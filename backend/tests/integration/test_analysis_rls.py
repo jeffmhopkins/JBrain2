@@ -346,3 +346,44 @@ async def test_distinction_pair_ordering_and_uniqueness_enforced(
                 ),
                 {"a": ids["entity"], "b": ids["entity_b"]},
             )
+
+
+@pytest.mark.parametrize(("table", "key"), [("facts", "fact"), ("entity_mentions", "mention")])
+async def test_settle_owner_is_inside_the_domain_firewall(
+    maker: async_sessionmaker,
+    table: str,
+    key: str,
+) -> None:
+    """Migration 0196's column (CLAUDE.md rule 3): `settle_owners` decides who may
+    RETRACT a row, so a narrowed session must not be able to read it off a health row
+    or flip it — re-stamping a health fact `conversation` from a general-scoped session
+    would hand its retraction to a producer the firewall never lets near the note.
+
+    It rides the existing row policies rather than one of its own, which is exactly what
+    this pins: the column is inside the row, and the row is what RLS isolates.
+
+    Also pins the default the seed relies on: these rows are inserted without the column
+    (as ~50 fixture inserts across the suite are), so `analyzer` is what they must get.
+    """
+    ids = await seed_health_graph(maker)
+    row_id = ids[key]
+    read = text(f"SELECT settle_owners FROM app.{table} WHERE id = :id")  # noqa: S608 — fixed set
+
+    async with scoped_session(maker, OWNER) as s:
+        assert (await s.execute(read, {"id": row_id})).scalar_one() == ["analyzer"]
+
+    async with scoped_session(maker, GENERAL_ONLY) as s:
+        assert (await s.execute(read, {"id": row_id})).first() is None
+        # RETURNING rather than rowcount: the row is invisible to this session, so a
+        # policy-refused UPDATE returns nothing at all.
+        refused = await s.execute(
+            text(
+                f"UPDATE app.{table} SET settle_owners = ARRAY['conversation']"  # noqa: S608
+                " WHERE id = :id RETURNING id"
+            ),
+            {"id": row_id},
+        )
+        assert refused.first() is None
+
+    async with scoped_session(maker, OWNER) as s:
+        assert (await s.execute(read, {"id": row_id})).scalar_one() == ["analyzer"]

@@ -19,6 +19,10 @@ The chain, end to end:
    notes alone — a fact drawn from the answer has a real chunk of a real note to cite;
 4. the conversation returns to `running` and the turn proceeds.
 
+It also holds the note conversation's TOOL-CALL LEDGER — the fold, the recorder, and the
+bind — because both turn paths need them and only one of the two can afford to import
+`analysis/converse.py`. See the block comment above `SELF_RECORDED_TOOLS`.
+
 Two things worth stating because they are not obvious:
 
 **Why the state moves BEFORE the append.** They are separate transactions (the repo owns
@@ -57,16 +61,22 @@ that is true.
 from __future__ import annotations
 
 import contextlib
+import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
-from jbrain.agent.asktools import latest_question
+from jbrain.agent.asktools import ASK_OWNER_TOOL, latest_question
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
+from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
+    MAX_ARG_CHARS,
     NoteConversationRepo,
     note_body_sha,
     state_for_stop,
@@ -79,6 +89,240 @@ NOTE_CONVERSE_AGENT = "note_ingest"
 """The persona whose sessions are note conversations. Spelled here rather than imported
 from `analysis/converse.py`, which drags the whole turn runner (and through it the LLM
 stack) into the API process for the sake of one string."""
+
+
+# --- the tool-call ledger, shared by BOTH turn paths -------------------------
+#
+# It lives HERE, beside `close_owner_reply`, and not in `analysis/converse.py`, for the
+# same reason `NOTE_CONVERSE_AGENT` is spelled above: `api/agent.py` is the reply turn's
+# seam and importing the worker's turn runner into the API process to reach a fold and
+# two inserts is not a trade worth making. `converse.py` imports these instead.
+#
+# Why the recorder sits at the TURN seam on both paths rather than inside the shared tool
+# dispatch — the direction W2 left open, and the one W4c did not take. The dispatch serves
+# every agent and knows nothing of note conversations, so recording there means threading
+# a note-conversation hook through every tool that could ever run in one. Recording at the
+# turn seam instead keeps the two paths SYMMETRIC: the same `ledger_rows` fold, the same
+# `record_tool_call` loop, the same bind-by-run-id, on the unattended pass and the owner's
+# reply alike — rather than making the reply turn stricter than the pass it continues. The
+# non-atomicity that buys (rows can land with no turn to bind to, or a write can land with
+# no row) is not a new failure mode: `converse._record` already reasons about exactly that
+# reachable partial, and both paths answer it the same way — a ledger that did not land
+# means the conversation does not reach `settled`, so constraint 6's sweep never reads a
+# half-written ledger.
+
+SELF_RECORDED_TOOLS = frozenset({ASK_OWNER_TOOL})
+"""Tools that write their OWN ledger row, inside the transaction that carries the change
+the row records. `ask_owner` is the first: its question has to be durable at ask time,
+because the owner can reply before the turn's post-hoc recorder ever runs, and the reply
+path reads that row to know what it is answering."""
+
+
+@dataclass(frozen=True)
+class LedgerRow:
+    """One tool call as the ledger records it — what the call CLAIMED, in call order."""
+
+    name: str
+    args: dict[str, Any]
+    ok: bool
+    detail: str
+    entity_ids: tuple[str, ...]
+    domains: tuple[str, ...]
+    # The fact rows the call WROTE (empty for every read tool, and for a write that
+    # landed nothing). Constraint 6's `touched` set is the union of these.
+    fact_ids: tuple[str, ...] = ()
+
+
+def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
+    """Fold a turn's `TranscriptAccumulator.tool_steps()` into ledger rows.
+
+    Pure, and separately tested against a REAL accumulator fed a real tool event stream.
+
+    `entity_ids`/`domains` come from the step's resolved-entity chips
+    (`ToolOutcome.entities`) and `fact_ids` from its WRITE chips (`ToolOutput.facts` /
+    `contracts.FactWriteRef`) — both reported by the write path itself, never inferred
+    from what the model ASKED for: `resolve_entity`/`assert_fact` surface the rows they
+    actually wrote, and a call that wrote nothing surfaces nothing. Constraint 6's
+    settle sweep reads this back as `touched`, so the direction matters in both
+    directions: an id here that did not land SPARES a fact the sweep should retract, and
+    a landed id missing here RETRACTS a fact the note still says.
+
+    A write's domain is unioned from both chips — a fact's domain is the floored and
+    ratcheted one the write path chose, which can be strictly above its entity's.
+
+    `detail` is capped for the same reason `args` is — a hostile body can drive a large
+    tool summary onto a disk the owner cannot reclaim from a terminal (CLAUDE.md #10)."""
+    rows: list[LedgerRow] = []
+    for step in tool_steps:
+        if step.get("name") in SELF_RECORDED_TOOLS:
+            # Already on the ledger, written by the handler inside the transaction that
+            # made the change it records (`agent/asktools.py`). Recording it again here
+            # would give one ask two rows, and the reply path reads the NEWEST `ask_owner`
+            # to build the clarification block — a duplicate is not just noise, it is a
+            # second row that could outlive a rollback of the first. This skip is what
+            # keeps a REPLY turn that ends in another question to one row as well: that
+            # turn's `ask_owner` self-recorded on its way through, and then arrives here
+            # again on `acc.tool_steps()`.
+            continue
+        entities = [e for e in step.get("entities", []) if isinstance(e, Mapping)]
+        facts = [f for f in step.get("facts", []) if isinstance(f, Mapping)]
+        ids = tuple(str(e["entity_id"]) for e in entities if e.get("entity_id"))
+        fact_ids = tuple(str(f["fact_id"]) for f in facts if f.get("fact_id"))
+        domains = tuple(
+            sorted(
+                {str(e["domain"]) for e in entities if e.get("domain")}
+                | {str(f["domain"]) for f in facts if f.get("domain")}
+            )
+        )
+        rows.append(
+            LedgerRow(
+                name=str(step.get("name", "")),
+                args=dict(step.get("args") or {}),
+                # `tool_steps()` settles an interrupted step to ok=False itself; the
+                # `is True` keeps a malformed step out of the truthy `writes()` union.
+                ok=step.get("ok") is True,
+                detail=str(step.get("summary") or "")[:MAX_ARG_CHARS],
+                entity_ids=ids,
+                fact_ids=fact_ids,
+                domains=domains,
+            )
+        )
+    return rows
+
+
+async def record_turn_writes(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    session_id: str,
+    tool_steps: Sequence[Mapping[str, Any]],
+) -> list[uuid.UUID]:
+    """Record one turn's calls on the ledger, UNBOUND, and return their ids for
+    `bind_turn_writes`.
+
+    Unbound because the assistant turn may not exist yet: the unattended pass records
+    before it writes the exchange, so a call is on the ledger as it happened rather than
+    only if the turn that made it survived to be persisted. The reply path could bind in
+    one step, but does not — sharing this seam is what keeps the ledger's shape identical
+    on both paths, which is the property `NoteConversationRepo.writes()` unions over.
+
+    Raises. Both callers decide what a failure means for their own state, and both answer
+    it the same way: the conversation must not reach `settled` on a ledger that did not
+    land."""
+    rows = ledger_rows(tool_steps)
+    if not rows:
+        return []
+    repo = NoteConversationRepo()
+    call_ids: list[uuid.UUID] = []
+    async with scoped_session(maker, ctx) as s:
+        for row in rows:
+            call = await repo.record_tool_call(
+                s,
+                session_id,
+                name=row.name,
+                args=row.args,
+                ok=row.ok,
+                detail=row.detail,
+                entity_ids=row.entity_ids,
+                fact_ids=row.fact_ids,
+                domains=row.domains,
+            )
+            call_ids.append(call.id)
+    return call_ids
+
+
+async def bind_turn_writes(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    session_id: str,
+    run_id: str,
+    call_ids: Sequence[uuid.UUID],
+) -> bool:
+    """Bind the calls `record_turn_writes` just wrote to THIS run's assistant turn.
+
+    Identified by an exact predicate, never by "the newest assistant row in the session"
+    and never by "whatever is unbound". `record_exchange` stamps `run_id` on both rows it
+    writes and a run writes one assistant turn, so `(session, run, assistant)` names
+    exactly the exchange these calls belong to. A note session holds more than one
+    exchange the moment the owner replies, and under that every ordering heuristic is a
+    guess about which exchange a tool call came from — the D3 chip would render one
+    turn's writes under another's answer. `scalar_one_or_none` says so out loud: two
+    assistant turns for one run would be a fault in the transcript writer, and raising
+    beats binding the ledger to a coin flip.
+
+    Returns whether the binding landed. `False` — no assistant turn for this run — is a
+    real outcome on both paths, because both persist the transcript best-effort: the rows
+    stay on the ledger with a NULL `turn_id`, which costs the D3 chip its grouping and
+    costs `writes()` nothing, since the sweep unions over the SESSION."""
+    if not call_ids:
+        return True
+    async with scoped_session(maker, ctx) as s:
+        turn_id = (
+            await s.execute(
+                select(AgentTurn.id).where(
+                    AgentTurn.session_id == uuid.UUID(session_id),
+                    AgentTurn.run_id == uuid.UUID(run_id),
+                    AgentTurn.role == "assistant",
+                )
+            )
+        ).scalar_one_or_none()
+        if turn_id is None:
+            return False
+        await NoteConversationRepo().bind_turn(s, session_id, str(turn_id), call_ids=call_ids)
+    return True
+
+
+async def record_reply_writes(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    session_id: str,
+    agent: str,
+    run_id: str,
+    tool_steps: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Put the OWNER REPLY turn's tool calls on the ledger, the way the unattended pass
+    puts its own there. Returns whether the ledger is complete for this turn.
+
+    This is what makes `ConversationWrites.facts` a whole-CONVERSATION union rather than a
+    whole-PASS one. The reply turn is an ordinary `/chat` turn, so before this existed a
+    `resolve_entity` / `assert_fact` / `correct_fact` the owner's own answer prompted
+    reached the graph and the D3 chip and never reached the ledger — and constraint 6's
+    sweep retracts every unpinned fact of the note that is NOT in `touched`, so wiring it
+    over that ledger would have retracted exactly those writes.
+
+    Must run BEFORE `close_owner_reply`: the sweep fires on the state that call sets, so
+    the ledger has to be complete before the state flips.
+
+    Never raises — the owner's turn already happened, its writes already committed in
+    their own transactions, and 500ing the response would neither un-write them nor
+    recover the row. The FALSE return is what the cost of that suppression is paid with:
+    an unrecorded write is a fact the sweep would retract, so a caller that cannot record
+    must not let the conversation claim `settled` (see the call site in `api/agent.py`,
+    which degrades the close to `record_failed` — the same `stop_reason` the unattended
+    pass lands on when its own recorder fails)."""
+    if agent != NOTE_CONVERSE_AGENT:
+        return True
+    try:
+        call_ids = await record_turn_writes(
+            maker, ctx, session_id=session_id, tool_steps=tool_steps
+        )
+    except Exception as exc:  # noqa: BLE001 — the owner's turn stands; the state degrades
+        log.warning("note_reply.ledger_failed", session_id=session_id, error=repr(exc))
+        return False
+    if not call_ids:
+        return True
+    # The BIND is not part of that verdict: the rows are already on the ledger, so
+    # `writes()` is complete whether or not they carry a `turn_id`. An unbound row costs
+    # the D3 chip its grouping, and nothing costs the sweep a fact.
+    bound = False
+    with contextlib.suppress(Exception):
+        bound = await bind_turn_writes(
+            maker, ctx, session_id=session_id, run_id=run_id, call_ids=call_ids
+        )
+    log.info("note_reply.ledger_recorded", session_id=session_id, calls=len(call_ids), bound=bound)
+    return True
 
 
 @dataclass(frozen=True)
@@ -279,7 +523,13 @@ async def close_owner_reply(
 
 __all__ = [
     "NOTE_CONVERSE_AGENT",
+    "SELF_RECORDED_TOOLS",
+    "LedgerRow",
     "OwnerReply",
+    "bind_turn_writes",
     "close_owner_reply",
+    "ledger_rows",
     "record_owner_reply",
+    "record_reply_writes",
+    "record_turn_writes",
 ]

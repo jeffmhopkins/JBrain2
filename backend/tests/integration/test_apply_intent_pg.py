@@ -25,6 +25,7 @@ from jbrain.analysis.intent import (
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.analysis.predicates import raw_descriptor
 from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.analysis.settle_owner import ANALYZER
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
@@ -165,6 +166,7 @@ async def _run(
             title="t",
             tags=["work"],
             extractor="test:fake",
+            settle_owner=ANALYZER,
             dropped_facts=dropped_facts,
         )
 
@@ -1099,6 +1101,7 @@ async def test_value_shape_mismatch_drops_value_when_enforced(maker, tmp_path): 
                 title="t",
                 tags=[],
                 extractor="test:fake",
+                settle_owner=ANALYZER,
             )
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -1331,6 +1334,7 @@ async def test_two_commit_passes_settled_once_keep_both_passes_mentions(maker, t
                 chunks=chunks,
                 extraction=_pass(name),
                 extractor="test:fake",
+                settle_owner=ANALYZER,
                 resolution_override={name: pins[name]},
             )
             for name in (one, two)
@@ -1342,6 +1346,7 @@ async def test_two_commit_passes_settled_once_keep_both_passes_mentions(maker, t
             chunks=chunks,
             extraction=_pass(two),
             extractor="test:fake",
+            settle_owner=ANALYZER,
             resolved={k: v for o in outcomes for k, v in o.resolved.items()},
             touched=set().union(*(o.touched for o in outcomes)),
             projected=set().union(*(o.projected for o in outcomes)),

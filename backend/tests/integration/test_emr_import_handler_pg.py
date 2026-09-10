@@ -578,26 +578,24 @@ async def test_layer_2_holds_across_sources_and_the_shared_settle(
         assert all("Elm" not in json.dumps(c.payload) for c in cards)
 
 
-# --- the OTHER settle collision, recorded rather than fixed (W4) --------------
+# --- the OTHER settle collision, closed by the producer key -------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Two producers, one note, and a whole-note settle on each. `note.ingested` on a"
-        " health Records note fans out to BOTH `integrate_note` (0040) and `emr_parse`"
-        " (0122); each ends in `settle_note`, which retracts every non-pinned fact of the"
-        " note it was not told about. So whichever runs second does not merely write late"
-        " — it RETRACTS the other's facts. This predates W4 (it is the shipped"
-        " `apply_intent`, on both sides) and W4's EMR half fixed only the collision"
-        " BETWEEN EMR sources. It was written expecting D10 to decide who owns a note's"
-        " settle; D10 landed as a tool-set difference that moves no producer, so with both"
-        " W4 halves merged this is owned by nobody yet. It turns green the day it is"
-        " decided."
-    ),
-    strict=True,
-)
 async def test_the_generic_integrator_does_not_retract_the_emr_parse_it_races(maker, tmp_path):  # noqa: F811
-    """Both producers' facts should survive one note. Today the second one wins outright.
+    """Both producers' facts survive one note.
+
+    `note.ingested` on a health `Records` note fans out to BOTH `integrate_note` (0040)
+    and `emr_parse` (0122), and each ends in `settle_note` — so whichever ran second did
+    not merely write late, it RETRACTED the other's facts. That was the shipped
+    `apply_intent`, on both sides, and W4's EMR half had fixed only the collision BETWEEN
+    EMR sources.
+
+    It is closed by the same change that closed the conversation's half, without a
+    special case for EMR: the sweep is scoped to the rows the settling producer stamped
+    (`analysis/settle_owner.py`, docs/plans/SETTLE_OWNERSHIP.md S1), so the analyzer
+    retracts `analyzer` rows and the importer `emr` rows and neither can reach the other.
+    D10's tool-set difference (`ingest/emr/ownership.py`) still keeps the CONVERSATION
+    from writing here at all, which is why this note has two producers and not three.
 
     `_IntegrateDriver` is the real `integrate_note` path with the two model calls
     scripted, so what runs here is the shipped extraction → arbiter → apply, not a

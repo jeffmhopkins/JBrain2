@@ -1,6 +1,26 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️ (W5a blocked — see W5)
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️ (W5a blocked — see W5)
+>
+> **W4c/1 landed:** the tool-call ledger now records BOTH turn paths. The owner's reply
+> turn records at the same seam the unattended pass records at
+> (`clarify.record_reply_writes`, called from `api/agent.py` before `close_owner_reply`) —
+> not in the shared tool dispatch, which serves every agent and would need a
+> note-conversation hook in every tool. `ConversationWrites.facts` is therefore the
+> whole-conversation union constraint 6 needs.
+>
+> **W4c/3 is decided and its first wave has landed.** The settle's owner is per PRODUCER,
+> not per note: `settle_note`'s sweep and `_reconcile_mentions` are scoped by a stamped
+> claim set, `settle_owners` (`analysis/settle_owner.py`). Each producer releases only
+> its OWN claim on the rows it no longer asserts, and a row is retracted (a mention,
+> deleted) only when its last claim goes — so `integrate_note` cannot reach what the
+> conversation asserts, and a fact BOTH of them assert survives either one letting go,
+> which is the common case with two producers on one note. That closed SHIPPED loss, not a prospective race — `integrate_note`
+> and `note_converse` fan out of one `note.ingested` event, so the analyzer's settle had
+> been retracting the conversation's facts (and deleting its mention spine) on every
+> settle of the note, the owner's reply-turn writes included. The decision and the
+> remaining waves are `docs/plans/SETTLE_OWNERSHIP.md`. **W4c/2 (wire the conversation's
+> own sweep) is still open, so W5a is still blocked.**
 >
 > W4's two halves have both landed and are merged. INTAKE (D10): the third tool set, and
 > the finding that the port itself had already happened by accident in W2. EMR (D9): the
@@ -743,15 +763,17 @@ Three things that answer questions the plan had left open:
 - **The `fact_ids` ledger is filled**, through a `facts` chip on the tool result
   (`contracts.FactWriteRef` → `ToolOutput` → `ToolResultEvent` → the transcript step →
   `ledger_rows`), so what is recorded is what the write path REPORTED, never what the
-  model asked for. **For the UNATTENDED pass only.** `record_tool_call` has two callers
-  — the worker's pass and `ask_owner`'s self-record — and the owner's reply is an
-  ordinary `/chat` turn that touches the repo nowhere, so a `resolve_entity` /
-  `assert_fact` / `correct_fact` on a reply reaches the D3 rung and never the ledger,
-  while `clarify.close_owner_reply` still maps that turn to `settled`. **W4 precondition,
-  beside constraint 6:** move the recorder into the tool dispatch, or scope the sweep to
-  the unattended pass, BEFORE wiring `settle_note(touched=writes().facts)` — otherwise
-  the first settle retracts every unpinned fact the owner's own answer added, while the
-  transcript still shows them recorded. `correct_fact` survives only because it pins. **`mention_ids` still has no channel** — the ledger
+  model asked for. **As of W3, for the UNATTENDED pass only** — `record_tool_call` had two
+  callers, the worker's pass and `ask_owner`'s self-record, and the owner's reply was an
+  ordinary `/chat` turn that touched the repo nowhere, so a `resolve_entity` /
+  `assert_fact` / `correct_fact` on a reply reached the D3 rung and never the ledger,
+  while `clarify.close_owner_reply` still mapped that turn to `settled`. That was the
+  precondition beside constraint 6, and it is **LANDED in W4c/1**: the reply turn records
+  at the same seam the pass records at (`clarify.record_reply_writes`, called from
+  `api/agent.py` before `close_owner_reply`), not down in the shared tool dispatch — the
+  dispatch serves every agent and would need a note-conversation hook threaded through
+  every tool, where the turn seam keeps the two paths symmetric. `writes().facts` is now
+  the whole-conversation union. `settle_note(touched=...)` is still not wired (W4c/2). **`mention_ids` still has no channel** — the ledger
   has no column for them and migrations are not this task's — so a `settle_note` call
   must NOT pass an empty `mention_ids` set: `_reconcile_mentions` would delete every
   mention of the note (constraint 7's failure, exactly).
@@ -1150,12 +1172,12 @@ conversation over an EMR note holds **no graph-write verb at all**.
   cards), and `emr_parse` and `note_converse` are still two jobs off one event with no
   ordering between them. Publishing the import into the thread's ledger and its D3 chip is
   the next task, and it needs the ordering decided rather than raced.
-- **The `record_tool_call` precondition is sidestepped, not solved.** The plan requires
-  moving the recorder into the tool dispatch (or scoping the sweep) before wiring
-  `settle_note(touched=writes().facts)`. Nothing here wires it: on an EMR note the
-  conversation writes no facts at all, so its ledger is empty *because it is empty*, and
-  the note's one settle is the importer's. The precondition still stands for every other
-  note and for D10.
+- **The `record_tool_call` precondition is sidestepped here, not solved.** Nothing in
+  W4's EMR half wires it: on an EMR note the conversation writes no facts at all, so its
+  ledger is empty *because it is empty*, and the note's one settle is the importer's. The
+  precondition stood for every other note and for D10 — and was closed separately in
+  W4c/1, by recording the owner's reply turn at the turn seam (`record_reply_writes`)
+  rather than in the tool dispatch.
 - **The rebuild sweep needed no change**, and was checked rather than assumed:
   `rebuild._rebuild_one` already re-enqueues `emr_parse` (`_EMR_REPARSE_SQL`) inside the
   same transaction as the purge, so a corpus rebuild re-drives the deterministic producer
@@ -1272,13 +1294,18 @@ rule, and it fails on two independent counts the plan's own line numbers hid:
   `note_analysis` stamp that `api/notes.py`'s `analyzed` flag and `/analysis` read —
   nor the `notes.integration_state = 'integrated'` flip that
   `queue.backfill_pending_integration`, the workflow reconciler and `rebuild.py` all
-  key on. `emr/ownership.py` already states the first half of this ("the CONVERSATION
-  adds no sweep of its own today"); what it does not say is that this makes the
-  deletion a producer removal with no replacement. Wiring the sweep is blocked on the
-  precondition W4 was briefed to land and did not: `ConversationWrites.facts` is filled
-  by the unattended pass and **empty for the owner's reply turn**, so
-  `settle_note(touched=writes().facts)` today would retract every unpinned fact the
-  owner's own reply just added (`models/note_conversation.py`). Pinned by
+  key on. `emr/ownership.py` used to state the first half of this as "the
+  CONVERSATION adds no sweep of its own today"; that sentence is corrected, because a
+  producer does not need a sweep of its own to LOSE, only a co-writer that has one. Its
+  LEDGER precondition is landed (W4c/1): `ConversationWrites.facts` is the
+  whole-conversation union across both turn paths, so `settle_note(touched=writes().facts)`
+  would no longer retract what the owner's own reply just added
+  (`models/note_conversation.py`) — and both turn paths stamp ONE `conversation` owner,
+  which makes that union a requirement rather than a nicety. **That does not unblock
+  W5a.** Ownership is decided and scoped (W4c/3, docs/plans/SETTLE_OWNERSHIP.md S1), but
+  the conversation's own sweep is still wired to nothing (W4c/2) and it neither stamps
+  `note_analysis` nor flips `integration_state`, so `integrate_note` remains the producer
+  of those and deleting it still strands the corpus at `pending_integration`. Pinned by
   `test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`.
 - **`arbiter.py` cannot go at all, and that is W4's own doing.** Its EMR half routes
   the deterministic importer through `arbiter.plan_intent`
@@ -1291,9 +1318,16 @@ rule, and it fails on two independent counts the plan's own line numbers hid:
 
 So W5a's real size is not ~940 lines; it is three helpers plus `integrate_note`, and
 it is gated on the settle wiring, which is a *replacement*, not a deletion. Sequence
-it as W4c (move the ledger recorder into tool dispatch, wire the scoped sweep, decide
-the `integrate_note` / `emr_parse` race the third writer would make three-way) and
-only then W5a.
+it as W4c and only then W5a. W4c/1 is **landed** — the ledger records both turn paths,
+recorded at the turn seam rather than in the tool dispatch (`clarify.record_reply_writes`;
+the dispatch serves every agent and knows nothing of note conversations, so the hook would
+have to be threaded through every tool, and the seam keeps the pass and the reply
+symmetric). W4c/3 is **decided and landed** in its first wave: the `integrate_note` /
+`emr_parse` race the third writer would have made three-way is closed by scoping each
+producer's sweep to the claims it holds, which also closed the conversation's live loss
+and turned `test_emr_import_handler_pg.py`'s settle-collision xfail green. W4c/2 (wire
+the conversation's own sweep) is open, and W5a stays blocked on it — and on the tail and
+stamp the conversation still does not own (docs/plans/SETTLE_OWNERSHIP.md S2/S4).
 
 What did land under W5a: two genuinely dead pieces inside `arbiter.py`, both
 unreachable regardless of the gate — `plan_to_extraction`'s `commit_only` arm (A1b-ii-1's

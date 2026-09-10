@@ -83,6 +83,10 @@ class EntityMention(Base):
     char_start: Mapped[int] = mapped_column(Integer)
     char_end: Mapped[int] = mapped_column(Integer)
     link_method: Mapped[str] = mapped_column(Text)  # exact_alias|embedding|llm|human
+    # Which producers currently ASSERT this mention (jbrain.analysis.settle_owner). A
+    # set, not one writer: a span both producers anchor is asserted by both, and a
+    # reconcile drops only its OWN claim — the row goes when the last claim does.
+    settle_owners: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{analyzer}")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -181,6 +185,14 @@ class Fact(Base):
         UUID(as_uuid=True), ForeignKey("app.chunks.id"), nullable=True
     )
     extractor: Mapped[str] = mapped_column(Text)
+    # The extractor NAMES the writer but cannot KEY on it: the analyzer's value is
+    # `provider:model` and moves with the model, and the conversation writes under two
+    # strings. `settle_owners` is the stable producer key the sweep scopes on
+    # (jbrain.analysis.settle_owner) — a SET, because two producers reading one note
+    # routinely assert the same identity key and a row asserted by both is retractable
+    # by neither alone. Each settle removes its own claim; the row is retracted when
+    # the set empties.
+    settle_owners: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{analyzer}")
     prompt_version: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))

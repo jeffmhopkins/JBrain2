@@ -123,6 +123,7 @@ from jbrain.analysis.pipeline import (
     _extract_note,
     local_anchor,
 )
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
@@ -509,6 +510,9 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
             chunks=await _chunks(session, note.note_id),
             extraction=led.as_extraction(),
             extractor=EXTRACTOR,
+            # The harness settles as the CONVERSATION — `EXTRACTOR` is `note_ingest`
+            # here, and the producer key groups both of that producer's runs.
+            settle_owner=CONVERSATION,
             resolved=led.resolved,
             touched=led.touched,
             projected=led.projected,

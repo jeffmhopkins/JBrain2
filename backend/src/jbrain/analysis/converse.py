@@ -61,14 +61,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
 
 import structlog
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -79,7 +78,7 @@ from jbrain.agent.agents import (
     narrow_for_emr,
     narrow_for_third_party_note,
 )
-from jbrain.agent.asktools import ASK_OWNER_TOOL, build_ask_owner_handlers
+from jbrain.agent.asktools import build_ask_owner_handlers
 from jbrain.agent.clock import build_clock_handlers, now_block
 from jbrain.agent.graphwritetools import (
     NoteGraphWriter,
@@ -93,6 +92,7 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.analysis.clarify import bind_turn_writes, record_turn_writes
 from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -100,9 +100,7 @@ from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.llm import LlmRouter, UserMessage
-from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
-    MAX_ARG_CHARS,
     NOTE_TURN_WALL_CLOCK,
     NoteConversationRepo,
     note_body_sha,
@@ -186,14 +184,6 @@ NOTE_CONVERSE_SPEC = ActionSpec(
 # — plan constraint 6 says the whole-note sweep must run on neither a truncated pass nor
 # a waiting one, and this distinction is what it keys on.
 
-# Tools that write their OWN ledger row, inside the transaction that carries the change
-# the row records — the direction W2 left open ("moving the recorder into the tool
-# dispatch so `ok` and the written ids come from the write path"). `ask_owner` is the
-# first: its question has to be durable at ask time, because the owner can reply before
-# this handler's post-turn `_record` ever runs, and the reply path reads that row to know
-# what it is answering.
-SELF_RECORDED_TOOLS = frozenset({ASK_OWNER_TOOL})
-
 _TITLE_LEN = 60
 
 
@@ -210,77 +200,6 @@ def capture_line(note: NoteInfo) -> str:
     local = note.created_at.astimezone(UTC) + timedelta(minutes=offset)
     sign, mins = ("+", offset) if offset >= 0 else ("-", -offset)
     return f"{local:%A, %B %d, %Y, %H:%M} (UTC{sign}{mins // 60:02d}:{mins % 60:02d})"
-
-
-@dataclass(frozen=True)
-class LedgerRow:
-    """One tool call as the ledger records it — what the call CLAIMED, in call order."""
-
-    name: str
-    args: dict[str, Any]
-    ok: bool
-    detail: str
-    entity_ids: tuple[str, ...]
-    domains: tuple[str, ...]
-    # The fact rows the call WROTE (empty for every read tool, and for a write that
-    # landed nothing). Constraint 6's `touched` set is the union of these.
-    fact_ids: tuple[str, ...] = ()
-
-
-def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
-    """Fold a turn's `TranscriptAccumulator.tool_steps()` into ledger rows.
-
-    Pure, and separately tested against a REAL accumulator fed a real tool event
-    stream, because in W2 the allowlist is empty and no tool can fire — an untested
-    recorder would ship dead and W3 would inherit a mapper that has never run.
-
-    `entity_ids`/`domains` come from the step's resolved-entity chips
-    (`ToolOutcome.entities`) and `fact_ids` from its WRITE chips (`ToolOutput.facts` /
-    `contracts.FactWriteRef`) — both reported by the write path itself, never inferred
-    from what the model ASKED for: `resolve_entity`/`assert_fact` surface the rows they
-    actually wrote, and a call that wrote nothing surfaces nothing. Constraint 6's
-    settle sweep reads this back as `touched`, so the direction matters in both
-    directions: an id here that did not land SPARES a fact the sweep should retract, and
-    a landed id missing here RETRACTS a fact the note still says.
-
-    A write's domain is unioned from both chips — a fact's domain is the floored and
-    ratcheted one the write path chose, which can be strictly above its entity's.
-
-    `detail` is capped for the same reason `args` is — a hostile body can drive a large
-    tool summary onto a disk the owner cannot reclaim from a terminal (CLAUDE.md #10)."""
-    rows: list[LedgerRow] = []
-    for step in tool_steps:
-        if step.get("name") in SELF_RECORDED_TOOLS:
-            # Already on the ledger, written by the handler inside the transaction that
-            # made the change it records (`agent/asktools.py`). Recording it again here
-            # would give one ask two rows, and the reply path reads the NEWEST `ask_owner`
-            # to build the clarification block — a duplicate is not just noise, it is a
-            # second row that could outlive a rollback of the first.
-            continue
-        entities = [e for e in step.get("entities", []) if isinstance(e, Mapping)]
-        facts = [f for f in step.get("facts", []) if isinstance(f, Mapping)]
-        ids = tuple(str(e["entity_id"]) for e in entities if e.get("entity_id"))
-        fact_ids = tuple(str(f["fact_id"]) for f in facts if f.get("fact_id"))
-        domains = tuple(
-            sorted(
-                {str(e["domain"]) for e in entities if e.get("domain")}
-                | {str(f["domain"]) for f in facts if f.get("domain")}
-            )
-        )
-        rows.append(
-            LedgerRow(
-                name=str(step.get("name", "")),
-                args=dict(step.get("args") or {}),
-                # `tool_steps()` settles an interrupted step to ok=False itself; the
-                # `is True` keeps a malformed step out of the truthy `writes()` union.
-                ok=step.get("ok") is True,
-                detail=str(step.get("summary") or "")[:MAX_ARG_CHARS],
-                entity_ids=ids,
-                fact_ids=fact_ids,
-                domains=domains,
-            )
-        )
-    return rows
 
 
 def note_read_scopes(profile: AgentProfile, note: NoteInfo) -> tuple[str, ...]:
@@ -583,35 +502,25 @@ class NoteConverseRunner:
         """Persist the exchange, the ledger, and the meter seed.
 
         Ledger first: a call is recorded as it happened, before the assistant turn
-        exists, then bound to it BY ID. Binding whatever is unbound would let an earlier
-        turn that died mid-flight have its calls adopted by this one. W3 moves the
-        recording INTO the tool dispatch, where `ok` and the written ids come from the
-        write path itself; the binding half is unchanged.
+        exists, then bound to it BY ID (`clarify.bind_turn_writes` — binding whatever is
+        unbound would let an earlier turn that died mid-flight have its calls adopted by
+        this one). The recorder itself is shared with the OWNER REPLY turn, which reaches
+        the same two calls from `api/agent.py`: the two turn paths of one conversation
+        record identically, which is what makes `NoteConversationRepo.writes()` a
+        whole-conversation union rather than a whole-pass one.
 
         These are separate transactions, and deliberately so — the transcript store owns
         its own. So a partial IS reachable: ledger rows with no assistant turn to bind
         to. What the caller guarantees is the direction that matters — this raising means
         the conversation lands `failed`, so `settled` never stands over a record that did
         not land, and constraint 6's sweep (which fires only on `settled`) never reads a
-        half-written ledger. The reverse is not guaranteed and does not need to be: a
-        `failed` conversation's ledger is evidence, not an input to anything."""
-        rows = ledger_rows(executed.tools)
-        call_ids: list[uuid.UUID] = []
-        if rows:
-            async with scoped_session(self.maker, owner_ctx) as s:
-                for row in rows:
-                    call = await self.conversations.record_tool_call(
-                        s,
-                        session_id,
-                        name=row.name,
-                        args=row.args,
-                        ok=row.ok,
-                        detail=row.detail,
-                        entity_ids=row.entity_ids,
-                        fact_ids=row.fact_ids,
-                        domains=row.domains,
-                    )
-                    call_ids.append(call.id)
+        half-written ledger. The reply path answers the same question the same way, by
+        degrading its own close to `record_failed`. The reverse is not guaranteed and does
+        not need to be: a `failed` conversation's ledger is evidence, not an input to
+        anything."""
+        call_ids = await record_turn_writes(
+            self.maker, owner_ctx, session_id=session_id, tool_steps=executed.tools
+        )
         await self.transcript.record_exchange(
             owner_ctx,
             session_id=session_id,
@@ -621,45 +530,14 @@ class NoteConverseRunner:
             tools=executed.tools,
             reasoning=executed.reasoning,
         )
-        if rows:
-            turn_id = await self._assistant_turn_of_run(owner_ctx, session_id, run_id)
-            if turn_id is not None:
-                async with scoped_session(self.maker, owner_ctx) as s:
-                    await self.conversations.bind_turn(s, session_id, turn_id, call_ids=call_ids)
+        await bind_turn_writes(
+            self.maker, owner_ctx, session_id=session_id, run_id=run_id, call_ids=call_ids
+        )
         if executed.context_window and executed.context_used:
             with contextlib.suppress(Exception):
                 await self.sessions.record_context(
                     owner_ctx, session_id, executed.context_used, executed.context_window
                 )
-
-    async def _assistant_turn_of_run(
-        self, owner_ctx: SessionContext, session_id: str, run_id: str
-    ) -> str | None:
-        """THIS run's assistant turn — the one `record_exchange` just wrote. It returns
-        the USER turn's id (its callers bind attachments to that one) and the ledger
-        binds to the assistant's.
-
-        Identified by an exact predicate, not by "the newest assistant row in the
-        session". `record_exchange` stamps `run_id` on both rows it writes, and a run
-        writes one assistant turn, so `(session, run, assistant)` names exactly the row
-        this exchange produced. Newest-first was only ever right while a note session
-        held ONE exchange; W3's owner reply is a second run in the same session, and
-        under it every ordering is a guess about which exchange a tool call belonged to.
-        With the predicate exact there is no ordering left to get backwards — and the
-        `scalar_one_or_none` says so: two assistant turns for one run would be a fault
-        in the transcript writer, and raising here fails the pass rather than binding
-        the ledger to a coin flip."""
-        async with scoped_session(self.maker, owner_ctx) as s:
-            row = (
-                await s.execute(
-                    select(AgentTurn.id).where(
-                        AgentTurn.session_id == uuid.UUID(session_id),
-                        AgentTurn.run_id == uuid.UUID(run_id),
-                        AgentTurn.role == "assistant",
-                    )
-                )
-            ).scalar_one_or_none()
-        return str(row) if row is not None else None
 
 
 def note_converse_handler(

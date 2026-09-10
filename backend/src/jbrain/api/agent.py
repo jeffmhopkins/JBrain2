@@ -70,6 +70,7 @@ from jbrain.analysis.clarify import (
     NOTE_CONVERSE_AGENT,
     close_owner_reply,
     record_owner_reply,
+    record_reply_writes,
     reply_profile_for_session,
 )
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -1528,12 +1529,36 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # opens is suppressed while this one stands. A turn that ended by asking
                 # ANOTHER question is left waiting — `state_for_stop` says so.
                 if session.agent == NOTE_CONVERSE_AGENT:
+                    # The ledger FIRST, then the state. This turn's `assert_fact` /
+                    # `correct_fact` / `resolve_entity` calls are as much a part of the
+                    # conversation's write set as the unattended pass's, and constraint
+                    # 6's whole-note sweep retracts every unpinned fact of the note that
+                    # `NoteConversationRepo.writes()` does NOT vouch for. It fires on the
+                    # state `close_owner_reply` sets, so recording after the flip would
+                    # be a race the owner's own facts lose.
+                    #
+                    # A recorder that fails never fails the turn (the writes already
+                    # committed; a 500 would neither undo them nor recover the row) — but
+                    # it does cost the ledger a write the sweep would then retract. So the
+                    # close DEGRADES instead: `record_failed` is the same stop_reason the
+                    # unattended pass lands on when its own `_record` breaks, and it lands
+                    # the conversation `failed`, which is precisely the state the sweep
+                    # does not run on. A turn that ended by asking ANOTHER question is
+                    # untouched either way — it is `waiting_on_owner`, not `running`.
+                    recorded = await record_reply_writes(
+                        request.app.state.session_maker,
+                        owner_ctx,
+                        session_id=str(session.id),
+                        agent=session.agent,
+                        run_id=run_id,
+                        tool_steps=acc.tool_steps(),
+                    )
                     await close_owner_reply(
                         request.app.state.session_maker,
                         owner_ctx,
                         session_id=str(session.id),
                         agent=session.agent,
-                        stop_reason=stop_reason,
+                        stop_reason=stop_reason if recorded else "record_failed",
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

@@ -111,6 +111,7 @@ from jbrain.analysis.pipeline import (
     _ChunkRef,
     local_anchor,
 )
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.analysis.weight import ConfidenceSignals, effective_weight
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
@@ -678,6 +679,7 @@ class NoteGraphWriter:
             chunks=chunks,
             extraction=extraction,
             extractor=self._extractor,
+            settle_owner=CONVERSATION,
         )
         entity = outcome.resolved.get(surface)
         if entity is None:
@@ -1042,6 +1044,11 @@ class NoteGraphWriter:
             chunks=chunks,
             extraction=extraction,
             extractor=self._extractor,
+            # ONE producer, whichever run this is: `self._extractor` is `note_ingest`
+            # on the unattended pass and `note_ingest_reply` on the owner's reply turn,
+            # and a settle scoped by the string would let the first eat the second's
+            # writes (analysis/settle_owner.py).
+            settle_owner=CONVERSATION,
             resolution_override=override,
         )
         write = outcome.writes.get(0)

@@ -321,26 +321,44 @@ class ConversationWrites:
     `frozenset`, not `set`: `frozen=True` only stops the FIELDS being rebound, and a
     caller that dropped an id from a mutable `facts` would silently widen the sweep.
 
-    **`facts` IS FILLED FOR ONE TURN PATH AND EMPTY FOR THE OTHER, AND AN EMPTY `facts`
-    IS NOT "NOTHING WAS WRITTEN".** `record_tool_call` has exactly two callers: the
-    worker's unattended pass (`analysis/converse.py`, via `ledger_rows`, which does now
-    report real fact ids) and `ask_owner`'s self-record. The owner's REPLY turn is an
-    ordinary `/chat` turn — `api/agent.py` touches this repo nowhere — so a
-    `resolve_entity` / `assert_fact` / `correct_fact` on that turn reaches the D3 rung
-    through the transcript and never reaches this table.
+    **BOTH TURN PATHS NOW FILL IT** (W4c/1). The asymmetry this docstring used to warn
+    about was real and worse than an always-empty ledger because it looked solved: the
+    worker's unattended pass recorded through `clarify.ledger_rows`, `ask_owner`
+    self-recorded, and the owner's REPLY turn — an ordinary `/chat` turn — reached this
+    table nowhere, so a `resolve_entity` / `assert_fact` / `correct_fact` the owner's own
+    answer prompted showed on the D3 rung through the transcript and was invisible here.
+    Wiring `settle_note(touched=writes().facts)` off `settled` would then have retracted
+    exactly those writes (`correct_fact` surviving only by accident, because it pins).
 
-    That asymmetry is the trap, and it is worse than the old always-empty state because
-    it looks solved. `clarify.close_owner_reply` maps that turn's clean end to
-    `settled`; wiring `settle_note(touched=writes().facts)` off `settled` — which is
-    exactly what constraint 6 specifies — would retract every unpinned fact the owner's
-    own reply just added, while the transcript still shows them recorded. `correct_fact`
-    survives only by accident, because it pins. **W4 must move the recorder into the
-    tool dispatch, or scope the sweep to the unattended pass, BEFORE wiring it.**"""
+    It is closed by making the two paths SYMMETRIC at the turn seam rather than by
+    pushing the recorder down into the shared tool dispatch: the dispatch serves every
+    agent and knows nothing of note conversations, so recording there would need a
+    note-conversation hook threaded through every tool. `api/agent.py` now calls
+    `clarify.record_reply_writes` on the reply turn, in the same `finally` as
+    `close_owner_reply` and BEFORE it, over the same `ledger_rows` fold and the same
+    `record_tool_call` loop the pass uses — see that function and the block comment above
+    `clarify.SELF_RECORDED_TOOLS` for why the seam is where it is.
+
+    So `facts` is a whole-CONVERSATION union, which is the property constraint 6 needs —
+    and it is a REQUIREMENT, not a nicety, now that ownership is decided: the sweep is
+    scoped by `settle_owners` (`analysis/settle_owner.py`), and BOTH turn paths claim the
+    one `conversation` key, because `note_ingest` and `note_ingest_reply` are two runs of
+    one producer. A conversation sweep handed one turn's share would therefore release
+    the other turn's claim — and on a row only the conversation asserts, that is the last
+    claim, so the row would be retracted with full authority.
+
+    Who owns a note's settle is no longer open (W4c/3, docs/plans/SETTLE_OWNERSHIP.md):
+    each producer sweeps the rows it stamped and cannot reach a co-writer's — which
+    closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
+    outright. What remains outstanding is not this dataclass's: the conversation's OWN
+    sweep is still unwired (W4c/2, optional), and it must stay unwired until an
+    incomplete ledger can gate it (`clarify.record_reply_writes` returning False, a
+    truncated turn, a turn ending `awaiting_owner`). An empty `facts` still means "the
+    conversation's successful calls wrote no fact", never "nothing was recorded"."""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
-    """The fact ids the conversation's successful calls wrote. Filled by the unattended
-    pass; EMPTY for anything the owner's reply turn wrote — see the class docstring
-    before feeding this to `settle_note`."""
+    """The fact ids the conversation's successful calls wrote, across every turn of it —
+    the unattended pass and each owner reply alike."""
 
     entities: frozenset[uuid.UUID] = field(default_factory=frozenset)
     domains: frozenset[str] = field(default_factory=frozenset)
@@ -478,8 +496,9 @@ class NoteConversationRepo:
         The question is the LAST `ask_owner` of the thread — a conversation resumed after
         an answer can ask again, and the inbox must point at the open one, not the
         answered one. `committed` counts distinct fact ids over the thread's SUCCEEDED
-        calls, so it is honestly 0 until the recorder moves into the tool dispatch
-        (`ConversationWrites`' docstring) rather than a number invented from arguments.
+        calls, so it counts what the write path reported rather than a number invented
+        from the arguments the model sent — over BOTH turn paths, since W4c/1 put the
+        owner's reply on the same ledger (`ConversationWrites`' docstring).
 
         A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
         conversation survives, and a redirect into a deleted note's thread is a dead end.
@@ -674,13 +693,15 @@ class NoteConversationRepo:
         counting its ids would spare a fact the whole-note sweep is supposed to
         retract.
 
-        **The returned `facts` covers the unattended pass ONLY.** The owner's reply turn
-        runs on `/chat`, which never calls `record_tool_call`, so anything it wrote is
-        missing here — not because the conversation wrote nothing. `settle_note`
-        retracts every non-pinned fact of the note that is NOT in `touched`
-        (`analysis/pipeline.py`), so passing this straight through would retract exactly
-        the facts the owner's own answer added. Read `ConversationWrites`' docstring
-        before you wire it."""
+        **The returned `facts` covers every turn of the conversation** — the unattended
+        pass and the owner's replies — since W4c/1 gave `/chat` the same recorder
+        (`clarify.record_reply_writes`). That is what `settle_note(touched=...)` needs:
+        it releases this producer's claim on every non-pinned fact of the note NOT in
+        `touched`, and retracts the ones left unclaimed (`analysis/pipeline.py`), so a
+        per-pass share would drop the claim the owner's own answer added — the claim set
+        groups both runs deliberately, so it would not save them. Still unwired, and still not
+        this method's call to make: read `ConversationWrites`' docstring for what remains
+        outstanding."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
             NoteConversationToolCall.entity_ids,
