@@ -823,10 +823,7 @@ class NoteGraphWriter:
                     )
                     continue
                 self._remember(handle)
-                rows.append(
-                    f"{handle.handle}  {handle.label} [{handle.kind}] ({handle.domain}) —"
-                    f" {'new entity' if handle.entity.created else 'already known'}"
-                )
+                rows.append(_resolved_line(handle))
                 if not handle.entity.created:
                     rows.append(handle)
                 refs.append(_entity_ref(handle))
@@ -1098,6 +1095,13 @@ class NoteGraphWriter:
         """
         del ctx  # the write session is the note's, never the turn's read scope
         items, clamped = _batch(arguments, ("facts", "items"), MAX_FACTS)
+        # LATCH FIRST, before any return can skip it. Every other path reaches `union`,
+        # but a call whose list is entirely unreadable (`{"facts": [null]}`) with no title
+        # and no tags falls out of the usage branch below — and `_batch` has already seen
+        # a dropped element. Unconditional here is the only shape with no fourth hole:
+        # a clamp latches, whatever else this call turns out to do.
+        if clamped:
+            self.reading.mark_incomplete()
         title = _text(arguments, "title", "headline", "summary")
         tags = _tags(arguments)
         if not items and not title and not tags:
@@ -1637,6 +1641,20 @@ def _entity_ref(handle: Handle) -> EntityRef:
         label=handle.label,
         domain=handle.domain,  # type: ignore[arg-type]  # a domain code from the row
     )
+
+
+def _resolved_line(handle: Handle) -> str:
+    """One resolved surface, in the result.
+
+    An entity outside the conversation's scopes gets its SURFACE and nothing else. The
+    withheld canonical name was never the whole disclosure: `[Medication] (health)` on a
+    general note's thread says what kind of thing the owner has and which domain files it,
+    which is the same question the name answers less precisely. The handle is what the
+    model needs to avoid minting a duplicate, and the handle is all it gets."""
+    known = "new entity" if handle.entity.created else "already known"
+    if not handle.visible:
+        return f"{handle.handle}  {handle.label} — {known}"
+    return f"{handle.handle}  {handle.label} [{handle.kind}] ({handle.domain}) — {known}"
 
 
 def _candidate_note(candidates: Sequence[Candidate], read_scopes: frozenset[str]) -> str:

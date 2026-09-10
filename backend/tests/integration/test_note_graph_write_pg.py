@@ -669,6 +669,12 @@ async def test_a_cross_domain_entity_gets_a_handle_but_not_its_name(maker, tmp_p
     assert "e1  Patel" in text
     assert "Anjali" not in text
     assert "already known" in text
+    # And nothing ELSE about the row either. The withheld canonical name was never the
+    # whole disclosure: `[Medication] (health)` on a general note's thread says what kind
+    # of thing the owner has and which domain files it, which is the same question the
+    # name answers less precisely. The handle is what the model needs; the handle is all
+    # it gets.
+    assert "[Person]" not in text and "(health)" not in text
     # The handle points at the EXISTING health row — no duplicate was minted.
     assert writer.lookup("e1").entity.id == health_entity.id  # type: ignore[union-attr]
 
@@ -1408,6 +1414,23 @@ async def test_a_clamped_reading_is_reported_as_incomplete_and_latches(maker, tm
     # The LATCH: the pass produced a prefix, and a later clean call does not make the
     # reading whole again.
     assert writer.reading.clamped is True
+
+
+@pytest.mark.asyncio
+async def test_a_call_whose_every_element_is_unreadable_latches_too(maker, tmp_path) -> None:  # noqa: F811
+    """The last path that could reach a return without latching: a `facts` list the
+    handler cannot read a single element of, with no title and no tags, falls out of the
+    usage branch — while `_batch` has already seen the dropped elements. The model tried
+    to state facts and none of them landed, which is a prefix of the note by any reading.
+
+    The latch is unconditional now, ahead of every return in the handler, because three
+    of these have been found one at a time."""
+    _, writer = await _own_person(maker, tmp_path, "Dana Nulls")
+    out = str(await writer.close_reading({"facts": [None, 7]}, _ctx()))
+    assert "close_reading takes" in out
+    assert writer.reading.clamped is True
+    # And nothing was claimed to have been read: no call landed.
+    assert writer.reading.calls == 0
 
 
 @pytest.mark.asyncio

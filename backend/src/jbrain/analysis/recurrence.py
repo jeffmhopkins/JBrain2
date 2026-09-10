@@ -250,6 +250,46 @@ _BOUNDED = re.compile(
     r")\b"
 )
 
+# THE UNCONSUMED-PERIOD REFUSAL, and it is a different SHAPE of check from the two
+# blocklists around it rather than a longer version of them.
+#
+# Three rounds of this parser produced the same bug three times — a rule that is well
+# formed and about a different thing, which `parse_rrule` can never catch — and each round
+# the blocklist was one phrase short: "every tuesday last month" is a weekly Monday…
+# sorry, a weekly TUESDAY entry in the owner's future, read out of a span about his past.
+# Enumerating the ways English scopes a rule (`last`, `next`, `this`, `for the`, `in the`,
+# `over the`, `since`, `all`, × every calendar noun × every determiner) is a cross product
+# that will always be one cell short.
+#
+# So it is inverted: the rule must consume its span. Whatever the clause did NOT consume
+# is scanned, and a PERIOD left over there refuses. What has to be complete for that to
+# hold is not the open-ended set of scoping constructions but the CLOSED lexical class of
+# calendar nouns — English has a fixed number of those, and they are listed here. Anything
+# new in the scoping half ("throughout the fall", "up until spring") lands on the same
+# refusal for free, which is the property the two blocklists could not have.
+#
+# WEEKDAYS are held to a narrower trigger than periods: "every Tuesday. Saw Dana on
+# Monday." is a rule plus an unrelated occasion, and refusing that would cost a correct
+# rule on a very ordinary note — so a bare preposition does not refuse a weekday, while
+# `last Monday` / `next Monday` (which re-time the rule) do.
+_PERIOD_NOUNS = (
+    r"days?|weeks?|weekends?|weekdays?|fortnights?|months?|quarters?|years?|decades?|"
+    r"seasons?|springs?|summers?|falls?|autumns?|winters?|terms?|semesters?|holidays|"
+    rf"breaks?|{_MONTHS}"
+)
+_SCOPES = r"last|next|this|past|previous|coming|upcoming|remaining|rest\s+of|all\s+of|all"
+_PREPS = (
+    r"in|on|over|during|throughout|through|until|till|til|since|after|before|by|for|"
+    r"within|from|to"
+)
+_DET = r"(?:the|a|an|this|that|my|his|her|our|their|next|last|coming|following|previous)\s+"
+_UNCONSUMED = re.compile(
+    rf"\b(?:"
+    rf"(?:{_SCOPES}|{_PREPS})\s+(?:{_DET})?(?:(?:{_COUNTS})\s+)?(?:{_PERIOD_NOUNS})"
+    rf"|(?:{_SCOPES})\s+(?:{_DET})?(?:(?:{_COUNTS})\s+)?(?:{_ANY_DAY})"
+    rf")\b"
+)
+
 # The RETROSPECTIVE refusal, which is not a bound at all: it is a span that names PAST
 # occasions. "He called me the last two Tuesdays" is a plural weekday — this module's
 # own stated marker for a rule — describing something that has already stopped, and
@@ -259,6 +299,15 @@ _BOUNDED = re.compile(
 _RETROSPECTIVE = re.compile(
     rf"\b(?:last|past|previous|these)\s+(?:(?:{'|'.join(_NUMBER_WORDS)}|\d+|few|several)\s+)?"
     rf"(?:{_ANY_PLURAL}|weeks|months|years)\b"
+)
+
+
+# A compound former standing in front of the word, SPACED rather than hyphenated. The
+# hyphen fix used `(?<![\w-])` and "semi annual" walked straight through it — the same
+# word, the same wrongness, one character apart. Fixed-width lookbehinds, one per former,
+# because that is what Python's `re` allows.
+_NOT_COMPOUND = "".join(
+    rf"(?<!\b{former}\s)" for former in ("semi", "tri", "bi", "quad", "multi", "quasi")
 )
 
 
@@ -381,25 +430,42 @@ _CLAUSES: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str | None]], .
         lambda _m: _rule("WEEKLY", byday="SA,SU"),
     ),
     # `(?<![\w-])` and not `\b`: a hyphen IS a word boundary, so `semi-annual` matched
-    # `annual` and `tri-weekly` matches `weekly` — a compound built on the word means
-    # something the word does not, and none of them are rules this can read. The spelled
-    # compounds it DOES know (`bi-weekly`) are keys of their own and match at their own
-    # first letter, where the lookbehind sees a space.
+    # `annual` and `tri-weekly` matched `weekly` — a compound built on the word means
+    # something the word does not, and none of them are rules this can read. `_NOT_COMPOUND`
+    # is the same rule for the SPACED spelling, which walked through the hyphen fix
+    # unchanged. The compounds this module really knows (`bi-weekly`) are keys of their own
+    # and match at their own first letter, where both guards see a space.
     (
-        re.compile(rf"(?<![\w-])(?P<word>{'|'.join(_ADVERB)})\b(?:\s+on\s+(?P<days>{_DAY_LIST}))?"),
+        re.compile(
+            rf"(?<![\w-]){_NOT_COMPOUND}(?P<word>{'|'.join(_ADVERB)})\b"
+            rf"(?:\s+on\s+(?P<days>{_DAY_LIST}))?"
+        ),
         _adverb,
     ),
     (re.compile(rf"\b(?P<days>{_PLURAL_LIST})"), _every_days),
-    (re.compile(r"(?<![\w-])annual\b"), lambda _m: _rule("YEARLY")),
+    (re.compile(rf"(?<![\w-]){_NOT_COMPOUND}annual\b"), lambda _m: _rule("YEARLY")),
 )
 
 
-def _first_clause(text: str) -> tuple[str, str] | None:
-    """The earliest clause in the text, as (rule, phrase). Earliest rather than
-    first-pattern-that-matches: the clause list is ordered by specificity, so scanning it
-    in order would read "every other week, Wednesdays" out of a span whose actual subject
-    is an nth-of-the-month rule two words earlier."""
-    best: tuple[int, str, str] | None = None
+@dataclass(frozen=True)
+class _Clause:
+    """One clause match: the rule it builds, the phrase it reads as, and the SPAN of the
+    text it consumed. The span is what makes the unconsumed-period check possible — it is
+    the difference between "the rule accounts for this text" and "a rule was found
+    somewhere inside it"."""
+
+    rule: str
+    phrase: str
+    start: int
+    end: int
+
+
+def _first_clause(text: str) -> _Clause | None:
+    """The earliest clause in the text. Earliest rather than first-pattern-that-matches:
+    the clause list is ordered by specificity, so scanning it in order would read "every
+    other week, Wednesdays" out of a span whose actual subject is an nth-of-the-month rule
+    two words earlier."""
+    best: _Clause | None = None
     for pattern, build in _CLAUSES:
         match = pattern.search(text)
         if match is None:
@@ -407,9 +473,9 @@ def _first_clause(text: str) -> tuple[str, str] | None:
         rule = build(match)
         if rule is None:
             continue
-        if best is None or match.start() < best[0]:
-            best = (match.start(), rule, match.group(0).strip())
-    return None if best is None else (best[1], best[2])
+        if best is None or match.start() < best.start:
+            best = _Clause(rule, match.group(0).strip(), match.start(), match.end())
+    return best
 
 
 def parse_recurrence(text: str) -> Recurrence | None:
@@ -428,6 +494,10 @@ def parse_recurrence(text: str) -> Recurrence | None:
     - **a span that names PAST occasions.** "He called me the last two Tuesdays" wears
       this module's own marker for a rule and describes something already over — see
       `_RETROSPECTIVE`.
+    - **a PERIOD the rule did not consume.** "every Tuesday last month", "every Tuesday
+      for the summer", "every Tuesday in the spring": the clause is a real rule and the
+      rest of the span scopes it to a window this cannot date. `_UNCONSUMED` is the check
+      that closes that class rather than listing its members.
     - **two different rules in one span.** A span that states both "every Tuesday" and
       "the first Monday of the month" is a fact the reading should have split; picking
       one of them silently is the failure mode this module exists to avoid.
@@ -440,9 +510,11 @@ def parse_recurrence(text: str) -> Recurrence | None:
     first = _first_clause(body)
     if first is None:
         return None
-    rule, phrase = first
-    tail = body[body.index(phrase) + len(phrase) :]
-    second = _first_clause(tail)
-    if second is not None and second[0] != rule:
+    # What the rule did NOT account for. A period left over there re-times the rule the
+    # clause found, and the span is then stating something this cannot write down.
+    if _UNCONSUMED.search(f"{body[: first.start]} {body[first.end :]}") is not None:
         return None
-    return Recurrence(rrule=rule, phrase=phrase) if parse_rrule(rule) else None
+    second = _first_clause(body[first.end :])
+    if second is not None and second.rule != first.rule:
+        return None
+    return Recurrence(first.rule, first.phrase) if parse_rrule(first.rule) else None

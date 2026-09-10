@@ -179,14 +179,85 @@ def test_the_retrospective_refusal_spares_the_ordinal(quote: str, rrule: str) ->
     assert found is not None and found.rrule == rrule
 
 
-@pytest.mark.parametrize("quote", ["semi-annual review", "tri-weekly staff meeting"])
-def test_a_hyphenated_compound_is_a_different_word(quote: str) -> None:
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "semi-annual review",
+        "tri-weekly staff meeting",
+        # SPACED, which walked straight through the hyphen fix — the same word, the same
+        # wrongness, one character apart.
+        "semi annual review",
+        "tri weekly standup",
+        "bi weekly payroll",
+    ],
+)
+def test_a_compound_is_a_different_word_hyphenated_or_spaced(quote: str) -> None:
     """A hyphen IS a word boundary, so `\b` let `semi-annual` match `annual` and
     `tri-weekly` match `weekly`. A compound built on the word means something the word
     does not — and nothing here can tell what — so it reads as no rule. The compounds
     this DOES know (`bi-weekly`) are spelled keys of their own."""
     assert parse_recurrence(quote) is None
     assert parse_recurrence("bi-weekly paycheck") is not None
+    assert parse_recurrence("bimonthly newsletter") is not None
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        # The six that got past three rounds of blocklist, each a well-formed rule about
+        # a different thing — and the first three are the worst shape this module has:
+        # a span describing the owner's PAST becoming a forever-repeating calendar entry.
+        "we met every tuesday last month",
+        "standup every monday last week",
+        "swim every tuesday last summer",
+        "yoga every tuesday for the summer",
+        "gym every tuesday next month",
+        "every tuesday in the spring",
+        # And the neighbours nobody listed, which is the point of inverting the check:
+        # these were never enumerated anywhere and refuse because the PERIOD is left
+        # over, not because the phrasing was foreseen.
+        "every tuesday since march",
+        "every monday through november",
+        "every friday all summer",
+        "every tuesday throughout the fall",
+        "every tuesday over the holidays",
+        "every monday until the spring",
+        "every tuesday up to the summer",
+        "every tuesday during the term",
+        "every wednesday for the rest of the year",
+        "every monday this semester",
+        "physio every day next week",
+    ],
+)
+def test_a_period_the_rule_did_not_consume_refuses(quote: str) -> None:
+    """The check that closes the class instead of listing its members.
+
+    Three rounds of this parser produced the same bug three times: a rule that is well
+    formed and about a different thing, which `parse_rrule` can never catch, and each
+    round the blocklist was one phrase short. Enumerating the ways English scopes a rule
+    (`last`, `next`, `this`, `for the`, `in the`, `over the`, `since`, `all`, × every
+    calendar noun × every determiner) is a cross product that will always have an empty
+    cell. So the rule must CONSUME its span, and a calendar noun left over refuses — which
+    needs only the closed lexical class of period words to be complete."""
+    assert parse_recurrence(quote) is None
+
+
+def test_the_unconsumed_check_reads_the_leftovers_not_the_whole_span() -> None:
+    """The other half of the property, and the one that keeps it usable: a span may say
+    plenty this parser does not model — a time, a place, a person, an unrelated occasion
+    — and none of that is a reason to drop the rule. Only a PERIOD is."""
+    for quote in (
+        "Signed up at the Y on Oak St. Gym every Tuesday and Thursday at 6am.",
+        "Therapy with Dr. Nunez every other week, Wednesdays at 4. His office moved to Pine Ave.",
+        "I pay the mortgage on the first of every month",
+        "in the office every Monday through Friday",
+        # A rule AND an unrelated one-off: refusing this would cost a correct rule on a
+        # very ordinary note, so a bare preposition does not refuse a weekday — while
+        # `last Monday` and `next Monday`, which RE-TIME the rule, do.
+        "Gym every Tuesday. Saw Dana on Monday.",
+    ):
+        assert parse_recurrence(quote) is not None, quote
+    assert parse_recurrence("Gym every Tuesday. Saw Dana last Monday.") is None
 
 
 def test_a_range_of_plural_days_is_an_accepted_over_refusal() -> None:

@@ -1557,6 +1557,40 @@ untouched, at v3, still bound everywhere it was. Nothing sweeps.
   what the model SENT now. That is the one silent loss the clamp signal can carry; O13's
   is a different population and it still cannot.
 
+*Corrected on SECOND review, and one of them changed the shape of the parser rather than
+its contents:*
+
+- **The bound vocabulary was still a blocklist on its non-numeric half, and every hole
+  yielded a WRONG rule rather than a refusal.** "every tuesday last month" →
+  `FREQ=WEEKLY;BYDAY=TU`, and so did "last week", "last summer", "for the summer", "next
+  month", "in the spring" — a span describing the owner's PAST becoming a forever-repeating
+  entry in his calendar, well formed, invisible to `parse_rrule`. That was the third round
+  of the same shape, so the fix is structural: **the rule must CONSUME its span.** After a
+  clause matches, whatever it did not consume is scanned, and a calendar noun left over
+  refuses. What has to be complete for that to hold is not the open-ended set of scoping
+  constructions — `last`/`next`/`this`/`for the`/`in the`/`over the`/`since`/`all`, times
+  every determiner, times every period — but the CLOSED lexical class of period words,
+  which English fixes for us. "since March", "through November", "all summer",
+  "throughout the fall", "over the holidays", "up to the summer" were never enumerated
+  anywhere and refuse for free. Weekdays are held to a narrower trigger than periods, and
+  that is deliberate: "Gym every Tuesday. Saw Dana on Monday." is a rule plus an unrelated
+  occasion and must still parse, while "last Monday" — which RE-TIMES the rule — must not.
+  This is the same lesson the rest of the wave kept learning: prove what you can, do not
+  enumerate what you cannot.
+- **The spaced compound walked through the hyphen fix.** `semi annual` was `FREQ=YEARLY`
+  while `semi-annual` and `semiannual` both refused — the same word, the same wrongness,
+  one character apart.
+- **The last clamp-laundering path.** `close_reading` returned before the union when its
+  whole `facts` list was unreadable and it carried no title and no tags, so
+  `{"facts": [null]}` latched nothing while `_batch` had already seen a dropped element.
+  The latch is now unconditional and ahead of every return in the handler, which is the
+  only shape with no fourth hole.
+- **`resolve_entity`'s success line printed `[kind] (domain)` for an entity the
+  conversation may not see.** Pre-existing, on the path §3.4 opened. The withheld
+  canonical name was never the whole disclosure: `[Medication] (health)` on a general
+  note's thread says what kind of thing the owner has and which domain files it. An
+  out-of-scope entity now gets its surface and its handle and nothing else.
+
 *The three decisions R1 had to make and the plan did not:*
 
 1. **The widened result is capped at 10 facts an entity and 30 a call, ordered newest
