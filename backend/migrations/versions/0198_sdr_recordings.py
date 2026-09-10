@@ -33,8 +33,8 @@ Create Date: 2026-09-10
 
 from alembic import op
 
-revision = "0196"
-down_revision = "0195"
+revision = "0198"
+down_revision = "0197"
 branch_labels = None
 depends_on = None
 

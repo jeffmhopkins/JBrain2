@@ -1,4 +1,4 @@
-"""Migration 0196 against real Postgres: `app.sdr_recordings` is owner-only.
+"""Migration 0198 against real Postgres: `app.sdr_recordings` is owner-only.
 
 The same policy as the APRS log and for the same reason (CLAUDE.md rule 3, enforced in
 Postgres rather than in the caller): the radio is a physical device on the owner's box,
