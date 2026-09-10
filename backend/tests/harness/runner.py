@@ -9,9 +9,10 @@ turns it into the TOOL CALLS a faithful agent would make — one batched
 fact through `supersession.decide()`, the domain floor and the ratchet;
 `sweep_note` + `settle_tail` then close the note out ONCE, over the union of every
 call's writes — plan constraint 6, the sweep is whole-conversation, never per call.
-Those two and not `settle_note`: they are exactly what production's conversation
-runs (`analysis/clarify.settle_conversation`), and the third half — the
-`note_analysis` stamp — belongs to a producer with a title, which this one is not.
+Not `settle_note`: the third half, the `note_analysis` stamp, belongs to a producer
+with a title, which this one is not. The SWEEP half is a deliberate divergence from
+production, which runs the tail alone; `_run_note` says why the harness can do what
+production cannot.
 
 **What the harness tests is unchanged: the deterministic engine given good model
 output.** What changed is the SHAPE of that output. The old runner compiled an
@@ -472,12 +473,18 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # and facts should be swept. It is a per-CALL settle that constraint 7
     # forbids, and this is not one.
     #
-    # The two halves production's conversation runs, and only those (S2/S3,
-    # docs/plans/SETTLE_OWNERSHIP.md). It used to call `settle_note` whole, which made
-    # the harness the one place a conversation stamped `note_analysis` — with the empty
-    # title and tags its tool surface has no verb for. `analysis/clarify`'s
-    # `settle_conversation` is the shape being modelled; what stays different is only
-    # the ledger's source, in-process here and `NoteConversationRepo.writes()` there.
+    # NOT `settle_note` whole: that made the harness the one place a conversation stamped
+    # `note_analysis`, with the empty title and tags its tool surface has no verb for.
+    #
+    # The `sweep_note` below is a DELIBERATE divergence from production, which runs the
+    # tail alone (`analysis/clarify.settle_conversation`; a conversation sweep was built
+    # and dropped — SETTLE_OWNERSHIP.md S3). The difference is the ledger, and it is the
+    # whole reason the sweep is unavailable there: a harness run is one conversation over
+    # one note with an in-process accumulator, so `led.touched` IS the complete record of
+    # everything this producer wrote about this note. Production's ledger is per session,
+    # records writes rather than readings, and gets a fresh session on every re-ingest, so
+    # it can never establish that. Keeping the sweep here is what lets a scenario express
+    # "the re-run dropped a fact"; it is not a claim that production does the same.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
         # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,

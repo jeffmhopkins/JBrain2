@@ -226,15 +226,18 @@ directly and then settles it itself.
 
 Production is now CLOSER than it was, and still not there. Since S2
 (`docs/plans/SETTLE_OWNERSHIP.md`) the conversation does run the settle's tail at the end
-of a clean pass — `analysis/clarify.settle_conversation`. Since S3 it releases its own
-`conversation` claim there too — so this runner's `sweep_note` + `settle_tail` pair is
-exactly what production runs, and what it no longer does is call `settle_note` whole,
-which made the harness the one place a conversation stamped `note_analysis` with the
-empty title its tool surface has no verb for. One scenario shape this corpus cannot
-express: production scopes the sweep's `touched` to every conversation session that read
-the same note text and refuses to release at all on three conditions
-(SETTLE_OWNERSHIP.md S3), while a harness run is one conversation over one note, so those
-gates are exercised in `test_conversation_settle_pg.py` and nowhere here.
+of a clean pass — `analysis/clarify.settle_conversation`. It does NOT release its
+`conversation` claim: a sweep for it was built and dropped, because no evidence this
+producer has can license a retraction (SETTLE_OWNERSHIP.md S3).
+
+This runner still calls `sweep_note` beside the tail, and that is a deliberate divergence
+rather than drift. The harness is one conversation over one note with an in-process
+ledger, so its `touched` IS the complete record of everything the producer wrote here —
+the condition production can never establish, and the whole reason the sweep is
+unavailable there. Keeping it means a scenario can still express "the re-run dropped a
+fact", which is what several of them are for. What the runner no longer does is call
+`settle_note` whole, which made the harness the one place a conversation stamped
+`note_analysis` with the empty title its tool surface has no verb for.
 
 What the conversation still does NOT produce,
 and `integrate_note` therefore still owns alone: the `note_analysis` stamp (it has no

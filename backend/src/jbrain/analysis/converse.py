@@ -249,16 +249,13 @@ class NoteConverseRunner:
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
     prefs: OwnerPrefsRepo = field(default_factory=OwnerPrefsRepo)
-    # The settle the pass runs at its end (S2/S3): `settle_tail` so its writes finally
-    # project, and `sweep_note` so its `conversation` claim is finally released. Not the
-    # stamp and not the state flip — see `clarify.settle_conversation`.
+    # The settle the pass runs at its end (S2): `settle_tail`, so its writes finally
+    # project and reproject. That is the WHOLE settle for this producer — no sweep, no
+    # stamp, no state flip. See `clarify.settle_conversation` for why a sweep here cannot
+    # be made sound rather than merely why this one does not have it.
     #
     # None keeps W2's behaviour, which is what the tests that fake a turn with no write
-    # tools use. Note what that reasoning is NOT: "a pass that cannot write has nothing to
-    # release" is false, and believing it is how S3's first cut shipped a bug — a
-    # whole-note sweep handed an empty ledger releases the whole NOTE, including what
-    # every earlier conversation on it claimed. `settle_conversation` refuses that case
-    # explicitly rather than relying on the ledger being empty to make it harmless.
+    # tools use: a pass that wrote nothing has nothing to project.
     # `note_converse_handler` always sets this, so no production path runs without one.
     pipeline: AnalysisPipeline | None = None
     # Builds the turn executor for ONE note, so the graph-write tools can be BOUND to
@@ -497,7 +494,6 @@ class NoteConverseRunner:
                 self.maker,
                 owner_ctx,
                 self.pipeline,
-                self.notes,
                 session_id=session_id,
                 state=state,
             )

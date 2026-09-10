@@ -243,8 +243,8 @@ def _settle_pipeline(request: Request) -> AnalysisPipeline:
     Built here rather than at startup because this is the only route that wants one, and
     an API that never carries a note reply should not pay for it at all.
 
-    The settle itself uses no model — `sweep_note` and `settle_tail` are deterministic
-    SQL — so the router is only what the constructor requires. The settings store IS
+    The settle itself uses no model — `settle_tail` is deterministic SQL — so the router
+    is only what the constructor requires. The settings store IS
     load-bearing: without it `_promote_corroborated` returns early, and the reply turn
     would then promote entities the worker's identical pass does."""
     pipeline = getattr(request.app.state, "note_settle_pipeline", None)
@@ -1605,7 +1605,6 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         request.app.state.session_maker,
                         owner_ctx,
                         _settle_pipeline(request),
-                        cast(NotesRepo, request.app.state.notes_repo),
                         session_id=str(session.id),
                         state=closed or "",
                     )

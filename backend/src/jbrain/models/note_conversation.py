@@ -33,7 +33,6 @@ from sqlalchemy import (
     Text,
     func,
     insert,
-    or_,
     select,
     text,
 )
@@ -362,12 +361,19 @@ class ConversationWrites:
     (`record_reply_writes` returning False degrades the close to `record_failed`), off a
     truncated turn, and off one ending `awaiting_owner`.
 
-    What it does NOT pass to the sweep is one session's `facts`. An empty `facts` means
-    "this session's successful calls wrote no fact" and never "nothing was recorded" — but
-    it also never means "the note no longer says that", and the sweep is note-scoped, so
-    reading it that way released every claim every earlier session of the note had laid
-    down. `writes_for_generation` below is the set the sweep takes; this one is for the
-    settle's tail."""
+    **There is no conversation sweep, and `facts` is not a retraction input.** One was
+    built over this field (S3) and removed. An empty `facts` means "this session's
+    successful calls wrote no fact", and never "nothing was recorded" — but it also never
+    means "the note no longer says that", which is the reading a sweep needs. The
+    conversation asserts once and revises by supersession, `correct_fact` supersedes and
+    pins, and a re-assert returns `ALREADY` with the same `fact_id`: this ledger never
+    SHRINKS. So a session can only ever release another session's claims, and judging
+    those needs a complete current reading of the note, which a record of writes
+    structurally is not — the agent is told to read before it writes and rewarded for not
+    restating what is already there, so a silent pass is the designed output. A sound
+    conversation sweep is therefore empty and a non-empty one is unsound
+    (docs/plans/SETTLE_OWNERSHIP.md S3). This set is the settle TAIL's input: what this
+    pass touched is what wants reprojecting."""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
     """The fact ids the conversation's successful calls wrote, across every turn of it —
@@ -714,10 +720,12 @@ class NoteConversationRepo:
         per-pass share would drop the claim the owner's own answer added — the claim set
         groups both runs deliberately, so it would not save them.
 
-        Per SESSION. That makes it the right input for the settle TAIL (what this pass
-        touched is what wants reprojecting) and the WRONG input for the sweep's `touched`,
-        which is note-scoped — use `writes_for_generation` there and read its docstring
-        for why the difference is a data-loss bug rather than a nuance."""
+        Per SESSION, and read by the settle's TAIL alone (what this pass touched is what
+        wants reprojecting). It is NOT a `touched` set for a whole-note sweep and there is
+        no longer a caller that treats it as one: a sweep is note-scoped, so a
+        per-session ledger handed in as `touched` retracts what earlier sessions of the
+        same note claimed. That was built and removed — `ConversationWrites` above says
+        why no reconstruction of it can work."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
             NoteConversationToolCall.entity_ids,
@@ -725,73 +733,6 @@ class NoteConversationRepo:
         ).where(
             NoteConversationToolCall.session_id == uuid.UUID(session_id),
             NoteConversationToolCall.ok.is_(True),
-        )
-        facts: set[uuid.UUID] = set()
-        entities: set[uuid.UUID] = set()
-        domains: set[str] = set()
-        for row_facts, row_entities, row_domains in (await session.execute(stmt)).all():
-            facts.update(row_facts or ())
-            entities.update(row_entities or ())
-            domains.update(row_domains or ())
-        return ConversationWrites(
-            facts=frozenset(facts), entities=frozenset(entities), domains=frozenset(domains)
-        )
-
-    async def writes_for_generation(
-        self,
-        session: AsyncSession,
-        *,
-        session_id: str,
-        note_id: uuid.UUID,
-        body_sha: str,
-    ) -> ConversationWrites:
-        """What the CONVERSATION PRODUCER asserts about this note as it now stands — the
-        only correct `touched` for `sweep_note`, because the sweep is note-scoped.
-
-        `sweep_note` releases the `conversation` claim on every unpinned, non-derived,
-        active row OF THE NOTE that is not in `touched`. A ledger scoped to one session
-        therefore says nothing about the rows earlier sessions of the same note claimed,
-        and handing it in as `touched` retracts them. That is not a variance risk, it is
-        deterministic: a note gets a NEW conversation on every re-ingest
-        (`analysis/converse.py` names three ordinary ones), so a second pass that writes
-        nothing — a read-only pass, or one the EMR narrowing left with no write verb at
-        all — released the whole note's `conversation` claim set and retracted every row
-        no other producer held.
-
-        The generation is keyed on `note_body_sha`: sessions that read the SAME text are
-        passes of one derivation over one note, and their union is what that producer
-        currently asserts. When the note's text changes, the previous generation's
-        sessions stop matching, their claims fall outside `touched`, and the sweep does
-        what it exists for — which is the case an unconditional union across every session
-        of the note could not express, since that union spares every id the conversation
-        ever wrote.
-
-        `session_id` is ALWAYS included, whatever its sha. A pass vouches for its own
-        writes unconditionally: `record_owner_reply` deliberately leaves the stored sha
-        stale when the note moved under the thread, and without this clause such a pass
-        would release its own claims.
-
-        FAILED calls are excluded, exactly as `writes` excludes them: a call that errored
-        asserted nothing, and counting its ids would spare a fact the sweep should retract.
-        """
-        stmt = (
-            select(
-                NoteConversationToolCall.fact_ids,
-                NoteConversationToolCall.entity_ids,
-                NoteConversationToolCall.domains,
-            )
-            .join(
-                NoteConversation,
-                NoteConversation.session_id == NoteConversationToolCall.session_id,
-            )
-            .where(
-                NoteConversation.note_id == note_id,
-                NoteConversationToolCall.ok.is_(True),
-                or_(
-                    NoteConversation.note_body_sha == body_sha,
-                    NoteConversation.session_id == uuid.UUID(session_id),
-                ),
-            )
         )
         facts: set[uuid.UUID] = set()
         entities: set[uuid.UUID] = set()

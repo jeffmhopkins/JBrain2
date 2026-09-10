@@ -72,7 +72,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import ASK_OWNER_TOOL, latest_question
-from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
@@ -83,7 +82,7 @@ from jbrain.models.note_conversation import (
     note_body_sha,
     state_for_stop,
 )
-from jbrain.notes.service import NoteInfo, NotesRepo
+from jbrain.notes.service import NotesRepo
 
 if TYPE_CHECKING:  # `analysis/pipeline.py` drags the LLM stack; only the TYPE is needed
     from jbrain.analysis.pipeline import AnalysisPipeline
@@ -548,168 +547,79 @@ async def settle_conversation(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
     pipeline: AnalysisPipeline,
-    notes: NotesRepo,
     *,
     session_id: str,
     state: str,
 ) -> bool:
-    """Run the note conversation's end-of-pass settle, and say whether it ran — the
-    sweep that releases its claim (S3) and the tail that projects what it wrote (S2).
+    """Run the note conversation's end-of-pass settle, and say whether it ran. It is the
+    settle's TAIL and nothing else — this producer never retracts, by design.
 
-    The conversation's write path is `commit_facts` and nothing else
-    (`agent/graphwritetools.py`), and `commit_facts` deliberately does nothing
-    whole-note. Two consequences, and this closes both.
-
-    **The tail.** Everything the graph DERIVES from a note's rows —
+    **What it does.** Everything the graph DERIVES from a note's rows —
     `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
     geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
-    and nowhere else in a write path. So before this existed, a conversation-written
-    appointment landed in NO projection and a conversation-written `name.*` fact never
-    refreshed `canonical_name`: the graph held the fact, the appointments view did not.
-    That gap was masked while the analyzer's settle retracted the conversation's facts
-    and then projected the dead rows away; S1 made them survive, which is why S2 is the
-    payment for S1's debt rather than an improvement on it
-    (docs/plans/SETTLE_OWNERSHIP.md).
+    and nowhere else in a write path. The conversation's write path is `commit_facts`
+    and nothing else (`agent/graphwritetools.py`), which deliberately does nothing
+    whole-note. So before this existed a conversation-written appointment landed in NO
+    projection and a conversation-written `name.*` fact never refreshed
+    `canonical_name`: the graph held the fact, the appointments view did not. That gap
+    was masked while the analyzer's settle retracted the conversation's facts and then
+    projected the dead rows away, which is why S2 is the payment for S1's debt rather
+    than an improvement on it (docs/plans/SETTLE_OWNERSHIP.md).
 
-    **The release.** A `settle_owners` claim is released by a settle, and until S3 the
-    conversation had none. So every row carrying a `conversation` claim — the rows only
-    it wrote AND every row both producers assert — was retractable by no sweep at all,
-    permanently, and the set grew with every co-asserted fact. Edit a note to drop a
-    claim both producers wrote and the graph went on asserting it: a note no longer the
-    sole source of truth for its own facts. `sweep_note` here is what stops that.
+    **What it deliberately does NOT do, and why nobody should add it back.** It runs no
+    `sweep_note`, so it never releases the `conversation` claim and never retracts
+    anything. That was built (S3), reviewed, and REMOVED, and the reason is a closed
+    argument rather than a bug count:
 
-    **The sweep needs THREE more refusals than the state gate gives it, because the
-    sweep is note-scoped and this producer is not a wholesale re-extractor.** The
-    analyzer re-derives the whole note every pass, so its silence about a fact is a
-    statement. This one asserts what is new and revises by supersession, so its silence
-    is not — and it runs once per INGEST, in a fresh session, over a note earlier
-    sessions of the same producer already wrote to. Each refusal below is a case where
-    an empty or partial ledger would otherwise have been read as "the note no longer
-    says that":
+    - a release is justified only when a producer has RE-DERIVED the note and dropped X;
+    - within one session this producer never drops anything — it asserts once and revises
+      by supersession, `correct_fact` supersedes and pins rather than retracting, and a
+      re-assert returns `ALREADY` with the same `fact_id`, so its ledger never shrinks;
+    - so the only claims a release could ever remove are OTHER sessions';
+    - and judging another session's claims needs a complete current READING of the note,
+      which a ledger of what a pass WROTE structurally is not — the agent holds
+      `find_entity`/`read_entity`, is told to read before it writes and is rewarded for
+      not restating what is already there, so a silent second pass is the DESIGNED
+      output, not a statement that the note stopped saying something.
 
-    - **the note moved under this thread.** `note_conversations.note_body_sha` is the
-      text this pass read; if it no longer matches the note's composed body, the pass is
-      judging a note that has changed since, and the conversation opened by that change
-      is the one entitled to release. (`record_owner_reply` deliberately leaves the sha
-      stale on a mismatch, so this is reachable without an edit racing the pass.)
-    - **the pass held no graph-write verb.** On an `emr_owned` note, `narrow_for_emr`
-      and the per-note registry leave the conversation unable to write anything
-      (D9). Its empty ledger means "never asked", not "nothing to say" — and
-      `emr_owned` reads note state that MUTATES, so a note whose PDF lands after the
-      body was ingested flips from writable to not between two ordinary passes.
-    - **an empty generation ledger.** With nothing asserted by any pass over this text,
-      there is no re-derivation to compare against, so the release has no evidence
-      behind it and would run on the whole note.
+    Therefore a sound conversation sweep is empty and a non-empty one is unsound. The
+    four ways the built version failed — and the one that fired on the feature's own
+    happy path, where the owner ANSWERS a question, the note's text only GROWS, and an
+    earlier fact is retracted — are in SETTLE_OWNERSHIP.md's S3 section. Read it before
+    re-deriving the sweep from "nothing ever releases a `conversation` claim", which is
+    true and is not a reason.
 
-    All three fail toward a LEAK — a `conversation` claim nobody releases — which is the
-    direction this design fails in deliberately (`analysis/settle_owner.py`). The tail
-    still runs in every one of them: projecting is never destructive.
+    It also does NOT stamp `note_analysis` (no title or tags verb, and the stamp is
+    unconditional — precondition 3) or flip `integration_state` (precondition 4).
 
-    **`state` is the gate, and it is the whole safety argument.** The pass settles only
-    from `SETTLED`, which `state_for_stop` gives to a CLEAN stop alone — so a truncated
-    turn (`max_steps`, the cost budget, consecutive tool errors, the wall clock) lands
-    `failed`, a turn that ended on `ask_owner` lands `waiting_on_owner`, and a turn whose
-    ledger did not record lands `failed` too, because both callers degrade the stop reason
-    to `record_failed` when their recorder fails (`converse._run_turn`,
-    `record_reply_writes` + `close_owner_reply` in `api/agent.py`). None of those three
-    reaches this function's body. That is not a nicety: the sweep retracts every unpinned
-    fact of the note the ledger does not vouch for, so firing it on an incomplete ledger
-    retracts the owner's own writes — the bug S1 just closed, re-entered through the front
-    door. An empty ledger under `settled` is a real statement ("this pass asserted
-    nothing") and is swept on; an empty ledger under anything else is "nothing was
-    recorded", and never reaches here.
+    **`state` gates it to a clean pass end.** `state_for_stop` gives `SETTLED` to a CLEAN
+    stop alone, so a truncated turn lands `failed`, a turn that ended on `ask_owner` lands
+    `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too, because
+    both callers degrade the stop reason to `record_failed` when their recorder fails
+    (`converse._run_turn`, `record_reply_writes` + `close_owner_reply` in `api/agent.py`).
+    The gate costs nothing now that the destructive half is gone — projecting is never
+    destructive — and it is kept because it is the shape the plan specifies for a pass end,
+    and because a caller who did add a sweep would otherwise inherit no gate at all.
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
-    settle leaks a claim — recoverable by the next settle of the note, and the direction
-    this whole design fails in deliberately. Raising instead would retry the worker job,
-    which re-enters `note_converse` for a note whose conversation is no longer live and
-    opens a SECOND thread for it.
+    projection refresh is a stale view, recoverable by the next settle of the note.
+    Raising instead would retry the worker job, which re-enters `note_converse` for a note
+    whose conversation is no longer live and opens a SECOND thread for it.
     """
     if state != SETTLED:
         return False
-    retracted: set[uuid.UUID] = set()
-    swept = False
     try:
         async with scoped_session(maker, ctx) as s:
             repo = NoteConversationRepo()
-            conversation = await repo.get(s, session_id)
-            if conversation is None:
+            if await repo.get(s, session_id) is None:
                 return False
-            note_id = conversation.note_id
-            # This pass's own writes drive the TAIL: what it touched is what wants
-            # reprojecting. The sweep's `touched` is a different set entirely, below.
             entities = set((await repo.writes(s, session_id)).entities)
-        note = await notes.get_note(ctx, str(note_id))
-        refusal = _sweep_refusal(note, conversation.note_body_sha)
-        async with scoped_session(maker, ctx) as s:
-            if refusal is None:
-                repo = NoteConversationRepo()
-                # NOTE-scoped, not session-scoped, because the sweep is: every pass over
-                # THIS TEXT is one derivation by one producer, and a per-session share
-                # would release the claims every earlier session of the note laid down
-                # (`NoteConversationRepo.writes_for_generation`).
-                touched = set(
-                    (
-                        await repo.writes_for_generation(
-                            s,
-                            session_id=session_id,
-                            note_id=note_id,
-                            body_sha=conversation.note_body_sha,
-                        )
-                    ).facts
-                )
-                if touched:
-                    # `mentions=None` SKIPS the mention reconcile rather than running it
-                    # against an empty set. The ledger has no mention-id column, and an
-                    # empty set would release this producer's claim on every mention of
-                    # the note — including the spans the facts it still asserts are
-                    # anchored to. `sweep_note` states what that leaks and why it is the
-                    # bounded half.
-                    retracted = await pipeline.sweep_note(
-                        s,
-                        note_id=note_id,
-                        settle_owner=CONVERSATION,
-                        touched=touched,
-                        mentions=None,
-                    )
-                    swept = True
-                else:
-                    refusal = "empty_generation_ledger"
-            # NOT `stamp_analysis`: the conversation has no title/tags verb, so it would
-            # blank the analyzer's extracted title (SETTLE_OWNERSHIP.md precondition 3,
-            # still unowned). NOT the `integration_state` flip either (precondition 4) —
-            # a thread that can park on `ask_owner` for days cannot be what declares a
-            # note integrated.
-            await pipeline.settle_tail(s, referenced=entities, projected=entities | retracted)
-    except Exception as exc:  # noqa: BLE001 — a leaked claim, never a retried job
+            await pipeline.settle_tail(s, referenced=entities, projected=entities)
+    except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
         log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
         return False
-    log.info(
-        "note_settle.done",
-        session_id=session_id,
-        entities=len(entities),
-        swept=swept,
-        retracted=len(retracted),
-        refused=refusal,
-    )
+    log.info("note_settle.done", session_id=session_id, entities=len(entities))
     return True
-
-
-def _sweep_refusal(note: NoteInfo | None, read_sha: str) -> str | None:
-    """Why this pass may not RELEASE anything, or None when it may — the three refusals
-    `settle_conversation` documents, in the order they are cheapest to check.
-
-    Fails closed: a note it cannot read refuses, because every one of these questions is
-    about the note and an unanswerable one is not a licence."""
-    if note is None:
-        return "note_unreadable"
-    if emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments]):
-        # The same predicate `converse.note_owned_by_emr` and `reply_profile_for_session`
-        # narrow on, so "could this pass write?" has one answer across all three.
-        return "no_write_verb"
-    if note_body_sha(note.body) != read_sha:
-        return "note_moved"
-    return None
 
 
 __all__ = [

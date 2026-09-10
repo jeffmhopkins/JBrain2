@@ -20,17 +20,14 @@ not the model. Two reasons, and both are mechanical rather than stylistic:
   avoided: the sweep is scoped by `settle_owners` (`analysis/settle_owner.py`,
   docs/plans/SETTLE_OWNERSHIP.md S1), so each producer releases only its own claim and a
   row survives while any producer still asserts it — a co-writer on one note is no longer
-  a data-loss condition. The conversation has a sweep of its own now (S3), and this
-  predicate is one of its GATES rather than an irrelevance — a distinction the first cut
-  of S3 got backwards, in a docstring that claimed a narrowed pass "stamps no claim on one
-  and its release finds nothing to let go of". True of the rows such a pass WRITES; false
-  of the rows its release ACTS on, because a whole-note sweep handed an empty ledger
-  releases the whole note. And this predicate MUTATES: a health `Records` note whose body
-  ingests before its PDF arrives is writable for one conversation and narrowed for the
-  next, so the flip is reachable without an edit, a race or any model variance.
-  `analysis/clarify.settle_conversation` therefore refuses to release at all when
-  `emr_owned` is true — a pass that was never given a write verb is not a producer whose
-  silence means anything. The `fhir_status` reason
+  a data-loss condition. The conversation has NO sweep — one was built and dropped
+  (SETTLE_OWNERSHIP.md S3) — so it retracts nothing on any note, this one included.
+  Worth knowing what that removed, because this predicate was one of the reasons: it reads
+  note state that MUTATES, so a health `Records` note whose body ingests before its PDF
+  arrives is writable for one conversation and stripped of every write verb for the next,
+  and a sweep reading the second pass's empty ledger as "the note no longer says that"
+  retracted what the first one wrote. Deterministically, with no model variance anywhere.
+  The `fhir_status` reason
   above is what keeps the narrowing in place regardless, and it is sufficient on its own
   — it is a lifecycle the model-facing verbs cannot express, not a sweep collision.
 

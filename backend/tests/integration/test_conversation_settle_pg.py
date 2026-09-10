@@ -1,32 +1,45 @@
-"""The note conversation's own end-of-pass settle — the tail it never ran, and the
-claim it never released.
+"""The note conversation's end-of-pass settle: the tail it runs, and the sweep it must
+never grow.
 
 S1 (`docs/plans/SETTLE_OWNERSHIP.md`) scoped the whole-note sweep to the producer that
-stamped each row, which stopped `integrate_note` retracting the conversation's facts.
-It also left two debts, and this file is where both are paid:
+stamped each row, which stopped `integrate_note` retracting the conversation's facts. S2
+paid the debt that left: projection and reprojection — `reproject_canonical_name`, the
+corroboration promotion, `project_appointments` / `project_emr` /
+`project_place_geofences`, `reconcile_device_bindings` — live in
+`AnalysisPipeline.settle_tail` and in no other write path, and the conversation's write
+path is `commit_facts` and nothing else, so a conversation-written appointment landed in
+NO projection: the graph held the fact and the calendar did not.
 
-- **the tail (S2).** Projection and reprojection — `reproject_canonical_name`, the
-  corroboration promotion, `project_appointments` / `project_emr` /
-  `project_place_geofences`, `reconcile_device_bindings` — live in
-  `AnalysisPipeline.settle_tail` and in no other write path. The conversation's write
-  path is `commit_facts` and nothing else, so a conversation-written appointment landed
-  in NO projection: the graph held the fact and the calendar did not. It was masked
-  while the analyzer's settle retracted those facts and then projected the dead rows
-  away, which is exactly why S1 had to be followed immediately.
-- **the release (S3).** A claim is released by a settle, and the conversation had none,
-  so every row carrying a `conversation` claim — its own AND every row both producers
-  assert — was retractable by no sweep at all, permanently, and the set grew with every
-  co-asserted fact.
+S3 would have given it a sweep as well. It was built, reviewed and REMOVED, and this
+file pins the removal as hard as it pins the tail, because the premise that produced it
+is true and is not a reason: *nothing ever releases a `conversation` claim*. What is
+also true is that no evidence this producer has can license a retraction —
 
-The gate is the dangerous half and gets its own three tests. `settle_conversation` fires
-only from `SETTLED`, so a truncated turn, a turn still `waiting_on_owner`, and a turn
-whose ledger did not record (`record_reply_writes` returning False, which degrades the
-close to `record_failed`) all leave the sweep unfired with the facts intact. Firing on an
-incomplete ledger retracts the owner's own writes — the bug S1 just closed, re-entered
-through the front door.
+- a release is justified only when a producer RE-DERIVED the note and dropped X;
+- within one session this one never drops anything (asserts once, revises by
+  supersession, `correct_fact` supersedes and pins, a re-assert returns `ALREADY` with
+  the same `fact_id`), so its ledger never shrinks;
+- so a release could only ever remove OTHER sessions' claims;
+- and judging those needs a complete current READING, which a ledger of WRITES is not:
+  the agent holds `find_entity`/`read_entity`, is told to read before it writes and is
+  rewarded for not restating what is already there, so a silent second pass is the
+  DESIGNED output rather than a statement that the note stopped saying something.
+
+A sound conversation sweep is therefore empty and a non-empty one is unsound. The built
+version failed four ways, ending with the one that fired on the feature's own happy
+path: the owner ANSWERS a question, the block is appended so the note's text only GROWS,
+`record_owner_reply` re-stamps `note_body_sha`, and an earlier conversation's fact is
+retracted.
+
+What that costs, stated plainly because it is the trade and not an oversight: the owner
+edits a note to delete a statement and a conversation-asserted fact stays `active` and
+citable. Bounded by `purge.purge_note_artifacts` (note deletion and the corpus rebuild),
+FK cascade, review-item retraction, `correct_fact`, and ordinary supersession. The
+unbounded residue is a fact whose identity key is never re-asserted on a note never
+purged or rebuilt.
 
 The LLM is faked throughout (CLAUDE.md #5): the writer's router is a stub its resolver
-never calls out through, and the analyzer half consumes a pre-built intent.
+never calls out through.
 """
 
 import uuid
@@ -45,12 +58,10 @@ from jbrain.analysis.clarify import (
     settle_conversation,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline
-from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.note_conversation import SETTLED, NoteConversationRepo, note_body_sha
-from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import (  # noqa: F401
@@ -79,8 +90,8 @@ async def owner(maker) -> SessionContext:  # noqa: F811
 
 
 def _pipeline(maker) -> AnalysisPipeline:  # noqa: F811
-    """The settle's pipeline. It makes no model call — `sweep_note` and `settle_tail`
-    are deterministic SQL — so the router exists only to satisfy the constructor.
+    """The settle's pipeline. It makes no model call — `settle_tail` is deterministic
+    SQL — so the router exists only to satisfy the constructor.
 
     Built with NO settings store, which makes one part of the tail thinner here than in
     production: `_promote_corroborated` returns early without one, so nothing below
@@ -95,15 +106,9 @@ async def _settle(
     *,
     state: str = SETTLED,
 ) -> bool:
-    """`settle_conversation` as both callers invoke it — with the note repo it reads the
-    note's CURRENT composed body and attachments through."""
+    """`settle_conversation` as both callers invoke it."""
     return await settle_conversation(
-        maker,
-        owner,
-        _pipeline(maker),
-        SqlNotesRepo(maker),
-        session_id=session_id,
-        state=state,
+        maker, owner, _pipeline(maker), session_id=session_id, state=state
     )
 
 
@@ -294,26 +299,6 @@ async def test_the_conversations_settle_does_not_flip_the_note_to_integrated(
     assert state == "pending_integration"
 
 
-async def test_the_facts_the_conversation_still_asserts_keep_their_claim(
-    maker,  # noqa: F811
-    owner: SessionContext,
-    tmp_path,
-) -> None:
-    """The settle is not a retraction of the pass that just ran. Everything on the
-    ledger is in `touched`, so the release skips it and the claim stands — the invariant
-    that makes running a sweep at the end of EVERY clean pass safe rather than reckless."""
-    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
-    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
-    session_id = await _conversation(maker, owner, note_id)
-    await _ledger(maker, owner, session_id, outs)
-
-    await _settle(maker, owner, session_id)
-
-    row = await _fact_row(maker, fact_id)
-    assert row.status == "active"
-    assert row.settle_owners == [CONVERSATION]
-
-
 async def _rewrites_the_note(
     maker,  # noqa: F811
     owner: SessionContext,
@@ -324,9 +309,9 @@ async def _rewrites_the_note(
     """The note is edited and re-ingested, and `note.ingested` opens a SECOND
     conversation over the new text — which asserts something of its own.
 
-    This is the shape a release is legitimate in, and the only one: the note's composed
-    body CHANGED, so the earlier session's `note_body_sha` no longer matches and its
-    ledger falls outside the settling pass's generation."""
+    This is the sharpest shape available: the note's composed body CHANGED, the producer
+    read it again, and what it wrote does not include the earlier fact. If any evidence
+    could license this producer retracting, it would be this — and it does not."""
     await reingest_a_rewritten_body(maker, note_id, tmp_path, body)
     session_id = await _conversation(maker, owner, note_id)
     writer = await _writer(maker, note_id)
@@ -357,28 +342,33 @@ async def _rewrites_the_note(
     return session_id, outs
 
 
-async def test_a_fact_the_edited_note_no_longer_says_is_retracted(
+async def test_the_conversations_settle_retracts_nothing_ever(
     maker,  # noqa: F811
     owner: SessionContext,
     tmp_path,
 ) -> None:
-    """S3's payoff, in the ONE shape that licenses a release.
+    """The decision, pinned: this producer's settle has no sweep and cannot acquire one
+    by accident.
 
-    The note's text changes and `note.ingested` opens a second conversation over it
-    (`converse.note_converse`; the first is `settled`, so the one-live index allows it).
-    That pass reads the note as it now stands, asserts something else, and does not
-    assert what the first one did — so the first's claim falls outside the settling
-    generation, is released, and a row nobody claims any more is retracted.
+    A sweep was built here (S3), reviewed and REMOVED, and the reason is a closed
+    argument rather than a bug count. A release is justified only when a producer
+    re-derived the note and dropped X. Within one session this producer never drops
+    anything — it asserts once and revises by supersession, `correct_fact` supersedes and
+    pins rather than retracting, and a re-assert returns `ALREADY` with the same
+    `fact_id`, so its ledger never shrinks. So the only claims a release could remove are
+    OTHER sessions', and judging those needs a complete current READING of the note,
+    which a ledger of what a pass WROTE structurally is not: the agent holds
+    `find_entity`/`read_entity`, is told to read before it writes and is rewarded for not
+    restating what is there, so a silent second pass is the DESIGNED output. A sound
+    conversation sweep is empty; a non-empty one is unsound.
 
-    Before S3 nothing released that claim at any point in the note's life, so the row
-    stood active forever — a note no longer the sole source of truth for its own facts,
-    and the set of such rows grew with every co-asserted claim.
+    The case here is the one that most looks like a licence to retract and is not: the
+    note is REWRITTEN, re-ingested, and a second conversation reads the new text and
+    asserts something else entirely. The first conversation's fact survives, `active`,
+    still claimed. That is the leak S2-only accepts, and it is deliberate — a visible
+    stale row is the failure this design chose over a silent deletion.
 
-    What makes this test mean anything is the three tests after it, which hold the
-    release OFF every shape that is not this one. Its first version had the second
-    conversation read nothing and write nothing, and asserted the retraction anyway —
-    which is not S3 working, it is the note-scoped-release bug with a benign story
-    attached."""
+    Its predecessor asserted the opposite, and that assertion was the bug."""
     note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     first = await _conversation(maker, owner, note_id)
@@ -388,33 +378,33 @@ async def test_a_fact_the_edited_note_no_longer_says_is_retracted(
 
     async with scoped_session(maker, owner) as s:
         await NoteConversationRepo().set_state(s, first, SETTLED)
-    second, _ = await _rewrites_the_note(
+    second, second_outs = await _rewrites_the_note(
         maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
     )
     assert await _settle(maker, owner, second)
 
     row = await _fact_row(maker, fact_id)
-    assert row.status == "retracted"
-    assert row.settle_owners == []
+    assert row.status == "active", "the conversation retracted a fact it has no evidence about"
+    assert row.settle_owners == [CONVERSATION]
+    # ...and the second pass's own write is live, so the settle did run.
+    assert (await _fact_row(maker, uuid.UUID(second_outs[1].facts[0].fact_id))).status == "active"
 
 
-async def test_a_second_pass_over_an_UNCHANGED_note_retracts_nothing(
+async def test_a_silent_second_pass_retracts_nothing(
     maker,  # noqa: F811
     owner: SessionContext,
     tmp_path,
 ) -> None:
-    """The conversation is not a wholesale re-extractor, and the sweep is NOTE-scoped —
-    so a per-session ledger as `touched` is a data-loss bug, not a nuance.
+    """The commonest shape, and the one a sweep read backwards.
 
-    A note is re-ingested for a reason that does not change its text (an attachment
-    lands; `analysis/converse.py` names that as ordinary), a second conversation opens,
-    and the agent — which holds `find_entity`/`read_entity` and is told to read before it
-    writes — reads, concludes nothing is new, and answers in prose. Its ledger is empty.
-    Handed in as `touched`, that empty set released the `conversation` claim on EVERY row
-    of the note and retracted every one no other producer held.
+    A note is re-ingested for a reason that changes no text — an attachment landing,
+    which `analysis/converse.py` names as ordinary — a second conversation opens, reads,
+    finds nothing it wants to add, and answers in prose. Its ledger is empty. That is the
+    agent working as designed, and a note-scoped sweep handed that empty set released
+    every `conversation` claim on the note and retracted every row no other producer
+    held.
 
-    `writes_for_generation` is what closes it: the first session read the same text, so
-    its ledger is part of what this producer still asserts."""
+    Nothing here needs a gate or a refusal to be safe now: there is no release to gate."""
     note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     first = await _conversation(maker, owner, note_id)
@@ -423,228 +413,12 @@ async def test_a_second_pass_over_an_UNCHANGED_note_retracts_nothing(
 
     async with scoped_session(maker, owner) as s:
         await NoteConversationRepo().set_state(s, first, SETTLED)
-    second = await _conversation(maker, owner, note_id)  # same body, so the same sha
-    assert await _settle(maker, owner, second)
-
-    row = await _fact_row(maker, fact_id)
-    assert row.status == "active", "a silent second pass retracted the first pass's fact"
-    assert row.settle_owners == [CONVERSATION]
-
-
-async def test_two_sessions_on_one_generation_spare_each_others_facts(
-    maker,  # noqa: F811
-    owner: SessionContext,
-    tmp_path,
-) -> None:
-    """The union's DISTINGUISHING case, and the one nothing else here reaches.
-
-    Every other pin in this file has a second session with an empty ledger, so the
-    `empty_generation_ledger` refusal catches it and the test passes even with `touched`
-    reverted to a per-session `writes()`. Reverting the union would therefore have kept
-    the whole suite green while re-opening exactly the loss it closed.
-
-    So: TWO sessions over the same text, the second one non-empty. The re-ingest that
-    opened it changed no text — an attachment landing, which `analysis/converse.py` names
-    as ordinary — and this pass writes a fact of its own. The release runs (nothing
-    refuses it, the ledger is not empty), and it must still spare the FIRST session's
-    fact, because both sessions read the same note."""
-    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
-    first_fact = uuid.UUID(outs[1].facts[0].fact_id)
-    first = await _conversation(maker, owner, note_id)
-    await _ledger(maker, owner, first, outs)
-    await _settle(maker, owner, first)
-    async with scoped_session(maker, owner) as s:
-        await NoteConversationRepo().set_state(s, first, SETTLED)
-
-    # A second conversation over the SAME body — no rewrite, so the shas match — that
-    # writes something of its own, which is what takes the empty-ledger refusal out of
-    # play and leaves only the union standing between the release and the first fact.
-    second = await _conversation(maker, owner, note_id)
-    writer = await _writer(maker, note_id)
-    ctx = ToolContext(session=OWNER, scopes=("general",))
-    surface = f"Marisol Quenby {uuid.uuid4().hex[:8]}"
-    resolved = await writer.resolve_entity(
-        {"entities": [{"surface": surface, "kind": "person"}]}, ctx
-    )
-    asserted = await writer.assert_fact(
-        {
-            "facts": [
-                {
-                    "subject": "e1",
-                    "predicate": "occupation",
-                    "object": "dentist",
-                    "statement": f"{surface} is a dentist.",
-                    "when": "",
-                    "quote": "Booked it this morning",
-                }
-            ]
-        },
-        ctx,
-    )
-    assert isinstance(resolved, ToolOutput) and isinstance(asserted, ToolOutput)
-    assert len(asserted.facts) == 1, str(asserted)
-    await _ledger(maker, owner, second, [resolved, asserted])
-
-    assert await _settle(maker, owner, second)
-
-    row = await _fact_row(maker, first_fact)
-    assert row.status == "active", (
-        "a second session on the same generation retracted the first session's fact"
-    )
-    assert row.settle_owners == [CONVERSATION]
-    assert (await _fact_row(maker, uuid.UUID(asserted.facts[0].fact_id))).status == "active"
-
-
-async def test_a_pass_with_no_write_verb_releases_nothing(
-    maker,  # noqa: F811
-    owner: SessionContext,
-    tmp_path,
-) -> None:
-    """The deterministic half, and the one no model variance is needed to reach.
-
-    `emr_owned` reads note state that MUTATES. The owner captures a health `Records`
-    note; the body ingests before any attachment lands, which `analysis/converse.py`
-    names as an ordinary shipped re-ingest. Conversation #1 therefore runs with the FULL
-    write surface and asserts facts. Then the PDF lands, the note re-ingests, and
-    conversation #2 opens on a note that is now `emr_owned` — `narrow_for_emr` and the
-    per-note registry leave it no write verb at all (D9). It reads, replies in prose, and
-    ends cleanly with an empty ledger.
-
-    Its empty ledger means "never asked", not "the note no longer says that". Releasing
-    on it retracted every row conversation #1 uniquely wrote, silently, with no model
-    variance anywhere in the chain."""
-    note_id = await make_note(maker, domain="health", body=APPOINTMENT_BODY)
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        await s.execute(
-            text("UPDATE app.notes SET destination = :d WHERE id = CAST(:n AS uuid)"),
-            {"d": EMR_DESTINATION, "n": note_id},
-        )
-    await ingest(maker, note_id, tmp_path)
-    writer = await _writer(maker, note_id)
-    ctx = ToolContext(session=OWNER, scopes=("health", "general"))
-    surface = f"Dr Ellery Vance {uuid.uuid4().hex[:8]}"
-    await writer.resolve_entity({"entities": [{"surface": surface, "kind": "person"}]}, ctx)
-    asserted = await writer.assert_fact(
-        {
-            "facts": [
-                {
-                    "subject": "e1",
-                    "predicate": "occupation",
-                    "object": "dentist",
-                    "statement": f"{surface} is a dentist.",
-                    "when": "",
-                    "quote": "Booked it this morning",
-                }
-            ]
-        },
-        ctx,
-    )
-    assert isinstance(asserted, ToolOutput) and len(asserted.facts) == 1, str(asserted)
-    fact_id = uuid.UUID(asserted.facts[0].fact_id)
-    first = await _conversation(maker, owner, note_id)
-
-    # The PDF lands. Nothing about the note's TEXT changed, so this is not the
-    # edited-note case — only the write surface flipped underneath the producer.
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        await s.execute(
-            text(
-                "INSERT INTO app.attachments (id, note_id, domain_code, sha256, filename,"
-                " media_type, size_bytes)"
-                " VALUES (gen_random_uuid(), CAST(:n AS uuid), 'health', :sha, 'lab.pdf',"
-                " :mt, 1024)"
-            ),
-            {"n": note_id, "sha": uuid.uuid4().hex, "mt": PDF_MEDIA_TYPE},
-        )
-    async with scoped_session(maker, owner) as s:
-        await NoteConversationRepo().set_state(s, first, SETTLED)
     second = await _conversation(maker, owner, note_id)
     assert await _settle(maker, owner, second)
 
     row = await _fact_row(maker, fact_id)
-    assert row.status == "active", "an EMR-narrowed pass retracted what an earlier one wrote"
+    assert row.status == "active"
     assert row.settle_owners == [CONVERSATION]
-
-
-async def test_a_pass_that_read_a_note_that_has_since_moved_releases_nothing(
-    maker,  # noqa: F811
-    owner: SessionContext,
-    tmp_path,
-) -> None:
-    """`note_conversations.note_body_sha` is the text this pass READ, and a pass judging
-    a note that has changed since has no authority to release anything about it — the
-    conversation the change opened is the one entitled to.
-
-    Without this refusal the generation union turns on its head: a STALE settler unions
-    only its own generation, so the CURRENT generation's writes fall outside `touched`
-    and are retracted by a pass that never read the text they came from. Reachable
-    without a race — `record_owner_reply` deliberately leaves the stored sha stale when
-    the note moved under the thread, so a reply turn can settle against text that is two
-    generations old."""
-    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
-    stale = await _conversation(maker, owner, note_id)
-    await _ledger(maker, owner, stale, outs)
-    stale_fact = uuid.UUID(outs[1].facts[0].fact_id)
-    async with scoped_session(maker, owner) as s:
-        await NoteConversationRepo().set_state(s, stale, SETTLED)
-
-    # Something OTHER than that thread rewrites the note, and the conversation the
-    # rewrite opened writes over the new text. The stale thread's stored sha now names
-    # text that no longer exists.
-    _current, current_outs = await _rewrites_the_note(
-        maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
-    )
-    current_fact = uuid.UUID(current_outs[1].facts[0].fact_id)
-
-    assert await _settle(maker, owner, stale)
-
-    assert (await _fact_row(maker, current_fact)).status == "active", (
-        "a pass reading two-generations-old text retracted the current generation's write"
-    )
-    assert (await _fact_row(maker, stale_fact)).status == "active"
-
-
-async def test_a_co_asserted_row_survives_the_conversation_letting_go(
-    maker,  # noqa: F811
-    owner: SessionContext,
-    tmp_path,
-) -> None:
-    """The other half of the claim SET, from the side S1 could not exercise: the
-    conversation releases and the ANALYZER still says so, therefore the row stands.
-
-    Until S3 this direction was untestable, because the conversation had no settle to
-    release with. It is the case the doc calls ordinary rather than exceptional — both
-    producers read the same note off one `note.ingested` event, and a salient claim is
-    exactly what both write down, at which point `decide()` refreshes ONE row.
-
-    Run over an EDITED note, because that is the only shape in which the conversation
-    releases at all — the point is that a release which DOES fire still cannot reach a
-    row the analyzer holds."""
-    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
-    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
-    first = await _conversation(maker, owner, note_id)
-    await _ledger(maker, owner, first, outs)
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        # The analyzer JOINING the claim, exactly as `_claimed_by` writes it: the same
-        # remove-then-append, so a re-run cannot duplicate its own claim.
-        await s.execute(
-            text(
-                "UPDATE app.facts SET settle_owners ="
-                " array_append(array_remove(settle_owners, 'analyzer'), 'analyzer')"
-                " WHERE id = CAST(:f AS uuid)"
-            ),
-            {"f": str(fact_id)},
-        )
-    async with scoped_session(maker, owner) as s:
-        await NoteConversationRepo().set_state(s, first, SETTLED)
-
-    second, _ = await _rewrites_the_note(
-        maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
-    )
-    assert await _settle(maker, owner, second)
-
-    row = await _fact_row(maker, fact_id)
-    assert row.status == "active", "the conversation retracted a row the analyzer asserts"
-    assert row.settle_owners == [ANALYZER]
 
 
 @pytest.mark.parametrize(
@@ -655,27 +429,27 @@ async def test_a_co_asserted_row_survives_the_conversation_letting_go(
         ("waiting_on_owner", "a turn that stopped to ask the owner a question"),
     ],
 )
-async def test_the_sweep_does_not_fire_on_a_pass_that_did_not_end_cleanly(
+async def test_the_settle_does_not_run_on_a_pass_that_did_not_end_cleanly(
     maker,  # noqa: F811
     owner: SessionContext,
     tmp_path,
     state: str,
     why: str,
 ) -> None:
-    """The three refusals, each with the facts left intact — precondition 2.
+    """The three endings a pass does not settle on — precondition 2.
 
-    They collapse to ONE gate on purpose, and the collapse is the argument: `settled` is
-    a claim that the pass finished and everything it meant to write is written, and
-    `state_for_stop` gives it to a clean stop alone. A truncated turn lands `failed`. A
-    turn that asked lands `waiting_on_owner`. A turn whose recorder failed lands `failed`
-    too, because both callers degrade the stop reason to `record_failed` when
-    `record_reply_writes` returns False (`api/agent.py`) or `_record` raises
-    (`converse._run_turn`) — so an UNRECORDED write can never be swept as a fact the note
-    no longer says.
+    They collapse to ONE gate on purpose: `settled` is a claim that the pass finished and
+    everything it meant to write is written, and `state_for_stop` gives it to a clean stop
+    alone. A truncated turn lands `failed`. A turn that asked lands `waiting_on_owner`. A
+    turn whose recorder failed lands `failed` too, because both callers degrade the stop
+    reason to `record_failed` when `record_reply_writes` returns False (`api/agent.py`) or
+    `_record` raises (`converse._run_turn`).
 
-    The ledger is deliberately left EMPTY here, which is the sharpest version: under
-    `settled` an empty ledger is a real statement and everything unpinned would go, so a
-    gate that leaked would show as a retraction rather than as a subtle difference."""
+    With the sweep removed the gate protects nothing destructive — projecting is never
+    destructive — and it is kept for two reasons: it is the shape the plan specifies for a
+    pass end, and a caller who did add a sweep would otherwise inherit no gate at all.
+    Pinned as a refusal rather than as an absence of damage, because the damage is what
+    stopped being possible, not the gate."""
     note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     session_id = await _conversation(maker, owner, note_id)
