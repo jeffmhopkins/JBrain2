@@ -82,12 +82,38 @@ export class AttachmentUploadError extends Error {
 }
 
 /** The two conversation tabs and the agents each owns. Full Brain is the Curator
- * (your knowledge base, full domain access); Research is Jerv (web), Teacher
- * (study tutor), or the Archivist (Gmail organizer) — none read your notes. A null
- * mode means the surface is off screen (Entry / capture modes), so the controller
- * does no network work. */
+ * (your knowledge base, full domain access) plus the note conversations the ingest
+ * engine opens; Research is Jerv (web), Teacher (study tutor), or the Archivist
+ * (Gmail organizer) — none read your notes. A null mode means the surface is off
+ * screen (Entry / capture modes), so the controller does no network work. */
 export type ConvMode = "research" | "fullbrain";
+/** Which agents' sessions a tab LISTS. `note_ingest` is here and not in
+ * NEW_AGENT_OPTIONS: an ingested note opens its own thread (backend
+ * `analysis/converse.py`, AGENT_INGEST_CONVERSATION_PLAN.md W2) and that thread is
+ * the whole of what the wave delivers — off this list the owner pays for a turn they
+ * would need a debug token to read. It sits on Full Brain because it is a
+ * conversation about the owner's own notes, and every Research agent is defined by
+ * reading none of them. Listing only: the notes tab that will POINT at these is W3
+ * (D4), and this is not it. */
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
+  research: ["jerv", "teacher", "archivist", "jmolt_observer"],
+  fullbrain: ["curator", "note_ingest"],
+};
+/** The tab that HOSTS a persona. A handoff (a Tasks run, a notes-tab redirect) has a
+ * session id and its agent, and must flip to the right tab before opening it — an
+ * unknown persona lands in Research, where every non-owner-data agent lives. Derived
+ * from MODE_AGENTS so a persona cannot be listed on one tab and opened on another. */
+export function modeForAgent(agent: string): ConvMode {
+  return MODE_AGENTS.fullbrain.includes(agent) ? "fullbrain" : "research";
+}
+
+/** Which agents the new-chat picker OFFERS, per tab — a subset of MODE_AGENTS.
+ * `note_ingest` is deliberately absent: the engine opens a note conversation with a
+ * captured note as turn 0, and a hand-started one would be the persona W3 hands the
+ * graph writes to, running under owner-picked scopes with no note behind it. The
+ * backend refuses it as well (`agents.ENGINE_ONLY_PERSONAS`), so offering it here
+ * would only be a button that 422s. */
+const NEW_AGENT_OPTIONS: Record<ConvMode, readonly string[]> = {
   research: ["jerv", "teacher", "archivist", "jmolt_observer"],
   fullbrain: ["curator"],
 };
@@ -102,9 +128,15 @@ const newSessionBody = (mode: ConvMode): SessionCreate =>
     : { domain_scopes: [], agent: "jerv" };
 
 /** The latest non-archived session whose agent belongs to the mode — what a tab
- * reopens when you switch into it (active or ended, newest by last activity). */
+ * reopens when you switch into it (active or ended, newest by last activity).
+ *
+ * Keyed on the STARTABLE agents, not everything the tab lists: a note conversation
+ * is opened by the ingest engine, so on a busy capture day it is always the newest
+ * Full Brain session, and landing there would mean tapping Full Brain to talk to the
+ * Curator and getting last night's grocery note instead. Note threads are reached
+ * from the chat list (and, in W3, the notes tab) — never by hijacking the tab. */
 function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession | null {
-  const agents = MODE_AGENTS[mode];
+  const agents = NEW_AGENT_OPTIONS[mode];
   return (
     sessions
       .filter((s) => agents.includes(s.agent) && s.status !== "archived")
@@ -196,6 +228,8 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.web_sources?.length ? { webSources: tool.web_sources } : {}),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
+      ...(tool.facts?.length ? { facts: tool.facts } : {}),
+      ...(tool.truncated ? { truncated: true } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
       ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),
@@ -433,8 +467,9 @@ export function useFullBrain(
   // Guards a single auto-create per mode entry against a fast double-fire.
   const creatingFor = useRef<ConvMode | null>(null);
 
-  // Only this mode's agents belong on the tab; the picker creates under them too.
-  const agentOptions = mode ? MODE_AGENTS[mode] : ["curator", "teacher", "jerv"];
+  // Only this mode's agents belong on the tab; the picker offers the subset a person
+  // may START (MODE_AGENTS also lists the engine-opened note conversation).
+  const agentOptions = mode ? NEW_AGENT_OPTIONS[mode] : ["curator", "teacher", "jerv"];
   // A spawned sub-agent child carries its PERSONA as its agent ("research"/"review"/
   // "summarize"), not the tab's spawner agent, so a plain mode filter would drop every
   // child and the SessionsPanel rail would never see them. Keep a child whenever its

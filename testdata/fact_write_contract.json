@@ -1,0 +1,262 @@
+{
+  "cases": [
+    {
+      "name": "a held fact is never reported as written",
+      "event": {
+        "type": "tool_result",
+        "tool_call_id": "c1",
+        "ok": true,
+        "summary": "",
+        "sources": [],
+        "web_sources": [],
+        "proposal": null,
+        "entities": [],
+        "facts": [
+          {
+            "fact_id": "11111111-1111-1111-1111-111111111111",
+            "label": "Jeff lives in the Marina District",
+            "domain": "general",
+            "outcome": "replaced",
+            "status": "replaced",
+            "predicate": "lives_in",
+            "qualifier": null,
+            "value": "Marina District",
+            "replaced": "Jeff lives in Noe Valley",
+            "from_attachment": false
+          },
+          {
+            "fact_id": "22222222-2222-2222-2222-222222222222",
+            "label": "Jeff's blood type is O-negative",
+            "domain": "health",
+            "outcome": "held",
+            "status": "held",
+            "predicate": "blood_type",
+            "qualifier": null,
+            "value": "O-negative",
+            "replaced": null,
+            "from_attachment": false
+          }
+        ],
+        "truncated": false
+      },
+      "expect": {
+        "tool": "assert_fact",
+        "state": "written",
+        "phrase": "1 replaced \u00b7 1 held \u00b7 general + health"
+      }
+    },
+    {
+      "name": "an attachment-sourced write says so (D12)",
+      "event": {
+        "type": "tool_result",
+        "tool_call_id": "c2",
+        "ok": true,
+        "summary": "",
+        "sources": [],
+        "web_sources": [],
+        "proposal": null,
+        "entities": [],
+        "facts": [
+          {
+            "fact_id": "33333333-3333-3333-3333-333333333333",
+            "label": "Jeff's A1C is 5.4",
+            "domain": "health",
+            "outcome": "written",
+            "status": "written",
+            "predicate": "lab_result",
+            "qualifier": "a1c",
+            "value": "5.4",
+            "replaced": null,
+            "from_attachment": true
+          }
+        ],
+        "truncated": false
+      },
+      "expect": {
+        "tool": "assert_fact",
+        "state": "written",
+        "phrase": "1 written \u00b7 health \u00b7 from a photo"
+      }
+    },
+    {
+      "name": "a clamped batch says truncated",
+      "event": {
+        "type": "tool_result",
+        "tool_call_id": "c3",
+        "ok": true,
+        "summary": "",
+        "sources": [],
+        "web_sources": [],
+        "proposal": null,
+        "entities": [],
+        "facts": [
+          {
+            "fact_id": "44444444-4444-4444-4444-444444444444",
+            "label": "Jeff runs on Tuesdays",
+            "domain": "general",
+            "outcome": "written",
+            "status": "written",
+            "predicate": "routine",
+            "qualifier": null,
+            "value": "Tuesdays",
+            "replaced": null,
+            "from_attachment": false
+          }
+        ],
+        "truncated": true
+      },
+      "expect": {
+        "tool": "assert_fact",
+        "state": "written",
+        "phrase": "1 written \u00b7 general \u00b7 truncated"
+      }
+    },
+    {
+      "name": "every outcome word the write path can report",
+      "event": {
+        "type": "tool_result",
+        "tool_call_id": "c4",
+        "ok": true,
+        "summary": "",
+        "sources": [],
+        "web_sources": [],
+        "proposal": null,
+        "entities": [],
+        "facts": [
+          {
+            "fact_id": "50555555-5555-5555-5555-555555555555",
+            "label": "outcome written",
+            "domain": "general",
+            "outcome": "written",
+            "status": "written",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "51555555-5555-5555-5555-555555555555",
+            "label": "outcome already",
+            "domain": "general",
+            "outcome": "already",
+            "status": "written",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "52555555-5555-5555-5555-555555555555",
+            "label": "outcome closed",
+            "domain": "general",
+            "outcome": "closed",
+            "status": "written",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "53555555-5555-5555-5555-555555555555",
+            "label": "outcome replaced",
+            "domain": "general",
+            "outcome": "replaced",
+            "status": "replaced",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "54555555-5555-5555-5555-555555555555",
+            "label": "outcome held",
+            "domain": "general",
+            "outcome": "held",
+            "status": "held",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "55555555-5555-5555-5555-555555555555",
+            "label": "outcome historical",
+            "domain": "general",
+            "outcome": "historical",
+            "status": "written",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          },
+          {
+            "fact_id": "56555555-5555-5555-5555-555555555555",
+            "label": "outcome promoted",
+            "domain": "general",
+            "outcome": "promoted",
+            "status": "written",
+            "predicate": null,
+            "qualifier": null,
+            "value": null,
+            "replaced": null,
+            "from_attachment": false
+          }
+        ],
+        "truncated": false
+      },
+      "expect": {
+        "tool": "assert_fact",
+        "state": "written",
+        "phrase": "5 written \u00b7 1 replaced \u00b7 1 held \u00b7 general"
+      }
+    },
+    {
+      "name": "a write tool that wrote nothing",
+      "event": {
+        "type": "tool_result",
+        "tool_call_id": "c5",
+        "ok": true,
+        "summary": "",
+        "sources": [],
+        "web_sources": [],
+        "proposal": null,
+        "entities": [],
+        "facts": [],
+        "truncated": false
+      },
+      "expect": {
+        "tool": "assert_fact",
+        "state": "nothing",
+        "phrase": "nothing written"
+      }
+    }
+  ],
+  "persisted_before_status": {
+    "name": "a turn persisted before `status` existed still reads its held fact as held",
+    "tool": "assert_fact",
+    "facts": [
+      {
+        "fact_id": "66666666-6666-6666-6666-666666666666",
+        "label": "Jeff's blood type is O-negative",
+        "domain": "health",
+        "outcome": "held"
+      },
+      {
+        "fact_id": "77777777-7777-7777-7777-777777777777",
+        "label": "Jeff runs on Tuesdays",
+        "domain": "general",
+        "outcome": "written"
+      }
+    ],
+    "expect": {
+      "state": "written",
+      "phrase": "1 written \u00b7 1 held \u00b7 general + health"
+    }
+  }
+}

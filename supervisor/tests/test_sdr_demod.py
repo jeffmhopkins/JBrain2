@@ -905,3 +905,218 @@ def test_the_agc_gain_is_per_SAMPLE_not_per_buffer():
     # The gain rides down ACROSS the buffer rather than stepping at its head.
     assert out[0] > 3.0 * out[-1]
     assert np.all(np.diff(out) <= 1e-6), "monotonic, not a step"
+
+
+# -- filter bandwidth ----------------------------------------------------------------
+
+
+def _two_am(
+    seconds: float, *, wanted_hz: float, neighbour_hz: float, spacing_hz: float
+) -> np.ndarray:
+    """Two equally strong AM stations, `spacing_hz` apart, each modulated by one tone.
+
+    The measurement this exists for is a RATIO between the two tones in one block of
+    audio, which is why both stations are the same strength and why the AGC — on for
+    AM — cannot influence the answer: it moves both by the same amount."""
+    n = int(seconds * CAPTURE_HZ)
+    t = np.arange(n, dtype=np.float64) / CAPTURE_HZ
+    wanted = 1.0 + 0.5 * np.cos(2.0 * np.pi * wanted_hz * t)
+    neighbour = (1.0 + 0.5 * np.cos(2.0 * np.pi * neighbour_hz * t)) * np.exp(
+        2j * np.pi * spacing_hz * t
+    )
+    return (wanted + neighbour).astype(np.complex64)
+
+
+def _fed(built, samples: np.ndarray) -> np.ndarray:
+    """Every sample through the chain in realistic chunks, as one block of audio."""
+    step = CAPTURE_HZ // 10
+    out = [built.feed(samples[i : i + step]).pcm for i in range(0, samples.size, step)]
+    return np.concatenate(out)
+
+
+@pytest.mark.parametrize(
+    "bandwidth_hz,floor_db",
+    # MEASURED 2026-09-08, then floored well under the measurement so the test pins the
+    # behaviour rather than the noise: 8 kHz measured 14.8 dB, 6 kHz 85.2, 4 kHz 110.0,
+    # 3 kHz 103.1. The gap between the first two rungs is the whole feature — 8 kHz is
+    # the widest filter that costs no audio, and 6 kHz is the first that actually
+    # rejects a shortwave neighbour 5 kHz away.
+    [(8_000, 10.0), (6_000, 60.0), (4_000, 80.0), (3_000, 80.0)],
+)
+def test_am_bandwidth_rejects_the_neighbour(bandwidth_hz, floor_db):
+    """A station 5 kHz away must fall as the filter narrows — the owner's own case.
+
+    5 kHz is the shortwave broadcast raster, so this is not a contrived spacing: it is
+    what a crowded 49 m evening actually looks like.
+
+    The rejection has to happen HERE, in the channel filter, because the envelope
+    detector downstream is non-linear: two carriers that both reach it beat together and
+    their products land inside the audio band, where no filter can tell them from the
+    wanted audio afterwards."""
+    demod = _load()
+    built = demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=bandwidth_hz)
+    pcm = _fed(
+        built, _two_am(0.5, wanted_hz=1_000.0, neighbour_hz=1_700.0, spacing_hz=5_000.0)
+    )
+    wanted = _tone_level(built, pcm, 1_000.0)
+    neighbour = _tone_level(built, pcm, 1_700.0)
+    assert wanted - neighbour >= floor_db, (
+        f"{bandwidth_hz} Hz left the neighbour only {wanted - neighbour:.1f} dB down"
+    )
+
+
+def test_am_default_is_the_widest_that_costs_no_audio():
+    """8 kHz must pass AM's own audio band flat — the reason it is the default.
+
+    The old default was 16 kHz, and dropping it was free precisely because of this: the
+    audio path is low-passed at 4 kHz, so RF past ±4 kHz carries no wanted audio and the
+    extra width only fed the detector interference."""
+    demod = _load()
+    built = demod.Demodulator("am", CAPTURE_HZ)
+    assert built.bandwidth_hz == 8_000
+    levels = [
+        _tone_level(built, _fed(built, am_signal(0.4, tone_hz=hz)), hz)
+        for hz in (300.0, 1_000.0, 2_000.0, 3_000.0)
+    ]
+    # Flat across the band the audio filter keeps. A channel filter that had started
+    # eating its own passband would show up here as a slope.
+    assert max(levels) - min(levels) < 3.0, levels
+
+
+def test_ssb_bandwidth_moves_the_outer_edge_only():
+    """Narrowing SSB must not move the edge nearest the suppressed carrier.
+
+    The low edge is set by where the carrier sits, not by how much bandwidth is wanted:
+    moving it would walk the passband onto the carrier as the filter narrowed."""
+    demod = _load()
+    for bandwidth_hz in demod.BANDWIDTH_HZ["usb"]:
+        low, high = demod.passband_for("usb", bandwidth_hz)
+        assert low == demod.SSB_LOW_HZ
+        assert high - low == bandwidth_hz
+        # ...and lsb is its mirror, not a copy with a sign bolted on.
+        mirror_low, mirror_high = demod.passband_for("lsb", bandwidth_hz)
+        assert (mirror_low, mirror_high) == (-high, -low)
+
+
+def test_a_narrow_ssb_filter_rejects_a_tone_past_its_edge():
+    """The generalised bandpass must actually be the width it claims.
+
+    A tone 2.6 kHz off the carrier is inside 3.1 kHz USB and outside 1.8 kHz, so the two
+    filters must disagree about it — which is what proves the width reached the taps and
+    not merely the label."""
+    demod = _load()
+    levels = {}
+    for bandwidth_hz in (3_100, 1_800):
+        built = demod.Demodulator("usb", CAPTURE_HZ, bandwidth_hz=bandwidth_hz)
+        pcm = _fed(built, tone(0.4, hz=2_600.0))
+        levels[bandwidth_hz] = _tone_level(built, pcm, 2_600.0)
+    assert levels[3_100] - levels[1_800] > 25.0, levels
+
+
+def test_a_width_outside_the_range_is_refused():
+    """Bounded, never clamped. A clamped width would leave the radio listening at
+    something other than the number on screen, which is the failure this control exists
+    to end — and it is one nobody can see or hear.
+
+    Between the bounds anything on the grid is allowed: the owner drags the passband
+    edge on the picture and it has to land where they put it, which is a position rather
+    than a menu choice."""
+    demod = _load()
+    low, high = demod.BANDWIDTH_RANGE_HZ["am"]
+    # A width no preset names is fine, because the drag can ask for it.
+    assert demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_000).bandwidth_hz == 5_000
+    for outside in (low - demod.BANDWIDTH_STEP_HZ, high + demod.BANDWIDTH_STEP_HZ):
+        with pytest.raises(demod.DemodError) as bad:
+            demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=outside)
+        # The refusal says what WOULD work: this reaches the owner via the API.
+        assert str(low) in str(bad.value) and str(high) in str(bad.value)
+
+
+def test_a_width_off_the_grid_is_refused():
+    """100 Hz, not 1 kHz: SSB's 2.4 and NFM's 12.5 are 100 Hz multiples and neither is a
+    1 kHz one, so a coarser grid would put the classic filters out of reach of the very
+    control meant to offer them."""
+    demod = _load()
+    with pytest.raises(demod.DemodError, match="multiple"):
+        demod.Demodulator("am", CAPTURE_HZ, bandwidth_hz=5_050)
+    # ...and every preset is on the grid, or the ladder offers what the box refuses.
+    for mode, ladder in demod.BANDWIDTH_HZ.items():
+        low, high = demod.BANDWIDTH_RANGE_HZ[mode]
+        for width in ladder:
+            assert width % demod.BANDWIDTH_STEP_HZ == 0, (mode, width)
+            assert low <= width <= high, (mode, width)
+
+
+def test_every_width_on_the_grid_builds_a_real_filter():
+    """The range replaced a ladder, so the guarantee has to cover the range.
+
+    Walked at 1 kHz — the step the drag actually produces — asserting each chain builds
+    and its channel filter passes its own edge. A width that raised, or that quietly
+    came out attenuating its own passband, would reach the owner as a filter that
+    sounds wrong at one setting and fine at the next."""
+    demod = _load()
+    for mode, (low, high) in demod.BANDWIDTH_RANGE_HZ.items():
+        for width in range(low, high + 1, 1_000):
+            built = demod.Demodulator(mode, CAPTURE_HZ, bandwidth_hz=width)
+            assert built.bandwidth_hz == width, (mode, width)
+            assert built.channel_half_hz <= built.crop_reach_hz, (mode, width)
+            channel = built._build_channel()
+            if channel is None:  # wide FM: the front end is its own channel filter
+                continue
+            freqs = np.fft.rfftfreq(4096, 1.0 / built.if_rate_hz)
+            resp = np.abs(np.fft.rfft(channel._taps[::-1].real, 4096))
+            at_edge = resp[np.argmin(np.abs(freqs - built.channel_half_hz))]
+            assert 20.0 * np.log10(at_edge / resp[0]) > -6.5, (mode, width)
+
+
+def test_the_picture_does_not_zoom_when_the_filter_narrows():
+    """`crop_reach_hz` comes from the mode's widest filter, not the one in force.
+
+    `listen._tuning_frame` crops the tuning strip to four times this. Deriving it from
+    the live passband would zoom the picture in every time the owner narrowed the
+    filter — hiding the interfering station at the exact moment they narrowed it to
+    reject that station, and leaving the shaded box the same fraction of the picture at
+    every setting, so the control would look like it had done nothing."""
+    demod = _load()
+    for mode, ladder in demod.BANDWIDTH_HZ.items():
+        widest = demod.Demodulator(mode, CAPTURE_HZ, bandwidth_hz=ladder[0])
+        for bandwidth_hz in ladder:
+            built = demod.Demodulator(mode, CAPTURE_HZ, bandwidth_hz=bandwidth_hz)
+            assert built.crop_reach_hz == widest.crop_reach_hz, mode
+            # ...and the shaded box really is narrower inside that fixed picture.
+            assert built.channel_half_hz <= built.crop_reach_hz, (mode, bandwidth_hz)
+
+
+def test_the_default_bandwidth_preserves_every_mode_but_am():
+    """The ladder's first rung reproduces the filter each mode already had.
+
+    This wave is meant to change exactly one default — AM's, from 16 kHz to 8 — and a
+    ladder is an easy place to move another one by accident."""
+    demod = _load()
+    for mode, half_hz in (
+        ("fm", 8_000.0),
+        ("nfm", 8_000.0),
+        ("usb", 3_400.0),
+        ("lsb", 3_400.0),
+        ("wbfm", 90_000.0),
+    ):
+        assert demod.Demodulator(mode, CAPTURE_HZ).channel_half_hz == half_hz, mode
+    assert demod.Demodulator("am", CAPTURE_HZ).channel_half_hz == 4_000.0
+
+
+def test_every_view_span_fits_the_picture_it_crops():
+    """A span wider than the chain supplies is drawn out of the anti-alias filter's
+    own skirt — a station that is not there, at the edge of a picture the owner just
+    zoomed out to see more of.
+
+    This is what keeps `VIEW_SPAN_HZ` honest as the ladders or the rates change: the
+    ladders exist to be croppable from what the chain ALREADY makes: widening
+    the chain would mean rebuilding it and clicking the audio."""
+    demod = _load()
+    for mode, spans in demod.VIEW_SPAN_HZ.items():
+        built = demod.Demodulator(mode, CAPTURE_HZ)
+        for span in spans:
+            assert span <= built.max_span_hz, (mode, span, built.max_span_hz)
+        # ...and the default the picture opens at is one of them, or the zoom control
+        # opens with nothing selected.
+        assert built.view_span_hz in [float(s) for s in spans], mode

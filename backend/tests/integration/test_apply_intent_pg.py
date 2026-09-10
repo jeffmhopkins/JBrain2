@@ -1,7 +1,7 @@
 """apply_intent (Wave 1 Track A, A1b-ii-1): an arbiter-approved IntegrationIntent
-committed through the existing deterministic _apply, against real Postgres. The
-LLM is not used — apply_intent consumes a pre-built intent + plan. Reuses the
-proven note/ingest helpers from test_extraction_pg.
+committed through the deterministic commit_facts + settle_note pair, against real
+Postgres. The LLM is not used — apply_intent consumes a pre-built intent + plan.
+Reuses the proven note/ingest helpers from test_extraction_pg.
 """
 
 import hashlib
@@ -14,6 +14,8 @@ import pytest
 from sqlalchemy import select, text
 
 from jbrain.analysis.arbiter import plan_intent
+from jbrain.analysis.entities import ResolvedEntity, merge_entity_pair
+from jbrain.analysis.extraction import ExtractedMention, Extraction
 from jbrain.analysis.intent import (
     AttestedSpan,
     EntityResolution,
@@ -22,17 +24,25 @@ from jbrain.analysis.intent import (
 )
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.analysis.predicates import raw_descriptor
+from jbrain.analysis.repo import SqlAnalysisRepo
+from jbrain.analysis.settle_owner import ANALYZER
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import FakeLlmClient, LlmRouter
-from jbrain.models.analysis import Entity, Fact, ReviewItem
+from jbrain.models.analysis import Entity, EntityMention, Fact, ReviewItem
 from jbrain.models.notes import Chunk
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_extraction_pg import (  # noqa: F401
+    ingest,
+    make_note,
+    maker,
+    reingest_a_rewritten_body,
+)
+from tests.integration.test_note_purge_pg import seed_item
+from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -156,6 +166,7 @@ async def _run(
             title="t",
             tags=["work"],
             extractor="test:fake",
+            settle_owner=ANALYZER,
             dropped_facts=dropped_facts,
         )
 
@@ -585,6 +596,106 @@ async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # no
     assert cards[0].payload["fact_id"] == str(held[0].id)  # link still valid
 
 
+@pytest.mark.parametrize("order", ["file_then_settle", "settle_then_file"])
+async def test_a_re_resolved_held_fact_never_ends_up_with_no_card(
+    maker,  # noqa: F811
+    tmp_path,
+    order,
+    monkeypatch,
+):
+    """N11's invariant — a `pending_review` fact is owner-VISIBLE, never silently held —
+    across a re-analysis that resolves the same mention_ref to a DIFFERENT entity.
+
+    Two idempotency keys have to agree for that to hold, and they were written apart.
+    `_insert_held_fact` keys its row on `(note_id, entity_id, predicate, qualifier,
+    object_entity_id, domain_code)`, so a re-resolution mints a SECOND held row; the
+    card dedup used to key on `(note_id, entity_ref, predicate, qualifier)`, which the
+    re-resolution leaves unchanged, so the FIRST run's still-open card suppressed the
+    new one — and then `settle_note` deleted that card, because the row it pointed at
+    had just been retracted. Net: a `pending_review` fact with no card at all.
+
+    Parametrized over the ORDER of the two steps because the fix must not depend on it:
+    W1's split moved `_file_inference_reviews` from after the settle to before it, and
+    nothing failed. Keying the dedup on the HELD ROW's id rather than on the mention
+    surface is what makes both orders safe.
+    """
+    a_id = await _seed_entity(maker, "Initech")
+    b_id = await _seed_entity(maker, "Initech Holdings")
+    note_id = await make_note(maker, domain="general", body="Initech notes.")
+    await ingest(maker, note_id, tmp_path)
+
+    def _for(entity_id: str):  # noqa: ANN202
+        intent = _intent(
+            note_id,
+            [
+                EntityResolution(
+                    mention_ref="m1",
+                    mode="existing",
+                    proposed_entity_id=entity_id,
+                    cross_subject=True,
+                )
+            ],
+            [_fact("m1", statement="Initech is in tech")],
+        )
+        return intent, plan_intent(intent, signals={0: _SURFACE})
+
+    async def _pass(entity_id: str) -> None:
+        intent, plan = _for(entity_id)
+        if order == "file_then_settle":
+            await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+            return
+        # The other order: hold the card filing back and run it AFTER the settle, the
+        # way `apply_intent` composed the two before W1 split them.
+        deferred: list[dict[str, Any]] = []
+
+        async def _defer(_self, _session, **kw) -> None:  # noqa: ANN001, ANN202
+            deferred.append(kw)
+
+        monkeypatch.setattr(AnalysisPipeline, "_file_inference_reviews", _defer)
+        try:
+            await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+        finally:
+            monkeypatch.undo()
+        pipeline = _pipeline(maker)
+        async with scoped_session(maker, SYSTEM_CTX) as session:
+            for kw in deferred:
+                await pipeline._file_inference_reviews(session, **kw)
+
+    await _pass(a_id)
+    await _pass(b_id)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        live = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.note_id == uuid.UUID(note_id), Fact.status == "pending_review"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        cards = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.kind == "low_confidence_inference",
+                        ReviewItem.payload["note_id"].astext == note_id,
+                        ReviewItem.status == "open",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    # The re-resolution moved the held fact onto the other entity, and it is still held.
+    assert len(live) == 1
+    assert str(live[0].entity_id) == b_id
+    # ...and it is still on the owner's desk. One card, pointing at the LIVE row.
+    assert [c.payload["fact_id"] for c in cards] == [str(live[0].id)]
+
+
 async def _seed_person(maker, name: str) -> str:  # noqa: F811
     async with scoped_session(maker, SYSTEM_CTX) as session:
         ent = Entity(kind="Person", canonical_name=name, status="confirmed", domain_code="general")
@@ -990,6 +1101,7 @@ async def test_value_shape_mismatch_drops_value_when_enforced(maker, tmp_path): 
                 title="t",
                 tags=[],
                 extractor="test:fake",
+                settle_owner=ANALYZER,
             )
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -1090,3 +1202,366 @@ async def test_under_cap_note_files_no_truncation_card(maker, tmp_path):  # noqa
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path, dropped_facts=0)
 
     assert await _truncation_cards(maker, note_id) == []
+
+
+# ---- the incremental mention seam + citation re-anchoring ---------------------------------
+
+
+async def _mentions(maker, note_id: str):  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return (
+            await session.execute(
+                select(
+                    EntityMention.id,
+                    EntityMention.entity_id,
+                    EntityMention.char_start,
+                    EntityMention.char_end,
+                )
+                .where(EntityMention.note_id == uuid.UUID(note_id))
+                .order_by(EntityMention.id)
+            )
+        ).all()
+
+
+async def _entity_id(maker, name: str) -> str:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return str(
+            (
+                await session.execute(select(Entity.id).where(Entity.canonical_name == name))
+            ).scalar_one()
+        )
+
+
+async def _facts_of(maker, note_id: str):  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return (
+            await session.execute(
+                select(Fact.id, Fact.chunk_id, Fact.derived_from_fact_id, Fact.predicate)
+                .where(Fact.note_id == uuid.UUID(note_id))
+                .order_by(Fact.created_at)
+            )
+        ).all()
+
+
+async def test_two_mentions_on_one_span_keep_two_rows_and_their_ids(maker, tmp_path):  # noqa: F811
+    """(chunk, span) is NOT a unique key. `_locate` anchors every surface it cannot
+    find at (chunk 0, 0, 0), so two unlocatable mentions collapse onto one span with
+    different entities — the upsert keys on (chunk, span, ENTITY), so both rows live.
+    Re-asserting them keeps their ids (what `repo.py`'s stored mention_ids replay
+    needs), and dropping one reconciles exactly that row away."""
+    # Refs the body cannot contain, and names no other test in this shared database
+    # shares — an existing-mode ref whose surface names 2+ live entities is
+    # deliberately dropped by apply_intent's same-name guard.
+    tag = uuid.uuid4().hex[:8]
+    note_id = await make_note(maker, domain="general", body="A short note, unnamed.")
+    await ingest(maker, note_id, tmp_path)
+    one, two = f"One {tag}", f"Two {tag}"
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(mention_ref=f"r1_{tag}", mode="new", new_kind="Person", new_name=one),
+            EntityResolution(mention_ref=f"r2_{tag}", mode="new", new_kind="Person", new_name=two),
+        ],
+        [],
+    )
+    await _run(maker, note_id, intent, plan_intent(intent, signals={}), tmp_path=tmp_path)
+
+    first = await _mentions(maker, note_id)
+    assert len(first) == 2
+    assert {(r.char_start, r.char_end) for r in first} == {(0, 0)}  # one shared span
+    assert len({r.entity_id for r in first}) == 2
+
+    kept, dropped = await _entity_id(maker, one), await _entity_id(maker, two)
+    pinned = [
+        EntityResolution(mention_ref=f"r1_{tag}", mode="existing", proposed_entity_id=kept),
+        EntityResolution(mention_ref=f"r2_{tag}", mode="existing", proposed_entity_id=dropped),
+    ]
+    again = _intent(note_id, pinned, [])
+    await _run(maker, note_id, again, plan_intent(again, signals={}), tmp_path=tmp_path)
+
+    second = await _mentions(maker, note_id)
+    assert [r.id for r in second] == [r.id for r in first]  # upserted in place, not churned
+
+    # Now assert only one of them: the reconcile drops the other, and only it.
+    shrunk = _intent(note_id, pinned[:1], [])
+    await _run(maker, note_id, shrunk, plan_intent(shrunk, signals={}), tmp_path=tmp_path)
+
+    third = await _mentions(maker, note_id)
+    assert [r.id for r in third] == [r.id for r in first if str(r.entity_id) == kept]
+
+
+async def test_two_commit_passes_settled_once_keep_both_passes_mentions(maker, tmp_path):  # noqa: F811
+    """The seam's whole point: a caller may `commit_facts` several times and
+    `settle_note` their union ONCE. Reconciling per pass (or wiping, as the
+    original did) deletes what the previous pass wrote — the per-turn destruction
+    a note conversation would hit on its second tool call."""
+    tag = uuid.uuid4().hex[:8]
+    one, two = f"One {tag}", f"Two {tag}"
+    note_id = await make_note(maker, domain="general", body=f"{one} met {two}.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(mention_ref=one, mode="new", new_kind="Person", new_name=one),
+            EntityResolution(mention_ref=two, mode="new", new_kind="Person", new_name=two),
+        ],
+        [],
+    )
+    await _run(maker, note_id, intent, plan_intent(intent, signals={}), tmp_path=tmp_path)
+    pins = {
+        name: ResolvedEntity(id=uuid.UUID(await _entity_id(maker, name)), subject_id=None)
+        for name in (one, two)
+    }
+
+    def _pass(name: str) -> Extraction:
+        return Extraction(
+            title="t",
+            tags=[],
+            mentions=[ExtractedMention(name=name, kind="Person", surface_text=name)],
+            facts=[],
+            tokens=[],
+        )
+
+    chunks = await _load_chunks(maker, note_id)
+    pipeline = _pipeline(maker)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        outcomes = [
+            await pipeline.commit_facts(
+                session,
+                note_id=uuid.UUID(note_id),
+                note_domain="general",
+                captured_at=datetime.now(UTC),
+                chunks=chunks,
+                extraction=_pass(name),
+                extractor="test:fake",
+                settle_owner=ANALYZER,
+                resolution_override={name: pins[name]},
+            )
+            for name in (one, two)
+        ]
+        await pipeline.settle_note(
+            session,
+            note_id=uuid.UUID(note_id),
+            note_domain="general",
+            chunks=chunks,
+            extraction=_pass(two),
+            extractor="test:fake",
+            settle_owner=ANALYZER,
+            resolved={k: v for o in outcomes for k, v in o.resolved.items()},
+            touched=set().union(*(o.touched for o in outcomes)),
+            projected=set().union(*(o.projected for o in outcomes)),
+            mention_ids=set().union(*(o.mention_ids for o in outcomes)),
+        )
+
+    # The FIRST pass's mention is still there: the settle reconciled against the
+    # union, not against the last pass alone.
+    assert {r.entity_id for r in await _mentions(maker, note_id)} == {p.id for p in pins.values()}
+
+
+async def test_reingest_re_anchors_a_refreshed_edge_and_its_derived_shadow(maker, tmp_path):  # noqa: F811
+    """A re-ingest deletes the note's chunks, so `facts.chunk_id` (ON DELETE SET
+    NULL) goes null on BOTH halves of a relationship. The re-integration refreshes
+    the source in place — and nothing else would ever re-link the derived shadow,
+    because the settle sweep deliberately skips derived rows and never re-inserts
+    it. Left unfixed the reciprocal keeps a null chunk forever and drops out of the
+    OBJECT entity's article, which is the spine the graph is being refocused on."""
+    # Unique refs and names: the same-name guard drops an existing-mode ref whose
+    # surface names 2+ live entities, and this database is shared across the module.
+    tag = uuid.uuid4().hex[:8]
+    person, org = f"Emp {tag}", f"Org {tag}"
+    person_ref, org_ref = f"p_{tag}", f"o_{tag}"
+    note_id = await make_note(maker, domain="general", body=f"{person} works for {org}.")
+    await ingest(maker, note_id, tmp_path)
+    edge = _fact(
+        person_ref,
+        predicate="worksFor",
+        kind="relationship",
+        statement=f"{person} works for {org}.",
+        object_entity_ref=org_ref,
+        attested_span=AttestedSpan("c", person),
+    )
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref=person_ref, mode="new", new_kind="Person", new_name=person
+            ),
+            EntityResolution(
+                mention_ref=org_ref, mode="new", new_kind="Organization", new_name=org
+            ),
+        ],
+        [edge],
+    )
+    await _run(
+        maker, note_id, intent, plan_intent(intent, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    before = await _facts_of(maker, note_id)
+    assert {r.predicate for r in before} == {"worksFor", "employs"}  # edge + its shadow
+    assert all(r.chunk_id is not None for r in before)
+    assert any(r.derived_from_fact_id is not None for r in before)
+
+    # The edit path, as a rewrite: no chunk of the old generation survives, so both
+    # halves' citations are nulled. (An unchanged re-ingest now carries its chunks over.)
+    await reingest_a_rewritten_body(maker, note_id, tmp_path, f"{person} has a new employer.")
+    assert all(r.chunk_id is None for r in await _facts_of(maker, note_id))
+
+    pinned = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref=person_ref,
+                mode="existing",
+                proposed_entity_id=await _entity_id(maker, person),
+            ),
+            EntityResolution(
+                mention_ref=org_ref,
+                mode="existing",
+                proposed_entity_id=await _entity_id(maker, org),
+            ),
+        ],
+        [edge],
+    )
+    await _run(
+        maker, note_id, pinned, plan_intent(pinned, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    after = await _facts_of(maker, note_id)
+    assert [r.id for r in after] == [r.id for r in before]  # refreshed in place, no churn
+    assert all(r.chunk_id is not None for r in after)
+
+
+async def test_existing_resolution_onto_a_merge_tombstone_lands_on_the_survivor(maker, tmp_path):  # noqa: F811
+    """A re-analysis must not un-do a merge. The Integrator reads graph context that
+    can predate a fold (or names the loser from its own earlier run), so an
+    `existing` resolution can carry the LOSER's id. Loading it by id with no status
+    filter minted live facts and a live mention on a `status='merged'` row —
+    silently resurrecting the duplicate the owner merged away. The tombstone records
+    its survivor (`merged_into_id`), so the fix follows it."""
+    tag = uuid.uuid4().hex[:8]
+    keep, gone = f"Keep {tag}", f"Gone {tag}"
+    keep_id = await _seed_entity(maker, keep)
+    gone_id = await _seed_entity(maker, gone)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await merge_entity_pair(session, keep=keep_id, gone=gone_id)
+
+    note_id = await make_note(maker, domain="general", body=f"{gone} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=gone, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(gone, statement=f"{gone} is in tech", attested_span=AttestedSpan("c", gone))],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        facts = (
+            (await session.execute(select(Fact).where(Fact.note_id == uuid.UUID(note_id))))
+            .scalars()
+            .all()
+        )
+    mentions = await _mentions(maker, note_id)
+    assert [str(f.entity_id) for f in facts] == [keep_id]
+    assert [str(m.entity_id) for m in mentions] == [keep_id]
+
+
+async def test_a_chain_of_merges_resolves_to_the_last_survivor(maker, tmp_path):  # noqa: F811
+    """A fold leaves the tombstones already aimed at its loser pointing at a row that
+    is now itself merged, so `a -> b -> c` is an ordinary shape, not a corruption. The
+    stale id has to be chased to the end of the chain, not one hop."""
+    tag = uuid.uuid4().hex[:8]
+    a_id = await _seed_entity(maker, f"First {tag}")
+    b_id = await _seed_entity(maker, f"Second {tag}")
+    c_id = await _seed_entity(maker, f"Third {tag}")
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await merge_entity_pair(session, keep=b_id, gone=a_id)
+        await merge_entity_pair(session, keep=c_id, gone=b_id)
+
+    ref = f"First {tag}"
+    note_id = await make_note(maker, domain="general", body=f"{ref} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=ref, mode="existing", proposed_entity_id=a_id)],
+        [_fact(ref, statement=f"{ref} is in tech", attested_span=AttestedSpan("c", ref))],
+    )
+    await _run(
+        maker, note_id, intent, plan_intent(intent, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    assert [str(m.entity_id) for m in await _mentions(maker, note_id)] == [c_id]
+
+
+async def test_a_tombstone_with_no_survivor_skips_the_fact(maker, tmp_path):  # noqa: F811
+    """The fail-closed end of the chain: a merged row with no `merged_into_id` names
+    nothing live, so the resolution is withheld and the fact skips — the same answer a
+    missing or out-of-scope id already gets. Never a fresh row on the tombstone."""
+    tag = uuid.uuid4().hex[:8]
+    gone_id = await _seed_entity(maker, f"Orphan {tag}")
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await session.execute(
+            text("UPDATE app.entities SET status = 'merged' WHERE id = :id"), {"id": gone_id}
+        )
+
+    ref = f"Orphan {tag}"
+    note_id = await make_note(maker, domain="general", body=f"{ref} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=ref, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(ref, statement=f"{ref} is in tech", attested_span=AttestedSpan("c", ref))],
+    )
+    await _run(
+        maker, note_id, intent, plan_intent(intent, signals={0: _SURFACE}), tmp_path=tmp_path
+    )
+
+    assert await _facts_of(maker, note_id) == []
+    assert await _mentions(maker, note_id) == []
+
+
+async def test_a_merge_survives_a_re_analysis_and_still_un_merges(maker, tmp_path):  # noqa: F811
+    """The end-to-end claim W1 could only state as limited: the rebuild sweep spares the
+    `mention_ids` a settled merge card will replay, but the replay is only as good as
+    the re-analysis that runs in between. Re-resolving the surface onto the tombstone
+    minted a second mention on the loser and let the reconcile drop the spared row, so
+    the reopen moved nothing. Following the fold instead re-asserts the SAME mention on
+    the survivor, and the un-merge still puts it back."""
+    tag = uuid.uuid4().hex[:8]
+    keep, gone = f"Survivor {tag}", f"Folded {tag}"
+    keep_id = await _seed_entity(maker, keep)
+    gone_id = await _seed_entity(maker, gone)
+    note_id = await make_note(maker, domain="general", body=f"{gone} is in tech.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [EntityResolution(mention_ref=gone, mode="existing", proposed_entity_id=gone_id)],
+        [_fact(gone, statement=f"{gone} is in tech", attested_span=AttestedSpan("c", gone))],
+    )
+    plan = plan_intent(intent, signals={0: _SURFACE})
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+    (before,) = await _mentions(maker, note_id)
+    (fact_before,) = await _facts_of(maker, note_id)
+    assert str(before.entity_id) == gone_id
+
+    card = await seed_item(maker, "merge_proposal", {"entity_a": keep_id, "entity_b": gone_id})
+    repo = SqlAnalysisRepo(maker)
+    await repo.resolve_review(OWNER, card, "accept", {})
+    assert [str(m.entity_id) for m in await _mentions(maker, note_id)] == [keep_id]
+
+    # The re-analysis: the Integrator still names the id it saw before the fold.
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+    assert [(m.id, str(m.entity_id)) for m in await _mentions(maker, note_id)] == [
+        (before.id, keep_id)
+    ]
+    assert [r.id for r in await _facts_of(maker, note_id)] == [fact_before.id]
+
+    await repo.reopen_review(OWNER, card)
+    assert [(m.id, str(m.entity_id)) for m in await _mentions(maker, note_id)] == [
+        (before.id, gone_id)
+    ]
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        owners = (
+            await session.execute(select(Fact.entity_id).where(Fact.note_id == uuid.UUID(note_id)))
+        ).scalars()
+    assert [str(e) for e in owners] == [gone_id]

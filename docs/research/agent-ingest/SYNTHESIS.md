@@ -1,8 +1,12 @@
 # Agent-Conversation Ingestion — Research Synthesis
 
 > **Status:** Research · **Last verified:** 2026-09-08 — consolidated read of the
-> eighteen dossiers in this directory. Owner decision pending; nothing here is
-> ratified and no code has been written.
+> eighteen dossiers in this directory. **The owner ratified on 2026-09-08 and the
+> decisions moved:** see `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` for what was
+> chosen. The "Open owner decisions" section below is preserved as the record of what
+> was asked, not as live questions — several were answered differently from the
+> recommendation here (notably: option B directly with no gate spike, and the review
+> inbox retired rather than kept).
 
 ## The ask
 

@@ -10,27 +10,37 @@ from jbrain.agent.agents import (
     AGENTS,
     ARCHIVIST_TOOLS,
     DEFAULT_AGENT,
+    ENGINE_ONLY_PERSONAS,
     GMAIL_TOOLS,
     INTAKE_TOOLS,
     JERV_TOOLS,
     MEMORY_TOOLS,
     NON_OWNER_PERSONAS,
+    NOTE_INGEST_ON_REPLY_TOOLS,
+    NOTE_INGEST_THIRD_PARTY_TOOLS,
+    NOTE_INGEST_UNATTENDED_TOOLS,
     OWNER_AGENTS,
     RESEARCH_TOOLS,
     REVIEW_TOOLS,
     SPAWN_TOOL,
+    STORABLE_OWNER_AGENTS,
     SUBAGENT_PERSONAS,
     SUMMARIZE_TOOLS,
     WEB_TOOLS,
     PersonaResolutionError,
     agent_for,
     agent_for_intake,
+    agent_for_owner_reply,
     is_agent,
     is_owner_agent,
+    narrow_for_third_party_note,
 )
+from jbrain.agent.readtools import TOOLS_DIR
+from jbrain.agent.toolfile import load_tool
+from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 
 
-def test_seventeen_agents_are_defined() -> None:
+def test_eighteen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -51,6 +61,7 @@ def test_seventeen_agents_are_defined() -> None:
                 "research_fetch",
                 "jmolt",
                 "jmolt_observer",
+                "note_ingest",
             }
         )
         == AGENT_NAMES
@@ -386,8 +397,11 @@ def test_intake_is_a_capture_only_non_owner_persona() -> None:
 def test_intake_is_not_owner_selectable() -> None:
     """intake is a NON-owner persona: resolvable + pinned, but excluded from the set an
     owner may open a session/task as (it must never land in app.agent_sessions, whose
-    agent CHECK excludes it). is_owner_agent gates the owner session/task routes."""
-    assert AGENT_NAMES - frozenset({"intake"}) == OWNER_AGENTS
+    agent CHECK excludes it). is_owner_agent gates the owner session/task routes.
+
+    OWNER_AGENTS excludes the ENGINE-ONLY personas as well — a different exclusion for a
+    different reason (they are owner-side, they are simply not a person's to pick)."""
+    assert AGENT_NAMES - frozenset({"intake"}) - ENGINE_ONLY_PERSONAS == OWNER_AGENTS
     assert "intake" not in OWNER_AGENTS
     assert is_owner_agent("curator") and is_owner_agent("jerv")
     assert not is_owner_agent("intake")
@@ -402,6 +416,403 @@ def test_agent_for_intake_fails_closed_never_curator() -> None:
     for bad in ("curator", "jerv", "archivist", "research", "nonesuch", ""):
         with pytest.raises(PersonaResolutionError):
             agent_for_intake(bad)
+
+
+# --- note_ingest: the note conversation's closed allowlist (D16) ----------
+#
+# AGENT_INGEST_CONVERSATION_PLAN.md D1/D16: a note conversation is the ordinary agent loop
+# under its OWN closed tool allowlist, never the curator wildcard. W2 ships the mechanism
+# with an empty set (the graph-write tools do not exist yet), so these tests are what make
+# W3's widening deliberate rather than accidental.
+
+# The four verbs D16 names as provably outside the persona. `file_correction` and
+# `add_source_exclusion` write a NOTE that re-enters ingestion, so a hostile note body could
+# launder itself into an owner-attributed source note and a second conversation.
+_FORBIDDEN_FOUR = frozenset(
+    {"file_correction", "add_source_exclusion", "make_intake_link", "remember"}
+)
+
+# Every domain scope a session can hold — the widest a note conversation could ever run at,
+# so the closure below is proven by the ALLOWLIST rule and not by domain invisibility.
+_EVERY_SCOPE = frozenset({"general", "health", "finance", "location", "external", "jmolt"})
+
+
+async def _noop(_args: dict, _ctx: object) -> object:  # pragma: no cover - never dispatched
+    return None
+
+
+def _every_shipped_tool() -> ToolRegistry:
+    """The real registry over every shipped `.tool` sidecar, handlers stubbed. Going
+    through the registry (not the dataclass field) is the point: `allowed_names` is the
+    dispatch-time gate the loop actually consults."""
+    return ToolRegistry(
+        [RegisteredTool(load_tool(p), _noop) for p in sorted(TOOLS_DIR.glob("*.tool"))]
+    )
+
+
+def test_the_profile_carries_the_unattended_set_so_a_forgotten_caller_narrows() -> None:
+    """D8's split is asymmetric on purpose, and this is the asymmetry.
+
+    `AgentProfile.tools` — what every resolution path reads by default — is the
+    UNATTENDED set. The wider one exists only behind `agent_for_owner_reply`, so a caller
+    that never heard of the split (the task runner, a session listing, a future entry
+    point) gets the narrow surface. The other arrangement fails the other way: it would
+    hand `correct_fact` to a pass the owner is not present for, which is exactly the
+    authority D8 withholds."""
+    assert AGENTS["note_ingest"].tools == NOTE_INGEST_UNATTENDED_TOOLS
+    assert agent_for("note_ingest").tools == NOTE_INGEST_UNATTENDED_TOOLS
+    # And the two sets are genuinely different objects, not one aliased twice — the
+    # failure mode where "the split" is a rename.
+    assert NOTE_INGEST_ON_REPLY_TOOLS != NOTE_INGEST_UNATTENDED_TOOLS
+
+
+def test_the_on_reply_set_adds_exactly_the_six_names_and_keeps_the_unattended_six() -> None:
+    """TOOL_SURFACE's on-reply rows, enumerated. A SUPERSET: the reply turn is the same
+    agent finishing the same note, so it keeps the graph writes it was recording with."""
+    assert NOTE_INGEST_ON_REPLY_TOOLS > NOTE_INGEST_UNATTENDED_TOOLS
+    assert {
+        "correct_fact",
+        "merge_entities",
+        "prefs_write",
+        "search",
+        "read_note",
+        "relate",
+    } == NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS
+    # `prefs_read` is in NEITHER (TOOL_SURFACE Cut #1: D15 already injects the document
+    # into the system prompt, so the tool would be a second overlapping memory surface).
+    assert "prefs_read" not in NOTE_INGEST_ON_REPLY_TOOLS
+    # Nothing outward-facing. The owner replying does not sanitize the note body still
+    # sitting in this turn's context, so the trifecta is just as complete on-reply.
+    outward = WEB_TOOLS | GMAIL_TOOLS | {"news_feed", "news_search", "web_fetch", "grokipedia"}
+    assert not (outward & NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def test_agent_for_owner_reply_widens_only_the_note_persona() -> None:
+    """The selector is called unconditionally from `/chat`, so every other persona has to
+    come back byte-identical — otherwise the note split would be a chat-wide change."""
+    assert agent_for_owner_reply("note_ingest").tools == NOTE_INGEST_ON_REPLY_TOOLS
+    # Everything else is the same OBJECT, not merely an equal one.
+    for name in AGENT_NAMES - {"note_ingest"}:
+        assert agent_for_owner_reply(name) is AGENTS[name]
+    # An unknown/malformed stored name still falls back to curator, unwidened — the
+    # fallback must not become a door into the note persona's write set.
+    assert agent_for_owner_reply("no-such-agent") is AGENTS[DEFAULT_AGENT]
+    # The widened profile is otherwise the note persona unchanged: same prompt version,
+    # same empty `extra_tools` (which `_admits` honours AHEAD of the NEVER_DEFAULT gate).
+    widened = agent_for_owner_reply("note_ingest")
+    assert widened.name == "note_ingest"
+    assert widened.version == AGENTS["note_ingest"].version
+    assert widened.extra_tools == frozenset()
+    assert widened.reads_knowledge_base is True
+
+
+def test_the_on_reply_writes_are_never_default_and_the_reads_are_not() -> None:
+    """Constraint 9 at the point it bites: a `mutate`/`sensitive` tool outside
+    NEVER_DEFAULT is handed to the CURATOR by `allow=None` on every ordinary chat turn.
+    Asserted on the three WRITES only — `search`/`read_note`/`relate` are curator's
+    already and belong in its wildcard."""
+    from jbrain.agent.toolregistry import NEVER_DEFAULT
+
+    assert {"correct_fact", "merge_entities", "prefs_write"} <= NEVER_DEFAULT
+    registry = _every_shipped_tool()
+    curator = AGENTS["curator"]
+    wildcard = registry.allowed_names(_EVERY_SCOPE, curator.tools, curator.extra_tools)
+    assert not ({"correct_fact", "merge_entities", "prefs_write"} & wildcard)
+
+
+def test_the_unattended_pass_can_never_reach_an_on_reply_verb() -> None:
+    """The first of the two directions the split has to prove, at the dispatch gate.
+
+    Every shipped sidecar is in this registry, including the three on-reply writes — so
+    the closure is the ALLOWLIST's doing and not an accident of what happens to be
+    wired."""
+    registry = _every_shipped_tool()
+    assert all(n in registry for n in ("correct_fact", "merge_entities", "prefs_write"))
+    unattended = AGENTS["note_ingest"]
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, unattended.tools, unattended.extra_tools)
+        assert admitted == NOTE_INGEST_UNATTENDED_TOOLS
+        assert not (admitted & (NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS))
+
+
+def test_the_reply_turn_admits_the_on_reply_verbs_and_still_nothing_else() -> None:
+    """The other direction: the widened profile really does reach the three writes and
+    the three reads — and reaches nothing beyond its own allowlist, at every scope."""
+    registry = _every_shipped_tool()
+    widened = agent_for_owner_reply("note_ingest")
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, widened.tools, widened.extra_tools)
+        assert admitted == NOTE_INGEST_ON_REPLY_TOOLS
+    # The D16 four stay outside on the reply turn too — the owner replying does not
+    # unlock the verbs that write a note back into ingestion.
+    assert not (_FORBIDDEN_FOUR & NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def test_the_third_party_set_is_the_unattended_write_core_minus_the_owner_channel() -> None:
+    """D10, enumerated. A stranger's words may cause a FACT and nothing else.
+
+    Both graph writes survive, unnarrowed — D10 says intake commits "unrestricted in
+    *what* it may write", and taking `assert_fact` away would be a different decision
+    from the one ratified. What goes is the one verb that is a CHANNEL: `ask_owner`
+    writes a model-authored question, out of stranger-controlled text, into the owner's
+    notes tab in his own agent's voice, and the answer he types is appended to the note
+    as source text and re-ingested."""
+    assert {
+        "resolve_entity",
+        "assert_fact",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    } == NOTE_INGEST_THIRD_PARTY_TOOLS
+    assert {"ask_owner"} == NOTE_INGEST_UNATTENDED_TOOLS - NOTE_INGEST_THIRD_PARTY_TOOLS
+    # A strict subset of BOTH shipped sets, which is what makes it a narrowing rather
+    # than a third surface with its own reach: it can hold nothing the owner's own note
+    # conversation does not already hold.
+    assert NOTE_INGEST_THIRD_PARTY_TOOLS < NOTE_INGEST_UNATTENDED_TOOLS
+    assert NOTE_INGEST_THIRD_PARTY_TOOLS < NOTE_INGEST_ON_REPLY_TOOLS
+
+
+def test_a_third_party_note_never_reaches_an_on_reply_verb_on_either_turn() -> None:
+    """The claim that makes this one set instead of two: it serves the reply turn too.
+
+    D8 widens the reply turn because the owner is the only voice in the room. On a note
+    a stranger wrote he is not — the submitted body is turn 0 and is still in context —
+    so the three on-reply WRITES stay out with him present. `correct_fact` is the sharp
+    one: its `decide()` branch force-supersedes and PINS, so a fact it writes is one no
+    later note can supersede, past every confidence guard in the arbiter."""
+    registry = _every_shipped_tool()
+    # The verbs are all really in this registry, so the closure below is the allowlist's
+    # doing and not an accident of what happens to be wired.
+    assert all(n in registry for n in ("correct_fact", "merge_entities", "prefs_write"))
+    narrowed = narrow_for_third_party_note(agent_for_owner_reply("note_ingest"))
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+        assert admitted == NOTE_INGEST_THIRD_PARTY_TOOLS
+        assert "ask_owner" not in admitted
+        assert not (admitted & (NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_THIRD_PARTY_TOOLS))
+    # The D16 four are outside it too, so a stranger's body cannot reach the verbs that
+    # would write a note back into ingestion under the owner's own attribution.
+    assert not (_FORBIDDEN_FOUR & NOTE_INGEST_THIRD_PARTY_TOOLS)
+
+
+def test_the_third_party_narrowing_runs_last_and_leaves_every_other_persona_alone() -> None:
+    """It UNDOES the on-reply widening, so ordering is load-bearing: applied before
+    `agent_for_owner_reply` it would be silently overwritten by it, and the reply turn on
+    a stranger's note would hold `prefs_write` while every test of the narrowing passed.
+
+    Idempotent, and identity on every other persona, so `/chat` can apply it without a
+    persona test at the call site that a later edit could drop."""
+    widened = agent_for_owner_reply("note_ingest")
+    once = narrow_for_third_party_note(widened)
+    assert once.tools == NOTE_INGEST_THIRD_PARTY_TOOLS
+    assert narrow_for_third_party_note(once).tools == NOTE_INGEST_THIRD_PARTY_TOOLS
+    # The other order is the bug this asserts against.
+    assert agent_for_owner_reply(once.name).tools == NOTE_INGEST_ON_REPLY_TOOLS
+    # Otherwise the note persona unchanged: same prompt version, same empty extra_tools
+    # (which `_admits` honours AHEAD of the NEVER_DEFAULT gate), same KB access.
+    assert once.name == "note_ingest"
+    assert once.version == AGENTS["note_ingest"].version
+    assert once.extra_tools == frozenset()
+    assert once.reads_knowledge_base is True
+    for name in AGENT_NAMES - {"note_ingest"}:
+        assert narrow_for_third_party_note(AGENTS[name]) is AGENTS[name]
+    assert narrow_for_third_party_note(agent_for("no-such-agent")) is AGENTS[DEFAULT_AGENT]
+
+
+def test_an_emr_note_narrows_both_turns_at_the_dispatch_gate() -> None:
+    """W4/D9's narrowing, asserted where the loop actually asks — over every shipped
+    sidecar, at every scope, on BOTH turns.
+
+    The reply turn is the one that matters most and the one the split's own asymmetry
+    does not cover: `agent_for_owner_reply` WIDENS, so a caller that forgot the EMR
+    narrowing would hand a note the deterministic parser owns the full write surface.
+    `correct_fact` is the sharpest of the four — at an empty address it commits active +
+    PINNED, and a pinned lab head makes every later import of that reading `held`."""
+    from jbrain.agent.agents import NOTE_GRAPH_WRITE_TOOLS, narrow_for_emr
+
+    registry = _every_shipped_tool()
+    assert all(n in registry for n in NOTE_GRAPH_WRITE_TOOLS)  # not a wiring accident
+    for base in (AGENTS["note_ingest"], agent_for_owner_reply("note_ingest")):
+        narrowed = narrow_for_emr(base)
+        for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+            admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+            assert not (admitted & NOTE_GRAPH_WRITE_TOOLS)
+            # ...and nothing else was lost with them: the thread can still ask, read the
+            # graph, and be told what the deterministic parse did.
+            assert admitted == (base.tools or frozenset()) - NOTE_GRAPH_WRITE_TOOLS
+            assert "ask_owner" in admitted
+
+
+def test_a_note_that_is_both_third_party_and_emr_owned_gets_the_intersection() -> None:
+    """W4's two halves over ONE note, which is the case neither half could write alone.
+
+    The predicates are independent and a note can satisfy both: an approved guided-intake
+    submission enacts into an `untrusted_origin` note (D10), and if the owner filed that
+    submission to health / `Records` with the archive or PDF attached, `emr_owned` reads
+    it as importer-owned too (D9). Nothing forbids that note; what must not happen is the
+    turn coming out WIDER than either narrowing alone. Getting it wrong is silent — the
+    thread looks identical, and the only visible difference is a fact written onto a note
+    the deterministic parse is authoritative for, out of a stranger's text.
+
+    So the merged answer is the INTERSECTION of the two, and the composition is a property
+    of the functions rather than of the call order: `narrow_for_emr` SUBTRACTS and
+    `narrow_for_third_party_note` INTERSECTS, so they commute. Assigning the third-party
+    set outright — the shape the intake half shipped, correct while it was alone — would
+    hand `resolve_entity` and `assert_fact` straight back whenever it ran second, which is
+    exactly the order `/chat` and the unattended runner both use."""
+    from jbrain.agent.agents import NOTE_GRAPH_WRITE_TOOLS, narrow_for_emr
+
+    both = NOTE_INGEST_THIRD_PARTY_TOOLS - NOTE_GRAPH_WRITE_TOOLS
+    # Enumerated, not derived: what a stranger's words on an EMR note may reach is the two
+    # entity reads and the clock. No write verb, and no channel to the owner.
+    assert both == {"find_entity", "read_entity", "current_time"}
+
+    registry = _every_shipped_tool()
+    for base in (AGENTS["note_ingest"], agent_for_owner_reply("note_ingest")):
+        # Both orders, because two call sites apply them and a third could pick either.
+        emr_then_third = narrow_for_third_party_note(narrow_for_emr(base))
+        third_then_emr = narrow_for_emr(narrow_for_third_party_note(base))
+        assert emr_then_third.tools == both
+        assert third_then_emr.tools == both
+        for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+            for narrowed in (emr_then_third, third_then_emr):
+                admitted = registry.allowed_names(scopes, narrowed.tools, narrowed.extra_tools)
+                assert admitted == both
+                # Neither half's own guarantee is weakened by the other being applied.
+                assert not (admitted & NOTE_GRAPH_WRITE_TOOLS)
+                assert "ask_owner" not in admitted
+                assert not (admitted - NOTE_INGEST_THIRD_PARTY_TOOLS)
+                assert not (_FORBIDDEN_FOUR & admitted)
+    # Applying either one twice, or in either order, is the same set: a caller may narrow
+    # unconditionally without knowing what another caller already did.
+    once = narrow_for_third_party_note(narrow_for_emr(AGENTS["note_ingest"]))
+    assert narrow_for_emr(once).tools == both
+    assert narrow_for_third_party_note(once).tools == both
+
+
+def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> None:
+    """`tools` is a frozenset, never None. `None` is the curator wildcard — the single
+    thing D16 forbids for the persona that will hold graph writes — and the difference is
+    invisible at the call site (`allow is not None` is the whole gate)."""
+    note = AGENTS["note_ingest"]
+    assert note.tools is not None
+    assert isinstance(note.tools, frozenset)
+    assert note.tools == NOTE_INGEST_UNATTENDED_TOOLS
+    # W3's whole unattended set, and nothing else: two graph writes, `ask_owner`, two
+    # entity reads, the clock. Enumerated rather than derived, so a tool arrives here by
+    # being named and never by inheriting anything.
+    assert note.tools == {
+        "resolve_entity",
+        "assert_fact",
+        "ask_owner",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    }
+    # `extra_tools` is admitted AHEAD of the web / NEVER_DEFAULT gates, so it is the one way
+    # to hand this persona a tool without touching its allowlist. It stays empty in W3 too.
+    assert note.extra_tools == frozenset()
+    # W3: True, and the flip is what makes constraint 2 real — a False agent runs with EMPTY
+    # read scopes, under which the domain-visible entity reads cannot reach a row and there
+    # are no scopes to narrow to `(note_domain, 'general')`.
+    assert note.reads_knowledge_base is True
+    # 2x, matching the KB-less children: inert while the persona is tool-less, but W3's
+    # resolve/assert chain runs many calls per note and a truncated turn is a correctness
+    # problem (plan constraint 6: the settle sweep must not run on one), not a short answer.
+    assert note.budget_multiplier == 2
+
+
+def test_note_ingest_admits_only_its_allowlist_through_the_real_registry() -> None:
+    """The closure, proven at the dispatch gate rather than on the dataclass: at every
+    scope, over every shipped sidecar, the admitted set is EXACTLY the allowlist and never
+    more. Rule 2 of `_admits` (`allow is not None and name not in allow`) is what closes
+    it, and it fires BEFORE the web and NEVER_DEFAULT gates — so the closure does not
+    depend on a tool's permission class, its domains, or its NEVER_DEFAULT membership.
+
+    This registry globs the sidecar directory, so it holds the graph writes too — which
+    is the stricter test: even where their sidecars ARE present, the closure holds. The
+    registry `analysis.converse` actually builds is narrower still (the same six, with
+    the graph writes bound to one note), and `readtools.build_registry` drops those two
+    sidecars outright."""
+    registry = _every_shipped_tool()
+    note = AGENTS["note_ingest"]
+    assert note.tools is not None  # the wildcard would make every assertion below vacuous
+    assert len(registry) > 100  # the real sidecar set, not a two-tool stub
+
+    # Including NO scopes: every one of the six declares no `domains`, so registry
+    # VISIBILITY was never what the `reads_knowledge_base` flip bought — the schemas the
+    # model is offered are the same six at every scope. What the flip bought is at the
+    # DB: `read_context(pid, ())` is `owner_scoped` with an empty scope list, so
+    # `has_domain_scope` is false for every domain and the entity reads would answer
+    # "nothing in scope" for every name in the note. RLS is the firewall; the allowlist
+    # is the surface.
+    for scopes in (frozenset(), frozenset({"general"}), _EVERY_SCOPE):
+        assert registry.allowed_names(scopes, note.tools, note.extra_tools) == note.tools
+        offered = [t.name for t in registry.schemas_for(scopes, note.tools, note.extra_tools)]
+        assert sorted(offered) == sorted(note.tools)
+
+
+def test_note_ingest_cannot_reach_the_four_verbs_d16_names() -> None:
+    """`file_correction`, `add_source_exclusion`, `make_intake_link` and `remember` are
+    REAL registered tools that the curator wildcard does admit — they are outside this
+    persona because its allowlist excludes them, not because they are absent from the box.
+    That contrast is the whole content of D16."""
+    registry = _every_shipped_tool()
+    note, curator = AGENTS["note_ingest"], AGENTS["curator"]
+    assert all(name in registry for name in _FORBIDDEN_FOUR)
+
+    admitted = registry.allowed_names(_EVERY_SCOPE, note.tools, note.extra_tools)
+    assert not (_FORBIDDEN_FOUR & admitted)
+    # The wildcard reaches all four — what a note conversation would inherit without D16.
+    wildcard = registry.allowed_names(_EVERY_SCOPE, curator.tools, curator.extra_tools)
+    assert wildcard >= _FORBIDDEN_FOUR
+    # And the closure holds for the classes the wildcard itself excludes, so no future
+    # loosening of the web / NEVER_DEFAULT gates can leak one in through the back.
+    assert not ({"web_search", "web_fetch", SPAWN_TOOL, "deep_produce"} & admitted)
+
+
+def test_agent_for_resolves_note_ingest_and_never_the_curator_fallback() -> None:
+    """`agent_for` falls back to the KB-capable curator — the WILDCARD persona — on any
+    unknown name. A typo between this profile's key and the DB CHECK would therefore hand a
+    note conversation every tool D16 exists to withhold, silently. Pin the exact key."""
+    profile = agent_for("note_ingest")
+    assert profile is AGENTS["note_ingest"]
+    assert profile.name == "note_ingest"
+    assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS  # a closed set, not curator's None
+    assert profile.tools is not None
+    assert is_agent("note_ingest")
+
+
+def test_note_ingest_is_owner_side_and_never_spawnable() -> None:
+    """It mints an app.agent_sessions row, so it must be STORABLE owner-side (migration
+    0192 widens both agent CHECKs to match; test_agent_session_rls/test_tasks_rls iterate
+    STORABLE_OWNER_AGENTS against the DB, which is what keeps AGENTS and the CHECK from
+    drifting).
+
+    It is NOT in SUBAGENT_PERSONAS: a spawnable note-ingest persona would be a path for any
+    other agent to reach whatever W3 grants this one — jerv could spawn a child holding the
+    graph writes. Nothing spawns a note conversation; the ingest path opens it."""
+    assert "note_ingest" in STORABLE_OWNER_AGENTS
+    assert "note_ingest" not in NON_OWNER_PERSONAS
+    assert "note_ingest" not in SUBAGENT_PERSONAS
+
+
+def test_note_ingest_is_engine_only_and_not_selectable() -> None:
+    """ASSISTANT.md says the note persona "is not selectable — the engine opens it, never
+    a picker", and this is what makes that true rather than aspirational.
+
+    `POST /sessions {"agent": ...}` and the task launcher both gate on OWNER_AGENTS
+    (`api/sessions.py`, `api/tasks.py`), so leaving `note_ingest` in that set accepted a
+    hand-started note persona: no note, no frame, no `note_conversations` row, and
+    owner-chosen read scopes. Inert today behind the empty allowlist — and exactly the
+    door W3 must not find already open when it fills that allowlist with graph writes."""
+    assert "note_ingest" in ENGINE_ONLY_PERSONAS
+    assert "note_ingest" not in OWNER_AGENTS
+    assert not is_owner_agent("note_ingest")
+    # The engine-only set narrows what a person may pick, and nothing else: every other
+    # owner persona is still selectable, and the storable set is unchanged.
+    assert is_owner_agent("curator") and is_owner_agent("archivist")
+    assert STORABLE_OWNER_AGENTS == AGENT_NAMES - NON_OWNER_PERSONAS
 
 
 def test_agent_for_falls_back_to_curator() -> None:
@@ -488,6 +899,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "jmolt_observer": (
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
+        ),
+        "note_ingest": (
+            "agent-note-ingest-v3",
+            "d3bace60e9d1fbf279ece138fa8360d8193446c23ea1665c0a9eaebb9ec679f5",
         ),
     }
     assert set(pins) == AGENT_NAMES

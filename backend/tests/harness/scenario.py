@@ -17,8 +17,8 @@ SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 @dataclass(frozen=True)
 class Step:
     """One note: its capture metadata plus the extraction a model would emit,
-    and (optionally) the Integrator intent — the agent's resolution/supersession
-    judgment over that extraction."""
+    and (optionally) the graph-write tool arguments the agent would send for
+    it."""
 
     body: str
     extraction: dict[str, Any]
@@ -33,15 +33,15 @@ class Step:
     # extraction matters. This is how a scenario scripts "the model now reads
     # the same note differently" (re-extraction after an edit or upgrade).
     reanalyze_step: int | None = None
-    # The agent's IntegrationIntent for this step. Omit it and the runner derives
-    # a faithful default (name-match resolution against the live graph, every
-    # surface-attested fact committed) — enough for scenarios whose point is the
-    # arbiter/apply behavior, not a specific coreference call. Author it
-    # explicitly when the resolution itself is under test (cross-subject holds,
-    # an agent picking an existing entity by id, a proposed merge). Existing-mode
-    # resolutions and merge/distinct pairs reference entities by NAME; the runner
-    # resolves each to its live id at step time. See _compile_intent.
-    intent: dict[str, Any] | None = None
+    # The `resolve_entity` / `assert_fact` ARGUMENTS this step's agent sends,
+    # `{"entities": [...], "facts": [...]}`, batched by the runner at the tools'
+    # own ceilings. Omit it and the runner derives them faithfully from the
+    # extraction (every named surface resolved, every fact asserted, each quoting
+    # its subject's own span) — enough for scenarios whose point is the write
+    # path, not a specific model call. Author it only when the default cannot
+    # express the case under test: a deliberately fumbled `quote`, or an object
+    # the model chose to leave as a literal. See runner._tool_calls.
+    tool_calls: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ def load_scenario(path: Path) -> Scenario:
                 domain=s.get("domain", "general"),
                 created_at=s.get("created_at", "2026-06-10T12:00:00-06:00"),
                 reanalyze_step=s.get("reanalyze_step"),
-                intent=s.get("intent"),
+                tool_calls=s.get("tool_calls"),
             )
             for s in raw["steps"]
         ],
@@ -99,6 +99,15 @@ class FactRow:
     chained: bool
     pinned: bool
     domain: str
+    closed: bool
+    """Whether the fact's interval has an END (`valid_to IS NOT NULL`).
+
+    Added with `assert_fact` v3's `when_end`: before it, the only column a scenario
+    could read a closed interval out of was `value_json`, and an edge written through
+    the tool stores none — so `hist_retrospective_closes_open_interval` had to assert
+    the word "ended" in a payload the write path never produces. The two-axis model
+    (current = active AND valid_to IS NULL) makes this the column that actually says
+    it."""
 
 
 @dataclass
@@ -144,6 +153,8 @@ def _fact_matches(row: FactRow, spec: dict[str, Any]) -> bool:
         if key == "status" and row.status != want:
             return False
         if key == "chained" and row.chained != want:
+            return False
+        if key == "closed" and row.closed != want:
             return False
         if key == "pinned" and row.pinned != want:
             return False

@@ -5096,6 +5096,119 @@ button.small {
   margin: 0;
 }
 
+/* "Answers you gave": the D6 clarification eraser, at the foot of the Note tab
+   (AGENT_INGEST_CONVERSATION_PLAN D6 — W2's "the wave that ships the writer ships the
+   eraser"). Quiet by construction: collapsed, and absent for a note with no blocks,
+   which is nearly every note. The blocks themselves still render as prose in the body
+   above — D6 changes no screen — this is only where their ids become reachable. */
+
+.clar-panel {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.clar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  text-align: left;
+}
+
+.clar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.clar-hint {
+  margin: 4px 0 10px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.clar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clar-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+}
+
+.clar-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clar-q {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-a {
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+
+.clar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.clar-when {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The tap-again confirm every destructive act in the app uses (DESIGN.md "Note view").
+   Erasing re-drives ingestion and, unlike a note delete, is not even soft — so the
+   armed label spells out the consequence rather than saying "tap again" alone. */
+.clar-erase {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-erase.clar-armed {
+  border-color: var(--rose);
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.clar-erase:disabled {
+  opacity: 0.5;
+}
+
 /* Attachments tab: manifest list (docs/reference/DESIGN.md "Note view"). */
 
 .tab-count {
@@ -6569,6 +6682,74 @@ button.small {
   padding-right: 4px;
   color: var(--text-3);
   font-size: var(--fs-title);
+}
+
+/* ----- Notes tab (AGENT_INGEST_CONVERSATION_PLAN D4; binding mock
+   docs/mocks/agent-ingest-inbox/a-inbox-holds.html) — a row is a REDIRECT. It reuses
+   the shipped .rrow2/.rrow-open/.rrow-chev row shell wholesale; what is different is
+   only WHAT it carries, because the answer controls the reviewed draft had were
+   removed by the ruling. ----- */
+.nrow-src {
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+/* the note as captured — quoted, so it reads as the owner's words rather than the
+   agent's, and clamped so a long note cannot push the question off the row. */
+.nrow-quote {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.nrow-quote::before {
+  content: "“";
+}
+.nrow-quote::after {
+  content: "”";
+}
+.nrow-ask {
+  font-size: var(--fs-note);
+  color: var(--text);
+  line-height: 1.5;
+}
+.nrow-meta {
+  flex-wrap: wrap;
+}
+.nchip {
+  font-size: var(--fs-micro);
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.nchip-ok {
+  background: var(--green-tint);
+  color: var(--text);
+}
+.nchip-work {
+  background: var(--steel-tint);
+  color: var(--text);
+}
+.nchip-ask {
+  background: var(--amber-tint);
+  color: var(--text);
+}
+/* the decided log's way back into the wiki tab — the same quiet sentence register the
+   empty lanes use, not a third segment (the two tabs are the ruling). */
+.rdecided-link {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  background: none;
+  border: none;
+  text-align: center;
+  cursor: pointer;
 }
 
 /* A thin brand rail flags inference rows so the list carries intentional
@@ -9144,6 +9325,89 @@ button.small {
   background: transparent;
   color: var(--text-3);
   font-weight: 400;
+}
+
+/* the "entity modified" rung (AGENT_INGEST_CONVERSATION_PLAN D3) — what a write tool
+   actually did to the graph, inside the step that did it. Same 23px result gutter and
+   same weights as the step's other rungs: this is the Worked block's register, not a
+   card of its own. */
+.fb-shell .fbw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 23px;
+  list-style: none;
+}
+.fb-shell .fbw-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fb-shell .fbw-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10.5px;
+}
+/* what became of the write. Tinted ground with the label in --text (the shipped
+   seg-active recipe), never an accent-coloured word on its own — the WORD is what
+   carries the state, the tint only reinforces it. */
+.fb-shell .fbw-verb {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.fb-shell .fbw-row.fbw-replaced .fbw-verb {
+  background: var(--steel-tint);
+}
+.fb-shell .fbw-row.fbw-held .fbw-verb {
+  background: var(--amber-tint);
+}
+/* the domain, as a dot AND its name — D3's "never colour alone" is the firewall being
+   legible, so the word is not optional decoration beside the dot. */
+.fb-shell .fbw-dom {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+}
+.fb-shell .fbw-src {
+  color: var(--text-3);
+}
+.fb-shell .fbw-row .fact-edge {
+  font-size: 12px;
+}
+.fb-shell .fbw-stmt {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.fb-shell .fbw-row .rdiff {
+  margin-top: 3px;
+}
+.fb-shell .fbw-trunc {
+  padding-left: 23px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--amber);
+}
+/* the row's own one-line summary of the write — the step's count-chip slot, so it
+   truncates with the row rather than wrapping it on a phone. */
+.fb-shell .fbw-cnt {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fbw-cnt.fbw-held {
+  color: var(--amber);
+}
+.fb-shell .fbw-cnt.fbw-failed {
+  color: var(--rose);
 }
 
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
@@ -25120,9 +25384,18 @@ button.task-band:active {
   font-weight: 640;
   margin: 0;
 }
-/* The tab strip is the shared `.seg-tabs` control (see the session list); what is left
-   here is only the screen's own scroll body — `.subscreen` is a fixed flex column, so
-   the content pane is what scrolls, never the shell. */
+/* The tab strip is the shared `.seg-row`/`.seg` control — the one the job row inside a
+   radio (`.sdr-jobs`) uses, and this supplies only the accent its tint reads from, in the
+   same two lines that file does. Two tab-shaped rows a thumb apart on one screen were
+   drawn two different ways before this; nothing here restyles the control itself. */
+.radio-tabs {
+  --mode: var(--accent);
+  --mode-tint: var(--accent-tint);
+  margin-bottom: 11px;
+}
+
+/* what is left here is only the screen's own scroll body — `.subscreen` is a fixed flex
+   column, so the content pane is what scrolls, never the shell. */
 .radio-body {
   flex: 1;
   overflow-y: auto;
@@ -25608,43 +25881,78 @@ button.task-band:active {
    question"), and a near-identical clone under a different class name would have slipped
    past that test while being exactly what it was written against. Only the count pill and
    the tighter spacing are new. */
+/* THE COMPACT VARIANT (DESIGN.md: "compact-variant rows may reduce to 36px height but
+   never shrink tap areas below 44px including padding"). Measured on the owner's phone,
+   these two rows plus their labels ate roughly a third of the screen before the first
+   station appeared — on a screen whose whole job is the list underneath them.
+   36px painted, 44px live, and the 8px between rows is exactly what the pads claim, so
+   two neighbouring filters can never overlap into one another's target. */
 .aprs-ranges {
-  margin-bottom: 9px;
+  margin-bottom: 8px;
+  /* The hit pad below reaches past the pill, and `.seg-tabs` clips to its radius — which
+     clips hit-testing too, not only paint. So this row keeps the radius on its segments
+     (next rule) instead of on the container. */
+  overflow: visible;
 }
-/* The house control is ~31px tall repo-wide; on this screen it is the primary filter and
-   sits next to the chips, so it gets the phone tap target rather than matching a
-   deviation. */
 .aprs-ranges .seg-tab {
-  min-height: 44px;
+  position: relative;
+  min-height: 36px;
+  font-size: var(--fs-micro);
+}
+/* What `overflow: hidden` was doing for the container: without it the active segment's
+   tint squares off the pill's rounded ends. Inset by the container's 1px border. */
+.aprs-ranges .seg-tab:first-child {
+  border-radius: calc(var(--r-seg) - 1px) 0 0 calc(var(--r-seg) - 1px);
+}
+.aprs-ranges .seg-tab:last-child {
+  border-radius: 0 calc(var(--r-seg) - 1px) calc(var(--r-seg) - 1px) 0;
+}
+/* The 8px the row gave up, handed back as tap area it does not have to paint. Invisible,
+   out of flow, and part of its own button — so the target is 44px while the control reads
+   36px. The repo's other answer to this (`button.vitals`, `.note-menu-btn`) is transparent
+   padding plus a negative margin, which cannot work for either of these: the segment is
+   inside a clipping pill, and the chips WRAP, where negative margins would pull two rows
+   of targets through each other. */
+.aprs-ranges .seg-tab::before,
+.aprs-chip::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
 }
 .seg-count {
   font-size: 10.5px;
   color: var(--text-3);
 }
+/* The counts are the reason these chips are worth their space, so they come UP to the
+   type scale's floor as the rows come down — scoped, because `.seg-count` is shared. */
+.aprs-ranges .seg-count {
+  font-size: var(--fs-micro);
+}
 .seg-tab.on .seg-count {
   color: inherit;
 }
 
+/* Row-gap 8px is load-bearing: it is what the two chip rows' hit pads occupy when the row
+   wraps. Column-gap can be tighter — nothing extends sideways. */
 .aprs-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 11px;
+  gap: 8px 6px;
+  margin-bottom: 8px;
 }
 .aprs-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  /* 44px of tap target on a phone (DESIGN.md), even though the pill reads smaller. A
-     filter you have to aim at twice is a filter you stop using. */
-  min-height: 44px;
-  padding: 5px 12px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 .aprs-chip[aria-pressed="true"] {
@@ -25653,11 +25961,29 @@ button.task-band:active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .aprs-chip-n {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 .aprs-chip[aria-pressed="true"] .aprs-chip-n {
   color: inherit;
+}
+/* The provenance chips share the row with the kinds, so they carry the SAME tints the
+   packet rows' provenance badge does — the chip that filters "gated" looks like the
+   "gated" badge the reader is filtering on, which is what tells the two dimensions apart
+   in one row without a divider that would land mid-wrap. */
+.aprs-chip-arr.b-direct {
+  --chip: var(--ok, var(--accent));
+}
+.aprs-chip-arr.b-gated {
+  --chip: var(--text-2);
+}
+.aprs-chip-arr.b-rf {
+  --chip: var(--accent);
+}
+.aprs-chip-arr[aria-pressed="true"] {
+  border-color: var(--chip);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
 }
 
 .aprs-count {
@@ -26455,4 +26781,529 @@ button.wf-sigpill {
 .tv-swap[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* The filter width, under the mode it belongs to (docs/mocks/bandwidth, shape D).
+   Inside the mode button rather than beside it: mode and bandwidth are one setting to
+   the owner — "AM, 6 kHz wide" — and two controls for one setting is what shape D was
+   chosen to avoid. */
+.sdr-modes .seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.15;
+}
+.sdr-bw {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.sdr-modes .seg-on .sdr-bw {
+  color: var(--accent);
+}
+
+/* The passband's draggable edges, over the tuning view's canvas. Handles rather than a
+   slider: the value being set is WHERE THE EDGE SITS on this picture, and a slider
+   somewhere else would make the owner map a number onto the interference by eye. */
+.sdr-tuneview {
+  position: relative;
+  touch-action: none;
+}
+.sdr-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The TOUCH target stays wide — a 12px one on a 32 kHz picture is a miss most tries.
+     What shrank is the grip drawn inside it, which at 12x28 covered a chunk of the trace
+     it is meant to sit beside and read as furniture rather than as an edge. */
+  width: 28px;
+  margin-left: -14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Comfortably past the 44px minimum in the tall direction, and 28px wide so two
+     handles on a narrow AM filter do not overlap into one unhittable target. */
+  min-height: 44px;
+}
+.sdr-edge::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  margin-top: -9px;
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.95;
+}
+.sdr-edge:disabled {
+  cursor: default;
+}
+.sdr-edge:disabled::after {
+  opacity: 0.35;
+}
+.sdr-edge-on::after,
+.sdr-edge:focus-visible::after {
+  opacity: 1;
+  /* Grows only while held, so the grip is findable under a fingertip without being
+     furniture the rest of the time. */
+  box-shadow: 0 0 0 5px var(--steel-tint);
+}
+.sdr-edge-live {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 6px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--scrim);
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+/* The tuning view's width, which doubles as the zoom. Styled as text that can be
+   tapped rather than as a button: it sits inside a label, and a real button there
+   would read as chrome on a sheet that is already tall. The dotted underline is the
+   only affordance it needs — the row it labels is the thing that changes. */
+.tv-zoom {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--text-3);
+}
+.tv-zoom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- SDR recordings: the library and the trim sheet ------------------------------- */
+/* Binding specs: docs/mocks/recording/a-tape-deck.html (rows) and d-trim-sheet.html
+   (the header's disk line, the trailing scissors column, the whole trim sheet).
+   Sized against the neighbouring radio surfaces — .radio-body already gives a 14px
+   gutter, so nothing here carries a horizontal margin of its own. */
+.sdr-act-record {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+/* Armed INVERTS rather than merely brightening: the button is about to do something,
+   and a tint that only deepens is the state people tap through without reading. */
+.sdr-act-record.armed {
+  color: var(--bg);
+  background: var(--rose);
+}
+.sdr-act-record .sdr-rec-el {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.sdr-act-record small {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-disk {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.rec-freed {
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.rec-bar {
+  height: 5px;
+  margin: 6px 2px 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rec-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-day {
+  margin: 12px 2px 6px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+/* The row is the flex container, so the trailing action sits BESIDE the tappable body
+   rather than wrapping under it, and the progress bar spans the full width below both. */
+.rec-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.rec-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px 11px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* Its own control beside the row, not a glyph inside it: the circle plays and the row
+   expands, and one button that guessed from the tap's coordinates would have one
+   accessible name for two different actions. */
+.rec-play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: center;
+  width: 38px;
+  height: 38px;
+  margin-left: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.rec-row-on .rec-play {
+  border-color: var(--accent);
+  background: var(--steel-tint);
+  color: var(--accent);
+}
+.rec-who {
+  flex: 1;
+  min-width: 0;
+}
+.rec-who b {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.rec-unit {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* Scoped to a class, not `.rec-who span`: an element+class selector outranks `.rec-chip`,
+   which quietly turned the mode badge and the MHz unit into full-width blocks. */
+.rec-who .rec-prev {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.rec-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  color: var(--text-2);
+  vertical-align: 1px;
+}
+.rec-chip-cut {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  color: var(--green);
+}
+.rec-meta {
+  flex: none;
+  text-align: right;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 44px and divided by a hairline: the whole point of the column is that the one
+   irreversible action on this surface cannot be hit by a thumb aiming at the row. */
+.rec-trim {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  width: 44px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.rec-prog {
+  flex: 0 0 100%;
+  height: 3px;
+  background: var(--surface-2);
+}
+.rec-prog i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-body {
+  flex: 0 0 100%;
+  padding: 0 12px 6px;
+  border-top: 1px solid var(--border);
+}
+.rec-tx {
+  margin: 10px 0 2px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+/* The house action list (.rl-action), so Delete arms and confirms the same way it does
+   in the Research Library rather than inventing a second ceremony. An <a> is in the row
+   because a download is a URL the browser handles, never a request through the client. */
+.rec-body .rl-action {
+  text-decoration: none;
+  font-size: var(--fs-secondary);
+}
+.rec-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--accent);
+}
+
+.trim-sub {
+  margin: 0 0 14px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* The waveform is the argument: radio has real silence in it, so the part worth
+   keeping is VISIBLE. Its ground is dark in both themes — a level envelope on a white
+   card reads as a chart, not as tape. */
+.trim-wave {
+  position: relative;
+  height: 118px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a0c10;
+  overflow: hidden;
+  touch-action: none;
+}
+.trim-bar {
+  position: absolute;
+  bottom: 50%;
+  width: 2px;
+  background: var(--text-3);
+  opacity: 0.45;
+  transform: translateY(50%);
+}
+.trim-bar.in {
+  background: var(--green);
+  opacity: 1;
+}
+.trim-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(14, 15, 17, 0.55);
+}
+.trim-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  margin-left: -17px;
+  touch-action: none;
+}
+.trim-grip::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--green);
+}
+.trim-grip::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  margin-top: -16px;
+  width: 12px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--green);
+}
+.trim-grip:focus-visible {
+  outline: none;
+}
+.trim-grip:focus-visible::after {
+  box-shadow: 0 0 0 4px var(--green-tint);
+}
+.trim-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.trim-at {
+  position: absolute;
+  top: 6px;
+  font-size: 9px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-at-in {
+  left: 6px;
+}
+.trim-at-out {
+  right: 6px;
+}
+.trim-marks {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 2px 0;
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-nudge {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.trim-nudge button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.trim-sums {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.trim-sums div {
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.trim-sums span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.trim-sums b {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-note);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.trim-sums .trim-was {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.trim-gain {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--green-tint);
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.trim-gain b {
+  font-variant-numeric: tabular-nums;
+}
+.trim-error {
+  margin: 10px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--danger);
+}
+.trim-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.trim-acts button {
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  cursor: pointer;
+}
+/* Green because it is the SAVE, per the house green=save rule — and 1.5× wide because
+   it is the one button on this sheet that cannot be undone. */
+.trim-acts .trim-keep {
+  flex: 1.5;
+  border-color: var(--green);
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.trim-acts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.trim-foot {
+  margin: 12px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.trim-foot b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+/* The waveform's ground stays dark in LIGHT theme too — a level envelope on a white
+   card reads as a chart rather than as tape, and the green selection needs the contrast.
+   Both values are the mock's, and both are picture content rather than chrome. */
+[data-theme="light"] .trim-wave {
+  background: #0e1218;
+}
+[data-theme="light"] .trim-drop {
+  background: rgba(0, 0, 0, 0.42);
 }

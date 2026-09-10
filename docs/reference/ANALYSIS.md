@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-09 — LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-09-09 — **The note conversation's tool-call ledger now records BOTH turn paths** (`AGENT_INGEST_CONVERSATION_PLAN.md` W4c/1). `record_tool_call` had two callers — the worker's unattended pass and `ask_owner`'s self-record — so a `resolve_entity` / `assert_fact` / `correct_fact` on the owner's REPLY turn (an ordinary `/chat` turn) reached the graph and the D3 chip and never `app.note_conversation_tool_calls`. `NoteConversationRepo.writes()` was therefore a whole-PASS share, and wiring constraint 6's `settle_note(touched=writes().facts)` over it would have retracted every unpinned fact the owner's own answer just added. The fix records the reply turn at the same TURN SEAM the pass records at rather than pushing the recorder down into the shared tool dispatch: the dispatch serves every agent and knows nothing of note conversations, so a hook there would have to be threaded through every tool, where the seam keeps the two paths symmetric — one `ledger_rows` fold, one `record_tool_call` loop, one bind-by-run-id, now shared and living in `analysis/clarify.py` (the reply path's existing note-conversation seam, and the half `api/agent.py` can import without dragging the worker's turn runner into the API process). `api/agent.py` calls `clarify.record_reply_writes` in the same `finally` as `close_owner_reply` and BEFORE it, since the sweep will fire on the state that call sets. A ledger write that fails never fails the owner's turn — the writes already committed and a 500 would neither undo them nor recover the row — but it degrades the close to `record_failed`, which lands the conversation `failed`, the one state the sweep does not run on; the unattended pass answers its own recorder failure the same way. `ask_owner` still self-records inside its own transaction and `SELF_RECORDED_TOOLS` still skips it, so a reply turn that ends by asking AGAIN gets one row, not two. **The sweep itself is still unwired**, and who owns a note's whole-note settle is still undecided (W4c/2 and W4c/3): `integrate_note` remains the sole producer, and W5a stays blocked. Prior: **An accepted merge card is enacted on the pair as it stands now, not as the card was written.** `resolve_review`'s `merge_proposal` accept arm folded `entity_b` into the payload's `entity_a` verbatim, so two overlapping cards resolved in sequence repointed the second pair's rows onto a tombstone — a merge that silently undid the merge before it. `_accept_merge` now asks the scope guard first, then resolves each side through `entities.live_entity_by_id`, then `are_distinct`, then re-ranks with `plan_merge`, and records the pair it actually FOLDED so `_reverse_effects` stays exact ("Alias resolution & separation" below has the decision and why the inbox redirects where the agent's `merge_entities` no-ops). Prior: **A note a STRANGER wrote runs on a third tool set** (`AGENT_INGEST_CONVERSATION_PLAN.md` D10, W4's intake half). Nothing had to be wired to put intake on the conversation: `ingest/pipeline.py` emits `note.ingested` on every settled ingest whatever the provenance, so the `untrusted_origin` note an approved submission enacts into has been opening a `note_converse` thread since W2 — and W3 gave that thread the write verbs, which made plan risk 1 live and unmarked. What W4 adds is the difference. `agents.NOTE_INGEST_THIRD_PARTY_TOOLS` is the unattended six minus `ask_owner`, and it serves BOTH turns: a stranger's words may cause a FACT and nothing else. `resolve_entity`/`assert_fact` are untouched (D10: unrestricted in *what* it may write, same budgets, same `commit_facts`, same floor, same span check). `ask_owner` goes because its question is model-authored out of stranger-controlled text, lands in the owner's inbox in his own agent's voice after the materialize→approve step that is the intake feature's whole trust boundary, and the answer he types becomes chunked, embedded, citable source text on the note. The reply turn does not widen, because D8's premise — the owner is the only voice in the room — is false while the submitted body is still turn 0; `correct_fact` is the sharp loss and it is deliberate, since `decide()`'s correction branch reads neither confidence field and so force-supersedes AND pins. Enforcement is not the prompt: on the unattended pass `ask_owner` is not BOUND (`converse.executor_for_note` builds the note's registry without it, so the sidecar is never loaded), and on `/chat` `agents.narrow_for_third_party_note` is applied LAST over `analysis/thirdparty.conversation_is_third_party`, which fails closed — an unreadable note or conversation reads as third-party, so a failure narrows a turn rather than widening one. The predicate is `notes.provenance`, not a new column. **An EMR note has ONE writer, and it is not the model** (W4/D9 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`). `fhir_status` is EMR-only, set by the parser, has no `assert_fact` field and cannot grow one, and is what `supersession._lab_status_transition` reads — the transition that keeps a FHIR *preliminary* reading from becoming a citable current value. So the importer writes through W1's seam directly (`AnalysisPipeline.commit_intent`, the half of `apply_intent` that does everything except the settle), and the conversation over an EMR note holds NO graph-write verb: `ingest/emr/ownership.emr_owned` mirrors migration 0122's own trigger filter, and both the ALLOWLIST (`agents.narrow_for_emr`, applied on the unattended pass AND on the `/chat` reply turn — the one place W4 breaks D8, because `correct_fact` PINS and a pinned lab head makes every later import of that reading `held`) and the worker's per-note REGISTRY (`NoteToolset(writes_graph=False)`) say so independently. `ingest/emr/integrate.EmrNoteCommit` is the multi-source caller: one `commit_intent` per parsed source in its own transaction, then ONE `settle_note` over the union. That fixed a live bug no test could see because every EMR test attached one file — a decrypted archive attaches MANY PDFs to one note, the settle is whole-note, and the per-attachment loop had each PDF's settle retract the PDFs before it, so a two-source import kept only the last source's readings. Layer 2 is untouched and stays a hard NON-COMMIT: the guard runs inside `lower_parse_result`, before an intent exists, so nothing downstream can un-hold a catch. **Still true and still unfixed, now proven:** `integrate_note` and `emr_parse` both fan out from one `note.ingested` on a health `Records` note and each ends in the whole-note settle, so the loser's facts are RETRACTED rather than merely written late — `integrate_note` running after `emr_parse` retracts EVERY fact the parse wrote, held by the strict-xfail `test_the_generic_integrator_does_not_retract_the_emr_parse_it_races`, which flips green the day it is fixed. It predates W4 (it is the shipped `apply_intent`, on both sides) and W4's EMR half fixed only the collision BETWEEN EMR sources. Deciding who owns a note's settle is nobody's yet: the intake half touched no settle path, so with both halves merged it is still open and still held by that xfail. **The two W4 narrowings compose, and the narrower wins.** A note can satisfy both predicates — an approved intake submission enacting into a health `Records` note with an EMR-shaped attachment is third-party-bodied AND importer-owned — so `narrow_for_third_party_note` INTERSECTS where `narrow_for_emr` SUBTRACTS, and the two commute: such a note's conversation holds `find_entity` / `read_entity` / `current_time` and nothing else, on both turns, with neither `ask_owner` nor a write verb bound in the worker's registry either. Prior: **The note conversation now WRITES the graph** (`agent/graphwritetools.py`, W3 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`): the `note_ingest` persona holds `resolve_entity` (batch ≤12) and `assert_fact` (batch ≤8), plus `find_entity`/`read_entity`/`current_time` inherited unchanged — and nothing else, enforced by two locks rather than by the prompt (the closed `AgentProfile` allowlist and `toolregistry.NEVER_DEFAULT`). A third — the chat registry dropping both sidecars outright — was removed in the same wave, because the owner's reply turn IS a chat turn and without them it could discuss a correction and not record one. Both tools write through W1's `commit_facts`, so `supersession.decide()`, the domain floor, the ratchet, the citation anchor and the mention spine are byte-for-byte the shipped ones; the tools add no second write path, and `decide()` never becomes a model-facing verb. The batch shape is measured, not guessed (`evals/shape_probe.py`: 20/20 well-formed, 7.6 facts and 8.9 entities per turn against 1.0 for one-per-call). `assert_fact` carries no `domain`, `inferred`, `supersedes` or `correction` field and no JSON-Schema `enum` anywhere; `quote` is REQUIRED and checked against the note — an unattested quote still commits (Lever A) but at the 0.4 inferred-overwrite ceiling, so it cannot silently rewrite a stated value. Each element commits inside its own SAVEPOINT, so one bad element cannot undo the good ones. What the write path did unasked (replaced-and-kept-as-history, already-recorded, `held` with `decide()`'s own reason) is the tool's result text, and the rows it wrote are reported structurally — which is what finally fills `note_conversation_tool_calls.fact_ids` for the UNATTENDED pass — the `touched` set the whole-note settle sweep reads, and W2 had to ship empty. The owner's reply turn ran on `/chat`, which recorded into that ledger nowhere — closed since (see the head of this line). `reads_knowledge_base` flipped to True for the persona (constraint 2: the conversation reads narrowed to `(note_domain, 'general')`, computed from the note by `converse.note_read_scopes` on every turn rather than read back from the session row), and the ungated `POST /sessions/{id}/scope` is now closed against engine-opened personas. `domain_floor` matches separator- and case-insensitively with a dotted-base fallback, because the agent's only lever on a fact's domain is the predicate it spells. Prior: **The note conversation runs** (`note_converse`, `analysis/converse.py`): an ingested note now also opens an ordinary agent session under the `note_ingest` persona, reads the note as turn 0, and settles `settled` / `failed` — `failed` too for a turn that did not end cleanly, because the whole-note sweep must never run on a pass that asserted only a prefix. It is seeded onto `note.ingested` **beside** the shipped extraction pipeline, never instead of it, so the graph is written exactly as before and the thread is additive; the cost is one extra `agent.turn` per `note.ingested` EVENT — not per note: a re-ingest (an attachment landing on an already-ingested note, or a D6 clarification) is charged again in its own second thread, while a corpus rebuild is free because `backfill_pending_integration` enqueues `integrate_note` directly and emits no event — producing no graph writes at all in this wave, which is the accepted trade for the thread existing. The thread is VISIBLE: `note_ingest` is listed on the PWA's Full Brain tab (listed, not landed on — the tab still opens the curator), and it is not startable by hand (`ENGINE_ONLY_PERSONAS` keeps it out of `OWNER_AGENTS`, so the session and task routes refuse it while the two `agent` CHECKs still admit what the engine stores). A pass stranded `running` by a killed worker no longer takes its note out of the pipeline forever: `live_for_note` reclaims one older than `STALE_CONVERSATION` to `failed` before it reads (`queue.claim`'s stale-lock shape), never a `waiting_on_owner` thread, and the runner bounds its own turn by `NOTE_TURN_WALL_CLOCK`, which that horizon is derived from. `settled` is claimed only AFTER the transcript and ledger land, because W3 hangs the whole-note retraction off it and an empty ledger under `settled` would arm one. Turn 0 is the note **fenced as DATA** (the `intake/turn.py` recipient-frame pattern) — a note body can be third-party text and the persona will hold graph writes later, so the boundary goes in while it holds none. Every tool call the turn makes is recorded into the ledger and bound to its assistant turn, though nothing can call one yet: the allowlist and the executor's tool registry are both empty. One live conversation per note, enforced by the partial unique index with a graceful dispatcher skip in front of it so a re-delivered event is a logged no-op rather than a failed job. Also: **A re-ingest no longer destroys what points at a note's chunks** (`jbrain.ingest.carryover`). `ingest_note` deleted every chunk of the note and inserted fresh ones, and five tables hang off `app.chunks.id` — two of them ON DELETE CASCADE. So every re-ingest silently deleted the note's `entity_mentions` (`link_method='human'` rows included, and the id arrays a review reopen replays) and the `wiki_citations` of an already PUBLISHED revision, and blanked `facts.chunk_id`/`temporal_tokens.chunk_id` until a later re-integration re-anchored them. A cascaded citation cannot be re-anchored afterwards — the row is gone — so the repair runs while both generations of chunk exist: a rebuilt chunk KEEPS ITS ROW (and its embedding, and its `resolution_pin`s) when it comes back byte-identical, and otherwise hands its references to a surviving chunk that covers its span and holds the same characters there, shifting the chunk-relative mention spans by exactly the offset difference. Keeping the embedding has a price, and it is paid elsewhere: it keeps the row's `embedding_model` too, and `embed_note` only fills NULLs, so destroy-and-rebuild was quietly the ONLY thing that ever re-embedded a note's chunks after an embed-model change — a note edited or given an attachment healed itself, and now it does not. `chunks_embedding_idx` would therefore accumulate mixed-model vectors that only a genuinely rewritten body ever cleared, with no PWA or debug path to fix it. So `app.chunks` is now a target of the nightly `reembed_stale` sweep (`analysis/reembed.py`), which is where the re-embed-after-a-model-change path for chunks lives: it takes the rows that ARE embedded under a model that is no longer ours (NULL embeddings stay with `reconcile_unembedded_notes`, which re-enqueues `embed_note` for them every 300s), and it gets EIGHT batches a run rather than the one the small tables get, because chunks is the largest embedded table by an order of magnitude and one batch a night would take months to drain a model swap. It runs under SYSTEM_CTX (so it crosses every domain, exactly as ingest and `embed_note` already do — no scope is widened to make the sweep possible), and it needs no terminal: 0066 seeds the SCHEDULE disabled (the live box has it on — `docs/reference/MODEL_ACCESS_INVENTORY.md`) but seeds the TRIGGER `manual` and enabled, so Ops → Automations can Run-now it today and its toggle arms the nightly run. A rewritten body or a note that moved domain matches neither rule and behaves as before; `resolution_pin` rides the identical case only, because `chunk_id` is in its primary key and its `occurrence_index` is chunk-relative. Also: **Note clarification blocks** (D6/D7 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`, migration 0193): a note keeps the body its author wrote and gains appended, timestamped answers in `app.note_clarifications`, composed onto the note's text at read time (`jbrain.notes.compose`) rather than written into `notes.body`, so an owner edit cannot destroy them and the composed text is what the chunker sees — which is what gives a fact drawn from an answer a chunk to cite. Precisely which offsets appending protects: `app.chunks.char_start`/`char_end` and the CHUNK-RELATIVE `entity_mentions` spans `_locate` derives from them. `app.facts` has no span columns at all; it cites a chunk by id, and the carry-over above is what protects that. The editor round trip is an EXACT-SUFFIX strip: `update_note` reconstructs what the note's own rows compose to and removes only that, refusing the PATCH (409, nothing written) when the text does not end in it. Cutting at the first `[clarification ` marker instead — the first cut — silently and permanently truncated any body that CONTAINED that literal, which ordinary prose does. A block's `domain_code` must equal its note's, enforced by a `SECURITY DEFINER` trigger on the 0045 subsection pattern: the RLS policy validates only the domain the writer names, and the FK bypasses RLS, so a general-scoped token could otherwise stamp a health note's clarification `general`. Appending re-drives ingestion from inside the append's own transaction, which makes the method owner-only (`app.jobs` is `is_owner()`). The privacy purge takes the blocks; the rebuild sweep keeps them (the fifth of its exemptions), because a rebuild re-derives FROM the notes. Also: **Note conversations** (`app.note_conversations` + `app.note_conversation_tool_calls`, `models/note_conversation.py`): the durable spine of the agent-conversation ingest (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` W2). A note conversation is an ordinary `agent_sessions` row plus an owner-only side table carrying its lifecycle (`running` / `waiting_on_owner` / `settled` / `failed`, at most one of the first two live per note) and the sha of the body it read; beside it a per-tool-call ledger records what each write CLAIMED — the entity/fact ids and domain names — which is the whole-conversation `touched`/`projected` accumulator the settle sweep needs and the D3 chip renders. Neither table is the firewall: that stays the RLS on the tables actually written. **Note deletion now purges the conversation WHOLE** — the `agent_sessions` row, not merely the side row, since the transcript holds the note's body and the owner's answers — and the corpus rebuild spares it, one of the five exemptions, alongside agent episodes, because no re-derive from the notes can reconstruct what the owner replied. Also: **A stale entity id now resolves through the fold, not around it.** `_resolve_from_intent` loaded the Integrator's `existing` entity by id with no status filter, so a re-analysis that echoed the loser's id back resolved a surface onto a merge tombstone and minted live facts and a live mention on a `status='merged'` row — silently un-doing the merge, needing no rebuild to fire. `entities.live_entity_by_id` now follows `merged_into_id` to the survivor (a fold does not re-point the tombstones already aimed at its loser, so an `a -> b -> c` chain is chased to its end, bounded), and withholds the resolution when the chain ends nowhere live. Prior: The corpus **entity-graph rebuild sweep** (`jbrain.analysis.rebuild`, the `graph_rebuild` action): re-derive the whole graph from the notes while KEEPING them, the acceptance/rollback instrument Ops → Reset could never be. It reused the purge's destructive half with three exemptions then — the facts a human verdict rests on survive (the pin, the chain below it, every fact named by a review item that outlives the purge, and every fact or entity MENTION that item's recorded effects will replay by id (the purge spares those ids, and the re-analysis in between re-asserts them on the survivor rather than on the tombstone, so the replay holds end to end), which no chain walk and no payload key reaches), only OPEN review items are retired, agent episodes are untouched — is resumable from a durable cursor one transaction per note, and chains into a three-job wiki repair, prune then rebuild then refresh (citations are ON DELETE SET NULL and article entity refs have no FK). "Whole graph" includes the deterministic half: an EMR note's `emr_parse` is re-enqueued alongside its re-integration, since a purge takes both producers' facts and only the generic one had a re-drive path. `decide()` now also refuses to resurrect a retracted row when a pinned head sits beside it OR the resolution's own recorded `retracted` effect names it — so a rebuild can neither re-litigate a settled decision into a fresh collision card nor quietly put a rejected value back. Fired from Ops → Automations, never scheduled to start itself. Also: the attachment settle window now measures from the server's `notes.received_at`, not the client's `created_at`, so an offline-flushed note with a promised attachment no longer arrives past its own window. Also: the write path split in two: `commit_facts` writes one pass of a note's facts, `settle_note` runs everything whole-note (the retraction and card sweeps, the projections, the `NoteAnalysis` stamp) and takes the touched-fact and touched-entity sets as explicit inputs, so a caller that commits over several passes settles their union once. Mentions became an incremental upsert keyed on (chunk, span, entity) plus a reconcile, replacing a wipe-and-reinsert that a second pass would have undone. And the re-extraction refresh path now re-anchors a fact's `chunk_id`: a re-ingest deletes the note's chunks and `facts.chunk_id` is ON DELETE SET NULL, so refreshed facts were silently dropping out of their wiki articles. Also: the entity fold is now a full-owner-only write: `merge_entity_pair` and the un-merge in `_reverse_effects` refuse a domain-narrowed session before their first statement, which is the guarantee; the `app.entities` trigger (INSERT and UPDATE) is a partial backstop that goes blind when the loser row is itself out of scope, because a row trigger never fires for a row RLS filtered out of the scan. A narrowed fold used to tombstone an entity and silently repoint only the facts that session could see. Prior: LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -22,14 +22,58 @@ capture (Phase 1)
   → arbiter (plan_intent)          (deterministic: validate the intent, weigh
                                     each fact, partition commit / review / reject;
                                     cross-subject + ambiguous force review)
-  → apply (apply_intent)           (deterministic write through _apply: domain
-                                    floor/ratchet + per-domain derived chunks,
-                                    entity linking [agent resolution, deterministic
-                                    resolver as fallback], per-kind supersession,
-                                    + review-inbox items)
-nightly: entity hygiene, merge proposals, summary re-embedding,
+  → apply (apply_intent)           (deterministic write through commit_facts:
+                                    domain floor/ratchet + per-domain derived
+                                    chunks, entity linking [agent resolution,
+                                    deterministic resolver as fallback], per-kind
+                                    supersession, + review-inbox items; then
+                                    settle_note for the whole-note sweeps,
+                                    projections and the analysis stamp.
+                                    apply_intent IS commit_intent + settle_note;
+                                    a caller with SEVERAL intents for one note
+                                    calls commit_intent per intent and settles
+                                    their union once — see the EMR line below,
+                                    because settling per intent retracts the
+                                    intents before it)
+
+and the deterministic EMR half, which writes through the same seam and is the
+one producer the model has no verb for (W4/D9) —
+  note.ingested (health Records)
+  → emr_parse                      (extract/OCR each decrypted PDF, fingerprint
+                                    it to its parser, reconcile OCR reprints)
+  → EmrNoteCommit.commit_source    (per source: Layer-2 firewall inside
+                                    lower_parse_result, then plan_intent and
+                                    commit_intent in that source's own
+                                    transaction, carrying fhir_status)
+  → EmrNoteCommit.settle           (ONCE, over every source's union)
+nightly: entity hygiene, merge proposals, stale-model re-embedding
+         (summaries AND note chunks — see reembed_stale),
          tag consolidation; (Phase 6) wiki triage, wiki_lint health sweep
+
+beside it (AGENT_INGEST_CONVERSATION_PLAN.md, W3): the note conversation now
+writes the graph THROUGH TOOLS, and through the SAME deterministic core —
+  note.ingested
+  → note_converse                  (the note as turn 0 of an ordinary agent
+                                    conversation, `note_ingest` persona)
+  → resolve_entity (batch ≤12)     (the shipped layered resolver + the mention
+                                    spine, via commit_facts with no facts;
+                                    the ONLY minting path, and the only source
+                                    of the `e1`/`e2` handles a fact may name)
+  → assert_fact (batch ≤8)         (one Extraction per element through
+                                    commit_facts: the same domain floor/ratchet,
+                                    the same decide(), the same citation anchor.
+                                    Per-element SAVEPOINT, so a bad element
+                                    cannot undo the good ones)
 ```
+
+The tools add **no second write path**: `supersession.decide()` is never a
+model-facing verb (plan constraint 5), there is no `domain` / `inferred` /
+`supersedes` field on `assert_fact`, and what the write path did that the model
+did not ask for — a value replaced and kept as history, a duplicate recognised,
+a clash `held` — comes back as the tool's RESULT TEXT, which is the model's only
+window into `decide()`. Each written row is reported structurally as well, and
+that is what fills `note_conversation_tool_calls.fact_ids` — the whole-conversation
+`touched` set the settle sweep reads.
 
 Capture-to-searchable never waits on a cloud LLM: embeddings/FTS index
 immediately; facts and entities are async enrichment.
@@ -79,9 +123,13 @@ interval history, `appointment.scheduled_time` a reschedule chain — every
 link citing its source note. Nothing is deleted, ever — except when a source
 note is deleted: notes are the sole sources of truth, so deletion purges
 every derived artifact (facts, mentions, tokens, review items incl. resolved
-history, and provisional entities no surviving note references) and repairs
-affected supersession chains **[decided]**. Delete = gone; the note row
-itself stays soft-deleted.
+history, provisional entities no surviving note references, and the note's
+agent ingest conversations — whole, session and transcript included) and
+repairs affected supersession chains **[decided]**. The note's own
+**clarification blocks** go with them — not derived, but part of the note's
+text. Delete = gone; the note row itself stays soft-deleted, which is why the
+block, episode and conversation purges are all explicit statements rather than
+FK cascades.
 
 Entity-row fields (`canonical_name`, summary) are **denormalized
 projections of current facts**: a name change is an `entity.name`
@@ -183,6 +231,68 @@ reschedules. Past-tense references convert `expected` → `occurred`.
 - Every link is span-anchored via `entity_mentions` (surface text + chunk +
   offsets), so merges are reversible: merge = tombstone
   (`merged_into_id`) + repoint, un-merge = re-resolve mentions.
+- **A stale id resolves through the fold.** A caller holding an entity id may be
+  holding one the owner has since merged away: every context builder filters
+  `status != 'merged'`, so the Integrator is handed live ids only — but a merge that
+  lands while an analysis is in flight makes the id it echoes back a tombstone, and any
+  replay of a stored decision (the persisted `resolution_pin` rows already carry entity
+  ids) would make that the ordinary case rather than a race.
+  `entities.live_entity_by_id` is the one loader for it: it follows `merged_into_id` to
+  the survivor, chases an `a -> b -> c` chain (a fold leaves older tombstones pointing
+  at a row that is now itself merged) to its end under a bound, and returns None — the
+  caller's ordinary "can't resolve this" path — when the id is unknown, out of scope, or
+  the chain ends nowhere live. Redirecting is what the merge decided; refusing is not
+  the safe alternative, because the loser's aliases stay on the tombstone, so falling
+  through to `_exact_matches` would mint the duplicate straight back.
+- **An accepted merge card is enacted on the pair as it stands NOW.** A card is a
+  proposal held open across arbitrary time, so both its ids can go stale under it:
+  an overlapping card resolved first turns one side into a tombstone, and the
+  ranking that chose the card's direction (`plan_merge`, at *filing* time) predates
+  any later promotion to `confirmed` or link to a subject. `resolve_review`'s
+  `merge_proposal` accept arm used to fold the payload verbatim, so two overlapping
+  cards resolved in sequence repointed the second pair's rows onto a tombstone — a
+  merge that silently undid the merge before it. `_accept_merge` re-derives the pair
+  instead: the scope guard first (a narrowed session sees an RLS-filtered
+  `app.entities`, so a fold chain can dead-end or resolve to the wrong survivor for
+  want of an invisible tombstone — none of the reasoning below is trustworthy under
+  one, and a narrowed accept is therefore a scope refusal, not a can't-resolve one);
+  then each side through `live_entity_by_id`, the same fold-following loader
+  `_resolve_from_intent` uses; then `are_distinct` on the LIVE pair; then
+  `plan_merge`. Where the agent's `merge_entities` no-ops on a stale side, the inbox
+  redirects, because the two callers answer different questions — `merge_entities`
+  re-enacts a decision already carried out, while accepting a card asserts for the
+  FIRST time that these two are one thing. Discarding that would leave the third
+  duplicate live under a log that says "resolved"; refusing outright would leave the
+  card acceptable by no verb but `reject`, which writes a false permanent
+  `distinct_from`. Both sides landing on one live entity IS a no-op — the assertion
+  is already true, so nothing is written, the card records `merge_noop`, and the
+  reopen says it folded nothing to undo. A side resolving nowhere live, or a
+  permanent `distinct_from` on the live pair (which outlives a reopen by doctrine,
+  so the re-queued card must not be acceptable), refuses and leaves the card open.
+  The recorded effect names the pair actually FOLDED, never the payload's, which is
+  what keeps `_reverse_effects` — which un-merges by id — exact.
+- **A fold needs a full-owner session, and fails closed without one.** Facts
+  carry their own `domain_code`, so a `general` entity routinely owns `health`
+  and `finance` facts; on a domain-narrowed session (`owner_scoped`) RLS filters
+  the repoint UPDATEs to the visible rows, tombstoning an entity while half its
+  facts stay bolted to it. Nothing inside that session can notice —
+  `RETURNING` also returns only visible rows, so counting the leftovers needs
+  exactly the cross-domain read the narrowing forbids, and the tombstone UPDATE
+  runs first, so it can match zero rows while the repoints partly succeed. There
+  is no in-scope evidence a fold is safe, so `merge_entity_pair` (and the
+  un-merge in `_reverse_effects`) refuses a narrowed session *before* its first
+  statement, and the escalation becomes the caller's visible choice. That session
+  guard is the guarantee.
+- **The `app.entities` trigger is defence in depth, not the guarantee.** It refuses
+  the merge tombstone (on INSERT as well as UPDATE) from a narrowed session, and is
+  deliberately not `SECURITY DEFINER` — it reads nothing and bypasses no policy, so
+  it adds no RLS-bypassing primitive a model-facing tool could reach. But a `BEFORE
+  ... FOR EACH ROW` trigger only fires for rows the statement matched, and RLS
+  filters the scan first: fold a `health` entity from a `general`-narrowed session
+  and the tombstone matches zero rows, raises nothing, and the repoints still move
+  every fact that session can see. The table cannot police the shape where the
+  *loser row itself* is out of scope — only the session guard can, because it asks
+  about the session rather than about a row.
 - Auto-merge only on exact alias + same kind; everything else is a
   review-inbox proposal. Bare first names never auto-merge without
   co-mention signals. New entities are `provisional` until implicitly
@@ -329,6 +439,21 @@ LLM disambiguation with candidates → review inbox for the gray zone.
   review, never down. Health/finance keywords block `general` assignment
   without review. Titles and tags are generated per-domain-content so a
   note list never leaks a sensitive auto-title.
+- **The floor is matched on the predicate's MEANING, not its spelling.**
+  `domain_floor` keys ~45 clearly-sensitive predicates to the domain they
+  force, and its table is written in the canonical camelCase the
+  `note.extract` prompt teaches. That was sufficient while the prompt was the
+  only writer; it is not now that the note-conversation agent writes
+  predicates through `assert_fact`, where the natural spelling is snake_case.
+  So the lookup strips separators and case (`blood_pressure`,
+  `Blood Pressure` and `bloodPressure` are one predicate) and a dotted path
+  falls back to its base segment (`bloodPressure.systolic` floors as
+  `bloodPressure` does). Both rules only ever ADD a floor. This is what
+  D18 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` actually rests on:
+  the agent has no `domain` field and never will (the firewall red-team
+  rule) — it chooses a fact's domain only by choosing its PREDICATE, so the
+  predicate lookup is the thing that has to hold, and a novel predicate the
+  registry has never seen lands in the note's own domain, ratcheted.
 
 ## Privacy routing **[decided: cloud for everything, for now]**
 
@@ -356,10 +481,38 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
 ## Reprocessing and corrections
 
 - Re-extraction (model/prompt upgrade) **upserts on the structural identity
-  key**: same key → update rendering in place (citations survive); key gone
-  → `retracted_by_reextraction` (not a conflict, no inbox noise); new key →
-  insert. `prompt_version` makes corpus re-runs a planned, budgeted
-  migration.
+  key**: same key → update rendering in place, re-anchoring the citation on
+  the note's current chunks; key gone → `retracted_by_reextraction` (not a
+  conflict, no inbox noise); new key → insert. `prompt_version` makes corpus
+  re-runs a planned, budgeted migration. Re-anchoring is not cosmetic: a
+  re-ingest *replaces* the note's chunks and `facts.chunk_id` is
+  `ON DELETE SET NULL`, so a refresh that left it alone would strand the fact
+  with no citation — and the wiki builder INNER JOINs chunks, so the article
+  would rebuild without it, silently. (Since `jbrain.ingest.carryover`, a chunk
+  that comes back unchanged keeps its row and a replaced one hands its
+  references over, so most re-ingests no longer null anything. This re-anchor
+  is still the backstop for the cases carry-over declines — a rewritten body, a
+  domain move — and for a fact whose identity key moved between chunks.)
+  **Every** in-place path re-anchors — the
+  refresh, the interval close, the held-row refresh, and a relationship's
+  derived shadow, which nothing else would ever re-link because the retraction
+  sweep deliberately skips derived rows. Only a fact THIS note owns is
+  re-anchored; an in-place update landing on another note's fact leaves that
+  note's citation to its own re-integration.
+- The note's **mentions** are upserted incrementally, keyed on (chunk, span,
+  entity) — not (chunk, span), which is not unique: `_locate` anchors every
+  surface it cannot find at the same zero-width span, and two mentions may share
+  one surface. The reconcile that drops what is no longer asserted runs in
+  `settle_note`, over the union of every pass's ids, for the same reason the
+  fact sweep does. A re-asserted row keeps its id, so re-analysis no longer
+  churns the co-mention spine, an un-merge can still replay stored
+  `mention_ids` across an intervening re-analysis, and `created_at` is now
+  first-link time rather than last-re-analysis time (which changes the
+  entity page's mention ordering to a stable one). A re-run that re-asserts
+  the same mentions writes nothing at all, so it no longer re-dirties every
+  mentioned entity's article — `confidence` is compared with a tolerance to
+  make that true, since the column is `real` and a resolver's float64 never
+  round-trips exactly.
 - **Re-run = the same incremental pass [decided]**, on demand via
   `POST /api/notes/{id}/analyze` (202 + job id, a plain `integrate_note` job;
   409 while an analysis is already queued/running, or while ingest/OCR will
@@ -377,6 +530,95 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   because tearing the note's artifacts down to replay them would discard
   exactly what incremental repair preserves — pins, resolution history, and
   the cross-note supersession evidence other notes' facts hang off.
+- **The corpus rebuild sweep is the one exception to that, and it is an
+  operator instrument, not a re-run path.** `jbrain.analysis.rebuild` re-derives
+  the WHOLE graph from the notes while keeping the notes — the acceptance check
+  on a pipeline change, and the rollback lever, that Ops → Reset (which drops
+  the schema and takes the notes with it) could never be. It reuses the purge's
+  destructive half with five exemptions that answer two of the rejection's
+  three worries: **the facts a human verdict rests on survive** — the pinned
+  row, the chain it superseded, and every fact a review item that OUTLIVES the
+  purge names, which no supersession walk can reach because resolving a card
+  writes no chain edge at all (it pins the winner and retracts the loser, and
+  a rejected `low_confidence_inference` only retracts); **only open review
+  items are retired**, so resolved, dismissed and *deferred* history stands —
+  and it stands with its facts, since a card whose payload was purged is a
+  dangling pointer whose reopen silently no-ops; agent episodes are untouched,
+  since nothing re-derives them; **note conversations** are untouched for the
+  same reason and one stronger, in that a thread holds the owner's answers to
+  the agent's clarification questions, which no re-derive from the notes can
+  reconstruct, and destroying one would orphan a question still waiting in the
+  notes inbox; and the notes' **clarification blocks** are untouched, since
+  they are source the owner typed and the whole premise of the sweep is
+  re-deriving *from* the notes — a rebuild that took them would break
+  re-derivability corpus-wide and silently. Both halves of "a review item that
+  outlives the purge" are **derived, never enumerated**: the statuses are the
+  complement of the one status the purge deletes, and the payload keys are the
+  single list (`fact_id`, `fact_a`, `fact_b`, `source_fact_id`) that the
+  card-delete reads too — taken kind by kind from every kind the `review_items`
+  CHECK admits (including `inverse_proposal`, which is filed outside
+  `decide()`'s `review_kind` and names its fact by `source_fact_id`), so a
+  `fact_id` kind or a parked card cannot be missed the way an
+  enumerated-from-the-bug-report list missed both.
+  **A card's payload is not the only way it names a row.** A settled resolution
+  records the ids it MOVED in `resolution->'effects'` — `mention_ids`,
+  `fact_ids`, `object_fact_ids` for a merge fold, `fact_ids` for a predicate
+  remap — and a reopen replays exactly those ids, one UPDATE each. A
+  `merge_proposal` payload holds two ENTITY ids and nothing else, so a
+  payload-only spare set spares none of them: the reopen would restore the
+  entity row (from the recorded prior status, a value) while moving zero
+  mentions and zero facts. A half un-merge, silent, and worse than a clean
+  no-op. So those id arrays are a second spare arm, and the entity-mention wipe
+  is conditional on it for the same reason the fact delete is — a replay finds
+  rows by id or not at all. (The purge is that promise's first half; whether a
+  later re-analysis of the note preserves the mention ids it re-asserts is the
+  mention writer's own contract.)
+  Sparing is only half of what
+  keeps a settled decision settled: `decide()` filters retracted rows out of
+  its live set, so it also takes a **retracted twin as a re-extraction** and
+  refreshes it in place, rather than inserting a fresh active twin — without
+  which one rebuild files one collision card per settled decision, corpus-wide.
+  Two things can make a retracted row a settled verdict rather than the
+  machine's own `retracted_by_reextraction` (which must still resurrect when
+  its key comes back): a **pinned head** beside it, or the resolution's own
+  recorded **`{"action": "retracted"}` effect** naming it. The second arm is
+  not redundant — a `low_confidence_inference` REJECT retracts and pins
+  *nothing*, so a pinned-head-only guard silently re-mints the value the owner
+  rejected as a fresh active row with no card filed. The effect is also the
+  honest discriminator: it is the decision itself, recorded, not an inference
+  from a neighbouring row. Either way the match is on value AND
+  exact `valid_from`, so validity drift on re-extraction still falls through to
+  the re-flag; that limit is inherent, not a gap in the spare set. The third
+  worry stands unanswered and is
+  inherent to a rebuild: **cross-note supersession chains that reach no pin are
+  dissolved and re-derived.**
+  **The re-derive drives BOTH producers.** A health `Records` note's facts come
+  from the generic LLM extraction *and* from the deterministic EMR parsers
+  (`emr_parse`), which are what turn a lab PDF into cited analyte readings; both
+  fan out from one `note.ingested` at ingest, and only the first had a re-drive
+  path. Re-queuing integration alone would hand back a rebuilt medical record
+  holding only the LLM's read of it, silently — so the sweep re-enqueues
+  `emr_parse` for every note still matching stage 2's markers, and the drain
+  waits on that job too before chaining the wiki repair. It is enqueued
+  directly rather than by re-emitting `note.ingested`, which would claim the
+  chunks were rebuilt, give integration a second producer beside the sweep's own
+  drain, and put stage 1 back in scope. No ordering is promised between the two
+  passes and none is at ingest either; the Layer-2 location firewall is a
+  property of the parser's own lowering, so re-driving restores it for exactly
+  the facts it ever covered — it never guarded the generic extraction.
+  It runs one transaction per note from a durable
+  cursor, so it is resumable, and it **chains into a three-job wiki repair** —
+  `wiki_prune` first (only it can archive an article whose `entity_ref` the
+  sweep orphaned; `wiki_rebuild` iterates those very refs and so cannot repair
+  a dead one), then `wiki_rebuild` to re-derive survivors and restore their
+  citations, then `wiki_refresh` for entities the re-derivation newly minted,
+  which have no article row for `wiki_rebuild` to visit. Without that repair a
+  graph re-derive degrades every published revision to chunk-only claims
+  (`wiki_citations.fact_id` is ON DELETE SET NULL) and orphans articles to dead
+  entity ids (`wiki_articles.entity_ref` is a soft ref with no FK). It is fired from
+  Ops → Automations ("Run now" on the `graph_rebuild_start` trigger) and
+  reports progress on its run; a recurring drain schedule resumes a run
+  stranded by a restart. Never automatic, never scheduled to start itself.
 - **Human decisions are pinned overrides**: review-inbox resolutions,
   entity merges/rejections, domain corrections, and tag fixes survive any
   reprocessing; auto-supersession cannot override a pinned fact, only
@@ -385,6 +627,19 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   *structured pipeline outputs* (tags, domains, entity links, fact status)
   are corrected directly in the review inbox. A correction note's "elevated
   weight" is implemented as pinning the facts it asserts.
+- **Where that elevation lives**: the note's own agent conversation, not the
+  arbiter. `agent/graphwritetools.NoteTarget.is_correction` reads
+  `notes.provenance == 'owner_correction'` (the four owner-gated producers:
+  `file_correction`, `POST /api/wiki/{id}/corrections`,
+  `POST /api/review/{id}/correction`, and the lint card's `correct` verb), and
+  `_assert_one` sets `ExtractedFact.correction` on a fact the correction note's
+  own text ATTESTS — full weight, force-supersede + pin through
+  `supersession.decide()`. An INFERRED fact in a correction note is **not**
+  elevated. This is the rule `arbiter.plan_intent(correction=True)` implemented,
+  ported unchanged off `integrate_note` ahead of its deletion
+  (`AGENT_INGEST_CONVERSATION_PLAN.md` W5). Nothing about it is model-facing:
+  `assert_fact` has no `correction` field and the capture API has no
+  `provenance` field.
 - Contested (flagged-and-unreviewed) facts are **held out of wiki builds**;
   the wiki never publishes an unreviewed supersession.
 - The pipeline records per-note stage state so retries are idempotent and a
@@ -484,8 +739,12 @@ The integration reconciler (`backfill_pending_integration`) honors the same wait
 else it would body-only integrate during the upload window and defeat the gate —
 bounded by a **settle window** (`INTEGRATION_ATTACHMENT_SETTLE_SECONDS`) so a
 promised attachment that never arrives (a failed upload) integrates on what it has
-rather than stranding. Absent/0 (a plain note, or a client that doesn't send the
-hint) = today's immediate behavior; the common no-attachment path is never delayed.
+rather than stranding. That window is measured from **`notes.received_at`**, the
+server's receipt instant — never `created_at`, which is the *client's* capture time
+(the offline outbox flushes later), so a note captured yesterday and flushed now
+would arrive already past its own window and defeat the gate in exactly the case it
+exists for. Absent/0 (a plain note, or a client that doesn't send the hint) =
+today's immediate behavior; the common no-attachment path is never delayed.
 
 Guards on what extraction feeds the fact pipeline: structured
 medical/financial documents are *detected and routed* (deferred to the
@@ -602,8 +861,8 @@ structural identity key so a property restated across groups collapses to one;
 `dropped_facts` sums each group's truncation for the note-level card. A note
 that fits one group makes exactly one call — the short-note path is unchanged.
 Groups run sequentially and a malformed group fails the note like any single
-extraction (the merge is in-memory; `_apply` runs once, after, in one
-transaction). Cross-group coreference is bounded by group size (several
+extraction (the merge is in-memory; the commit + settle pair runs once, after,
+in one transaction). Cross-group coreference is bounded by group size (several
 paragraphs); a context header for later groups is possible future work.
 
 **Per-source extraction [decided: a group never mixes the note body with an
@@ -664,4 +923,7 @@ effects in the same transaction that re-queues it and stamps a
 exception: permanent `distinct_from` edges survive reopen by doctrine — a
 reopened merge-rejection re-queues the item but the edge stays, and the
 reopen response says so. Dismissals record no effects; their reopen is a
-bare re-queue.
+bare re-queue. Reversing a *merge* effect carries the fold's scope rule: the
+un-merge refuses a domain-narrowed session before reversing any effect at
+all, so a refused reopen leaves the whole resolution intact rather than half
+of it.

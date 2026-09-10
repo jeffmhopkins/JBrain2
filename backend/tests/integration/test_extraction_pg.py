@@ -47,7 +47,7 @@ HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
 
 # Red-team derived-shadow / cross-subject lifecycle tests that asserted v1
-# resolver + _apply behaviour. Under integrate they need an explicit intent
+# resolver + commit-path behaviour. Under integrate they need an explicit intent
 # (cross_subject / ambiguous flags) + assertion revision; the core cross-subject
 # firewall stays covered by test_apply_intent_pg. Tracked in
 # docs/archive/CUTOVER_V1_REMOVAL.md.
@@ -85,6 +85,23 @@ async def make_note(
 
 async def ingest(maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path: Any) -> None:
     await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+
+
+async def reingest_a_rewritten_body(
+    maker: async_sessionmaker[AsyncSession], note_id: str, tmp_path: Any, body: str
+) -> None:
+    """Re-ingest over a REWRITTEN body — what actually nulls `facts.chunk_id` now.
+
+    An unchanged re-ingest no longer does: `ingest.carryover` keeps a rebuilt chunk's row
+    when it comes back byte-identical, so a re-ingest stops destroying the note's entity
+    mentions and its published wiki citations. The in-place re-anchor stays load-bearing
+    for the cases carry-over declines, and a rewrite is the plainest of them.
+    """
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = :n"), {"b": body, "n": note_id}
+        )
+    await ingest(maker, note_id, tmp_path)
 
 
 async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:

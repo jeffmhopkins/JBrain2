@@ -8,8 +8,8 @@ structured path:
   load PDF attachments → extract text, or vision-OCR a scanned (text-less) PDF
   page by page (§6.2, the one LLM adapter touch here) → dispatch each to its parser
   → reconcile the OCR reprints against the precise draws (§6.4) → integrate each
-  precise parse through the shipped arbiter → file a review card for every parked
-  OCR read and unrecognized file.
+  precise parse through the shipped arbiter → file a review card for every Layer-2
+  firewall catch (§3.6), parked OCR read, and unrecognized file.
 
 Provenance: each precise source is integrated against ITS OWN attachment chunks,
 so a fact's citation lands on the source document (the arbiter anchors an EMR fact
@@ -38,8 +38,12 @@ from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.dispatch import Attachment as SourceInput
 from jbrain.ingest.emr.dispatch import Source, parse_corpus, select_source
-from jbrain.ingest.emr.importer import ChunkResolver
-from jbrain.ingest.emr.integrate import file_parked_cards, integrate_parse_result
+from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch
+from jbrain.ingest.emr.integrate import (
+    EmrNoteCommit,
+    file_firewall_cards,
+    file_parked_cards,
+)
 from jbrain.ingest.emr.onecontent import pdf_word_pages
 from jbrain.ingest.emr.reconcile import REVIEW_KIND
 from jbrain.ingest.emr.scan_ocr import VISION_OCR_TASK, ocr_scanned_pdf
@@ -117,6 +121,24 @@ class EmrImportPipeline:
         sources = await self._build_sources(attachments)
         corpus = parse_corpus(sources)
 
+        # ONE commit for the whole note, fed one attachment at a time and settled once
+        # (D9 / plan constraint 6). A decrypted archive attaches many PDFs to one note,
+        # and `settle_note` retracts every non-pinned fact of the note it is not told
+        # about — so the old per-attachment `integrate_parse_result` loop had each PDF's
+        # settle retract the PDFs before it, and a two-PDF import kept only the last
+        # one's readings.
+        run = EmrNoteCommit(
+            self._pipeline,
+            self._maker,
+            ctx,
+            note_id=uuid.UUID(note_id),
+            note_domain=domain,
+            captured_at=captured_at,
+        )
+        # Layer-2 firewall catches, paired with the attachment they came from. The
+        # guard holding a whereabouts fact out of the graph is only half the control:
+        # a silent hold tells the owner nothing, so every catch is carded below (§3.6).
+        caught: list[tuple[str, FirewallCatch]] = []
         for parsed in corpus.precise:
             # Cite THIS attachment's chunks so a fact's provenance lands on the source
             # document's page, not the note body (the arbiter anchors an EMR fact to the
@@ -126,17 +148,18 @@ class EmrImportPipeline:
             if not att_refs:
                 att_refs = note_refs
             resolver = self._resolver(anchors, att_refs)
-            await integrate_parse_result(
-                self._pipeline,
-                self._maker,
-                ctx,
-                note_id=uuid.UUID(note_id),
-                note_domain=domain,
-                captured_at=captured_at,
-                chunks=att_refs,
-                result=parsed.result,
-                chunk_for_anchor=resolver,
+            catches = await run.commit_source(
+                chunks=att_refs, result=parsed.result, chunk_for_anchor=resolver
             )
+            caught += [(parsed.ref, c) for c in catches]
+        await run.settle()
+        await file_firewall_cards(
+            self._maker,
+            ctx,
+            note_id=uuid.UUID(note_id),
+            note_domain=domain,
+            catches=caught,
+        )
         await file_parked_cards(
             self._maker,
             ctx,
@@ -283,11 +306,28 @@ class EmrImportPipeline:
         self, ctx: SessionContext, note_id: str, domain: str, refs: list[str]
     ) -> None:
         """A file that matched no parser fingerprint is routed to review (§6.3), never
-        free-extracted. One open card per (note, attachment)."""
+        free-extracted. One card per (note, attachment), deduped across ALL statuses
+        like the parked-OCR and firewall cards: `emr_parse` re-runs on every re-ingest,
+        so with no probe at all this minted a fresh row per unrecognized file per run,
+        and an open-only probe would read a dismissal as a snooze."""
         if not refs:
             return
         async with scoped_session(self._maker, ctx) as s:
             for ref in refs:
+                exists = (
+                    await s.execute(
+                        select(ReviewItem.id)
+                        .where(
+                            ReviewItem.kind == REVIEW_KIND,
+                            ReviewItem.payload["subkind"].astext == UNRECOGNIZED_SUBKIND,
+                            ReviewItem.payload["note_id"].astext == note_id,
+                            ReviewItem.payload["attachment_id"].astext == ref,
+                        )
+                        .limit(1)
+                    )
+                ).first()
+                if exists is not None:
+                    continue
                 s.add(
                     ReviewItem(
                         kind=REVIEW_KIND,

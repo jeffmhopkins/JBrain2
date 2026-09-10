@@ -21,9 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from jbrain import box_events, ops_metrics, queue
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC, note_converse_handler
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.predicates import retire_open_new_predicate_cards
+from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC, graph_rebuild_handler
 from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
 from jbrain.config import get_settings
@@ -744,6 +746,19 @@ async def run() -> None:
         "embed_research_report": research_report_embedder.embed_research_report,
         "title_research_report": research_report_titler.title_research_report,
         "integrate_note": analyzer.integrate_note,
+        # The note conversation (AGENT_INGEST_CONVERSATION_PLAN.md W2/W3), running BESIDE
+        # integrate_note off the same note.ingested event — D13 forbids removing a
+        # producer before its replacement is merged, so this wave pays for both.
+        # Its registry is built PER NOTE and holds six tools, not the chat registry: a
+        # graph-write handler is bound to ONE note, so there is no session-agnostic copy
+        # of it to filter down to, and building from names keeps "this persona reaches
+        # nothing else" a property of what was constructed (D16 is a second lock on it).
+        # The SAME `AnalysisPipeline` the shipped integration runs on, not a second one:
+        # the graph-write tools commit through its `commit_facts`, so sharing it is what
+        # gives them entity-resolution layer 2 (the embedder) and the live value-shape
+        # setting — a private pipeline would silently resolve without embeddings and
+        # write on subtly different terms from the path running beside it (D13).
+        "note_converse": note_converse_handler(maker, router, pipeline=analyzer),
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(
             maker, blobs, router, SqlSettingsStore(maker), RapidOcrClient(settings.rapidocr_url)
@@ -847,6 +862,11 @@ async def run() -> None:
             maker, embedder=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
         ),
         "tag_consolidate": tag_consolidate_handler(maker),
+        # The corpus entity-graph rebuild (analysis/rebuild.py): re-derive every note's
+        # graph while KEEPING the notes — the acceptance/rollback instrument Ops -> Reset
+        # could never be, since that drops the schema. In-code only (a migration seeds the
+        # manual start trigger + the drain schedule); inert unless a run is open.
+        "graph_rebuild": graph_rebuild_handler(maker),
         # The archivist's inbox-triage sweep (docs/archive/EMAIL_ARCHIVIST_PLAN.md): classify
         # untriaged inbox mail into triaged/* priority labels, archiving all but `high`
         # (which stays in the inbox). The Gmail mechanics are direct API calls; only the
@@ -907,6 +927,8 @@ async def run() -> None:
             WIKI_LINT_SPEC,
             EMR_IMPORT_SPEC,
             EMR_PARSE_SPEC,
+            GRAPH_REBUILD_SPEC,
+            NOTE_CONVERSE_SPEC,
         )
     )
     handlers = registry.dispatch_table(impls)

@@ -231,6 +231,59 @@ def test_compute_diff_without_a_baseline_is_informational_not_a_mismatch() -> No
     assert diff.actual is None
 
 
+def _baseline_event(kind: str = "integrate_note", note_id: str = "n-1") -> Any:
+    return _event(
+        type=wf_events.NOTE_INGESTED,
+        payload={
+            "note_id": note_id,
+            wf_events.SHADOW_ENQUEUED_KEY: wf_events.shadow_enqueued(kind, {"note_id": note_id}),
+        },
+    )
+
+
+# The subset check has to stay a subset — `note.ingested` legitimately drives both the
+# integration and the note conversation (D13) — WITHOUT going quiet on the thing it is
+# the only observer of: the baseline kind arriving more than once, or against the wrong
+# row. These three pin the line between the two.
+
+
+def test_compute_diff_flags_the_baseline_kind_enqueued_twice() -> None:
+    """Two triggers resolving to the same job off one event is a duplicated pipeline,
+    not an additive one — and `live_enqueue` would run both."""
+    ev = _baseline_event()
+    diff = dispatcher.compute_diff(ev, [_would(), _would()])
+    assert not diff.matches
+    assert any("duplicate baseline kind" in d for d in diff.discrepancies)
+
+
+def test_compute_diff_flags_a_second_baseline_carrying_the_wrong_row() -> None:
+    """The dangerous shape of the same fault: the first copy is right, so a
+    "some enqueue matches" check passed while a job ran against another note."""
+    ev = _baseline_event()
+    diff = dispatcher.compute_diff(ev, [_would(), _would(note_id="SOMEONE-ELSES-NOTE")])
+    assert not diff.matches
+    assert any("duplicate baseline kind" in d for d in diff.discrepancies)
+    assert "SOMEONE-ELSES-NOTE" in " ".join(diff.discrepancies)
+
+
+def test_compute_diff_tolerates_another_kind_beside_the_baseline() -> None:
+    """The case the subset check exists for, and it stays tolerated deliberately —
+    including for a kind that is not additive at all. This diff is DIAGNOSTIC: the
+    verdict gates nothing (`live_enqueue` submits `diff.enqueues` regardless), so
+    calling an extra kind a mismatch would not stop it running, it would only turn the
+    note conversation into a permanent warning on every ingested note — which is how a
+    real mismatch stops being noticed. What a wrong extra kind is caught by is the
+    trigger's own review, not here."""
+    ev = _baseline_event()
+    additive = dispatcher.compute_diff(ev, [_would(), _would(kind="note_converse")])
+    assert additive.matches
+    destructive = dispatcher.compute_diff(ev, [_would(), _would(kind="purge_note_artifacts")])
+    assert destructive.matches
+    # Both are still RECORDED — the extra kind is in the run log's `would`, so the diff
+    # tolerating it is not the same as the diff hiding it.
+    assert [w["kind"] for w in destructive.would] == ["integrate_note", "purge_note_artifacts"]
+
+
 # --- resolve_event: full chain over a faked session -------------------------
 
 
@@ -982,3 +1035,45 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
     assert captured_enqueue[0]["principal_id"] == PRINCIPAL
     assert len(run_log.records) == 1
     assert run_log.records[0]["steps"][0].job_id == "job-1"
+
+
+def _extra_enqueue(ev, kind: str = "note_converse"):  # noqa: ANN001, ANN202
+    return dispatcher.WouldEnqueue(
+        kind=kind,
+        payload={"note_id": "n-1"},
+        principal_id=ev.principal_id,
+        domain_code=ev.domain_code,
+        trigger_id="t-extra",
+        pipeline="event_note_converse",
+    )
+
+
+def _ingest_baseline_event():  # noqa: ANN202
+    return _event(
+        payload={
+            "note_id": "n-1",
+            wf_events.SHADOW_ENQUEUED_KEY: wf_events.shadow_enqueued(
+                "ingest_note", {"note_id": "n-1"}
+            ),
+        }
+    )
+
+
+def test_compute_diff_tolerates_an_additive_second_pipeline_on_the_same_event() -> None:
+    """`note.ingested` drives BOTH the integration and the note conversation (D13 of
+    AGENT_INGEST_CONVERSATION_PLAN.md), and neither displaces the other. The baseline
+    names only the kind the hardcoded path enqueued, so an equality check would log a
+    permanent mismatch on every note — which is how a real mismatch gets ignored."""
+    ev = _ingest_baseline_event()
+    would, _ = dispatcher.diff_pipeline(ev, _ingest_pipeline(), _registry())
+    diff = dispatcher.compute_diff(ev, [*would, _extra_enqueue(ev)])
+    assert diff.matches
+    assert diff.discrepancies == []
+
+
+def test_compute_diff_still_flags_the_baseline_kind_going_missing() -> None:
+    """The subset rule tolerates an EXTRA kind, never a MISSING one."""
+    ev = _ingest_baseline_event()
+    diff = dispatcher.compute_diff(ev, [_extra_enqueue(ev)])
+    assert not diff.matches
+    assert any("kind mismatch" in d for d in diff.discrepancies)

@@ -595,6 +595,11 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
 # counterfactual differs from it by exactly one edit. `matched_recorded` per step is the
 # measure: where the model stops following the night it actually had is the effect.
 #
+# It also takes inline `raw_tools`, which widens it past its origin: a tool surface still
+# being designed has no registry entry, and a persona that resolves before it writes never
+# reaches its write tool in one turn — so the call worth measuring is invisible until the
+# tool ships, which is backwards. Stubs feed the first move so the second can be observed.
+#
 # Reuses the llm.complete scope (it IS a converse). NO HANDLER EVER RUNS: the only tool
 # output that reaches the model is a string the caller supplied.
 
@@ -611,6 +616,12 @@ class ReplayRequest(BaseModel):
     task: str = "agent.turn"
     strength: str | None = None
     tools: list[str] = Field(default_factory=list)
+    # Inline tool schemas, appended after the registry ones — the same knob /tool-probe
+    # carries, and here for a reason that surface does not cover: a multi-turn loop is the
+    # only way to measure a tool a model reaches for on its SECOND move, and a tool being
+    # designed does not exist in the registry yet. Without this, a proposed tool surface
+    # can be measured for the shape of its first call and nothing else.
+    raw_tools: list[dict[str, Any]] = Field(default_factory=list)
     # The night's observed tool results, in the order the sitting produced them. Matched to
     # the model's calls by NAME (FIFO per name) so a replay that reorders its reads still
     # continues; `matched_recorded` records whether the order held.
@@ -649,12 +660,27 @@ class ReplayOut(BaseModel):
 @router.post("/replay")
 async def replay(body: ReplayRequest, request: Request, _p: DebugDep) -> ReplayOut:
     """Replay a sitting multi-turn against recorded tool results. See the module note."""
-    request.state.debug_detail = f"{len(body.tools)} tools, {body.max_steps} steps"
+    attached = len(body.tools) + len(body.raw_tools)
+    request.state.debug_detail = f"{attached} tools, {body.max_steps} steps"
     registry = cast(ToolRegistry, request.app.state.agent_registry)
     unknown = [t for t in body.tools if t not in registry.names()]
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown tools: {unknown}")
     llm_tools = [registry.get(name).as_llm_tool() for name in body.tools]
+    try:
+        llm_tools += [
+            LlmTool(
+                name=rt["name"],
+                description=rt.get("description", ""),
+                input_schema=rt.get("input_schema", {"type": "object", "properties": {}}),
+            )
+            for rt in body.raw_tools
+        ]
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"raw_tools need a 'name' (and optional description/input_schema): {exc}",
+        ) from exc
     router_ = _llm_router(request)
     provider, model = await router_.effective_spec(body.task, body.strength)
 
@@ -2320,7 +2346,10 @@ async def sdr_sessions_debug(
     something the sidecar reports. It calls the same `status_of`, so it cannot drift
     from the icon: a second derivation would be the very thing B7 deleted."""
     request.state.debug_detail = "sdr sessions"
-    return await sdr_api.status_of(settings)
+    # `recording_now` for the same reason: the tape deck is api state rather than
+    # something /healthz reports, and a console that omits it would say the box is idle
+    # while a recording is running.
+    return await sdr_api.status_of(settings, sdr_api.recording_now(request))
 
 
 def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:

@@ -5,7 +5,18 @@
 // problem this whole screen exists for.
 
 import { describe, expect, it } from "vitest";
-import { ago, arrival, baseCall, chipsFor, isMine, pinMine, shownLabel } from "./aprsStations";
+import {
+  ago,
+  alsoHeard,
+  arrival,
+  baseCall,
+  chipsFor,
+  isMine,
+  narrowedBy,
+  pinMine,
+  provenanceChips,
+  shownLabel,
+} from "./aprsStations";
 
 function station(call: string, over: Record<string, unknown> = {}) {
   return {
@@ -151,5 +162,77 @@ describe("base callsign", () => {
     expect(baseCall(" k4jtt-d ")).toBe("K4JTT");
     expect(baseCall("WINLINK")).toBe("WINLINK");
     expect(baseCall("")).toBe("");
+  });
+});
+
+describe("the provenance chips", () => {
+  it("offers the three states the packet rows already draw", () => {
+    // Three, not two. The owner asked for "gated/direct", and `rf` is the remainder the
+    // row badge already names — a station heard only through a digipeater is neither of
+    // the other two, and on this band that is most of the roster.
+    expect(provenanceChips({ direct: 4, gated: 9, rf: 2 })).toEqual([
+      { id: "direct", label: "Direct", count: 4 },
+      { id: "gated", label: "Gated", count: 9 },
+      { id: "rf", label: "RF", count: 2 },
+    ]);
+  });
+
+  it("collapses when everything arrived the same way", () => {
+    // Same rule as the kinds: one chip is a filter with one option, and it can only
+    // narrow to what is already on screen.
+    expect(provenanceChips({ gated: 12 })).toEqual([]);
+    expect(provenanceChips({})).toEqual([]);
+  });
+
+  it("keeps a SELECTED state on screen reading zero", () => {
+    // The distinction the owner cannot make any other way from a phone: a chip that is
+    // on and reads 0 says "nothing arrived that way", which is a different fact from a
+    // filter that never reached the box and left the list blank.
+    expect(provenanceChips({ gated: 3 }, ["direct"])).toEqual([
+      { id: "direct", label: "Direct", count: 0 },
+      { id: "gated", label: "Gated", count: 3 },
+    ]);
+  });
+
+  it("counts stations rather than partitioning them", () => {
+    // The counts OVERLAP by design — a station heard both ways is in both — so they can
+    // sum past the roster total and must never be shown as a breakdown of it.
+    const chips = provenanceChips({ direct: 3, gated: 3, rf: 0 });
+    expect(chips.map((c) => c.count).reduce((a, b) => a + b)).toBe(6);
+  });
+});
+
+describe("a station heard more than one way", () => {
+  it("names the ways its newest frame does not", () => {
+    // The case that would otherwise make the filter read as a lie: this station was
+    // gated this morning and heard direct since, so a row returned by the Gated chip
+    // would say "heard on RF" and contradict the chip that returned it.
+    expect(alsoHeard({ direct: true, gated: false, heard: ["direct", "gated"] })).toBe(
+      "also gated",
+    );
+    expect(alsoHeard({ direct: false, gated: true, heard: ["direct", "gated"] })).toBe(
+      "also direct",
+    );
+  });
+
+  it("says nothing when every frame arrived the one way the row already names", () => {
+    expect(alsoHeard({ direct: true, gated: false, heard: ["direct"] })).toBe("");
+    expect(alsoHeard({ direct: false, gated: false, heard: ["rf"] })).toBe("");
+  });
+});
+
+describe("what the list is narrowed to", () => {
+  it("says nothing at all when nothing is selected", () => {
+    expect(narrowedBy([], [])).toBe("");
+  });
+
+  it("names BOTH filters, because an empty list has to say which one emptied it", () => {
+    // The owner has no terminal: a filter that matched nothing and a receiver that heard
+    // nothing are the same blank list unless the screen names the filter.
+    expect(narrowedBy(["Weather"], [])).toBe("sending Weather");
+    expect(narrowedBy([], ["gated"])).toBe("heard gated");
+    expect(narrowedBy(["Weather", "Object"], ["direct", "rf"])).toBe(
+      "sending Weather or Object, heard direct or digipeated",
+    );
   });
 });

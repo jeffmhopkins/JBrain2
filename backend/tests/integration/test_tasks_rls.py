@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.agents import NON_OWNER_PERSONAS, OWNER_AGENTS
+from jbrain.agent.agents import NON_OWNER_PERSONAS, STORABLE_OWNER_AGENTS
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
@@ -103,12 +103,15 @@ async def test_check_constraints_pin_the_sets(maker: async_sessionmaker) -> None
 async def test_every_owner_persona_is_a_valid_task_agent(
     maker: async_sessionmaker,
 ) -> None:
-    """The tasks.agent CHECK (0093, widened in 0095) must admit every OWNER-selectable
-    persona, so the task launcher can schedule any of them — the archivist included. The
-    non-owner intake persona is excluded by design (proven rejected below)."""
+    """The tasks.agent CHECK (0093, widened in 0095) must admit every persona stored
+    owner-side, so the task launcher can schedule any SELECTABLE one — the archivist
+    included — and the CHECK never becomes the thing that rejects an engine-only persona
+    (`note_ingest`) that 0192 widened it for. The API gate is the narrower
+    `OWNER_AGENTS`; this is the DB's set. The non-owner intake persona is excluded by
+    design (proven rejected below)."""
     owner = await _owner_ctx(maker)
     repo = TaskRepo(maker)
-    for name in sorted(OWNER_AGENTS):
+    for name in sorted(STORABLE_OWNER_AGENTS):
         task = await _make_task(repo, owner, name=name, agent=name)
         assert task.agent == name
 

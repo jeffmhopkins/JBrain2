@@ -30,8 +30,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
+from jbrain.models.note_conversation import STALE_CONVERSATION, NoteConversationRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from jbrain.workflow import dispatcher
@@ -52,7 +54,10 @@ GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=(
 
 
 def _registry():  # noqa: ANN202
-    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+    # NOTE_CONVERSE_SPEC is here because migration 0194 seeds a SECOND note.ingested
+    # trigger beside the integrate one; without the spec the dispatcher cannot resolve
+    # that pipeline and every note.ingested diff carries a resolution error.
+    return build_registry((*ACTION_SPECS, PURGE_ACTION, NOTE_CONVERSE_SPEC))
 
 
 @pytest.fixture
@@ -834,3 +839,176 @@ async def test_events_rls_isolates_by_domain(maker: async_sessionmaker[AsyncSess
     assert await visible(GENERAL_ONLY) == 0  # firewalled out
     assert await visible(HEALTH_ONLY) == 1  # in-scope reader sees it
     assert await visible(OWNER) == 1  # the owner crosses every firewall
+
+
+async def test_note_ingested_drives_the_conversation_beside_integration(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """D13's guarantee, at the dispatch seam. Migration 0194 binds `note_converse` to
+    `note.ingested` ALONGSIDE the shipped integrate pipeline — it does not re-point it.
+    One ingest event therefore enqueues exactly one of EACH, and the old pipeline is
+    left doing precisely what it did before."""
+    await _seed_owner_principal(maker)
+    note_id = await _make_note(maker, domain="general", body="lunch with priya on thursday")
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+
+    diffs = await dispatcher.dispatcher_tick(
+        maker, _registry(), live=True, run_log=PipelineRunLog(maker)
+    )
+    mine = [d for d in diffs if d.event_type == wf_events.NOTE_INGESTED]
+    assert mine and all(d.error is None for d in mine)
+
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 1
+    assert await _count_jobs(maker, kind="note_converse", note_id=note_id) == 1
+
+    # A re-delivered event enqueues neither a second integrate nor a second
+    # conversation: the note has no live thread yet (the job has not run), so the
+    # note_converse arm is carried by the queued-twin half of the guard.
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 1
+    assert await _count_jobs(maker, kind="note_converse", note_id=note_id) == 1
+
+
+async def test_a_live_conversation_suppresses_a_second_note_converse_enqueue(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The graceful arm in front of `note_conversations_one_live`. Once the queued job is
+    gone but the conversation it opened is still live, a re-delivered event must skip —
+    letting it through would hand the worker an IntegrityError, which is a failed job and
+    a 500 in the run log for a note that is simply already being read."""
+    pid = await _seed_owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    note_id = await _make_note(maker, domain="general", body="the fence post is rotting")
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+    assert await _count_jobs(maker, kind="note_converse", note_id=note_id) == 1
+
+    # The job ran: it is off the queue, and it left a live conversation behind.
+    session_id = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done' WHERE payload->>'note_id' = :n"),
+            {"n": note_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions (id, principal_id, agent, domain_scopes)"
+                " VALUES (CAST(:id AS uuid), :pid, 'note_ingest', '{}')"
+            ),
+            {"id": session_id, "pid": pid},
+        )
+        await NoteConversationRepo().start(
+            s, session_id=session_id, note_id=note_id, body_sha="deadbeef"
+        )
+
+    # A re-delivered event: the queued-twin check no longer fires, the live-thread one does.
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.events (id, type, payload, domain_code, principal_id)"
+                " VALUES (CAST(:eid AS uuid), :t,"
+                " jsonb_build_object('note_id', CAST(:n AS text)), 'general', :pid)"
+            ),
+            {
+                "eid": str(uuid.uuid4()),
+                "t": wf_events.NOTE_INGESTED,
+                "n": note_id,
+                "pid": pid,
+            },
+        )
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    async with scoped_session(maker, owner) as s:
+        queued = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
+                    " AND payload->>'note_id' = :n AND status = 'queued'"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert queued == 0
+    # Integration is NOT suppressed by a live conversation — the two arms are
+    # independent. Its own guard re-enqueued it (the queued twin is gone and the note is
+    # not yet integrated), which is exactly the shipped behaviour, unchanged by this
+    # wave: the conversation's dedup narrows nothing but the conversation.
+    assert await _count_jobs(maker, kind="integrate_note", note_id=note_id) == 2
+
+
+async def test_a_stranded_conversation_stops_suppressing_the_note_once_it_is_stale(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The other side of the suppression above, and the one that had no exit. A pass can
+    only leave `running` from inside the handler that opened it, so a worker SIGKILLed
+    mid-turn — which `Ops -> Update` produces on every deploy (`docker compose stop -t 30
+    worker`) — leaves `running` standing with nothing to clear it. This gate then skipped
+    every future `note_converse` for that note, silently and forever, on a box whose owner
+    has no terminal (CLAUDE.md #10).
+
+    `live_for_note` now reclaims a `running` pass older than `STALE_CONVERSATION` before
+    it reads, so the note comes back into the pipeline by itself."""
+    pid = await _seed_owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    note_id = await _make_note(maker, domain="general", body="the gutter is coming loose")
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    # The job ran and was killed mid-turn: off the queue, `running` left behind, and its
+    # last transition is older than any turn is allowed to take.
+    session_id = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done' WHERE payload->>'note_id' = :n"),
+            {"n": note_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions (id, principal_id, agent, domain_scopes)"
+                " VALUES (CAST(:id AS uuid), :pid, 'note_ingest', '{}')"
+            ),
+            {"id": session_id, "pid": pid},
+        )
+        await NoteConversationRepo().start(
+            s, session_id=session_id, note_id=note_id, body_sha="deadbeef"
+        )
+        await s.execute(
+            text(
+                "UPDATE app.note_conversations"
+                " SET updated_at = now() - make_interval(secs => :s)"
+                " WHERE session_id = CAST(:i AS uuid)"
+            ),
+            {"s": STALE_CONVERSATION.total_seconds() + 60, "i": session_id},
+        )
+
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.events (id, type, payload, domain_code, principal_id)"
+                " VALUES (CAST(:eid AS uuid), :t,"
+                " jsonb_build_object('note_id', CAST(:n AS text)), 'general', :pid)"
+            ),
+            {"eid": str(uuid.uuid4()), "t": wf_events.NOTE_INGESTED, "n": note_id, "pid": pid},
+        )
+    await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
+
+    async with scoped_session(maker, owner) as s:
+        queued = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
+                    " AND payload->>'note_id' = :n AND status = 'queued'"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+        state = (
+            await s.execute(
+                text(
+                    "SELECT state FROM app.note_conversations WHERE session_id = CAST(:i AS uuid)"
+                ),
+                {"i": session_id},
+            )
+        ).scalar_one()
+    assert queued == 1  # the note is back in the pipeline
+    assert state == "failed"  # and the dead pass is settled as dead, not resurrected

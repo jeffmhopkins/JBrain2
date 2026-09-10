@@ -12,7 +12,7 @@
 // so an app with no radio surface open costs nothing.
 
 import { useEffect, useState } from "react";
-import { ApiError, api } from "./api/client";
+import { ApiError, type SdrRecording, api } from "./api/client";
 import { playSdrAudio, stopSdrAudio } from "./sdrAudio";
 
 export interface SdrListening {
@@ -49,6 +49,50 @@ export interface SdrListening {
    *  noise. Nothing renders it today; the name is what keeps it that way. */
   audio_peak: number;
   listeners: number;
+  /** How wide the demodulator's filter is, as a FULL channel width in Hz. Zero on a
+   *  session with no channel (a spectrum stare), and absent on a sidecar older than the
+   *  bandwidth control — both of which mean "draw no bandwidth control". */
+  bandwidth_hz?: number;
+  /** Every width THIS mode offers, widest first. Sent WITH the session rather than
+   *  hardcoded here, because the ladder is a property of the demodulator: a copy in the
+   *  PWA would go on offering widths a redeployed box had stopped accepting, and the
+   *  refusal would arrive as a 400 the owner cannot act on. */
+  bandwidths_hz?: number[];
+  /** The narrowest and widest this mode will build, and the grid a width must land on.
+   *  The presets above are quick picks INSIDE this; the drag on the tuning view runs
+   *  anywhere in the range, so the control needs the bounds rather than just the menu. */
+  bandwidth_min_hz?: number;
+  bandwidth_max_hz?: number;
+  bandwidth_step_hz?: number;
+  /** How wide the TUNING PICTURE is drawn, and the widths this mode offers. A different
+   *  thing from the bandwidth above: that is what the radio hears, this is only how much
+   *  spectrum is drawn around it. Changing it rebuilds nothing and never clicks the
+   *  audio, which is why it has its own route rather than being a `tune` parameter. */
+  view_span_hz?: number;
+  view_spans_hz?: number[];
+}
+
+/** A capture in flight, as `GET /sdr/status` reports it (docs/plans/SDR_RECORDING_PLAN.md
+ *  §4). The Record button draws its elapsed time and running size FROM HERE, off the 1 Hz
+ *  poll every other radio reading already uses — a second timer in the component would be
+ *  a clock of its own to drift against the box, and an optimistic local "recording" state
+ *  would keep counting through a capture the box had already dropped. */
+export interface SdrRecordingState {
+  /** When the capture began, as the box's clock said it (`sdr/recorder.py`). */
+  started_at: string;
+  /** How long it has been running. Named as the recorder names it, not `elapsed_s` —
+   *  the session's elapsed time is a different clock on the same poll, and one name for
+   *  two quantities is how a surface ends up printing the wrong one. */
+  seconds: number;
+  /** What has landed in the blob so far. Reported rather than derived from the bitrate:
+   *  the running size is the argument for stopping, so it has to be measured. */
+  bytes: number;
+  /** The settings the clip will carry. A retune does not restart the pipeline, so these
+   *  are where the recording BEGAN, which is what the library will show. */
+  frequency_hz: number;
+  mode: string;
+  bandwidth_hz: number | null;
+  serial: string | null;
 }
 
 export interface SdrState {
@@ -65,6 +109,18 @@ export interface SdrState {
   /** Every radio the box is holding. Absent from an api older than per-radio sessions,
    *  hence the default — a box like that can hold only one thing anyway. */
   sessions?: SdrListening[];
+  /** The capture in flight, or null. One at a time, box-wide (`sdr/recorder.py`), which
+   *  is why it sits on the STATUS rather than on a session. */
+  recording?: SdrRecordingState | null;
+}
+
+/** The capture in flight, or null.
+ *
+ *  One reading, like `sessionFor` and `anyHeld`: the recorder is box-wide rather than a
+ *  property of a session, so "is anything recording" is a question about the STATUS —
+ *  and both the Record button and the library ask it of the same 1 Hz poll. */
+export function liveRecording(state: SdrState): SdrRecordingState | null {
+  return state.recording ?? null;
 }
 
 /** The session holding a radio for one job, or null.
@@ -185,6 +241,39 @@ export function useSdrSession(): SdrState {
 export function resetSdrSession(): void {
   stop();
   listeners.clear();
+  savedListeners.clear();
   published = IDLE;
   inFlight = false;
+}
+
+// --- the row a stop just landed ------------------------------------------------------
+//
+// `liveRecording` above cannot answer "has the clip been written yet". The recorder
+// reports no capture the moment the STREAM ends, which is before the waveform is
+// computed and the row inserted, so a library reloading off that poll can legitimately
+// read a list that does not contain the recording the owner just made — and nothing
+// would ever re-read it. `POST /sdr/record?on=false` answers with the saved row itself,
+// which is the only signal that is true by construction; this carries it from the
+// control that pressed Stop to the tab that lists it, the two being on different tabs of
+// the launcher and never mounted together.
+//
+// A one-shot signal, deliberately NOT retained state: a last-saved row kept around would
+// be re-folded into the list by a library mounted long afterwards, resurrecting a
+// recording the owner had since deleted.
+
+type SavedListener = (row: SdrRecording) => void;
+
+const savedListeners = new Set<SavedListener>();
+
+/** Announce the row a just-completed capture landed. */
+export function noteSdrRecordingSaved(row: SdrRecording): void {
+  for (const listener of savedListeners) listener(row);
+}
+
+/** Hear about a capture that has finished being written; returns an unsubscribe. */
+export function onSdrRecordingSaved(listener: SavedListener): () => void {
+  savedListeners.add(listener);
+  return () => {
+    savedListeners.delete(listener);
+  };
 }

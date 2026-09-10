@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toolStep } from "./toolSummary";
 import type { ToolActivity } from "./transcript";
-import type { EntityRef } from "./types";
+import type { EntityRef, FactWrite } from "./types";
 
 function tool(over: Partial<ToolActivity> & { name: string }): ToolActivity {
   return { id: "c1", ok: true, ...over };
@@ -156,5 +156,94 @@ describe("toolStep", () => {
     expect(step.webSources).toEqual(webSources);
     // A tool that surfaced none gets an empty list, never undefined.
     expect(toolStep(tool({ name: "search" })).webSources).toEqual([]);
+  });
+});
+
+describe("the note-conversation write tools", () => {
+  it("labels them in the owner's terms, never the raw verb", () => {
+    expect(toolStep(tool({ name: "assert_fact" })).label).toBe("Recorded what the note says");
+    expect(toolStep(tool({ name: "resolve_entity" })).label).toBe("Resolved who the note means");
+    expect(toolStep(tool({ name: "ask_owner" })).label).toBe("Asked you a question");
+    expect(toolStep(tool({ name: "prefs_read" })).label).toBe("Read your standing instructions");
+    expect(toolStep(tool({ name: "prefs_write" })).label).toBe("Staged a standing instruction");
+    // The on-reply pair (D8). The two labels have to say which one WROTE and which only
+    // staged — that is the difference between something on file and something Jeff still
+    // has to approve, and it is the whole content of the step for him.
+    expect(toolStep(tool({ name: "correct_fact" })).label).toBe("Corrected a fact you disputed");
+    expect(toolStep(tool({ name: "merge_entities" })).label).toBe("Staged an entity fold");
+  });
+
+  it("names the on-reply writes by what they are about, not by their arguments", () => {
+    // Neither batches — one disputed value, one pair of records — so the inline piece is
+    // the thing Jeff would recognise in the strip.
+    expect(
+      toolStep(
+        tool({
+          name: "correct_fact",
+          args: {
+            entity: "e-1",
+            predicate: "homeLocation",
+            statement: "Jeff lives at 412 Oak St.",
+          },
+        }),
+      ).inline,
+    ).toBe("Jeff lives at 412 Oak St.");
+    expect(
+      toolStep(
+        tool({ name: "merge_entities", args: { entity_a: "Dana Whitfield", entity_b: "Dana W" } }),
+      ).inline,
+    ).toBe("Dana Whitfield · Dana W");
+  });
+
+  it("names a BATCHED argument elementwise, capped with a +N", () => {
+    // `entities`, not `surfaces` — the key `resolve_entity.tool` actually declares. The
+    // polish landed before the sidecar did (the old `_FORWARD` window), and named the
+    // wrong one; a backend test now pins every INLINE_ARGS key to its tool's schema.
+    const step = toolStep(
+      tool({
+        name: "resolve_entity",
+        // The real sidecar takes `entities`, an array of {surface, kind} — this fixture
+        // guessed a flat `surfaces` before the tool existed.
+        args: {
+          entities: [
+            { surface: "Priya", kind: "person" },
+            { surface: "the shop", kind: "place" },
+            { surface: "Dr. Okafor", kind: "person" },
+            { surface: "Me", kind: "person" },
+          ],
+        },
+      }),
+    );
+    expect(step.inline).toBe("Priya, the shop, Dr. Okafor +1");
+  });
+
+  it("names each element of an array of objects by its first legible field", () => {
+    const step = toolStep(
+      tool({
+        name: "assert_fact",
+        args: { facts: [{ subject: "Me", predicate: "takes" }, { subject: "Priya" }] },
+      }),
+    );
+    expect(step.inline).toBe("Me, Priya");
+  });
+
+  it("carries the graph writes and the truncation flag onto the step", () => {
+    const facts: FactWrite[] = [
+      {
+        fact_id: "f1",
+        label: "Me takes lisinopril",
+        domain: "health",
+        status: "written",
+      },
+    ];
+    const step = toolStep(tool({ name: "assert_fact", facts, truncated: true }));
+    expect(step.facts).toEqual(facts);
+    expect(step.truncated).toBe(true);
+  });
+
+  it("defaults to no writes and not truncated, so a read tool is unaffected", () => {
+    const step = toolStep(tool({ name: "search" }));
+    expect(step.facts).toEqual([]);
+    expect(step.truncated).toBe(false);
   });
 });

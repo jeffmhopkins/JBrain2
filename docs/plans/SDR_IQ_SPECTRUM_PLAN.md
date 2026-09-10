@@ -1,6 +1,6 @@
 # SDR I/Q spectrum — own the samples, and shortwave stops being a special case
 
-> **Status:** Proposed · **Last verified:** 2026-09-05 (rev 4) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡
+> **Status:** Proposed · **Last verified:** 2026-09-09 (rev 8) · **Waves:** F0✅ F1✅ F2✅ F3✅ F4✅ F5✅ F6✅ F7✅ F8✅ F9✅ F10🟡 B1✅ B2✅ B3✅ B4✅ B5✅ B6✅(on air; six corrections folded in)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: no LLM call is added (rule 1);
 > nothing new is written to disk (rule 2); no new table, so no new RLS surface (rule 3);
@@ -1336,3 +1336,129 @@ inherit it), and every door that tunes — `/sdr/listen`, `/sdr/tune`, `/sdr/apr
 the debug listen and capture twins — refuses with the frequency that would really have
 arrived. Refusal, not a caveat: nothing downstream of `-E direct2` can tell 18.1 MHz
 from the 10.7 MHz it delivers.
+
+## B — the filter is the owner's to set (2026-09-09)
+
+The owner reported a station at 5 MHz picking up a neighbouring AM broadcaster. Not a
+tuning error, not the antenna: the channel filter, which was not adjustable and was
+twice as wide as AM's own audio path can use.
+
+**Measured on the real chain**, two equal AM carriers 5 kHz apart — the shortwave
+broadcast raster — reading how far the neighbour's tone lands below the wanted one in
+the audio:
+
+| Channel filter | Neighbour at +5 kHz |
+| --- | --- |
+| 16 kHz (what shipped) | **0.0 dB — as loud as the station that was tuned** |
+| 8 kHz | 14.8 dB down |
+| 6 kHz | 85.2 dB down |
+| 4 kHz | 110.0 dB down |
+| 3 kHz | 103.1 dB down |
+
+That splits into a defect and a feature, and they are separate changes:
+
+**B1 — the defect.** AM's audio is low-passed at 4 kHz, so RF beyond ±4 kHz cannot carry
+any wanted audio; the same measurement shows 16 kHz and 8 kHz giving *identical*
+response at every audio tone out to 3.5 kHz. The outer half was pure interference
+intake. The default is now 8 kHz and 16 has left the ladder. `BANDWIDTH_HZ` is a
+per-mode ladder, and `CHANNEL_HALF_HZ`/`PASSBAND_HZ` are derived from it rather than
+being tables of their own, so the three cannot drift apart. Off-ladder widths are
+refused, never clamped: every rung is a filter design a test measures, and a clamped
+width would leave the radio listening at something other than what the screen says.
+
+Rejection has to happen in the channel filter, **before** the envelope detector, because
+detection is non-linear — two carriers that both reach it beat together and the products
+land inside the audio band, where nothing downstream can separate them from speech.
+That ordering is why a control here works and an audio-side one could not.
+
+`crop_reach_hz` comes from the mode's *widest* rung, not the one in force. The tuning
+strip crops to four times the reach it is given, so deriving it from the live passband
+would zoom the picture in every time the owner narrowed the filter — hiding the
+interfering station at the moment they narrowed it to reject that station, and leaving
+the shaded box the same fraction of the picture at every setting, so the control would
+look like it had done nothing.
+
+**B2 — the width travels.** `Session` carries it, sticky across a retune (a narrow
+filter is a decision about a crowded *band*, not one station) and reset to the mode's
+default on a mode change (the ladders differ, so carrying a width across would refuse an
+ordinary mode press). The session reports both the width and the whole ladder, so the
+PWA never holds its own copy to go stale against a redeployed box.
+
+**B4 — what the box taught it (2026-09-09, on air).** Three corrections from the owner
+using it at 162.550:
+
+*A ladder of four was too coarse.* "Narrower than that station" is a position, so a drag
+now snaps to **whole kilohertz** anywhere inside a per-mode range, and the presets became
+quick picks inside that range rather than the whole contract. The box accepts a 100 Hz
+grid — finer than a fingertip on a 32 kHz picture can mean, but the reason it must be
+100 Hz is that NFM's 12.5 kHz and SSB's 3.1 kHz are real filters and neither is a whole
+kilohertz. Each range's ceiling is its widest preset, deliberately: on AM that keeps the
+8 kHz limit this wave measured, rather than reopening the interference intake it closed.
+
+*The grips were furniture.* 12×28 px of accent colour sat over the trace beside them; now
+6×18, growing only while held. The touch target is unchanged at 28 px — a 6 px one would
+be a miss most tries.
+
+*The picture contradicted itself for the length of a retune.* MEASURED: the mode button
+read `8k` while the shading still spanned 16 kHz, because a retune takes ~100 ms and
+every row arriving in that window still carries the OLD passband. Releasing the drag also
+cleared the dragged width, so the edges sprang back to the old position and then jumped
+forward again — which reads as the drag having been rejected. The chosen width now wins
+until the row agrees with it (`sdrBandwidth.pendingPassband`), and only until, so a width
+the box REFUSES stops being drawn instead of lingering as a lie about what the radio is
+doing.
+
+**B5 — the tuner floor leaked into the band sheet (2026-09-09, on air).** The Spectrum
+band sheet's manual entry refused 4.625 MHz as "outside what this radio reaches
+(24-1766 MHz)" — while the picture behind it was drawing 4.393-5.417 MHz from the 60 m
+button. It bounded on `bands.tuner_min_hz`, which is the R820T2 TUNER's floor, so the
+band table could go somewhere the box's own entry field called unreachable.
+
+This is the bug class `jbrain/sdr/tuner.py` exists to end, appearing for the third time:
+`MIN_MHZ` is the tuner's range and `TUNABLE_MIN_MHZ` is the radio's. The tuner controls
+had already been fixed with a comment saying exactly that, and the fix did not travel.
+So the rule now lives in one module both screens import (`sdrTunable.ts`), and the API
+was already right — `Query(ge=TUNABLE_MIN_MHZ)` — which is why the frontend guard was the
+only thing blocking it. Verified against the real planner: the owner's 4.625 ± 0.5 gets
+400 Hz bins in a single capture, the same plan the 60 m button gets.
+
+A span is checked at both EDGES and across the middle, which a point never needs: 12 to
+28 MHz has two legal edges and a middle drawn from a mirror of somewhere else. My own
+test caught that — the first draft checked edges only.
+
+**B6 — half a kilohertz, and a zoom (2026-09-09, on air).** Two more from use.
+
+*The drag snaps to 500 Hz.* 1 kHz was still too coarse; 500 Hz is about 5 px on a 32 kHz
+picture, is a multiple of the box's 100 Hz grid so nothing it produces gets refused, and
+on SSB is the difference between 2.4 and 2.9 kHz — two filters that sound quite different.
+
+*The tuning picture's width is the owner's.* `VIEW_SPAN_HZ` is a per-mode ladder and the
+"32.0 kHz view" label is the control: a tap steps to the next width and wraps.
+
+**A span is a CROP, never a rebuild, and that is the whole design.** A bandwidth change
+redesigns the channel filter and replaces the chain — a click in the audio, worth paying
+once for selectivity. A zoom changes only how much of a row `_tuning_frame` keeps, so it
+costs one integer, the next frame is already drawn to it, and the audio does not stop.
+That is why it has its own route rather than a `/tune` parameter (`tune` rebuilds), why
+the label can be tapped freely, and why every ladder stops at what the chain ALREADY
+supplies (`Demodulator.max_span_hz`): a wider picture would need `view_rate_hz` to change,
+which is a rebuild, so it is not offered rather than being offered and made to click.
+
+The test that matters drives it through `_publish_channel` rather than calling the cropper
+directly. The first version passed the span in by hand and still passed when the wiring
+from the stored span to the crop was cut — which is exactly the bug that would make the
+zoom do nothing on the box.
+
+**B3 — the control.** Binding spec `docs/mocks/bandwidth/d-mode-width-draggable.html`,
+chosen by the owner: the mode button carries its width and a second tap opens the
+ladder, *and* the shaded passband on the tuning view is draggable, snapping to the same
+rungs. Two ways into one value, because they answer different questions — the popover
+when you know the number, the drag when what you want is "narrower than that station",
+which is the question the owner actually started with.
+
+**A pre-existing bug this wave found rather than caused:** `/reset` wrote its HTTP
+response *before* the `finally` that released the lease, so a client acting on the reply
+raced the handler and lost — `409 the radio is already resetting the radio` on the very
+next request, which after a reset is always "use the radio". Invisible on an idle box.
+Fixed by deciding, then releasing, then answering. Racing it from a client passes either
+way, so the test observes the lease at the moment the reply is written.

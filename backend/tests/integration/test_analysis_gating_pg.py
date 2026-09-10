@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue, worker
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
 from jbrain.ingest.ocr import MAX_OCR_BYTES, OcrPipeline
@@ -61,7 +62,10 @@ EMPTY_INTENT = '{"resolutions": [], "facts": []}'
 
 
 def _registry():  # noqa: ANN202
-    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+    # note.ingested drives the note conversation as well as integration since
+    # migration 0194; without its spec the dispatcher cannot resolve that pipeline and
+    # the whole tick errors before it enqueues anything.
+    return build_registry((*ACTION_SPECS, PURGE_ACTION, NOTE_CONVERSE_SPEC))
 
 
 async def _seed_owner_principal(maker: async_sessionmaker[AsyncSession]) -> None:
@@ -458,15 +462,48 @@ async def test_backfill_waits_for_promised_attachment_then_settles(
     await queue.backfill_pending_integration(maker, OWNER)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
 
-    # Backdate creation past the settle window — the promise never arrived, so the
+    # Backdate RECEIPT past the settle window — the promise never arrived, so the
     # note becomes eligible and integrates body-only rather than stranding.
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "UPDATE app.notes SET created_at = now() - make_interval("
+                "UPDATE app.notes SET received_at = now() - make_interval("
                 "secs => :secs) WHERE id = :nid"
             ),
             {"secs": queue.INTEGRATION_ATTACHMENT_SETTLE_SECONDS + 60, "nid": note_id},
         )
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+
+
+async def test_offline_flushed_note_still_gets_its_attachment_window(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The settle window measures the UPLOAD race, so it must run from the server's
+    receipt instant, not the client's capture time.
+
+    `notes.created_at` is the client's (notes/repo.py: "Client capture time wins when
+    supplied — the offline outbox flushes later"), so a note captured yesterday and
+    flushed now arrives already past a created_at window — defeating the gate in
+    exactly the case it exists for, and body-only integrating a note whose promised
+    image is still uploading. Against `received_at` the window is honored, and it
+    still lapses on its own terms.
+    """
+    await quiesce(maker)
+    note_id = await make_note(maker, "captured offline, flushed today", attachments_expected=1)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.notes SET ingest_state = 'indexed',"
+                " created_at = now() - interval '1 day' WHERE id = :nid"
+            ),
+            {"nid": note_id},
+        )
+
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+
+    # The promised attachment lands inside the window: it integrates WITH the image.
+    await add_image(maker, note_id, blobs=blobs)
     await queue.backfill_pending_integration(maker, OWNER)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]

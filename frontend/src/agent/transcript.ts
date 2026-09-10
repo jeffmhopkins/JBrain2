@@ -8,6 +8,7 @@ import type {
   ChatAttachment,
   ChatEvent,
   EntityRef,
+  FactWrite,
   ProposalRef,
   ViewPayload,
   WebSource,
@@ -96,6 +97,10 @@ export interface ToolActivity {
   proposal?: ProposalRef;
   /** Entities this tool resolved (tappable chips). */
   entities?: EntityRef[];
+  /** Graph writes this tool made — the D3 "entity modified" rung of the step. */
+  facts?: FactWrite[];
+  /** The call asserted only a prefix of what it was given (D3's `truncated`). */
+  truncated?: boolean;
   /** Live progress for an in-flight tool — image gen's sampler step/total + sharpening
    * preview, or a multi-phase tool's text `label` ("Analyzing frame 12/30"). Set by
    * `tool_progress`, cleared when the result lands (the final view then renders). */
@@ -313,6 +318,8 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         ...(event.proposal ? { proposal: event.proposal } : {}),
         ...(event.entities?.length ? { entities: event.entities } : {}),
         ...(event.web_sources?.length ? { webSources: event.web_sources } : {}),
+        ...(event.facts?.length ? { facts: event.facts } : {}),
+        ...(event.truncated ? { truncated: true } : {}),
       };
       next.tools = next.tools.map((t) => {
         if (t.id !== event.tool_call_id) return t;

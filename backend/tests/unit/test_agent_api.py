@@ -879,6 +879,99 @@ def test_chat_buffer_retry_is_forced_off_for_a_spawner(
     assert sse_events(resp.text)[-1]["type"] == "done"
 
 
+@pytest.fixture
+def no_standing_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A note-conversation turn reads `owner_prefs` from the database, and the test app
+    has none. Stand in for the empty document — the shape a box whose owner has never
+    set a rule is in."""
+    import jbrain.api.agent as agent_mod
+
+    async def none(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", none)
+
+
+def test_a_note_reply_turn_is_given_the_owners_standing_instructions(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D15 says the standing instructions go into EVERY note conversation's prompt, and
+    only the unattended pass did it. The consequence was precise: `prefs_write` is in the
+    ON-REPLY set alone, so the one turn that can edit the numbered list was the one turn
+    that had never been shown it — and `prefs_read` is deliberately unreachable on the
+    premise that the injection makes it redundant, which was true there and false here.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def rules(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return ["Stop splitting recipe ingredients into separate facts."]
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", rules)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-p", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router = stream_router(
+        [LlmTurn("noted", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["noted"]]
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-p", "message": "stop doing that"})
+
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    system = fake.stream_calls[0]["system"]
+    assert "Stop splitting recipe ingredients into separate facts." in system
+    # Framed as JEFF's instructions, not as the note's data — the one thing in a note
+    # conversation's context that IS an instruction has to say so.
+    assert "standing instructions" in system.lower()
+
+
+def test_a_curator_chat_gets_no_standing_instructions_block(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # The injection is the note persona's, not every persona's: `owner_prefs` says how to
+    # read a NOTE, and an ordinary chat has none.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-c", "", "active", ("general",), (), NOW, NOW))
+    router = stream_router([LlmTurn("hi", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["hi"]])
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-c", "message": "hello"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    assert "standing instructions" not in fake.stream_calls[0]["system"].lower()
+
+
+def test_chat_buffer_retry_is_forced_off_for_a_note_conversation(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    no_standing_rules: None,
+) -> None:
+    # The same objection as the spawner above, with the graph writes in place of the fan.
+    # The on-reply surface holds `assert_fact`, `correct_fact`, `merge_entities` and
+    # `prefs_write`; a re-produce re-dispatches every one of them, so one owner message
+    # would force-supersede twice and stage two Proposals for the same edit — arriving in
+    # the inbox twice and in the graph twice, for a better closing paragraph.
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-n", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
+    router = stream_router(
+        [LlmTurn("recorded that", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["recorded that"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-n", "message": "my sister"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # The streaming adapter ran; the non-streaming buffered produce path did not.
+    assert fake.stream_calls and fake.converse_calls == []
+    # (The tail here is the provenance label, not `done` — this persona reads the
+    # knowledge base and this turn cited nothing.)
+    assert any(e["type"] == "done" for e in sse_events(resp.text))
+
+
 def test_chat_persists_proposal_and_entity_chips(
     client: TestClient,
     repo: FakeAuthRepo,
@@ -1866,7 +1959,13 @@ def test_chat_completed_turn_deregisters_from_live_turns(
 
 class GatedStreamClient:
     """Streams a partial answer, then BLOCKS on a release event before finishing — lets a
-    test drop the SSE connection mid-turn and prove the detached turn still completes."""
+    test drop the SSE connection mid-turn and prove the detached turn still completes.
+
+    It closes with an `LlmTurn` because a real adapter always does, and the loop now
+    tells the two apart: a round that ends with no turn at all reports `no_turn` rather
+    than `end_turn`, since a caller reading the stop reason as "this pass finished and
+    everything it meant to write is written" must not be told that by a stream that
+    simply stopped (`models/note_conversation.state_for_stop`)."""
 
     def __init__(self, release: asyncio.Event) -> None:
         self._release = release
@@ -1875,6 +1974,7 @@ class GatedStreamClient:
         yield TextChunk(text="partial ")
         await self._release.wait()
         yield TextChunk(text="answer")
+        yield LlmTurn("partial answer", (), "end_turn", LlmUsage(4, 2))
 
 
 async def test_chat_turn_survives_a_client_disconnect() -> None:
@@ -2296,6 +2396,125 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert ("sess-j", "agent-jerv-v48") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
+def _note_write_registry() -> ToolRegistry:
+    """The three note-write sidecars, bound to inert handlers — enough to see which of
+    them `/chat` actually offers a note conversation's reply turn."""
+    import jbrain.agent.readtools as readtools
+    from jbrain.agent.toolfile import load_tool
+
+    async def _inert(_args: dict, _ctx: object) -> object:  # pragma: no cover - never called
+        return {}
+
+    return ToolRegistry(
+        [
+            RegisteredTool(load_tool(readtools.TOOLS_DIR / f"{n}.tool"), _inert)
+            for n in ("assert_fact", "ask_owner", "correct_fact")
+        ]
+    )
+
+
+@pytest.mark.parametrize("third_party", [True, False])
+def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_no_correction(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+    third_party: bool,
+) -> None:
+    """D10's reply half, at the gate `/chat` actually consults.
+
+    D8 widens this turn because the owner is the only voice in the room. On a note a
+    STRANGER wrote he is not — the submitted body is turn 0 of this thread and is still
+    in context — so `correct_fact` (a force-supersede that PINS) and `ask_owner` are not
+    offered, while `assert_fact` still is: D10 keeps the write path unrestricted.
+
+    Parametrized against its own negative, because the failure this guards is the
+    narrowing applying to EVERY note conversation — which would look identical from the
+    third-party side and would quietly cost the owner the verbs D8 exists to give him.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def _origin(*_a: object, **_k: object) -> bool:
+        return third_party
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _origin)
+    # The OTHER W4 predicate on this same turn, held to "not an EMR note". It reads the
+    # conversation row and the note through app state this hand-wired app does not have,
+    # and it fails CLOSED, so leaving it live would narrow every case here for a reason
+    # that has nothing to do with D10.
+    _not_emr(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-tp", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-tp", "message": "my cousin"})
+    assert resp.status_code == 200
+    offered = {t.name for t in fake.stream_calls[0]["tools"]}
+    assert "assert_fact" in offered
+    if third_party:
+        assert offered == {"assert_fact"}
+    else:
+        assert offered == {"assert_fact", "ask_owner", "correct_fact"}
+
+
+def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold W4's EMR predicate at "the importer does not own this note"."""
+    import jbrain.api.agent as agent_mod
+
+    async def _identity(*_a: object, profile: object, **_k: object) -> object:
+        return profile
+
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _identity)
+
+
+def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_nothing(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+) -> None:
+    """W4's two narrowings composing on ONE reply turn, at the gate `/chat` consults.
+
+    Neither half of the wave could write this: each was built against a branch that did
+    not have the other. A note can satisfy both predicates — an approved intake
+    submission the owner filed to health / `Records` with the archive or a PDF attached —
+    and the turn has to come out with the INTERSECTION. Getting it wrong is silent: the
+    thread renders identically, and the only difference is a fact written out of a
+    stranger's text onto a note the deterministic parse is authoritative for.
+
+    Of this registry's three tools none survives: `ask_owner` is D10's, `correct_fact`
+    is in both narrowings, and `assert_fact` — which D10 deliberately KEEPS — goes to
+    D9, because on an EMR note the model holds no graph-write verb at all."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.agent.agents import narrow_for_emr
+
+    async def _third_party(*_a: object, **_k: object) -> bool:
+        return True
+
+    async def _emr(*_a: object, profile: object, **_k: object) -> object:
+        return narrow_for_emr(profile)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _third_party)
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _emr)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-both", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-both", "message": "my cousin"})
+    assert resp.status_code == 200
+    assert {t.name for t in fake.stream_calls[0]["tools"]} == set()
+
+
 def test_chat_curator_is_offered_no_web_tools(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
@@ -2591,6 +2810,28 @@ def test_model_message_frames_a_proposal_outcome_as_data() -> None:
         agent_mod.ChatRequest(session_id="s", message="when is it?", appointment_id=appt)
     )
     assert appt in hinted and "read_appointment" in hinted
+
+
+def test_only_a_turn_the_owner_typed_counts_as_owner_authored() -> None:
+    """The predicate the note-conversation reply path gates on. A `proposal_outcome` or
+    `deferred_outcome` turn carries text the SERVER wrote, and `record_owner_reply`
+    appends what it is given to the owner's own note as searchable, citable SOURCE text —
+    so an enact summary landing there would be a sentence Jeff never said, permanently in
+    his corpus, with the agent's open question spent on it."""
+    import jbrain.api.agent as agent_mod
+
+    typed = agent_mod.ChatRequest(session_id="s", message="My sister.")
+    assert typed.owner_authored is True
+
+    enact = agent_mod.ChatRequest(
+        session_id="s", message="Enacted 1 of 1 — 1 approved.", proposal_outcome=True
+    )
+    assert enact.owner_authored is False
+
+    deferred = agent_mod.ChatRequest(
+        session_id="s", message="Analysis finished.", deferred_outcome=True
+    )
+    assert deferred.owner_authored is False
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:

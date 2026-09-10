@@ -17,7 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
-from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
+from jbrain.analysis.entities import (
+    MergeScopeError,
+    are_distinct,
+    live_entity_by_id,
+    merge_entity_pair,
+    plan_merge,
+    require_unnarrowed_session,
+)
 from jbrain.analysis.neighborhood import (
     DEFAULT_DEPTH,
     DEFAULT_HUB_CAP,
@@ -856,8 +863,11 @@ class SqlAnalysisRepo:
                         # INNER JOIN notes (never LEFT): the join is the RLS
                         # backstop — an out-of-scope note must drop the whole
                         # mention, not leak a bare note_id. Live notes only;
-                        # n.created_at is the date shown next to the source note
-                        # (m.created_at is re-analysis-time, not capture time).
+                        # n.created_at is the date shown next to the source note.
+                        # m.created_at is now first-link time, not re-analysis
+                        # time: mentions are upserted in place, so a re-asserted
+                        # row keeps its original timestamp and this ordering is
+                        # stable across re-analysis instead of churning.
                         """
                         SELECT m.note_id::text, m.surface_text,
                                m.char_start, m.char_end,
@@ -1213,6 +1223,28 @@ class SqlAnalysisRepo:
             )
         return [{"name": n, "score": s} for n, s in suggestions]
 
+    async def review_correctable(self, ctx: SessionContext, item_id: str) -> bool:
+        """Whether the card at `item_id` may be corrected via the owner-correction flow.
+
+        Mirrors the frontend's `payload.correctable !== false` EXACTLY: only a payload
+        that says `correctable: false` refuses, so the flag's absence — true of every
+        card but the EMR location-firewall one — keeps meaning "correctable". An id
+        naming no card is correctable too; this is the leak gate, not an existence
+        check, and the create path already tolerates an unknown id.
+        """
+        iid = _as_uuid(item_id)
+        if iid is None:
+            return True
+        async with scoped_session(self._maker, ctx) as session:
+            payload = (
+                await session.execute(
+                    text("SELECT payload FROM app.review_items WHERE id = :id"), {"id": str(iid)}
+                )
+            ).scalar()
+        # An id that names no card reads as correctable for the same reason: the gate is
+        # about the leak, not about existence.
+        return not isinstance(payload, dict) or payload.get("correctable") is not False
+
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -1322,7 +1354,13 @@ class SqlAnalysisRepo:
                     new_status, effects = await self._apply_resolution(
                         session, row.kind, row.payload, action, payload
                     )
-                except UnknownAction as exc:
+                except (UnknownAction, MergeScopeError) as exc:
+                    # MergeScopeError belongs here rather than on the floor: the guard
+                    # raises before writing anything — its one statement is a SELECT that
+                    # succeeded — so unlike a DB error it has not poisoned the
+                    # transaction, and the batch's advertised contract is
+                    # that a bad item is an error while the good ones still commit.
+                    # Aborting 200 cards over one merge card would be the outage.
                     errors.append({"id": item_id, "detail": str(exc)})
                     continue
                 to_emit.append((str(iid), row.domain_code, effects))
@@ -1560,29 +1598,7 @@ class SqlAnalysisRepo:
             if not entity_a or not entity_b:
                 raise UnknownAction("item payload lacks entity_a/entity_b")
             if action == "accept":
-                # Tombstone + repoint via the shared fold (merge_entity_pair).
-                # RETURNING captures the repointed row ids — un-merge moves exactly
-                # those rows back instead of guessing from spans.
-                gone_prior = (
-                    await session.execute(
-                        text(
-                            "SELECT status, merged_into_id::text AS merged_into"
-                            " FROM app.entities WHERE id = :gone"
-                        ),
-                        {"gone": entity_b},
-                    )
-                ).first()
-                repointed = await merge_entity_pair(session, keep=entity_a, gone=entity_b)
-                return "resolved", [
-                    {
-                        "action": "merged",
-                        "entity_id": entity_b,
-                        "into": entity_a,
-                        "prior_status": gone_prior.status if gone_prior else None,
-                        "prior_merged_into": gone_prior.merged_into if gone_prior else None,
-                        **repointed,
-                    }
-                ]
+                return await self._accept_merge(session, entity_a, entity_b)
             # Permanent negative knowledge: never re-proposed.
             a, b = sorted((entity_a, entity_b))
             inserted = (
@@ -1824,11 +1840,101 @@ class SqlAnalysisRepo:
 
         raise UnknownAction(f"action {action!r} is not valid for kind {kind!r}")
 
+    async def _accept_merge(
+        self, session: AsyncSession, entity_a: str, entity_b: str
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Enact an accepted merge_proposal — on the pair as it stands NOW, not as
+        the card was written.
+
+        A card is a proposal held open across arbitrary time, so its two ids can go
+        stale under it: an overlapping card resolved first turns one side into a
+        tombstone, and the ranking that chose the card's direction (`plan_merge`, at
+        filing time) predates any later promotion to `confirmed` or link to a subject.
+        Folding the payload verbatim therefore repointed a live entity's rows onto a
+        tombstone — a merge that silently un-does the merge before it.
+
+        So the pair is re-derived here, in the order that keeps the owner's decision
+        rather than the card's spelling of it:
+
+        * each side resolves through `live_entity_by_id`, the same fold-following
+          loader `_resolve_from_intent` uses. Accepting says "these two are one
+          thing", and a side that has since folded IS its survivor — redirecting
+          enacts what the owner asked; refusing would leave the third duplicate live
+          while the log claimed the merge happened.
+        * both sides landing on ONE live entity means the assertion is already true.
+          Nothing is written and the card records why, so a reopen has nothing to
+          undo — the honest answer, where a fold would tombstone the survivor.
+        * a side that resolves nowhere live (unknown, out of scope, or a chain that
+          dead-ends) refuses: the card stays open rather than guessing.
+        * a permanent `distinct_from` on the LIVE pair refuses too. The edge outlives
+          a reopen by doctrine, so the reopened card must not be acceptable.
+        * `plan_merge` then re-ranks, so the more-anchored identity survives whichever
+          way the payload happened to be written (the owner is never merged away).
+
+        The recorded effect names the pair actually folded, never the payload's — so
+        `_reverse_effects`, which un-merges by id, undoes exactly this write.
+
+        The scope guard runs FIRST, ahead of every read above — a narrowed session
+        sees an RLS-filtered `app.entities`, so a fold chain can dead-end or resolve
+        to the wrong survivor for want of an invisible tombstone, and none of the
+        reasoning above is trustworthy under one. `merge_entity_pair` re-asks; asking
+        here too is what keeps a narrowed accept a scope refusal rather than a
+        can't-resolve-this one.
+        """
+        await require_unnarrowed_session(session, operation="merging two entities")
+        live: dict[uuid.UUID, Any] = {}
+        for side in (entity_a, entity_b):
+            eid = _as_uuid(side)
+            row = await live_entity_by_id(session, eid) if eid is not None else None
+            if row is None:
+                raise UnknownAction(f"merge_proposal: {side} resolves to no live entity")
+            live[row.id] = row
+        if len(live) == 1:
+            (survivor,) = live
+            return "resolved", [
+                {
+                    "action": "merge_noop",
+                    "reason": "already merged",
+                    "entity_a": entity_a,
+                    "entity_b": entity_b,
+                    "live_entity_id": str(survivor),
+                }
+            ]
+        a, b = live
+        if await are_distinct(session, a, b):
+            raise UnknownAction("a permanent distinct_from forbids merging these")
+        plan = await plan_merge(session, a, b)
+        gone_prior = live[plan.gone_id]
+        # RETURNING captures the repointed row ids — un-merge moves exactly those
+        # rows back instead of guessing from spans.
+        repointed = await merge_entity_pair(session, keep=plan.keep_id, gone=plan.gone_id)
+        return "resolved", [
+            {
+                "action": "merged",
+                "entity_id": str(plan.gone_id),
+                "into": str(plan.keep_id),
+                "prior_status": gone_prior.status,
+                "prior_merged_into": (
+                    str(gone_prior.merged_into_id) if gone_prior.merged_into_id else None
+                ),
+                **repointed,
+            }
+        ]
+
     async def _reverse_effects(
         self, session: AsyncSession, effects: list[dict[str, Any]]
     ) -> list[str]:
         """Undo recorded effects newest-first; returns notes for the ones
-        that are permanent by doctrine and deliberately survive."""
+        that are permanent by doctrine and deliberately survive.
+
+        An un-merge is the fold run backwards and is scoped exactly like it: the
+        check runs before ANY effect is reversed, so a narrowed reopen leaves the
+        whole resolution untouched rather than half of it. It is asked ONLY when a
+        merge is among the effects — reversing a pin, a retraction or a domain move
+        is an in-scope single-row write, and a narrowed reopen must keep it.
+        """
+        if any(e.get("action") == "merged" for e in effects):
+            await require_unnarrowed_session(session, operation="un-merging two entities")
         notes: list[str] = []
         for effect in reversed(effects):
             action = effect.get("action")
@@ -1874,6 +1980,13 @@ class SqlAnalysisRepo:
                             text(f"{stmt} WHERE id = :id"),
                             {"gone": effect["entity_id"], "id": row_id},
                         )
+            elif action == "merge_noop":
+                # The accept found the pair already folded together and wrote
+                # nothing, so there is nothing to reverse — say so rather than let
+                # the reopen imply a fold was undone.
+                notes.append(
+                    "the pair was already merged, so this resolution folded nothing to undo"
+                )
             elif action == "entity_confirmed":
                 await session.execute(
                     text(

@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-08-26
+> **Status:** Living · **Last verified:** 2026-09-09
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -151,18 +151,40 @@ Two consequences that have each cost a session real time:
 1. **`backend/` is 100 columns and every other Python package is 88.** Formatting a
    supervisor file with the backend's config, or vice versa, reformats lines CI will
    then reject — and the diff buries the actual change.
-2. **`deploy/sdr/` is linted and typechecked by NOTHING.** It is *tested* by
-   `supervisor`'s pytest, which loads `deploy/sdr/*.py` by path (that is why
-   `deploy/sdr/**` is in the `changes` filter for the supervisor job), but no job runs
-   ruff or pyright over it, and `supervisor`'s pyright `include` is `["src", "tests"]`.
-   So: run ruff there only with an explicit `--line-length` matching the file's existing
-   style, or not at all. Running it bare applies ruff's 88-column default to files
-   hand-kept near 96 and produces a large unrelated reformat.
+2. **`deploy/sdr/` is LINTED by nothing but TYPECHECKED by `supervisor`'s pyright.**
+   It is *tested* by `supervisor`'s pytest, which loads `deploy/sdr/*.py` by path (that
+   is why `deploy/sdr/**` is in the `changes` filter for the supervisor job). No job
+   runs ruff over it — so run ruff there only with an explicit `--line-length` matching
+   the file's existing style, or not at all; running it bare applies ruff's 88-column
+   default to files hand-kept near 96 and produces a large unrelated reformat.
 
-**A change to `deploy/sdr/` is verified by `supervisor`'s suite**, and typechecking it
-needs `pyright` pointed at it explicitly — its modules import each other by bare name
-(they share one WORKDIR in the image), so a bare run reports unresolved imports rather
-than real errors.
+   But `supervisor/pyproject.toml` puts `../deploy/sdr` in pyright's `include`, together
+   with the `extraPaths` that make the sidecar's bare-name imports resolve. **A sidecar
+   edit that no local check covers can still fail CI on types**, and the only way to see
+   it first is `(cd supervisor && uv run pyright)`.
+
+   ⟲ This entry said pyright's `include` was `["src", "tests"]` and that the sidecar was
+   typechecked by nothing. It has not been true since that line was added, and believing
+   it cost a red CI run on PR #1372: an `int()` on a value that is `object` until
+   something narrows it, in a file the author had "verified" with ruff and pytest alone.
+
+3. **Every package's gate set is wider than the obvious command.** `frontend` CI is
+   `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build` — four, and the
+   lint script covers more than `src/`, so `npx biome check src` passes while CI fails.
+   Run the package's own npm scripts, not a tool invocation you composed yourself.
+
+   ⟲ Two red CI runs in one session came from exactly this: a `deploy/sdr/` edit checked
+   with ruff and pytest but never pyright, and a frontend edit checked with
+   `biome check src` rather than `npm run lint`. Both had passed "locally".
+
+**Read every exit code.** Chaining checks into one command and piping each to `tail`
+hides the one that failed — the second of those two red runs was visible locally and
+scrolled past. One command per gate, or `echo $?` after each.
+
+**A change to `deploy/sdr/` is verified by `supervisor`'s WHOLE gate set** — `ruff check
+.`, `ruff format --check .`, `pyright`, `pytest` — not the subset that looks relevant.
+Run all four from `supervisor/`; the pyright config already knows how to read the
+sidecar's tree, so no extra pointing is needed.
 
 ### Shell discipline
 
@@ -199,6 +221,17 @@ place, several mutations stayed live in the file, and the "clean" backup was the
   deliberately-run eval suite outside CI.
 - Tests are deterministic: no network, no real clock (inject time), no
   ordering dependence. The suite stays fast enough to run on every commit.
+- **A test file must pass when it is the only file in the run.** Sharing an
+  interpreter hides real defects: `test_lists_pg.py` failed alone for months and
+  was green in CI only because `--dist loadscope` happened to seat, in the same
+  xdist worker, a sibling that imported the model `jbrain.models.lists` needed and
+  did not import itself — SQLAlchemy resolves a ForeignKey's target by string, at
+  flush, so the missing mapping raised on the first INSERT and never at import.
+  A failure only a solo run can see is invisible to the suite that is supposed to
+  catch it, so pinning it takes a test that reconstructs the isolation
+  (`tests/unit/test_model_module_isolation.py` re-imports each model module in a
+  subprocess with a purged `sys.modules`) — checking the fix by running the file
+  alone once proves nothing about tomorrow.
 
 ### CI runtime budget
 - **Every workflow job declares `timeout-minutes`.** A job that omits it inherits

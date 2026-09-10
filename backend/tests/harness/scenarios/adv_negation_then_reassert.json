@@ -1,6 +1,7 @@
 {
   "name": "re-asserting a relationship after negation must not leave a negated zombie",
   "description": "Adversarial assertion-transition probe, now fixed. Note 1 negates the worksFor edge ('Bjorn no longer works at Acme', assertion=negated). Note 2 re-asserts it ('Bjorn is back at Acme', assertion=asserted) — same functional predicate, same object entity Acme. Previously supersession.values_equal keyed on object_entity_id only for a pure edge, so the asserted candidate was 'equal' to the still-active negated row and decide returned refresh_id: the pipeline refreshed the NEGATED row in place and never updated its assertion, leaving a negated zombie that read as 'not working there' when the truth was the opposite. SPEC-CORRECT expectation encoded: an active ASSERTED worksFor to Acme after re-assertion, and NO active negated one. Fixed: values_equal returns False on a flipped assertion, so the re-assertion supersedes the negated head and the new active row carries assertion=asserted.",
+  "xfail": "Note 1's NEGATED worksFor cannot be written at all, so both halves of this guard read on a graph that never held a negation: the `absent_facts` zombie check matches zero rows because no negated row can exist, and the re-assertion it is supposed to catch has nothing to supersede. The added `assertion: negated, count: 1` is what gives the guard teeth again - it is the precondition the zombie check needs, and it is what fails today. ACCEPTED, on measurement. assert_fact writes assertion='asserted' and has no field for anything else, so a negated, questioned, reported or hypothetical fact cannot be stated at all. Both spellings of a fix were probed against the live model through /api/debug/tool-probe (evals/shape_probe.py, `fields` suite, gpt-oss-120b, 12 samples an arm): an `assertion` STRING whose description names its five words came back legal 0 times in 72 - the model writes the fact's topic (`civic_sold`, `current_weight`, `dana works at everlane`) - and a `negated` BOOLEAN, the one closed vocabulary a tool grammar can carry without an enum (constraint 8), came back false 80 times out of 80, including every time on 'I finally sold the Civic last week so it is gone'. The string fills with garbage, the boolean fills with the majority class and never fires; neither is a channel. The future (`expected`) and past-marker (interval close) normalizers still fire - they are `_upsert_fact`'s own. The surviving channel is the owner's reply: `correct_fact` force-supersedes and pins. W5 MUST NOT DELETE: `facts.assertion` and its CHECK, `supersession.CURRENT_ASSERTIONS` / `_IRREALIS` and the negated-supersedes arm of decide(), or `extraction.ASSERTIONS` - the EMR importer and the reply turn both still write non-asserted rows, and the read surfaces filter on the column.",
   "steps": [
     {
       "domain": "general",
@@ -39,7 +40,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Bjorn", "predicate": "worksFor", "kind": "relationship", "assertion": "asserted", "status": "active"}
+      {"entity": "Bjorn", "predicate": "worksFor", "kind": "relationship", "assertion": "asserted", "status": "active"},
+      {"entity": "Bjorn", "predicate": "worksFor", "assertion": "negated", "count": 1}
     ],
     "absent_facts": [
       {"entity": "Bjorn", "predicate": "worksFor", "assertion": "negated", "status": "active"}

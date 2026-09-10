@@ -17,7 +17,15 @@ from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
-from jbrain.notes.service import AttachmentInfo, ExtractInfo, NoteInfo, NoteUpdate, UnknownDomain
+from jbrain.notes.service import (
+    AttachmentInfo,
+    ClarificationInfo,
+    ClarificationsAltered,
+    ExtractInfo,
+    NoteInfo,
+    NoteUpdate,
+    UnknownDomain,
+)
 from jbrain.storage import FsBlobStore
 from tests.unit.fakes import FakeAuthRepo
 
@@ -58,6 +66,8 @@ class FakeJobQueue:
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
     extracts: dict[str, list[ExtractInfo]] = field(default_factory=dict)
+    # note_id -> its D6 clarification blocks, for the eraser routes.
+    clarifications: dict[str, list[ClarificationInfo]] = field(default_factory=dict)
     # Records the attachment-intent hint each create carried, for plumbing assertions
     # (NoteInfo is capture-input, not serialized output, so the count lives here).
     attachments_expected: list[int] = field(default_factory=list)
@@ -103,6 +113,10 @@ class FakeNotesRepo:
     ) -> NoteInfo | None:
         if changes.domain is not None and changes.domain not in KNOWN_DOMAINS:
             raise UnknownDomain(changes.domain)
+        # The real repo raises this when the PATCH body is not the note's composed text
+        # with its D6 clarification blocks intact; the marker stands in for that here.
+        if changes.body is not None and "MANGLED-BLOCKS" in changes.body:
+            raise ClarificationsAltered(note_id)
         for i, n in enumerate(self.notes):
             if n.id == note_id:
                 updated = dataclasses.replace(
@@ -194,6 +208,23 @@ class FakeNotesRepo:
         if await self.get_attachment(ctx, attachment_id) is None:
             return None
         return self.extracts.get(attachment_id, [])
+
+    async def list_clarifications(
+        self, ctx: SessionContext, note_id: str
+    ) -> list[ClarificationInfo] | None:
+        if await self.get_note(ctx, note_id) is None:
+            return None
+        return list(self.clarifications.get(note_id, []))
+
+    async def delete_clarification(
+        self, ctx: SessionContext, note_id: str, clarification_id: str
+    ) -> NoteInfo | None:
+        blocks = self.clarifications.get(note_id, [])
+        kept = [b for b in blocks if b.id != clarification_id]
+        if len(kept) == len(blocks):
+            return None
+        self.clarifications[note_id] = kept
+        return await self.get_note(ctx, note_id)
 
 
 @pytest.fixture
@@ -507,6 +538,21 @@ def test_patch_note_unknown_domain_400(
     assert c.patch(f"/api/notes/{note['id']}", json={"domain": "nope"}).status_code == 400
 
 
+def test_patch_that_mangles_clarification_blocks_409s_and_reingests_nothing(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    """Nothing is written and no re-ingest is queued: the composed text the editor sent
+    back did not end in the note's own blocks, and both other readings of that string
+    lose data (store it and the blocks double; cut at the marker and a body that merely
+    contains the marker is truncated)."""
+    c, _, jobs = client
+    note = c.post("/api/notes", json={"client_id": "p9", "body": "b"}).json()
+    jobs.enqueued.clear()
+    resp = c.patch(f"/api/notes/{note['id']}", json={"body": "MANGLED-BLOCKS"})
+    assert resp.status_code == 409
+    assert jobs.enqueued == []
+
+
 def test_patch_missing_note_404(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
     c, _, jobs = client
     jobs.enqueued.clear()
@@ -787,3 +833,66 @@ def test_analyze_attachment_404_unknown_409_in_flight(
     jobs.enqueued.clear()
     assert c.post(f"/api/attachments/{att_id}/analyze").status_code == 409
     assert jobs.enqueued == []  # the duplicate guard never double-enqueues
+
+
+def test_the_clarification_eraser_is_owner_only_on_both_verbs(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    """W2 recorded the limit before either route existed: `append_clarification` enqueues
+    its own `ingest_note` and `app.jobs` is `is_owner()` RLS, so a capability-token
+    caller gets a raw `ProgrammingError` rather than a refusal — "so W3 must not offer
+    this behind a token-authenticated surface".
+
+    Under `PrincipalDep` it did. The DELETE was fail-closed only by accident, as a 500
+    instead of a 403; the GET had no backstop at all and let an intake-link principal
+    enumerate Jeff's question-and-answer pairs for any note in its scope. A clarification
+    is his own words about a health or finance note.
+    """
+    from jbrain.api.deps import current_principal
+
+    c, repo, _ = client
+    created = c.post("/api/notes", json={"client_id": "clar1", "body": "Ran the 10k."}).json()
+    repo.clarifications[created["id"]] = [
+        ClarificationInfo(
+            id="b1",
+            seq=1,
+            question="Which Sarah?",
+            answer="my sister — reachable on 555-0148",
+            created_at=datetime.now(UTC),
+        )
+    ]
+
+    # The owner reads and erases.
+    listed = c.get(f"/api/notes/{created['id']}/clarifications")
+    assert listed.status_code == 200
+    assert [b["id"] for b in listed.json()] == ["b1"]
+
+    app = cast(FastAPI, c.app)
+    app.dependency_overrides[current_principal] = lambda: auth_service.PrincipalInfo(
+        id="cap-1", kind="capability_token", label="scoped"
+    )
+    try:
+        assert c.get(f"/api/notes/{created['id']}/clarifications").status_code == 403
+        assert c.delete(f"/api/notes/{created['id']}/clarifications/b1").status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+    # Refused, not merely errored: the block is still there for the owner to erase.
+    assert [b.id for b in repo.clarifications[created["id"]]] == ["b1"]
+    erased = c.delete(f"/api/notes/{created['id']}/clarifications/b1")
+    assert erased.status_code == 200
+    assert repo.clarifications[created["id"]] == []
+
+
+def test_erasing_a_block_that_is_not_there_is_a_404_not_a_500(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    c, _, _ = client
+    created = c.post("/api/notes", json={"client_id": "clar2", "body": "Ran the 10k."}).json()
+    assert c.delete(f"/api/notes/{created['id']}/clarifications/nope").status_code == 404
+    # An unclarified note lists an empty set rather than 404ing — the PWA asks for every
+    # note it opens, and "no blocks" is an answer.
+    assert c.get(f"/api/notes/{created['id']}/clarifications").json() == []
+    assert (
+        c.get("/api/notes/00000000-0000-0000-0000-000000000000/clarifications").status_code == 404
+    )

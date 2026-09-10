@@ -1,6 +1,7 @@
 {
   "name": "relative plan dates resolve absolutely against created_at",
-  "description": "Relative phrases must be resolved to absolute ISO against the note's capture anchor and stored, never kept only-relative (docs/reference/ANALYSIS.md 'Temporal model'). Two plans: 'in 3 months' from 2026-06-10 -> 2026-09-10 (day precision), and 'next Tuesday' from 2026-06-10 (a Wednesday) -> 2026-06-16. The harness snapshot exposes value_json+statement but not valid_from/temporal_precision columns, so the resolved date is asserted via value_contains and the precision is encoded in value_json (the authored temporal also carries precision for the real pipeline). Pins that the resolved absolute dates land on the facts.",
+  "description": "Relative phrases must be resolved to absolute ISO against the note's capture anchor and stored, never kept only-relative (docs/reference/ANALYSIS.md 'Temporal model'). Two plans: 'in 3 months' from 2026-06-10 -> 2026-09-10 (day precision), and 'next Tuesday' from 2026-06-10 (a Wednesday) -> 2026-06-16. The harness snapshot exposes value_json+statement but not valid_from/temporal_precision columns, so the resolved date is asserted via value_contains and the precision is encoded in value_json (the authored temporal also carries precision for the real pipeline). Pins that the resolved absolute dates land on the facts. TOOL-PATH NOTE: the entity kind asserted here was 'appointment' before the W3 re-point and is now 'Event'. resolve_entity canonicalizes the declared word through _KIND_HINTS, so what is stored is the registry spelling. Stricter, not weaker.",
+  "xfail": "No structured `value_json`: assert_fact takes a plain STRING object, so {start: 2026-09-10, precision: day} is flattened by runner._object_literal to '2026-09-10 day' and stored as {value: '2026-09-10 day'} - a shape production never produces. The stored temporal PRECISION (the thing this scenario pins, alongside the absolute resolution) has no column in the harness snapshot and no longer has a value_json to hide in, so it cannot be asserted at all. Retargeting the assertion onto the flattened string, as this file briefly did, pins the synthesiser's own output rather than the engine's. ACCEPTED as designed, not open. `assert_fact.object` is a plain STRING and there is no structured `value_json` field: TOOL_SURFACE gap 5's deliberate narrowing, the model is never asked to nest. So a literal is stored as {value} or {value, unit} and anything richer is flattened by runner._object_literal first, while an edge with an object entity stores no value_json at all. W5 MUST NOT DELETE: `facts.value_json`, `_quantity_value`'s unit split, or `supersession.values_equal`'s cross-unit comparison - the EMR importer and the projections write and read structured values through the non-model path.",
   "steps": [
     {
       "domain": "general",
@@ -39,8 +40,8 @@
       {"entity": "platform team standup", "predicate": "scheduledTime", "kind": "state", "value_contains": "\"precision\": \"instant\""}
     ],
     "entities": [
-      {"name": "Dr. Okafor follow-up", "kind": "appointment", "status": "provisional"},
-      {"name": "platform team standup", "kind": "appointment", "status": "provisional"}
+      {"name": "Dr. Okafor follow-up", "kind": "Event", "status": "provisional"},
+      {"name": "platform team standup", "kind": "Event", "status": "provisional"}
     ]
   }
 }

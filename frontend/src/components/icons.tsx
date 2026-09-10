@@ -419,6 +419,26 @@ export const PauseIcon = (p: IconProps) => (
   </Icon>
 );
 
+// The record dot, from the tuner's binding spec (docs/mocks/sdr-tuner/a-tuner-sheet.html):
+// an outline circle, so the button reads the same whether it is idle, armed or running
+// and only its colour changes.
+export const RecordIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="7" />
+  </Icon>
+);
+
+// Scissors — the one action the recordings library offers on a row
+// (docs/mocks/recording/d-trim-sheet.html). A glyph specific to the thing this surface
+// does, rather than the Research Library's generic kebab.
+export const ScissorsIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" />
+  </Icon>
+);
+
 export const VideoIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m22 8-6 4 6 4V8z" />

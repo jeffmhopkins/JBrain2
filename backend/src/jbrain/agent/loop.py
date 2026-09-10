@@ -23,6 +23,7 @@ from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
     EntityRef,
+    FactWriteRef,
     GeneralKnowledgeEvent,
     JobEnqueuedEvent,
     NoteSource,
@@ -61,7 +62,6 @@ from jbrain.llm import (
     LlmMessage,
     LlmRouter,
     LlmTurn,
-    LlmUsage,
     ReasoningChunk,
     TextChunk,
     ToolCall,
@@ -69,6 +69,7 @@ from jbrain.llm import (
     ToolResultMessage,
     UserMessage,
 )
+from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
 
 log = structlog.get_logger()
@@ -357,8 +358,10 @@ class ToolOutput(str):
     note sources (source cards), web sources (favicon citation chips), a staged
     proposal (a "Review proposal" chip), resolved entities, a rich `view` (a
     registered component the PWA renders, e.g. a checklist), a `job` it deferred to
-    the queue, and/or a turn-ending `deferred` handle (a background job whose
-    `task_status` card takes over — the turn ends). It *is* the model-facing text (a
+    the queue, the `facts` a write tool actually landed, a turn-ending `deferred`
+    handle (a background job whose
+    `task_status` card takes over — the turn ends), and/or a bare `halt` reason (the
+    turn ends here, with no job and no card). It *is* the model-facing text (a
     str subclass), so handlers keep their `-> str` contract and existing call sites
     are untouched; `_dispatch` pulls the extras off when present."""
 
@@ -369,6 +372,9 @@ class ToolOutput(str):
     view: ViewPayload | None
     job: JobRef | None
     deferred: DeferredRef | None
+    facts: tuple[FactWriteRef, ...]
+    halt: str | None
+    truncated: bool
 
     def __new__(
         cls,
@@ -380,6 +386,9 @@ class ToolOutput(str):
         job: JobRef | None = None,
         web_sources: tuple[WebSource, ...] = (),
         deferred: DeferredRef | None = None,
+        facts: tuple[FactWriteRef, ...] = (),
+        halt: str | None = None,
+        truncated: bool = False,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -389,6 +398,14 @@ class ToolOutput(str):
         out.view = view
         out.job = job
         out.deferred = deferred
+        # The rows a WRITE tool actually wrote. Every other tool leaves it empty; a
+        # note conversation's ledger reads it back as `fact_ids` (constraint 6).
+        out.facts = facts
+        out.halt = halt
+        # The call took only a prefix of its batch (D3's `truncated`). Set by the tool
+        # that clamped, never inferred downstream — nothing below can tell a short list
+        # from a clamped one.
+        out.truncated = truncated
         return out
 
 
@@ -462,6 +479,10 @@ def _persisted_step(
         step["proposal"] = dispatched.proposal.model_dump()
     if dispatched.entities:
         step["entities"] = [e.model_dump() for e in dispatched.entities]
+    if dispatched.facts:
+        step["facts"] = [f.model_dump() for f in dispatched.facts]
+    if dispatched.truncated:
+        step["truncated"] = True
     if dispatched.view is not None:
         step["view"] = dispatched.view.model_dump()
     return step
@@ -471,7 +492,8 @@ def _persisted_step(
 class _Dispatched:
     """One tool call's outcome: the result fed back to the model, plus what it
     surfaced for the UI (sources, a staged proposal, entities, a rich view, an
-    enqueued job, and/or a turn-ending deferred handle)."""
+    enqueued job, the fact rows it landed, and/or a turn-ending deferred handle or
+    bare halt)."""
 
     result: ToolResult
     sources: tuple[NoteSource, ...]
@@ -481,6 +503,15 @@ class _Dispatched:
     job: JobRef | None
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
+    facts: tuple[FactWriteRef, ...] = ()
+    truncated: bool = False
+    # A tool that ENDS THE TURN on its own, with no background job behind it and no card
+    # to stream: the string is the stop_reason the loop finishes on. `deferred` is the
+    # same contract with a job attached; this is the bare one, for a tool whose whole
+    # point is that nothing should follow it in the same turn (`ask_owner` — plan
+    # constraint 6, and TOOL_SURFACE.md's "gpt-oss does not honour protocol obligations
+    # stated in prose", which is why this is the loop's job and not the prompt's).
+    halt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -497,11 +528,24 @@ class _BufferedTurn:
     entities: tuple[EntityRef, ...]
     mutated: bool
     stop_reason: str
+    # A turn-ending tool ended this attempt (`ask_owner`). Carried separately from
+    # `stop_reason` because it also has to suppress the RETRY: `reflect` re-runs the
+    # producer, and re-producing a halted turn would re-dispatch the very side-effecting
+    # writes the halt exists to stop — asking the owner a second question, staging a
+    # second Proposal, writing the graph again — for a turn whose whole point is that
+    # nothing more happens until they answer.
+    halted: bool = False
 
 
 def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
     """The Loop-1 trigger applied to a buffered turn: evidence (sources OR entities),
-    a mutation, or sensitive data actually touched (not merely a held scope)."""
+    a mutation, or sensitive data actually touched (not merely a held scope).
+
+    A HALTED turn is never critique-worthy, whatever it gathered. It ended on a tool
+    that says "stop here and wait for Jeff", and the improvement loop's move is to run
+    the whole turn again."""
+    if turn.halted:
+        return False
     return critique_worthy(
         source_count=len(turn.sources),
         entity_count=len(turn.entities),
@@ -526,6 +570,34 @@ def _prompt_message(message: LlmMessage) -> dict[str, Any]:
         for r in message.results
     )
     return {"role": "tool", "content": joined}
+
+
+def _round_stop(turn: LlmTurn) -> str:
+    """The reason a round that produced no tool call to dispatch actually ended on.
+
+    ONE classifier for the three places a ReAct round can fall out of the chain —
+    `run`, `run_stream` and `_produce_buffered` — because they had drifted, and the
+    drift is invisible: each independently wrote `"end_turn"`, so a length-cut turn was
+    laundered into a clean stop on two of the three paths after the third was fixed.
+
+    Two shapes reach here that are NOT the model finishing:
+
+    - `max_tokens`. Both adapters map a provider LENGTH cut to it against
+      `TURN_MAX_TOKENS`, and it can land mid-tool-call, so the branch that tests
+      `!= "tool_use" or not tool_calls` is exactly where it surfaces.
+    - `tool_use` with an EMPTY `tool_calls`. The provider said it was calling tools and
+      none survived: on the Anthropic route the content blocks never arrived, on the
+      openai-compatible route the deltas did not. Either way the round is a fragment,
+      and the one thing it is not is a model that chose to stop talking.
+
+    Both matter because `models/note_conversation.state_for_stop` reads this string:
+    `end_turn` alone lands a note conversation in `settled`, which is the ONE state its
+    whole-note sweep fires on (plan constraint 6). Everything else lands `failed`."""
+    if turn.stop_reason == "max_tokens":
+        return "max_tokens"
+    if turn.stop_reason == "tool_use":
+        return "empty_tool_use"
+    return "end_turn"
 
 
 class AgentLoop:
@@ -670,8 +742,16 @@ class AgentLoop:
                     on_reasoning(part.text)
             else:
                 turn = part
-        # The adapter always closes a stream with an LlmTurn; guard the contract.
-        turn = turn or LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+        if turn is None:
+            # The adapter always closes a stream with an LlmTurn, and since both of them
+            # refuse a stream that never carried a stop reason
+            # (`LlmStreamTruncatedError`), this is a belt for a contract nobody violates.
+            # It used to fabricate a clean `end_turn` turn, which is the same laundering
+            # `_round_stop` exists to stop — and worse, because a fabricated turn also
+            # reports zero usage. `run_stream`'s twin reports `no_turn` rather than
+            # raising, since it is mid-SSE and the PWA wants a terminal reason; both land
+            # outside `end_turn`, which is the property that matters.
+            raise LlmStreamTruncatedError(f"{self._task}: stream closed with no LlmTurn")
         if hide_tool_round_text and round_text:
             round_content = "".join(round_text)
             if turn.stop_reason == "tool_use" and turn.tool_calls:
@@ -857,8 +937,8 @@ class AgentLoop:
                 # paths use so the child lands on a real answer from what it gathered. Scoped
                 # to force_final_answer (sub-agents); the root's empty turn is handled upstream.
                 if force_final_answer and not turn.text.strip():
-                    return await _forced_final("end_turn", step + 1)
-                return _result(turn.text, "end_turn", step + 1)
+                    return await _forced_final(_round_stop(turn), step + 1)
+                return _result(turn.text, _round_stop(turn), step + 1)
             if self._tree_exhausted(tree, depth):
                 if force_final_answer:
                     return await _forced_final("tree_budget_exhausted", step + 1)
@@ -871,9 +951,12 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 web_sources.extend(dispatched.web_sources)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
@@ -900,6 +983,16 @@ class AgentLoop:
                     on_tool(call.name, call.arguments, not dispatched.result.is_error)
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A turn-ending tool (`ask_owner`). Honoured on BOTH loop entry points,
+                # even though the note conversation drives the streaming one: "the turn
+                # stops here" is the property the tool exists for, and leaving it true of
+                # only one of two loops makes it a property of the caller instead. No
+                # forced-final synthesis — a halted turn has already said what it had to
+                # say, and asking the model for a closing paragraph is the extra step the
+                # halt exists to prevent.
+                return _result(turn.text, halt_seen, step + 1)
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
@@ -1124,9 +1217,13 @@ class AgentLoop:
                     answer_parts.append(round_content)
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
-                # contract anyway rather than dereference None.
+                # contract anyway rather than dereference None. NOT `end_turn`: a round
+                # that produced no turn at all did not reach its own end, and a caller
+                # that maps stop reasons to "this pass finished and everything it meant
+                # to write is written" (`models/note_conversation.state_for_stop`) must
+                # not be told it did.
                 async for ev in self._finish(
-                    "end_turn",
+                    "no_turn",
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -1160,7 +1257,7 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
-                    "end_turn",
+                    _round_stop(turn),
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -1196,6 +1293,7 @@ class AgentLoop:
             results: list[ToolResult] = []
             any_error = False
             deferred_seen: DeferredRef | None = None
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
                 # Run the tool while draining any progress it reports into
@@ -1257,6 +1355,8 @@ class AgentLoop:
                     web_sources=list(dispatched.web_sources),
                     proposal=dispatched.proposal,
                     entities=list(dispatched.entities),
+                    facts=list(dispatched.facts),
+                    truncated=dispatched.truncated,
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1268,11 +1368,33 @@ class AgentLoop:
                     )
                 if dispatched.deferred is not None:
                     deferred_seen = dispatched.deferred
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A tool ENDED the turn (`ask_owner`: the note now waits on the owner).
+                # End here, without calling the model again — the round's results are
+                # already appended, so what the model wrote before the halt stands and
+                # nothing after it runs. This is the enforcement half of a rule prose
+                # cannot hold (TOOL_SURFACE.md: gpt-oss does not honour protocol
+                # obligations stated in prose), and it is what makes the caller's
+                # "a turn that asked did not carry on writing" true by construction
+                # rather than by the model's cooperation.
+                async for ev in self._finish(
+                    halt_seen,
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
+                ):
+                    yield ev
+                return
 
             if deferred_seen is not None:
                 # A tool kicked a background job and streamed its task_status card, which
@@ -1516,7 +1638,7 @@ class AgentLoop:
                     tuple(sources),
                     tuple(entities),
                     mutated,
-                    "end_turn",
+                    _round_stop(turn),
                 )
             if self._tree_exhausted(tree, depth):
                 return _BufferedTurn(
@@ -1540,9 +1662,12 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            halt_seen: str | None = None
             for call in turn.tool_calls:
                 events.append(ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments))
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
+                if dispatched.halt is not None:
+                    halt_seen = dispatched.halt
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 sources.extend(dispatched.sources)
@@ -1557,6 +1682,8 @@ class AgentLoop:
                         web_sources=list(dispatched.web_sources),
                         proposal=dispatched.proposal,
                         entities=list(dispatched.entities),
+                        facts=list(dispatched.facts),
+                        truncated=dispatched.truncated,
                     )
                 )
                 if dispatched.view is not None:
@@ -1572,6 +1699,26 @@ class AgentLoop:
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if halt_seen is not None:
+                # A turn-ending tool (`ask_owner`). The THIRD dispatch loop, and the last
+                # one that did not honour this — `/chat` picks this path whenever the
+                # owner has reflexion buffer-retry on, and the owner's reply into a note
+                # thread IS a `/chat` turn, so the halt was silently a property of which
+                # entry point a caller happened to take. After `ask_owner` flips the
+                # thread to `waiting_on_owner` the loop went on for up to 19 more steps
+                # of `correct_fact`, `merge_entities` and `prefs_write` against a note it
+                # had just said it could not read.
+                return _BufferedTurn(
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    halt_seen,
+                    halted=True,
+                )
+
             if any_error:
                 return _BufferedTurn(
                     tuple(events),
@@ -1693,15 +1840,21 @@ class AgentLoop:
             return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        # By keyword: this list has grown past the point where a reader can check a
+        # positional call against the dataclass, and inserting a field mid-list silently
+        # shifts every argument after it.
         return _Dispatched(
-            result,
-            out.sources if out else (),
-            out.proposal if out else None,
-            out.entities if out else (),
-            out.view if out else None,
-            out.job if out else None,
-            out.web_sources if out else (),
-            out.deferred if out else None,
+            result=result,
+            sources=out.sources if out else (),
+            proposal=out.proposal if out else None,
+            entities=out.entities if out else (),
+            view=out.view if out else None,
+            job=out.job if out else None,
+            web_sources=out.web_sources if out else (),
+            deferred=out.deferred if out else None,
+            facts=out.facts if out else (),
+            truncated=out.truncated if out else False,
+            halt=out.halt if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

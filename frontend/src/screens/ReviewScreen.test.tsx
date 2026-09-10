@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReviewItem } from "../api/client";
+import type { NotesInboxRow, ReviewItem } from "../api/client";
 import { ReviewScreen } from "./ReviewScreen";
 
 // Pending lane: two collisions (accept_a/accept_b choices, before→after diff),
@@ -153,12 +153,18 @@ describe("ReviewScreen (split inbox)", () => {
   // for cards with no baked suggestions). Tests set it before opening a card.
   let predicateSuggestions: { name: string; score: number }[] = [];
 
+  // The notes tab's rows. Empty by default: every wiki-lane test below opens the wiki
+  // tab, and an empty notes tab is the ordinary state of a box the agent is keeping up
+  // with.
+  let notesRows: NotesInboxRow[] = [];
+
   function serve(pending: ReviewItem[], deferred: ReviewItem[], decided: ReviewItem[]) {
     fetchMock.mockImplementation(async (input, init) => {
       const path = String(input);
       if (path.endsWith("/predicate-suggestions")) {
         return jsonResponse({ suggestions: predicateSuggestions });
       }
+      if (path === "/api/review/notes") return jsonResponse({ items: notesRows });
       if (path === "/api/review?status=open") return jsonResponse({ items: pending });
       if (path === "/api/review?status=deferred") return jsonResponse({ items: deferred });
       if (path === "/api/review?status=resolved") return jsonResponse({ items: decided });
@@ -198,9 +204,18 @@ describe("ReviewScreen (split inbox)", () => {
     });
   }
 
+  // The inbox opens on the NOTES tab (D4), so every test of the wiki lane switches to
+  // it first — the one deliberate cost of the two-tab split.
+  function renderWiki() {
+    const rendered = render(<ReviewScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: /^wiki/ }));
+    return rendered;
+  }
+
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
     predicateSuggestions = [];
+    notesRows = [];
     serve(PENDING, DEFERRED, DECIDED);
   });
   afterEach(() => {
@@ -208,21 +223,23 @@ describe("ReviewScreen (split inbox)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows the two filter lanes with counts and a browsable list of all pending items", async () => {
-    render(<ReviewScreen />);
+  it("shows the two tabs with counts and a browsable list of all wiki findings", async () => {
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
-    expect(screen.getByRole("tab", { name: "pending 4" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "decided 2" })).toBeInTheDocument();
-    // Defer is retired — there is no deferred lane.
+    expect(screen.getByRole("tab", { name: "wiki 4" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "notes" })).toBeInTheDocument();
+    // The three-lane inbox DESIGN.md used to describe never shipped, and neither
+    // survives the two-tab split.
     expect(screen.queryByRole("tab", { name: /deferred/ })).not.toBeInTheDocument();
-    // Browsable: every pending item is listed, not one-at-a-time.
+    expect(screen.queryByRole("tab", { name: /pending/ })).not.toBeInTheDocument();
+    // Browsable: every open finding is listed, not one-at-a-time.
     expect(screen.getByText("are “Bob” and “Robert Chen” the same person?")).toBeInTheDocument();
     expect(screen.getByText("which Sam?")).toBeInTheDocument();
   });
 
   it("opens a row into a detail with a before→after diff and proposals; back returns", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
@@ -238,11 +255,11 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByLabelText("proposed fact")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "‹ inbox" }));
-    expect(screen.getByRole("tab", { name: "pending 4" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "wiki 4" })).toBeInTheDocument();
   });
 
   it("prev/next moves between pending items inside the detail", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
 
@@ -252,7 +269,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("swipes left/right to carousel between pending items", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
 
@@ -273,7 +290,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("a vertical drag does not carousel (scroll is preserved)", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
 
@@ -285,7 +302,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("choosing a proposal resolves with its action and raises an undo snackbar", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
     fireEvent.click(screen.getByRole("button", { name: /from this note/ }));
@@ -332,7 +349,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([newPred], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/unknown predicate/);
     fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
 
@@ -379,7 +396,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -418,7 +435,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([addr], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -457,7 +474,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inf], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -501,7 +518,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("approves a typed inference unchanged, recording it as accept", async () => {
     serve([genderInference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -522,7 +539,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("picking a different enum member files a correction note instead of accepting", async () => {
     serve([genderInference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -572,7 +589,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([nick], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -615,7 +632,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("advances to the next pending item after approving, not back to the list", async () => {
     serve([nickInference, genderInference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/People call me Jeff/);
     fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
     fireEvent.click(screen.getByRole("button", { name: /^approve/ }));
@@ -625,12 +642,12 @@ describe("ReviewScreen (split inbox)", () => {
     expect(
       await screen.findByRole("button", { name: "female", pressed: true }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /pending/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^wiki/ })).toBeNull();
   });
 
   it("advances to the next pending item after rejecting", async () => {
     serve([nickInference, genderInference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/People call me Jeff/);
     fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
     fireEvent.click(screen.getByRole("button", { name: /reject/ }));
@@ -638,18 +655,19 @@ describe("ReviewScreen (split inbox)", () => {
     expect(
       await screen.findByRole("button", { name: "female", pressed: true }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /pending/ })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /^wiki/ })).toBeNull();
   });
 
   it("returns to the list when the last pending item is decided", async () => {
     serve([nickInference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/People call me Jeff/);
     fireEvent.click(screen.getByRole("button", { name: /People call me Jeff/ }));
     fireEvent.click(screen.getByRole("button", { name: /^approve/ }));
 
-    // Nothing left to advance to: the inbox list (lane tabs) comes back.
-    expect(await screen.findByRole("tab", { name: "pending 0" })).toBeInTheDocument();
+    // Nothing left to advance to: the inbox list comes back. An emptied lane carries
+    // NO count pill — there is no zero to clear (D5).
+    expect(await screen.findByRole("tab", { name: "wiki" })).toBeInTheDocument();
   });
 
   it("a confirm_entity card renders its question with approve/reject", async () => {
@@ -673,7 +691,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([confirm], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/single, confirmed entity/);
     fireEvent.click(screen.getByRole("button", { name: /single, confirmed entity/ }));
     // Renders via the generic summary + outcomes path: an approve and a reject.
@@ -728,7 +746,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -765,7 +783,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inference], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     // In the list (not the detail), the row carries predicate → value too.
     const row = await screen.findByRole("button", { name: /hold for review/ });
     expect(within(row).getByText("name.nickname")).toBeInTheDocument();
@@ -791,7 +809,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([newPred], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/unknown predicate/);
     fireEvent.click(screen.getByRole("button", { name: /unknown predicate/ }));
 
@@ -816,7 +834,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("an ambiguous mention is never reject-only: correct-it is the way out", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /which Sam\?/ }));
 
@@ -853,7 +871,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inf], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -898,7 +916,7 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([inf], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/hold for review/);
     fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
 
@@ -919,7 +937,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("correcting a collision in place files a correction note and resolves as corrected", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
     fireEvent.click(screen.getByRole("button", { name: /two values recorded for Sarah/ }));
 
@@ -960,7 +978,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("the high-confidence suggestion bulk-approves via resolve-batch", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "approve 2 high-confidence" }));
@@ -978,11 +996,11 @@ describe("ReviewScreen (split inbox)", () => {
         }),
       ),
     );
-    expect(screen.getByRole("tab", { name: "pending 2" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "wiki 2" })).toBeInTheDocument();
   });
 
   it("select mode offers bulk approve but no defer", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "select" }));
@@ -995,9 +1013,9 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("the decided lane lists decisions and reopen unwinds one", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
-    fireEvent.click(screen.getByRole("tab", { name: "decided 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "2 decided" }));
 
     fireEvent.click(screen.getByRole("button", { name: /merge “Dr. Patel”/ }));
     expect(screen.getByText("what was decided")).toBeInTheDocument();
@@ -1038,9 +1056,9 @@ describe("ReviewScreen (split inbox)", () => {
       },
     };
     serve([], [], [decided]);
-    render(<ReviewScreen />);
-    await screen.findByText("pending is clear — new items arrive as notes are analyzed.");
-    fireEvent.click(screen.getByRole("tab", { name: "decided 1" }));
+    renderWiki();
+    await screen.findByText(/findings that never start from a note/);
+    fireEvent.click(screen.getByRole("button", { name: "1 decided" }));
     fireEvent.click(screen.getByRole("button", { name: /new predicate marriedTo/ }));
 
     // The outcome is a before→after diff, not a list of re-ticked options.
@@ -1051,7 +1069,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("groups pending items by entity by default, subjectless ones under Other", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     // The ambiguous "Sam" mention names a subject; the collisions and the merge
@@ -1064,7 +1082,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("collapsing an entity group hides only its own rows", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: /^Other 3/ }));
@@ -1074,7 +1092,7 @@ describe("ReviewScreen (split inbox)", () => {
   });
 
   it("group-by time falls back to the flat chronological list", async () => {
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText("two values recorded for Sarah's birthDate");
 
     fireEvent.click(screen.getByRole("button", { name: "time" }));
@@ -1083,14 +1101,12 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByText("two values recorded for Sarah's birthDate")).toBeInTheDocument();
   });
 
-  it("shows per-lane empty states", async () => {
+  it("shows the wiki tab's empty state, and offers no way into an empty decided log", async () => {
     serve([], [], []);
-    render(<ReviewScreen />);
-    expect(
-      await screen.findByText("pending is clear — new items arrive as notes are analyzed."),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "decided 0" }));
-    expect(screen.getByText("no decisions yet — resolved items collect here.")).toBeInTheDocument();
+    renderWiki();
+    expect(await screen.findByText(/findings that never start from a note/)).toBeInTheDocument();
+    // Nothing decided: no link, no zero.
+    expect(screen.queryByRole("button", { name: /decided/ })).toBeNull();
   });
 
   // A wiki_contradiction card (the source-grounded claim:contradiction block): the
@@ -1155,7 +1171,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("a contradiction card surfaces the source and both records' facts", async () => {
     serve([CONTRADICTION], [], []);
-    const { container } = render(<ReviewScreen />);
+    const { container } = renderWiki();
     await screen.findByText(/two different dates, times, doctors/);
     fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
 
@@ -1176,7 +1192,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("filing a contradiction correction opens the composer prefilled, then resolves corrected", async () => {
     serve([CONTRADICTION], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/two different dates, times, doctors/);
     fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
 
@@ -1211,7 +1227,7 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("dismissing a contradiction resolves it as distinct records", async () => {
     serve([CONTRADICTION], [], []);
-    render(<ReviewScreen />);
+    renderWiki();
     await screen.findByText(/two different dates, times, doctors/);
     fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
 
@@ -1225,5 +1241,143 @@ describe("ReviewScreen (split inbox)", () => {
         }),
       ),
     );
+  });
+
+  it("an uncorrectable card dismisses and offers no correction composer", async () => {
+    // The EMR location firewall's card (backend integrate.file_firewall_cards): it
+    // exists because an address was deliberately held OUT of the health domain, and
+    // "correct it" would file an owner_correction note back INTO that domain, pinned
+    // at full weight — the exact leak the guard prevented, offered as the only exit.
+    // So the payload says correctable: false and carries its own verb.
+    const firewall: ReviewItem = {
+      id: "fw1",
+      kind: "low_confidence",
+      domain: "health",
+      created_at: "2026-07-03T10:00:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        subkind: "firewall_address",
+        summary:
+          "location firewall: 1 address fact on a health Encounter held out of the graph at page 1",
+        rationale: "the value is deliberately not recorded here.",
+        choices: [
+          {
+            action: "dismiss",
+            label: "Dismiss",
+            detail: "the held fact stays out of the health graph",
+          },
+        ],
+        correctable: false,
+      },
+    };
+    serve([firewall], [], []);
+    renderWiki();
+    await screen.findByText(/location firewall/);
+    fireEvent.click(screen.getByRole("button", { name: /location firewall/ }));
+
+    expect(screen.queryByRole("button", { name: "correct it" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/fw1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"dismiss"'),
+        }),
+      ),
+    );
+  });
+
+  // ===== The notes tab (D4/D5) =====
+
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+  const QUESTION: NotesInboxRow = {
+    kind: "question",
+    session_id: "sess-note-1",
+    agent: "note_ingest",
+    note_id: "note-1",
+    domain: "health",
+    quote: "Started 10mg of the new one Tuesday, no side effects so far.",
+    ask: "Which is “the new one” — the lisinopril, or the atorvastatin?",
+    captured_at: "2026-09-08T09:00:00Z",
+    waiting_since: hoursAgo(6),
+    committed: 2,
+    live: false,
+  };
+  const APPROVAL: NotesInboxRow = {
+    kind: "approval",
+    session_id: "sess-chat-9",
+    agent: "curator",
+    note_id: null,
+    domain: "general",
+    quote: "Stop splitting recipe ingredients into separate facts.",
+    ask: "A change to your standing instructions is staged.",
+    captured_at: null,
+    waiting_since: hoursAgo(72),
+    committed: 0,
+    live: false,
+  };
+  const STILL_READING: NotesInboxRow = {
+    kind: "question",
+    session_id: "sess-note-2",
+    agent: "note_ingest",
+    note_id: "note-2",
+    domain: "general",
+    quote: "Medical records — 14-page attachment",
+    ask: null,
+    captured_at: "2026-09-09T07:00:00Z",
+    waiting_since: hoursAgo(1),
+    committed: 0,
+    live: true,
+  };
+
+  it("opens on the notes tab and lists questions and staged approvals", async () => {
+    notesRows = [APPROVAL, QUESTION];
+    render(<ReviewScreen />);
+
+    expect(await screen.findByText(/Which is .the new one./)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^notes/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/standing instructions is staged/)).toBeInTheDocument();
+    // The row says how long it has waited and how much already landed.
+    expect(screen.getByText("staged 3 days ago")).toBeInTheDocument();
+    expect(screen.getByText("2 committed")).toBeInTheDocument();
+  });
+
+  it("a notes row only redirects — it offers nothing to decide with", async () => {
+    notesRows = [QUESTION];
+    const onOpenConversation = vi.fn();
+    render(<ReviewScreen onOpenConversation={onOpenConversation} />);
+    await screen.findByText(/Which is .the new one./);
+
+    // The ONE control in the row is the row itself, and it opens the conversation.
+    const rowButtons = screen.getAllByRole("button");
+    expect(rowButtons).toHaveLength(1);
+    fireEvent.click(rowButtons[0] as HTMLElement);
+    expect(onOpenConversation).toHaveBeenCalledWith("sess-note-1", "note_ingest");
+    // No answer/approve/dismiss affordance was rendered, and nothing was posted.
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/resolve"),
+      expect.anything(),
+    );
+  });
+
+  it("counts only what is waiting: a first pass still reading is listed, not counted", async () => {
+    notesRows = [QUESTION, STILL_READING];
+    render(<ReviewScreen />);
+    await screen.findByText(/Which is .the new one./);
+
+    expect(screen.getByText("still reading · nothing written yet")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "notes 1" })).toBeInTheDocument();
+  });
+
+  it("an empty notes tab carries no count pill and no zero to clear", async () => {
+    notesRows = [];
+    render(<ReviewScreen />);
+    expect(await screen.findByText(/nothing is waiting on you/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "notes" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /notes 0/ })).toBeNull();
   });
 });

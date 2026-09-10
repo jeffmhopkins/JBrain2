@@ -62,7 +62,9 @@ from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
@@ -237,6 +239,13 @@ structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
 )
 
+#: How long shutdown waits for an in-flight SDR recording to finalize. Bounded, because
+#: an Ops → Update must not hang on a wedged sidecar — but long enough for the blob
+#: rename and the row write, because a recording interrupted by a deploy is still a
+#: recording (docs/plans/SDR_RECORDING_PLAN.md §2). A module constant so the finalize is
+#: testable without a ten-second test.
+SDR_FINALIZE_TIMEOUT_S = 10.0
+
 # The action specs the API's registry carries: the shipped six plus every in-code
 # action the worker can dispatch that the Ops surface must resolve — the purge sweep,
 # the three reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, the wiki
@@ -258,6 +267,12 @@ API_ACTION_SPECS = (
     *WIKI_SPECS,
     WIKI_LINT_SPEC,
     TRIAGE_INBOX_SPEC,
+    GRAPH_REBUILD_SPEC,
+    # Event-bound, never Ops-fireable — but the Automations surface resolves every
+    # seeded pipeline's steps through THIS registry, and an action it does not carry
+    # renders as "not in the action registry" beside the integrate trigger it now
+    # runs next to.
+    NOTE_CONVERSE_SPEC,
 )
 
 
@@ -1394,6 +1409,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_url=settings.supervisor_url, timeout=30.0
         )
         yield
+        # Finalize a recording that is still running, before anything else is torn down.
+        # An Ops → Update while the tape deck is going would otherwise take the clip's
+        # spool file with the container — and an interrupted recording is still a
+        # recording (docs/plans/SDR_RECORDING_PLAN.md §2). Bounded, and here rather than
+        # further down because writing its row needs the pool still alive.
+        sdr_recorder = getattr(app.state, "sdr_recorder", None)
+        if sdr_recorder is not None:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(sdr_recorder.stop(), timeout=SDR_FINALIZE_TIMEOUT_S)
         warm_keeper_task.cancel()
         if live_task is not None:
             live_task.cancel()

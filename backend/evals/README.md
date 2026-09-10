@@ -19,6 +19,7 @@ Three pieces, two of which need **no API key**:
 | `evals/audit.py` | **No** | Offline self-consistency + closed-set temporal audit of the case set. CI-enforced. |
 | be-the-model critic | a model (the agent itself) | An agent acts as the extractor over every case and flags expectations a *faithful* extraction would fail (case bugs / over-strict asserts). |
 | `evals/run.py` (`scripts/prompt-eval.sh`) | **Yes** (the configured provider) | Runs the REAL prompt through a REAL model and scores its output. Opt-in, never in CI. |
+| `evals/shape_probe.py` | **Yes** (the live box, via a debug token) | Scores whether the model FILLS a proposed *tool schema* — a different question from whether a prompt's output is right, and the one a new tool surface raises first. Opt-in, never in CI. |
 
 ## The loop (what a session should do)
 
@@ -38,6 +39,41 @@ Three pieces, two of which need **no API key**:
 > **Keys are never committed.** `run.py` reads the provider key from the env
 > via `Settings` (`JBRAIN_XAI_API_KEY`, etc.). Pass it inline at call time
 > (`JBRAIN_XAI_API_KEY=… scripts/prompt-eval.sh`); it never touches the repo.
+
+## `shape_probe.py` — does the model FILL this tool schema?
+
+A different question from "is the prompt's output right", and the one a new tool
+surface raises first. It sends a candidate `.tool` schema to the live box through
+`/api/debug/tool-probe` (which never runs a handler) and scores the call that comes
+back. Two suites:
+
+```
+JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe shape 20
+JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe fields 12
+JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe fields 12 v4_shipping_eight
+```
+
+`shape` (W2) answered the batched-vs-flat question for `assert_fact` — 20/20 both
+ways, 7.6 items a turn against 1.0. `fields` (W3/T5) answered what ADDING a field
+costs, and produced the finding this file exists to keep:
+
+> **`required` buys PRESENCE, not MEMBERSHIP.** gpt-oss fills every required
+> string field, every time, with a value it invented. A fact `kind` described with
+> its six words, under "copy exactly ONE of these six words and never any other",
+> came back **7 legal in 80** (`residence`, `employment`, `medical`). An
+> `assertion` from a five-word list: **0 in 72**. The only closed vocabularies a
+> tool grammar can enforce without a JSON-Schema `enum` (which segfaults gpt-oss's
+> harmony grammar) are the JSON types — `number` and `boolean` — so a field whose
+> legal values are WORDS is not buildable on this box, and one whose value is a
+> number or an ISO date is.
+
+So an arm scores three things, not one: **well-formedness** (every required field
+non-blank, every quote verbatim), **legality** (is the value in the field's
+vocabulary), and **correctness** (right on the one fact that needs it, and left
+alone on the ones that do not). The third is what decides a field — an
+over-applied `qualifier` splits an identity key so nothing supersedes again, and
+an over-applied `confidence` parks a true fact behind a card. Add an arm to
+`FIELD_ARMS` and a grader to `GRADERS`; keep the old arms, they are the record.
 
 ## Running the live eval
 

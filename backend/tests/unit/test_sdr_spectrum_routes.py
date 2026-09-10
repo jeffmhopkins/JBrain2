@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_type_hints
 
 import httpx
 import pytest
@@ -534,3 +534,76 @@ def test_every_hopped_section_still_declares_the_width_it_will_produce() -> None
             continue
         rate_hz, fft_bins, _hops = capture
         assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id
+
+
+# --- filter bandwidth -------------------------------------------------------------
+
+
+async def test_a_bandwidth_is_forwarded_and_absence_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted rather than sent as null when the caller says nothing.
+
+    A `"bandwidth_hz": None` on the wire would make this route the place that decides
+    the default, and it is not: the ladder and its widest rung live in the demodulator,
+    and a second opinion here is a second thing to keep in step."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=5.0, mode="am")
+    _path, body = seen[-1]
+    assert "bandwidth_hz" not in body
+
+    await sdr_api.listen(
+        _request(), _settings(), OWNER, frequency_mhz=5.0, mode="am", bandwidth_hz=6_000
+    )
+    _path, body = seen[-1]
+    assert body["bandwidth_hz"] == 6_000
+
+
+async def test_retuning_can_change_only_the_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """How the control sends a new width: the same frequency back with a new bandwidth.
+
+    The session keeps its width across a retune, so this is the whole mechanism — there
+    is no separate "set bandwidth" route to get out of step with `/tune`."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.tune(_settings(), OWNER, frequency_mhz=5.0, session_id="s1", bandwidth_hz=4_000)
+
+    path, body = seen[-1]
+    assert path == "/listen/tune"
+    assert body == {
+        "frequency_hz": 5_000_000,
+        "session_id": "s1",
+        "bandwidth_hz": 4_000,
+    }
+    # No mode: sending one would reset the width to that mode's default on the sidecar,
+    # which is exactly what a filter-only change must not do.
+    assert "mode" not in body
+
+
+@pytest.mark.parametrize("route", [sdr_api.tune, sdr_api.listen])
+def test_the_bandwidth_is_bounded_by_the_schema(route: Any) -> None:
+    """Bounded so nonsense is a 422 here rather than a 400 from a round trip.
+
+    This pins the BOUND, not a request: the sidecar stays the authority on which exact
+    widths are real, and these limits only refuse values no ladder could ever hold. Both
+    routes are checked because they are separate signatures that must not drift.
+
+    Read through `get_type_hints` because `from __future__ import annotations` leaves
+    every annotation in this module a string — reading `__annotations__` directly finds
+    the source text and asserts nothing."""
+    query = get_type_hints(route, include_extras=True)["bandwidth_hz"].__metadata__[0]
+    # FastAPI keeps the constraints as annotated-types markers on the Query rather than
+    # as attributes of it, so `query.ge` does not exist and reading it would only raise.
+    limits = {type(m).__name__: m for m in query.metadata}
+    low, high = limits["Ge"].ge, limits["Le"].le
+
+    assert (low, high) == (sdr_api.MIN_BANDWIDTH_HZ, sdr_api.MAX_BANDWIDTH_HZ)
+    # Wide enough for every real rung — the narrowest is SSB's 1.8 kHz and the widest is
+    # wide FM's 180 kHz — and tight enough to catch the likely units mistake, which is
+    # kHz sent as Hz or Hz sent as kHz.
+    assert low <= 1_800 and high >= 180_000
+    for absurd in (0, 6, 500, 500_000):
+        assert not (low <= absurd <= high), absurd

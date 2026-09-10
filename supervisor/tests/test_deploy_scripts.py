@@ -1416,3 +1416,184 @@ def test_the_refresh_rebuilds_only_the_service_it_was_given() -> None:
     assert code.count("docker compose build") == 1
     assert code.count("docker compose up -d") == 1
     assert "backup.sh" not in code
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
+
+
+def _fetch_lines(script: str) -> list[str]:
+    """The git commands the script uses to bring `src` up to date, in order.
+
+    Read out of the script rather than copied, so this test tracks the deploy path
+    instead of a snapshot of it that can quietly diverge."""
+    lines = [
+        ln.strip()
+        for ln in (DEPLOY / script).read_text().splitlines()
+        if ln.strip().startswith("git -C src ")
+        and ("fetch" in ln or "remote prune" in ln or "reset --hard" in ln)
+    ]
+    assert lines, script
+    return lines
+
+
+def _stale_directory_ref(tmp_path: Path) -> Path:
+    """A box in the state the owner's actually reached: a remote-tracking ref left
+    behind under `wave1/`, and a branch named `wave1` now upstream.
+
+    Returns the directory holding `src`, so the script's own `git -C src …` lines run
+    against it unmodified."""
+    up = tmp_path / "up.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(up)], check=True)
+    _git(tmp_path, "-C", str(up), "symbolic-ref", "HEAD", "refs/heads/main")
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(up), str(work)], check=True)
+    _git(work, "config", "user.email", "t@e.st")
+    _git(work, "config", "user.name", "t")
+    (work / "f").write_text("v1\n")
+    _git(work, "add", "f")
+    _git(work, "commit", "-qm", "v1")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "-q", "-u", "origin", "main")
+    # The shape that does the damage: a branch UNDER `wave1/`, which makes
+    # `refs/remotes/origin/wave1` a DIRECTORY on anything that fetches it.
+    _git(work, "push", "-q", "origin", "main:refs/heads/wave1/old-task")
+
+    box = tmp_path / "box"
+    box.mkdir()
+    subprocess.run(["git", "clone", "-q", str(up), str(box / "src")], check=True)
+
+    # Upstream drops that branch and grows one named `wave1` — the collision. The box
+    # never pruned, so it still holds the directory.
+    _git(work, "push", "-q", "origin", "--delete", "wave1/old-task")
+    (work / "f").write_text("v2\n")
+    _git(work, "commit", "-qam", "v2")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "push", "-q", "origin", "main:refs/heads/wave1")
+    return box
+
+
+def test_a_stale_branch_ref_cannot_strand_the_box_on_old_source(tmp_path: Path) -> None:
+    """The failure the owner hit: `! [new branch] wave1 -> origin/wave1 (unable to
+    update local ref)`, exit 1, and under `set -eu` the update aborts BEFORE the reset —
+    so the stack stays on stale source while `origin/main` fetched fine in the same
+    command. There is no terminal on that box to run the `git remote prune origin` git
+    suggests (CLAUDE.md #10), so the deploy path has to survive it unaided.
+
+    Run against a real repo in that exact state rather than asserting on the text of the
+    script, because what matters is the exit code and where `src` ends up."""
+    box = _stale_directory_ref(tmp_path)
+
+    # What the box used to run, proving the repo really is in the broken state — the
+    # test would pass vacuously against a shape that never collided.
+    broken = _git(box, "-C", "src", "fetch", "origin")
+    assert broken.returncode != 0
+    assert "unable to update local ref" in broken.stderr
+    assert (box / "src" / "f").read_text() == "v1\n", "the worktree must still be stale"
+
+    for line in _fetch_lines("update-inner.sh"):
+        # `|| true` is the script's own; strip it and demand success from the command
+        # itself, except where the script deliberately tolerates a failure.
+        tolerant = line.endswith("|| true")
+        done = subprocess.run(
+            line.removesuffix("|| true").strip(),
+            cwd=box,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if not tolerant:
+            assert done.returncode == 0, f"{line}\n{done.stderr}"
+
+    # ...and the point of all of it: the source actually moved.
+    assert (box / "src" / "f").read_text() == "v2\n"
+    # The stranded ref is gone too, not merely stepped around. Restricting the refspec
+    # alone would have got the update through while leaving the box carrying a tracking
+    # ref for a branch deleted upstream long ago — inert, but it is exactly the litter
+    # that collided in the first place, and a mirror should hold only what it mirrors.
+    left = _git(box, "-C", "src", "for-each-ref", "--format=%(refname)", "refs/remotes")
+    assert "wave1" not in left.stdout, left.stdout
+
+
+def test_the_refresh_survives_the_same_stale_ref(tmp_path: Path) -> None:
+    """`refresh` pulls main the same way `update` does, so it strands the box the same
+    way. Both were fixed; this is what keeps them fixed together."""
+    box = _stale_directory_ref(tmp_path)
+
+    for line in _fetch_lines("refresh-inner.sh"):
+        tolerant = line.endswith("|| true")
+        done = subprocess.run(
+            line.removesuffix("|| true").strip(),
+            cwd=box,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if not tolerant:
+            assert done.returncode == 0, f"{line}\n{done.stderr}"
+
+    assert (box / "src" / "f").read_text() == "v2\n"
+
+
+def test_the_update_fetches_main_and_nothing_else(tmp_path: Path) -> None:
+    """The refspec is pinned to `main` by name.
+
+    Two things ride on it. A box that fetches every branch collects a tracking ref for
+    each, which is what made the collision above possible at all — and the security
+    property the refresh test names, that a capability token can ask for what a merged
+    PR put on `main` and nothing else, is stronger when no other ref is even fetched."""
+    for script in ("update-inner.sh", "refresh-inner.sh"):
+        want = (
+            "git -C src fetch --prune origin "
+            '"+refs/heads/main:refs/remotes/origin/main"'
+        )
+        assert [ln for ln in _fetch_lines(script) if "fetch" in ln] == [want], script
+
+
+def test_the_restricted_fetch_still_brings_tags(tmp_path: Path) -> None:
+    """`update-inner.sh` stamps the image with `git describe --tags`, and the refspec
+    was narrowed to `main` — which would be a silent way to lose every tag and turn
+    `JBRAIN_GIT_DESCRIBE` into a bare sha for good.
+
+    Git auto-follows tags that point into the objects it just downloaded even under an
+    explicit refspec, so this holds; it is pinned because nothing else would notice it
+    stopping."""
+    up = tmp_path / "up.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(up)], check=True)
+    _git(tmp_path, "-C", str(up), "symbolic-ref", "HEAD", "refs/heads/main")
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(up), str(work)], check=True)
+    _git(work, "config", "user.email", "t@e.st")
+    _git(work, "config", "user.name", "t")
+    (work / "f").write_text("1\n")
+    _git(work, "add", "f")
+    _git(work, "commit", "-qm", "v1")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "-q", "-u", "origin", "main")
+
+    box = tmp_path / "box"
+    box.mkdir()
+    subprocess.run(["git", "clone", "-q", str(up), str(box / "src")], check=True)
+
+    (work / "f").write_text("2\n")
+    _git(work, "commit", "-qam", "v2")
+    _git(work, "tag", "-a", "v1.2.3", "-m", "rel")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "push", "-q", "origin", "v1.2.3")
+
+    for line in _fetch_lines("update-inner.sh"):
+        subprocess.run(
+            line.removesuffix("|| true").strip(),
+            cwd=box,
+            shell=True,
+            capture_output=True,
+            check=False,
+        )
+
+    described = _git(box / "src", "describe", "--tags", "--always", "--dirty")
+    assert described.stdout.strip() == "v1.2.3", described.stdout + described.stderr

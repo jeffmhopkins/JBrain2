@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-09 — the `note_ingest` persona gained its verbs, and then a SECOND allowlist (D8): reading a note alone it holds six tools, and once Jeff replies it also holds `correct_fact` (address a wrong value by `(entity, predicate, qualifier)`, force-supersede and pin it), `merge_entities` (stage a fold — enacting one is a full-owner write a note conversation may not make), `prefs_write`, and the corpus reads `search`/`read_note`/`relate`; `read_note` now fences the body it returns for any turn holding a graph write. It **writes the graph** through `resolve_entity` + `assert_fact` bound to one note (`agent/graphwritetools.py`, see `ANALYSIS.md` for the write path), and it can **stop and ask**: **`ask_owner`** ("record one open question on this thread and stop") is the only producer of the `waiting_on_owner` state, ending its turn through the loop rather than by prose. With it, the **owner-reply path**: a reply into a waiting note thread is paired with the recorded question and appended to the note as a D6 clarification block, which re-ingests the note (D7) and resumes the conversation — only when the reply is text **Jeff typed**, never a server-authored enact or deferred-tool outcome, which would file machine text onto his note as source text and spend the open question. A single block can be listed and erased (`GET`/`DELETE /notes/{id}/clarifications`, **owner-only** — the append enqueues a job on `is_owner()` RLS, so a token caller gets a driver error rather than a refusal), from the note screen's **Answers you gave** panel, since an answer is free text that becomes the note's own searchable text. Beside all of it, **`owner_prefs`** — the owner's standing instructions, injected into that conversation's system prompt ahead of the note on **both** its turns (the unattended pass through `analysis/converse.py`, the reply turn through `api/agent.py`), whose write verb stages a Proposal, edits one numbered rule at a time, and is **held, not enacted**, if the rules moved under the approval. Prior: added the persona and the note conversation it runs in (`note_converse`, seeded off `note.ingested` beside the shipped extraction pipeline): a note is turn 0 of an ordinary agent conversation, fenced as DATA, under a closed EMPTY tool allowlist.
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -55,7 +55,10 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    autonomous write path** to behavioral / self-semantic memory. Such memory is
    created or changed only by an owner-issued, owner-confirmed `remember` action —
    never inferred from conversational content, never from a non-owner principal —
-   and references the **owner subject only**.
+   and references the **owner subject only**. The note persona's standing
+   instructions (`owner_prefs`, below) are the same rule made structural: its write
+   verb stages a Proposal and cannot write, and it edits one numbered rule at a
+   time, because the conversation it is offered in has third-party text as turn 0.
 4. **Episodic domain scope is fail-closed, RLS-enforced.** An episodic trace is
    scoped to the **most-restrictive domain any content in that turn touched**,
    enforced by an RLS column, not an LLM classifier. A multi-domain answer's
@@ -70,7 +73,9 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    has no runtime path to change its own prompts, tools, or behavior. *(The
    removed Loops 2–4 — skill promotion, durable-knowledge promotion, prompt/tool
    self-edit — and their promotion gate are gone; this rule now bounds Loop 1 and
-   the note door alone.)*
+   the note door alone.)* The owner's standing instructions do change what the
+   note persona's prompt says, and are the deliberate exception the rule already
+   allows: the agent cannot write them, only the owner's approval does.
 7. **Agent-drafted corrections are attributed and not privileged.** Agent-authored
    notes are provenance-flagged, carry the source ID of the content that prompted
    them, get **normal (not elevated) extraction weight** when sourced from
@@ -93,10 +98,21 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    widening, and any connector can be disabled. Location connectors are
    **local-first** so location data stays on-box (an on-box lookup egresses
    nothing and needs no Proposal).
-10. **Untrusted-origin content never triggers a background job.** Any batched or
-    scheduled agent processing runs only on owner-originated content, never on note
-    bodies, intake submissions, or other untrusted-origin input. *(This once also
-    capped a per-principal self-improvement spend budget; those pipelines were
+10. **Untrusted-origin content triggers exactly one background job, on a surface with
+    no channel out.** The rule was "never", and the note conversation amended it
+    (`AGENT_INGEST_CONVERSATION_PLAN.md` D10): a note whose body a stranger wrote — an
+    approved intake submission, `notes.provenance = 'untrusted_origin'` — opens the same
+    unattended `note_ingest` pass every note opens, and that pass writes the graph. What
+    keeps the amendment bounded is not the prompt but **which handlers are bound**: such
+    a conversation runs on `agents.NOTE_INGEST_THIRD_PARTY_TOOLS` — `resolve_entity`,
+    `assert_fact`, `find_entity`, `read_entity`, `current_time` — on the unattended pass
+    AND on the owner's reply, so a stranger's words may cause a fact and nothing else.
+    No `ask_owner` (a question written out of stranger text into the owner's inbox in his
+    own agent's voice, whose answer becomes source text on the note), and none of the
+    on-reply verbs D8 would otherwise unlock, because D8's premise — the owner is the
+    only voice in the room — is false while the submitted body is still turn 0. Every
+    other batched or scheduled job still runs only on owner-originated content. *(This
+    once also capped a per-principal self-improvement spend budget; those pipelines were
     removed, but the no-untrusted-trigger rule stands for every remaining job.)*
 11. **Purge is total.** Note deletion cascades to agent episodic memory — delete
     or redact the episode, not merely repair pointers — with a test asserting no
@@ -395,7 +411,8 @@ prompt** that frames it, the **tool allowlist** it may call, and whether it **re
 the knowledge base** at all. The set is code-defined (`jbrain.agent.agents`). The
 owner-facing conversation personas are `curator`, `teacher`, and `jerv` (below);
 the box also runs **`archivist`** (a Gmail-triage persona with the `gmail_*` tools
-+ an owner-only cross-session memory, no KB), the non-owner **`intake`**
++ an owner-only cross-session memory, no KB), **`note_ingest`** (the note conversation,
+below), the non-owner **`intake`**
 interviewer (no tools, no KB), and the closed **`research`/`review`/`summarize`**
 personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 
@@ -406,6 +423,111 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 - **`teacher`** — a Socratic homework tutor: **no tools, no retrieval.** It guides
   the learner to their own answer by questioning and never reads owner data; its
   prompt forbids handing over graded answers.
+- **`note_ingest`** — the **note conversation**
+  (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`): a captured note is turn 0 of an
+  ordinary agent conversation, opened by the `note_converse` action off `note.ingested`
+  and rendered by the same transcript route as any chat. It is **not selectable** — the
+  engine opens it, never a picker — and that is enforced, not conventional:
+  `note_ingest` is in `ENGINE_ONLY_PERSONAS`, so it is excluded from `OWNER_AGENTS` and
+  `POST /sessions {"agent":"note_ingest"}` (and the task launcher) refuse it with a 422,
+  while the two `agent` CHECKs still admit it so the engine can store one. Its threads
+  **are** listed: the PWA's Full Brain tab carries `note_ingest` beside the curator
+  (`useFullBrain.MODE_AGENTS`), so an ingested note's conversation is openable from the
+  chat list. Listed, not landed on — the tab still opens the curator, because a note
+  thread is always the newest Full Brain session and would otherwise take the surface
+  every time the owner captures anything. Its allowlist is an explicit **closed**
+  `frozenset`, never the curator wildcard (D16), and the executor's tool registry is
+  assembled by NAME rather than globbed from the sidecar directory, so a tool reaches
+  this persona only by being written into both. It is the one persona with **three**
+  allowlists (D8, D10) and one further subtraction over them (D9, the EMR narrowing
+  below). Reading a note on its own it holds **six**: the note-bound graph
+  writes `resolve_entity` and `assert_fact`, `ask_owner`, and `find_entity` /
+  `read_entity` / `current_time` inherited unchanged. Once the owner replies it holds
+  **twelve** — those six plus `correct_fact`, `merge_entities`, `prefs_write`, `search`,
+  `read_note` and `relate`. Nothing outward-facing is in either: the owner replying does
+  not sanitize the note body still in context. The choice is a second RESOLUTION
+  (`agents.agent_for_owner_reply`, called only by `/chat`, which by definition is a turn
+  the owner sent), not a flag — and `AgentProfile.tools` carries the NARROW set, so a
+  caller that does not ask for the wider one gets the safe answer by default. The third
+  allowlist is the **five** of `NOTE_INGEST_THIRD_PARTY_TOOLS`, and it applies on BOTH
+  turns of a note whose body the owner did not write (`notes.provenance =
+  'untrusted_origin'` — an approved intake submission; non-negotiable #10). It is the
+  unattended six minus `ask_owner`, and it does not widen on reply, because D8's premise
+  is that the owner is the only voice in the room and a stranger's body is still turn 0.
+  The graph writes are untouched: D10 is "unrestricted in *what* it may write". Applied
+  by `agents.narrow_for_third_party_note`, LAST (it undoes the widening), over a lookup
+  that fails closed — an unreadable note or conversation reads as third-party, so a
+  failure narrows a turn rather than widening one. On the unattended pass `ask_owner` is
+  additionally not BOUND at all: its sidecar is never loaded into that note's registry,
+  so the allowlist is a second lock over a verb that is not in the room. Turn 0 is
+  the note **fenced as
+  DATA** the way the `intake` persona fences a stranger's reply — a note body may carry
+  an email, a forwarded message or text read off a photo, so nothing inside it is an
+  instruction; a third-party body gets the same nonce-closed fence with one clause
+  naming whose text it is. The conversation's lifecycle and its per-tool-call ledger live in
+  `app.note_conversations` (see `ANALYSIS.md`); at most one live conversation exists per
+  note. It **does** write the graph now, through the two bound tools — and still beside
+  the shipped extraction pipeline (D13), never instead of it; both go through W1's
+  `commit_facts`, so there is one write path, not two. `ANALYSIS.md` has that half.
+  - **Except on a note the EMR importer owns** (W4/D9), where it holds NO graph-write verb
+    at all — not on the unattended pass and not on the reply turn, which is the one place
+    W4 narrows what D8 unlocks. `fhir_status` is EMR-only, set by the parser, and has no
+    tool field, so a lab value the model wrote is one the FHIR lifecycle can never
+    supersede — that is the reason that holds today, and it is sufficient on its own. The
+    second reason is prospective: the note's whole-note settle is the importer's, so once
+    the conversation gains a settle of its own (it has none today — its write path is
+    `commit_facts` only) a second writer would retract the importer's facts.
+    `ingest/emr/ownership.emr_owned` is the predicate (migration
+    0122's own trigger filter), `agents.narrow_for_emr` the allowlist half, and the
+    worker's per-note registry declines to bind the handlers as the second lock. The
+    thread still opens, still reads, and still holds `ask_owner`: what it loses is the
+    ability to write facts a deterministic parser is authoritative for.
+  - **The D9 and D10 narrowings compose, and the narrower wins.** They are independent
+    predicates and a note can satisfy both — an approved intake submission the owner
+    filed to health / `Records` with the archive or a PDF attached. Such a note's
+    conversation holds `find_entity` / `read_entity` / `current_time` and nothing else,
+    on both turns: no `ask_owner` (D10) and no write verb (D9). It is the intersection
+    rather than whichever narrowing ran last because `narrow_for_third_party_note`
+    intersects where `narrow_for_emr` subtracts, so the two commute.
+  - **`ask_owner`** is "record one open question on this thread and stop". It writes its
+    own ledger row and moves the conversation to `waiting_on_owner` in one transaction —
+    the question has to be durable the moment it is asked, because the owner can answer
+    before the runner's post-turn record runs — and it ends the turn through the LOOP
+    (`ToolOutput(halt=…)` → `stop_reason="awaiting_owner"`), never by asking the model to
+    stop, which is not a thing a prose obligation can make true. `waiting_on_owner` is
+    the one state the settle sweep never fires on (plan constraint 6), it holds the
+    note's one live slot so no second pass starts, and it is never reaped.
+  - **The owner's reply is the answer, and the engine files it** — not a tool
+    (`analysis/clarify.py`, called from `/chat`). A reply into a waiting thread is paired
+    with the recorded question and appended to the note as a timestamped **clarification
+    block** (D6), which re-ingests the note so the block becomes chunks of it (D7); the
+    thread returns to `running` and the reply turn proceeds, then closes by the same rule
+    the unattended pass ends by. The conversation's `note_body_sha` is read here — the
+    only reader — to tell "the note moved under this thread" from "this thread's own
+    answer changed it", and is re-stamped only in the second case.
+  - **`correct_fact`** is what a reply saying "no, that's wrong" turns into (D11). It
+    addresses by identity key `(entity, predicate, qualifier)` — the address
+    `read_entity` prints — never by fact id, and the entity is resolved under the TURN's
+    own read scopes, so the only rows it can be pointed at are ones the conversation
+    could already see. On a key holding several live values it lists them as `f1`/`f2`,
+    writes nothing, and REFUSES — there is no retry. A non-functional edge's identity is its object, so "replace this one" is one fact ending and another beginning, not a single write; the model is told what is on file and asks which is meant. The write is the ordinary graph
+    write with `correction=True`, which is what `supersession.decide()` reads to
+    supersede the current head(s) and commit the new value **active + pinned** — so a
+    later note re-flags it rather than flipping it back. It takes no `quote`: its
+    authority is the owner's own turn, not a passage of the note.
+  - **`merge_entities`** stages a fold and can never enact one. An entity fold is a
+    **full-owner** write (`merge_entity_pair` asks Postgres `app.is_full_owner()` first,
+    because RLS would silently narrow its repoints and strand half a cross-domain
+    entity's facts on the tombstone), and a note conversation runs domain-narrowed — so
+    it raises the same Proposal the chat persona's `propose_merge` does, and the owner's
+    approval runs the one shipped fold. The survivor is chosen at enact by `plan_merge`,
+    never by the model.
+  - **`read_note` frames what it returns here**, which it does for no other persona. A
+    fetched note body is third-party text arriving in a turn that can now correct a
+    fact, so it comes back inside the same nonce-closed `[CAPTURED NOTE #tag]` fence as
+    turn 0 (`analysis/noteframe.py`). The trigger is the TURN's own write authority
+    (`ToolContext.agent_tools`), not the persona name — curator and jerv hold no graph
+    write and see exactly what they saw before.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
   (`web_search`, `news_search`, `science_search`, `web_fetch`), the dataless `current_time`, and
   the owner-approved `current_location`, and **no knowledge-base tools** — it runs with empty read
@@ -926,6 +1048,7 @@ it, every time.
 |---|---|---|---|---|
 | **Working / core identity** (persona, owner preferences, behavioral rules) | `agent_memory` rows rendered as MD; small always-loaded index | Owner (policy) + owner-confirmed `remember` | No | **Owner-confirmed only** (non-neg. 3) |
 | **Working / task scratchpad** (current multi-step state, plan, IDs) | `agent_memory` row, task-scoped | Agent | No | Auto; archived on task completion |
+| **Standing instructions** (how to handle a note: "keep recipes whole") | `owner_prefs`, one owner-only row, one rule per line | Owner, via `prefs_write`'s staged Proposal | No | **Owner-confirmed only**; one numbered rule per approval |
 | **Semantic (self)** — behavioral learnings | `agent_memory` topic blocks, lazy-loaded | Owner-confirmed; seeded by owner corrections | No | **Owner-confirmed only** |
 | **Episodic** — conversation/task traces, tool logs | `agent_episodes` rows + segregated-namespace embeddings; pointers to fact/entity IDs | Agent (auto-append) | No | Auto-write; fail-closed domain scope; nightly decay |
 | **Semantic (world)** — facts about the owner's life | **NOT agent memory** — `facts`/`entities`, cited to chunks | Extraction pipeline, from **notes** | **Yes** | Pipeline + review inbox |
@@ -940,6 +1063,26 @@ curated-MD/lazy-topic pattern: a small always-loaded index, lazy topic blocks,
 and **ACE-style delta edits (ADD/UPDATE/REMOVE on individual bullets), never full
 rewrites** — full regeneration rots accumulated self-knowledge (brevity bias /
 context collapse).
+
+**`owner_prefs` — the note persona's standing instructions** (`docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`
+D15/D17). One owner-only row (`app.owner_prefs`, migration 0195) holding a single
+capped document of the owner's own rules for handling notes, injected into every note
+conversation's **system prompt** ahead of the note and framed as the owner's
+instructions, explicitly distinct from the note's DATA frame. It borrows the
+archivist's cross-session-memory shape for the READ half and deliberately rejects it
+for the WRITE half: `archivist_memory_write` is a bare full-replace upsert, safe only
+because that persona is `permission: web` and reads no untrusted text, while this
+document lives in a conversation whose turn 0 may be third-party text (plan risk 1).
+So `prefs_write` (a) **stages a Proposal** and cannot write — the only writer is the
+trusted leaf executor on the owner's approval — and (b) is a **delta**: one call moves
+one numbered rule (add / replace / remove), and no full-rewrite verb exists, so no
+single approval can wipe the standing orders. It is fired only on the owner's explicit
+request; it is in `toolregistry.NEVER_DEFAULT` and in no profile's allowlist. A rule is
+one LINE, numbered at render time, so an edit cannot renumber its neighbours; the
+document is capped at 50 rules / 8k characters (well under the archivist's 20k, because
+this one is paid for on **every** note turn), and every cap is checked on an in-memory
+rule list before any write is opened — including at enact, where a refusal is a skipped
+leaf rather than a raise that would roll back its siblings.
 
 **Retrieval reuses the existing RRF hybrid search** (dense + FTS), in a
 **segregated memory namespace** (a discriminator column the query filters on, and

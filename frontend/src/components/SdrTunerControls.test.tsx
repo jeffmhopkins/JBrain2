@@ -8,10 +8,15 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { type SdrRecording, api } from "../api/client";
 import { resetBands } from "../sdrBands";
 import { resetSdrCaptions } from "../sdrCaptions";
-import type { SdrListening } from "../sdrSession";
+import {
+  type SdrListening,
+  type SdrRecordingState,
+  onSdrRecordingSaved,
+  resetSdrSession,
+} from "../sdrSession";
 import { SdrTunerControls, liveTag } from "./SdrTunerControls";
 
 // The caption stream, faked at the EventSource seam so a test can deliver a segment.
@@ -62,17 +67,38 @@ function bands(sections: unknown[] = []) {
   } as never);
 }
 
+/** The 1 Hz status poll, stubbed at the api seam. The Record button reads WHETHER a
+ *  capture is running, how long it has run and how big it is from here and nowhere else,
+ *  so a test that wants a recording puts one on the status rather than on the component. */
+function status(recording: SdrRecordingState | null = null) {
+  vi.spyOn(api, "getSdrStatus").mockResolvedValue({
+    available: true,
+    listening: null,
+    sessions: [],
+    recording,
+  });
+}
+
 beforeEach(() => {
   bands();
+  status();
   // jsdom has no layout engine, so scrollIntoView is undefined on Element.
   Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
   resetBands();
+  resetSdrSession();
   vi.restoreAllMocks();
   resetSdrCaptions();
 });
+
+/** The Record control, by its accessible name in each of its three states. */
+function recordButton(): HTMLElement {
+  return screen.getByRole("button", {
+    name: /^(Record what you are hearing|Tap again to start recording|Stop recording)$/,
+  });
+}
 
 describe("the tuner controls", () => {
   it("shows the tuned frequency, mode and elapsed time", () => {
@@ -341,14 +367,6 @@ describe("the tuner controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "AM" }));
 
     await waitFor(() => expect(tune).toHaveBeenCalledWith(99.3, "am", "abc123"));
-  });
-
-  it("does not pretend recording works yet", () => {
-    // The binding spec has a Record button; the recording lane is a later wave, so
-    // it states that rather than failing on tap.
-    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
-
-    expect(screen.getByRole("button", { name: "Record" })).toBeDisabled();
   });
 });
 
@@ -672,5 +690,256 @@ describe("counting in channels", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tune up" }));
 
     await waitFor(() => expect(tune).toHaveBeenCalledWith(27.235, undefined, "abc123"));
+  });
+});
+
+describe("the bandwidth control", () => {
+  // A session on a box that has the control: AM, tuned to the owner's 5 MHz case.
+  const NARROW: SdrListening = {
+    ...LISTENING,
+    frequency_hz: 5_000_000,
+    mode: "am",
+    bandwidth_hz: 8000,
+    bandwidths_hz: [8000, 6000, 4000, 3000],
+    bandwidth_min_hz: 2000,
+    bandwidth_max_hz: 8000,
+    bandwidth_step_hz: 100,
+  };
+
+  it("shows the width under the mode it belongs to, and only there", () => {
+    // Mode and bandwidth are one setting to the owner — "AM, 8 kHz wide" — which is why
+    // shape D puts them in one button instead of adding a second row.
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    const row = screen.getByRole("group", { name: "Demodulation mode and bandwidth" });
+    const buttons = [...row.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["WBFM", "FM", "AM8k", "USB", "LSB"]);
+  });
+
+  it("opens the ladder on a second tap of the mode already selected", async () => {
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^AM/ }));
+    // Every rung the SESSION offered, said in full where there is room for it.
+    const ladder = screen.getByRole("group", { name: /bandwidth$/ });
+    expect([...ladder.querySelectorAll(".sdr-stepopt")].map((b) => b.textContent)).toEqual([
+      "8 kHz",
+      "6 kHz",
+      "4 kHz",
+      "3 kHz",
+    ]);
+    // ...and tapping the mode did NOT retune, which is the whole point of the second tap.
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("sends a new width with no mode, so the sidecar does not reset it", async () => {
+    // The session keeps its width across a retune but resets it when the mode changes,
+    // so naming a mode here would silently undo the change being made.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^AM/ }));
+    const ladder = screen.getByRole("group", { name: /bandwidth$/ });
+    fireEvent.click([...ladder.querySelectorAll(".sdr-stepopt")][1] as HTMLElement);
+
+    expect(tune).toHaveBeenCalledWith(5, undefined, "abc123", 6000);
+  });
+
+  it("switches mode without carrying the width across", async () => {
+    // The ladders differ per mode, so a width carried into a mode with no such rung
+    // would refuse an ordinary mode press — which is not where the owner asked for
+    // anything about bandwidth.
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(NARROW);
+    render(<SdrTunerControls listening={NARROW} onReleased={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "USB" }));
+
+    expect(tune).toHaveBeenCalledWith(5, "usb", "abc123");
+  });
+
+  it("draws no control where there is nothing to choose", async () => {
+    // Wide FM has one rung: narrowing a 180 kHz station clips the deviation, which
+    // distorts rather than cleans.
+    const fixed: SdrListening = {
+      ...LISTENING,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      bandwidths_hz: [180_000],
+      // min === max: there is nothing to choose, which is how wide FM says so.
+      bandwidth_min_hz: 180_000,
+      bandwidth_max_hz: 180_000,
+    };
+    const tune = vi.spyOn(api, "sdrTune").mockResolvedValue(fixed);
+    render(<SdrTunerControls listening={fixed} onReleased={() => {}} />);
+
+    // The width is still SHOWN — it is a true fact about the radio — but the fieldset
+    // is the plain one and a second tap opens nothing.
+    expect(screen.getByRole("group", { name: "Demodulation mode" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^WBFM/ }).textContent).toBe("WBFM180k");
+    fireEvent.click(screen.getByRole("button", { name: /^WBFM/ }));
+    expect(document.querySelectorAll(".sdr-stepopt").length).toBe(0);
+    expect(tune).not.toHaveBeenCalled();
+  });
+
+  it("says nothing at all on a sidecar older than the control", () => {
+    // Neither field sent: the control must be absent rather than defaulted, because a
+    // width invented here would be one the box has no idea about.
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    const row = screen.getByRole("group", { name: "Demodulation mode" });
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "WBFM",
+      "FM",
+      "AM",
+      "USB",
+      "LSB",
+    ]);
+  });
+});
+
+// --- Record (docs/plans/SDR_RECORDING_PLAN.md R3; the capture control's binding spec is
+// docs/mocks/recording/a-tape-deck.html, arm-then-confirm from the tuner sheet's) -------
+describe("the record control", () => {
+  it("arms rather than recording on the first tap", async () => {
+    // Arm-then-confirm is inherited ceremony, and the point of it is that a thumb
+    // brushing the transport row must not open a file on the box's disk.
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    fireEvent.click(recordButton());
+    expect(record).not.toHaveBeenCalled();
+    await waitFor(() => expect(recordButton().textContent).toContain("Tap again"));
+  });
+
+  it("disarms itself, so a tap walked away from cannot record minutes later", async () => {
+    vi.useFakeTimers();
+    try {
+      const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+      render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+      fireEvent.click(recordButton());
+      expect(recordButton().textContent).toContain("Tap again");
+
+      await act(async () => {
+        vi.advanceTimersByTime(2600);
+      });
+      expect(recordButton().textContent).toContain("Record");
+      expect(record).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts the capture on the second tap", async () => {
+    // No session id: the recorder subscribes to whichever session holds the tuner, and
+    // one capture runs at a time box-wide — so naming a session would be a parameter the
+    // api has nothing to do with.
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    fireEvent.click(recordButton());
+    fireEvent.click(recordButton());
+    await waitFor(() => expect(record).toHaveBeenCalledWith(true));
+  });
+
+  it("draws its elapsed time and size from the poll, never from a clock of its own", async () => {
+    // The whole reason the status carries a `recording` object. A local timer would go
+    // on counting through a capture the box had already dropped — and the number it
+    // showed would be the argument for pressing stop.
+    status({
+      started_at: "2026-09-10T19:12:00Z",
+      seconds: 72,
+      bytes: 576_000,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      serial: null,
+    });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    const button = screen.getByRole("button", { name: "Stop recording" });
+    expect(button.textContent).toContain("1:12");
+    expect(button.textContent).toContain("563 kB");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("stops without ceremony, because stopping destroys nothing", async () => {
+    // Arm-then-confirm guards the act that COSTS something. Making the owner tap twice
+    // to end a recording would only lose them the seconds they were trying to keep.
+    status({
+      started_at: "2026-09-10T19:12:00Z",
+      seconds: 4,
+      bytes: 32_000,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      serial: null,
+    });
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(record).toHaveBeenCalledWith(false));
+  });
+
+  it("announces the row the stop landed, because the library cannot infer it", async () => {
+    // The recorder reports no capture from the moment the STREAM ends — before the
+    // waveform is computed and the row written — so a library reloading off that poll
+    // can read a list without the clip that was just made. The stop's own answer carries
+    // the row, and it is a different TAB from this one, so it is announced rather than
+    // returned (sdrSession.ts).
+    const saved: SdrRecording = {
+      id: "fresh",
+      started_at: "2026-09-10T19:12:00Z",
+      ended_at: "2026-09-10T19:12:04Z",
+      duration_s: 4,
+      captured_s: 4,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      bytes: 32_000,
+    };
+    status({
+      started_at: "2026-09-10T19:12:00Z",
+      seconds: 4,
+      bytes: 32_000,
+      frequency_hz: 99_300_000,
+      mode: "wbfm",
+      bandwidth_hz: 180_000,
+      serial: null,
+    });
+    vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null, saved });
+    const heard: SdrRecording[] = [];
+    const off = onSdrRecordingSaved((row) => heard.push(row));
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => expect(heard).toEqual([saved]));
+    off();
+  });
+
+  it("says why when the box refuses, instead of a button that does nothing", async () => {
+    // Starting with nothing listening is a 409 with a sentence; it has to reach the
+    // owner, who has no terminal to go and read a log in (CLAUDE.md #10).
+    vi.spyOn(api, "sdrRecord").mockRejectedValue(new Error("nothing is listening to record"));
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    fireEvent.click(recordButton());
+    fireEvent.click(recordButton());
+    await waitFor(() =>
+      expect(document.querySelector(".sdr-error")?.textContent).toContain(
+        "nothing is listening to record",
+      ),
+    );
   });
 });

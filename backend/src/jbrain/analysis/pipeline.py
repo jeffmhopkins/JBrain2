@@ -16,12 +16,13 @@ chunk in the fact's domain — a citation never crosses the firewall
 """
 
 import uuid
-from dataclasses import dataclass, replace
+from collections import defaultdict
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, bindparam, delete, func, select, text, update
+from sqlalchemy import and_, any_, bindparam, delete, func, literal, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -71,6 +72,7 @@ from jbrain.analysis.entities import (
     create_provisional,
     declared_alias,
     get_or_create_me,
+    live_entity_by_id,
     near_duplicate_entity,
     normalize_alias,
     parse_disambiguation,
@@ -110,6 +112,7 @@ from jbrain.analysis.prompt import (
     group_texts_by_source,
     prompt_block,
 )
+from jbrain.analysis.settle_owner import ANALYZER
 from jbrain.analysis.supersession import (
     Candidate,
     Decision,
@@ -133,6 +136,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
+from jbrain.notes.compose import compose_body
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
 from jbrain.schema.models import _norm_key
@@ -181,6 +185,98 @@ class _ChunkRef:
 
 # (chunk_id, char_start, char_end) — what _locate anchors a surface to.
 _Span = tuple[uuid.UUID, int, int]
+
+# (chunk_id, char_start, char_end, entity_id) — a mention row's natural identity
+# within its note, and the key `_upsert_mentions` matches an existing row on.
+_MentionKey = tuple[uuid.UUID, int, int, uuid.UUID]
+
+
+# What one fact's write actually DID, in the vocabulary the note-conversation tools
+# report back to the model (docs/research/agent-ingest/TOOL_SURFACE.md, "Result shapes
+# are the ACI"). `decide()` is deterministic and NOT model-facing (constraint 5), so
+# this is the model's only window into it: a write it did not ask for — a value
+# replaced and kept as history, a duplicate recognised, a clash parked — is reported
+# rather than silently done.
+WRITTEN = "written"
+ALREADY = "already"  # same identity key, same value: refreshed in place
+CLOSED = "closed"  # supplied the END of an open interval, no new row
+REPLACED = "replaced"  # superseded one or more heads, which are kept as history
+HELD = "held"  # decide() could not resolve it: recorded, not live
+HISTORICAL = "historical"  # inserted already-superseded (a newer value is on file)
+PROMOTED = "promoted"  # a previously held row this pass rates live
+
+
+@dataclass(frozen=True)
+class FactWrite:
+    """One fact's landing, as the write path saw it.
+
+    `replaced` carries the STATEMENTS of the heads this write superseded (never their
+    ids — the model addresses facts by meaning, not by id: `read_entity` prints no
+    fact id, TOOL_SURFACE "correct_fact addresses by identity key"). `hold_reason` is
+    `decide()`'s own `review_kind`, never a confidence gate — those are gone under
+    Lever A."""
+
+    fact_id: uuid.UUID
+    outcome: str
+    domain: str
+    statement: str
+    replaced: tuple[str, ...] = ()
+    hold_reason: str = ""
+    conflicting: str = ""
+
+
+@dataclass(frozen=True)
+class CommitOutcome:
+    """What one `commit_facts` pass asserted, carried to `settle_note`.
+
+    `touched` (fact ids still asserted), `projected` (entity ids referenced) and
+    `mention_ids` are the accumulation seam. A whole-note run commits once and
+    settles that one pass; a caller committing across several turns must union
+    each pass's sets and settle once at the end, because the sweeps are
+    whole-note — settling on one turn's share retracts the earlier turns'
+    commits."""
+
+    resolved: dict[str, ResolvedEntity | None]
+    touched: set[uuid.UUID]
+    projected: set[uuid.UUID]
+    mention_ids: set[uuid.UUID]
+    held_ids: dict[int, uuid.UUID]
+    # {extraction.facts index: what that fact's write did}. Keyed by index because
+    # two facts can share an identity key, and empty for an index whose fact was
+    # skipped (an unlinked entity). The whole-note path ignores it; the
+    # note-conversation tools render it back to the model.
+    writes: dict[int, FactWrite] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AppliedIntent:
+    """One `commit_intent` pass: what it wrote, and what a later `settle_note` needs.
+
+    `extraction` is carried rather than rebuilt because `settle_note` reads it for the
+    mention/alias/ambiguity sweeps and the `note_analysis` stamp, and a caller
+    committing SEVERAL intents onto one note has to settle over the UNION of them —
+    rebuilding it from one intent would make the sweeps retract the others' work.
+    """
+
+    override: dict[str, ResolvedEntity | None]
+    outcome: CommitOutcome
+    extraction: Extraction
+
+
+# `entity_mentions.confidence` is Postgres `real` (float4) and the resolver's
+# value is a Python float64, so a stored 0.9 reads back as 0.8999999761581421 —
+# only 1.0 round-trips exactly. An exact `!=` would therefore call every
+# embedding- and relationship-linked mention "changed" on every re-run, UPDATE
+# it, and re-dirty its article through migration 0046's trigger. float4 carries
+# ~7 significant digits, so this tolerance is wider than the round-trip error
+# and far narrower than any real confidence change.
+_CONFIDENCE_EPSILON = 1e-6
+
+
+def _confidence_changed(stored: float | None, resolved: float | None) -> bool:
+    if stored is None or resolved is None:
+        return stored is not resolved
+    return abs(stored - resolved) > _CONFIDENCE_EPSILON
 
 
 def _cite(anchor: _Span | None, chunks: list[_ChunkRef]) -> str | None:
@@ -315,7 +411,10 @@ class AnalysisPipeline:
             if note is None or note.deleted_at is not None:
                 log.info("integration.skipped", note_id=note_id, reason="missing or deleted")
                 return
-            body, domain, captured_at = note.body, note.domain_code, note.created_at
+            # Composed (D6): `body` is only the chunkless fallback below, but an
+            # owner's answer is part of the note's text wherever it is read.
+            body = compose_body(note.body, note.clarifications)
+            domain, captured_at = note.domain_code, note.created_at
             tz_offset = note.tz_offset_minutes
             # An owner correction note (Phase 6 §4) extracts at full weight and
             # force-supersedes + pins the current head, so it out-argues the graph.
@@ -436,6 +535,9 @@ class AnalysisPipeline:
                 title=extraction.title,
                 tags=extraction.tags,
                 extractor=f"{provider}:{model}",
+                # The stamp does NOT move with the model the extractor names — that
+                # is the whole point of the key (analysis/settle_owner.py).
+                settle_owner=ANALYZER,
                 dropped_facts=extraction.dropped_facts,
             )
             await session.execute(
@@ -490,20 +592,87 @@ class AnalysisPipeline:
         title: str,
         tags: list[str],
         extractor: str,
+        settle_owner: str,
         dropped_facts: int = 0,
     ) -> dict[str, ResolvedEntity | None]:
-        """Commit an arbiter-approved IntegrationIntent through the existing
-        deterministic _apply (plan §9, Option 1). A rejected plan is a no-op: the
-        note stays pending_integration, nothing is written (N5: no partial
-        commit). Active-eligible facts commit; review-held facts (cross-subject,
-        ambiguous, low weight) are written as inert `pending_review` rows and each
-        linked to its low_confidence_inference card — all in this one transaction
-        (N5), so a human can later accept (pin) or reject (retract) it.
+        """Commit an arbiter-approved IntegrationIntent AND settle its note — the
+        whole-note, one-intent-per-note path (plan §9, Option 1).
 
-        Returns the committed mention_ref -> entity map (`{}` for a rejected plan)
-        so the caller can persist the Integrator's resolution pins from the SAME
-        entities the commit used, without re-resolving (which would double-mint
-        provisionals).
+        A caller with SEVERAL intents for one note must not call this in a loop:
+        `settle_note` is whole-note, so the second call's sweep retracts the first
+        call's facts. Use `commit_intent` per intent, union the outcomes, and settle
+        once (`ingest/emr/integrate.py` is the in-repo caller that does)."""
+        applied = await self.commit_intent(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            captured_at=captured_at,
+            chunks=chunks,
+            intent=intent,
+            plan=plan,
+            title=title,
+            tags=tags,
+            extractor=extractor,
+            settle_owner=settle_owner,
+            dropped_facts=dropped_facts,
+        )
+        if applied is None:
+            return {}
+        # One note, one pass: this run's sets ARE the whole conversation's.
+        await self.settle_note(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            chunks=chunks,
+            extraction=applied.extraction,
+            extractor=extractor,
+            settle_owner=settle_owner,
+            resolved=applied.outcome.resolved,
+            touched=applied.outcome.touched,
+            projected=applied.outcome.projected,
+            mention_ids=applied.outcome.mention_ids,
+        )
+        return applied.override
+
+    async def commit_intent(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        captured_at: datetime,
+        chunks: list[_ChunkRef],
+        intent: IntegrationIntent,
+        plan: ArbiterPlan,
+        title: str,
+        tags: list[str],
+        extractor: str,
+        settle_owner: str,
+        dropped_facts: int = 0,
+    ) -> AppliedIntent | None:
+        """Everything `apply_intent` does EXCEPT `settle_note` — the half a caller
+        with several intents for ONE note may run in a loop.
+
+        This is the seam the EMR importer writes through (plan D9 / TOOL_SURFACE gap
+        3): `IntentFact.fhir_status` rides `plan_to_extraction` into `ExtractedFact`
+        and on into `decide()`'s `_lab_status_transition`, and there is no model-facing
+        field that carries it. An importer that wrote through the note-conversation
+        tools instead would silently lose the lab lifecycle.
+
+        A rejected plan returns None and is a no-op: the note stays
+        pending_integration, nothing is written (N5: no partial commit). None is also
+        the signal to skip the settle, and that is load-bearing — a caller that settled
+        on a rejected plan would retract the note's whole graph on the strength of a
+        pass that committed nothing.
+
+        Active-eligible facts commit; review-held facts (cross-subject, ambiguous, low
+        weight) are written as inert `pending_review` rows and each linked to its
+        low_confidence_inference card — all in this one transaction (N5), so a human
+        can later accept (pin) or reject (retract) it.
+
+        `AppliedIntent.override` is the committed mention_ref -> entity map, so the
+        caller can persist the Integrator's resolution pins from the SAME entities the
+        commit used, without re-resolving (which would double-mint provisionals).
 
         `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
         the rebuilt extraction can file the `extraction_truncated` card (W0). The
@@ -516,11 +685,11 @@ class AnalysisPipeline:
                 note_id=str(note_id),
                 violations=[v.code for v in plan.fatal_violations],
             )
-            return {}
+            return None
         override = await self._resolve_from_intent(
             session, list(intent.entity_resolutions), note_domain=note_domain
         )
-        # All facts (commit_only=False); held ones are routed to the pending_review
+        # ALL facts, held ones included: they are routed to the pending_review
         # path by INDEX — extraction.facts[i] is 1:1 with plan.facts[i], so the key
         # is exact even when two facts share entity_ref.predicate.qualifier (e.g.
         # enumerated children edges).
@@ -530,7 +699,7 @@ class AnalysisPipeline:
         held_indices = frozenset(
             i for i, pf in enumerate(plan.facts) if pf.status == "pending_review"
         )
-        held_ids = await self._apply(
+        outcome = await self.commit_facts(
             session,
             note_id=note_id,
             note_domain=note_domain,
@@ -538,13 +707,23 @@ class AnalysisPipeline:
             chunks=chunks,
             extraction=extraction,
             extractor=extractor,
+            settle_owner=settle_owner,
             resolution_override=override,
             held_indices=held_indices,
         )
         # Recompute the deterministic signals (pure, cheap) so each held card can
-        # carry the same ceiling arithmetic the arbiter used — apply_intent is also
+        # carry the same ceiling arithmetic the arbiter used — `commit_intent` is also
         # called standalone (eval harness) with a pre-built plan, so the signals
-        # aren't threaded in.
+        # aren't threaded in. Filed HERE rather than after the settle because the card
+        # and the inert `pending_review` row it points at are one unit, and a
+        # multi-source caller (`ingest/emr/integrate.EmrNoteCommit`) settles ONCE for
+        # several commits — a filing that lived after the settle would file no card at
+        # all for those. It is safe on either side of the settle only because the card
+        # dedup keys on the HELD ROW's id: the row this pass wrote is in `touched` so
+        # the sweep spares it and its card stands, while a stale card from a previous
+        # pass points at a row the sweep DID retract and is deleted with it. Keyed on
+        # the mention surface instead, the stale card suppressed this pass's card and
+        # was then deleted, leaving a held fact with nothing on the owner's desk.
         signals = compute_signals(intent, [c.text for c in chunks])
         await self._file_inference_reviews(
             session,
@@ -553,9 +732,9 @@ class AnalysisPipeline:
             intent=intent,
             plan=plan,
             signals=signals,
-            held_ids=held_ids,
+            held_ids=outcome.held_ids,
         )
-        return override
+        return AppliedIntent(override=override, outcome=outcome, extraction=extraction)
 
     async def _resolve_from_intent(
         self,
@@ -565,10 +744,11 @@ class AnalysisPipeline:
         note_domain: str,
     ) -> dict[str, ResolvedEntity | None]:
         """Validate the agent's coreference into a name(=mention_ref)→entity
-        override (plan §9). An existing-mode ref is honored only if its entity is
-        fetchable under the session's scope; missing/out-of-scope/malformed-id →
-        None (the fact then skips — never a guess, and a synthetic ref can't be
-        re-resolved). new-mode mints a provisional; ambiguous → None."""
+        override (plan §9). An existing-mode ref is honored only if its id reaches a
+        LIVE entity under the session's scope, following a merge tombstone to its
+        survivor (`live_entity_by_id`); missing/out-of-scope/malformed-id → None (the
+        fact then skips — never a guess, and a synthetic ref can't be re-resolved).
+        new-mode mints a provisional; ambiguous → None."""
         override: dict[str, ResolvedEntity | None] = {}
         for r in resolutions:
             if r.mode == "existing" and r.proposed_entity_id:
@@ -589,9 +769,10 @@ class AnalysisPipeline:
                     and len(await same_name_entity_ids(session, r.mention_ref)) >= 2
                 ):
                     continue
-                entity = (
-                    await session.execute(select(Entity).where(Entity.id == eid))
-                ).scalar_one_or_none()
+                # Through the fold, not around it: an id the owner has since merged
+                # away resolves to its survivor, so a re-analysis can never mint live
+                # rows on a tombstone and silently un-do the merge.
+                entity = await live_entity_by_id(session, eid)
                 override[r.mention_ref] = (
                     ResolvedEntity(
                         id=entity.id, subject_id=entity.subject_id, created=False, method="llm"
@@ -666,27 +847,45 @@ class AnalysisPipeline:
             # _upsert_fact's `fact.domain or note_domain` collapses to note_domain
             # — we start there, then apply the same floor + ratchet.
             card_domain = _review_card_domain(fact.predicate, note_domain)
-            # Re-analysis must not multiply identical open cards.
-            existing = (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM app.review_items"
-                        " WHERE kind = 'low_confidence_inference' AND status = 'open'"
-                        " AND payload->>'note_id' = :nid AND payload->>'entity_ref' = :ref"
-                        " AND payload->>'predicate' = :pred AND payload->>'qualifier' = :qual"
-                        " LIMIT 1"
-                    ),
-                    {
-                        "nid": str(note_id),
-                        "ref": fact.entity_ref,
-                        "pred": fact.predicate,
-                        "qual": fact.qualifier,
-                    },
-                )
-            ).first()
-            if existing is not None:
-                continue
             held_id = held_ids.get(i)
+            # Re-analysis must not multiply identical open cards — and must not
+            # SUPPRESS a needed one either. The dedup key is therefore the held ROW's
+            # id, the same identity `_insert_held_fact` keys its idempotent refresh on
+            # (note_id, entity_id, predicate, qualifier, object, domain). Keying it on
+            # the mention SURFACE instead let the two disagree: a re-analysis that
+            # resolves the same `entity_ref` to a different entity — or a note whose
+            # domain an owner PATCH moved — mints a NEW held row while the OLD run's
+            # card still matches the surface, so the new card was skipped and the
+            # settle then deleted the old one as pointing at a retracted fact. A
+            # `pending_review` fact with no card is exactly what N11 forbids. On the
+            # row's id the two agree, and they agree whichever side of `settle_note`
+            # this runs on. Open-only, like every other sweep here: a resolved or
+            # dismissed card is a human decision and never suppresses a fresh one.
+            if held_id is not None:
+                probe = text(
+                    "SELECT 1 FROM app.review_items"
+                    " WHERE kind = 'low_confidence_inference' AND status = 'open'"
+                    " AND payload->>'fact_id' = :fid LIMIT 1"
+                )
+                params: dict[str, Any] = {"fid": str(held_id)}
+            else:
+                # No row was written (the entity or object did not resolve), so there is
+                # no id to key on and the identity key is all there is.
+                probe = text(
+                    "SELECT 1 FROM app.review_items"
+                    " WHERE kind = 'low_confidence_inference' AND status = 'open'"
+                    " AND payload->>'note_id' = :nid AND payload->>'entity_ref' = :ref"
+                    " AND payload->>'predicate' = :pred AND payload->>'qualifier' = :qual"
+                    " AND payload->>'fact_id' IS NULL LIMIT 1"
+                )
+                params = {
+                    "nid": str(note_id),
+                    "ref": fact.entity_ref,
+                    "pred": fact.predicate,
+                    "qual": fact.qualifier,
+                }
+            if (await session.execute(probe, params)).first() is not None:
+                continue
             # Render the card from the COMMITTED held fact (the row the note view
             # reads), not the raw planned fact: _insert_held_fact shape-checked and
             # coerced its value_json ("Female (inferred from 'wife')" -> "female"),
@@ -822,7 +1021,7 @@ class AnalysisPipeline:
             if sp.predicate == raw:
                 intent.supersession_proposals[j] = replace(sp, predicate=canonical)
 
-    async def _apply(
+    async def commit_facts(
         self,
         session: AsyncSession,
         *,
@@ -832,19 +1031,41 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extraction: Extraction,
         extractor: str,
+        settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
         held_indices: frozenset[int] = frozenset(),
-    ) -> dict[int, uuid.UUID]:
-        """Write a note's extraction. Facts whose index is in `held_indices` are
-        written as inert `pending_review` rows (the arbiter held them); the rest
-        go through the normal commit path. Returns {index: fact_id} for the held
-        rows so the caller can link each to its review card. The default empty set
-        commits every fact through the normal path."""
+    ) -> CommitOutcome:
+        """Commit one pass of a note's extraction: resolve its entities, anchor its
+        mentions and temporal tokens, then write each fact through `decide()`.
+
+        Facts whose index is in `held_indices` are written as inert
+        `pending_review` rows (the arbiter held them); the rest go through the
+        normal commit path. The outcome carries {index: fact_id} for the held rows
+        so the caller can link each to its review card. The default empty set
+        commits every fact through the normal path.
+
+        Nothing whole-note happens here: the retraction sweeps, the projections and
+        the `NoteAnalysis` stamp are `settle_note`'s, so a caller may commit
+        several passes and settle their union once.
+
+        `settle_owner` records this PRODUCER's claim on every row the pass writes
+        (`analysis/settle_owner.py`) — joining the claim set of a row that already
+        exists, never replacing it — which is what later lets `settle_note` release
+        this producer's claim without touching a co-writer's. Required, and required
+        separately from `extractor`: the extractor names the model, the producer names
+        the writer, and only the second is stable across a model change."""
         resolved = await self._resolve_entities(
-            session, extraction, note_id, note_domain, chunks, captured_at, resolution_override
+            session,
+            extraction,
+            note_id,
+            note_domain,
+            chunks,
+            captured_at,
+            settle_owner,
+            resolution_override,
         )
-        anchor_for = await self._rebuild_mentions(
-            session, extraction, resolved, note_id, note_domain, chunks
+        anchor_for, mention_ids = await self._upsert_mentions(
+            session, extraction, resolved, note_id, note_domain, chunks, settle_owner
         )
         token_ids = await self._upsert_tokens(
             session, extraction, note_id, note_domain, captured_at, chunks
@@ -852,7 +1073,9 @@ class AnalysisPipeline:
 
         touched: set[uuid.UUID] = set()
         held_ids: dict[int, uuid.UUID] = {}
+        writes: dict[int, FactWrite] = {}
         for i, fact in enumerate(extraction.facts):
+            write: FactWrite | None = None
             if i in held_indices:
                 fact_id = await self._insert_held_fact(
                     session,
@@ -865,11 +1088,15 @@ class AnalysisPipeline:
                     captured_at=captured_at,
                     chunks=chunks,
                     extractor=extractor,
+                    settle_owner=settle_owner,
                 )
                 if fact_id is not None:
                     held_ids[i] = fact_id
+                    write = FactWrite(
+                        fact_id, HELD, note_domain, fact.statement, hold_reason="review"
+                    )
             else:
-                fact_id = await self._upsert_fact(
+                write = await self._upsert_fact(
                     session,
                     fact=fact,
                     resolved=resolved,
@@ -880,52 +1107,246 @@ class AnalysisPipeline:
                     captured_at=captured_at,
                     chunks=chunks,
                     extractor=extractor,
+                    settle_owner=settle_owner,
                 )
-            # Both paths' ids enter `touched` so the sweep below never retracts a
+            # Both paths' ids enter `touched` so the settle sweep never retracts a
             # fact this run still asserts — including a still-held pending_review
             # row (without this, re-analysis would churn its id and orphan the
             # open card's fact_id link).
-            if fact_id is not None:
-                touched.add(fact_id)
+            if write is not None:
+                touched.add(write.fact_id)
+                writes[i] = write
             await session.flush()
 
+        return CommitOutcome(
+            resolved=resolved,
+            touched=touched,
+            # The retracted half of the projection set is the sweep's, so it is
+            # `settle_note` that unions it in.
+            projected={e.id for e in resolved.values() if e is not None},
+            mention_ids=mention_ids,
+            held_ids=held_ids,
+            writes=writes,
+        )
+
+    @staticmethod
+    def _claimed_by(settle_owner: str) -> Any:
+        """This row's claim set with `settle_owner` in it exactly once — the SQL half of
+        "a re-assert joins the claim rather than taking it over".
+
+        remove-then-append rather than a bare append: `array_append` would duplicate the
+        producer on every re-run, and a set that grows without bound would make
+        `array_remove`'s emptiness test (the retraction trigger) meaningless."""
+        return func.array_append(func.array_remove(Fact.settle_owners, settle_owner), settle_owner)
+
+    async def settle_note(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        chunks: list[_ChunkRef],
+        extraction: Extraction,
+        extractor: str,
+        settle_owner: str,
+        resolved: dict[str, ResolvedEntity | None],
+        touched: set[uuid.UUID],
+        projected: set[uuid.UUID],
+        mention_ids: set[uuid.UUID],
+    ) -> None:
+        """Close a note out once everything it asserts has been committed — the whole
+        settle, for a producer that has an EXTRACTION behind it.
+
+        Three of the four steps below are now public seams of their own (S2,
+        docs/plans/SETTLE_OWNERSHIP.md): `sweep_note` releases this producer's claim,
+        `settle_tail` refreshes what the graph derives from the rows, and
+        `stamp_analysis` writes the `note_analysis` row. This method is their
+        composition and stays the ONLY thing `integrate_note` and `emr_parse` call, so
+        the split changed nothing for either of them.
+
+        The split exists because the third caller cannot take all three. The note
+        conversation has no title/tags verb (`agent/agents.py`'s four write verbs), so
+        an `Extraction` it handed a settle would carry `title=""`/`tags=[]` and the
+        unconditional `on_conflict_do_update` in `stamp_analysis` would blank the
+        analyzer's real title. It therefore calls `sweep_note` + `settle_tail` and never
+        `stamp_analysis` (`analysis/clarify.settle_conversation`).
+
+        `touched`, `projected` and `mention_ids` are inputs rather than locals precisely
+        because this step is whole-note: a caller that commits over several passes unions
+        them across all of them and settles once. Settling on one pass's share would
+        retract every fact — and delete every mention — the earlier passes committed.
+
+        Two halves stay HERE rather than moving into `sweep_note`, and that is the one
+        judgement call in the split. `_sweep_stale_ambiguous` and `_sync_truncation_review`
+        are the settle's REVIEW-CARD halves, and they want the `extraction` the
+        conversation does not have — the same reason `_register_declared_aliases` is
+        here. They are producer-scoped too now (migration 0197): each takes
+        `settle_owner` and touches only the cards THAT producer filed, so they no longer
+        reach a co-writer's the way S1's residuals did. The scoping is on the card's own
+        `settle_owner` column rather than on where the call sits, so moving them would
+        cost correctness nothing; they stay for the `extraction`.
+        """
+        retracted_entities = await self.sweep_note(
+            session,
+            note_id=note_id,
+            settle_owner=settle_owner,
+            touched=touched,
+            mentions=mention_ids,
+        )
         await self._register_declared_aliases(
             session, extraction, resolved, note_id, note_domain, chunks
         )
+        await self._sweep_stale_ambiguous(session, note_id, extraction, settle_owner)
+        await self._sync_truncation_review(
+            session,
+            note_id,
+            note_domain,
+            chunks,
+            extraction.dropped_facts,
+            len(extraction.facts),
+            settle_owner,
+        )
+        await self.settle_tail(
+            session,
+            # The entities this producer's passes RESOLVED. `CommitOutcome.projected` is
+            # built from exactly this set, so the two agree for every caller in the repo;
+            # it is recomputed here rather than reusing `projected` because the caller has
+            # already unioned other ids into that one and the reprojection must not widen.
+            referenced={e.id for e in resolved.values() if e is not None},
+            projected=projected | retracted_entities,
+        )
+        await self.stamp_analysis(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            title=extraction.title,
+            tags=extraction.tags,
+            extractor=extractor,
+        )
 
-        # Identity keys this note no longer asserts were removed by the edit:
-        # retract quietly — not a conflict, no inbox noise. Pinned facts are
-        # human decisions and survive (docs/reference/ANALYSIS.md "Reprocessing"). Derived
-        # shadows are excluded: their lifecycle mirrors their source's, not the
-        # note's re-extraction set, so the source's own refresh/supersession (or
-        # FK cascade on its deletion) governs them, never this sweep. RETURNING
-        # carries the (unchanged) superseded_by/valid_from of the rows actually
-        # retracted — the doomed maps the chain repair below walks.
-        sweep = (
+    async def sweep_note(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        settle_owner: str,
+        touched: set[uuid.UUID],
+        mentions: set[uuid.UUID] | None,
+    ) -> set[uuid.UUID]:
+        """Release THIS PRODUCER's claim on the note's rows it no longer asserts, retract
+        the facts that leaves unclaimed, and repair what that breaks. Returns the entity
+        ids of the facts actually retracted, which the caller unions into `settle_tail`'s
+        projection set — a reschedule lands on the same appointment entity, and a dropped
+        mention leaves one with no active scheduledTime, so its row has to be removed.
+
+        Takes no `Extraction`: what a sweep needs is the id sets a pass wrote, and that
+        is the whole reason this is separable from `settle_note`. The note conversation
+        has ledger ids and nothing extraction-shaped, and it can call this directly
+        (S3, `analysis/clarify.settle_conversation`).
+
+        `settle_owner` is WHOSE sweep this is (`analysis/settle_owner.py`), and it bounds
+        both destructive halves. Whole-note is not whole-graph: up to three producers
+        write one note, they do not share a `touched` set, and a sweep that could not name
+        its writer retracted the co-writer's facts — live, on every settle of that note,
+        not as a race (docs/plans/SETTLE_OWNERSHIP.md). What this does now is narrower and
+        exact: it RELEASES this producer's claim on the rows it no longer asserts, and
+        retracts only those no producer claims any more. A row two producers assert
+        survives the first one letting go — which is the common case during the D13
+        window, not an edge case (settle_owner.py).
+
+        `mentions` is the mention half's `asserted` set, and `None` is not the same as
+        an empty set: it means this producer keeps NO mention ledger, so the reconcile is
+        SKIPPED rather than run against nothing. Run with an empty set it would release
+        this producer's claim on every mention of the note — including the spans the
+        facts it still asserts are anchored to — and delete the ones left unclaimed. That
+        is the conversation's case: `NoteConversationRepo.writes()` records fact and
+        entity ids and no mention ids, so its claims on mention rows go unreleased. The
+        leak that costs is bounded, unlike the fact one S3 exists to close:
+        `entity_mentions.chunk_id` is ON DELETE CASCADE, so a re-ingest of the note wipes
+        that chunk generation outright (`analysis/settle_owner.py`).
+        """
+        if mentions is not None:
+            # The mention reconcile LEADS, because `_promote_corroborated` in the tail
+            # counts corroborating notes through `entity_mentions` (`canonical.py`) and
+            # must not see a row this run stopped asserting.
+            await self._reconcile_mentions(session, note_id, mentions, settle_owner)
+
+        # Identity keys THIS PRODUCER no longer asserts were removed by the edit:
+        # release its claim, then retract quietly whatever no producer claims any more
+        # — not a conflict, no inbox noise. Pinned facts are human decisions and survive
+        # (docs/reference/ANALYSIS.md "Reprocessing"). Derived shadows are excluded:
+        # their lifecycle mirrors their source's, not the note's re-extraction set, so
+        # the source's own refresh/supersession (or FK cascade on its deletion) governs
+        # them, never this sweep.
+        #
+        # TWO statements, because the second's row set is the first's answer: only the
+        # release can say which rows just lost their LAST claimant, and a row another
+        # producer still asserts must survive this one letting go.
+        #
+        # THEY MUST STAY IN ONE TRANSACTION, and that is not a style preference. The
+        # release's UPDATE holds a row lock on every row it touched until COMMIT, so a
+        # concurrent producer's `_claimed_by` append on the same row BLOCKS instead of
+        # interleaving — which is the only reason the retract below may act on ids
+        # gathered a statement earlier. Split across transactions (or moved behind a
+        # commit by a later refactor), a claim could land between the two and the
+        # retract would take a row somebody asserts: the original bug, restored
+        # silently, and invisible to a suite whose settles all run serially.
+        # `cardinality(...) = 0` below is the belt to that braces — it costs nothing and
+        # makes the statement self-guarding, so the failure mode of getting this wrong
+        # becomes "leaks a row" rather than "deletes the owner's answer".
+        release = (
             update(Fact)
             .where(
                 Fact.note_id == note_id,
+                literal(settle_owner) == any_(Fact.settle_owners),
                 Fact.pinned.is_(False),
                 Fact.derived_from_fact_id.is_(None),
                 Fact.status.in_(("active", "pending_review")),
             )
-            .values(status="retracted")
-            .returning(Fact.id, Fact.superseded_by, Fact.valid_from, Fact.entity_id)
+            .values(settle_owners=func.array_remove(Fact.settle_owners, settle_owner))
+            .returning(Fact.id, Fact.settle_owners)
         )
         if touched:
-            sweep = sweep.where(Fact.id.not_in(touched))
-        swept = (await session.execute(sweep)).all()
+            release = release.where(Fact.id.not_in(touched))
+        unclaimed = [r.id for r in (await session.execute(release)).all() if not r.settle_owners]
+        # RETURNING carries the (unchanged) superseded_by/valid_from of the rows
+        # actually retracted — the doomed maps the chain repair below walks.
+        swept = (
+            (
+                await session.execute(
+                    update(Fact)
+                    .where(Fact.id.in_(unclaimed), func.cardinality(Fact.settle_owners) == 0)
+                    .values(status="retracted")
+                    .returning(Fact.id, Fact.superseded_by, Fact.valid_from, Fact.entity_id)
+                )
+            ).all()
+            if unclaimed
+            else []
+        )
         # A derived shadow follows its source's fate. The sweep above excludes
         # shadows (it governs only note-sourced facts), so when it retracts a
         # source the re-extraction no longer asserts, close that source's
         # reciprocal in the same breath — otherwise a dropped relationship would
         # leave a stale active inverse on the object's stream.
+        #
+        # Deliberately NOT claim-scoped, on either side. A shadow is nobody's
+        # independent claim — it is a projection of its source — so "may this close?"
+        # is answered by the source's status alone. Reading the shadow's own set here
+        # would strand it the moment the two diverge, and they do diverge: an in-place
+        # refresh adds the refresher's claim to the SOURCE only
+        # (`_update_shadows_in_place` copies rendering, never claims), so a source
+        # retracted by producer A can carry a shadow whose set never held A. That
+        # shadow would then stay active forever behind a retracted source, which is
+        # what `wiki/builder.py` would keep citing.
         shadow_swept = (
             await session.execute(
                 update(Fact)
                 .where(
                     Fact.derived_from_fact_id.in_(
-                        select(Fact.id).where(Fact.note_id == note_id, Fact.status == "retracted")
+                        select(Fact.id).where(
+                            Fact.note_id == note_id,
+                            Fact.status == "retracted",
+                        )
                     ),
                     Fact.pinned.is_(False),
                     Fact.status.in_(("active", "pending_review")),
@@ -947,17 +1368,74 @@ class AnalysisPipeline:
             # resolved/dismissed items are human history and pinned facts never
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
-        await self._sweep_stale_ambiguous(session, note_id, extraction)
-        await self._sync_truncation_review(
-            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
-        )
-        await self._reproject_entities(session, resolved)
-        await self._promote_corroborated(session, resolved)
+        return {r.entity_id for r in retracted}
 
+    async def settle_tail(
+        self,
+        session: AsyncSession,
+        *,
+        referenced: set[uuid.UUID],
+        projected: set[uuid.UUID],
+    ) -> None:
+        """Refresh everything the graph DERIVES from a note's rows, once they have
+        settled — the half that has nothing to do with who owns the sweep.
+
+        This is the half the note conversation was missing outright, and the reason S2
+        landed with S1 rather than after it. Nothing in `commit_facts` projects (it says
+        so in its own docstring) and `agent/graphwritetools.py` calls no projection, so
+        before this seam existed a conversation-written appointment landed in NO
+        projection and a conversation-written `name.*` fact never refreshed
+        `canonical_name`. That gap was MASKED while the analyzer's settle retracted the
+        conversation's facts and then projected the dead rows away; S1 made the facts
+        survive, which turned the mask into a fact the graph holds that the appointments
+        view does not.
+
+        `referenced` is the entities this producer's passes resolved — what gets its
+        canonical name reprojected and its corroboration re-counted. `projected` is that
+        set PLUS the entities whose facts the sweep just retracted, because a projection
+        row has to be REMOVED when its last supporting fact goes.
+        """
+        await self._reproject_entities(session, referenced)
+        await self._promote_corroborated(session, referenced)
+        await project_appointments(session, projected)
+        await project_emr(session, projected)
+        await project_place_geofences(session, projected)
+        # Bind any touched Device entity to its operational subject row (owner-set,
+        # deterministic, never LLM-chosen). Rides the same full-owner fact-apply
+        # path as the geofence projection so a device note links on apply.
+        await reconcile_device_bindings(session, projected)
+
+    async def stamp_analysis(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        title: str,
+        tags: list[str],
+        extractor: str,
+    ) -> None:
+        """Stamp the note's `note_analysis` row — the settle's third half, and the one
+        with a SINGLE rightful producer.
+
+        The upsert is unconditional: no `WHERE`, no `COALESCE`, no "only if absent". So
+        whoever calls it last wins, and a caller with no title and no tags blanks a real
+        one. That is why this is its own seam rather than a step inside `settle_note`:
+        the note conversation has no title/tags verb at all, and wiring it to a settle
+        that stamped would have written `title = NULL, tags = {}` over the analyzer's
+        extracted title on every note — losing it from `GET /notes/{id}/analysis` (the
+        Analysis tab's heading) and from `agent/externaltools.py`'s dedup line, and
+        emptying what `analysis/tagconsolidate.py` normalizes.
+
+        Where a title comes from the day `integrate_note` is retired is precondition 3 of
+        docs/plans/SETTLE_OWNERSHIP.md and is deliberately still open. Until it is
+        answered, exactly two producers call this — `integrate_note` and `emr_parse`, both
+        through `settle_note` — and S4 decides which of them wins on an `emr_owned` note.
+        """
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
-            title=extraction.title or None,
-            tags=extraction.tags,
+            title=title or None,
+            tags=tags,
             extractor=extractor,
             prompt_version=PROMPT_VERSION,
             analyzed_at=datetime.now(UTC),
@@ -977,28 +1455,27 @@ class AnalysisPipeline:
             )
         )
 
-        # Refresh the appointments projection for every entity this note touched —
-        # the ones it re-asserted (resolved) and the ones whose facts it retracted
-        # (a reschedule lands on the same appointment entity; a dropped mention
-        # leaves it with no active scheduledTime, so its row is removed).
-        projected = {e.id for e in resolved.values() if e is not None}
-        projected.update(r.entity_id for r in retracted)
-        await project_appointments(session, projected)
-        await project_emr(session, projected)
-        await project_place_geofences(session, projected)
-        # Bind any touched Device entity to its operational subject row (owner-set,
-        # deterministic, never LLM-chosen). Rides the same full-owner fact-apply
-        # path as the geofence projection so a device note links on apply.
-        await reconcile_device_bindings(session, projected)
-        return held_ids
-
     async def _sweep_stale_ambiguous(
-        self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
+        self,
+        session: AsyncSession,
+        note_id: uuid.UUID,
+        extraction: Extraction,
+        settle_owner: str,
     ) -> None:
-        """Retire open ambiguous_mention cards for names the re-extraction no
-        longer references — the dedup in _file_ambiguous_review only stops new
-        duplicates, it never retires obsolete ones. Open-only: a resolved or
-        dismissed card is a human decision and survives any re-run."""
+        """Retire THIS PRODUCER's open ambiguous_mention cards for names its
+        re-extraction no longer references — the dedup in _file_ambiguous_review only
+        stops new duplicates, it never retires obsolete ones. Open-only: a resolved or
+        dismissed card is a human decision and survives any re-run.
+
+        `settle_owner` bounds it to the cards this producer FILED (migration 0197), and
+        the `NOT IN :names` clause is not a substitute for that: any commit path can
+        file one (`_file_ambiguous_review` sits in `_resolve_entities`) and the names
+        are not a shared vocabulary. Against the EMR importer the clause excludes
+        nothing at all — an EMR `Extraction`'s refs are semantic keys (`org:Quest`,
+        `cond:E11.9`), which share no surface with anything the analyzer cards — so an
+        unscoped EMR settle deleted essentially every open card on the note, on a
+        re-enqueue path (`queue.backfill_pending_integration`, `analysis/rebuild.py`)
+        that never re-runs the filer to re-file them."""
         names = {m.name for m in extraction.mentions}
         for fact in extraction.facts:
             for ref in (fact.entity_ref, fact.object_entity_ref):
@@ -1008,9 +1485,9 @@ class AnalysisPipeline:
         stmt = text(
             "DELETE FROM app.review_items"
             " WHERE kind = 'ambiguous_mention' AND status = 'open'"
-            " AND payload->>'note_id' = :nid" + clause
+            " AND settle_owner = :owner AND payload->>'note_id' = :nid" + clause
         )
-        params: dict[str, Any] = {"nid": str(note_id)}
+        params: dict[str, Any] = {"nid": str(note_id), "owner": settle_owner}
         if names:
             stmt = stmt.bindparams(bindparam("names", expanding=True))
             params["names"] = sorted(names)
@@ -1024,30 +1501,43 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         dropped: int,
         kept: int,
+        settle_owner: str,
     ) -> None:
         """Surface a hit fact-budget as a review card, and clear it once a re-run
         no longer truncates. The cap keeps the model's salient head and drops the
         tail silently (extraction.parse_extraction); for a genuinely long note
         (a pasted article, a medical-history dump) that tail is real signal, so
         the owner gets a dismissible notice with the re-run hint. One open card
-        per note: dedup like the ambiguous sweep so re-analysis never stacks
-        duplicates, and a larger-budget re-run that fits retires the stale card."""
+        per note per producer: dedup like the ambiguous sweep so re-analysis never
+        stacks duplicates, and a larger-budget re-run that fits retires the stale card.
+
+        Every branch is scoped to the producer settling (migration 0197), and the clear
+        branch is why: a producer whose own extraction did not truncate says nothing
+        about anyone else's. Unscoped, the EMR importer — which CANNOT truncate, so it
+        takes this branch on every settle (`ingest/emr/integrate.py`) — deleted the
+        analyzer's card on the exact note this card exists for, a health `Records` note
+        both producers settle off one `note.ingested`, and the owner was never told the
+        tail of their medical records had been dropped. The refresh branch is scoped for
+        the mirror reason: a truncating producer must not rewrite another's counts onto
+        a card it did not file."""
         if dropped <= 0:
             await session.execute(
                 text(
                     "DELETE FROM app.review_items WHERE kind = 'extraction_truncated'"
-                    " AND status = 'open' AND payload->>'note_id' = :nid"
+                    " AND status = 'open' AND settle_owner = :owner"
+                    " AND payload->>'note_id' = :nid"
                 ),
-                {"nid": str(note_id)},
+                {"nid": str(note_id), "owner": settle_owner},
             )
             return
         existing = (
             await session.execute(
                 text(
                     "SELECT id FROM app.review_items WHERE kind = 'extraction_truncated'"
-                    " AND status = 'open' AND payload->>'note_id' = :nid LIMIT 1"
+                    " AND status = 'open' AND settle_owner = :owner"
+                    " AND payload->>'note_id' = :nid LIMIT 1"
                 ),
-                {"nid": str(note_id)},
+                {"nid": str(note_id), "owner": settle_owner},
             )
         ).first()
         payload = {
@@ -1056,13 +1546,20 @@ class AnalysisPipeline:
         }
         if existing is not None:
             # Refresh the counts in place — a re-run may clip a different amount —
-            # without churning the row's identity or its open status.
+            # without churning the row's identity or its open status. `payload` is
+            # REPLACED wholesale, which is one reason the filer is a column and not a
+            # payload key: a key would be dropped here on every refresh.
             await session.execute(
                 update(ReviewItem).where(ReviewItem.id == existing.id).values(payload=payload)
             )
             return
         session.add(
-            ReviewItem(kind="extraction_truncated", payload=payload, domain_code=note_domain)
+            ReviewItem(
+                kind="extraction_truncated",
+                payload=payload,
+                domain_code=note_domain,
+                settle_owner=settle_owner,
+            )
         )
 
     async def _resolve_entities(
@@ -1073,6 +1570,7 @@ class AnalysisPipeline:
         note_domain: str,
         chunks: list[_ChunkRef],
         captured_at: datetime,
+        settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
@@ -1082,7 +1580,8 @@ class AnalysisPipeline:
         for whatever is still undecided.
 
         Ambiguous names resolve to None (no link) and file one deduplicated
-        ambiguous_mention review item.
+        ambiguous_mention review item, stamped with `settle_owner` so only the producer
+        that filed it can later retire it (`_sweep_stale_ambiguous`).
         """
         kind_hints = {m.name: m.kind for m in extraction.mentions}
         # A fact-only reference has no mention surface; the name itself is
@@ -1133,6 +1632,7 @@ class AnalysisPipeline:
                     note_domain,
                     outcome.candidate_ids,
                     snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                    settle_owner=settle_owner,
                 )
             else:
                 resolved[name] = outcome
@@ -1145,6 +1645,7 @@ class AnalysisPipeline:
                 kind_hints=kind_hints,
                 surfaces=surfaces,
                 chunks=chunks,
+                settle_owner=settle_owner,
             )
         )
         return resolved
@@ -1159,6 +1660,7 @@ class AnalysisPipeline:
         kind_hints: dict[str, str],
         surfaces: dict[str, str],
         chunks: list[_ChunkRef],
+        settle_owner: str,
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
         conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
@@ -1233,6 +1735,7 @@ class AnalysisPipeline:
                 note_domain,
                 sorted(c.id for c in need.candidates),
                 snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                settle_owner=settle_owner,
             )
         return out
 
@@ -1245,7 +1748,19 @@ class AnalysisPipeline:
         candidate_ids: list[uuid.UUID],
         *,
         snippet: str | None,
+        settle_owner: str,
     ) -> None:
+        """File one open card per (name, note), stamped with the producer that filed it.
+
+        The dedup stays whole-note rather than per-producer, and that is the decision
+        that makes the filer SINGULAR where `facts.settle_owners` is a set: the card is
+        one notice to the owner about one name, so a second producer hitting the same
+        ambiguity must not put a second identical row in the inbox. It therefore
+        piggybacks on the first filer's card and the row keeps one owner. Safe because
+        the scoped delete is evidence-backed — only the filer retires it, only on a
+        settle where it re-read the note and stopped referencing the name — and a
+        piggybacking producer that still cannot resolve the name re-files on its own
+        next run (migration 0197)."""
         # Re-analysis must not multiply identical open items.
         existing = (
             await session.execute(
@@ -1269,10 +1784,11 @@ class AnalysisPipeline:
                     **ambiguous_display(name=name, snippet=snippet),
                 },
                 domain_code=note_domain,
+                settle_owner=settle_owner,
             )
         )
 
-    async def _rebuild_mentions(
+    async def _upsert_mentions(
         self,
         session: AsyncSession,
         extraction: Extraction,
@@ -1280,12 +1796,42 @@ class AnalysisPipeline:
         note_id: uuid.UUID,
         note_domain: str,
         chunks: list[_ChunkRef],
-    ) -> dict[str, _Span]:
-        """Delete + insert this note's mentions (the chunks pattern from
-        ingest); returns name -> anchoring span for fact provenance and the
-        <mark>ed citations review items carry."""
-        await session.execute(delete(EntityMention).where(EntityMention.note_id == note_id))
+        settle_owner: str,
+    ) -> tuple[dict[str, _Span], set[uuid.UUID]]:
+        """Write this note's mentions incrementally, keyed on (chunk, span,
+        entity): a row this pass re-asserts is kept — same id, fields refreshed
+        only where they differ — and only a genuinely new anchor inserts.
+
+        Returns name -> anchoring span (for fact provenance and the <mark>ed
+        citations review items carry) and the ids this pass asserts. Deleting what
+        is no longer asserted is NOT done here — it is `_reconcile_mentions`, which
+        `settle_note` runs once over the union of every pass's ids. A wipe (or a
+        per-pass reconcile) would be correct for one whole-note pass and
+        destructive for anything that commits in several: the second pass would
+        delete what the first wrote.
+
+        Re-asserted rows keep their ids, which is what lets `repo.py`'s stored
+        `mention_ids` replay an un-merge across an intervening re-analysis — and a row
+        kept that way GAINS this producer's claim rather than changing hands, so a span
+        both producers anchor is deletable by neither alone (SETTLE_OWNERSHIP.md names
+        this shared-span case as its one uncertain point; it is pinned by
+        `test_settle_cross_producer_pg.py`)."""
+        by_key: dict[_MentionKey, list[EntityMention]] = defaultdict(list)
+        for row in (
+            (
+                await session.execute(
+                    select(EntityMention)
+                    .where(EntityMention.note_id == note_id)
+                    .order_by(EntityMention.id)
+                )
+            )
+            .scalars()
+            .all()
+        ):
+            by_key[(row.chunk_id, row.char_start, row.char_end, row.entity_id)].append(row)
+
         anchor_for: dict[str, _Span] = {}
+        asserted: set[uuid.UUID] = set()
         for mention in extraction.mentions:
             entity = resolved.get(mention.name)
             located = _locate(mention.surface_text, chunks)
@@ -1294,60 +1840,122 @@ class AnalysisPipeline:
             if entity is None or located is None:
                 continue
             chunk_id, start, end = located
-            session.add(
-                EntityMention(
+            # 0006 CHECKs link_method to exact_alias|embedding|llm|human; the
+            # deterministic relationship hop rides exact_alias (it is rule-based
+            # linking too) until a migration widens the enum.
+            link_method = entity.method if entity.method in _DB_LINK_METHODS else "exact_alias"
+            # Popped, not just looked up: two mention entries can anchor to the
+            # same span for the same entity, and each still owns its own row.
+            pool = by_key[(chunk_id, start, end, entity.id)]
+            row = pool.pop(0) if pool else None
+            if row is None:
+                # Explicit id: `_reconcile_mentions` filters on it before the
+                # ORM's flush-time default would fire.
+                row = EntityMention(
+                    id=uuid.uuid4(),
                     entity_id=entity.id,
                     chunk_id=chunk_id,
                     note_id=note_id,
                     surface_text=mention.surface_text,
                     char_start=start,
                     char_end=end,
-                    # 0006 CHECKs link_method to exact_alias|embedding|llm|
-                    # human; the deterministic relationship hop rides
-                    # exact_alias (it is rule-based linking too) until a
-                    # migration widens the enum.
-                    link_method=(
-                        entity.method if entity.method in _DB_LINK_METHODS else "exact_alias"
-                    ),
+                    link_method=link_method,
                     confidence=entity.confidence,
                     domain_code=note_domain,
+                    settle_owners=[settle_owner],
+                )
+                session.add(row)
+            else:
+                # Assigned only on a real change: an unchanged row must not emit an
+                # UPDATE, or migration 0046's mention trigger re-dirties every
+                # mentioned entity's article on a re-run that changed nothing.
+                if row.surface_text != mention.surface_text:
+                    row.surface_text = mention.surface_text
+                if row.link_method != link_method:
+                    row.link_method = link_method
+                if _confidence_changed(row.confidence, entity.confidence):
+                    row.confidence = entity.confidence
+                if row.domain_code != note_domain:
+                    row.domain_code = note_domain
+                # Additive: a claim is joined, never taken over. Assigned only when
+                # it is genuinely new, like every field above it (0046's trigger).
+                if settle_owner not in row.settle_owners:
+                    row.settle_owners = [*row.settle_owners, settle_owner]
+            asserted.add(row.id)
+        return anchor_for, asserted
+
+    async def _reconcile_mentions(
+        self,
+        session: AsyncSession,
+        note_id: uuid.UUID,
+        asserted: set[uuid.UUID],
+        settle_owner: str,
+    ) -> None:
+        """Release THIS PRODUCER's claim on the mentions it no longer asserts, and
+        delete the ones no producer claims any more — the mention half of the fact
+        sweep, and the other half of `_upsert_mentions`.
+
+        Claim-scoped for the same reason the fact sweep is, and it had the same defect:
+        this is a hard DELETE, so an unscoped reconcile took the co-writer's mention
+        spine with it — the rows `_promote_corroborated` counts co-mentions through and
+        the stored `mention_ids` an un-merge replay needs.
+
+        The set matters MORE here than on facts, because two producers anchoring the
+        same surface land on the SAME ROW: `_upsert_mentions` matches on
+        (chunk, span, entity) and keeps the existing id. Single ownership would have
+        meant one of them silently deleting a span the other still asserts a fact
+        against."""
+        release = (
+            update(EntityMention)
+            .where(
+                EntityMention.note_id == note_id,
+                literal(settle_owner) == any_(EntityMention.settle_owners),
+            )
+            .values(settle_owners=func.array_remove(EntityMention.settle_owners, settle_owner))
+            .returning(EntityMention.id, EntityMention.settle_owners)
+        )
+        if asserted:
+            release = release.where(EntityMention.id.not_in(asserted))
+        unclaimed = [r.id for r in (await session.execute(release)).all() if not r.settle_owners]
+        if unclaimed:
+            # Same one-transaction invariant as the fact sweep, and the same self-guard
+            # against a refactor that breaks it — see `settle_note`. It matters more
+            # here: this is a DELETE, so acting on a row someone re-claimed in between
+            # would not be recoverable by re-running anything.
+            await session.execute(
+                delete(EntityMention).where(
+                    EntityMention.id.in_(unclaimed),
+                    func.cardinality(EntityMention.settle_owners) == 0,
                 )
             )
-        return anchor_for
 
-    async def _reproject_entities(
-        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
-    ) -> None:
+    async def _reproject_entities(self, session: AsyncSession, referenced: set[uuid.UUID]) -> None:
         """Once this note's facts have settled, refresh each touched entity's
         canonical_name from its current name.* facts — a projection of current
-        facts (docs/reference/ANALYSIS.md), never the frozen first-mention surface form."""
-        seen: set[uuid.UUID] = set()
-        for entity in resolved.values():
-            if entity is None or entity.id in seen:
-                continue
-            seen.add(entity.id)
-            await reproject_canonical_name(session, entity.id)
+        facts (docs/reference/ANALYSIS.md), never the frozen first-mention surface form.
+
+        Entity IDS rather than the caller's `resolved` map (S2): all this ever read off a
+        `ResolvedEntity` was its `id`, and the note conversation reaches the tail with a
+        ledger of ids and no map to build."""
+        for entity_id in referenced:
+            await reproject_canonical_name(session, entity_id)
 
     async def _promote_corroborated(
-        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
+        self, session: AsyncSession, referenced: set[uuid.UUID]
     ) -> None:
         """Confirm each touched provisional entity that >= CORROBORATION_THRESHOLD
         distinct same-domain notes now corroborate (docs/reference/entity.md). Eager and
         complete: an entity only crosses the bar on a note that references it, and
-        that note's refs are exactly `resolved`, so no sweep is needed. A
+        that note's refs are exactly `referenced`, so no sweep is needed. A
         contested identity (a live namesake) files a deduped confirm_entity card
         instead of auto-confirming. Gated by the entity_promotion setting
         (default off until the goldens expect confirmation)."""
         if self._settings is None or not await self._settings.entity_promotion(SYSTEM_CTX):
             return
-        seen: set[uuid.UUID] = set()
-        for entity in resolved.values():
-            if entity is None or entity.id in seen:
-                continue
-            seen.add(entity.id)
-            outcome = await promote_if_corroborated(session, entity.id)
+        for entity_id in referenced:
+            outcome = await promote_if_corroborated(session, entity_id)
             if outcome.action == "confirmed":
-                log.info("entity.promoted", entity_id=str(entity.id))
+                log.info("entity.promoted", entity_id=str(entity_id))
             elif outcome.action == "propose":
                 await self._file_confirm_entity_card(session, outcome)
 
@@ -1621,6 +2229,13 @@ class AnalysisPipeline:
                 else Fact.object_entity_id.is_(None)
             )
         rows = (await session.execute(stmt)).scalars().all()
+        # Which retracted rows a settled decision retracted — the discriminator
+        # `decide()`'s retracted-twin branch needs when the reject pinned nothing
+        # (analysis/purge.py). Only retracted rows can carry it, and most identity keys
+        # hold none, so the common case is no query at all.
+        decided = await purge.decision_retracted_fact_ids(
+            session, [str(f.id) for f in rows if f.status == "retracted"]
+        )
         return [
             FactView(
                 id=str(f.id),
@@ -1638,6 +2253,7 @@ class AnalysisPipeline:
                 # candidate must not displace a row of unknown confidence.
                 confidence=f.confidence if f.confidence is not None else 1.0,
                 derived=f.derived_from_fact_id is not None,
+                decision_retracted=str(f.id) in decided,
             )
             for f in rows
         ]
@@ -1687,6 +2303,41 @@ class AnalysisPipeline:
         )
         return new_id
 
+    async def _anchor_chunk(
+        self,
+        session: AsyncSession,
+        *,
+        entity_ref: str,
+        anchor_for: dict[str, _Span],
+        chunks: list[_ChunkRef],
+        fact_domain: str,
+        note_domain: str,
+        note_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """The citation chunk this run anchors a fact of `entity_ref` to — the
+        insert paths' anchor lookup and `_citation_chunk`, factored out so every
+        IN-PLACE update path re-links exactly the way an insert would."""
+        anchor = anchor_for.get(entity_ref)
+        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+        return await self._citation_chunk(
+            session,
+            source_chunk_id=base_chunk,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
+
+    @staticmethod
+    async def _owns_fact(session: AsyncSession, fact_id: uuid.UUID, note_id: uuid.UUID) -> bool:
+        """Whether this run's note is the one the row hangs off. An in-place update
+        may land on ANOTHER note's fact (the identity-key lookups are cross-note),
+        and that row's citation belongs to its own note — re-anchoring it here would
+        point `chunk_id` at a chunk of a note the fact does not come from."""
+        owner = (
+            await session.execute(select(Fact.note_id).where(Fact.id == fact_id))
+        ).scalar_one_or_none()
+        return owner == note_id
+
     async def _insert_held_fact(
         self,
         session: AsyncSession,
@@ -1700,6 +2351,7 @@ class AnalysisPipeline:
         captured_at: datetime,
         chunks: list[_ChunkRef],
         extractor: str,
+        settle_owner: str,
     ) -> uuid.UUID | None:
         """Write an arbiter-held fact (cross-subject / ambiguous / below-threshold)
         as an inert `pending_review` row. Deliberately NOT through decide(): a held
@@ -1708,7 +2360,7 @@ class AnalysisPipeline:
         (firewall) and a citation chunk. Idempotent on re-analysis: this note's
         existing pending_review row for the same identity key is refreshed in place,
         so the id (and the open card's fact_id link) survives. Returns the row id so
-        _apply adds it to `touched` and the card can reference it; None when the
+        `commit_facts` adds it to `touched` and the card can reference it; None when the
         entity (or object) didn't resolve, exactly like _upsert_fact."""
         fact = normalize_past_assertion(normalize_future_assertion(fact, captured_at), captured_at)
         entity = resolved.get(fact.entity_ref)
@@ -1794,6 +2446,15 @@ class AnalysisPipeline:
             .scalars()
             .first()
         )
+        chunk_id = await self._anchor_chunk(
+            session,
+            entity_ref=fact.entity_ref,
+            anchor_for=anchor_for,
+            chunks=chunks,
+            fact_domain=fact_domain,
+            note_domain=note_domain,
+            note_id=note_id,
+        )
         if existing_id is not None:
             await session.execute(
                 update(Fact)
@@ -1808,20 +2469,17 @@ class AnalysisPipeline:
                     temporal_token_id=token_id,
                     confidence=fact.confidence,
                     extractor=extractor,
+                    # Unconditional with the chunk, and for the same reason: the
+                    # lookup is note-scoped, so this row is ours to claim.
+                    settle_owners=self._claimed_by(settle_owner),
                     prompt_version=PROMPT_VERSION,
+                    # Unconditional: the lookup above is already note-scoped, so
+                    # this row is ours. A re-ingest nulls its chunk like any other.
+                    chunk_id=chunk_id,
                 )
             )
             return existing_id
 
-        anchor = anchor_for.get(fact.entity_ref)
-        base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
-        chunk_id = await self._citation_chunk(
-            session,
-            source_chunk_id=base_chunk,
-            fact_domain=fact_domain,
-            note_domain=note_domain,
-            note_id=note_id,
-        )
         held = Fact(
             id=uuid.uuid4(),
             subject_id=entity.subject_id,
@@ -1842,6 +2500,7 @@ class AnalysisPipeline:
             note_id=note_id,
             chunk_id=chunk_id,
             extractor=extractor,
+            settle_owners=[settle_owner],
             prompt_version=PROMPT_VERSION,
             confidence=fact.confidence,
             domain_code=fact_domain,
@@ -1919,7 +2578,8 @@ class AnalysisPipeline:
         captured_at: datetime,
         chunks: list[_ChunkRef],
         extractor: str,
-    ) -> uuid.UUID | None:
+        settle_owner: str,
+    ) -> FactWrite | None:
         # A still-future fact is `expected`, never an asserted past event; and an
         # undated "used to" relationship is CLOSED, not current — both resolved
         # against the note's capture anchor (docs/reference/ANALYSIS.md "Temporal model").
@@ -2026,28 +2686,48 @@ class AnalysisPipeline:
             # rendering ("...until March") carries the end-marker the open
             # row's payload lacks, and the scenario-facing value must show it.
             fact_id = uuid.UUID(decision.close_id)
-            await session.execute(
-                update(Fact)
-                .where(Fact.id == fact_id)
-                .values(
-                    statement=fact.statement,
-                    value_json=fact.value_json,
-                    valid_to=decision.close_valid_to,
-                    extractor=extractor,
-                    prompt_version=PROMPT_VERSION,
-                    confidence=fact.confidence,
+            close_values: dict[str, Any] = {
+                "statement": fact.statement,
+                "value_json": fact.value_json,
+                "valid_to": decision.close_valid_to,
+                "extractor": extractor,
+                "prompt_version": PROMPT_VERSION,
+                "confidence": fact.confidence,
+            }
+            # `_close_open_interval` can close THIS note's own open row ("worked at
+            # X from 2020", edited to "…until March"), and the edit's re-ingest has
+            # already nulled its chunk — so an in-place close re-anchors too.
+            closed_chunk: uuid.UUID | None = None
+            if await self._owns_fact(session, fact_id, note_id):
+                closed_chunk = await self._anchor_chunk(
+                    session,
+                    entity_ref=fact.entity_ref,
+                    anchor_for=anchor_for,
+                    chunks=chunks,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
                 )
-            )
+                close_values["chunk_id"] = closed_chunk
+                # This producer now asserts the row, so it JOINS the claim set — it
+                # does not take it over, and it does not drop anyone. Only for a row of
+                # THIS note: another note's row is governed by that note's producers,
+                # and claiming it there would leave it unsweepable by them.
+                close_values["settle_owners"] = self._claimed_by(settle_owner)
+            await session.execute(update(Fact).where(Fact.id == fact_id).values(close_values))
             # A derived shadow's lifecycle mirrors its source's: copy the
             # interval close (and re-render) so the reciprocal closes too.
             await self._update_shadows_in_place(
-                session, source_id=fact_id, valid_to=decision.close_valid_to
+                session,
+                source_id=fact_id,
+                valid_to=decision.close_valid_to,
+                chunk_id=closed_chunk,
             )
-            return fact_id
+            return FactWrite(fact_id, CLOSED, fact_domain, fact.statement)
 
         if decision.refresh_id is not None:
             # Same identity key, same value: refresh the rendering and provenance in
-            # place — citations survive, no chain link, no duplicate row.
+            # place — no chain link, no duplicate row.
             fact_id = uuid.UUID(decision.refresh_id)
             values: dict[str, Any] = {
                 "statement": fact.statement,
@@ -2055,6 +2735,26 @@ class AnalysisPipeline:
                 "prompt_version": PROMPT_VERSION,
                 "confidence": fact.confidence,
             }
+            # Re-anchor the citation, exactly as the insert paths do. Citations do
+            # NOT survive on their own: a re-ingest deletes every chunk of the note
+            # and `facts.chunk_id` is ON DELETE SET NULL (0006:187), so without this
+            # a refreshed fact keeps a null chunk and silently drops out of its
+            # article — `wiki/builder.py` INNER JOINs chunks. Only for a row THIS
+            # note owns: a refresh may land on another note's fact, whose citation
+            # belongs to that note and is re-anchored by its own re-integration.
+            refreshed_chunk: uuid.UUID | None = None
+            if await self._owns_fact(session, fact_id, note_id):
+                refreshed_chunk = await self._anchor_chunk(
+                    session,
+                    entity_ref=fact.entity_ref,
+                    anchor_for=anchor_for,
+                    chunks=chunks,
+                    fact_domain=fact_domain,
+                    note_domain=note_domain,
+                    note_id=note_id,
+                )
+                values["chunk_id"] = refreshed_chunk
+                values["settle_owners"] = self._claimed_by(settle_owner)  # join, never take
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             # Re-analysis healing: a row still held purely by WEIGHT (it carries an
             # open low_confidence_inference card) that the arbiter now rates active is
@@ -2094,6 +2794,14 @@ class AnalysisPipeline:
                 base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
                 values["derived_from_fact_id"] = None
                 values["note_id"] = note_id
+                # RE-HOMED, so re-claimed from scratch. `_existing_facts` is not
+                # note-scoped, so the shadow being adopted can belong to ANOTHER note —
+                # in which case `_owns_fact` above was False (it tested the row's OLD
+                # note_id) and left the claim set as that note's. Landing an unclaimed
+                # or foreign-claimed primary row on this note is the original bug in
+                # miniature: the producer that adopted it could not sweep it, and the
+                # producer named in the set never wrote it here.
+                values["settle_owners"] = [settle_owner]
                 values["chunk_id"] = await self._citation_chunk(
                     session,
                     source_chunk_id=base_chunk,
@@ -2102,7 +2810,13 @@ class AnalysisPipeline:
                     note_id=note_id,
                 )
             await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
-            await self._update_shadows_in_place(session, source_id=fact_id)
+            # The shadow carries its own chunk_id, was written by THIS note beside
+            # its source, and the settle sweep deliberately skips derived rows — so
+            # nothing else would ever re-link it. Without this the reciprocal edge
+            # keeps a null chunk forever and vanishes from the OBJECT's article.
+            await self._update_shadows_in_place(
+                session, source_id=fact_id, chunk_id=refreshed_chunk
+            )
             if promoted:
                 # The row's open review card is now unservable (the fact committed);
                 # resolved/dismissed history survives. Then give an open relationship
@@ -2133,9 +2847,12 @@ class AnalysisPipeline:
                             note_id=note_id,
                         ),
                         extractor=extractor,
+                        settle_owner=settle_owner,
                         snippet=_cite(anchor, chunks),
                     )
-            return fact_id
+            return FactWrite(
+                fact_id, PROMOTED if promoted else ALREADY, fact_domain, fact.statement
+            )
 
         anchor = anchor_for.get(fact.entity_ref)
         base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
@@ -2172,6 +2889,7 @@ class AnalysisPipeline:
             note_id=note_id,
             chunk_id=chunk_id,
             extractor=extractor,
+            settle_owners=[settle_owner],
             prompt_version=PROMPT_VERSION,
             confidence=fact.confidence,
             domain_code=fact_domain,
@@ -2224,6 +2942,7 @@ class AnalysisPipeline:
                 captured_at=captured_at,
                 chunk_id=chunk_id,
                 extractor=extractor,
+                settle_owner=settle_owner,
                 snippet=_cite(anchor, chunks),
             )
         if decision.supersede_ids:
@@ -2258,7 +2977,28 @@ class AnalysisPipeline:
                     domain_code=fact_domain,
                 )
             )
-        return new_fact.id
+        # What the write DID, for the caller that has to explain it (the
+        # note-conversation tools). Read off `decision` alone: the same branch the
+        # rows above were written from, so the report can never drift from the write.
+        by_id = {e.id: e for e in existing}
+        replaced = tuple(by_id[i].statement for i in decision.supersede_ids if i in by_id)
+        if decision.insert_status == "pending_review":
+            outcome = HELD
+        elif decision.insert_status == "retracted":
+            outcome = HISTORICAL
+        elif replaced:
+            outcome = REPLACED
+        else:
+            outcome = WRITTEN
+        return FactWrite(
+            new_fact.id,
+            outcome,
+            fact_domain,
+            fact.statement,
+            replaced=replaced,
+            hold_reason=decision.review_kind or "",
+            conflicting=conflict.statement if conflict is not None else "",
+        )
 
     async def _entity_name(self, session: AsyncSession, entity_id: uuid.UUID | None) -> str | None:
         """The canonical name of an entity id, or None. Used to render an edge's
@@ -2376,6 +3116,7 @@ class AnalysisPipeline:
         captured_at: datetime,
         chunk_id: uuid.UUID | None,
         extractor: str,
+        settle_owner: str,
         snippet: str | None,
     ) -> uuid.UUID | None:
         """Write the reciprocal of a directed relationship edge on the object's
@@ -2452,6 +3193,12 @@ class AnalysisPipeline:
             }
             if decision.close_id is not None:
                 values["valid_to"] = decision.close_valid_to
+            # Same re-anchor as every other in-place path, and the same ownership
+            # rule: this row may be another note's reciprocal, whose citation is
+            # that note's to re-link.
+            if await self._owns_fact(session, existing_id, note_id):
+                values["chunk_id"] = chunk_id
+                values["settle_owners"] = self._claimed_by(settle_owner)
             await session.execute(update(Fact).where(Fact.id == existing_id).values(values))
             return existing_id
 
@@ -2493,6 +3240,10 @@ class AnalysisPipeline:
             note_id=note_id,
             chunk_id=chunk_id,
             extractor=extractor,
+            # Stamped for completeness (the column is NOT NULL), never read: a shadow
+            # is closed by its SOURCE's fate, not by its own claim set — see the shadow
+            # sweep in `settle_note`.
+            settle_owners=[settle_owner],
             prompt_version=PROMPT_VERSION,
             confidence=fact.confidence,
             domain_code=fact_domain,
@@ -2571,13 +3322,20 @@ class AnalysisPipeline:
         *,
         source_id: uuid.UUID,
         valid_to: datetime | None = None,
+        chunk_id: uuid.UUID | None = None,
     ) -> None:
-        """Mirror a source's in-place refresh/close onto its derived shadow:
-        copy the valid_to (close) so the reciprocal interval ends with its
-        source's. The shadow's statement is display-only and already renders
-        the relationship, so only the temporal bound needs copying."""
-        if valid_to is None:
+        """Mirror a source's in-place refresh/close onto its derived shadow: copy
+        the valid_to (close) so the reciprocal interval ends with its source's, and
+        the re-anchored chunk so its citation survives a re-ingest. The shadow's
+        statement is display-only and already renders the relationship, so nothing
+        else needs copying. Either field absent means "leave it alone"."""
+        values: dict[str, Any] = {}
+        if valid_to is not None:
+            values["valid_to"] = valid_to
+        if chunk_id is not None:
+            values["chunk_id"] = chunk_id
+        if not values:
             return
         await session.execute(
-            update(Fact).where(Fact.derived_from_fact_id == source_id).values(valid_to=valid_to)
+            update(Fact).where(Fact.derived_from_fact_id == source_id).values(values)
         )

@@ -65,13 +65,23 @@ while IFS= read -r f; do
   case "$status" in *[Ss]hipped*) ;; *) err "$f — all header Waves are ✅ but Status is not Shipped — archive it (R4)";; esac
 done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
 
+# Living docs that live OUTSIDE docs/ because they must sit beside the code they
+# describe. This gate scans docs/ only, which is how backend/tests/harness/README.md
+# came to claim the harness ran "the real analyze_note pipeline" for a whole wave after
+# it stopped doing so — nothing looked at it. Named explicitly rather than by a glob:
+# most in-tree READMEs are build notes with nothing to go stale, and a gate that warned
+# on all of them would be ignored. Add a file here when it becomes load-bearing prose.
+OUTSIDE_DOCS=(
+  "backend/tests/harness/README.md"
+)
+
 # R2/R3 — every non-archived doc opens with a freshness header (a Status line in
 # the first 6 lines). Absence is a warning.
 while IFS= read -r f; do
   case "$f" in */archive/*|*/mocks/*) continue;; esac
   head -n 6 "$f" | grep -q '\*\*Status:\*\*' \
     || warn "$f — no freshness header ('> **Status:** … · **Last verified:** …') in first 6 lines (R2/R3)"
-done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
+done < <( { find "$DOCS" -name '*.md' 2>/dev/null; for f in "${OUTSIDE_DOCS[@]}"; do [ -f "$ROOT/$f" ] && echo "$ROOT/$f"; done; } | sort)
 
 # Homes — a directory README must name every *.md sibling in the folder.
 # (Under-listing only: a README also cross-references non-sibling docs in prose,
@@ -117,7 +127,7 @@ while IFS= read -r f; do
     age=$(( (today - ts) / 86400 ))
     [ "$age" -gt 90 ] && warn "$f — Last verified $d is ${age}d old (>90); re-verify or bump"
   fi
-done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
+done < <( { find "$DOCS" -name '*.md' 2>/dev/null; for f in "${OUTSIDE_DOCS[@]}"; do [ -f "$ROOT/$f" ] && echo "$ROOT/$f"; done; } | sort)
 
 printf '\ndocs-freshness: %d error(s), %d warning(s)\n' "$errors" "$warns"
 [ "$errors" -eq 0 ]

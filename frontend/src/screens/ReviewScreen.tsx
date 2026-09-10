@@ -1,5 +1,10 @@
-// Review inbox — split-inbox redesign (docs/reference/DESIGN.md "Review inbox"). Two
-// lanes (pending · decided) behind a segmented filter. The list is
+// Review inbox — two tabs (docs/reference/DESIGN.md "Review inbox"; binding mock
+// docs/mocks/agent-ingest-inbox/a-inbox-holds.html, plan D4). **notes** lists the
+// ingestion questions and staged approvals waiting on the owner and only REDIRECTS into
+// the conversation that raised them; **wiki** holds the findings that never start from a
+// note and is where deciding happens. The asymmetry is the ruling, not an omission.
+//
+// Everything below the tab switch is the shipped wiki-lane machinery. The list is
 // browsable with a selection mode for bulk actions; tapping a row pushes a
 // detail view with prev/next so you move between items without returning to
 // the list. The detail is composed from a registry of typed blocks
@@ -14,6 +19,7 @@ import { edgePath, valueLabel } from "../analysis/format";
 import { type ReviewFilter, type ReviewItem, api } from "../api/client";
 import { EntityTypeIcon } from "../entities/kinds";
 import { DomainDot } from "../review/DomainDot";
+import { NotesTab } from "../review/NotesTab";
 import { Footer } from "../review/blocks/Footer";
 import { BLOCKS, blockSequenceFor } from "../review/blocks/registry";
 import type { BlockCtx } from "../review/blocks/types";
@@ -27,6 +33,7 @@ import {
   parsePayload,
 } from "../review/payload";
 import { useArmed } from "../review/useArmed";
+import { useNotesInbox } from "../review/useNotesInbox";
 import { type ReviewQueueController, useReviewQueue } from "../review/useReviewQueue";
 
 // The kinds that carry a structured proposed fact and so correct in place
@@ -451,7 +458,7 @@ function ListView({ lane, items, queue, onOpen }: ListViewProps) {
 
 function EmptyLane({ lane }: { lane: ReviewFilter }) {
   const copy: Record<ReviewFilter, string> = {
-    pending: "pending is clear — new items arrive as notes are analyzed.",
+    pending: "nothing to decide — findings that never start from a note collect here.",
     decided: "no decisions yet — resolved items collect here.",
   };
   return <p className="analysis-quiet rlane-empty">{copy[lane]}</p>;
@@ -459,8 +466,25 @@ function EmptyLane({ lane }: { lane: ReviewFilter }) {
 
 // ===== Screen =====
 
-export function ReviewScreen() {
+/** The two tabs (D4 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md), and they are
+ * deliberately asymmetric: **notes redirects, wiki decides**. That asymmetry IS the
+ * owner's ruling — the conversation is the only place note ingestion is settled, so the
+ * notes tab holds no decision machinery at all, not even a disabled one. */
+type InboxTab = "notes" | "wiki";
+
+export function ReviewScreen({
+  onOpenConversation,
+}: {
+  /** Open a note conversation — the only thing a notes row does. */
+  onOpenConversation?: (sessionId: string, agent: string) => void;
+}) {
   const queue = useReviewQueue();
+  const notes = useNotesInbox();
+  const [tab, setTab] = useState<InboxTab>("notes");
+  // The wiki tab keeps the shipped two-lane machinery: its list is the OPEN findings,
+  // and the decided log stays reachable from inside it (the chosen mock drops the
+  // `decided` segment from the track, which would have taken reopen — a shipped,
+  // DESIGN.md-binding unwind — with it).
   const [filter, setFilter] = useState<ReviewFilter>("pending");
   const [detailId, setDetailId] = useState<string | null>(null);
 
@@ -511,34 +535,57 @@ export function ReviewScreen() {
     setDetailId(next?.id ?? null);
   }
 
-  const counts: Record<ReviewFilter, number | undefined> = {
-    pending: queue.pending?.length,
-    decided: queue.decided?.length,
+  // An empty lane carries NO count pill — there is no zero to clear (D5: no nagging
+  // badge). The shipped screen rendered a `0`; the mock hides it and so does this.
+  const counts: Record<InboxTab, number | undefined> = {
+    notes: notes.waitingCount > 0 ? notes.waitingCount : undefined,
+    wiki: queue.pending && queue.pending.length > 0 ? queue.pending.length : undefined,
   };
+  const decidedCount = queue.decided?.length ?? 0;
 
   return (
     <main className="screen-body review-body">
       {detailItem === null ? (
         <>
           <div className="review-segs" role="tablist">
-            {(["pending", "decided"] as ReviewFilter[]).map((f) => (
+            {(["notes", "wiki"] as InboxTab[]).map((t) => (
               <button
-                key={f}
+                key={t}
                 type="button"
                 role="tab"
-                aria-selected={filter === f}
-                className={`review-seg${filter === f ? " seg-active" : ""}`}
-                onClick={() => setFilter(f)}
+                aria-selected={tab === t}
+                className={`review-seg${tab === t ? " seg-active" : ""}`}
+                onClick={() => {
+                  setTab(t);
+                  setFilter("pending");
+                }}
               >
-                {f}
-                {counts[f] !== undefined && <span className="seg-count">{counts[f]}</span>}
+                {t}
+                {counts[t] !== undefined && <span className="seg-count">{counts[t]}</span>}
               </button>
             ))}
           </div>
-          {queue.loadError && filter === "pending" ? (
+          {tab === "notes" ? (
+            <NotesTab
+              rows={notes.rows}
+              loadError={notes.loadError}
+              onOpenConversation={(sessionId, agent) => onOpenConversation?.(sessionId, agent)}
+            />
+          ) : queue.loadError && filter === "pending" ? (
             <p className="analysis-quiet">couldn't load the inbox — reopen to retry.</p>
           ) : (
-            <ListView lane={filter} items={items} queue={queue} onOpen={setDetailId} />
+            <>
+              <ListView lane={filter} items={items} queue={queue} onOpen={setDetailId} />
+              {(filter === "decided" || decidedCount > 0) && (
+                <button
+                  type="button"
+                  className="analysis-quiet rdecided-link"
+                  onClick={() => setFilter(filter === "decided" ? "pending" : "decided")}
+                >
+                  {filter === "decided" ? "back to open findings" : `${decidedCount} decided`}
+                </button>
+              )}
+            </>
           )}
         </>
       ) : (

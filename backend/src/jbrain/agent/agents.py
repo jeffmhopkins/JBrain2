@@ -32,7 +32,7 @@ The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from jbrain.llm.promptfile import load_prompt
@@ -454,6 +454,139 @@ SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 # (docs/archive/GUIDED_INTAKE_PLAN.md §5, W2).
 INTAKE_TOOLS: frozenset[str] = frozenset()
 
+# The note-conversation persona's allowlist: EMPTY, and empty as a MECHANISM
+# (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D16). A note is turn 0 of an ordinary agent
+# conversation, but that conversation runs under its own CLOSED allowlist and never
+# curator's `tools=None` wildcard — whose admitted set reaches `file_correction`,
+# `add_source_exclusion`, `make_intake_link` and `remember`, the four verbs D16 names as
+# provably outside this persona (the first two would write a note that re-enters ingestion,
+# laundering third-party text into an owner-attributed source). W2 ships only the mechanism:
+# the graph-write tools do not exist yet, so the set is empty and dispatch refuses every
+# call — `ToolRegistry._admits` rejects any name outside a non-None `allow` BEFORE it
+# consults the web / NEVER_DEFAULT gates, so an empty frozenset is a hard floor no later
+# registry change can lift.
+#
+# W3 fills the UNATTENDED half (docs/research/agent-ingest/TOOL_SURFACE.md): the two graph
+# writes, `ask_owner`, plus the entity reads and the clock, inherited unchanged. That is the
+# whole unattended surface — D8: nothing outward-facing runs while the owner is asleep, and
+# every `web_*` / connector / vision tool stays out of the ON-REPLY set too, because the owner
+# replying does not sanitize the note body still sitting in context (untrusted content +
+# private data + egress is the complete trifecta).
+#
+# `prefs_read` is deliberately in NEITHER set: D15 hands the owner's standing instructions
+# to this persona through the SYSTEM PROMPT (`converse._rules`), so the tool it was also
+# built as stays unreachable. A name allowlisted with no handler behind it is a tool call
+# that dies in dispatch, so an allowlist grows with the handlers, never ahead of them.
+#
+# Every write tool here also joins `toolregistry.NEVER_DEFAULT`, or curator's wildcard absorbs
+# it on every ordinary chat turn — and for the note-graph verbs that set, plus this allowlist,
+# is the whole of the enforcement. Each is bound TWICE, on two registries that never meet: the
+# worker builds `graphwritetools.note_registry` for the unattended pass, and `replytools` binds
+# a session-addressed copy on the chat registry, because the owner's REPLY into a note thread
+# arrives as an ordinary /chat turn (D8). `ask_owner` is bound the second way only. The rule
+# above is what makes this necessary rather than optional: an allowlisted name with no handler
+# behind it is a tool call that dies in dispatch, and for a whole wave that is what these two
+# were on the reply turn.
+NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
+    {"resolve_entity", "assert_fact", "ask_owner", "find_entity", "read_entity", "current_time"}
+)
+
+# The ON-REPLY surface (D8: "the full surface unlocks when you reply"). A SECOND frozenset
+# shaped like `JERV_TOOLS`/`ARCHIVIST_TOOLS`, chosen at turn assembly by
+# `agent_for_owner_reply` below — never a flag on one set, because which handlers are BOUND
+# is the only enforcement there is (constraint 9, TOOL_SURFACE R2).
+#
+# A superset of the unattended set, not a swap. The reply turn is the same agent finishing
+# the same reading of the same note, so taking `assert_fact` away at the moment the owner
+# explains what the note actually meant would leave it able to discuss a correction and
+# unable to record one — and worse than unable. `correct_fact` at an EMPTY address commits
+# active + pinned (`supersession.decide`), so a reply turn holding only that verb records
+# every new thing the owner mentions as a pinned fact no later note can supersede. Being a
+# superset is what keeps the ordinary "here is one more fact" on the ordinary write path.
+#
+# Why each added verb is on-reply rather than unattended, one line each:
+# - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
+#   is the note, and a note that talks its way into overriding the graph past the arbiter's
+#   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
+#   is actually in.
+# - `merge_entities` STAGES a fold and can never enact one (constraint 12). Staging is cheap
+#   and reversible, but a merge card raised while the owner is asleep is a decision queued
+#   against him by third-party text; raised in answer to his own message it is a reply.
+# - `prefs_write` delta-edits the STANDING INSTRUCTIONS injected into every future note
+#   conversation's system prompt. D17 fires it on his explicit request only, and "explicit
+#   request" has no meaning on a turn he is not present for.
+# `search` / `read_note` / `relate` are inherited unchanged, and are reads: the unattended
+# pass has the note in front of it and needs no corpus, while "no, that was the OTHER Dana"
+# is exactly the question the corpus answers.
+#
+# What is NOT in either set, and what the owner replying does not change: every
+# outward-facing tool (`web_*`, `news_*`, the connectors, `gmail_*`). His reply does not
+# sanitize the note body, which is still sitting in this turn's context — untrusted content
+# + private data + egress is the complete trifecta, and it is just as complete here.
+NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | frozenset(
+    {"correct_fact", "merge_entities", "prefs_write", "search", "read_note", "relate"}
+)
+
+# The THIRD-PARTY surface (D10, and plan risk 1 answered by which handlers are bound).
+# A note whose BODY A STRANGER WROTE — today the `untrusted_origin` note an approved
+# guided-intake submission enacts into (`agent/proposaltools.intake_note_executor`) —
+# opens the same conversation every other note opens, and that conversation now holds
+# graph writes. This is the set it gets, and it is a THIRD frozenset rather than a flag
+# on one of the two above for the reason constraint 9 gives: which handlers are BOUND is
+# the only enforcement there is, so the difference has to be a difference of names.
+#
+# The rule it encodes, stated once: **a stranger's words may cause a FACT, and nothing
+# else.** They may resolve and mint entities and assert facts about them, because that
+# is what the owner approved the submission FOR — D10's "unrestricted in *what* it may
+# write" is honoured exactly, both graph-write verbs present, unnarrowed, at the same
+# budgets, through the same `commit_facts`, with the same floor and the same span check.
+# They may not open a channel to the owner, escalate past the arbiter, edit a standing
+# instruction, or aim the corpus.
+#
+# Dropped from the UNATTENDED set:
+# - `ask_owner`. Its question is MODEL-AUTHORED FROM STRANGER-CONTROLLED TEXT, and it
+#   lands in the owner's notes tab wearing his own agent's voice — after the review step
+#   (materialize -> Proposal -> approve) that is the entire trust boundary of the intake
+#   feature has already happened. The answer he types is then appended to the note as
+#   SOURCE text (D6) and re-ingested: chunked, embedded, searchable, citable. So a
+#   stranger-steered question is a prompt that writes the owner's own reply into his own
+#   corpus. Nothing reaches the submitter (no set here holds an egress verb, and the
+#   intake session is a different principal on a different table), so this is not an
+#   exfiltration hole — it is an UNREVIEWED INBOUND MESSAGE CHANNEL, and it costs
+#   nothing to not have one. D2 stands in its place: what is clear commits, what is not
+#   is left alone.
+#
+# And the whole ON-REPLY set is dropped as well — one set serving BOTH turns is the
+# substantive claim here. D8 widens the reply turn on the premise that the owner is the
+# only voice in the room. On a third-party note he is not: the stranger's body is turn 0
+# and is still in this turn's context, which is the plan's own reason for keeping `web_*`
+# out of the on-reply set, applied to the verbs the owner's presence was meant to justify.
+# - `correct_fact` force-supersedes AND PINS (`supersession.decide`'s correction branch
+#   reads neither confidence field), so what it writes is a fact no later note can ever
+#   supersede. A stranger who can shape what the owner types into the thread gets a
+#   durable write past every arbiter guard. The owner has not lost the verb — it is
+#   reachable from a reply into any note conversation whose body he wrote.
+# - `merge_entities` stages a fold. A fold card raised out of stranger text is a decision
+#   queued against the owner by the stranger, on whichever turn raises it.
+# - `prefs_write` delta-edits the standing instructions injected into EVERY FUTURE note
+#   conversation's system prompt. A rule that lands there is persistent, corpus-wide
+#   prompt injection with a stranger at its source, and the Proposal gate in front of it
+#   is the owner tapping Enact on a card whose label the model wrote.
+# - `search` / `read_note` / `relate` are reads, and safe in the direction that usually
+#   matters — no egress verb exists in any of the three sets to carry anything out. They
+#   go because they let the stranger's text AIM the owner's corpus, and buy nothing on a
+#   materialized interview, which is self-contained by construction.
+NOTE_INGEST_THIRD_PARTY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS - frozenset(
+    {"ask_owner"}
+)
+
+# The four verbs that WRITE the entity graph from a note conversation. Named as a set
+# because W4 has to subtract exactly them, in two places, and a hand-listed second copy
+# would drift the day a fifth write verb lands.
+NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
+    {"resolve_entity", "assert_fact", "correct_fact", "merge_entities"}
+)
+
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
 # set — never `agent_for`, whose curator fallback would be catastrophic for a stranger.
@@ -685,20 +818,96 @@ AGENTS: dict[str, AgentProfile] = {
         reads_knowledge_base=False,
         budget_multiplier=1,
     ),
+    # note_ingest — the note conversation (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, D1/D16).
+    # An OWNER persona the engine opens with a captured note as turn 0, not a picker choice.
+    # `tools` is an explicit empty frozenset, never None: the wildcard is precisely what D16
+    # forbids for a persona that will hold graph writes, and `frozenset()` closes the set now
+    # so W3 widens it deliberately rather than by inheriting a default.
+    # `extra_tools` stays EMPTY here in every wave. On /chat an `extra` name is admitted
+    # AHEAD of the registry's web and NEVER_DEFAULT gates (`toolregistry._admits`), which is
+    # exactly the door D16 closes. On the path this persona actually runs, `LoopTurnExecutor`
+    # never forwards `extra_tools` at all, so a grant here would be silently dropped rather
+    # than admitted — differently wrong, equally a reason to gain tools only through the
+    # allowlist.
+    # `reads_knowledge_base=True` as of W3, and the flip is what makes constraint 2 real.
+    # Note what it is NOT: the entity read tools declare no `domains`, so registry
+    # visibility never depended on it. It is enforced one layer down — a False agent runs
+    # with EMPTY read scopes, and `read_context` is `owner_scoped`, so `has_domain_scope`
+    # is false for every domain and `find_entity`/`read_entity` would answer "nothing in
+    # scope" for every name in the note. The agent has to be able to see what the graph
+    # already says before it writes against it, and there would be no scopes to narrow to
+    # `(note_domain, 'general')` either. `converse.note_read_scopes` is the one
+    # place that computes them.
+    # Two consequences, both handled rather than discovered (plan W3):
+    # - the flip widens NOTHING retroactively. `read_scopes` is also what is stored as the
+    #   session row's `domain_scopes`, so every W2-era note session keeps `[]` forever.
+    #   Deliberately NOT backfilled: those threads wrote no graph (the persona held no
+    #   tools), so a backfill would only make a stale row look authoritative. The two
+    #   turn paths read that row differently, and the difference is only ever NARROWING:
+    #   the unattended pass recomputes from the NOTE (`converse.note_read_scopes`), while
+    #   the owner's REPLY turn is an ordinary `/chat` turn and takes `session.domain_scopes`
+    #   as stored. For a W3-era thread the two agree by construction — the stored row IS
+    #   what `note_read_scopes` returned. For a W2-era one the reply turn gets `[]` and
+    #   reads no domain row at all, which is a starved turn, never a widened one, and the
+    #   route that could have widened it is closed below.
+    # - `POST /sessions/{id}/scope` is ungated on persona, so the owner-facing route could
+    #   widen an engine-opened write persona past `(note_domain, 'general')` on a session
+    #   the owner never started. Inert while this flag was False; closed now in
+    #   `AgentSessionRepo.set_scopes`, which refuses an engine-only persona outright.
+    # 2x budget (not 1x), and NOT as truncation protection — that comes from the settled/failed
+    # latch (`converse.py`), which withholds the sweep at any multiplier. The step cap already
+    # has an order of magnitude of headroom over W3's measured batch sizes (TOOL_SURFACE.md:
+    # ~7.6 facts and ~8.9 entities per call, so a 20-fact note is ~5 calls against a floor of
+    # 20 steps). What `scale` actually moves is `max_cost_tokens`, 200k -> 400k, and only on
+    # the UNATTENDED pass: the owner's reply turn is supervised and ignores it. So this is a
+    # headroom-vs-cost call under plan risk 4, bounded by NOTE_TURN_WALL_CLOCK, not a
+    # correctness guard.
+    "note_ingest": _profile(
+        "note_ingest",
+        "note_ingest.prompt",
+        tools=NOTE_INGEST_UNATTENDED_TOOLS,
+        reads_knowledge_base=True,
+        budget_multiplier=2,
+    ),
 }
 
 AGENT_NAMES = frozenset(AGENTS)
 
-# The personas an OWNER may select for a Full Brain session or task. `intake` lives in
-# AGENTS (so it is resolvable + version-pinned) but is a NON-owner persona — it belongs to
-# an intake_link principal, is resolved via `agent_for_intake`, and must never be stored in
-# app.agent_sessions/app.tasks (whose `agent` CHECK excludes it anyway). Owner-facing
-# validation gates on THIS set, not AGENT_NAMES, so an owner can't open an intake session.
-OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS
+# Two different exclusions sit between AGENT_NAMES and what an owner may select, and they
+# are not the same question. `intake` lives in AGENTS (so it is resolvable +
+# version-pinned) but is a NON-owner persona — it belongs to an intake_link principal, is
+# resolved via `agent_for_intake`, and must never be stored owner-side at all (the `agent`
+# CHECK excludes it). The engine-only personas below ARE owner-side and ARE stored; they
+# are simply not a person's to start.
+
+# Owner-side personas the ENGINE opens and a person never picks. They are stored in
+# `app.agent_sessions` like any other owner persona (the CHECK admits them, 0192), and
+# they are the owner's own threads — but nothing may mint one from a request.
+#
+# `note_ingest` is one because it is only itself with a note behind it: the runner opens
+# it in the same transaction as its `note_conversations` row, seeded with a captured note
+# as turn 0 under the frame, and W3 hands it the graph-write tools. A session started
+# from `POST /sessions {"agent":"note_ingest"}` has none of that — no note, no frame, no
+# conversation row, owner-chosen read scopes — and would be the write persona reachable
+# by a request. Harmless while the allowlist is an empty frozenset, which is exactly why
+# it is closed now rather than after W3 fills it. Also keeps `ASSISTANT.md`'s "not
+# selectable — the engine opens it, never a picker" a fact rather than an intention.
+ENGINE_ONLY_PERSONAS = frozenset({"note_ingest"})
+
+# What an OWNER may SELECT for a Full Brain session or task — the session/task routes'
+# gate (`is_owner_agent`, `api/sessions.py`, `api/tasks.py`), never AGENT_NAMES.
+OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS - ENGINE_ONLY_PERSONAS
+
+# What may be STORED owner-side: everything an owner selects, plus the engine-opened
+# personas. This is the set the two `agent` CHECK constraints must admit, and the set the
+# RLS suites iterate — selectability and storability are different questions, and pinning
+# the CHECK to the selectable set alone would fail the moment the engine opens a session.
+STORABLE_OWNER_AGENTS = OWNER_AGENTS | ENGINE_ONLY_PERSONAS
 
 
 def is_owner_agent(name: str) -> bool:
-    """Whether an OWNER may run this persona (excludes the non-owner intake persona)."""
+    """Whether an OWNER may SELECT this persona (excludes the non-owner intake persona
+    and the engine-only ones the owner never picks)."""
     return name in OWNER_AGENTS
 
 
@@ -709,8 +918,115 @@ def agent_for(name: str) -> AgentProfile:
 
     OWNER sessions only. A non-owner principal must NEVER resolve through this: its
     curator fallback would hand a stranger the Full Brain knowledge agent. Non-owner
-    principals use `agent_for_intake`, which fails closed."""
+    principals use `agent_for_intake`, which fails closed.
+
+    This is the UNATTENDED resolution, and it is the one every caller gets by default —
+    the worker's note pass, the task runner, the session listing. The owner's own reply
+    turn asks for the wider surface explicitly through `agent_for_owner_reply`, so a
+    caller that forgets the distinction gets the narrow set, never the wide one."""
     return AGENTS.get(name, AGENTS[DEFAULT_AGENT])
+
+
+NOTE_INGEST_AGENT = "note_ingest"
+"""The note-conversation persona. Named here because this module owns the two sets its
+turn assembly picks between; `analysis/converse.py` and `analysis/clarify.py` each keep
+their own spelling of it rather than importing the LLM stack for one string."""
+
+
+def agent_for_owner_reply(name: str) -> AgentProfile:
+    """The profile for a turn the OWNER just sent — the `/chat` resolution.
+
+    This function IS the unattended/on-reply split (D8). It is the only thing that hands
+    out `NOTE_INGEST_ON_REPLY_TOOLS`, and it is called from exactly one place: `chat()` in
+    `api/agent.py`, where a turn exists precisely because the owner typed into the thread.
+    Every other resolution path — the worker's unattended note pass, the task runner, a
+    sub-agent, the session listing — goes through `agent_for` and gets the unattended set.
+
+    The split has to live at turn assembly rather than in the profile because the two
+    paths are different code (`analysis/converse.py`'s per-note executor in the worker,
+    `/chat` in the API) and a persona field can only carry one answer. Making the PROFILE
+    carry the unattended set and the reply turn ASK for more is the safe direction of that
+    asymmetry: forgetting to call this narrows a turn, while the reverse would have handed
+    `correct_fact` to a pass the owner is not present for.
+
+    Non-note personas are returned unchanged, so `/chat` can call this unconditionally
+    instead of carrying a persona test at the call site that a later edit could drop."""
+    profile = agent_for(name)
+    if profile.name != NOTE_INGEST_AGENT:
+        return profile
+    return replace(profile, tools=NOTE_INGEST_ON_REPLY_TOOLS)
+
+
+def narrow_for_third_party_note(profile: AgentProfile) -> AgentProfile:
+    """The profile for a note conversation whose BODY someone other than the owner wrote
+    (D10, plan risk 1). Applied LAST, over whatever the turn resolved to.
+
+    It is a narrowing, and that is the awkward direction: `AgentProfile.tools` carries the
+    unattended set precisely so a caller who never heard of the split gets the SAFE answer,
+    and a caller who forgets to call THIS gets the unsafe one. Three things carry that
+    weight instead of the default:
+
+    - both turn paths already resolve their profile in exactly one place each
+      (`analysis/converse._run_turn` for the unattended pass, `chat()` for the reply), and
+      both are persona-gated blocks that already exist;
+    - the caller that decides whether to apply it fails CLOSED — an unreadable note or
+      conversation is treated as third-party (`analysis/thirdparty.py`), so a DB blip
+      narrows a turn rather than widening one;
+    - the worker's registry does not BIND `ask_owner` for such a note at all, so the
+      allowlist is the second lock over a tool that is not there, not the only one.
+
+    Every other persona comes back the same OBJECT, so a caller can apply it
+    unconditionally rather than carrying a persona test that a later edit could drop.
+
+    **It INTERSECTS, and that is what makes it compose with `narrow_for_emr`.** A note can
+    satisfy both W4 predicates at once — an approved intake submission that enacts into a
+    health `Records` note carrying an EMR-shaped attachment is third-party-bodied AND
+    importer-owned — and the merged result has to be the INTERSECTION of both narrowings,
+    never whichever ran second. Assigning `NOTE_INGEST_THIRD_PARTY_TOOLS` outright would
+    have handed such a note `resolve_entity` and `assert_fact` back the moment this ran
+    after the EMR subtraction: a stranger's body writing facts onto a note whose graph the
+    deterministic parse owns, which is exactly the two-writers state `ingest/emr/ownership`
+    exists to make unreachable. Intersecting makes the two narrowings commute, so the
+    "third-party runs LAST" rule below is belt over braces rather than the only lock.
+
+    The ordering rule still stands and is still load-bearing for a different reason:
+    `agent_for_owner_reply` WIDENS, and a widening applied after this one would undo it."""
+    if profile.name != NOTE_INGEST_AGENT:
+        return profile
+    if profile.tools is None:
+        # The wildcard D16 forbids for this persona. Unreachable today; if it ever became
+        # reachable the safe reading is the third-party ceiling, not "narrow nothing".
+        return replace(profile, tools=NOTE_INGEST_THIRD_PARTY_TOOLS)
+    return replace(profile, tools=profile.tools & NOTE_INGEST_THIRD_PARTY_TOOLS)
+
+
+def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
+    """Subtract every graph-write verb from a note conversation whose note the EMR
+    importer owns (W4/D9, `ingest/emr/ownership.py`).
+
+    Applied AFTER the unattended/on-reply split, so it narrows both — the owner replying
+    does not unlock a write surface here, which is the one place W4 breaks D8's "the full
+    surface unlocks when you reply". It has to: `correct_fact` at an empty address commits
+    active + PINNED, and a pinned lab head makes every later import of that reading `held`
+    — the owner would silently freeze a value the next draw is supposed to supersede. What
+    the reply turn keeps is `ask_owner`, the entity reads, `search`/`read_note`/`relate`
+    and `prefs_write`: it can explain the import and be told how to handle the next one.
+
+    Two locks, deliberately: this one narrows the ALLOWLIST, and `converse`'s per-note
+    registry independently declines to BIND the handlers. Constraint 9 says the surface is
+    the registry's, not the prompt's; the allowlist alone would leave `/chat`'s registry
+    holding live handlers behind one `frozenset` field.
+
+    Non-note personas are returned unchanged, so a caller may apply it unconditionally.
+
+    Composes with `narrow_for_third_party_note` in either order: this one SUBTRACTS and
+    that one INTERSECTS, so a note that is both third-party-bodied and importer-owned ends
+    up with `NOTE_INGEST_THIRD_PARTY_TOOLS - NOTE_GRAPH_WRITE_TOOLS` — the reads and the
+    clock — whichever runs first.
+    """
+    if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
+        return profile
+    return replace(profile, tools=profile.tools - NOTE_GRAPH_WRITE_TOOLS)
 
 
 class PersonaResolutionError(ValueError):

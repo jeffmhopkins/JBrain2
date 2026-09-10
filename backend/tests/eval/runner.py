@@ -17,6 +17,7 @@ from jbrain.analysis.arbiter import ArbiterPlan, compute_signals, plan_intent
 from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.intent import IntegrationIntent
 from jbrain.analysis.pipeline import _extract_note
+from jbrain.analysis.settle_owner import ANALYZER
 from jbrain.llm import LlmRouter
 from tests.eval.cases import Case, DbCommit
 
@@ -236,6 +237,9 @@ async def run_case_db(
             title=extraction.title,
             tags=extraction.tags,
             extractor="eval:db",
+            # The eval harness stands in for `integrate_note`, so it settles as the
+            # analyzer — its extractor string is as arbitrary as the live one.
+            settle_owner=ANALYZER,
             dropped_facts=extraction.dropped_facts,
         )
 

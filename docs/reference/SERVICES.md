@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-09-04
+> **Status:** Living · **Last verified:** 2026-09-09 — the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -172,6 +172,7 @@ Personas (`backend/src/jbrain/agent/agents.py`, each a `.prompt` sidecar); an
 | **teacher** | Socratic tutor | No tools, no retrieval. |
 | **jerv** | Sandboxed web chatbot (the approved web-egress exception) | Web + weather/hurricane + image/media + `spawn_subagent` + host metrics. **No KB.** |
 | **archivist** | Gmail triage/organizer | `gmail_*` + an owner-only cross-session memory. **No KB**; present only when Gmail is configured. |
+| **note_ingest** | The note conversation — a captured note as turn 0, opened by the `note_converse` action. Never picked by the owner, and now enforced: `ENGINE_ONLY_PERSONAS` keeps it out of `OWNER_AGENTS`, so the session/task routes 422 it. Its threads are listed on the PWA's Full Brain tab | Six, by a closed allowlist (never the curator wildcard): `resolve_entity` + `assert_fact` bound to the one note, `ask_owner`, and `find_entity` / `read_entity` / `current_time`. **KB read** narrowed to `(note_domain, 'general')`. |
 | **intake** | Guided-intake interviewer, run by a **non-owner** | **No tools, no KB** — capture is the server's job. |
 | research / review / summarize | The closed sub-agents `jerv` can spawn | Web-only or no tools; always leaves. |
 | research_scout / research_fetch / research_deep | The deep-research gather tiers (scout searches only, fetch opens only, deep may decompose one sub-fan) | Web-only; always leaves. |

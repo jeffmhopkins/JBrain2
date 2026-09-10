@@ -49,7 +49,15 @@ ChunkResolver = Callable[[str], str]  # "page N" -> chunk_id
 
 @dataclass(frozen=True)
 class FirewallCatch:
-    """A fact held out of the graph by the Layer-2 guard (§3.6) — never committed."""
+    """A fact held out of the graph by the Layer-2 guard (§3.6) — never committed.
+
+    Records WHAT was caught and WHERE (the page anchor; the card pairs it with the
+    attachment id, and those two locate the page durably across a re-ingest, which
+    re-mints chunk rows). It deliberately does NOT retain the fact's `statement` or
+    `value_json`: the caught value is whereabouts the guard exists to keep out of the
+    health domain, and the review card filed from this catch lives in that same
+    domain — carrying the value there would re-plant exactly what was held out.
+    """
 
     entity_kind: str
     predicate: str
@@ -436,10 +444,10 @@ def lower_parse_result(
     (including a facility transfer's segments) and orphan portal observations share
     the intent, so `partOfEncounter`/`hasObservation` refs resolve intra-intent.
 
-    One intent per note — not per grouping unit — because the shipped `_apply`
-    reconciles the whole note (it retracts facts a re-apply doesn't re-assert,
-    pipeline.py's touched-set sweep), so a second per-unit apply on the same note
-    would retract the first unit's facts. The plan's §6.6 per-unit transaction
+    One intent per note — not per grouping unit — because the shipped write path
+    settles the whole note (`settle_note` retracts facts a re-apply doesn't
+    re-assert, pipeline.py's touched-set sweep), so a second per-unit apply on the
+    same note would retract the first unit's facts. The plan's §6.6 per-unit transaction
     isolation (crash-resumability at 216-page scale) is a follow-on that needs
     `apply_intent` to support incremental note commits; for correctness one intent
     per note is right.
