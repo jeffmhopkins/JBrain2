@@ -36,7 +36,7 @@ from sqlalchemy import select
 
 from jbrain.agent.graphwritetools import NoteGraphWriter, NoteTarget
 from jbrain.agent.loop import ToolContext, ToolOutput
-from jbrain.analysis.converse import ledger_rows
+from jbrain.analysis.clarify import ledger_rows
 from jbrain.analysis.entities import normalize_alias
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session

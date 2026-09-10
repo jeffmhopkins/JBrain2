@@ -601,7 +601,7 @@ async def test_the_reply_turn_closes_the_thread_it_reopened(
     await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
         {"question": QUESTION}, _ctx(owner, session_id)
     )
-    await record_owner_reply(
+    reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
         owner,
@@ -611,7 +611,12 @@ async def test_the_reply_turn_closes_the_thread_it_reopened(
     )
 
     await close_owner_reply(
-        maker, owner, session_id=session_id, agent=NOTE_CONVERSE_AGENT, stop_reason="end_turn"
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="end_turn",
+        reopened=reply is not None,
     )
 
     state, _ = await _state(maker, owner, session_id)
@@ -628,7 +633,7 @@ async def test_a_reply_turn_that_asked_again_is_left_waiting(
     session_id = await _conversation(maker, owner, note_id)
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
     await handler({"question": QUESTION}, _ctx(owner, session_id))
-    await record_owner_reply(
+    reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
         owner,
@@ -639,7 +644,12 @@ async def test_a_reply_turn_that_asked_again_is_left_waiting(
     await handler({"question": "Which running club?"}, _ctx(owner, session_id))
 
     await close_owner_reply(
-        maker, owner, session_id=session_id, agent=NOTE_CONVERSE_AGENT, stop_reason=AWAITING_OWNER
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason=AWAITING_OWNER,
+        reopened=reply is not None,
     )
 
     state, _ = await _state(maker, owner, session_id)
@@ -660,7 +670,7 @@ async def test_a_reply_turn_that_died_releases_the_note(
     await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
         {"question": QUESTION}, _ctx(owner, session_id)
     )
-    await record_owner_reply(
+    reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
         owner,
@@ -670,8 +680,55 @@ async def test_a_reply_turn_that_died_releases_the_note(
     )
 
     await close_owner_reply(
-        maker, owner, session_id=session_id, agent=NOTE_CONVERSE_AGENT, stop_reason="disconnected"
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="disconnected",
+        reopened=reply is not None,
     )
 
     state, _ = await _state(maker, owner, session_id)
     assert state == "failed"
+
+
+async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The close needs a POSITIVE signal, not a `running` state.
+
+    A conversation is `running` for the whole unattended pass — up to
+    `NOTE_TURN_WALL_CLOCK`, 30 minutes — and `/chat`'s busy guard counts only the API's
+    own live turns, so nothing stops the owner opening the thread and typing while the
+    worker's pass is mid-flight. `record_owner_reply` correctly declines (the thread is
+    not waiting on anything, so there is no question to pair the message with), and the
+    close must decline with it: settling here would declare a LIVE pass finished before
+    its `_record` wrote a ledger row, and the settle behind the close would then sweep
+    the note against an empty ledger. It also left the worker's own `set_state` raising
+    `InvalidStateTransition` into a job retry, which opens a second thread for the note.
+    """
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)  # opens `running`
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="just a thought while you read",
+    )
+    assert reply is None, "nothing was waiting, so nothing was answered"
+
+    closed = await close_owner_reply(
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="end_turn",
+        reopened=reply is not None,
+    )
+
+    assert closed is None, "the chat turn ended a pass it had no part in"
+    state, _ = await _state(maker, owner, session_id)
+    assert state == "running"

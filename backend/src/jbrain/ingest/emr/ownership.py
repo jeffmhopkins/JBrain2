@@ -11,15 +11,25 @@ not the model. Two reasons, and both are mechanical rather than stylistic:
   one without an `enum`-shaped vocabulary the sidecars may not carry (constraint 8). A
   lab value the model wrote is therefore a lab value the lifecycle cannot supersede.
 - **`settle_note` is whole-note** (constraint 6), and the importer is the writer that
-  settles this note. That reason is PROSPECTIVE, not live: the conversation's write path
-  is `commit_facts` only (`agent/graphwritetools.py`) and calls `settle_note` nowhere, so
-  the CONVERSATION adds no sweep of its own today (`integrate_note` and `emr_parse` each
-  still settle, which is the separate, older race the plan records as open in W4 — it is
-  not this predicate's to close). It becomes load-bearing the moment the
-  plan's outstanding precondition lands — the recorder moved into tool dispatch and
-  `settle_note(touched=writes().facts)` wired behind it — at which point two writers on
-  one note would be two whole-note sweeps, each retracting the other's facts. The
-  `fhir_status` reason above is the one that holds today, and it is sufficient on its own.
+  settles this note. That reason used to be filed here as PROSPECTIVE, on the reasoning
+  that the conversation's write path is `commit_facts` only
+  (`agent/graphwritetools.py`) and calls `settle_note` nowhere. That reasoning was wrong
+  in the way that matters: a producer does not need a sweep of its own to LOSE, only a
+  co-writer that has one — and `integrate_note` and `emr_parse` both had one, each
+  retracting the other's facts on every settle of the note. That is fixed rather than
+  avoided: the sweep is scoped by `settle_owners` (`analysis/settle_owner.py`,
+  docs/plans/SETTLE_OWNERSHIP.md S1), so each producer releases only its own claim and a
+  row survives while any producer still asserts it — a co-writer on one note is no longer
+  a data-loss condition. The conversation has NO sweep — one was built and dropped
+  (SETTLE_OWNERSHIP.md S3) — so it retracts nothing on any note, this one included.
+  Worth knowing what that removed, because this predicate was one of the reasons: it reads
+  note state that MUTATES, so a health `Records` note whose body ingests before its PDF
+  arrives is writable for one conversation and stripped of every write verb for the next,
+  and a sweep reading the second pass's empty ledger as "the note no longer says that"
+  retracted what the first one wrote. Deterministically, with no model variance anywhere.
+  The `fhir_status` reason
+  above is what keeps the narrowing in place regardless, and it is sufficient on its own
+  — it is a lifecycle the model-facing verbs cannot express, not a sweep collision.
 
 So the note conversation over an EMR note runs with NO graph-write verb — see
 `agents.narrow_for_emr`, which is applied on the unattended pass AND on the owner's

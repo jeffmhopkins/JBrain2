@@ -22,12 +22,12 @@ from jbrain.agent.contracts import (
     ToolResultEvent,
 )
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
+from jbrain.analysis.clarify import ledger_rows
 from jbrain.analysis.converse import (
     NOTE_CONVERSE_AGENT,
     NOTE_CONVERSE_KIND,
     NOTE_CONVERSE_SPEC,
     framed_note,
-    ledger_rows,
 )
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter

@@ -55,17 +55,33 @@ from jbrain.agent.agents import (
     agent_for,
     agent_for_owner_reply,
 )
-from jbrain.agent.contracts import DoneEvent, EntityRef, TextDelta, ToolCallEvent, ToolResultEvent
-from jbrain.agent.loop import AgentResult
+from jbrain.agent.asktools import ASK_OWNER_TOOL, build_ask_owner_handlers
+from jbrain.agent.contracts import (
+    Domain,
+    DoneEvent,
+    EntityRef,
+    FactWriteRef,
+    TextDelta,
+    ToolCallEvent,
+    ToolResultEvent,
+)
+from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import reply_profile_for_session
+from jbrain.analysis.clarify import (
+    close_owner_reply,
+    record_reply_writes,
+    reply_profile_for_session,
+)
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
+from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
+from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.note_conversation import (
+    AWAITING_OWNER,
     NOTE_TURN_WALL_CLOCK,
     STALE_CONVERSATION,
     NoteConversationRepo,
@@ -157,6 +173,11 @@ def _runner(
         transcript=transcript or AgentTranscript(maker),
         executor=executor,
         owner_principal_id=_const(owner.principal_id),
+        # Wired, so the end-of-pass settle (S2/S3) actually RUNS in these tests rather
+        # than being skipped for want of a pipeline — which is the only way the
+        # absences pinned below (no `note_analysis` row, no `integrated` flip) mean
+        # anything. It makes no model call: the settle is deterministic SQL.
+        pipeline=AnalysisPipeline(maker, LlmRouter({"xai": FakeLlmClient()}, {})),
         **override,
     )
 
@@ -948,24 +969,21 @@ async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
 ) -> None:
     """The W5a gate, pinned: `settled` is the CONVERSATION's state, never the note's.
 
-    The conversation's write path is `commit_facts` only (`agent/graphwritetools.py`)
-    and calls `settle_note` nowhere, so a finished pass leaves the note
-    `pending_integration` and writes no `note_analysis` row. `integrate_note` is
-    therefore still the sole producer of both, and of everything else `settle_note`
-    owns — the mention reconcile, the declared-alias sweep, the retraction of facts a
-    re-extraction dropped and the chain repair behind it, the stale-ambiguity and
-    truncation cards, the entity reprojection, the corroboration promotion.
+    S2 gave the conversation the settle's TAIL and this test SURVIVED it, which is the
+    point of keeping it. The pass now ends by calling `settle_tail`, so its writes finally
+    project (`analysis/clarify.settle_conversation`, and the runner above is wired with a
+    real pipeline so that call genuinely runs here). It calls no `sweep_note` — a sweep
+    for this producer was built and dropped (SETTLE_OWNERSHIP.md S3) — and no
+    `stamp_analysis`, because the conversation has no title or tags verb and the stamp's
+    `on_conflict_do_update` is unconditional; and nothing anywhere flips
+    `integration_state`, which `integrate_note` still owns alone.
 
-    Constraint 6 is why it is not merely unwired: `ConversationWrites.facts` is filled
-    by the unattended pass and EMPTY for the owner's reply turn (an ordinary /chat turn
-    that reaches `NoteConversationRepo` nowhere), so wiring
-    `settle_note(touched=writes().facts)` today would retract every unpinned fact the
-    owner's own reply just added. The plan's precondition — move the recorder into the
-    tool dispatch, or scope the sweep to the unattended pass — is unlanded.
-
-    So this asserts an ABSENCE on purpose. Retiring `integrate_note` while it holds
-    strands the corpus at `pending_integration`, which `backfill_pending_integration`
-    and the workflow reconciler both key on, with no whole-note sweep left at all.
+    Both remaining absences are UNOWNED preconditions of retiring `integrate_note`
+    (docs/plans/SETTLE_OWNERSHIP.md, preconditions 3 and 4), not oversights: a title has
+    no second source yet, and a thread that can park on `ask_owner` for days cannot be
+    what declares a note integrated. So this asserts an ABSENCE on purpose. Retiring
+    `integrate_note` while it holds strands the corpus at `pending_integration`, which
+    `backfill_pending_integration` and the workflow reconciler both key on.
     """
     note_id = await _note(maker, owner, "Kaiya started a new medication today.")
 
@@ -989,3 +1007,278 @@ async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
         ).scalar_one()
     assert state == "pending_integration"
     assert analyzed == 0
+
+
+# --- W4c/1: the ledger records BOTH turn paths --------------------------------
+
+
+def _write_step(
+    acc: TranscriptAccumulator,
+    *,
+    call_id: str,
+    name: str,
+    fact_id: str,
+    entity_id: str,
+    domain: Domain,
+) -> None:
+    """One successful graph write, through the REAL accumulator, with the chips the
+    write path actually surfaces: `entities` from the resolve and `facts` from the
+    commit. Building the step dict by hand would test the fold against a shape nothing
+    produces."""
+    acc.feed(ToolCallEvent(id=call_id, name=name, arguments={"subject": "Kaiya"}))
+    acc.feed(
+        ToolResultEvent(
+            tool_call_id=call_id,
+            ok=True,
+            summary="wrote 1 fact",
+            entities=[EntityRef(entity_id=entity_id, label="Kaiya", domain=domain)],
+            facts=[
+                FactWriteRef(
+                    fact_id=fact_id,
+                    label="Kaiya takes amoxicillin.",
+                    domain=domain,
+                    outcome="written",
+                    status="written",
+                    predicate="medication",
+                    value="amoxicillin",
+                )
+            ],
+        )
+    )
+
+
+async def _reply_turn(
+    maker: async_sessionmaker[AsyncSession],
+    owner: SessionContext,
+    session_id: str,
+    steps: list[dict[str, Any]],
+    *,
+    answer: str = "Noted.",
+) -> str:
+    """One owner reply turn as `/chat` runs it: the transcript first (the `done` path),
+    then the ledger in the `finally`, both stamped with the same run id. Returns the run
+    id so a caller can name the assistant turn the rows must bind to.
+
+    The run row is REAL (`agent_turns.run_id` is a foreign key into `app.runs`), so the
+    binding is exercised against the same shape `/chat` produces rather than a uuid that
+    could never have been stamped on a turn."""
+    run_id = await AgentRunLog(maker).start(
+        owner, session_id=session_id, prompt_version="reply-turn-test"
+    )
+    await AgentTranscript(maker).record_exchange(
+        owner,
+        session_id=session_id,
+        run_id=run_id,
+        user_text="It was amoxicillin.",
+        assistant_text=answer,
+        tools=steps,
+        reasoning="",
+    )
+    assert await record_reply_writes(
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        run_id=run_id,
+        tool_steps=steps,
+    )
+    return run_id
+
+
+async def test_the_ledger_unions_the_unattended_pass_and_the_owners_reply_turn(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The property constraint 6 actually needs, and the one nothing pinned before W4c/1.
+
+    `settle_note` retracts every non-pinned fact of the note that is NOT in `touched`,
+    and `touched` is `NoteConversationRepo.writes().facts`. The owner's reply is an
+    ordinary `/chat` turn, so before this the reply's writes reached the graph and the D3
+    chip and never the ledger — wiring the sweep would have retracted exactly the facts
+    the owner's own answer added. So the assertion is the UNION, over both turn paths of
+    one conversation, not "the reply recorded something"."""
+    pass_fact, pass_entity = str(uuid.uuid4()), str(uuid.uuid4())
+    reply_fact, reply_entity = str(uuid.uuid4()), str(uuid.uuid4())
+
+    pass_acc = TranscriptAccumulator()
+    _write_step(
+        pass_acc,
+        call_id="p1",
+        name="assert_fact",
+        fact_id=pass_fact,
+        entity_id=pass_entity,
+        domain="health",
+    )
+    pass_acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    await _runner(maker, owner, FakeTurn(tools=pass_acc.tool_steps())).note_converse(
+        {"note_id": note_id}
+    )
+    sid = (await _conversation(maker, owner, note_id))[0].sid
+
+    reply_acc = TranscriptAccumulator()
+    _write_step(
+        reply_acc,
+        call_id="r1",
+        name="assert_fact",
+        fact_id=reply_fact,
+        entity_id=reply_entity,
+        domain="general",
+    )
+    reply_acc.feed(DoneEvent(stop_reason="end_turn"))
+    reply_run = await _reply_turn(maker, owner, sid, reply_acc.tool_steps())
+
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        writes = await repo.writes(s, sid)
+        calls = await repo.tool_calls(s, sid)
+    assert writes.facts == {uuid.UUID(pass_fact), uuid.UUID(reply_fact)}
+    assert writes.entities == {uuid.UUID(pass_entity), uuid.UUID(reply_entity)}
+    assert writes.domains == {"health", "general"}
+
+    # Two turns, two rows, and the reply's row is bound to the REPLY's assistant turn —
+    # not to the pass's, and not left NULL. The D3 chip renders a write under the
+    # exchange that made it, and a note session holds more than one the moment the owner
+    # answers.
+    assert len(calls) == 2
+    async with scoped_session(maker, owner) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT c.id::text AS call_id, t.run_id::text AS run"
+                    " FROM app.note_conversation_tool_calls c"
+                    " JOIN app.agent_turns t ON t.id = c.turn_id"
+                    " WHERE c.session_id = CAST(:i AS uuid) AND t.role = 'assistant'"
+                ),
+                {"i": sid},
+            )
+        ).all()
+    bound = {r.call_id: r.run for r in rows}
+    assert len(bound) == 2
+    assert bound[str(calls[1].id)] == reply_run
+    assert bound[str(calls[0].id)] != reply_run
+
+
+async def test_a_reply_turn_that_asks_again_records_one_row_not_two(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`ask_owner` self-records inside the transaction that flips the state, because the
+    owner can answer before any post-turn recorder runs. The turn seam then sees that
+    same call again on `acc.tool_steps()`, and `SELF_RECORDED_TOOLS` is what keeps it to
+    one row — a duplicate is not noise, it is a second question the reply path could read
+    back as the open one after the first was rolled back."""
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    sid = await _session(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(
+            s, session_id=sid, note_id=note_id, body_sha="sha-for-the-reply-turn"
+        )
+
+    question = "Which Kaiya do you mean?"
+    out = await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
+        {"question": question},
+        ToolContext(session=owner, scopes=("general",), agent_session_id=sid),
+    )
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="a1", name=ASK_OWNER_TOOL, arguments={"question": question}))
+    acc.feed(ToolResultEvent(tool_call_id="a1", ok=True, summary=str(out)))
+    acc.feed(DoneEvent(stop_reason=AWAITING_OWNER))
+    await _reply_turn(maker, owner, sid, acc.tool_steps())
+
+    async with scoped_session(maker, owner) as s:
+        calls = await NoteConversationRepo().tool_calls(s, sid)
+    assert [c.name for c in calls] == [ASK_OWNER_TOOL]
+    # The row is the HANDLER's, written with the question as `detail` — which is what
+    # `latest_question` reads to build the clarification block.
+    assert calls[0].detail == question
+
+
+async def test_a_ledger_that_cannot_be_written_degrades_the_close_rather_than_the_turn(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """What a suppressed recorder failure costs, and what pays for it.
+
+    The owner's turn already happened and its writes already committed in their own
+    transactions, so raising here would neither undo them nor recover the row — it would
+    only 500 a turn that worked. But an unrecorded write is a fact the sweep would
+    retract, so the failure is not free either: `record_reply_writes` reports it, and
+    `api/agent.py` closes the conversation on `record_failed` instead of the turn's own
+    stop reason, landing it `failed` — the one state constraint 6's sweep does not run
+    on. Exactly what the unattended pass does when its own `_record` breaks."""
+    orphan = str(uuid.uuid4())
+    acc = TranscriptAccumulator()
+    _write_step(
+        acc,
+        call_id="x1",
+        name="assert_fact",
+        fact_id=str(uuid.uuid4()),
+        entity_id=str(uuid.uuid4()),
+        domain="general",
+    )
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    # No conversation row behind this session: the insert hits the FK and the recorder
+    # swallows it. The absence of a raise IS the assertion — the owner's turn stands.
+    assert (
+        await record_reply_writes(
+            maker,
+            owner,
+            session_id=orphan,
+            agent=NOTE_CONVERSE_AGENT,
+            run_id=str(uuid.uuid4()),
+            tool_steps=acc.tool_steps(),
+        )
+        is False
+    )
+
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    sid = await _session(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(s, session_id=sid, note_id=note_id, body_sha="sha")
+    await close_owner_reply(
+        maker,
+        owner,
+        session_id=sid,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="record_failed",
+        # This turn is the one that re-opened the thread — the state alone is not a
+        # licence to close, since the worker's own pass is also `running`.
+        reopened=True,
+    )
+    async with scoped_session(maker, owner) as s:
+        conversation = await NoteConversationRepo().get(s, sid)
+    assert conversation is not None and conversation.state == "failed"
+
+
+async def test_a_reply_turn_on_someone_elses_persona_records_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The gate is the persona, the same one `close_owner_reply` uses. Every ordinary
+    /chat turn reaches this call site, and a curator turn that happened to run
+    `find_entity` must not open a ledger row against a conversation it has nothing to do
+    with."""
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    sid = await _session(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(s, session_id=sid, note_id=note_id, body_sha="sha")
+
+    acc = TranscriptAccumulator()
+    _write_step(
+        acc,
+        call_id="c1",
+        name="assert_fact",
+        fact_id=str(uuid.uuid4()),
+        entity_id=str(uuid.uuid4()),
+        domain="general",
+    )
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+    assert await record_reply_writes(
+        maker,
+        owner,
+        session_id=sid,
+        agent="curator",
+        run_id=str(uuid.uuid4()),
+        tool_steps=acc.tool_steps(),
+    )
+    async with scoped_session(maker, owner) as s:
+        assert await NoteConversationRepo().tool_calls(s, sid) == []

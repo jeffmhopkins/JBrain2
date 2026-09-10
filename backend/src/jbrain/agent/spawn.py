@@ -1172,8 +1172,26 @@ class SpawnService:
             # [FAILED] so the parent doesn't synthesize over an empty block. (AgentResult
             # never carries stop_reason="error"; an exception-failed child returns above.)
             text = result.text.strip()
-            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted", "max_steps")
-            hit_cap = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
+            # `max_tokens` joins both lists as a CAP, not a fault. It is the provider's
+            # output ceiling doing what the step and cost caps do — cutting a child that
+            # was still producing — so a length-cut child that nonetheless synthesized a
+            # real answer is complete-but-deep like a budget-cut one, and only a
+            # length-cut child with NO text is truncated. `agent/loop._round_stop` started
+            # reporting it here rather than laundering it into `end_turn`; without this
+            # line that fix would have turned every usable length-cut child red.
+            _clean_stops = (
+                "end_turn",
+                "budget",
+                "tree_budget_exhausted",
+                "max_steps",
+                "max_tokens",
+            )
+            hit_cap = result.stop_reason in (
+                "budget",
+                "tree_budget_exhausted",
+                "max_steps",
+                "max_tokens",
+            )
             ok = bool(text) and result.stop_reason in _clean_stops
             # "Truncated" (the synthesis card's red ✕) is reserved for a child a cap cut
             # off WITHOUT a usable answer. A capped child that still synthesized a real

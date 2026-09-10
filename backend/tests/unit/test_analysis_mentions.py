@@ -19,6 +19,7 @@ import pytest
 from jbrain.analysis.entities import ResolvedEntity
 from jbrain.analysis.extraction import ExtractedMention, Extraction
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
+from jbrain.analysis.settle_owner import ANALYZER
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.models import EntityMention
@@ -98,6 +99,7 @@ def _row(
         link_method=link_method,
         confidence=confidence,
         domain_code="general",
+        settle_owners=[ANALYZER],
     )
 
 
@@ -111,6 +113,7 @@ async def _upsert(
         _NOTE,
         "general",
         [_ChunkRef(id=_CHUNK, text="Cleo and Ada were here.")],
+        ANALYZER,
     )
 
 
@@ -249,24 +252,48 @@ async def test_unresolved_or_unlocatable_mention_writes_nothing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_spares_the_asserted_ids() -> None:
+async def test_reconcile_releases_this_producers_claim_and_spares_the_asserted_ids() -> None:
+    """The reconcile no longer deletes on sight: it RELEASES this producer's claim on
+    the note's rows it did not assert, and only what is left unclaimed goes."""
     session = _StubSession()
     kept = uuid.uuid4()
 
-    await _pipeline()._reconcile_mentions(cast(Any, session), _NOTE, {kept})
+    await _pipeline()._reconcile_mentions(cast(Any, session), _NOTE, {kept}, ANALYZER)
 
     sql = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
-    assert "DELETE FROM app.entity_mentions" in sql
+    assert "UPDATE app.entity_mentions" in sql
+    assert "array_remove" in sql
     assert _hex(_NOTE) in sql and _hex(kept) in sql
     assert "NOT IN" in sql.upper()
+    # Nothing came back unclaimed, so no DELETE was issued at all.
+    assert len(session.executed) == 1
 
 
 @pytest.mark.asyncio
-async def test_reconcile_with_nothing_asserted_clears_the_note() -> None:
+async def test_reconcile_with_nothing_asserted_releases_every_row_it_claims() -> None:
     session = _StubSession()
 
-    await _pipeline()._reconcile_mentions(cast(Any, session), _NOTE, set())
+    await _pipeline()._reconcile_mentions(cast(Any, session), _NOTE, set(), ANALYZER)
 
     sql = str(session.executed[0].compile(compile_kwargs={"literal_binds": True}))
     assert "NOT IN" not in sql.upper()
     assert _hex(_NOTE) in sql
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletes_only_the_rows_no_producer_still_claims() -> None:
+    """The half the claim set exists for: a span the CONVERSATION also anchors survives
+    the analyzer letting go, and only the row whose set emptied is deleted."""
+    orphaned = _row()
+    orphaned.settle_owners = []  # what the release's RETURNING hands back
+    shared = _row(entity_id=_OTHER)
+    shared.settle_owners = ["conversation"]
+    session = _StubSession([orphaned, shared])
+
+    await _pipeline()._reconcile_mentions(cast(Any, session), _NOTE, set(), ANALYZER)
+
+    assert len(session.executed) == 2
+    sql = str(session.executed[1].compile(compile_kwargs={"literal_binds": True}))
+    assert "DELETE FROM app.entity_mentions" in sql
+    assert _hex(orphaned.id) in sql
+    assert _hex(shared.id) not in sql

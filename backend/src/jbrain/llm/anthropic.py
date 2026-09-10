@@ -6,8 +6,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 import httpx
+import structlog
 
-from jbrain.llm.errors import LlmBadResponseError
+from jbrain.llm.errors import LlmBadResponseError, LlmStreamTruncatedError
 from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
@@ -26,6 +27,8 @@ from jbrain.llm.types import (
     UserMessage,
     parse_json_payload,
 )
+
+log = structlog.get_logger()
 
 API_VERSION = "2023-06-01"
 DEFAULT_TIMEOUT = 120.0
@@ -285,6 +288,15 @@ class AnthropicClient:
         input_tokens = 0
         output_tokens = 0
         stop: StopReason = "end_turn"
+        # Whether the provider ever told us the turn was over. The default above is a
+        # LIE until this flips, and the deltas that did arrive look identical either way
+        # — which is exactly the shape `LlmStreamTruncatedError` documents, and which the
+        # openai-compatible adapter has guarded since it was found live. This route had
+        # no such guard: a stream cut mid-generation yielded a well-formed `LlmTurn`
+        # carrying a fragment, `stop_reason="end_turn"`, and every caller read it as "the
+        # model chose to stop". For the note conversation that reads as `settled`, which
+        # is the one state its whole-note sweep fires on.
+        saw_stop = False
         async for event in events:
             kind = event.get("type")
             if kind == "message_start":
@@ -311,8 +323,24 @@ class AnthropicClient:
             elif kind == "message_delta":
                 reason = event.get("delta", {}).get("stop_reason")
                 if reason:
+                    saw_stop = True
                     stop = _ANTHROPIC_STOP.get(reason, "end_turn")
                 output_tokens = int(event.get("usage", {}).get("output_tokens", output_tokens))
+        if not saw_stop:
+            # Body-free log, per retry.py's rule: the SHAPE of what survived is the
+            # diagnostic, never its text. Refused rather than yielded, because the round
+            # IS retryable and a fragment wearing a completed turn's clothes is not.
+            log.warning(
+                "llm.stream_truncated",
+                provider=self.provider,
+                model=model,
+                text_chars=sum(len(p) for p in text_parts),
+                tool_calls=len(tools_by_index),
+            )
+            raise LlmStreamTruncatedError(
+                f"{self.provider} stream ended without a stop_reason "
+                f"({len(tools_by_index)} partial tool call(s) discarded)"
+            )
         tool_calls = tuple(
             ToolCall(id=buf["id"], name=buf["name"], arguments=_parse_tool_args(buf["json"]))
             for _, buf in sorted(tools_by_index.items())

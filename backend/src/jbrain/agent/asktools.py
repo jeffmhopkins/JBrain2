@@ -13,9 +13,10 @@ What this module owns is the mechanics, and there are exactly three:
    audit row and wrong for this one: the reply path reads the question back out of the
    ledger to compose the clarification block, so a question that exists only in a
    post-turn write is a question the owner can be waiting on while nothing knows what it
-   was. This is the first piece of the recorder move W2 left open ("moving the recorder
-   into the tool dispatch"); `converse.ledger_rows` skips what was self-recorded here so
-   the two do not double up.
+   was. It is the one tool that records inside its own transaction rather than at the
+   turn seam every other call is recorded at (`clarify.record_turn_writes`, which both
+   turn paths share); `clarify.ledger_rows` skips `SELF_RECORDED_TOOLS` so the two do not
+   double up — including on a REPLY turn that ends by asking again.
 
 2. **The conversation goes to `waiting_on_owner`.** That state is the notes tab's query
    (D4/D5), it holds the note's one live slot so no second pass starts over a note whose
