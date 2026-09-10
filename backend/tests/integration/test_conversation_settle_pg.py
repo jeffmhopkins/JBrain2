@@ -431,6 +431,70 @@ async def test_a_second_pass_over_an_UNCHANGED_note_retracts_nothing(
     assert row.settle_owners == [CONVERSATION]
 
 
+async def test_two_sessions_on_one_generation_spare_each_others_facts(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The union's DISTINGUISHING case, and the one nothing else here reaches.
+
+    Every other pin in this file has a second session with an empty ledger, so the
+    `empty_generation_ledger` refusal catches it and the test passes even with `touched`
+    reverted to a per-session `writes()`. Reverting the union would therefore have kept
+    the whole suite green while re-opening exactly the loss it closed.
+
+    So: TWO sessions over the same text, the second one non-empty. The re-ingest that
+    opened it changed no text — an attachment landing, which `analysis/converse.py` names
+    as ordinary — and this pass writes a fact of its own. The release runs (nothing
+    refuses it, the ledger is not empty), and it must still spare the FIRST session's
+    fact, because both sessions read the same note."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    first_fact = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs)
+    await _settle(maker, owner, first)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+
+    # A second conversation over the SAME body — no rewrite, so the shas match — that
+    # writes something of its own, which is what takes the empty-ledger refusal out of
+    # play and leaves only the union standing between the release and the first fact.
+    second = await _conversation(maker, owner, note_id)
+    writer = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    surface = f"Marisol Quenby {uuid.uuid4().hex[:8]}"
+    resolved = await writer.resolve_entity(
+        {"entities": [{"surface": surface, "kind": "person"}]}, ctx
+    )
+    asserted = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "occupation",
+                    "object": "dentist",
+                    "statement": f"{surface} is a dentist.",
+                    "when": "",
+                    "quote": "Booked it this morning",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(resolved, ToolOutput) and isinstance(asserted, ToolOutput)
+    assert len(asserted.facts) == 1, str(asserted)
+    await _ledger(maker, owner, second, [resolved, asserted])
+
+    assert await _settle(maker, owner, second)
+
+    row = await _fact_row(maker, first_fact)
+    assert row.status == "active", (
+        "a second session on the same generation retracted the first session's fact"
+    )
+    assert row.settle_owners == [CONVERSATION]
+    assert (await _fact_row(maker, uuid.UUID(asserted.facts[0].fact_id))).status == "active"
+
+
 async def test_a_pass_with_no_write_verb_releases_nothing(
     maker,  # noqa: F811
     owner: SessionContext,
