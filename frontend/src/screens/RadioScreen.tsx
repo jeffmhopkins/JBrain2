@@ -31,6 +31,7 @@ import {
 } from "../aprsLog";
 import { AprsStations } from "../components/AprsStations";
 import { SdrRadiosTab } from "../components/SdrRadiosTab";
+import { SdrRecordingsTab } from "../components/SdrRecordingsTab";
 import { sessionFor, useSdrSession } from "../sdrSession";
 
 type Tab = "radios" | "aprs" | "recordings";
@@ -165,9 +166,7 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
         {tab === "radios" && (
           <SdrRadiosTab tick={tick} log={log} onOpenAprs={() => setTab("aprs")} />
         )}
-        {tab === "recordings" && (
-          <p className="radio-empty">Recordings arrive in a later wave. Nothing is stored yet.</p>
-        )}
+        {tab === "recordings" && <SdrRecordingsTab onOpenRadios={() => setTab("radios")} />}
       </div>
     </section>
   );

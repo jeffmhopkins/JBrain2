@@ -2,6 +2,7 @@
 // Mirrors the real API contract closely enough for UI work: idempotent
 // note creation, cursor pagination, multipart attachments, always-on auth.
 
+import type { SdrRecordingState } from "../sdrSession";
 import type {
   AppSettings,
   AttachmentExtract,
@@ -28,6 +29,8 @@ import type {
   ReviewItem,
   RunDetail,
   RunSummary,
+  SdrRecording,
+  SdrRecordingsPage,
   SearchHit,
   SearchMatch,
   SearchResult,
@@ -3120,11 +3123,269 @@ function videoListItem(v: VideoDetail) {
   };
 }
 
+// --- SDR recordings (docs/plans/SDR_RECORDING_PLAN.md; binding mocks
+// docs/mocks/recording/a-tape-deck.html and d-trim-sheet.html) ------------------------
+//
+// 64 kbps mono MP3 is what the sidecar produces (deploy/sdr/listen.py
+// AUDIO_BITRATE_BPS), so every size in here is real arithmetic rather than a plausible
+// number: 8 kB/s, 480 kB/minute, 28.8 MB/hour.
+//
+// The audio BYTES are deliberately absent. `sdrRecordingUrl` is an element `src`, and an
+// <audio src> never passes through this transport — the same reason the generated-image
+// fixtures above need their own data: URIs. Playback is a live-box affordance; what these
+// fixtures exist to exercise is the library, the trim arithmetic and the four states.
+const MOCK_BPS = 8000;
+
+/** A deterministic level envelope with real silence at both ends — which is what makes a
+ *  trim worth offering at all: most of a capture is the part before it started. */
+function mockPeaks(seedFrom: number, secs: number): number[] {
+  let seed = seedFrom * 9781 + 1;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const n = Math.max(24, Math.min(240, Math.round(secs * 2)));
+  const lead = 0.14 + (seedFrom % 3) * 0.06;
+  const tail = 0.1 + (seedFrom % 2) * 0.09;
+  return Array.from({ length: n }, (_unused, i) => {
+    const t = i / n;
+    if (t < lead || t > 1 - tail) return Number((0.03 + rnd() * 0.05).toFixed(3));
+    const env = Math.min(1, (t - lead) * 9) * Math.min(1, (1 - tail - t) * 9);
+    return Number(Math.max(0.06, (0.34 + rnd() * 0.62) * env).toFixed(3));
+  });
+}
+
+function mockRecording(
+  seed: number,
+  minutesAgo: number,
+  frequencyHz: number,
+  mode: string,
+  bandwidthHz: number,
+  capturedS: number,
+  transcript: string,
+  durationS = capturedS,
+): SdrRecording {
+  const started = new Date(Date.now() - minutesAgo * 60_000);
+  return {
+    id: `mock-rec-${seed}`,
+    started_at: started.toISOString(),
+    ended_at: new Date(started.getTime() + capturedS * 1000).toISOString(),
+    duration_s: durationS,
+    captured_s: capturedS,
+    frequency_hz: frequencyHz,
+    mode,
+    bandwidth_hz: bandwidthHz,
+    gain: "auto",
+    serial: "00000001",
+    bytes: Math.round(durationS * MOCK_BPS),
+    peaks: mockPeaks(seed, durationS),
+    transcript: transcript ? { text: transcript } : null,
+    transcribed_at: transcript ? started.toISOString() : null,
+  };
+}
+
+const MOCK_RECORDINGS: SdrRecording[] = [
+  mockRecording(
+    1,
+    12,
+    5_000_000,
+    "am",
+    6000,
+    42,
+    "At the tone, twenty-three hours forty-five minutes Coordinated Universal Time. Geophysical alert, solar flux one thirty-two, A index six, no storms observed.",
+  ),
+  mockRecording(
+    2,
+    190,
+    162_550_000,
+    "fm",
+    16_000,
+    186,
+    "A coastal flood advisory remains in effect until two AM Eastern time. Winds south fifteen to twenty knots becoming west after midnight. Seas three to five feet, subsiding late.",
+  ),
+  // Already trimmed: duration_s < captured_s is what makes the row say so, and what the
+  // header's "reclaimed by trimming" line is computed from.
+  mockRecording(
+    3,
+    260,
+    146_940_000,
+    "fm",
+    12_500,
+    27,
+    "That is a good copy, you are full quieting into the repeater. Seventy-three.",
+    10,
+  ),
+  mockRecording(
+    4,
+    1_500,
+    7_200_000,
+    "lsb",
+    2400,
+    415,
+    "Net control is standing by for check-ins. Any station with traffic or announcements for the net please come now.",
+  ),
+  mockRecording(
+    5,
+    1_900,
+    4_625_000,
+    "usb",
+    3100,
+    240,
+    "Buzzer. Repeating tone approximately twenty-five per minute. No voice heard during this capture.",
+  ),
+  // No transcript at all — R4 is deferred, so a row with nothing said is the ordinary
+  // case rather than an edge one.
+  mockRecording(6, 4_400, 121_500_000, "am", 8000, 19, ""),
+];
+
+/** What trimming has given back so far, from the rows themselves. Derived rather than
+ *  stored for the same reason the api derives "trimmed": a counter kept alongside the
+ *  audio is a counter that can drift away from it. */
+function mockReclaimed(): number {
+  return MOCK_RECORDINGS.reduce(
+    (total, r) => total + Math.max(0, Math.round((r.captured_s - r.duration_s) * MOCK_BPS)),
+    0,
+  );
+}
+
+function mockRecordingsPage(): SdrRecordingsPage {
+  const bytes = MOCK_RECORDINGS.reduce((total, r) => total + r.bytes, 0);
+  return {
+    recordings: [...MOCK_RECORDINGS]
+      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+      // `peaks` is STRIPPED here because the real list route omits it (400 floats a row
+      // would dwarf the response) and the trim sheet fetches it by id instead. A fixture
+      // that handed the waveform over with the list would make the one path that has to
+      // work on a real box the one path mock mode never exercises.
+      .map(({ peaks: _envelope, ...row }) => row),
+    usage: { bytes, count: MOCK_RECORDINGS.length, reclaimed_bytes: mockReclaimed() },
+  };
+}
+
+/** The api reports what the LIBRARY weighs; the disk it sits on comes from the host's
+ *  own metrics, which the recordings header reads separately. */
+function mockUsageOnly() {
+  return mockRecordingsPage().usage;
+}
+
+/** Which fixture state the recordings library serves. DESIGN.md implementation rule 4
+ *  makes default / empty / error / offline part of this screen's definition of done, and
+ *  the surface has no text input to hide a `degraded!` switch in — so it is read off the
+ *  dev server's own URL (`?sdr=empty`, `?sdr=error`, `?sdr=offline`), and off an explicit
+ *  `state=` on the request, which is how a test drives it. */
+function mockSdrState(explicit: string | null): string {
+  if (explicit) return explicit;
+  try {
+    return new URLSearchParams(window.location.search).get("sdr") ?? "default";
+  } catch {
+    return "default";
+  }
+}
+
+/** The capture in flight, or null — what `GET /sdr/status` carries so the Record button
+ *  can draw its elapsed time and running size off the one 1 Hz poll. */
+let mockCapture: { started_ms: number } | null = null;
+
+function mockRecordingState(): SdrRecordingState | null {
+  if (!mockCapture) return null;
+  const seconds = (Date.now() - mockCapture.started_ms) / 1000;
+  return {
+    started_at: new Date(mockCapture.started_ms).toISOString(),
+    seconds,
+    bytes: Math.round(seconds * MOCK_BPS),
+    // Where the capture BEGAN — the settings the row will carry, whatever the dial does
+    // between now and stop.
+    frequency_hz: 5_000_000,
+    mode: "am",
+    bandwidth_hz: 6000,
+    serial: "00000001",
+  };
+}
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
   const path = url.pathname;
   const method = (init?.method ?? "GET").toUpperCase();
+
+  // --- the radio's recordings. Exact /recordings wins before the /recordings/{id}
+  // prefixes, and /record (the switch) is a different route from /recordings (the list).
+  if (path === "/api/sdr/status" && method === "GET") {
+    // No lease is fabricated here: a session would start the live audio element against
+    // /api/sdr/audio, which is a real stream this transport never sees. What the status
+    // is here FOR is the capture in flight.
+    return json({
+      available: true,
+      listening: null,
+      sessions: [],
+      recording: mockRecordingState(),
+    });
+  }
+  if (path === "/api/sdr/record" && method === "POST") {
+    const on = url.searchParams.get("on") === "true";
+    if (on) {
+      mockCapture ??= { started_ms: Date.now() };
+      return json({ recording: mockRecordingState() });
+    }
+    const running = mockCapture;
+    mockCapture = null;
+    if (!running) return json({ recording: null });
+    const secs = Math.max(1, Math.round((Date.now() - running.started_ms) / 1000));
+    const saved = mockRecording(Date.now() % 997, 0, 5_000_000, "am", 6000, secs, "");
+    MOCK_RECORDINGS.unshift(saved);
+    return json({ recording: null, saved });
+  }
+  if (path === "/api/sdr/recordings" && method === "GET") {
+    const state = mockSdrState(url.searchParams.get("state"));
+    // A real offline fetch REJECTS; it does not answer with a status. Anything that
+    // renders a network failure has to survive that, not just a 5xx body.
+    if (state === "offline") throw new TypeError("Failed to fetch");
+    if (state === "error") return json({ detail: "the recordings table is unreadable" }, 500);
+    if (state === "empty") {
+      return json({ recordings: [], usage: { bytes: 0, count: 0, reclaimed_bytes: 0 } });
+    }
+    return json(mockRecordingsPage());
+  }
+  const oneRec = path.match(/^\/api\/sdr\/recordings\/([^/]+)$/);
+  if (oneRec && method === "GET") {
+    const row = MOCK_RECORDINGS.find((r) => r.id === decodeURIComponent(oneRec[1] ?? ""));
+    if (!row) return json({ detail: "no recording with that id" }, 404);
+    // The by-id route is the ONLY one that carries `peaks` — the list omits it on
+    // purpose — so the fixture has to differ from the list's rows here, or a sheet that
+    // never fetched its waveform would look identical to one that did.
+    return json({ ...row, peaks: row.peaks ?? mockPeaks(row.id.length, row.duration_s) });
+  }
+  const trimRec = path.match(/^\/api\/sdr\/recordings\/([^/]+)\/trim$/);
+  if (trimRec && method === "POST") {
+    const row = MOCK_RECORDINGS.find((r) => r.id === decodeURIComponent(trimRec[1] ?? ""));
+    if (!row) return json({ detail: "no recording with that id" }, 404);
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as { start_s?: number; end_s?: number })
+      : {};
+    const start = Math.max(0, body.start_s ?? 0);
+    const end = Math.min(row.duration_s, body.end_s ?? row.duration_s);
+    // The server answers with what it ACTUALLY cut: `-c copy` lands on a frame boundary,
+    // so the client's seconds are rounded here exactly as ffmpeg would round them.
+    const frame = 0.072;
+    const kept = Math.max(frame, Math.round((end - start) / frame) * frame);
+    row.duration_s = Number(kept.toFixed(3));
+    row.bytes = Math.round(row.duration_s * MOCK_BPS);
+    row.peaks = mockPeaks(row.id.length + Math.round(start * 10), row.duration_s);
+    return json({
+      recording: row,
+      // What was REALLY cut: the client asked in seconds, and the copy landed on a frame.
+      cut: { start_s: start, end_s: start + row.duration_s },
+      usage: mockUsageOnly(),
+    });
+  }
+  const delRec = path.match(/^\/api\/sdr\/recordings\/([^/]+)$/);
+  if (delRec && method === "DELETE") {
+    const at = MOCK_RECORDINGS.findIndex((r) => r.id === decodeURIComponent(delRec[1] ?? ""));
+    if (at < 0) return json({ detail: "no recording with that id" }, 404);
+    MOCK_RECORDINGS.splice(at, 1);
+    // The meter comes back with the delete so the header moves with the list.
+    return json({ deleted: true, usage: mockUsageOnly() });
+  }
 
   // --- Research Library (owner browse over jerv's external corpus). Exact /reports and
   // /reports/search win before the /reports/{id} prefix; same for videos. ---

@@ -56,7 +56,7 @@ import type {
 } from "../jlaunch/types";
 import type { SdrBands, SpectrumRange } from "../sdrBands";
 import type { SdrRadios } from "../sdrRadios";
-import type { SdrListening, SdrState } from "../sdrSession";
+import type { SdrListening, SdrRecordingState, SdrState } from "../sdrSession";
 
 export interface Principal {
   principal_id: string;
@@ -2208,6 +2208,84 @@ export interface PetCommand {
   text?: string;
 }
 
+/** One stored recording (docs/plans/SDR_RECORDING_PLAN.md §3). A recording is a FILE:
+ *  a frequency, a mode, a bandwidth, a time, a length and a size. */
+export interface SdrRecording {
+  id: string;
+  started_at: string;
+  ended_at: string | null;
+  /** What the clip IS now. */
+  duration_s: number;
+  /** What was originally captured. `duration_s < captured_s` is what makes a row
+   *  "trimmed" — a derived fact rather than a flag that can drift out of step with the
+   *  audio it describes. */
+  captured_s: number;
+  /** The settings at the moment Record was pressed. A retune does not restart the
+   *  pipeline, so a clip may span a frequency change; the row states where it began. */
+  frequency_hz: number;
+  mode: string;
+  bandwidth_hz: number | null;
+  gain?: string | null;
+  serial?: string | null;
+  bytes: number;
+  /** The level envelope the trim sheet draws, 0..1, computed on the box at stop and
+   *  again after a trim — so the waveform can never disagree with the clip.
+   *
+   *  Optional because the LIST route's projection omits it — 400 floats a row would
+   *  dwarf a hundred-row response — so a row that arrived from the library has none and
+   *  the trim sheet fetches the one clip it is open on (`getSdrRecording`, the by-id
+   *  route). A box older than that route, or a clip whose decode failed, answers without
+   *  an envelope even there; a sheet without one draws a flat picture and says so rather
+   *  than inventing one. See SdrTrimSheet. */
+  peaks?: number[];
+  /** R4 (deferred). The library and the trim both work without it; a row simply has no
+   *  preview yet. */
+  transcript?: { text?: string | null; words?: unknown[] } | null;
+  /** Whether the box HAS a transcript, which is all the list carries — the text itself
+   *  arrives with R4. Nothing renders it today; the field is here so a reader of this
+   *  type does not conclude a row with no `transcript` was never transcribed. */
+  has_transcript?: boolean;
+  transcribed_at?: string | null;
+}
+
+/** What the library reads, in one document: the rows and what they cost.
+ *
+ *  `usage` rides with the list rather than living on its own route because the header's
+ *  meter and the rows under it are one reading — fetched apart, the total could disagree
+ *  with the sum of what is on screen. */
+export interface SdrRecordingsPage {
+  recordings: SdrRecording[];
+  usage: {
+    bytes: number;
+    count: number;
+    /** How much trimming has actually given back. **Nothing expires** — there is no
+     *  retention prune — so this is the only number that argues for the feature. */
+    reclaimed_bytes: number;
+  };
+}
+
+/** What a trim actually did. `cut` is the frame-boundary window the server landed on,
+ *  which is within 72 ms of what the handles asked for. */
+export interface SdrTrimResult {
+  recording: SdrRecording;
+  cut: { start_s: number; end_s: number };
+  usage: SdrRecordingsPage["usage"];
+}
+
+/** A delete's answer: the meter, so it moves with the list rather than a poll later. */
+export interface SdrUsageResult {
+  deleted: boolean;
+  usage: SdrRecordingsPage["usage"];
+}
+
+/** The answer to `POST /sdr/record`. Idempotent both ways, so `recording` is simply
+ *  what is running afterwards — null once a capture has stopped — and `saved` is the row
+ *  that just landed, when this call is what landed it. */
+export interface SdrRecordResult {
+  recording: SdrRecordingState | null;
+  saved?: SdrRecording | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -2290,6 +2368,20 @@ export function chatAttachmentThumbUrl(id: string, thumbId: string): string {
 
 export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
+}
+
+/** Streamable/downloadable URL for one stored SDR recording.
+ *
+ *  A URL helper rather than an `api.*` method for the same reason `attachmentUrl` is: a
+ *  blob never goes through `request()`, which reads the body as JSON. The api serves this
+ *  with `FileResponse`, so Starlette answers HTTP Range on it — which is what makes the
+ *  trim sheet's Preview able to start mid-clip instead of downloading from zero.
+ *
+ *  NOT the live stream. `/api/sdr/audio` is the chunked broadcast that `sdrAudio.ts`
+ *  owns end to end, and its element is one-shot; a recording is a file, and every
+ *  surface that plays one uses its own element against this URL. */
+export function sdrRecordingUrl(id: string): string {
+  return `/api/sdr/recordings/${encodeURIComponent(id)}/audio`;
 }
 
 // Offline stand-ins for the generated-image bytes: an `<img src>` never flows
@@ -2928,6 +3020,58 @@ export const api = {
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
     const response = await request(`/api/sdr/spectrum/tune?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
+  },
+
+  // --- recordings (docs/plans/SDR_RECORDING_PLAN.md §4) ----------------------
+  // The api is the recorder, not the sidecar: it opens its own subscriber on the live
+  // stream and spools it into the blob store. So "record" is a switch on the box, which
+  // is why it is idempotent both ways and why starting with nothing listening is a
+  // refusal with a sentence rather than a silent no-op.
+  // No session id: the recorder subscribes to whichever session holds the tuner, and one
+  // capture runs at a time box-wide — so naming a session here would be a parameter the
+  // api has nothing to do with.
+  async sdrRecord(on: boolean): Promise<SdrRecordResult> {
+    const response = await request(`/api/sdr/record?on=${on ? "true" : "false"}`, {
+      method: "POST",
+    });
+    return (await response.json()) as SdrRecordResult;
+  },
+
+  async getSdrRecordings(limit = 200): Promise<SdrRecordingsPage> {
+    const response = await request(`/api/sdr/recordings?limit=${encodeURIComponent(limit)}`);
+    return (await response.json()) as SdrRecordingsPage;
+  },
+
+  /** One recording, carrying the waveform the list leaves out.
+   *
+   *  The library omits `peaks` on purpose — 400 floats per row would dwarf a hundred-row
+   *  response — so the trim sheet asks for the one clip it is open on. Without it the
+   *  sheet is two handles over an empty picture, which is the shape's whole argument
+   *  missing: a cut is placeable because the dead air at each end is visible. */
+  async getSdrRecording(id: string): Promise<SdrRecording> {
+    const response = await request(`/api/sdr/recordings/${encodeURIComponent(id)}`);
+    return (await response.json()) as SdrRecording;
+  },
+
+  /** Cut to `[startS, endS]`, discard the original, and say what was really cut.
+   *
+   *  The client asks in SECONDS and the server answers with what it actually did: the
+   *  copy lands on an MP3 frame boundary, so the returned `recording.duration_s` is the
+   *  truth and the sheet's arithmetic was only ever an estimate of it. `usage` comes
+   *  back with it so the disk meter moves with the list rather than a poll later. */
+  async trimSdrRecording(id: string, startS: number, endS: number): Promise<SdrTrimResult> {
+    const response = await request(
+      `/api/sdr/recordings/${encodeURIComponent(id)}/trim`,
+      jsonInit("POST", { start_s: startS, end_s: endS }),
+    );
+    return (await response.json()) as SdrTrimResult;
+  },
+
+  async deleteSdrRecording(id: string): Promise<SdrUsageResult> {
+    const response = await request(`/api/sdr/recordings/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return (await response.json()) as SdrUsageResult;
   },
 
   async sdrStop(sessionId?: string): Promise<void> {

@@ -2346,7 +2346,10 @@ async def sdr_sessions_debug(
     something the sidecar reports. It calls the same `status_of`, so it cannot drift
     from the icon: a second derivation would be the very thing B7 deleted."""
     request.state.debug_detail = "sdr sessions"
-    return await sdr_api.status_of(settings)
+    # `recording_now` for the same reason: the tape deck is api state rather than
+    # something /healthz reports, and a console that omits it would say the box is idle
+    # while a recording is running.
+    return await sdr_api.status_of(settings, sdr_api.recording_now(request))
 
 
 def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:

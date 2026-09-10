@@ -28,13 +28,19 @@ import {
   subscribeSdrCaptions,
 } from "../sdrCaptions";
 import { channelIndex, channelLabel, namedByFrequency, planAt, stepChannel } from "../sdrChannels";
-import type { SdrListening } from "../sdrSession";
+import {
+  type SdrListening,
+  liveRecording,
+  noteSdrRecordingSaved,
+  useSdrSession,
+} from "../sdrSession";
 import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
+import { formatSize } from "../sdrTrim";
 import { whyNotTunable } from "../sdrTunable";
 import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
 import { SdrTuningView } from "./SdrTuningView";
-import { PauseIcon, PlayIcon } from "./icons";
+import { PauseIcon, PlayIcon, RecordIcon } from "./icons";
 
 // Every demodulator the back end has, in the order a dial usually offers them —
 // widest first, then the two sidebands. `nfm` is NOT a sixth button: the sidecar maps
@@ -112,18 +118,39 @@ export function liveTag(behindS: number | null): string {
  *  reason (`SdrSpectrumJob.BACKFILL_ROWS`). */
 const BACKFILL_ROWS = 120;
 
+/** How long an armed Record stays armed. From the tuner's binding spec, and the same
+ *  2.6 s the delete confirmations elsewhere use. */
+const ARM_MS = 2600;
+
 export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Record is arm-then-confirm per DESIGN.md's destructive-action doctrine; the
-  // recording lane itself is a later wave, so the control states that plainly
-  // rather than pretending to work.
+  // Record is arm-then-confirm (docs/mocks/sdr-tuner/a-tuner-sheet.html: tap, "Tap
+  // again", a 2.6 s window). The arming is the only piece of this that is local state —
+  // it is ceremony in front of the tap, not a claim about the box. WHETHER a capture is
+  // running, how long it has been running and how big it is all come off the 1 Hz status
+  // poll, so the button can never go on counting through a capture the box has dropped.
+  const [armed, setArmed] = useState(false);
   // Null until the owner picks one, so the mode's default can keep applying as they
   // switch bands; an explicit choice then sticks for the rest of the session.
   const [pickedStep, setPickedStep] = useState<number | null>(null);
   const [stepOpen, setStepOpen] = useState(false);
   const [bwOpen, setBwOpen] = useState(false);
   const stepHz = pickedStep ?? DEFAULT_STEP_HZ[listening.mode] ?? FALLBACK_STEP_HZ;
+
+  // The capture in flight, off the SHARED 1 Hz poll rather than a timer of this
+  // component's own — the same store the omnibox and the Radios tab read, so the
+  // elapsed time on this button and the row that lands in the library cannot disagree.
+  const sdr = useSdrSession();
+  const recording = liveRecording(sdr);
+  // The armed state disarms itself, so a tap the owner walked away from cannot start a
+  // recording minutes later. Keyed on `armed` alone: re-arming restarts the window,
+  // which is what a second deliberate tap on an already-armed button means.
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
 
   // The band table, for the one question this control asks of it: does a complete
   // channel plan cover where the radio is? Best-effort — a table that fails to load
@@ -625,8 +652,57 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       {error && <p className="sdr-error">{error}</p>}
 
       <div className="sdr-actions">
-        <button type="button" className="sdr-act sdr-act-ghost" disabled title="Coming next">
-          Record
+        <button
+          type="button"
+          className={`sdr-act sdr-act-record${armed ? " armed" : ""}`}
+          aria-pressed={recording !== null}
+          aria-label={
+            recording
+              ? "Stop recording"
+              : armed
+                ? "Tap again to start recording"
+                : "Record what you are hearing"
+          }
+          disabled={busy}
+          onClick={() => {
+            if (recording) {
+              // No confirmation on the way OUT: stopping destroys nothing, and the clip
+              // it lands is the thing the owner asked for.
+              setArmed(false);
+              void act(async () => {
+                // The answer carries the row that just landed, and it is the ONLY
+                // reliable news of it: the recorder stops reporting a capture when the
+                // stream ends, which is before the waveform is computed and the row
+                // written, so a library reloading off the poll can read a list without
+                // it. Announced rather than returned because the library is a different
+                // tab (sdrSession.ts).
+                const result = await api.sdrRecord(false);
+                if (result.saved) noteSdrRecordingSaved(result.saved);
+              });
+              return;
+            }
+            if (!armed) {
+              setArmed(true);
+              return;
+            }
+            setArmed(false);
+            void act(() => api.sdrRecord(true));
+          }}
+        >
+          <RecordIcon size={16} />
+          {recording ? (
+            // Elapsed and running size, both read off the poll. The size is what argues
+            // for stopping — the owner runs this box remotely and cannot go and look at
+            // the disk (CLAUDE.md #10).
+            <>
+              <span className="sdr-rec-el">{elapsed(recording.seconds)}</span>
+              <small>{formatSize(recording.bytes)}</small>
+            </>
+          ) : armed ? (
+            "Tap again"
+          ) : (
+            "Record"
+          )}
         </button>
         <button
           type="button"

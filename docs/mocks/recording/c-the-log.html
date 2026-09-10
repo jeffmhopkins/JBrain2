@@ -1,0 +1,313 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C — The log: a recording is something the box heard and can read back</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18); --amber-tint: rgba(201,163,106,.2);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 9; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; flex: 1; flex-direction: column; }
+.pane.on { display: flex; }
+#listen { justify-content: flex-end; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.readout { padding: 4px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 30px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 12px 16px 6px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+
+/* live captions on the sheet — the box is already listening, and it already writes */
+.cc { margin: 0 16px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); font-size: 13px; line-height: 1.5; min-height: 74px; color: var(--text-2); }
+.cc b { color: var(--text); font-weight: 400; }
+.cc .cursor { display: inline-block; width: 7px; height: 14px; vertical-align: -2px;
+  background: var(--accent); opacity: .8; animation: blink 1.1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.acts { display: flex; gap: 8px; padding: 10px 16px 6px; }
+.acts button { flex: 1; min-height: 50px; border-radius: 12px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.acts .keep { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); color: var(--danger); }
+.acts .keep.armed { background: var(--danger); border-color: var(--danger); color: var(--bg); font-weight: 500; }
+.acts .keep[data-on=true] { background: var(--rose-tint); border-color: var(--danger); color: var(--text); }
+.acts .watch[aria-pressed=true] { border-color: var(--warn); background: var(--amber-tint); color: var(--text); }
+.acts small { display: block; font-size: 10px; color: var(--text-3); font-weight: 400; }
+.hint { padding: 6px 16px 18px; font-size: 12px; color: var(--text-3); }
+
+/* ---- the log ---- */
+.hdr { padding: 14px 16px 8px; font-size: 22px; font-weight: 600; }
+.find { display: flex; align-items: center; gap: 9px; height: 44px; margin: 0 16px 10px; padding: 0 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text-3); }
+.find:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--steel-tint); }
+.find input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.filters { display: flex; gap: 6px; padding: 0 16px 10px; overflow-x: auto; }
+.filters button { flex: none; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; white-space: nowrap; }
+.filters button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.count { padding: 0 16px 8px; font-size: 11px; color: var(--text-3); }
+
+.ent { margin: 0 16px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.ent > .head { display: flex; gap: 10px; padding: 11px 12px 9px; width: 100%; background: transparent;
+  border: 0; color: var(--text); font: inherit; text-align: left; align-items: flex-start; }
+.ent .glyph { width: 34px; height: 34px; flex: none; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-2); display: grid; place-items: center; color: var(--text-2); }
+.ent[data-play=true] .glyph { border-color: var(--accent); background: var(--steel-tint); color: var(--accent); }
+.ent .said { flex: 1; min-width: 0; }
+.ent .said q { display: block; font-size: 14px; line-height: 1.5; color: var(--text); quotes: none;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ent[data-open=true] .said q { -webkit-line-clamp: unset; line-clamp: unset; }
+.ent .sub { display: block; margin-top: 5px; font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; line-height: 1.7; }
+.ent mark { background: var(--amber-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+.tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-2); }
+.tag.auto { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
+.wave { height: 3px; background: var(--surface-2); display: none; }
+.ent[data-play=true] .wave { display: block; }
+.wave i { display: block; height: 100%; width: 0; background: var(--accent); }
+.body { display: none; padding: 2px 12px 12px; }
+.ent[data-open=true] .body { display: block; }
+.karaoke { font-size: 13.5px; line-height: 1.65; color: var(--text-3); margin: 8px 0 12px; }
+.karaoke w { transition: color 90ms linear; }
+.karaoke w.on { color: var(--text); }
+.rowacts { display: flex; gap: 6px; }
+.rowacts button { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.rowacts .del { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.rowacts .del.armed { background: var(--danger); border-color: var(--danger); color: var(--bg); }
+.empty { margin: 26px 16px; padding: 26px 16px; border: 1px dashed var(--border); border-radius: 12px;
+  text-align: center; color: var(--text-3); font-size: 13px; line-height: 1.6; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .cc .cursor { animation: none; } .karaoke w { transition: none; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>C &mdash; The log.</b> A recording is not a file, it is <b>something the box heard</b>. Every clip is transcribed on arrival, so the Recordings tab is a <b>search over what was said</b> rather than a column of timestamps &mdash; and those transcripts go into the same hybrid search as everything else the box knows.<br><br>That changes what the capture control is for. If the value is in the transcript, the box should be catching things <b>while you are not there</b>: <b>Watch this channel</b> arms it to record whenever the squelch opens. You come back to a log, not to an empty list you forgot to fill.<br><br>Its cost is honesty about transcription: narrowband radio voice is hard, and a garbled line in a searchable log is worse than no line. Every clip keeps its audio and the transcript is always shown as the machine's reading, never as a record of fact.</div>
+  <div class="swap" role="tablist">
+    <button id="t-listen" role="tab" aria-pressed="true" type="button">Listen</button>
+    <button id="t-lib" role="tab" aria-pressed="false" type="button">Recordings</button>
+  </div>
+
+  <div class="pane on" id="listen">
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="title">Listen</div>
+      <div class="readout">162.550<small>MHz &middot; NFM 16k &middot; NOAA</small></div>
+      <div class="lbl">Hearing now</div>
+      <div class="cc" id="cc"><b></b><span class="cursor"></span></div>
+      <div class="acts">
+        <button class="keep" id="keep" type="button" data-on="false" aria-pressed="false">Record<small id="keepSub">to the log</small></button>
+        <button class="watch" id="watch" type="button" aria-pressed="false">Watch<small>record on activity</small></button>
+      </div>
+      <p class="hint">Record is arm-then-confirm, inherited from the tuner's binding spec. <b style="color:var(--text-2);font-weight:500">Watch</b> keeps the radio on this channel and writes a clip each time it goes active &mdash; a scanner that files what it caught.</p>
+    </div>
+  </div>
+
+  <div class="pane" id="lib">
+    <div class="hdr">Recordings</div>
+    <div class="find">
+      <span aria-hidden="true" style="display:flex"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg></span>
+      <input id="q" type="search" placeholder="Search what was said" aria-label="Search transcripts">
+    </div>
+    <div class="filters" id="filters">
+      <button type="button" aria-pressed="true" data-f="all">All</button>
+      <button type="button" aria-pressed="false" data-f="auto">Caught by watch</button>
+      <button type="button" aria-pressed="false" data-f="5.000">5.000 MHz</button>
+      <button type="button" aria-pressed="false" data-f="162.550">162.550 MHz</button>
+      <button type="button" aria-pressed="false" data-f="146.940">146.940 MHz</button>
+    </div>
+    <div class="count" id="count"></div>
+    <div id="list"></div>
+  </div>
+</div>
+<script>
+const BPS = 8000; // 64 kbps mono MP3 — listen.py AUDIO_BITRATE_BPS
+const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1) + " MB" : Math.round(b/1024) + " kB";
+const fmtDur = s => Math.floor(s/60) + ":" + String(Math.floor(s%60)).padStart(2, "0");
+
+const LOG = [
+  { f: "162.550", mode: "NFM", at: "Today 19:12", secs: 186, auto: true,
+    tx: "A coastal flood advisory remains in effect until two AM Eastern time. Winds south fifteen to twenty knots becoming west after midnight. Seas three to five feet, subsiding late." },
+  { f: "5.000", mode: "AM", at: "Today 23:45", secs: 42, auto: false,
+    tx: "At the tone twenty-three hours forty-five minutes Coordinated Universal Time. Geophysical alert, solar flux one thirty-two, A index six, no storms observed." },
+  { f: "146.940", mode: "NFM", at: "Today 18:03", secs: 9, auto: true,
+    tx: "That is a good copy, you are full quieting into the repeater. Seventy-three." },
+  { f: "146.940", mode: "NFM", at: "Today 17:41", secs: 14, auto: true,
+    tx: "Anybody around this evening, this is Kilo Four Delta Whiskey Golf monitoring." },
+  { f: "7.200", mode: "LSB", at: "Yesterday 21:40", secs: 415, auto: false,
+    tx: "Net control is standing by for check-ins. Any station with traffic or announcements for the net please come now." },
+  { f: "4.625", mode: "USB", at: "Yesterday 02:11", secs: 51, auto: true,
+    tx: "Buzzer. Repeating tone approximately twenty-five per minute. No voice heard during this capture." },
+  { f: "5.000", mode: "AM", at: "7 Sep 06:00", secs: 63, auto: false,
+    tx: "At the tone six hours Coordinated Universal Time. Geophysical alert, solar flux one twenty-nine." },
+];
+
+let q = "", filter = "all", openIdx = null;
+const list = document.getElementById("list");
+const count = document.getElementById("count");
+
+function hit(c) {
+  if (filter === "auto" && !c.auto) return false;
+  if (filter !== "all" && filter !== "auto" && c.f !== filter) return false;
+  return !q || c.tx.toLowerCase().includes(q) || c.f.includes(q);
+}
+function mark(text) {
+  if (!q) return text;
+  return text.replace(new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>");
+}
+function draw() {
+  const rows = LOG.filter(hit);
+  count.textContent = rows.length + (rows.length === 1 ? " recording" : " recordings")
+    + (q ? ` matching “${q}”` : "");
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty">Nothing heard matching that.<br>The log fills as you record, or on its own while <b style="color:var(--text-2)">Watch</b> is armed.</div>';
+    return;
+  }
+  list.innerHTML = rows.map(c => {
+    const i = LOG.indexOf(c);
+    const open = openIdx === i;
+    return `<div class="ent" data-i="${i}" data-open="${open}" data-play="false">
+      <button class="head" type="button" aria-expanded="${open}">
+        <span class="glyph" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/></svg></span>
+        <span class="said"><q>${mark(c.tx)}</q>
+          <span class="sub">${c.f} MHz <span class="tag">${c.mode}</span>
+            ${c.auto ? '<span class="tag auto">watch</span>' : ""}
+            &middot; ${c.at} &middot; ${fmtDur(c.secs)} &middot; ${fmtSize(c.secs*BPS)}</span></span>
+      </button>
+      <div class="wave"><i></i></div>
+      <div class="body">
+        <p class="karaoke">${c.tx.split(" ").map(w => `<w>${w}</w>`).join(" ")}</p>
+        <div class="rowacts">
+          <button type="button">Download</button>
+          <button type="button">Tune here</button>
+          <button type="button" class="del">Delete</button>
+        </div>
+      </div></div>`;
+  }).join("");
+}
+draw();
+
+document.getElementById("q").addEventListener("input", e => { q = e.target.value.trim().toLowerCase(); draw(); });
+document.getElementById("filters").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#filters button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+  filter = b.dataset.f; draw();
+});
+
+let playing = null, playT = null, karaokeT = null;
+list.addEventListener("click", e => {
+  const ent = e.target.closest(".ent"); if (!ent) return;
+  const del = e.target.closest(".del");
+  if (del) {
+    if (!del.classList.contains("armed")) {
+      del.classList.add("armed"); del.textContent = "Tap again — deletes this";
+      setTimeout(() => { del.classList.remove("armed"); del.textContent = "Delete"; }, 2600);
+      return;
+    }
+    LOG.splice(Number(ent.dataset.i), 1); openIdx = null; draw(); return;
+  }
+  if (e.target.closest(".rowacts")) return;
+  if (e.target.closest(".glyph")) {
+    clearInterval(playT); clearInterval(karaokeT);
+    if (playing === ent) { ent.dataset.play = "false"; playing = null; return; }
+    if (playing) playing.dataset.play = "false";
+    playing = ent; ent.dataset.play = "true";
+    const fill = ent.querySelector(".wave i");
+    const words = [...ent.querySelectorAll(".karaoke w")];
+    let p = 0, w = 0;
+    playT = setInterval(() => {
+      p += 1.6; fill.style.width = p + "%";
+      const upto = Math.floor((p / 100) * words.length);
+      while (w < upto) { words[w]?.classList.add("on"); w++; }
+      if (p >= 100) {
+        clearInterval(playT); ent.dataset.play = "false"; fill.style.width = "0";
+        words.forEach(x => x.classList.remove("on")); playing = null;
+      }
+    }, 50);
+    return;
+  }
+  const i = Number(ent.dataset.i);
+  openIdx = openIdx === i ? null : i;
+  draw();
+});
+
+// --- the live caption line, so the sheet shows the box already reading ------------
+const LINE = "A coastal flood advisory remains in effect until two AM Eastern time. Winds south fifteen to twenty knots, becoming west after midnight.";
+const ccb = document.querySelector("#cc b");
+let ci = 0;
+setInterval(() => {
+  ci = (ci + 1) % (LINE.length + 40);
+  ccb.textContent = LINE.slice(0, Math.min(ci, LINE.length));
+}, 55);
+
+// --- record (arm-then-confirm, per the tuner binding spec) + watch ---------------
+const keep = document.getElementById("keep"), keepSub = document.getElementById("keepSub");
+let armed = false, recording = false, recFrom = 0, recT = null, armT = null;
+keep.addEventListener("click", () => {
+  if (recording) {
+    clearInterval(recT); recording = false; keep.dataset.on = "false";
+    const s = Math.max(1, Math.round((Date.now() - recFrom) / 1000));
+    keep.innerHTML = 'Record<small id="keepSub">to the log</small>';
+    LOG.unshift({ f: "162.550", mode: "NFM", at: "Today now", secs: s, auto: false, tx: "Transcribing…" });
+    draw();
+    return;
+  }
+  if (!armed) {
+    armed = true; keep.classList.add("armed");
+    keep.innerHTML = 'Tap again<small>to start recording</small>';
+    armT = setTimeout(() => {
+      armed = false; keep.classList.remove("armed");
+      keep.innerHTML = 'Record<small>to the log</small>';
+    }, 2600);
+    return;
+  }
+  clearTimeout(armT); armed = false; keep.classList.remove("armed");
+  recording = true; keep.dataset.on = "true"; recFrom = Date.now();
+  recT = setInterval(() => {
+    const s = (Date.now() - recFrom) / 1000;
+    keep.innerHTML = `Stop<small>${fmtDur(s)} · ${fmtSize(s * BPS)}</small>`;
+  }, 250);
+});
+const watch = document.getElementById("watch");
+watch.addEventListener("click", () => {
+  const on = watch.getAttribute("aria-pressed") !== "true";
+  watch.setAttribute("aria-pressed", String(on));
+  watch.innerHTML = on ? 'Watching<small>armed on activity</small>' : 'Watch<small>record on activity</small>';
+});
+
+// --- panes + theme ---------------------------------------------------------------
+const panes = { listen: document.getElementById("listen"), lib: document.getElementById("lib") };
+const tabs = { listen: document.getElementById("t-listen"), lib: document.getElementById("t-lib") };
+function show(w) { for (const k in panes) { panes[k].classList.toggle("on", k === w); tabs[k].setAttribute("aria-pressed", String(k === w)); } }
+tabs.listen.addEventListener("click", () => show("listen"));
+tabs.lib.addEventListener("click", () => show("lib"));
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+</script>

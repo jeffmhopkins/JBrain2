@@ -12,7 +12,7 @@
 // so an app with no radio surface open costs nothing.
 
 import { useEffect, useState } from "react";
-import { ApiError, api } from "./api/client";
+import { ApiError, type SdrRecording, api } from "./api/client";
 import { playSdrAudio, stopSdrAudio } from "./sdrAudio";
 
 export interface SdrListening {
@@ -72,6 +72,29 @@ export interface SdrListening {
   view_spans_hz?: number[];
 }
 
+/** A capture in flight, as `GET /sdr/status` reports it (docs/plans/SDR_RECORDING_PLAN.md
+ *  §4). The Record button draws its elapsed time and running size FROM HERE, off the 1 Hz
+ *  poll every other radio reading already uses — a second timer in the component would be
+ *  a clock of its own to drift against the box, and an optimistic local "recording" state
+ *  would keep counting through a capture the box had already dropped. */
+export interface SdrRecordingState {
+  /** When the capture began, as the box's clock said it (`sdr/recorder.py`). */
+  started_at: string;
+  /** How long it has been running. Named as the recorder names it, not `elapsed_s` —
+   *  the session's elapsed time is a different clock on the same poll, and one name for
+   *  two quantities is how a surface ends up printing the wrong one. */
+  seconds: number;
+  /** What has landed in the blob so far. Reported rather than derived from the bitrate:
+   *  the running size is the argument for stopping, so it has to be measured. */
+  bytes: number;
+  /** The settings the clip will carry. A retune does not restart the pipeline, so these
+   *  are where the recording BEGAN, which is what the library will show. */
+  frequency_hz: number;
+  mode: string;
+  bandwidth_hz: number | null;
+  serial: string | null;
+}
+
 export interface SdrState {
   /** False on a box with no radio, or one whose sidecar is unreachable. Either way
    *  the icon must not appear: a lit icon over a dead radio is worse than none. */
@@ -86,6 +109,18 @@ export interface SdrState {
   /** Every radio the box is holding. Absent from an api older than per-radio sessions,
    *  hence the default — a box like that can hold only one thing anyway. */
   sessions?: SdrListening[];
+  /** The capture in flight, or null. One at a time, box-wide (`sdr/recorder.py`), which
+   *  is why it sits on the STATUS rather than on a session. */
+  recording?: SdrRecordingState | null;
+}
+
+/** The capture in flight, or null.
+ *
+ *  One reading, like `sessionFor` and `anyHeld`: the recorder is box-wide rather than a
+ *  property of a session, so "is anything recording" is a question about the STATUS —
+ *  and both the Record button and the library ask it of the same 1 Hz poll. */
+export function liveRecording(state: SdrState): SdrRecordingState | null {
+  return state.recording ?? null;
 }
 
 /** The session holding a radio for one job, or null.
@@ -206,6 +241,39 @@ export function useSdrSession(): SdrState {
 export function resetSdrSession(): void {
   stop();
   listeners.clear();
+  savedListeners.clear();
   published = IDLE;
   inFlight = false;
+}
+
+// --- the row a stop just landed ------------------------------------------------------
+//
+// `liveRecording` above cannot answer "has the clip been written yet". The recorder
+// reports no capture the moment the STREAM ends, which is before the waveform is
+// computed and the row inserted, so a library reloading off that poll can legitimately
+// read a list that does not contain the recording the owner just made — and nothing
+// would ever re-read it. `POST /sdr/record?on=false` answers with the saved row itself,
+// which is the only signal that is true by construction; this carries it from the
+// control that pressed Stop to the tab that lists it, the two being on different tabs of
+// the launcher and never mounted together.
+//
+// A one-shot signal, deliberately NOT retained state: a last-saved row kept around would
+// be re-folded into the list by a library mounted long afterwards, resurrecting a
+// recording the owner had since deleted.
+
+type SavedListener = (row: SdrRecording) => void;
+
+const savedListeners = new Set<SavedListener>();
+
+/** Announce the row a just-completed capture landed. */
+export function noteSdrRecordingSaved(row: SdrRecording): void {
+  for (const listener of savedListeners) listener(row);
+}
+
+/** Hear about a capture that has finished being written; returns an unsubscribe. */
+export function onSdrRecordingSaved(listener: SavedListener): () => void {
+  savedListeners.add(listener);
+  return () => {
+    savedListeners.delete(listener);
+  };
 }
