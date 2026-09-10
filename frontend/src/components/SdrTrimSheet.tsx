@@ -1,0 +1,358 @@
+// The trim sheet — binding spec docs/mocks/recording/d-trim-sheet.html.
+//
+// A capture is a rough take: you pressed record before it started and stopped after it
+// ended. This is where it becomes the thing worth keeping, and it is the app's first
+// surface that edits stored content in place rather than only creating or deleting it —
+// so it is written against DESIGN.md's "Destructive editing of stored media" rules:
+//
+//   1. its own sheet, entered deliberately from the row's scissors — never an inline
+//      control you can brush past;
+//   2. Preview is mandatory, because the original does NOT survive and there is no undo;
+//   3. the confirm names the loss ("Trim & discard rest", not "Save");
+//   4. the selection is DRAWN — two role="slider" handles on the waveform, draggable,
+//      arrow-key operable, plus nudge buttons at the medium's own smallest honest unit
+//      (one MP3 frame, 72 ms — the UI must not imply finer precision than -c copy can
+//      deliver);
+//   5. the saving is stated live, not implied.
+//
+// It is the shared <Sheet> shell, never a bespoke modal. Note Sheet.tsx:30-35 — the
+// focus effect there has an empty dep array precisely so a 1 Hz repaint cannot steal the
+// caret; there is no text input in here, and adding one would need that read first.
+
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useRef,
+  useState,
+} from "react";
+import { type SdrRecording, type SdrTrimResult, api, sdrRecordingUrl } from "../api/client";
+import { mhz } from "../mhz";
+import { bandwidthLabel } from "../sdrBandwidth";
+import {
+  FRAME_MS,
+  FRAME_S,
+  type Handle,
+  type Selection,
+  clampSelection,
+  clockLabel,
+  formatDuration,
+  formatSize,
+  formatStamp,
+  isWholeClip,
+  moveHandle,
+  nudgeHandle,
+  trimGain,
+  waveformBars,
+} from "../sdrTrim";
+import { Sheet } from "./Sheet";
+
+/** How many bars the picture draws. The stored envelope is whatever the box computed;
+ *  this is what fits a phone-width sheet at 2 px a bar with a gap. */
+const BARS = 116;
+
+/** A coarse keyboard step — Shift + arrow. One second, because frame-by-frame across a
+ *  seven-minute net check-in is four hundred presses. */
+const COARSE_STEP_S = 1;
+
+interface TrimSheetProps {
+  recording: SdrRecording;
+  onClose: () => void;
+  /** What the SERVER cut, and the meter after it. The client asks in seconds; the copy
+   *  lands on a frame boundary, so what comes back is the truth and replaces the row
+   *  wholesale rather than being merged with the sheet's estimate. */
+  onTrimmed: (result: SdrTrimResult) => void;
+}
+
+export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) {
+  const totalS = recording.duration_s;
+  const [selection, setSelection] = useState<Selection>(() =>
+    clampSelection({ startS: 0, endS: totalS }, totalS),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Where the preview has reached, or null when it is not playing. Owned here rather
+  // than read off the element on every frame so the picture repaints only when the
+  // element says something new.
+  const [headS, setHeadS] = useState<number | null>(null);
+
+  const waveRef = useRef<HTMLDivElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const dragging = useRef<Handle | null>(null);
+
+  // The list route does not carry `peaks` today, and there is no by-id route to ask for
+  // one row — so the sheet has to work without a picture rather than draw a flat line
+  // and let it read as three minutes of silence.
+  const envelope = recording.peaks ?? [];
+  const bars = waveformBars(envelope, BARS);
+  const gain = trimGain(selection, totalS, recording.bytes);
+  const whole = isWholeClip(selection, totalS);
+  const startPct = (selection.startS / Math.max(totalS, FRAME_S)) * 100;
+  const endPct = (selection.endS / Math.max(totalS, FRAME_S)) * 100;
+
+  const stopPreview = useCallback(() => {
+    audioRef.current?.pause();
+    setHeadS(null);
+  }, []);
+
+  /** Where on the clip a pointer is, in seconds. */
+  const secondsAt = (event: ReactPointerEvent): number | null => {
+    const box = waveRef.current?.getBoundingClientRect();
+    if (!box || box.width <= 0) return null;
+    const fraction = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    return fraction * totalS;
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const at = secondsAt(event);
+    if (at === null) return;
+    // A press anywhere on the picture grabs the NEARER handle. Requiring a hit on the
+    // 34px grip itself is what makes a two-handle selection fiddly on a phone; the
+    // waveform is the control, and the grips are only where it says so.
+    const target = (event.target as Element | null)?.closest("[data-handle]");
+    const handle: Handle =
+      (target?.getAttribute("data-handle") as Handle | null) ??
+      (Math.abs(at - selection.startS) <= Math.abs(at - selection.endS) ? "start" : "end");
+    dragging.current = handle;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    stopPreview();
+    setSelection((was) => moveHandle(was, handle, at, totalS));
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = dragging.current;
+    if (!handle) return;
+    const at = secondsAt(event);
+    if (at === null) return;
+    setSelection((was) => moveHandle(was, handle, at, totalS));
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, handle: Handle) => {
+    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    if (direction === 0) return;
+    event.preventDefault();
+    const step = event.shiftKey ? COARSE_STEP_S : FRAME_S;
+    setSelection((was) => nudgeHandle(was, handle, direction * step, totalS));
+  };
+
+  /** Play ONLY the selection. Mandatory, not a nicety: the original does not survive
+   *  the confirm, so the sheet has to be able to play exactly what will remain. */
+  const preview = () => {
+    const element = audioRef.current;
+    if (!element) return;
+    if (headS !== null) {
+      stopPreview();
+      return;
+    }
+    element.currentTime = selection.startS;
+    setHeadS(selection.startS);
+    void element.play().catch(() => {
+      // A refused autoplay or a clip the box cannot serve: say so rather than leaving
+      // a Preview button that does nothing, which reads as a broken sheet.
+      setHeadS(null);
+      setError("Couldn't play this clip.");
+    });
+  };
+
+  const onTimeUpdate = () => {
+    const element = audioRef.current;
+    if (!element || headS === null) return;
+    if (element.currentTime >= selection.endS) {
+      stopPreview();
+      return;
+    }
+    setHeadS(element.currentTime);
+  };
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await work();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That didn't work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const commit = () =>
+    run(async () => {
+      stopPreview();
+      onTrimmed(await api.trimSdrRecording(recording.id, selection.startS, selection.endS));
+      onClose();
+    });
+
+  return (
+    <Sheet title={`Trim ${mhz(recording.frequency_hz)} MHz`} onClose={onClose}>
+      <p className="trim-sub">
+        {recording.mode.toUpperCase()}
+        {recording.bandwidth_hz ? ` ${bandwidthLabel(recording.bandwidth_hz)}` : ""} ·{" "}
+        {clockLabel(recording.started_at)} · full capture {formatDuration(totalS)},{" "}
+        {formatSize(recording.bytes)}
+      </p>
+
+      {/* The PICTURE is the control, not the two grips on it: a press anywhere grabs
+          the nearer handle, which is what makes a two-handle selection placeable with a
+          thumb. The grips are focusable and arrow-operable, and they are what a screen
+          reader and a keyboard drive — this div is only the drag surface they sit on. */}
+      <div
+        className={`trim-wave${headS !== null ? " playing" : ""}`}
+        ref={waveRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => {
+          dragging.current = null;
+        }}
+        onPointerCancel={() => {
+          dragging.current = null;
+        }}
+      >
+        {bars.map((level, at) => {
+          const t = ((at + 0.5) / BARS) * totalS;
+          const inside = t >= selection.startS && t <= selection.endS;
+          return (
+            <span
+              // Position IS the identity here: the bars are a fixed-length resampling of
+              // one envelope, so index is stable and there is nothing else to key on.
+              // biome-ignore lint/suspicious/noArrayIndexKey: see above.
+              key={at}
+              className={`trim-bar${inside ? " in" : ""}`}
+              style={{ left: `${((at / BARS) * 100).toFixed(2)}%`, height: `${level * 96}px` }}
+            />
+          );
+        })}
+        <span className="trim-drop" style={{ left: 0, width: `${startPct.toFixed(2)}%` }} />
+        <span className="trim-drop" style={{ left: `${endPct.toFixed(2)}%`, right: 0 }} />
+        <span className="trim-at trim-at-in">{formatStamp(selection.startS)}</span>
+        <span className="trim-at trim-at-out">{formatStamp(selection.endS)}</span>
+        {(["start", "end"] as Handle[]).map((handle) => {
+          const at = handle === "start" ? selection.startS : selection.endS;
+          return (
+            <div
+              key={handle}
+              className="trim-grip"
+              data-handle={handle}
+              role="slider"
+              tabIndex={0}
+              aria-label={handle === "start" ? "Start of the trim" : "End of the trim"}
+              aria-valuemin={0}
+              aria-valuemax={totalS}
+              aria-valuenow={Number(at.toFixed(2))}
+              aria-valuetext={formatStamp(at)}
+              style={{ left: `${(handle === "start" ? startPct : endPct).toFixed(2)}%` }}
+              onKeyDown={(event) => onKeyDown(event, handle)}
+            />
+          );
+        })}
+        {headS !== null && (
+          <span
+            className="trim-head"
+            style={{ left: `${((headS / Math.max(totalS, FRAME_S)) * 100).toFixed(2)}%` }}
+          />
+        )}
+      </div>
+
+      <div className="trim-marks">
+        <span>0:00</span>
+        <span>{envelope.length > 0 ? "drag either handle" : "no waveform stored"}</span>
+        <span>{formatDuration(totalS)}</span>
+      </div>
+
+      {/* A frame is the smallest cut `-c copy` can make. These exist because a fingertip
+          on a 118px picture cannot place one, and because naming the unit is how the
+          sheet declines to imply millisecond precision it does not have. */}
+      <div className="trim-nudge">
+        {(
+          [
+            ["start", -1, `−${FRAME_MS} ms in`],
+            ["start", 1, `+${FRAME_MS} ms in`],
+            ["end", -1, `−${FRAME_MS} ms out`],
+            ["end", 1, `+${FRAME_MS} ms out`],
+          ] as [Handle, number, string][]
+        ).map(([handle, direction, label]) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() =>
+              setSelection((was) => nudgeHandle(was, handle, direction * FRAME_S, totalS))
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="trim-sums">
+        <div>
+          <span>Keeps</span>
+          <b>{formatDuration(gain.keptS)}</b>
+        </div>
+        <div>
+          <span>Size</span>
+          <b>{formatSize(gain.keptBytes)}</b>
+          {!whole && <b className="trim-was">{formatSize(recording.bytes)}</b>}
+        </div>
+      </div>
+
+      {/* DESIGN.md rule 5: the saving is stated, not implied. The whole reason the
+          feature exists is disk, and the owner cannot go and look at it. */}
+      <p className="trim-gain">
+        {whole ? (
+          <>
+            <span>Nothing trimmed yet</span>
+            <b>{formatSize(recording.bytes)}</b>
+          </>
+        ) : (
+          <>
+            <span>Discards {formatDuration(gain.discardedS)} of dead air</span>
+            <b>frees {formatSize(gain.freedBytes)}</b>
+          </>
+        )}
+      </p>
+
+      {error && (
+        <p className="trim-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <div className="trim-acts">
+        <button type="button" onClick={preview} disabled={busy}>
+          {headS !== null ? "Stop" : "Preview"}
+        </button>
+        <button type="button" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="trim-keep"
+          disabled={busy || whole}
+          onClick={() => void commit()}
+        >
+          Trim &amp; discard rest
+        </button>
+      </div>
+
+      <p className="trim-foot">
+        <b>The full capture is discarded.</b> That is what frees the disk, and it is why the trim is
+        confirmed rather than applied on the way past — Preview first, because there is no undo. Cut
+        on an MP3 frame boundary with <code>-c copy</code>: lossless and instant, landing within{" "}
+        {FRAME_MS} ms of the handle.
+      </p>
+
+      {/* Its own element, never sdrAudio.ts's: that one is the LIVE stream, parked in
+          <body> for the life of the lease, and its createMediaElementSource is one-shot.
+          A recording is a file. `preload="none"` because opening the sheet is not a
+          request to fetch the clip — pressing Preview is. */}
+      {/* biome-ignore lint/a11y/useMediaCaption: radio audio; the transcript is the row's. */}
+      <audio
+        ref={audioRef}
+        src={sdrRecordingUrl(recording.id)}
+        preload="none"
+        onTimeUpdate={onTimeUpdate}
+        onEnded={stopPreview}
+      />
+    </Sheet>
+  );
+}

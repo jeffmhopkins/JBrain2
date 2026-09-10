@@ -12,6 +12,7 @@ import type {
   NoteOut,
   ReviewItem,
   ReviewQueue,
+  SdrRecordingsPage,
   SearchOut,
   WikiArticleOut,
   WikiLandingOut,
@@ -505,6 +506,104 @@ describe("mock API", () => {
     expect(done.state).toBe("exited");
     expect(done.exit_code).toBe(0);
     expect(done.log_tail).toContain("[reset] complete");
+  });
+
+  // --- the SDR recordings surface. DESIGN.md implementation rule 4 makes default /
+  // empty / error / offline part of this screen's definition of done, and the two
+  // failure states are NOT the same shape: one answers, the other never arrives.
+  it("serves a recordings library whose sizes are the sidecar's real arithmetic", async () => {
+    const page = (await (await call("/api/sdr/recordings")).json()) as SdrRecordingsPage;
+    expect(page.recordings.length).toBeGreaterThan(0);
+    // 64 kbps mono MP3 is 8 kB/s. Every row's size has to follow from its length, or the
+    // trim sheet's "frees N" is arguing from a number nobody can check.
+    for (const row of page.recordings) {
+      expect(row.bytes).toBe(Math.round(row.duration_s * 8000));
+      expect(row.peaks?.length ?? 0).toBeGreaterThan(0);
+    }
+    // Newest first — the only order the library is ever read in.
+    const times = page.recordings.map((r) => new Date(r.started_at).getTime());
+    expect([...times].sort((a, b) => b - a)).toEqual(times);
+    // One fixture is already trimmed, so the header's "reclaimed" line has something to
+    // report; it is derived from duration_s < captured_s, never from a stored flag.
+    expect(page.recordings.some((r) => r.duration_s < r.captured_s)).toBe(true);
+    expect(page.usage.reclaimed_bytes).toBeGreaterThan(0);
+  });
+
+  it("offers the empty, error and offline states the screen has to draw", async () => {
+    const empty = (await (await call("/api/sdr/recordings?state=empty")).json()) as {
+      recordings: unknown[];
+      usage: { reclaimed_bytes: number };
+    };
+    expect(empty.recordings).toHaveLength(0);
+    expect(empty.usage.reclaimed_bytes).toBe(0);
+
+    expect((await call("/api/sdr/recordings?state=error")).status).toBe(500);
+
+    // Offline REJECTS rather than answering, because that is what fetch does with no
+    // network — a fixture that returned 503 would let a screen pass that only handles
+    // ApiError and hangs on a real outage.
+    await expect(call("/api/sdr/recordings?state=offline")).rejects.toThrow(TypeError);
+  });
+
+  it("round-trips record on/off, and the stopped capture lands in the library", async () => {
+    const before = ((await (await call("/api/sdr/recordings")).json()) as SdrRecordingsPage)
+      .recordings.length;
+
+    const on = (await (await call("/api/sdr/record?on=true", { method: "POST" })).json()) as {
+      recording: { bytes: number } | null;
+    };
+    expect(on.recording).not.toBeNull();
+    // The status is where the Record button reads its elapsed time and running size.
+    const status = (await (await call("/api/sdr/status")).json()) as {
+      recording: { bytes: number } | null;
+    };
+    expect(status.recording).not.toBeNull();
+
+    const off = (await (await call("/api/sdr/record?on=false", { method: "POST" })).json()) as {
+      recording: unknown;
+      saved: { id: string } | null;
+    };
+    expect(off.recording).toBeNull();
+    expect(off.saved).not.toBeNull();
+    const after = (await (await call("/api/sdr/recordings")).json()) as SdrRecordingsPage;
+    expect(after.recordings).toHaveLength(before + 1);
+
+    // Idempotent both ways, like POST /sdr/aprs: stopping twice is not an error.
+    const again = (await (await call("/api/sdr/record?on=false", { method: "POST" })).json()) as {
+      recording: unknown;
+    };
+    expect(again.recording).toBeNull();
+  });
+
+  it("trims to a frame boundary and answers with what it actually cut", async () => {
+    const page = (await (await call("/api/sdr/recordings")).json()) as SdrRecordingsPage;
+    const target = page.recordings.find((r) => r.duration_s > 60);
+    if (!target) throw new Error("fixture has no clip long enough to trim");
+
+    const answer = (await (
+      await call(
+        `/api/sdr/recordings/${target.id}/trim`,
+        jsonInit("POST", { start_s: 5, end_s: 25 }),
+      )
+    ).json()) as {
+      recording: { duration_s: number; bytes: number; captured_s: number };
+      cut: { start_s: number; end_s: number };
+      usage: { reclaimed_bytes: number };
+    };
+    const cut = answer.recording;
+    // 20 s is not a whole number of 72 ms frames, so the server answers with the one it
+    // could actually make — the client's seconds were only ever a request.
+    expect(cut.duration_s).toBeCloseTo(20, 1);
+    const frames = cut.duration_s / 0.072;
+    expect(Math.abs(frames - Math.round(frames))).toBeLessThan(1e-6);
+    expect(cut.bytes).toBe(Math.round(cut.duration_s * 8000));
+    // captured_s is untouched, which is what keeps the row marked "trimmed".
+    expect(cut.captured_s).toBe(target.captured_s);
+
+    // The meter travels with the answer, so the header moves with the list.
+    expect(answer.usage.reclaimed_bytes).toBeGreaterThan(0);
+    expect((await call(`/api/sdr/recordings/${target.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await call(`/api/sdr/recordings/${target.id}`, { method: "DELETE" })).status).toBe(404);
   });
 
   it("acknowledges a chat-run cancel (the composer's Stop)", async () => {

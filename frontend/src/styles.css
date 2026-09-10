@@ -26826,3 +26826,422 @@ button.wf-sigpill {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* --- SDR recordings: the library and the trim sheet ------------------------------- */
+/* Binding specs: docs/mocks/recording/a-tape-deck.html (rows) and d-trim-sheet.html
+   (the header's disk line, the trailing scissors column, the whole trim sheet).
+   Sized against the neighbouring radio surfaces — .radio-body already gives a 14px
+   gutter, so nothing here carries a horizontal margin of its own. */
+.sdr-act-record {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+/* Armed INVERTS rather than merely brightening: the button is about to do something,
+   and a tint that only deepens is the state people tap through without reading. */
+.sdr-act-record.armed {
+  color: var(--bg);
+  background: var(--rose);
+}
+.sdr-act-record .sdr-rec-el {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.sdr-act-record small {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-disk {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.rec-freed {
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.rec-bar {
+  height: 5px;
+  margin: 6px 2px 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rec-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-day {
+  margin: 12px 2px 6px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+/* The row is the flex container, so the trailing action sits BESIDE the tappable body
+   rather than wrapping under it, and the progress bar spans the full width below both. */
+.rec-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.rec-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px 11px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* Its own control beside the row, not a glyph inside it: the circle plays and the row
+   expands, and one button that guessed from the tap's coordinates would have one
+   accessible name for two different actions. */
+.rec-play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: center;
+  width: 38px;
+  height: 38px;
+  margin-left: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.rec-row-on .rec-play {
+  border-color: var(--accent);
+  background: var(--steel-tint);
+  color: var(--accent);
+}
+.rec-who {
+  flex: 1;
+  min-width: 0;
+}
+.rec-who b {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.rec-unit {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* Scoped to a class, not `.rec-who span`: an element+class selector outranks `.rec-chip`,
+   which quietly turned the mode badge and the MHz unit into full-width blocks. */
+.rec-who .rec-prev {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.rec-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  color: var(--text-2);
+  vertical-align: 1px;
+}
+.rec-chip-cut {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  color: var(--green);
+}
+.rec-meta {
+  flex: none;
+  text-align: right;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 44px and divided by a hairline: the whole point of the column is that the one
+   irreversible action on this surface cannot be hit by a thumb aiming at the row. */
+.rec-trim {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  width: 44px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.rec-prog {
+  flex: 0 0 100%;
+  height: 3px;
+  background: var(--surface-2);
+}
+.rec-prog i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-body {
+  flex: 0 0 100%;
+  padding: 0 12px 6px;
+  border-top: 1px solid var(--border);
+}
+.rec-tx {
+  margin: 10px 0 2px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+/* The house action list (.rl-action), so Delete arms and confirms the same way it does
+   in the Research Library rather than inventing a second ceremony. An <a> is in the row
+   because a download is a URL the browser handles, never a request through the client. */
+.rec-body .rl-action {
+  text-decoration: none;
+  font-size: var(--fs-secondary);
+}
+.rec-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--accent);
+}
+
+.trim-sub {
+  margin: 0 0 14px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* The waveform is the argument: radio has real silence in it, so the part worth
+   keeping is VISIBLE. Its ground is dark in both themes — a level envelope on a white
+   card reads as a chart, not as tape. */
+.trim-wave {
+  position: relative;
+  height: 118px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a0c10;
+  overflow: hidden;
+  touch-action: none;
+}
+.trim-bar {
+  position: absolute;
+  bottom: 50%;
+  width: 2px;
+  background: var(--text-3);
+  opacity: 0.45;
+  transform: translateY(50%);
+}
+.trim-bar.in {
+  background: var(--green);
+  opacity: 1;
+}
+.trim-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(14, 15, 17, 0.55);
+}
+.trim-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  margin-left: -17px;
+  touch-action: none;
+}
+.trim-grip::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--green);
+}
+.trim-grip::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  margin-top: -16px;
+  width: 12px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--green);
+}
+.trim-grip:focus-visible {
+  outline: none;
+}
+.trim-grip:focus-visible::after {
+  box-shadow: 0 0 0 4px var(--green-tint);
+}
+.trim-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.trim-at {
+  position: absolute;
+  top: 6px;
+  font-size: 9px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-at-in {
+  left: 6px;
+}
+.trim-at-out {
+  right: 6px;
+}
+.trim-marks {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 2px 0;
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-nudge {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.trim-nudge button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.trim-sums {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.trim-sums div {
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.trim-sums span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.trim-sums b {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-note);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.trim-sums .trim-was {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.trim-gain {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--green-tint);
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.trim-gain b {
+  font-variant-numeric: tabular-nums;
+}
+.trim-error {
+  margin: 10px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--danger);
+}
+.trim-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.trim-acts button {
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  cursor: pointer;
+}
+/* Green because it is the SAVE, per the house green=save rule — and 1.5× wide because
+   it is the one button on this sheet that cannot be undone. */
+.trim-acts .trim-keep {
+  flex: 1.5;
+  border-color: var(--green);
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.trim-acts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.trim-foot {
+  margin: 12px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.trim-foot b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+/* The waveform's ground stays dark in LIGHT theme too — a level envelope on a white
+   card reads as a chart rather than as tape, and the green selection needs the contrast.
+   Both values are the mock's, and both are picture content rather than chrome. */
+[data-theme="light"] .trim-wave {
+  background: #0e1218;
+}
+[data-theme="light"] .trim-drop {
+  background: rgba(0, 0, 0, 0.42);
+}
