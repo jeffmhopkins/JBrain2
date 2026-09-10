@@ -62,7 +62,6 @@ from jbrain.llm import (
     LlmMessage,
     LlmRouter,
     LlmTurn,
-    LlmUsage,
     ReasoningChunk,
     TextChunk,
     ToolCall,
@@ -70,6 +69,7 @@ from jbrain.llm import (
     ToolResultMessage,
     UserMessage,
 )
+from jbrain.llm.errors import LlmStreamTruncatedError
 from jbrain.llm.promptfile import load_prompt
 
 log = structlog.get_logger()
@@ -572,6 +572,34 @@ def _prompt_message(message: LlmMessage) -> dict[str, Any]:
     return {"role": "tool", "content": joined}
 
 
+def _round_stop(turn: LlmTurn) -> str:
+    """The reason a round that produced no tool call to dispatch actually ended on.
+
+    ONE classifier for the three places a ReAct round can fall out of the chain —
+    `run`, `run_stream` and `_produce_buffered` — because they had drifted, and the
+    drift is invisible: each independently wrote `"end_turn"`, so a length-cut turn was
+    laundered into a clean stop on two of the three paths after the third was fixed.
+
+    Two shapes reach here that are NOT the model finishing:
+
+    - `max_tokens`. Both adapters map a provider LENGTH cut to it against
+      `TURN_MAX_TOKENS`, and it can land mid-tool-call, so the branch that tests
+      `!= "tool_use" or not tool_calls` is exactly where it surfaces.
+    - `tool_use` with an EMPTY `tool_calls`. The provider said it was calling tools and
+      none survived: on the Anthropic route the content blocks never arrived, on the
+      openai-compatible route the deltas did not. Either way the round is a fragment,
+      and the one thing it is not is a model that chose to stop talking.
+
+    Both matter because `models/note_conversation.state_for_stop` reads this string:
+    `end_turn` alone lands a note conversation in `settled`, which is the ONE state its
+    whole-note sweep fires on (plan constraint 6). Everything else lands `failed`."""
+    if turn.stop_reason == "max_tokens":
+        return "max_tokens"
+    if turn.stop_reason == "tool_use":
+        return "empty_tool_use"
+    return "end_turn"
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -714,8 +742,16 @@ class AgentLoop:
                     on_reasoning(part.text)
             else:
                 turn = part
-        # The adapter always closes a stream with an LlmTurn; guard the contract.
-        turn = turn or LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+        if turn is None:
+            # The adapter always closes a stream with an LlmTurn, and since both of them
+            # refuse a stream that never carried a stop reason
+            # (`LlmStreamTruncatedError`), this is a belt for a contract nobody violates.
+            # It used to fabricate a clean `end_turn` turn, which is the same laundering
+            # `_round_stop` exists to stop — and worse, because a fabricated turn also
+            # reports zero usage. `run_stream`'s twin reports `no_turn` rather than
+            # raising, since it is mid-SSE and the PWA wants a terminal reason; both land
+            # outside `end_turn`, which is the property that matters.
+            raise LlmStreamTruncatedError(f"{self._task}: stream closed with no LlmTurn")
         if hide_tool_round_text and round_text:
             round_content = "".join(round_text)
             if turn.stop_reason == "tool_use" and turn.tool_calls:
@@ -901,8 +937,8 @@ class AgentLoop:
                 # paths use so the child lands on a real answer from what it gathered. Scoped
                 # to force_final_answer (sub-agents); the root's empty turn is handled upstream.
                 if force_final_answer and not turn.text.strip():
-                    return await _forced_final("end_turn", step + 1)
-                return _result(turn.text, "end_turn", step + 1)
+                    return await _forced_final(_round_stop(turn), step + 1)
+                return _result(turn.text, _round_stop(turn), step + 1)
             if self._tree_exhausted(tree, depth):
                 if force_final_answer:
                     return await _forced_final("tree_budget_exhausted", step + 1)
@@ -1181,9 +1217,13 @@ class AgentLoop:
                     answer_parts.append(round_content)
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
-                # contract anyway rather than dereference None.
+                # contract anyway rather than dereference None. NOT `end_turn`: a round
+                # that produced no turn at all did not reach its own end, and a caller
+                # that maps stop reasons to "this pass finished and everything it meant
+                # to write is written" (`models/note_conversation.state_for_stop`) must
+                # not be told it did.
                 async for ev in self._finish(
-                    "end_turn",
+                    "no_turn",
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -1217,7 +1257,7 @@ class AgentLoop:
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
-                    "end_turn",
+                    _round_stop(turn),
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -1598,7 +1638,7 @@ class AgentLoop:
                     tuple(sources),
                     tuple(entities),
                     mutated,
-                    "end_turn",
+                    _round_stop(turn),
                 )
             if self._tree_exhausted(tree, depth):
                 return _BufferedTurn(

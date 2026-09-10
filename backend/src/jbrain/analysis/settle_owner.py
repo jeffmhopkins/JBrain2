@@ -72,59 +72,67 @@ computed table name, a stamp it cannot follow into a variable, a wrong producer 
 The DB column does carry `DEFAULT ARRAY['analyzer']`, a divergence from
 SETTLE_OWNERSHIP.md S1 argued in migration 0196's docstring.
 
-**The conversation never releases a claim, and that is the live cost of this change —
-not a hypothetical.** A claim is released by a settle, and the conversation HAS no
-settle: `graphwritetools` calls `commit_facts` and nothing else, and the only production
-callers of `settle_note` are the analyzer's `apply_intent` and `EmrNoteCommit.settle`
-(S3, the conversation's own sweep, is unbuilt). So from the day this ships, every row
-carrying a `conversation` claim — the ones only the conversation wrote AND the ones both
-producers assert — is retractable by no sweep at all, and the set of such rows only
-grows. Edit a note to drop a claim both producers wrote and the graph keeps asserting
-it, which is a note no longer being the sole source of truth for its own facts.
+**The conversation NEVER releases its claim, permanently and by decision.** A claim is
+released by a settle, and the conversation's settle (`analysis/clarify.settle_conversation`)
+runs the tail and no sweep. So every row carrying a `conversation` claim — the ones only
+it wrote AND the ones both producers assert — is retractable by no sweep at all. Edit a
+note to drop a claim both producers wrote and the graph keeps asserting it.
 
-State it in trade terms, because it IS a trade and it was made deliberately: before this
-change those rows were retracted, by a producer that had not written them and could not
-tell them from its own — which is how the owner's answers were disappearing. This
-exchanges "a co-writer silently deletes what the owner said" for "the graph keeps
+That is a decision, not an omission. A sweep for this producer was built (S3), reviewed
+and removed, on a proof rather than a bug count:
+
+- a release is justified only when a producer RE-DERIVED the note and dropped X;
+- within one session this producer never drops anything — it asserts once and revises by
+  supersession, `correct_fact` supersedes and PINS rather than retracting, and a
+  re-assert returns `ALREADY` with the same `fact_id` — so its ledger never SHRINKS;
+- therefore the only claims a release could remove are OTHER sessions';
+- and judging those needs a complete current READING of the note, which
+  `NoteConversationRepo.writes()` — a record of what a pass WROTE — structurally is not.
+  Its silence is the designed output: the agent holds `find_entity`/`read_entity`, is
+  told to read before it writes, and is rewarded by its own tool surface for not
+  restating what the graph already holds.
+
+**A sound conversation sweep is empty; a non-empty one is unsound.** The built version
+failed four ways, ending on the feature's happy path: the owner answers a question, the
+clarification block is appended so the note's text only GROWS, `record_owner_reply`
+re-stamps the `note_body_sha` the sweep was keyed on, and an earlier conversation's facts
+are retracted. SETTLE_OWNERSHIP.md's S3 section is the argument in full; read it before
+re-deriving a sweep from "nothing ever releases a `conversation` claim", which is true and
+is not a reason.
+
+State the cost in trade terms, because it IS a trade and it was made with the numbers in
+front of us. Before S1 those rows were retracted by a producer that had not written them
+and could not tell them from its own — which is how the owner's answers were disappearing.
+The exchange is "a co-writer silently deletes what the owner said" for "the graph keeps
 asserting something the note no longer says". The second is visible, correctable and
 recoverable; the first is none of those. That does not make it free.
 
-**S3 is what stops the bleeding, not a nice-to-have.** Until the conversation settles
-(over a whole-conversation ledger, gated on a turn that ended cleanly — see
-`models/note_conversation.py`), the leak is the default state and grows monotonically
-with every co-asserted fact. Read SETTLE_OWNERSHIP.md's S3 as scheduled work, not an
-option.
+**What removes such a row.** None of these is producer-scoped, which is why they are the
+escape hatches: `analysis/purge.purge_note_artifacts` (note deletion, and the corpus
+rebuild sweep), `ON DELETE CASCADE` from the note, review-item resolution/retraction,
+ordinary supersession (any later fact on the same identity key retires the head), and the
+owner's own `correct_fact` — which supersedes rather than sweeps, so a wrong value the
+owner notices stops being the current one even while the stale row survives as history.
+The unbounded residue is a fact whose identity key is never re-asserted, on a note never
+purged or rebuilt.
 
-**The leak is unbounded for FACTS only; mention rows expire on their own.** The two
-tables sit behind different foreign keys (migration 0006): `entity_mentions.chunk_id` is
-`ON DELETE CASCADE`, while `facts.chunk_id` is `ON DELETE SET NULL`. Re-ingesting a note
-replaces its chunks (`ingest/pipeline.py`, `notes/repo.py` both delete the old ones), so
-an unreleasable `conversation` mention claim survives at most until the next re-chunk of
-that note — the mention half is bounded to one chunk generation and a re-ingest wipes
-it. A fact carrying that claim keeps its row and merely loses its chunk pointer, so it
-outlives every re-ingest. Keep the distinction when reasoning about how bad this is: the
-S3 backlog that actually grows without bound is facts.
+**The mention half is bounded on its own, which is why the fact half was the loud one.**
+The two tables sit behind different foreign keys (migration 0006):
+`entity_mentions.chunk_id` is `ON DELETE CASCADE`, while `facts.chunk_id` is
+`ON DELETE SET NULL`. Re-ingesting a note replaces its chunks (`ingest/pipeline.py`,
+`notes/repo.py` both delete the old ones), so an unreleasable `conversation` mention claim
+survives at most until that note's next re-chunk, while a fact carrying one keeps its row
+and merely loses its chunk pointer.
 
-**What can still remove such a row today.** None of these is producer-scoped, which is
-why they are the escape hatches: `analysis/purge.purge_note_artifacts` (note deletion,
-and the corpus rebuild sweep), `ON DELETE CASCADE` from the note, review-item
-resolution/retraction, and the owner's own `correct_fact` — which supersedes rather than
-sweeps, so a wrong value the owner notices stops being the current one even while the
-stale row survives as history. What is NOT available is "another producer tidies up
-after it", and that is the point: no producer has ever been able to tell a co-writer's
-row from a stale one of its own.
-
-**What scoping the sweep does NOT give the conversation: the settle TAIL.** Projection
-and reprojection (`_reproject_entities`, `_promote_corroborated`, `project_appointments`,
-`project_emr`, …) run inside `settle_note` and NOWHERE else in a write path — verified:
-`analysis/pipeline.py` and `analysis/purge.py` hold every call. The conversation calls
-`commit_facts` only, so a conversation-written appointment lands in no projection and a
-conversation-written `name.*` fact never refreshes `canonical_name`. That gap predates
-this key and was MASKED by the bug: the analyzer's settle retracted the conversation's
-facts and then projected the (now dead) rows away. With the facts surviving, the gap is
-visible instead of fatal — a fact the graph holds that the appointments view does not.
-Closing it is SETTLE_OWNERSHIP.md S2 (give the conversation the tail), which is a
-separate change from attribution and deliberately not bundled here.
+**A future remedy, recorded and NOT scheduled.** That same asymmetry names an
+evidence-based retraction needing no producer: `ingest.carryover` keeps a rebuilt chunk's
+row when it comes back byte-identical, so a fact whose note has been re-ingested and whose
+`chunk_id` is now NULL is a fact WHOSE CITED TEXT IS GONE. That is real evidence about the
+note, it is producer-agnostic, and it applies to the analyzer's rows exactly as to the
+conversation's — so it satisfies the invariant S3 could not, without reconstructing
+anybody's reading from a write ledger. It is a different mechanism from the settle and it
+needs its own care (a fact can lose its chunk for reasons other than its text
+disappearing). Nothing depends on it. Do not read this paragraph as planned work.
 
 **Two residuals, both review cards rather than graph rows.** The settle's fact and
 mention halves are producer-scoped; its review-card halves are still note-keyed and

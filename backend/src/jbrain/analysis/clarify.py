@@ -64,7 +64,7 @@ import contextlib
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
@@ -77,11 +77,15 @@ from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
     MAX_ARG_CHARS,
+    SETTLED,
     NoteConversationRepo,
     note_body_sha,
     state_for_stop,
 )
 from jbrain.notes.service import NotesRepo
+
+if TYPE_CHECKING:  # `analysis/pipeline.py` drags the LLM stack; only the TYPE is needed
+    from jbrain.analysis.pipeline import AnalysisPipeline
 
 log = structlog.get_logger()
 
@@ -493,9 +497,26 @@ async def close_owner_reply(
     session_id: str,
     agent: str,
     stop_reason: str,
-) -> None:
+    reopened: bool,
+) -> str | None:
     """End the conversation the owner's reply re-opened, by the same rule the unattended
-    pass ends by (`state_for_stop`).
+    pass ends by (`state_for_stop`). Returns the state it WROTE, or None when it wrote
+    none — which is the caller's gate for `settle_conversation`, so the answer to "did
+    this pass end cleanly?" is given by the call that decided it rather than re-derived
+    beside it.
+
+    `reopened` says whether THIS turn moved the thread `waiting_on_owner -> running`,
+    which is exactly `record_owner_reply` returning an `OwnerReply`. It is required, and
+    a `running` state is not a substitute for it: a conversation is `running` for the
+    whole of the worker's unattended pass — up to `NOTE_TURN_WALL_CLOCK`, 30 minutes —
+    and `/chat`'s busy guard counts only the API's own live turns, so nothing stops the
+    owner opening the thread and typing while that pass is mid-flight. Closing on the
+    state alone then declared a LIVE pass `settled` before its `_record` had written a
+    single ledger row, and the settle behind this call swept the note against an empty
+    ledger: the incomplete-ledger retraction the whole gate exists to prevent, reached
+    without any of its three refusals firing. It also left the worker's own `set_state`
+    raising `InvalidStateTransition` into a job retry, which opens a second thread for
+    the note.
 
     Something has to: `record_owner_reply` put the thread back in `running`, and `running`
     holds the note's ONE live slot — the re-ingest the answer just queued emits its own
@@ -505,20 +526,102 @@ async def close_owner_reply(
 
     A turn the agent ended with another `ask_owner` is left exactly where the handler put
     it: the thread is waiting again, and `state_for_stop` says so."""
-    if agent != NOTE_CONVERSE_AGENT:
-        return
+    if agent != NOTE_CONVERSE_AGENT or not reopened:
+        return None
     state = state_for_stop(stop_reason)
     repo = NoteConversationRepo()
     try:
         async with scoped_session(maker, ctx) as s:
             conversation = await repo.get(s, session_id)
             if conversation is None or conversation.state != "running":
-                return
+                return None
             await repo.set_state(s, session_id, state)
     except Exception as exc:  # noqa: BLE001 — the reaper is the backstop
         log.warning("note_reply.close_failed", session_id=session_id, error=repr(exc))
-        return
+        return None
     log.info("note_reply.closed", session_id=session_id, state=state, stop_reason=stop_reason)
+    return state
+
+
+async def settle_conversation(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    pipeline: AnalysisPipeline,
+    *,
+    session_id: str,
+    state: str,
+) -> bool:
+    """Run the note conversation's end-of-pass settle, and say whether it ran. It is the
+    settle's TAIL and nothing else — this producer never retracts, by design.
+
+    **What it does.** Everything the graph DERIVES from a note's rows —
+    `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
+    geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
+    and nowhere else in a write path. The conversation's write path is `commit_facts`
+    and nothing else (`agent/graphwritetools.py`), which deliberately does nothing
+    whole-note. So before this existed a conversation-written appointment landed in NO
+    projection and a conversation-written `name.*` fact never refreshed
+    `canonical_name`: the graph held the fact, the appointments view did not. That gap
+    was masked while the analyzer's settle retracted the conversation's facts and then
+    projected the dead rows away, which is why S2 is the payment for S1's debt rather
+    than an improvement on it (docs/plans/SETTLE_OWNERSHIP.md).
+
+    **What it deliberately does NOT do, and why nobody should add it back.** It runs no
+    `sweep_note`, so it never releases the `conversation` claim and never retracts
+    anything. That was built (S3), reviewed, and REMOVED, and the reason is a closed
+    argument rather than a bug count:
+
+    - a release is justified only when a producer has RE-DERIVED the note and dropped X;
+    - within one session this producer never drops anything — it asserts once and revises
+      by supersession, `correct_fact` supersedes and pins rather than retracting, and a
+      re-assert returns `ALREADY` with the same `fact_id`, so its ledger never shrinks;
+    - so the only claims a release could ever remove are OTHER sessions';
+    - and judging another session's claims needs a complete current READING of the note,
+      which a ledger of what a pass WROTE structurally is not — the agent holds
+      `find_entity`/`read_entity`, is told to read before it writes and is rewarded for
+      not restating what is already there, so a silent second pass is the DESIGNED
+      output, not a statement that the note stopped saying something.
+
+    Therefore a sound conversation sweep is empty and a non-empty one is unsound. The
+    four ways the built version failed — and the one that fired on the feature's own
+    happy path, where the owner ANSWERS a question, the note's text only GROWS, and an
+    earlier fact is retracted — are in SETTLE_OWNERSHIP.md's S3 section. Read it before
+    re-deriving the sweep from "nothing ever releases a `conversation` claim", which is
+    true and is not a reason.
+
+    It also does NOT stamp `note_analysis` (no title or tags verb, and the stamp is
+    unconditional — precondition 3) or flip `integration_state` (precondition 4).
+
+    **`state` gates it to a clean pass end.** `state_for_stop` gives `SETTLED` to a CLEAN
+    stop alone, so a truncated turn lands `failed`, a turn that ended on `ask_owner` lands
+    `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too, because
+    both callers degrade the stop reason to `record_failed` when their recorder fails
+    (`converse._run_turn`, `record_reply_writes` + `close_owner_reply` in `api/agent.py`).
+    The gate guards nothing DESTRUCTIVE now that the sweep is gone — projecting never
+    retracts — but it is not free: a pass that committed facts and then truncated lands
+    `failed`, so its writes go unprojected until some later settle of the note happens to
+    touch the same entities. It is kept because it is the shape the plan specifies for a
+    pass end, and because a caller who did add a sweep would otherwise inherit no gate.
+
+    Never raises. A pass that settled is already `settled` in the database, and a failed
+    projection refresh is a stale view, recoverable by the next settle of the note.
+    Raising instead would retry the worker job, which re-enters `note_converse` for a note
+    whose conversation is no longer live and opens a SECOND thread for it.
+    """
+    if state != SETTLED:
+        return False
+    try:
+        async with scoped_session(maker, ctx) as s:
+            repo = NoteConversationRepo()
+            if await repo.get(s, session_id) is None:
+                return False
+            entities = set((await repo.writes(s, session_id)).entities)
+            await pipeline.settle_tail(s, referenced=entities, projected=entities)
+    except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
+        log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
+        return False
+    log.info("note_settle.done", session_id=session_id, entities=len(entities))
+    return True
 
 
 __all__ = [
@@ -532,4 +635,5 @@ __all__ = [
     "record_owner_reply",
     "record_reply_writes",
     "record_turn_writes",
+    "settle_conversation",
 ]
