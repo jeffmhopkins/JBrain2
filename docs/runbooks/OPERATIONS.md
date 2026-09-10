@@ -85,7 +85,11 @@ restore:
   owner principal" means `WHERE kind = 'owner' AND revoked_at IS NULL`, and a store
   keyed by principal id carries its document forward when the current principal has
   none (`ArchivistMemoryRepo.read`). Rotation is still not data loss — but only
-  because the readers account for it.
+  because the readers account for it. The carry-forward cannot repair a box where the
+  new principal already wrote a row (there is nothing left to fall back from), so
+  migration `0187` is the one-time fold of any already-stranded document onto the
+  active owner; it runs on the next **Ops → Update** and touches nothing on a box that
+  never rotated.
 - Pairing codes are **one-time and short-lived**; never reuse or store a redeemed
   code.
 
