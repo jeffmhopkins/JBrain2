@@ -28,8 +28,8 @@ Three deliberate choices:
   could never save back. Blocks go in newest-first while they fit; anything left over
   stays in its own row and the document says so.
 
-Revision ID: 0187
-Revises: 0186
+Revision ID: 0199
+Revises: 0198
 Create Date: 2026-09-10
 """
 
@@ -40,8 +40,8 @@ from datetime import datetime
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0187"
-down_revision = "0186"
+revision = "0199"
+down_revision = "0198"
 branch_labels = None
 depends_on = None
 

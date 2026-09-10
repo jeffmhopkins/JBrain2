@@ -1,4 +1,4 @@
-"""Migration 0187 against real Postgres: the orphaned-memory repair actually runs.
+"""Migration 0199 against real Postgres: the orphaned-memory repair actually runs.
 
 The unit test pins the fold decision; this pins the half only a database can show — that
 `upgrade()` resolves the ACTIVE owner, reads across principals, writes the folded document
@@ -35,11 +35,11 @@ pytestmark = [
 ]
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-_PATH = BACKEND_ROOT / "migrations" / "versions" / "0187_archivist_memory_consolidate.py"
+_PATH = BACKEND_ROOT / "migrations" / "versions" / "0199_archivist_memory_consolidate.py"
 
 
 def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("migration_0187_pg", _PATH)
+    spec = importlib.util.spec_from_file_location("migration_0199_pg", _PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

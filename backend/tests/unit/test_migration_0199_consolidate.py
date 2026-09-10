@@ -1,4 +1,4 @@
-"""The fold logic in migration 0187 (archivist memory consolidation).
+"""The fold logic in migration 0199 (archivist memory consolidation).
 
 The migration repairs a box whose owner key was rotated: the archivist's notes stay in
 `app.archivist_memory` under the revoked principal, unaddressed, while the persona reads
@@ -12,12 +12,12 @@ from pathlib import Path
 from types import ModuleType
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-_PATH = BACKEND_ROOT / "migrations" / "versions" / "0187_archivist_memory_consolidate.py"
+_PATH = BACKEND_ROOT / "migrations" / "versions" / "0199_archivist_memory_consolidate.py"
 
 
 def _module() -> ModuleType:
     """Load the migration by path — `migrations/versions` is not an importable package."""
-    spec = importlib.util.spec_from_file_location("migration_0187", _PATH)
+    spec = importlib.util.spec_from_file_location("migration_0199", _PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
