@@ -1241,6 +1241,9 @@ async def test_a_ledger_that_cannot_be_written_degrades_the_close_rather_than_th
         session_id=sid,
         agent=NOTE_CONVERSE_AGENT,
         stop_reason="record_failed",
+        # This turn is the one that re-opened the thread — the state alone is not a
+        # licence to close, since the worker's own pass is also `running`.
+        reopened=True,
     )
     async with scoped_session(maker, owner) as s:
         conversation = await NoteConversationRepo().get(s, sid)

@@ -68,6 +68,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
 from jbrain.analysis.clarify import (
     NOTE_CONVERSE_AGENT,
+    OwnerReply,
     close_owner_reply,
     record_owner_reply,
     record_reply_writes,
@@ -919,8 +920,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # agent's open question and appends it to the note as SOURCE text. Filing one would
     # put a sentence Jeff never said into his own note, permanently and searchably, and
     # spend the question that his real answer was waiting to be paired with.
+    owner_reply: OwnerReply | None = None
     if session.agent == NOTE_CONVERSE_AGENT:
-        await record_owner_reply(
+        owner_reply = await record_owner_reply(
             request.app.state.session_maker,
             cast(NotesRepo, request.app.state.notes_repo),
             owner_ctx,
@@ -1585,6 +1587,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         session_id=str(session.id),
                         agent=session.agent,
                         stop_reason=stop_reason if recorded else "record_failed",
+                        # Only a turn that itself moved the thread out of
+                        # `waiting_on_owner` may end it. A thread is also `running` for
+                        # the whole of the worker's unattended pass, and this turn must
+                        # not settle THAT — see `close_owner_reply`.
+                        reopened=owner_reply is not None,
                     )
                     # The reply turn's writes are the conversation's too, so the pass
                     # settles from HERE as well as from the worker's unattended pass —

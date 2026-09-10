@@ -1959,7 +1959,13 @@ def test_chat_completed_turn_deregisters_from_live_turns(
 
 class GatedStreamClient:
     """Streams a partial answer, then BLOCKS on a release event before finishing — lets a
-    test drop the SSE connection mid-turn and prove the detached turn still completes."""
+    test drop the SSE connection mid-turn and prove the detached turn still completes.
+
+    It closes with an `LlmTurn` because a real adapter always does, and the loop now
+    tells the two apart: a round that ends with no turn at all reports `no_turn` rather
+    than `end_turn`, since a caller reading the stop reason as "this pass finished and
+    everything it meant to write is written" must not be told that by a stream that
+    simply stopped (`models/note_conversation.state_for_stop`)."""
 
     def __init__(self, release: asyncio.Event) -> None:
         self._release = release
@@ -1968,6 +1974,7 @@ class GatedStreamClient:
         yield TextChunk(text="partial ")
         await self._release.wait()
         yield TextChunk(text="answer")
+        yield LlmTurn("partial answer", (), "end_turn", LlmUsage(4, 2))
 
 
 async def test_chat_turn_survives_a_client_disconnect() -> None:

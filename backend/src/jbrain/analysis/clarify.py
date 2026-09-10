@@ -498,6 +498,7 @@ async def close_owner_reply(
     session_id: str,
     agent: str,
     stop_reason: str,
+    reopened: bool,
 ) -> str | None:
     """End the conversation the owner's reply re-opened, by the same rule the unattended
     pass ends by (`state_for_stop`). Returns the state it WROTE, or None when it wrote
@@ -505,9 +506,28 @@ async def close_owner_reply(
     this pass end cleanly?" is given by the call that decided it rather than re-derived
     beside it.
 
+    `reopened` says whether THIS turn moved the thread `waiting_on_owner -> running`,
+    which is exactly `record_owner_reply` returning an `OwnerReply`. It is required, and
+    a `running` state is not a substitute for it: a conversation is `running` for the
+    whole of the worker's unattended pass — up to `NOTE_TURN_WALL_CLOCK`, 30 minutes —
+    and `/chat`'s busy guard counts only the API's own live turns, so nothing stops the
+    owner opening the thread and typing while that pass is mid-flight. Closing on the
+    state alone then declared a LIVE pass `settled` before its `_record` had written a
+    single ledger row, and the settle behind this call swept the note against an empty
+    ledger: the incomplete-ledger retraction the whole gate exists to prevent, reached
+    without any of its three refusals firing. It also left the worker's own `set_state`
+    raising `InvalidStateTransition` into a job retry, which opens a second thread for
+    the note.
+
+    Something has to: `record_owner_reply` put the thread back in `running`, and `running`
+    holds the note's ONE live slot — the re-ingest the answer just queued emits its own
+    `note.ingested`, and the pass that event opens is suppressed while this one stands. So
+    a reply turn that never closed would leave the answered note un-re-read, until the
+    stale-conversation reaper eventually called it `failed` an hour later.
+
     A turn the agent ended with another `ask_owner` is left exactly where the handler put
     it: the thread is waiting again, and `state_for_stop` says so."""
-    if agent != NOTE_CONVERSE_AGENT:
+    if agent != NOTE_CONVERSE_AGENT or not reopened:
         return None
     state = state_for_stop(stop_reason)
     repo = NoteConversationRepo()

@@ -1181,9 +1181,13 @@ class AgentLoop:
                     answer_parts.append(round_content)
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
-                # contract anyway rather than dereference None.
+                # contract anyway rather than dereference None. NOT `end_turn`: a round
+                # that produced no turn at all did not reach its own end, and a caller
+                # that maps stop reasons to "this pass finished and everything it meant
+                # to write is written" (`models/note_conversation.state_for_stop`) must
+                # not be told it did.
                 async for ev in self._finish(
-                    "end_turn",
+                    "no_turn",
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -1216,8 +1220,17 @@ class AgentLoop:
                 )
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
+                # A provider LENGTH cut is the fifth truncation, and the only one that
+                # used to leave here wearing `end_turn`'s clothes: both adapters map it
+                # to `max_tokens` (`llm/anthropic.py`, `llm/openai_compat.py`) against
+                # `TURN_MAX_TOKENS`, and it can land mid-tool-call with partial or empty
+                # `tool_calls`, which is precisely this branch. Carried out under its own
+                # name because a downstream reader has to be able to tell "the model
+                # finished" from "the model was cut off": `state_for_stop` lands the
+                # first in `settled` and everything else in `failed`, and the note
+                # conversation's whole-note sweep fires only on `settled` (constraint 6).
                 async for ev in self._finish(
-                    "end_turn",
+                    "max_tokens" if turn.stop_reason == "max_tokens" else "end_turn",
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,

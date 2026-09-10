@@ -321,7 +321,15 @@ the sole producer and must take the sweep, the stamp and the state flip:
    would retract. The sweep must not fire on a `False`, nor on a truncated turn or one
    ending `awaiting_owner` (constraint 6). *Landed with S3: all three are one gate on the
    pass's STATE, `SETTLED`, because the `False` is degraded to `record_failed` at the call
-   site and `state_for_stop` maps every non-clean ending away from `settled`.*
+   site and `state_for_stop` maps every non-clean ending away from `settled`. Two things
+   the first cut of that gate got wrong and S3's review caught: there is a FIFTH
+   truncation — a provider LENGTH cut, which both adapters report as `max_tokens` and
+   `agent/loop.py` used to collapse into `end_turn` — and `close_owner_reply` could not
+   tell a thread the owner's reply re-opened from one the worker's 30-minute unattended
+   pass is still inside, so an ordinary `/chat` message during a live pass settled it and
+   swept against a ledger that had not been written yet. Both are fixed: the loop carries
+   `max_tokens` (and `no_turn`) out under their own names, and the close requires the
+   positive `reopened` signal `record_owner_reply` already returns.*
 3. **A title/tags source.** Unowned: the plan names `note_analysis` exactly once
    (`AGENT_INGEST_CONVERSATION_PLAN.md:1282`) and never says where the title comes from
    afterwards. Recommendation for that day: keep the analyzer's title half as its own small
