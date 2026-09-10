@@ -25,6 +25,21 @@ if TYPE_CHECKING:
 _MAX_CHARS = 20_000
 
 
+def _receipt(previous: str, content: str) -> str:
+    """What the write actually DID, in the tool result. A write is a full replace, and the
+    model has to hold that fact across a turn: asked whether it had clobbered the owner's
+    notes, the archivist apologized for destroying a document its own read had just
+    returned as empty. A receipt naming the before/after keeps its account of its memory
+    grounded, and puts a real clobber in front of it while it can still re-save the merge."""
+    if not previous:
+        return "Memory saved — nothing was stored before, so this replaced an empty memory."
+    return (
+        "Memory saved. The previous document is GONE, replaced by this one "
+        f"({len(previous)} chars → {len(content)}). If it dropped anything you meant to "
+        "keep, save the merged version now."
+    )
+
+
 def build_archivist_memory_handlers(
     maker: async_sessionmaker[AsyncSession],
 ) -> dict[str, ToolHandler]:
@@ -50,8 +65,9 @@ def build_archivist_memory_handlers(
         if not ctx.session.principal_id:
             return "Can't save memory — this session has no owner principal."
         async with scoped_session(maker, ctx.session) as session:
+            previous = await repo.read(session, ctx.session.principal_id)
             await repo.write(session, ctx.session.principal_id, content)
-        return "Memory saved."
+        return _receipt(previous, content)
 
     return {
         "archivist_memory_read": archivist_memory_read,

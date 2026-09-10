@@ -41,10 +41,14 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
 
 
 async def _owner_principal(maker: async_sessionmaker) -> str:
+    """Rotate the owner key and return the principal it minted — the ACTIVE one, so a
+    second call (a rotation mid-test) returns the new owner and not a superseded row."""
     await service.rotate_owner_key(SqlAuthRepo(maker))
     async with scoped_session(maker, SessionContext(principal_kind="owner")) as session:
         pid = (
-            await session.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))
+            await session.execute(
+                text("SELECT id FROM app.principals WHERE kind = 'owner' AND revoked_at IS NULL")
+            )
         ).scalar()
     return str(pid)
 
@@ -94,6 +98,60 @@ async def test_owner_memory_corrections_reach_the_classifier(maker: async_sessio
     assert "Owner corrections" in llm.calls[0]["system"]
     assert "newsletters from acme.com are spam" in llm.calls[0]["system"]
     assert "Finance/Chase" not in llm.calls[0]["system"]
+
+
+async def _write_memory(maker: async_sessionmaker, principal: str, content: str) -> None:
+    ctx = SessionContext(principal_id=principal, principal_kind="owner")
+    async with scoped_session(maker, ctx) as s:
+        await ArchivistMemoryRepo().write(s, principal, content)
+
+
+async def _clear_memory(maker: async_sessionmaker, principal: str) -> None:
+    """`database_url` is module-scoped, so rows outlive a test. A rotation test turns on
+    which document the sweep resolves, so it starts from a known-empty table."""
+    ctx = SessionContext(principal_id=principal, principal_kind="owner")
+    async with scoped_session(maker, ctx) as s:
+        await s.execute(text("DELETE FROM app.archivist_memory"))
+
+
+def _clarification(rule: str) -> str:
+    return f"=== TRIAGE CLARIFICATIONS ===\n- {rule}\n=== END TRIAGE CLARIFICATIONS ===\n"
+
+
+async def test_corrections_survive_an_owner_key_rotation(maker: async_sessionmaker) -> None:
+    """The failure this guards, observed live: the owner rotated his key, so the sweep's
+    unscoped `kind = 'owner'` lookup resolved a principal revoked months earlier with no
+    memory row — every correction he recorded read back as "no corrections"."""
+    old_owner = await _owner_principal(maker)
+    await _clear_memory(maker, old_owner)
+    await _write_memory(maker, old_owner, _clarification("newsletters from acme.com are spam"))
+
+    new_owner = await _owner_principal(maker)  # a rotation: old principal revoked, new minted
+    assert new_owner != old_owner
+
+    fake = FakeGmail(messages=[_msg()])
+    router, llm = _router()
+    await InboxTriage(lambda: _factory(fake), router, maker).run({})
+
+    # Resolved to the ACTIVE owner, and its memory carried the pre-rotation document.
+    assert "newsletters from acme.com are spam" in llm.calls[0]["system"]
+
+
+async def test_active_owners_corrections_win_over_a_revoked_owners(
+    maker: async_sessionmaker,
+) -> None:
+    old_owner = await _owner_principal(maker)
+    await _clear_memory(maker, old_owner)
+    await _write_memory(maker, old_owner, _clarification("acme.com is spam"))
+    new_owner = await _owner_principal(maker)
+    await _write_memory(maker, new_owner, _clarification("acme.com is high"))
+
+    fake = FakeGmail(messages=[_msg()])
+    router, llm = _router()
+    await InboxTriage(lambda: _factory(fake), router, maker).run({})
+
+    assert "acme.com is high" in llm.calls[0]["system"]
+    assert "acme.com is spam" not in llm.calls[0]["system"]
 
 
 async def test_no_corrections_section_leaves_the_prompt_clean(maker: async_sessionmaker) -> None:
