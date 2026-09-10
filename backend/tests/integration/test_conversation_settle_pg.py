@@ -45,6 +45,7 @@ from jbrain.analysis.clarify import (
     settle_conversation,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.note_conversation import SETTLED, NoteConversationRepo, note_body_sha
@@ -271,3 +272,132 @@ async def test_the_conversations_settle_does_not_flip_the_note_to_integrated(
             )
         ).scalar_one()
     assert state == "pending_integration"
+
+
+async def test_the_facts_the_conversation_still_asserts_keep_their_claim(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The settle is not a retraction of the pass that just ran. Everything on the
+    ledger is in `touched`, so the release skips it and the claim stands — the invariant
+    that makes running a sweep at the end of EVERY clean pass safe rather than reckless."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    session_id = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, session_id, outs)
+
+    await settle_conversation(maker, owner, _pipeline(maker), session_id=session_id, state=SETTLED)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active"
+    assert row.settle_owners == [CONVERSATION]
+
+
+async def test_a_fact_the_note_no_longer_says_is_retracted_once_the_claim_is_released(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """S3's payoff, in the shape the corpus actually produces it.
+
+    A note is re-ingested — an attachment lands, a clarification block is appended, the
+    body is edited — and `note.ingested` opens a SECOND conversation over it
+    (`converse.note_converse`; the first is `settled`, so the one-live index allows it).
+    That pass reads the note as it now stands and no longer asserts what the first one
+    did. Its settle releases the `conversation` claim on the rows outside ITS ledger, and
+    a row nobody claims any more is retracted.
+
+    Before S3 nothing released that claim at any point in the note's life, so the row
+    stood active forever — a note that is no longer the sole source of truth for its own
+    facts, and the set of such rows grew with every co-asserted claim."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs)
+    await settle_conversation(maker, owner, _pipeline(maker), session_id=first, state=SETTLED)
+    assert (await _fact_row(maker, fact_id)).status == "active"
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    second = await _conversation(maker, owner, note_id)
+    await settle_conversation(maker, owner, _pipeline(maker), session_id=second, state=SETTLED)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "retracted"
+    assert row.settle_owners == []
+
+
+async def test_a_co_asserted_row_survives_the_conversation_letting_go(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The other half of the claim SET, from the side S1 could not exercise: the
+    conversation releases and the ANALYZER still says so, therefore the row stands.
+
+    Until now this direction was untestable, because the conversation had no settle to
+    release with. It is the case the doc calls ordinary rather than exceptional — both
+    producers read the same note off one `note.ingested` event, and a salient claim is
+    exactly what both write down, at which point `decide()` refreshes ONE row."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        # The analyzer JOINING the claim, exactly as `_claimed_by` writes it: the same
+        # remove-then-append, so a re-run cannot duplicate its own claim.
+        await s.execute(
+            text(
+                "UPDATE app.facts SET settle_owners ="
+                " array_append(array_remove(settle_owners, 'analyzer'), 'analyzer')"
+                " WHERE id = CAST(:f AS uuid)"
+            ),
+            {"f": str(fact_id)},
+        )
+    first = await _conversation(maker, owner, note_id)
+    await settle_conversation(maker, owner, _pipeline(maker), session_id=first, state=SETTLED)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "the conversation retracted a row the analyzer asserts"
+    assert row.settle_owners == [ANALYZER]
+
+
+@pytest.mark.parametrize(
+    ("state", "why"),
+    [
+        ("failed", "a truncated turn — max_steps, the budget, the wall clock"),
+        ("failed", "a turn whose ledger did not record: `record_failed`"),
+        ("waiting_on_owner", "a turn that stopped to ask the owner a question"),
+    ],
+)
+async def test_the_sweep_does_not_fire_on_a_pass_that_did_not_end_cleanly(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+    state: str,
+    why: str,
+) -> None:
+    """The three refusals, each with the facts left intact — precondition 2.
+
+    They collapse to ONE gate on purpose, and the collapse is the argument: `settled` is
+    a claim that the pass finished and everything it meant to write is written, and
+    `state_for_stop` gives it to a clean stop alone. A truncated turn lands `failed`. A
+    turn that asked lands `waiting_on_owner`. A turn whose recorder failed lands `failed`
+    too, because both callers degrade the stop reason to `record_failed` when
+    `record_reply_writes` returns False (`api/agent.py`) or `_record` raises
+    (`converse._run_turn`) — so an UNRECORDED write can never be swept as a fact the note
+    no longer says.
+
+    The ledger is deliberately left EMPTY here, which is the sharpest version: under
+    `settled` an empty ledger is a real statement and everything unpinned would go, so a
+    gate that leaked would show as a retraction rather than as a subtle difference."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    session_id = await _conversation(maker, owner, note_id)
+
+    assert not await settle_conversation(
+        maker, owner, _pipeline(maker), session_id=session_id, state=state
+    ), why
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active"
+    assert row.settle_owners == [CONVERSATION]

@@ -356,11 +356,14 @@ class ConversationWrites:
     Who owns a note's settle is no longer open (W4c/3, docs/plans/SETTLE_OWNERSHIP.md):
     each producer sweeps the rows it stamped and cannot reach a co-writer's — which
     closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
-    outright. What remains outstanding is not this dataclass's: the conversation's OWN
-    sweep is still unwired (W4c/2, optional), and it must stay unwired until an
-    incomplete ledger can gate it (`clarify.record_reply_writes` returning False, a
-    truncated turn, a turn ending `awaiting_owner`). An empty `facts` still means "the
-    conversation's successful calls wrote no fact", never "nothing was recorded"."""
+    outright. **The conversation's own sweep now reads this** (W4c/2 / S3):
+    `clarify.settle_conversation` passes `facts` as `sweep_note`'s `touched`, at the end
+    of a pass that reached `settled` — which is what keeps it off an incomplete ledger
+    (`record_reply_writes` returning False degrades the close to `record_failed`), off a
+    truncated turn, and off one ending `awaiting_owner`. An empty `facts` under `settled`
+    means "the conversation's successful calls wrote no fact" and is swept on; an empty
+    one never means "nothing was recorded", because a recorder that failed does not reach
+    `settled`."""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
     """The fact ids the conversation's successful calls wrote, across every turn of it —
@@ -705,9 +708,15 @@ class NoteConversationRepo:
         it releases this producer's claim on every non-pinned fact of the note NOT in
         `touched`, and retracts the ones left unclaimed (`analysis/pipeline.py`), so a
         per-pass share would drop the claim the owner's own answer added — the claim set
-        groups both runs deliberately, so it would not save them. Still unwired, and still not
-        this method's call to make: read `ConversationWrites`' docstring for what remains
-        outstanding."""
+        groups both runs deliberately, so it would not save them.
+
+        Per SESSION, not per note, and that is load-bearing rather than incidental. A note
+        gets a new conversation on every re-ingest, so it is a LATER conversation's settle
+        that releases an earlier one's claims on rows the note no longer supports — the
+        sweep's own rule ("what a re-derivation by the same producer stopped asserting"),
+        applied to a producer that runs once per ingest. A union across every session of
+        the note would put every id the conversation ever wrote into `touched` and release
+        nothing at all."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
             NoteConversationToolCall.entity_ids,

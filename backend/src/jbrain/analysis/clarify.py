@@ -72,6 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import ASK_OWNER_TOOL, latest_question
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
@@ -537,11 +538,14 @@ async def settle_conversation(
     session_id: str,
     state: str,
 ) -> bool:
-    """Run the note conversation's end-of-pass settle, and say whether it ran.
+    """Run the note conversation's end-of-pass settle, and say whether it ran — the
+    sweep that releases its claim (S3) and the tail that projects what it wrote (S2).
 
     The conversation's write path is `commit_facts` and nothing else
     (`agent/graphwritetools.py`), and `commit_facts` deliberately does nothing
-    whole-note. Everything the graph DERIVES from a note's rows —
+    whole-note. Two consequences, and this closes both.
+
+    **The tail.** Everything the graph DERIVES from a note's rows —
     `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
     geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
     and nowhere else in a write path. So before this existed, a conversation-written
@@ -552,6 +556,13 @@ async def settle_conversation(
     payment for S1's debt rather than an improvement on it
     (docs/plans/SETTLE_OWNERSHIP.md).
 
+    **The release.** A `settle_owners` claim is released by a settle, and until S3 the
+    conversation had none. So every row carrying a `conversation` claim — the rows only
+    it wrote AND every row both producers assert — was retractable by no sweep at all,
+    permanently, and the set grew with every co-asserted fact. Edit a note to drop a
+    claim both producers wrote and the graph went on asserting it: a note no longer the
+    sole source of truth for its own facts. `sweep_note` here is what stops that.
+
     **`state` is the gate, and it is the whole safety argument.** The pass settles only
     from `SETTLED`, which `state_for_stop` gives to a CLEAN stop alone — so a truncated
     turn (`max_steps`, the cost budget, consecutive tool errors, the wall clock) lands
@@ -559,16 +570,18 @@ async def settle_conversation(
     ledger did not record lands `failed` too, because both callers degrade the stop reason
     to `record_failed` when their recorder fails (`converse._run_turn`,
     `record_reply_writes` + `close_owner_reply` in `api/agent.py`). None of those three
-    reaches this function's body. That matters most for the sweep S3 adds below, where
-    firing on an incomplete ledger retracts the owner's own writes — the bug S1 just
-    closed, re-entered through the front door — but the gate is stated once, here, for
-    both halves rather than being an argument about which half is dangerous.
+    reaches this function's body. That is not a nicety: the sweep retracts every unpinned
+    fact of the note the ledger does not vouch for, so firing it on an incomplete ledger
+    retracts the owner's own writes — the bug S1 just closed, re-entered through the front
+    door. An empty ledger under `settled` is a real statement ("this pass asserted
+    nothing") and is swept on; an empty ledger under anything else is "nothing was
+    recorded", and never reaches here.
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
-    projection refresh is a stale view — recoverable by the next settle of the note, and
-    the direction this whole design fails in deliberately. Raising instead would retry the
-    worker job, which re-enters `note_converse` for a note whose conversation is no longer
-    live and opens a SECOND thread for it.
+    settle leaks a claim — recoverable by the next settle of the note, and the direction
+    this whole design fails in deliberately. Raising instead would retry the worker job,
+    which re-enters `note_converse` for a note whose conversation is no longer live and
+    opens a SECOND thread for it.
     """
     if state != SETTLED:
         return False
@@ -580,16 +593,38 @@ async def settle_conversation(
                 return False
             writes = await repo.writes(s, session_id)
             entities = set(writes.entities)
+            # The whole-CONVERSATION union, both turn paths (W4c/1). A per-TURN share
+            # here would release the OTHER turn's claim — and on a row only the
+            # conversation asserts, that is the last claim, so the row would be retracted
+            # with full authority (`models/note_conversation.ConversationWrites`).
+            #
+            # `mentions=None` SKIPS the mention reconcile rather than running it against
+            # an empty set. The ledger has no mention-id column, and an empty set would
+            # release this producer's claim on every mention of the note — including the
+            # spans the facts it still asserts are anchored to. `sweep_note` states what
+            # that leaks and why it is the bounded half.
+            retracted = await pipeline.sweep_note(
+                s,
+                note_id=conversation.note_id,
+                settle_owner=CONVERSATION,
+                touched=set(writes.facts),
+                mentions=None,
+            )
             # NOT `stamp_analysis`: the conversation has no title/tags verb, so it would
             # blank the analyzer's extracted title (SETTLE_OWNERSHIP.md precondition 3,
             # still unowned). NOT the `integration_state` flip either (precondition 4) —
             # a thread that can park on `ask_owner` for days cannot be what declares a
             # note integrated.
-            await pipeline.settle_tail(s, referenced=entities, projected=entities)
-    except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
+            await pipeline.settle_tail(s, referenced=entities, projected=entities | retracted)
+    except Exception as exc:  # noqa: BLE001 — a leaked claim, never a retried job
         log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
         return False
-    log.info("note_settle.done", session_id=session_id, entities=len(entities))
+    log.info(
+        "note_settle.done",
+        session_id=session_id,
+        entities=len(entities),
+        retracted=len(retracted),
+    )
     return True
 
 

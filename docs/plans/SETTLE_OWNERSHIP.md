@@ -1,6 +1,6 @@
 # Who owns a note's whole-note settle
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S2✅ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S2✅ S3✅ S4◻️ S5◻️
 >
 > **S1 shipped**, with three amendments the build forced. Each is argued in place below
 > and marked **[amended in build]**: the key is a claim SET (`settle_owners text[]`)
@@ -13,7 +13,11 @@
 > (`analysis/clarify.settle_conversation`, from BOTH turn paths) and never
 > `stamp_analysis`. One thing the recommendation below did not anticipate, argued in S2's
 > section: the two REVIEW-CARD halves stayed in the composition rather than moving into
-> `sweep_note`, so the new caller cannot reach them. S3-S5 stand as written.
+> `sweep_note`, so the new caller cannot reach them.
+>
+> **S3 shipped**, in the PR immediately after S2 and for the reason S1's amendment gave:
+> the conversation now RELEASES its `conversation` claim at the end of a clean pass, so
+> the leak S1 accepted knowingly is closed rather than growing. S4-S5 stand as written.
 
 The question `AGENT_INGEST_CONVERSATION_PLAN.md`'s W5a blocked on, answered:
 `settle_note` (`backend/src/jbrain/analysis/pipeline.py`) is whole-note and was filtered
@@ -244,9 +248,16 @@ That is a trade made with open eyes — before S1 those rows were retracted by a
 that had not written them and could not tell them from its own, which is how the owner's
 answers were disappearing — and the surviving failure is the visible, correctable one.
 But it means **S3 is scheduled work rather than an option**, and it is what stops the
-bleeding. What can still remove such a row meanwhile: the note purge and the corpus
+bleeding. What could still remove such a row meanwhile: the note purge and the corpus
 rebuild sweep, FK cascade on note deletion, review-item retraction, and the owner's own
 `correct_fact`, which supersedes so the stale value stops being current.
+
+***S3 has since shipped**, so the paragraph above describes the window between S1 and S3
+rather than the state of the code. The conversation releases its claim at the end of a
+clean pass. The one part of it that still stands is the MENTION half: the ledger records
+no mention ids, so the conversation's `sweep_note` call skips the mention reconcile and
+its mention claims go unreleased — bounded, because `entity_mentions.chunk_id` is
+`ON DELETE CASCADE` and a re-ingest wipes that chunk generation.*
 
 ### The title/tags gap is real — and it decides between (i), (ii) and (iii)
 
@@ -306,9 +317,11 @@ the sole producer and must take the sweep, the stamp and the state flip:
    `clarify.record_reply_writes` before `close_owner_reply`, so `ConversationWrites.facts`
    is whole-conversation (`models/note_conversation.py:313-352`).
 2. **A gate on an incomplete ledger.** `record_reply_writes` returns `False` when it could
-   not record (`analysis/clarify.py:276-322`), and an unrecorded write is a fact the sweep
+   not record (`analysis/clarify.py`), and an unrecorded write is a fact the sweep
    would retract. The sweep must not fire on a `False`, nor on a truncated turn or one
-   ending `awaiting_owner` (constraint 6).
+   ending `awaiting_owner` (constraint 6). *Landed with S3: all three are one gate on the
+   pass's STATE, `SETTLED`, because the `False` is degraded to `record_failed` at the call
+   site and `state_for_stop` maps every non-clean ending away from `settled`.*
 3. **A title/tags source.** Unowned: the plan names `note_analysis` exactly once
    (`AGENT_INGEST_CONVERSATION_PLAN.md:1282`) and never says where the title comes from
    afterwards. Recommendation for that day: keep the analyzer's title half as its own small
@@ -396,17 +409,53 @@ Three things the build settled that this section had left implicit:
 conversation stamped `note_analysis`, with the empty title its tool surface has no verb
 for.
 
-### S3 — The conversation's own sweep (W4c/2) — **scheduled, not optional**
+### S3 — The conversation's own sweep (W4c/2) ✅ SHIPPED
 
 Filed here as "optional; explicitly droppable" before S1 was built. S1 changed that: with
 the claim set shipped and no conversation settle, nothing ever releases a `conversation`
-claim, so every co-asserted row is permanently un-retractable and the set grows with use
-(argued in full above and in `analysis/settle_owner.py`). S3 is what closes it.
+claim, so every co-asserted row was permanently un-retractable and the set grew with use
+(argued in full above and in `analysis/settle_owner.py`). S3 closes it.
 
-Gated on (2) above — the sweep must not fire on an incomplete ledger
-(`clarify.record_reply_writes` returning False), a truncated turn, or a turn ending
-`awaiting_owner`. With S1 in place its blast radius is its own claims: it releases
-`conversation` and retracts only rows no producer asserts any more.
+`clarify.settle_conversation` now calls `sweep_note(settle_owner=CONVERSATION,
+touched=NoteConversationRepo.writes().facts, mentions=None)` before the tail it gained in
+S2. `touched` is the whole-conversation union W4c/1 made complete across both turn paths;
+a per-TURN share would release the OTHER turn's claim, and on a row only the conversation
+asserts that is the last claim. With S1 in place the blast radius is its own claims: it
+releases `conversation` and retracts only rows no producer asserts any more.
+
+**The gate is one condition, and the collapse is the argument.** All three refusals in
+(2) above are the same fact about the pass — `state_for_stop` gives `settled` to a CLEAN
+stop alone. A truncated turn (`max_steps`, the cost budget, consecutive tool errors, the
+wall clock) lands `failed`; a turn that ended on `ask_owner` lands `waiting_on_owner`; and
+a turn whose ledger did not record lands `failed` too, because both callers degrade the
+stop reason to `record_failed` — `api/agent.py` when `record_reply_writes` returns False,
+`converse._run_turn` when its own `_record` raises. So the sweep reads a state written by
+the code that knows how the pass ended, rather than re-deriving the question beside it,
+and `close_owner_reply` returns that state for exactly this reason. The unattended pass
+settles AFTER its state block, because the `question_stands` branch can still turn a
+`settled` verdict into `waiting_on_owner`.
+
+Three things S3 does NOT close, each stated so the next reader does not assume otherwise:
+
+- **the mention half.** `mentions=None` skips the mention reconcile, because the ledger
+  has no mention-id column and an empty set would delete the spans of facts the
+  conversation still asserts (the plan says this in W4c/1's own bullet). The
+  `conversation` mention claim therefore goes unreleased — bounded to one chunk
+  generation by `ON DELETE CASCADE`, unlike the fact leak this wave closes.
+- **the review cards.** They stayed in `settle_note` (S2's section), so the conversation's
+  sweep cannot reach them. Deliberate: it keeps S1's residual the size S1 left it.
+- **a pass that parks on `ask_owner` and is never answered** releases nothing, ever. The
+  gate is what makes that correct rather than unfortunate — a thread still waiting has not
+  finished reading the note — but the claim stands until the owner replies or the note is
+  re-ingested and a later conversation settles over it.
+
+One consequence worth naming because the tests pin it: a note gets a NEW conversation on
+every re-ingest (`converse.note_converse`), and `writes()` is per SESSION. So it is the
+SECOND conversation's settle that releases the first one's claims on rows the note no
+longer supports. That is the sweep's own rule applied to the producer — a re-derivation of
+the same note by the same producer — and it is what makes the release reachable at all: a
+union across every session of the note would put every id the conversation ever wrote into
+`touched` and release nothing, which is a sweep that cannot do its job.
 
 ### S4 — One stamper per note
 
@@ -417,7 +466,7 @@ an `emr_owned` note. Small and independent of S1–S3.
 
 ### S5 — W5a teardown, unchanged in its gating
 
-Only after S1 and S2 are green. A PR that deletes `integrate_note` is removing three
+Only after S1, S2 and S3 are green. A PR that deletes `integrate_note` is removing three
 producers at once — the `analyzer` sweep, the `note_analysis` stamp and the
 `integration_state` flip — and must land each one's replacement in the same PR, per the
 preconditions above. The three helpers `integrate_note` alone calls

@@ -9,11 +9,15 @@
 > note-conversation hook in every tool. `ConversationWrites.facts` is therefore the
 > whole-conversation union constraint 6 needs.
 >
-> **W4c/3's second wave (S2) landed:** `settle_note` is split into `sweep_note` /
-> `settle_tail` / `stamp_analysis`, and the conversation now runs the settle's TAIL at
-> the end of a clean pass, from both turn paths — so its facts finally project and
-> reproject. It still does not stamp `note_analysis` and still does not flip
-> `integration_state`, both deliberately (SETTLE_OWNERSHIP.md preconditions 3 and 4).
+> **W4c/2 has landed, with W4c/3's second and third waves (S2, S3).** `settle_note` is
+> split into `sweep_note` / `settle_tail` / `stamp_analysis`, and the conversation now
+> runs the settle's TAIL and its own SWEEP at the end of a clean pass, from both turn
+> paths (`analysis/clarify.settle_conversation`) — so its facts finally project, and its
+> `conversation` claim is finally released rather than accumulating forever. The sweep is
+> gated on the pass's state being `settled`, which is what keeps it off a truncated turn,
+> a turn ending `awaiting_owner`, and a turn whose ledger did not record. It still does
+> not stamp `note_analysis` and still does not flip `integration_state`, both
+> deliberately (SETTLE_OWNERSHIP.md preconditions 3 and 4), **so W5a stays blocked.**
 >
 > **W4c/3 is decided and its first wave has landed.** The settle's owner is per PRODUCER,
 > not per note: `settle_note`'s sweep and `_reconcile_mentions` are scoped by a stamped
@@ -26,7 +30,8 @@
 > been retracting the conversation's facts (and deleting its mention spine) on every
 > settle of the note, the owner's reply-turn writes included. The decision and the
 > remaining waves are `docs/plans/SETTLE_OWNERSHIP.md`. **W4c/2 (wire the conversation's
-> own sweep) is still open, so W5a is still blocked.**
+> own sweep) has since landed as S3 — see the note above — and W5a is still blocked, now
+> on the stamp and the state flip alone.**
 >
 > W4's two halves have both landed and are merged. INTAKE (D10): the third tool set, and
 > the finding that the port itself had already happened by accident in W2. EMR (D9): the
@@ -779,8 +784,8 @@ Three things that answer questions the plan had left open:
   `api/agent.py` before `close_owner_reply`), not down in the shared tool dispatch — the
   dispatch serves every agent and would need a note-conversation hook threaded through
   every tool, where the turn seam keeps the two paths symmetric. `writes().facts` is now
-  the whole-conversation union. The conversation's sweep over it is still not wired
-  (W4c/2 / S3), though it now runs the settle's tail (S2). **`mention_ids` still has no
+  the whole-conversation union, and the conversation's sweep now reads it (W4c/2 / S3)
+  beside the settle's tail (S2). **`mention_ids` still has no
   channel** — the ledger has no column for them and migrations are not this task's — so
   the conversation's `sweep_note` call passes `mentions=None`, which SKIPS the mention
   reconcile rather than running it against an empty set: an empty set would delete every
@@ -1318,12 +1323,11 @@ rule, and it fails on two independent counts the plan's own line numbers hid:
   `ConversationWrites.facts` is the whole-conversation union across both turn paths, so
   `sweep_note(touched=writes().facts)` would no longer retract what the owner's own reply
   just added (`models/note_conversation.py`) — and both turn paths stamp ONE
-  `conversation` owner, which makes that union a requirement rather than a nicety.
-  **None of this unblocks W5a.** Ownership is decided and scoped (W4c/3,
-  SETTLE_OWNERSHIP.md S1), the tail is wired (S2), but the conversation's own sweep is
-  still unwired (W4c/2 / S3) and it neither stamps `note_analysis` nor flips
-  `integration_state`, so deleting `integrate_note` still strands the corpus at
-  `pending_integration`. Pinned by
+  `conversation` owner, which makes that union a requirement rather than a nicety, and S3
+  wired the sweep to read it. **None of this unblocks W5a.** Ownership is decided and
+  scoped (W4c/3, SETTLE_OWNERSHIP.md S1), the tail and the sweep are wired (S2, S3), but
+  the conversation neither stamps `note_analysis` nor flips `integration_state`, so
+  deleting `integrate_note` still strands the corpus at `pending_integration`. Pinned by
   `test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`.
 - **`arbiter.py` cannot go at all, and that is W4's own doing.** Its EMR half routes
   the deterministic importer through `arbiter.plan_intent`
@@ -1345,9 +1349,10 @@ symmetric). W4c/3 is **decided and landed** in its first wave: the `integrate_no
 producer's sweep to the claims it holds, which also closed the conversation's live loss
 and turned `test_emr_import_handler_pg.py`'s settle-collision xfail green. Its SECOND
 wave (S2) split `settle_note` and gave the conversation the settle's TAIL, which it had
-never had. W4c/2 (wire the conversation's own sweep) is open, and W5a stays blocked on it
-— and on the stamp the conversation still does not own
-(docs/plans/SETTLE_OWNERSHIP.md S3/S4).
+never had; its THIRD (S3) is W4c/2 — the conversation's own sweep, over the
+whole-conversation ledger, gated on a pass that ended `settled`. W5a stays blocked on
+what is left: the `note_analysis` stamp and the `integration_state` flip
+(docs/plans/SETTLE_OWNERSHIP.md preconditions 3 and 4, and S4).
 
 What did land under W5a: two genuinely dead pieces inside `arbiter.py`, both
 unreachable regardless of the gate — `plan_to_extraction`'s `commit_only` arm (A1b-ii-1's

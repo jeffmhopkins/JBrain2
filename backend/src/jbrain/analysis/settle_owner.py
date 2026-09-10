@@ -72,47 +72,50 @@ computed table name, a stamp it cannot follow into a variable, a wrong producer 
 The DB column does carry `DEFAULT ARRAY['analyzer']`, a divergence from
 SETTLE_OWNERSHIP.md S1 argued in migration 0196's docstring.
 
-**The conversation never releases a claim, and that is the live cost of this change —
-not a hypothetical.** A claim is released by a settle, and the conversation HAS no
-settle: `graphwritetools` calls `commit_facts` and nothing else, and the only production
-callers of `settle_note` are the analyzer's `apply_intent` and `EmrNoteCommit.settle`
-(S3, the conversation's own sweep, is unbuilt). So from the day this ships, every row
-carrying a `conversation` claim — the ones only the conversation wrote AND the ones both
-producers assert — is retractable by no sweep at all, and the set of such rows only
-grows. Edit a note to drop a claim both producers wrote and the graph keeps asserting
-it, which is a note no longer being the sole source of truth for its own facts.
+**The conversation releases its claim now (S3) — and for one release between S1 and S3
+it did not, which is worth remembering because it is the shape of what this key costs
+when a producer has no settle.** A claim is released by a settle. When S1 shipped, the
+conversation had none: `graphwritetools` calls `commit_facts` and nothing else, and the
+only callers of `settle_note` were the analyzer's `apply_intent` and
+`EmrNoteCommit.settle`. Every row carrying a `conversation` claim — the ones only the
+conversation wrote AND the ones both producers assert — was therefore retractable by no
+sweep at all, and the set of such rows only grew: edit a note to drop a claim both
+producers wrote and the graph kept asserting it, which is a note no longer being the sole
+source of truth for its own facts.
 
-State it in trade terms, because it IS a trade and it was made deliberately: before this
-change those rows were retracted, by a producer that had not written them and could not
-tell them from its own — which is how the owner's answers were disappearing. This
-exchanges "a co-writer silently deletes what the owner said" for "the graph keeps
-asserting something the note no longer says". The second is visible, correctable and
-recoverable; the first is none of those. That does not make it free.
+State that in trade terms, because it WAS a trade and it was made deliberately: before
+S1, those rows were retracted by a producer that had not written them and could not tell
+them from its own — which is how the owner's answers were disappearing. It exchanged "a
+co-writer silently deletes what the owner said" for "the graph keeps asserting something
+the note no longer says". The second is visible, correctable and recoverable; the first
+is none of those. That did not make it free, which is why S3 followed immediately.
 
-**S3 is what stops the bleeding, not a nice-to-have.** Until the conversation settles
-(over a whole-conversation ledger, gated on a turn that ended cleanly — see
-`models/note_conversation.py`), the leak is the default state and grows monotonically
-with every co-asserted fact. Read SETTLE_OWNERSHIP.md's S3 as scheduled work, not an
-option.
+**What closed it.** `analysis/clarify.settle_conversation` runs at the end of a clean
+pass, from both turn paths, and calls `sweep_note(settle_owner=CONVERSATION,
+touched=NoteConversationRepo.writes().facts)`. `touched` is the whole-CONVERSATION union
+across the unattended pass and the owner's reply turn (W4c/1); a per-turn share would
+release the other turn's claim, and on a row only the conversation asserts that is the
+last claim. It fires ONLY from the `settled` state, which is what keeps it off a
+truncated turn, a turn still waiting on the owner, and a turn whose ledger did not record
+— all three degrade to a state that is not `settled`.
 
-**The leak is unbounded for FACTS only; mention rows expire on their own.** The two
-tables sit behind different foreign keys (migration 0006): `entity_mentions.chunk_id` is
-`ON DELETE CASCADE`, while `facts.chunk_id` is `ON DELETE SET NULL`. Re-ingesting a note
-replaces its chunks (`ingest/pipeline.py`, `notes/repo.py` both delete the old ones), so
-an unreleasable `conversation` mention claim survives at most until the next re-chunk of
-that note — the mention half is bounded to one chunk generation and a re-ingest wipes
-it. A fact carrying that claim keeps its row and merely loses its chunk pointer, so it
-outlives every re-ingest. Keep the distinction when reasoning about how bad this is: the
-S3 backlog that actually grows without bound is facts.
+**The MENTION half of that leak is still open, and is the bounded one.** The two tables
+sit behind different foreign keys (migration 0006): `entity_mentions.chunk_id` is
+`ON DELETE CASCADE`, while `facts.chunk_id` is `ON DELETE SET NULL`. The conversation's
+ledger records fact and entity ids and no mention ids, so its sweep passes
+`mentions=None` and skips the mention reconcile — running it against an empty set would
+delete the spans of the facts it still asserts. An unreleased `conversation` mention
+claim therefore survives at most until the next re-chunk of that note
+(`ingest/pipeline.py`, `notes/repo.py` both replace the old chunks), where a fact
+carrying such a claim would have kept its row and merely lost its chunk pointer. That
+asymmetry is why the fact half was the urgent one.
 
-**What can still remove such a row today.** None of these is producer-scoped, which is
-why they are the escape hatches: `analysis/purge.purge_note_artifacts` (note deletion,
-and the corpus rebuild sweep), `ON DELETE CASCADE` from the note, review-item
+**What can remove such a row without a producer.** None of these is producer-scoped,
+which is why they are the escape hatches: `analysis/purge.purge_note_artifacts` (note
+deletion, and the corpus rebuild sweep), `ON DELETE CASCADE` from the note, review-item
 resolution/retraction, and the owner's own `correct_fact` — which supersedes rather than
 sweeps, so a wrong value the owner notices stops being the current one even while the
-stale row survives as history. What is NOT available is "another producer tidies up
-after it", and that is the point: no producer has ever been able to tell a co-writer's
-row from a stale one of its own.
+stale row survives as history.
 
 **The settle TAIL, which scoping the sweep did not give the conversation — closed by
 S2.** Projection and reprojection (`_reproject_entities`, `_promote_corroborated`,

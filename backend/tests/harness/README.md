@@ -226,10 +226,11 @@ directly and then settles it itself.
 
 Production is now CLOSER than it was, and still not there. Since S2
 (`docs/plans/SETTLE_OWNERSHIP.md`) the conversation does run the settle's tail at the end
-of a clean pass — `analysis/clarify.settle_conversation`. This runner calls `sweep_note`
-beside it, which production's conversation gains in S3; what it no longer does is call
-`settle_note` whole, which made the harness the one place a conversation stamped
-`note_analysis` with the empty title its tool surface has no verb for.
+of a clean pass — `analysis/clarify.settle_conversation`. Since S3 it releases its own
+`conversation` claim there too, over the ledger's `facts` — so this runner's
+`sweep_note` + `settle_tail` pair is exactly what production runs, and what it no longer
+does is call `settle_note` whole, which made the harness the one place a conversation
+stamped `note_analysis` with the empty title its tool surface has no verb for.
 
 What the conversation still does NOT produce,
 and `integrate_note` therefore still owns alone: the `note_analysis` stamp (it has no
@@ -242,9 +243,10 @@ sweeper cannot delete the analyzer's cards.
 Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is the
 whole-conversation union across both turn paths — the owner's reply turn records through
 `analysis/clarify.record_reply_writes` at the same seam the unattended pass records at —
-and S3 is what wires the sweep to it (W4c/2). What the harness cannot show is the
-production ledger at all: it unions its outcomes in process, so `mention_ids` are
-available here where `NoteConversationRepo.writes()` records none.
+and S3 wired the sweep to it (W4c/2). What the harness cannot show is the production
+ledger at all: it unions its outcomes in process, so `mention_ids` are available here
+where `NoteConversationRepo.writes()` records none and production's sweep therefore
+skips the mention reconcile.
 
 `tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
 pins what remains absent, so this is a red test rather than a rediscovery.

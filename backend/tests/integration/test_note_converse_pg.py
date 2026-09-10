@@ -969,12 +969,13 @@ async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
 ) -> None:
     """The W5a gate, pinned: `settled` is the CONVERSATION's state, never the note's.
 
-    S2 gave the conversation part of the settle and this test SURVIVED it, which is the
-    point of keeping it. The pass now ends by calling `settle_tail` — its writes finally
-    project and reproject (`analysis/clarify.settle_conversation`, and the runner above
-    is wired with a real pipeline so that call genuinely runs here). What it still does
-    not call is `stamp_analysis`, because the conversation has no title or tags verb and
-    the stamp's `on_conflict_do_update` is unconditional; and nothing anywhere flips
+    S2 and S3 gave the conversation most of the settle and this test SURVIVED both, which
+    is the point of keeping it. The pass now ends by calling `sweep_note` and
+    `settle_tail` — it releases its own `conversation` claim and its writes finally
+    project (`analysis/clarify.settle_conversation`, and the runner above is wired with a
+    real pipeline so that call genuinely runs here). What it still does not call is
+    `stamp_analysis`, because the conversation has no title or tags verb and the stamp's
+    `on_conflict_do_update` is unconditional; and nothing anywhere flips
     `integration_state`, which `integrate_note` still owns alone.
 
     Both remaining absences are UNOWNED preconditions of retiring `integrate_note`
