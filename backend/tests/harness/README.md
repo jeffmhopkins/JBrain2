@@ -120,19 +120,20 @@ Notes on authoring:
   statement, value_json, assertion, entity_ref, object_entity_ref, temporal,
   domain, confidence`; every mention needs `name, kind, surface_text`. A
   `surface_text` should appear in the note `body` so the citation can anchor.
-- **Four of those authored fields no longer reach the graph.** The tool surface
-  has no field for `assertion`, `kind`, a LONG-TAIL `qualifier`, or a structured
-  `value_json`, so `_tool_calls` drops them: `assertion` is always `asserted`,
-  `kind` is derived by `_fact_kind`, and `value_json` is rebuilt from a flattened
-  string. A qualifier on one of the five registry predicates declaring a
-  `qualifier_vocab` DOES survive, folded into the predicate's dotted path by
-  `_predicate` (`name.nickname` + `friends` → `name.nickname.friends`); every
-  other qualifier is dropped. `confidence` and the temporal's `resolved_end`
-  reach the graph as of v3 — `confidence` composed as a MINIMUM with the engine's
-  own span check, so a scripted 1.0 on a fumbled quote still lands at 0.4. The
-  dropped fields are still required by the extraction schema and still shape the
-  front-half parse, which is why they stay — but an `expect` block must not
-  assume they survive. See the gap table below.
+- **Five of those authored fields no longer reach the graph.** The tool surface
+  has no field for `assertion`, `kind`, a LONG-TAIL `qualifier`, a structured
+  `value_json`, or `confidence`, so `_tool_calls` drops them: `assertion` is
+  always `asserted`, `kind` is derived by `_fact_kind`, and `value_json` is
+  rebuilt from a flattened string. A qualifier on one of the five registry
+  predicates declaring a `qualifier_vocab` DOES survive, folded into the
+  predicate's dotted path by `_predicate` (`name.nickname` + `friends` →
+  `name.nickname.friends`); every other qualifier is dropped. **`confidence`
+  reached the graph in v3 and stopped again in v4** (`AGENT_INGEST_REWRITE.md`
+  R1b): the field is deleted from `assert_fact`, so the engine's span check is
+  the whole weight and a scenario cannot script a self-report. The temporal's
+  `resolved_end` still reaches. The dropped fields are still required by the
+  extraction schema and still shape the front-half parse, which is why they stay
+  — but an `expect` block must not assume they survive. See the gap table below.
 - `tool_calls` overrides the synthesiser for one step, `{"entities": [...],
   "facts": [...]}` in the tools' own argument shapes. Author it only when the
   faithful default cannot express the case under test — a deliberately fumbled
@@ -182,7 +183,7 @@ majority class; the other to the other one.
 | 3 | **No `qualifier`** | **accepted, with a bounded channel** | Where the qualifier named the OBJECT entity (`owns.Civic`) nothing is lost — a non-functional predicate keys on its object. Where it discriminated two scalar facts under one predicate, those facts collide on one identity key. A `qualifier` field filled with prose on **61 of 86** facts ("previous weight 182 lb in March"), and an over-applied qualifier SPLITS a key so nothing supersedes again — worse than the collision. What ships is the dotted path `registry.decompose_predicate` already read and v3 teaches (`name.nickname.friends`), bounded to the five registry predicates declaring a `qualifier_vocab`. Long-tail qualifiers still collide. **The channel is open and unreached**: the harness's perfect model uses it, the live model does not — 0 of 39 nickname facts carried a third segment, and it wrote `has nickname` where the registry declares `name.nickname`, so the real blocker is predicate normalization one layer earlier. |
 | 4 | **No structured `value_json`** | **accepted as designed** | `object` is a string, so a literal is stored as `{value}` or `{value, unit}` and anything richer is flattened first. An edge with an object entity stores **no** `value_json` at all. TOOL_SURFACE gap 5's deliberate narrowing: the model is never asked to nest. |
 | 5 | **One `when`, no interval end** | **CLOSED (v3 `when_end`)** | A seventh flat scalar, never a nested object, exactly as TOOL_SURFACE gap 4 sketched. What the sketch did not anticipate is that the field needs a HANDLER as much as a schema: the model closes the one genuinely-closed interval in a note nearly every time *and* stamps an end on nearly every other — **53 over-applications in 64 items** ("present", "last week", "unspecified", today's date on a fact the note dated today). `graphwritetools._close_interval` refuses an end that is not a date, has no `when` to close, or does not pass the start's own PERIOD. That last comparison is period-against-period: an instant test would have admitted every "today on a fact dated today" and closed the owner's current address at the end of today. **45 spurious ends in 56 items on the shipping schema, 0 admitted**; 4 of the 7 real ones admitted, the other three refused for arriving with a blank `when`. The two added fields cost nothing: 8.0 facts a turn, same well-formedness as the six-field control. |
-| 6 | **No `confidence`** | **CLOSED (v3 `confidence`)** | The **safety** one. A JSON `number`, and the type is the point: the string spelling came back `"high"`/`"low"` every time (0/24 legal), the number spelling 94/94. `self_confidence` is `min(engine span check, model number)`, so it **only ever lowers** — a model claiming 1.0 on an unattested quote still lands at 0.4. The direction that matters for a guard that HOLDS is the false positive, and across 94 facts the live model marked down **zero** legible ones. It under-reports rather than over-reports: across 121 facts it converges on exactly 0.5 on an unreadable line, and 0.5 is not `< LOW_CONFIDENCE`. Naming '0.3 or lower' instead of 'below 0.5' made it more consistent (7 of 10 smudged facts marked down, against 6 of 11) without moving it under the threshold. So it is a backstop for the clearly illegible case, not a calibrated dial. Moving `LOW_CONFIDENCE` to meet it is deliberately not done — it is a live threshold the whole `note.extract` path feeds. |
+| 6 | **No `confidence`** | **ACCEPTED — closed in v3, DELETED in v4** | R1b took the field back out on R0's measurement: **1 silent guess in 106 runs, from the arm that HAS the field.** The cost side is what moved — under one channel a spurious low number parks a TRUE fact behind a hold that no card will ever raise — so the engine's span check is now the whole weight and a scenario cannot script a self-report at all. The v3 findings below are kept because they are what the deletion was weighed against, and because `ExtractedFact.confidence` still exists on the ANALYZER's path. *v3, for the record:* A JSON `number`, and the type is the point: the string spelling came back `"high"`/`"low"` every time (0/24 legal), the number spelling 94/94. `self_confidence` is `min(engine span check, model number)`, so it **only ever lowers** — a model claiming 1.0 on an unattested quote still lands at 0.4. The direction that matters for a guard that HOLDS is the false positive, and across 94 facts the live model marked down **zero** legible ones. It under-reports rather than over-reports: across 121 facts it converges on exactly 0.5 on an unreadable line, and 0.5 is not `< LOW_CONFIDENCE`. Naming '0.3 or lower' instead of 'below 0.5' made it more consistent (7 of 10 smudged facts marked down, against 6 of 11) without moving it under the threshold. So it is a backstop for the clearly illegible case, not a calibrated dial. Moving `LOW_CONFIDENCE` to meet it is deliberately not done — it is a live threshold the whole `note.extract` path feeds. |
 | 7 | **An `object` string became an EDGE** | **CLOSED (validation, not schema)** | Not one of the original six and worth naming: a literal that happened to equal a resolved surface silently became an edge to that entity — an entity's own nickname became a self-edge, and the display projection then had no name fact to read. The registry already declares which predicates take an edge (`value_shape: ref`), so a declared non-ref predicate takes its object literally. An explicit handle still wins; an undeclared tier-2 predicate keeps the permissive link. |
 | 8 | **No arbiter** | accepted | `integrate_note` ran the arbiter; this path does not. Its derivations are simply absent (`derive_kinship_gender`: four `gender` facts that main wrote and this path does not), as are its card kinds — `low_confidence_inference` and `new_predicate` are unreachable, so a `count: 0` spec naming either asserts nothing. |
 
@@ -279,12 +280,13 @@ measurement and its own "W5 must not delete" line; this table is the index.
 | **Cross-subject edge migration** | `own_transfer_subject_cannot_move` | candidate read scopes to one entity; a lone counterparty edge never sees the prior owner's head |
 | **Bare-name ambiguity not detected** | `adv_same_first_name_collapses` | the auto-link rule fires on one exact match, so a second entity is never minted and the retro-recheck has nothing to fire on |
 
-`health_low_confidence_ocr_guard` moved roots and is worth calling out, because
-it is the **safety** scenario and its old reason is now obsolete. The confidence
-channel it was xfailed for is LIVE — `test_note_graph_write_pg.py` proves a
-perfectly quoted 0.25 read is held behind a `low_confidence` card with the
-confident prior left active. What blocks the scenario is two gaps upstream of the
-guard: `medicationRegimen` is declared by no type, so it lands as `attribute` and
+`health_low_confidence_ocr_guard` moved roots twice and is worth calling out,
+because it is the **safety** scenario. The confidence channel it was originally
+xfailed for went live in v3 and was deleted again in v4 (R1b), and it was never
+what blocks the scenario either way. Its expected card count is now 0 for the
+same wave's other half — a conversation's write path reports a hold in its tool
+result instead of filing one. What blocks the scenario is two gaps upstream of
+the guard: `medicationRegimen` is declared by no type, so it lands as `attribute` and
 the collision routes to `attribute_collision` before `decide()`'s
 state-supersession arm — where the low-confidence branch lives — is ever reached;
 and its qualifier `antihypertensive` is long-tail, so the two regimens do not

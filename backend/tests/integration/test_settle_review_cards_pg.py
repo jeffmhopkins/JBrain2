@@ -206,10 +206,11 @@ async def _analyzer_ambiguous_card(maker, note_id: str, name: str) -> None:  # n
     the resolver cannot decide goes through `_file_ambiguous_review` inside
     `_resolve_entities`, which every commit path runs.
 
-    `file_review_cards=True` is what makes this the ANALYZER's path rather than the
-    conversation's (AGENT_INGEST_REWRITE R1b): a producer with an agent behind it is told
-    in `resolve_entity`'s own result and files nothing, so the flag is exactly the
-    difference this file is about — two producers, one inbox."""
+    `settle_owner=ANALYZER` is what makes this the ANALYZER's path rather than the
+    conversation's, and under one channel (AGENT_INGEST_REWRITE R1b) it is what makes the
+    card get filed at all — card-filing is DERIVED from the producer key, since a
+    producer with an agent behind it is told in the tool result and files nothing. So the
+    one argument already names both halves of what this file is about."""
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
         await _pipeline(maker).commit_facts(
@@ -227,7 +228,6 @@ async def _analyzer_ambiguous_card(maker, note_id: str, name: str) -> None:  # n
             ),
             extractor=ANALYZER_EXTRACTOR,
             settle_owner=ANALYZER,
-            file_review_cards=True,
         )
 
 

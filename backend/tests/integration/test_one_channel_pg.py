@@ -27,6 +27,7 @@ import uuid
 import pytest
 from sqlalchemy import select, update
 
+from jbrain.agent.contracts import write_status
 from jbrain.db.session import scoped_session
 from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.core import Subject
@@ -137,6 +138,83 @@ async def test_an_attribute_collision_holds_both_sides_and_files_nothing(maker, 
     assert "Cleo Vance was born March 3, 1990." in line
     assert "was held too, so neither is live" in line
     assert "ask the owner which is right" in line
+
+
+@pytest.mark.asyncio
+async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -> None:  # noqa: F811
+    """The failure one channel makes possible, and it needs no re-ingest to reach.
+
+    `supersession`'s idempotent-refresh loop admits `pending_review` — a re-run must not
+    mint a twin of a held row — so restating a held fact returns `refresh_id`, and
+    `_upsert_fact` used to answer that with `ALREADY`. That was safe while a card stood
+    behind the row. It is not safe now: `_write_line` renders `ALREADY` as
+    "ok … already recorded" and `contracts.write_status` maps it to `written`, so the
+    line the agent reads and the chip the OWNER reads both say a held fact is live.
+
+    And the pass walks into it by design. `close_reading`'s sidecar requires a whole-note
+    restatement ("all of it, not only what is new since your last call") and the handler
+    dedups nothing, so a fact held by `assert_fact` earlier in the same pass is restated
+    seconds later — making `ok` the agent's LAST word on a fact the graph does not serve.
+
+    So a refresh that leaves the row held reports HELD, and says the thing that is
+    actually true of it: restating changed nothing, and re-reading will not settle it."""
+    note_id, writer = await _own_person(maker, tmp_path, "Cleo Vance")
+    born_1990 = _fact(
+        "birthDate",
+        "1990-03-03",
+        "Cleo Vance was born March 3, 1990.",
+        quote="Coffee with Cleo Vance at Ritual this morning.",
+        when="1990-03-03",
+    )
+    await writer.assert_fact({"facts": [born_1990]}, _ctx())
+    second_note = await _note(maker, tmp_path, body="Cleo Vance was born in November 1985.")
+    second = await _writer(maker, second_note)
+    await second.resolve_entity({"entities": [{"surface": "Cleo Vance", "kind": "person"}]}, _ctx())
+    held = await second.assert_fact(
+        {
+            "facts": [
+                _fact(
+                    "birthDate",
+                    "1985-11-12",
+                    "Cleo Vance was born November 12, 1985.",
+                    quote="Cleo Vance was born in November 1985.",
+                    when="1985-11-12",
+                )
+            ]
+        },
+        _ctx(),
+    )
+    assert (await _row(maker, held.facts[0].fact_id)).status == "pending_review"
+
+    # The whole-note restatement `close_reading` requires, on the same note and pass.
+    again = await second.assert_fact(
+        {
+            "facts": [
+                _fact(
+                    "birthDate",
+                    "1985-11-12",
+                    "Cleo Vance was born November 12, 1985.",
+                    quote="Cleo Vance was born in November 1985.",
+                    when="1985-11-12",
+                )
+            ]
+        },
+        _ctx(),
+    )
+    # Same row refreshed in place, still not live — no twin, and no promotion.
+    assert again.facts[0].fact_id == held.facts[0].fact_id
+    assert (await _row(maker, again.facts[0].fact_id)).status == "pending_review"
+
+    line = str(again)
+    assert "held  Cleo Vance.birthDate" in line
+    assert "already recorded, and STILL NOT LIVE" in line
+    assert "ask the owner which is right" in line
+    # The two spellings that would tell the agent, and the D3 chip, the opposite.
+    assert "ok  Cleo Vance.birthDate" not in line
+    assert write_status(again.facts[0].outcome) == "held"
+    # Still nobody's inbox.
+    assert await _cards(maker, note_id) == []
+    assert await _cards(maker, second_note) == []
 
 
 @pytest.mark.asyncio
@@ -493,18 +571,27 @@ async def test_the_domain_floor_fires_silently_because_there_is_nothing_to_propo
     assert await _cards(maker, note_id) == []
 
 
-def test_the_write_path_files_no_cards_unless_a_caller_asks() -> None:
-    """The switch's DEFAULT is the behaviour change, and it is a signature property
-    rather than a runtime one. `commit_facts` files nothing unless the caller opts in, so
-    the note conversation — which never passes the flag — gets one channel by
-    construction, and only `commit_intent` (the deterministic analyzer and the EMR
-    importer, neither of which has an agent to report to) turns it on."""
+def test_card_filing_is_derived_from_the_producer_and_cannot_be_forgotten() -> None:
+    """Who files is not a keyword anyone can omit — it is a function of `settle_owner`,
+    which every one of the four seams already requires with no default.
+
+    A defaulted `file_review_cards` would have replayed the failure
+    `tests/unit/test_settle_owner.py` pins the opposite discipline against ("a default is
+    what would let a new producer inherit someone else's sweep without saying so"), in its
+    strictly worse form: a fourth deterministic producer that forgot the flag would file
+    NO card and have no result reader either, so a hold `decide()` refused to make live
+    would vanish from both channels at once. Deriving it makes that unreachable — there is
+    no argument to forget, and the safe direction (file) is what any producer that is not
+    the conversation gets.
+
+    A signature property, checked as one: the runtime behaviour on both sides of the
+    derivation is what the other eight cases in this file are."""
     import inspect
 
     from jbrain.analysis.pipeline import AnalysisPipeline
 
-    param = inspect.signature(AnalysisPipeline.commit_facts).parameters["file_review_cards"]
-    assert param.default is False
-    assert param.kind is inspect.Parameter.KEYWORD_ONLY
-    source = inspect.getsource(AnalysisPipeline.commit_intent)
-    assert "file_review_cards=True" in source
+    assert "file_review_cards" not in inspect.signature(AnalysisPipeline.commit_facts).parameters
+    source = inspect.getsource(AnalysisPipeline.commit_facts)
+    assert "file_review_cards = settle_owner != CONVERSATION" in source
+    # And nobody re-introduces it as a caller-supplied keyword at the seam.
+    assert "file_review_cards=True" not in inspect.getsource(AnalysisPipeline.commit_intent)

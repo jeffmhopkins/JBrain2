@@ -28,7 +28,7 @@ from jbrain.agent.readtools import NOTE_GRAPH_TOOLS
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import NEVER_DEFAULT
 from jbrain.analysis.converse import NOTE_READ_TOOLS
-from jbrain.analysis.pipeline import ALREADY, HELD, REPLACED, WRITTEN, FactWrite
+from jbrain.analysis.pipeline import ALREADY, HELD, REPLACED, STILL_HELD, WRITTEN, FactWrite
 
 _TOOLS = Path(gw.__file__).parent / "tools"
 
@@ -492,6 +492,56 @@ def test_a_collision_that_held_the_other_side_too_says_so() -> None:
     )
     line = gw._write_line(0, "Cleo", "birthDate", "1985-11-12", both, [])
     assert "was held too, so neither is live" in line
+
+
+def test_a_correction_that_landed_live_still_names_the_rows_it_parked() -> None:
+    """`also_held` is rendered for EVERY outcome, not only HELD, and the case that makes
+    that necessary is `correct_fact`.
+
+    `decide()` sets `hold_ids` on two branches. The collision above holds the candidate
+    too, so the report rides the HELD line. The CORRECTION branch does not: an owner
+    correction on a single-head key inserts ACTIVE and PINNED while parking every
+    `pending_review` head it out-argues, so the write lands `replaced`/`written` and the
+    rows it moved would have dropped out of the result entirely — the exact
+    under-reporting the field was added to stop, in the one case where the field is the
+    only witness there is."""
+    corrected = FactWrite(
+        gw.uuid.uuid4(),
+        REPLACED,
+        "general",
+        "Cleo was born July 9, 1988",
+        replaced=("Cleo was born March 3, 1990",),
+        also_held=("Cleo was born November 12, 1985",),
+    )
+    line = gw._write_line(0, "Cleo", "birthDate", "1988-07-09", corrected, [])
+    assert line.startswith("ok  Cleo.birthDate → 1988-07-09")
+    assert "replaced Cleo was born March 3, 1990, kept as history" in line
+    assert "Cleo was born November 12, 1985 was held" in line
+    # It LANDED, so it must not read as the collision's "neither is live".
+    assert "neither is live" not in line
+    assert "this value is the live one now" in line
+
+
+def test_a_restatement_of_a_held_row_does_not_read_as_a_fresh_clash() -> None:
+    """The refresh path's own line (`STILL_HELD`). It must say three things the generic
+    HELD line does not: the row was already held, this write changed nothing, and
+    re-reading the note will not settle it — the model has already done that, and the
+    only move left belongs to the owner. And it must never render as `ok`."""
+    again = FactWrite(
+        gw.uuid.uuid4(),
+        HELD,
+        "general",
+        "Cleo was born November 12, 1985",
+        hold_reason=STILL_HELD,
+        conflicting="Cleo was born March 3, 1990",
+    )
+    line = gw._write_line(0, "Cleo", "birthDate", "1985-11-12", again, [])
+    assert line.startswith("held  Cleo.birthDate")
+    assert "already recorded, and STILL NOT LIVE" in line
+    assert "It still clashes with Cleo was born March 3, 1990." in line
+    assert "Re-reading will not settle this; ask the owner which is right" in line
+    # The generic hold's advice would send it round a loop it has already run.
+    assert "Re-read the note" not in line
 
 
 def test_a_supersede_that_landed_live_still_names_why_it_was_not_clean() -> None:

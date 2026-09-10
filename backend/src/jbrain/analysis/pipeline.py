@@ -110,7 +110,7 @@ from jbrain.analysis.prompt import (
     group_texts_by_source,
     prompt_block,
 )
-from jbrain.analysis.settle_owner import ANALYZER
+from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION
 from jbrain.analysis.supersession import (
     Candidate,
     Decision,
@@ -202,6 +202,11 @@ REPLACED = "replaced"  # superseded one or more heads, which are kept as history
 HELD = "held"  # decide() could not resolve it: recorded, not live
 HISTORICAL = "historical"  # inserted already-superseded (a newer value is on file)
 PROMOTED = "promoted"  # a previously held row this pass rates live
+
+# Not a `decide()` review_kind: the marker `_upsert_fact` puts on a HELD write whose row
+# was ALREADY held before this pass touched it, so the result can say the restatement
+# changed nothing rather than invent a fresh clash (AGENT_INGEST_REWRITE R1b).
+STILL_HELD = "still held"
 
 
 @dataclass(frozen=True)
@@ -733,9 +738,6 @@ class AnalysisPipeline:
             settle_owner=settle_owner,
             resolution_override=override,
             held_indices=held_indices,
-            # The deterministic path: no conversation, so an unsettled `decide()` has
-            # nobody to report to and the owner's inbox is the only channel left.
-            file_review_cards=True,
         )
         # Recompute the deterministic signals (pure, cheap) so each held card can
         # carry the same ceiling arithmetic the arbiter used — `commit_intent` is also
@@ -1060,7 +1062,6 @@ class AnalysisPipeline:
         settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
         held_indices: frozenset[int] = frozenset(),
-        file_review_cards: bool = False,
     ) -> CommitOutcome:
         """Commit one pass of a note's extraction: resolve its entities, anchor its
         mentions and temporal tokens, then write each fact through `decide()`.
@@ -1082,17 +1083,29 @@ class AnalysisPipeline:
         separately from `extractor`: the extractor names the model, the producer names
         the writer, and only the second is stable across a model change.
 
-        `file_review_cards` is ONE CHANNEL's switch (AGENT_INGEST_REWRITE R1b), and it
-        defaults OFF because the default caller is the note conversation. What
-        `decide()` could not settle is reported back through `CommitOutcome.writes` —
-        the reason, the statement it clashes with, and what else this write held — and
-        the AGENT settles it, by re-reading the note or by asking the owner. A card
-        beside that result is a second channel to the same person, adjudicated
-        somewhere the note is not. Only a producer with no conversation to report into
-        turns it on: `commit_intent`, which is the deterministic whole-note analyzer and
-        the EMR importer. A firewall catch (`domain_promotion`, `inverse_proposal`) is
-        NOT this flag's business and files either way — it is a notice about the writer,
-        not a question for it."""
+        ONE CHANNEL (AGENT_INGEST_REWRITE R1b) rides on that same `settle_owner`, and is
+        DERIVED from it rather than passed: a producer files review cards if and only if
+        it is not the conversation. What `decide()` could not settle is reported back
+        through `CommitOutcome.writes` — the reason, the statement it clashes with, and
+        what else this write held — and the AGENT settles it, by re-reading the note or
+        by asking the owner. A card beside that result is a second channel to the same
+        person, adjudicated somewhere the note is not. A producer with nobody to report
+        to still files: the deterministic analyzer and the EMR importer.
+
+        Derived and not a keyword ON PURPOSE, and the reason is this module's own
+        precedent one file over. `settle_owner` is required with no default on all four
+        seams because "a default is what would let a new producer inherit someone else's
+        sweep without saying so" (`tests/unit/test_settle_owner.py`), and a defaulted
+        `file_review_cards` admits the strictly worse version of that failure: a fourth
+        deterministic producer that forgets it files NO card and has no result reader
+        either, so the hold vanishes from both channels at once. The value is exactly
+        determined by one already required at every call site, so there is nothing to
+        forget. A firewall catch (`domain_promotion`, `inverse_proposal`) is outside this
+        entirely and files for every producer — it is a notice ABOUT the writer, not a
+        question for it."""
+        # A producer with an agent reading its results is told there; everyone else
+        # files. `CONVERSATION` is precisely "the note conversation, both runs".
+        file_review_cards = settle_owner != CONVERSATION
         resolved = await self._resolve_entities(
             session,
             extraction,
@@ -1612,8 +1625,8 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         captured_at: datetime,
         settle_owner: str,
-        resolution_override: dict[str, ResolvedEntity | None] | None = None,
-        file_review_cards: bool = False,
+        resolution_override: dict[str, ResolvedEntity | None] | None,
+        file_review_cards: bool,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
         (docs/reference/ANALYSIS.md "Alias resolution & separation"): exact alias, the
@@ -1709,7 +1722,7 @@ class AnalysisPipeline:
         surfaces: dict[str, str],
         chunks: list[_ChunkRef],
         settle_owner: str,
-        file_review_cards: bool = False,
+        file_review_cards: bool,
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
         conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
@@ -2606,7 +2619,7 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extractor: str,
         settle_owner: str,
-        file_review_cards: bool = False,
+        file_review_cards: bool,
     ) -> FactWrite | None:
         # A still-future fact is `expected`, never an asserted past event; and an
         # undated "used to" relationship is CLOSED, not current — both resolved
@@ -2881,6 +2894,35 @@ class AnalysisPipeline:
                         file_review_cards=file_review_cards,
                     )
                     reciprocal_held = reciprocal.held_against
+            if refreshed is not None and refreshed.status == "pending_review" and not promoted:
+                # STILL HELD, and this restatement did not change that. Reporting it
+                # `ALREADY` was safe while a card stood behind the row; under one
+                # channel it is the failure the channel exists to prevent — the line
+                # reads "ok … already recorded" and `contracts.write_status` maps it to
+                # `written`, so the D3 chip shows the owner a live fact. And it is
+                # reachable inside a single pass without any re-ingest: `assert_fact`
+                # collides and holds both sides, then `close_reading` restates the note
+                # whole (its sidecar requires that: "all of it, not only what is new"),
+                # the refresh loop admits `pending_review`, and `ok` becomes the agent's
+                # LAST word on a fact the graph does not serve.
+                #
+                # The standing reason is not stored on the row — it only ever lived in
+                # the card payload — so the CONTEST is reconstructed from what is on the
+                # key right now, which is the same thing the card showed.
+                contest = [
+                    e.statement
+                    for e in existing
+                    if e.id != decision.refresh_id and e.status in ("active", "pending_review")
+                ]
+                return FactWrite(
+                    fact_id,
+                    HELD,
+                    fact_domain,
+                    fact.statement,
+                    hold_reason=STILL_HELD,
+                    conflicting="; ".join(contest),
+                    reciprocal_held=reciprocal_held,
+                )
             return FactWrite(
                 fact_id,
                 PROMOTED if promoted else ALREADY,

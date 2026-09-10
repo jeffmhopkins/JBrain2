@@ -315,7 +315,7 @@ who is told.
 | `:829` — open head, candidate below the confidence floor | `low_confidence` + hold | **result**, same note as `:777`. |
 | `:855` — a supersede that is not Lever-B-silent (same-instant, or a `preference`) | `fact_conflict`, **status `active`** | **result, and the clearest case for the change**: the write LANDS LIVE and files a card anyway. That card is pure notification of a thing that already happened. It becomes a line in the result and nothing else. |
 | `pipeline.py:3215` — derived-defers-to-primary on the inverse path | `fact_conflict` + hold | **result**, reported on the fact whose reciprocal was refused. |
-| `supersession.py:476` — `_lab_status_transition`, a preliminary FHIR reading | `low_confidence` | **stays a card, and it is the genuine exception.** It is on the EMR path, and the conversation holds NO graph-write verbs on an `emr_owned` note (`NoteToolset.writes_graph=False`, `graphwritetools.py:1234-1243`) — there is no agent in that room to hand a result to. |
+| `supersession.py:477` — `_lab_status_transition`, a CORRECTION with no original on file | `low_confidence` (`subkind: correction_without_original`) | **stays a card, and it is the genuine exception.** It is on the EMR path, and the conversation holds NO graph-write verbs on an `emr_owned` note (`NoteToolset.writes_graph=False`, `graphwritetools.py:1234-1243`) — there is no agent in that room to hand a result to. **NB the neighbouring `preliminary` branch (`:493`) is NOT this case**: it returns `pending_review` with `review_kind=None` and so files nothing and never did. Naming it as the surviving card, as an earlier draft of this row and the R1b commit message both do, is wrong on the mechanism while right on the conclusion — the gate is justified by the correction branch. |
 
 **What happens to a held row with no card to promote it.** Two routes, both already built:
 a later reading rates it live (`PROMOTED`, `pipeline.py:206` — "a previously held row this
@@ -1676,13 +1676,16 @@ the row's status, an EMPTY `review_items` for the note, and the result's own wor
    fire and is silent, correctly: a floor that already put the fact where it belongs has
    nothing to propose. `inverse_proposal` IS reachable and does still file, which makes it
    the case that proves the gate is a gate.
-3. **TWO `decide()` sites are unreachable from the note path, not one.** `:806` (irrealis
-   vs an asserted head) is the one the plan names; `:703` (non-functional edge, opposite
-   polarity) is the other, and for the same reason — `CURRENT_ASSERTIONS` is
-   `{asserted, negated}` and `_assert_one` writes `assertion="asserted"` unconditionally,
-   so no conversation verb can produce the `negated` peer the branch needs. It stays
-   reachable today only because `integrate_note` writes beside the conversation and CAN
-   emit `negated`; it goes silent for the conversation the day R4 lands.
+3. **`:806` (irrealis vs an asserted head) is unreachable from the note path, as the plan
+   says — and `:703` is NOT, though a first pass here said it was.** The branch needs the
+   candidate and its peer to hold DIFFERENT assertions, both in `CURRENT_ASSERTIONS`
+   (`{asserted, negated}`). `_assert_one` writes `assertion="asserted"` unconditionally, so
+   the candidate can never be the `negated` side — but the PEER can, written by
+   `integrate_note` beside the conversation on the same note. So a conversation write does
+   reach it, it reports through the result (`review_kind='fact_conflict'` plus a
+   `conflicting_id`), and it goes quiet for the conversation only when R4 removes the
+   producer that can emit `negated`. Recorded because the reasoning that got it wrong is
+   the tempting one: "the model cannot say X" bounds the candidate, never the graph.
 4. **`merge_proposal` is already a message in the thread, by structure, and needed no
    change.** Its producer is `_register_declared_aliases`, which sits in `settle_note` —
    and the conversation never calls `settle_note`; `clarify.settle_conversation` runs
@@ -1690,6 +1693,22 @@ the row's status, an EMPTY `review_items` for the note, and the result's own wor
    notices is already a question it asks with `ask_owner`, and the enact is still
    owner-only through `merge_entities`. The card producer belongs to the analyzer and
    goes with it in R4.
+
+*Two things this wave leaves open, both recorded rather than fixed:*
+
+**A held row the conversation wrote can now be retired by nothing — O15**, because the card
+whose `accept_a`/`accept_b` arm retracted the loser is the one that went. `correct_fact` is
+NOT the discharge: `decide()`'s correction branch holds its `pending_review` heads rather
+than superseding them, so the key stays permanently contested even after the owner answers.
+Every fix touches what LANDS, so it is a constraint-5 change and the owner's; O15 has the
+mechanism and the three candidates.
+
+**A re-assert of a still-held row used to report `ok`**, which under one channel was the
+failure the channel exists to prevent — the refresh loop admits `pending_review`, and
+`close_reading` restates the whole note by design, so a hold could be contradicted by the
+agent's own last word one call later. Fixed in this wave (`STILL_HELD`): the write returns
+`HELD` and the line says the restatement changed nothing and that only the owner can settle
+it. It is the reason O15 is a recorded residual rather than a live silent loss.
 
 *Left standing deliberately:* `_sweep_stale_ambiguous` and `_sync_truncation_review` stay
 in `settle_note` this wave. R3's paragraph says R1b deleted them and R1b's own scope did
@@ -1746,9 +1765,17 @@ the reading, the runner's `sweep_note` re-labelled from divergence to spec. **Ac
 every currently-green scenario stays green** (52 of 75 at this doc's `Last verified`). This is the wave that proves the reading
 carries everything the old surface carried, and it runs before anything is removed.
 
-**R3 — the settle moves.** `settle_conversation` runs the whole settle for a pass with a
-reading: `sweep_note`, `settle_tail`, `stamp_analysis` — and NOT the two review-card
-halves, which R1b deleted, so the settle is three steps rather than five. The gate of §2,
+**R3 — the settle moves, and RETIRES the two card halves.** `settle_conversation` runs the
+whole settle for a pass with a reading: `sweep_note`, `settle_tail`, `stamp_analysis` — and
+NOT the two review-card halves, so the settle is three steps rather than five. **They are
+still standing when this wave starts.** R1b did not delete them, deliberately (see its
+paragraph): the analyzer is still filing `ambiguous_mention` and `extraction_truncated` on
+a live box, and `_sweep_stale_ambiguous` / `_sync_truncation_review` are the only things
+that retire them — a producer's cards go when the producer does. So this wave carries their
+removal rather than inheriting it, and it is R4's `integrate_note` deletion that makes them
+unreachable. Until then a card with `settle_owner = 'conversation'` (one the conversation
+won the filing race for, before R1b) is retired by no sweep at all; the corpus rebuild and
+note deletion are its escape hatches, exactly as for the rows. The gate of §2,
 third-party clause included. The `integration_state` flip moves to the terminal block and the reconciler,
 `has_active_analysis`, `POST /notes/{id}/analyze` and `_integration_drained` repoint with
 it, in this PR — they are one change, and splitting them leaves a box that re-enqueues a
@@ -2053,6 +2080,51 @@ model reaches for it; **(ii)** widen `_recurrence_rrule` to read the rule off an
 fact's token when no `recurrence` fact exists. *Recommendation:* (i) first. (ii) is a
 projection change made on a guess about what the model writes, and the scenario is what
 turns that guess into a number.
+
+**O15 — a held row the conversation wrote has NO retirement path, and `correct_fact` is
+not one.** *Opened by R1b, on review. Not decided, and deliberately not built — every fix
+touches what LANDS, which is a constraint-5 change and the owner's call.*
+
+The mechanism, because the obvious remedy does not work. Before R1b, a `fact_conflict` /
+`attribute_collision` card carried the discharge in its `accept_a`/`accept_b` arm
+(`analysis/repo.py`): pin the winner ACTIVE, **RETRACT the loser**. R1b removed that card
+for conversation writes and put nothing in its place, and nothing else reaches these rows:
+
+- the conversation has no sweep (S3, dropped on a proof);
+- the analyzer's sweep cannot touch them — a release is `array_remove(settle_owners,
+  'analyzer')` and a row claimed `['conversation']` never empties, so it is never
+  retracted;
+- **no write verb retracts.** `close_reading.tool` says so in as many words.
+
+A held row is not inert. `supersession.decide()` reads `pending_review` as LIVE, so the
+`attribute` branch's `heads` on that key is permanently non-empty and *every* later assert
+on it is held or silently refreshed. `analysis/repo.py`'s entity view counts it in
+`fact_count`, and `analysis/consolidation.py` treats it as a live-current twin that blocks
+a predicate rewrite.
+
+**The tempting remedy is ask → owner answers → `correct_fact`, and it does not close it.**
+`decide()`'s correction branch (`supersession.py`) puts `active` heads in `supersede_ids`
+and `pending_review` heads in **`hold_ids`** — so the correction lands live and pinned
+beside the held rows, which stay held. The key keeps a permanently non-empty head set even
+on the feature's happy path, and every later assert on it is held against the pinned
+winner. So the residual is not merely "if the owner never answers"; it survives the answer.
+
+Three candidate fixes, all constraint-5:
+
+1. a verb that retracts (`dismiss_fact`) — the model gains the power to un-hold, which
+   constraint 5 forbids in as many words;
+2. `decide()`'s correction branch supersedes rather than holds its `pending_review` heads —
+   same power, reached through `correct_fact` instead of a new verb, and it is the model's
+   `correction: true` that triggers it;
+3. an evidence-based retirement needing no verb — the shape `SETTLE_OWNERSHIP.md` already
+   records under "a future remedy, recorded and NOT scheduled" (a fact whose note was
+   re-ingested and whose `chunk_id` is now NULL has lost its cited text). Producer-agnostic
+   and outside the model's reach, so it is the only one that is not a constraint-5 change —
+   and it is a different mechanism with its own care, not a small edit.
+
+What R1b did do about it is wording, which is free and not a fix: the hold result names the
+owner as the next move rather than advising it, and a re-assert of an already-held row now
+says so explicitly instead of `ok … already recorded` (F1 below). Neither retires a row.
 
 **O11 and O12 are the same shape as O10, and should be decided together.** All three are
 about a thread that WAITS: nothing tells the owner it is waiting (O10), nothing survives

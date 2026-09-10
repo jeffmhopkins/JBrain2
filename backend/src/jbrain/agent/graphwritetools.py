@@ -119,6 +119,7 @@ from jbrain.analysis.pipeline import (
     HISTORICAL,
     PROMOTED,
     REPLACED,
+    STILL_HELD,
     AnalysisPipeline,
     FactWrite,
     _ChunkRef,
@@ -889,8 +890,11 @@ class NoteGraphWriter:
         entity = outcome.resolved.get(surface)
         if entity is None:
             # The resolver found several live entities on that name (or nothing it could
-            # decide). It files its own ambiguity card; the model gets no handle, which
-            # is the honest answer — a guess here is a mislinked fact forever.
+            # decide), so the model gets no handle — the honest answer, since a guess
+            # here is a mislinked fact forever. It files no card on this path any more
+            # (R1b): card-filing is derived from `settle_owner`, and this is the
+            # conversation. `resolve_entity` names the candidates in its own result
+            # instead, and `distinguish` is how the note answers.
             return None
         row = (
             await session.execute(
@@ -1552,6 +1556,20 @@ def _write_line(
             # preference. Nothing is held and nothing is owed — but the model asked for
             # one write and got a supersession it did not name, so it is told.
             tail.insert(1, f"not a clean update ({write.hold_reason})")
+    elif write.outcome == HELD and write.hold_reason == STILL_HELD:
+        # The row was already held before this write, and restating it changed nothing.
+        # It must not read `ok … already recorded`: that is what `ALREADY` said before
+        # R1b, when a card stood behind the row and this line was not the only channel.
+        # It must also not read as a FRESH clash — the model did nothing wrong, and
+        # telling it to "re-read the note" would send it round a loop it has already
+        # run. The one move left is the owner's.
+        clash = f" It still clashes with {write.conflicting}." if write.conflicting else ""
+        tail.insert(
+            0,
+            "already recorded, and STILL NOT LIVE — it was held before this pass and"
+            f" restating it changed nothing.{clash} Re-reading will not settle this;"
+            " ask the owner which is right",
+        )
     elif write.outcome == HELD:
         clash = f" with {write.conflicting}" if write.conflicting else ""
         reason = write.hold_reason or "unresolved"
@@ -1561,10 +1579,21 @@ def _write_line(
             " raise it: settling it is yours. Re-read the note, or ask the owner which"
             " is right",
         )
-        if write.also_held:
-            tail.insert(1, f"{'; '.join(write.also_held)} was held too, so neither is live")
     elif write.outcome in _OUTCOME_WORDS:
         tail.insert(0, _OUTCOME_WORDS[write.outcome])
+    if write.also_held:
+        # Rendered for EVERY outcome, not only HELD. `decide()` sets `hold_ids` on two
+        # branches and only one of them holds the candidate too: an owner correction
+        # inserts ACTIVE and parks the heads it out-argues, so the write lands
+        # `replaced`/`written` while still moving rows the model never named. Reporting
+        # `also_held` only under HELD would drop exactly those — the under-reporting
+        # this field was added to stop, in the one case the field is the sole witness.
+        others = "; ".join(write.also_held)
+        tail.append(
+            f"{others} was held too, so neither is live"
+            if write.outcome == HELD
+            else f"{others} was held — this value is the live one now"
+        )
     if write.reciprocal_held:
         tail.append(
             f"the reciprocal edge was recorded but NOT live — it clashes with"
