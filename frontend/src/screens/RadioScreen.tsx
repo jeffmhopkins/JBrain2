@@ -133,18 +133,25 @@ export function RadioScreen({ onClose }: { onClose: () => void }) {
         <h1 className="radio-title">Radio</h1>
       </div>
       <div className="radio-body">
-        {/* The house segmented control — the same one the session list uses for
-            Today / Older / Archived. This screen had invented an underline tab bar
-            instead, which is a second answer to a question the design system had
-            already settled. */}
-        <div className="seg-tabs" role="tablist" aria-label="Radio">
+        {/* The SAME control as the idle/listen/aprs/spectrum row inside a radio
+            (`.seg-row`/`.seg`, steel `--mode`): two tab-shaped rows a thumb apart on one
+            screen were drawn two different ways — `.seg-tab` at 13px on a flat tint,
+            `.seg` at --fs-note on the mode tint — and looked like two unrelated widgets.
+            This screen had already invented an underline tab bar once; picking one of the
+            house controls and staying on it is the point.
+
+            Still genuinely TABS, though, so `role="tab"`/`aria-selected` stay: the job row
+            it borrows from uses `aria-pressed` because it is a set of buttons, and these
+            three switch which panel is shown. Sharing an appearance never means sharing a
+            role. */}
+        <div className="seg-row radio-tabs" role="tablist" aria-label="Radio">
           {(["radios", "aprs", "recordings"] as Tab[]).map((id) => (
             <button
               key={id}
               type="button"
               role="tab"
               aria-selected={tab === id}
-              className={`seg-tab${tab === id ? " on" : ""}`}
+              className={`seg${tab === id ? " seg-on" : ""}`}
               onClick={() => setTab(id)}
             >
               {TAB_LABEL[id]}

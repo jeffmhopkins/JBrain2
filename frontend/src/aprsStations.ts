@@ -32,15 +32,45 @@ export const KINDS = ["Position", "Message", "Weather", "Object", "Other"] as co
 
 export type Kind = (typeof KINDS)[number];
 
+/** HOW A FRAME REACHED THE BOX — three states, not two.
+ *
+ * `direct` is the sender's own transmission arriving with no digipeater in the path;
+ * `gated` came off the internet through an IGate; `rf` is the remainder — on the air,
+ * but repeated by a digipeater rather than heard from the station itself. They are
+ * exclusive PER PACKET (the packet row draws exactly this badge), which is why two
+ * states would not be able to name what a row already says.
+ *
+ * PER STATION they are not exclusive. A roster row covers a whole range, so a chip here
+ * means "sent at least one frame that arrived this way" — the same reading the kind
+ * chips have, and two chips are a union. That makes the counts OVERLAP: a station heard
+ * both direct and gated is in both, and they can sum past the station total.
+ *
+ * `phrase` is the same fact inside a sentence, for the row that has to say a station
+ * arrived more than one way. */
+export const PROVENANCE = [
+  { id: "direct", label: "Direct", phrase: "direct" },
+  { id: "gated", label: "Gated", phrase: "gated" },
+  { id: "rf", label: "RF", phrase: "digipeated" },
+] as const;
+
+export type Provenance = (typeof PROVENANCE)[number]["id"];
+
 export interface AprsStation {
   call: string;
   packets: number;
   last_heard_at: string;
   kinds: string[];
-  /** Came from the internet rather than off the air. */
+  /** Came from the internet rather than off the air. From the NEWEST frame. */
   gated: boolean;
+  /** Heard from the station itself, no digipeater in between. From the NEWEST frame. */
+  direct: boolean;
   /** Who put it on the air, when that is not who wrote it. */
   relay: string | null;
+  /** EVERY way this station arrived over the range, not just its newest frame's — which
+   *  is what the provenance chips filter on. Without it a row the Gated chip let through
+   *  could read "heard on RF": true of the last packet, and a flat contradiction of the
+   *  chip that had just been pressed. */
+  heard: Provenance[];
   /** What this station LAST SAID, decoded — the roster used to answer who and how many
    *  but never what, so a screen of weather stations showed four callsigns and no
    *  weather. Same decode as a packet row, from the newest frame in the window. */
@@ -73,6 +103,10 @@ export interface AprsRoster {
   /** STATIONS per kind, not packets: it is what the chip filters, and a chip reading 27
    *  beside a list of three stations would be lying about what pressing it does. */
   kind_stations: Record<string, number>;
+  /** Stations per PROVENANCE, over the same range and equally unfiltered. These OVERLAP
+   *  on purpose — a station heard both ways is counted twice — so they are never a
+   *  partition of `stations_total` and must not be shown as one. */
+  provenance_stations: Record<string, number>;
   /** Stations in range BEFORE the chips narrow it, so the header can read "4 of 16". */
   stations_total: number;
   stations: AprsStation[];
@@ -206,6 +240,53 @@ export function chipsFor(
     count: counts[k] ?? 0,
   }));
   return present.length > 1 || selected.length > 0 ? present : [];
+}
+
+/** The provenance chips, on exactly the terms `chipsFor` uses for the kinds — present in
+ *  the range, or selected so the row stays escapable.
+ *
+ * One difference, and it is the reason this is not the same function: a count of zero
+ * beside a SELECTED chip is information here rather than a leftover. It is what tells
+ * the owner "nothing arrived that way" apart from "the filter did not reach the server",
+ * which on a box with no terminal are otherwise the same blank list (CLAUDE.md rule 10). */
+export function provenanceChips(
+  counts: Record<string, number>,
+  selected: readonly string[] = [],
+): { id: Provenance; label: string; count: number }[] {
+  const present = PROVENANCE.filter((p) => (counts[p.id] || 0) > 0 || selected.includes(p.id)).map(
+    (p) => ({ id: p.id, label: p.label, count: counts[p.id] ?? 0 }),
+  );
+  return present.length > 1 || selected.length > 0 ? present : [];
+}
+
+/** The OTHER ways a station arrived over the range, for the row that would otherwise
+ *  contradict the chip that let it through.
+ *
+ * Empty when every frame arrived the one way the row already names — which is the common
+ * case, so the sub-line only grows where it has something to add. */
+export function alsoHeard(station: Pick<AprsStation, "gated" | "direct" | "heard">): string {
+  const newest: Provenance = station.direct ? "direct" : station.gated ? "gated" : "rf";
+  // `?? []` for the minutes during an Ops → Update where a freshly cached PWA is reading
+  // the box's previous API: a row that cannot say it arrived two ways is a row missing a
+  // clause, and throwing here would cost the owner the whole list instead.
+  const heard = station.heard ?? [];
+  const others = PROVENANCE.filter((p) => p.id !== newest && heard.includes(p.id));
+  return others.length > 0 ? `also ${others.map((p) => p.phrase).join(", ")}` : "";
+}
+
+/** What the list is narrowed to, as one phrase — for the header AND for the empty state.
+ *
+ * The same words in both places on purpose. An empty list under a filter has to say which
+ * filter, or a chip that matched nothing is indistinguishable from a dead receiver, and
+ * the owner cannot open a terminal to tell them apart. */
+export function narrowedBy(kinds: readonly string[], provenance: readonly string[]): string {
+  const parts: string[] = [];
+  if (kinds.length > 0) parts.push(`sending ${kinds.join(" or ")}`);
+  if (provenance.length > 0) {
+    const words = PROVENANCE.filter((p) => provenance.includes(p.id)).map((p) => p.phrase);
+    parts.push(`heard ${words.join(" or ")}`);
+  }
+  return parts.join(", ");
 }
 
 /** The list header's count: "4 of 16" while chips are narrowing it, "16" otherwise. */

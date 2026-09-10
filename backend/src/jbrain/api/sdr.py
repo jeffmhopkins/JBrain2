@@ -53,7 +53,7 @@ from jbrain.sdr.recorder import RecorderRefused, SdrRecorder
 from jbrain.sdr.recordings import RECENT_DEFAULT, RECENT_MAX, RecordingsRepo
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
-from jbrain.sdr.stations import WINDOWS, StationsReader
+from jbrain.sdr.stations import PROVENANCE, WINDOWS, StationsReader
 from jbrain.sdr.tuner import (
     MAX_MHZ,
     MIN_MHZ,
@@ -494,12 +494,25 @@ def _kinds(raw: str | None) -> list[str]:
     return [k for k in (part.strip() for part in raw.split(",")) if k in KINDS]
 
 
+def _provenance(raw: str | None) -> list[str]:
+    """The gated/direct chips, on exactly the same terms as `_kinds`.
+
+    Whitelisted against the three states `stations.PROVENANCE` defines — and here it is
+    not only hygiene: these ids become SQL fragments rather than a bound parameter, so
+    the key check IS the guard (`StationsReader.roster` repeats it for the same reason).
+    An unknown one is dropped, so a stale PWA gets the unfiltered roster."""
+    if not raw:
+        return []
+    return [p for p in (part.strip() for part in raw.split(",")) if p in PROVENANCE]
+
+
 @router.get("/stations")
 async def stations(
     owner: OwnerDep,
     maker: SessionMakerDep,
     window: Annotated[str, Query(pattern=f"^({_WINDOW_IDS})$")] = "1d",
     kinds: Annotated[str | None, Query(max_length=120)] = None,
+    provenance: Annotated[str | None, Query(max_length=60)] = None,
     mine: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
     """Who has been heard, most recently heard first (`docs/mocks/aprs/e-stations.html`).
@@ -511,12 +524,21 @@ async def stations(
     packets. `kind_stations` therefore counts stations, because a chip reading 27 beside
     a list of three stations would be lying about what pressing it does.
 
+    `provenance` narrows it the same way, on how the frames ARRIVED: `direct`, `gated`
+    and `rf` are exclusive per packet but not per station, so a chip means "sent at least
+    one frame that arrived this way" and a station heard both ways answers to both. Its
+    counts (`provenance_stations`) therefore overlap and may sum past the total.
+
     `mine` pins the owner's own stations to the top BEFORE the list is capped. The client
     knows the callsign already (it is in Settings), so it travels as a parameter rather
     than costing a settings read on every poll — and it is a sort key on the owner's own
     request, not a permission."""
     return await StationsReader(maker).roster(
-        ctx_for(owner), window=window, kinds=_kinds(kinds), mine=mine
+        ctx_for(owner),
+        window=window,
+        kinds=_kinds(kinds),
+        provenance=_provenance(provenance),
+        mine=mine,
     )
 
 

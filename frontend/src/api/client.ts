@@ -2926,9 +2926,13 @@ export const api = {
     window: string,
     kinds: readonly string[] = [],
     mine: string | null = null,
+    provenance: readonly string[] = [],
   ): Promise<AprsRoster> {
     let query = `window=${encodeURIComponent(window)}`;
     if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    // How the frames arrived — direct / gated / rf. Server-side like the kinds, for the
+    // same reason: a year of this channel is ~1.2M rows to render sixteen lines.
+    if (provenance.length > 0) query += `&provenance=${encodeURIComponent(provenance.join(","))}`;
     // The owner's callsign pins his own stations BEFORE the server caps the list — the
     // client cannot pin what it was never sent. It is a sort key on his own request, not
     // a permission, and the server already knows who is asking.

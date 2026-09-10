@@ -25,13 +25,17 @@ import {
   type AprsStationDetail,
   type AprsStationPacket,
   type Kind,
+  type Provenance,
   WINDOWS,
   type WindowId,
   ago,
+  alsoHeard,
   arrival,
   chipsFor,
   isMine,
+  narrowedBy,
   pinMine,
+  provenanceChips,
   shownLabel,
 } from "../aprsStations";
 import { type Fix, askWhereYouAre, rangeAndBearing, rangeLine } from "../whereYouAre";
@@ -49,6 +53,12 @@ import {
 export function AprsStations({ tick, owner }: { tick: number; owner: string | null }) {
   const [window_, setWindow] = useState<WindowId>("1d");
   const [kinds, setKinds] = useState<Kind[]>([]);
+  // ROOT-ONLY, unlike the kinds. At the roster "gated" asks which STATIONS reached us
+  // that way; inside a station the question would be about its packets, and the detail
+  // route does not answer it — so rather than send a filter the server ignores (a filter
+  // that silently does nothing is the worst of the three states), the chips exist only
+  // where they work, and the selection survives a visit to a station and back.
+  const [prov, setProv] = useState<Provenance[]>([]);
   const [station, setStation] = useState<string | null>(null);
   const [roster, setRoster] = useState<AprsRoster | null>(null);
   const [detail, setDetail] = useState<AprsStationDetail | null>(null);
@@ -67,7 +77,7 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
         if (mine !== seq.current) return;
         setDetail(next);
       } else {
-        const next = await api.getAprsStations(window_, kinds, owner);
+        const next = await api.getAprsStations(window_, kinds, owner, prov);
         if (mine !== seq.current) return;
         setRoster(next);
       }
@@ -76,7 +86,7 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
       if (mine !== seq.current) return;
       setError(err instanceof ApiError ? err.message : "Couldn't read the stations.");
     }
-  }, [station, window_, kinds, owner]);
+  }, [station, window_, kinds, prov, owner]);
 
   // `tick` is the parent's poll counter, and depending on it IS the refresh — the
   // roster has to keep up with a live channel without owning a second timer that could
@@ -92,6 +102,12 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
     );
   }
 
+  function toggleProv(id: Provenance) {
+    setProv((current) =>
+      current.includes(id) ? current.filter((p) => p !== id) : [...current, id],
+    );
+  }
+
   // Leaving a station keeps the range but DROPS the chips. Inside a station they mean
   // "this station's weather"; back at the roster the same chips mean "stations that
   // send weather at all" — carrying a selection across that change silently rewrites
@@ -99,6 +115,7 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
   function back() {
     setStation(null);
     setKinds([]);
+    setProv([]);
     setDetail(null);
     setError(null);
   }
@@ -149,9 +166,11 @@ export function AprsStations({ tick, owner }: { tick: number; owner: string | nu
         roster={roster}
         window_={window_}
         kinds={kinds}
+        prov={prov}
         owner={owner}
         onWindow={setWindow}
         onKind={toggleKind}
+        onProv={toggleProv}
         onOpen={(call) => {
           setStation(call);
           setDetail(null);
@@ -166,17 +185,21 @@ function Roster({
   roster,
   window_,
   kinds,
+  prov,
   owner,
   onWindow,
   onKind,
+  onProv,
   onOpen,
 }: {
   roster: AprsRoster;
   window_: WindowId;
   kinds: Kind[];
+  prov: Provenance[];
   owner: string | null;
   onWindow: (id: WindowId) => void;
   onKind: (kind: Kind) => void;
+  onProv: (id: Provenance) => void;
   onOpen: (call: string) => void;
 }) {
   // The roster's rows now say where a station is, so they need the same fix the
@@ -184,7 +207,12 @@ function Roster({
   const you = useWhereYouAre();
   const stations = pinMine(roster.stations, owner);
   const chips = chipsFor(roster.kind_stations, kinds);
+  // `?? {}` for the minutes during an Ops → Update where a freshly cached PWA is talking
+  // to the box's previous API: a missing field would throw here and take the whole roster
+  // down, and a screen with one chip row missing is a screen the owner can still read.
+  const arrivals = provenanceChips(roster.provenance_stations ?? {}, prov);
   const mine = stations.filter((s) => isMine(s.call, owner)).length;
+  const narrowed = narrowedBy(kinds, prov);
 
   return (
     <>
@@ -196,11 +224,16 @@ function Roster({
         onWindow={onWindow}
         unit="packets"
       />
-      {chips.length > 0 && (
-        // At the ROOT these narrow the roster to stations that send that kind at all —
-        // "show me who is putting out weather" is a question about stations. So the
-        // counts are stations, and they are computed over the range UNFILTERED by the
-        // selection, or the row would rearrange itself as you used it.
+      {(chips.length > 0 || arrivals.length > 0) && (
+        // ONE row for both filters, not two. At the ROOT these narrow the roster to
+        // stations that match at all — "show me who is putting out weather", "show me
+        // who I am hearing direct" are both questions about stations. So every count is
+        // stations, and every one is computed over the range UNFILTERED by the selection,
+        // or the row would rearrange itself as you used it.
+        //
+        // Sharing the row is what keeps the second filter from costing a fifth strip of
+        // chrome above the list: on the owner's phone these controls were eating a third
+        // of the screen before the first station appeared.
         <div className="aprs-chips">
           {chips.map(({ kind, count }) => (
             <button
@@ -211,6 +244,21 @@ function Roster({
               onClick={() => onKind(kind)}
             >
               {kind}
+              <span className="aprs-chip-n">{count}</span>
+            </button>
+          ))}
+          {arrivals.map(({ id, label, count }) => (
+            <button
+              type="button"
+              key={id}
+              className={`aprs-chip aprs-chip-arr b-${id}`}
+              aria-pressed={prov.includes(id)}
+              // The two dimensions read alike on screen, so the accessible name says
+              // which is which — "Weather" and "Gated" are not the same kind of chip.
+              aria-label={`Heard ${id}, ${count} station${count === 1 ? "" : "s"}`}
+              onClick={() => onProv(id)}
+            >
+              {label}
               <span className="aprs-chip-n">{count}</span>
             </button>
           ))}
@@ -228,9 +276,9 @@ function Roster({
       )}
 
       <div className="aprs-sec">
-        {kinds.length > 0 ? `Stations sending ${kinds.join(" or ")}` : "Stations heard"}
+        {narrowed ? `Stations ${narrowed}` : "Stations heard"}
         <span className="aprs-count">
-          {shownLabel(stations.length, roster.stations_total, kinds.length > 0)}
+          {shownLabel(stations.length, roster.stations_total, narrowed !== "")}
           {/* The list is capped. Printing a confident total it did not return would hide
               a station — including, over a long range, the owner's own. */}
           {roster.truncated && ` of ${roster.stations_total}, newest first`}
@@ -239,8 +287,12 @@ function Roster({
 
       {stations.length === 0 ? (
         <p className="radio-empty">
-          {kinds.length > 0
-            ? `No station sent ${kinds.join(" or ")} in this range. Clear the type filter or widen the range.`
+          {narrowed
+            ? // NAMES the filter that is on. Empty-because-filtered and empty-because-
+              // nothing-was-heard are the same blank list otherwise, and the owner has no
+              // terminal to tell them apart (CLAUDE.md rule 10) — the counts on the chips
+              // above then say which of the two it is.
+              `No station ${narrowed} in this range. Clear the filters above or widen the range.`
             : "No stations in this range. A quiet channel and a dead antenna look the same in an empty list, so the line above shows the last decode rather than a signal bar — widen the range to see whether anything has been heard at all."}
         </p>
       ) : (
@@ -256,7 +308,12 @@ function Roster({
               <span className="aprs-st-call">{s.call}</span>
               {latestOf(s, you) && <span className="aprs-st-said">{latestOf(s, you)}</span>}
               <span className="aprs-st-sub">
-                {arrival(s)} · {s.kinds.join(", ")}
+                {/* `arrival` describes the NEWEST frame; `alsoHeard` covers the rest of
+                    the range, which is what the chips filter on. A station the Gated chip
+                    let through whose last packet came off the air would otherwise read
+                    "heard on RF" and contradict the chip that returned it. */}
+                {arrival(s)}
+                {alsoHeard(s) && ` · ${alsoHeard(s)}`} · {s.kinds.join(", ")}
               </span>
             </span>
             <span className="aprs-st-right">

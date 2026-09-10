@@ -557,6 +557,40 @@ def test_an_unknown_chip_shows_everything_rather_than_erroring() -> None:
     assert sdr_api._kinds("Telemetry,Weather") == ["Weather"]
 
 
+async def test_both_chip_rows_travel_to_the_reader_whitelisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The route's whole job for the roster: turn two query strings into two whitelists.
+
+    Worth pinning at the route rather than only at the reader because a filter dropped
+    HERE fails the way this box cannot afford — silently, as a full unfiltered list on a
+    screen whose chips say otherwise, with no terminal to check the request in."""
+    seen: dict[str, Any] = {}
+
+    class _Reader:
+        def __init__(self, _maker: Any) -> None: ...
+
+        async def roster(self, _ctx: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.update(kwargs)
+            return {}
+
+    monkeypatch.setattr(sdr_api, "StationsReader", _Reader)
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _o: object())
+
+    await sdr_api.stations(
+        OWNER,  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        window="3d",
+        kinds="Weather,Telemetry",
+        provenance="gated,igate",
+        mine=None,
+    )
+
+    assert seen["kinds"] == ["Weather"]
+    assert seen["provenance"] == ["gated"]
+    assert seen["window"] == "3d"
+
+
 async def test_the_log_says_when_packets_are_being_heard_and_LOST(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
