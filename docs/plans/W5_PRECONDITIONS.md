@@ -1,6 +1,19 @@
 # W5's two unowned preconditions — the `note_analysis` stamp and the `integrated` flip
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10
+> **Status:** Superseded 2026-09 (kept in place — its FINDINGS are still cited) · **Superseded-by:** `AGENT_INGEST_REWRITE.md`
+>
+> **The RECOMMENDATIONS below are void; the FINDINGS are not.** The owner redirected the
+> work to a complete rewrite of ingestion with a wipe of the notes and the graph, so the
+> COALESCE seam, the first-line title fallback and keeping the analyzer's title half
+> alive were answers to a question nobody is asking any more. What survives and is worth
+> reading before touching ingestion: §1's consumer table and Correction 2 (the stake is
+> the ROW, not the title — no row means a permanent "analyzing…" chip and an empty
+> Analysis tab), §2's four readers of `integration_state` and its recommendation, which
+> the successor adopts whole, §3's per-helper verdicts, and §4 — the finding that after
+> the analyzer nothing retracts anything on an ordinary note, which is the loss the
+> successor's closing reading exists to close. §4(a)'s read-only key-match measurement
+> is not merely superseded but UNRUNNABLE: the wipe deletes its corpus, and the reading
+> COMMITS, so the sweep stays id-based and needs no new mechanism.
 
 `SETTLE_OWNERSHIP.md` S5 and `AGENT_INGEST_CONVERSATION_PLAN.md` W5a gate the same PR:
 delete `integrate_note` and the deterministic chain, leaving the note conversation as the

@@ -1,6 +1,16 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5◻️ (W5a blocked — see W5)
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5❌superseded
+>
+> **W5 IS SUPERSEDED by `AGENT_INGEST_REWRITE.md`.** The owner redirected the work to a
+> complete rewrite of ingestion with a wipe of the notes, the graph and the predicate
+> registry, so the teardown W5a/W5b/W5c describe — and the gate they were blocked on —
+> no longer applies. Void with them: D13 read as a BLOCKER on this wave, the "what W5 may
+> not delete" list below and in each xfailed scenario's `xfail` string, and matching the
+> old extractor's output field-for-field. Everything above W5 is shipped and stands; the
+> successor builds on it. The measurements in W3/T5 — `required` buys PRESENCE, not
+> MEMBERSHIP, and the six-gap probe results — are NOT superseded: they describe the box,
+> not the old path, and the successor reasons from them.
 >
 > **W4c/1 landed:** the tool-call ledger now records BOTH turn paths. The owner's reply
 > turn records at the same seam the unattended pass records at

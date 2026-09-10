@@ -1,6 +1,15 @@
 # Who owns a note's whole-note settle
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S1b✅ S2✅ S3❌dropped S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S1b✅ S2✅ S3❌dropped S4❌superseded S5❌superseded
+>
+> **S4 and S5 are SUPERSEDED by `AGENT_INGEST_REWRITE.md`.** S5 was the teardown; the
+> owner redirected the work to a rewrite with a data wipe, so there is no corpus for the
+> teardown's gating to protect and S4's two-stampers-on-an-EMR-note question is folded
+> into that plan's O1. **S3's proof is not superseded — it is the successor's spine.** A
+> write ledger can never license a retraction, and the door the proof names (an
+> EXTRACTION, a complete current reading) is exactly what the agent is now asked to
+> produce at the end of a pass. S1/S1b/S2 are shipped and are the substrate that design
+> writes through.
 >
 > **S1b shipped**, closing S1's two residuals — the settle's review-card halves. A
 > third key, `review_items.settle_owner`, and singular rather than a set: a card records
