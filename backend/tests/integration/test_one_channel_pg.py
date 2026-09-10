@@ -135,7 +135,8 @@ async def test_an_attribute_collision_holds_both_sides_and_files_nothing(maker, 
     line = str(out)
     assert "held  Cleo Vance.birthDate" in line
     assert "attribute_collision" in line
-    assert "Cleo Vance was born March 3, 1990." in line
+    # The statement is quoted inside the line's prose, so its own stop is trimmed.
+    assert "Cleo Vance was born March 3, 1990" in line
     assert "was held too, so neither is live" in line
     assert "ask the owner which is right" in line
 
@@ -268,7 +269,7 @@ async def test_a_pinned_head_holds_the_new_value_and_files_nothing(maker, tmp_pa
     assert await _cards(maker, note_id) == [] and await _cards(maker, later) == []
     line = str(out)
     assert "held  Pinny Reyes.homeLocation" in line
-    assert "fact_conflict" in line and "Pinny Reyes lives at 118 Pine Ave." in line
+    assert "fact_conflict" in line and "Pinny Reyes lives at 118 Pine Ave" in line
     assert "nothing else will raise it" in line
 
 
@@ -321,7 +322,7 @@ async def test_a_low_weight_read_is_held_and_files_nothing(maker, tmp_path) -> N
     assert (await _row(maker, str(prior))).status == "active"
     assert await _cards(maker, note_id) == [] and await _cards(maker, later) == []
     line = str(out)
-    assert "low_confidence" in line and "Blurry Nakamura lives at 118 Pine Ave." in line
+    assert "low_confidence" in line and "Blurry Nakamura lives at 118 Pine Ave" in line
     assert "NOT live" in line and "Re-read the note" in line
 
 
@@ -357,7 +358,7 @@ async def test_a_same_instant_supersede_lands_live_and_files_nothing(maker, tmp_
     assert (await _row(maker, second.fact_id)).status == "active"
     assert (await _row(maker, first.fact_id)).status == "superseded"
     line = str(out)
-    assert "replaced Twice Okonkwo lives at 118 Pine Ave., kept as history" in line
+    assert "replaced Twice Okonkwo lives at 118 Pine Ave, kept as history" in line
     assert "not a clean update (fact_conflict)" in line
 
 
@@ -431,7 +432,7 @@ async def test_a_reciprocal_refused_for_a_primary_is_reported_on_its_source(
     assert await _cards(maker, first_note) == [] and await _cards(maker, second_note) == []
     line = str(out)
     assert "the reciprocal edge was recorded but NOT live" in line
-    assert "Bo Marchetti's spouse is Cy Delgado." in line
+    assert "Bo Marchetti's spouse is Cy Delgado" in line
 
 
 @pytest.mark.asyncio

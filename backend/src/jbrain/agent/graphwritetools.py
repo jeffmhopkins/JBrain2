@@ -1534,6 +1534,17 @@ class NoteGraphWriter:
         )
 
 
+def _trim_stop(text: str) -> str:
+    """A fact `statement` with its full stop removed, for embedding in a longer sentence.
+
+    Statements are written as sentences ("Cleo was born March 3, 1990."), and the result
+    line quotes them inside its own prose. Left alone they either double the stop
+    ("…born March 3, 1990..") or plant one mid-clause ("…1990. was held too"). This is
+    cosmetic, and it is worth a helper because the ONE channel a hold has is read by a
+    model that is being asked to act on it."""
+    return text.rstrip().rstrip(".").rstrip()
+
+
 def _write_line(
     idx: int, subject: str, predicate: str, value: str, write: FactWrite, notes: Sequence[str]
 ) -> str:
@@ -1550,7 +1561,9 @@ def _write_line(
     head = f"{'held' if write.outcome == HELD else 'ok'}  {subject}.{predicate} → {value}"
     tail: list[str] = list(notes)
     if write.outcome == REPLACED and write.replaced:
-        tail.insert(0, f"replaced {'; '.join(write.replaced)}, kept as history")
+        tail.insert(
+            0, f"replaced {'; '.join(_trim_stop(r) for r in write.replaced)}, kept as history"
+        )
         if write.hold_reason:
             # It LANDED LIVE and still was not a clean update: same value-instant, or a
             # preference. Nothing is held and nothing is owed — but the model asked for
@@ -1563,7 +1576,9 @@ def _write_line(
         # It must also not read as a FRESH clash — the model did nothing wrong, and
         # telling it to "re-read the note" would send it round a loop it has already
         # run. The one move left is the owner's.
-        clash = f" It still clashes with {write.conflicting}." if write.conflicting else ""
+        clash = (
+            f" It still clashes with {_trim_stop(write.conflicting)}." if write.conflicting else ""
+        )
         tail.insert(
             0,
             "already recorded, and STILL NOT LIVE — it was held before this pass and"
@@ -1571,7 +1586,7 @@ def _write_line(
             " ask the owner which is right",
         )
     elif write.outcome == HELD:
-        clash = f" with {write.conflicting}" if write.conflicting else ""
+        clash = f" with {_trim_stop(write.conflicting)}" if write.conflicting else ""
         reason = write.hold_reason or "unresolved"
         tail.insert(
             0,
@@ -1588,7 +1603,7 @@ def _write_line(
         # `replaced`/`written` while still moving rows the model never named. Reporting
         # `also_held` only under HELD would drop exactly those — the under-reporting
         # this field was added to stop, in the one case the field is the sole witness.
-        others = "; ".join(write.also_held)
+        others = "; ".join(_trim_stop(h) for h in write.also_held)
         tail.append(
             f"{others} was held too, so neither is live"
             if write.outcome == HELD
@@ -1597,7 +1612,7 @@ def _write_line(
     if write.reciprocal_held:
         tail.append(
             f"the reciprocal edge was recorded but NOT live — it clashes with"
-            f" {write.reciprocal_held}"
+            f" {_trim_stop(write.reciprocal_held)}"
         )
     if write.domain != "general":
         tail.append(f"filed under {write.domain}")

@@ -2081,50 +2081,86 @@ fact's token when no `recurrence` fact exists. *Recommendation:* (i) first. (ii)
 projection change made on a guess about what the model writes, and the scenario is what
 turns that guess into a number.
 
-**O15 — a held row the conversation wrote has NO retirement path, and `correct_fact` is
-not one.** *Opened by R1b, on review. Not decided, and deliberately not built — every fix
-touches what LANDS, which is a constraint-5 change and the owner's call.*
+**O15 — a held row the conversation wrote has NO retirement path, and the owner's own
+answer does not create one.** *Opened by R1b, on review, then corrected on a second review
+that found the first description materially incomplete. Not decided, and deliberately not
+built: two of the three fixes hand the model a power constraint 5 withholds, which is the
+owner's call.*
 
-The mechanism, because the obvious remedy does not work. Before R1b, a `fact_conflict` /
-`attribute_collision` card carried the discharge in its `accept_a`/`accept_b` arm
-(`analysis/repo.py`): pin the winner ACTIVE, **RETRACT the loser**. R1b removed that card
-for conversation writes and put nothing in its place, and nothing else reaches these rows:
+**The state.** Before R1b, a `fact_conflict` / `attribute_collision` card carried the
+discharge in its `accept_a`/`accept_b` arm (`analysis/repo.py`): pin the winner ACTIVE,
+**RETRACT the loser**. R1b removed that card for conversation writes and put nothing in its
+place, and nothing else reaches these rows:
 
 - the conversation has no sweep (S3, dropped on a proof);
 - the analyzer's sweep cannot touch them — a release is `array_remove(settle_owners,
   'analyzer')` and a row claimed `['conversation']` never empties, so it is never
   retracted;
+- the re-analysis `promoted` branch cannot either: it gates strictly on an open
+  `low_confidence_inference` card, which the conversation never files;
 - **no write verb retracts.** `close_reading.tool` says so in as many words.
 
 A held row is not inert. `supersession.decide()` reads `pending_review` as LIVE, so the
 `attribute` branch's `heads` on that key is permanently non-empty and *every* later assert
-on it is held or silently refreshed. `analysis/repo.py`'s entity view counts it in
-`fact_count`, and `analysis/consolidation.py` treats it as a live-current twin that blocks
-a predicate rewrite.
+on it is held or refreshed. `analysis/repo.py`'s entity view counts it in `fact_count`, and
+`analysis/consolidation.py` treats it as a live-current twin that blocks a predicate
+rewrite.
 
-**The tempting remedy is ask → owner answers → `correct_fact`, and it does not close it.**
-`decide()`'s correction branch (`supersession.py`) puts `active` heads in `supersede_ids`
-and `pending_review` heads in **`hold_ids`** — so the correction lands live and pinned
-beside the held rows, which stay held. The key keeps a permanently non-empty head set even
-on the feature's happy path, and every later assert on it is held against the pinned
-winner. So the residual is not merely "if the owner never answers"; it survives the answer.
+**Why `correct_fact` is not the discharge — TWO independent reasons, and the first is the
+one that surprises.** The agent's obligation under one channel ends at "ask the owner which
+is right", so the remedy that looks obvious is ask → owner answers → `correct_fact`.
 
-Three candidate fixes, all constraint-5:
+1. **When the owner answers with one of the CONTESTED values — the natural answer — the
+   correction branch is never reached at all.** `decide()`'s idempotency short-circuit runs
+   first, matches the `pending_review` row carrying that value (`e.status in ("active",
+   "pending_review")`) and returns `refresh_id`; the refresh path writes neither `status`
+   nor `pinned`. The row stays held and unpinned, nothing goes live, and the result tells
+   the agent to ask the owner which is right — said to the owner who just answered. The
+   branch's own comment names the assumption that fails: *"An identical-value restatement
+   was already refreshed above, so reaching here means a genuine override."* True when the
+   restatement is idempotent noise; false when the matched row is a held side of a live
+   contest and the restatement is the verdict. Pinned end to end by
+   `test_the_owner_answering_with_a_contested_value_settles_nothing`
+   (`tests/integration/test_note_reply_write_pg.py`), which flips to the acceptance check
+   the day this is resolved.
+2. **When the owner answers with a THIRD value, the correction lands but still retires
+   nothing.** The branch puts `active` heads in `supersede_ids` and `pending_review` heads
+   in **`hold_ids`**, so the correction commits live and pinned *beside* the held rows,
+   which stay held. The key keeps a permanently non-empty head set, and every later assert
+   on it is held against the pinned winner.
 
-1. a verb that retracts (`dismiss_fact`) — the model gains the power to un-hold, which
-   constraint 5 forbids in as many words;
-2. `decide()`'s correction branch supersedes rather than holds its `pending_review` heads —
-   same power, reached through `correct_fact` instead of a new verb, and it is the model's
-   `correction: true` that triggers it;
-3. an evidence-based retirement needing no verb — the shape `SETTLE_OWNERSHIP.md` already
-   records under "a future remedy, recorded and NOT scheduled" (a fact whose note was
-   re-ingested and whose `chunk_id` is now NULL has lost its cited text). Producer-agnostic
-   and outside the model's reach, so it is the only one that is not a constraint-5 change —
-   and it is a different mechanism with its own care, not a small edit.
+So a fix needs BOTH halves — the branch must run before the short-circuit, AND it must
+supersede its `pending_review` heads rather than hold them. Either alone leaves one of the
+two answers a dead end. **There is in-tree precedent for exactly the first half**, eight
+lines up in the same function: `_lab_status_transition` is deliberately placed AHEAD of the
+short-circuit, with the comment *"so a same-value correction still supersedes"*. That is
+this problem, already solved once, for the EMR path.
 
-What R1b did do about it is wording, which is free and not a fix: the hold result names the
-owner as the next move rather than advising it, and a re-assert of an already-held row now
-says so explicitly instead of `ok … already recorded` (F1 below). Neither retires a row.
+**Three candidate fixes. Constraint 5 is "`decide()` stays the implementation of the write
+tool, never a model-facing verb" — a rule about POWER, not about what lands — so two of the
+three engage it and one does not.**
+
+1. **A verb that retracts (`dismiss_fact`).** Constraint 5 head-on: the model gains the
+   un-hold power the constraint exists to withhold. This is the one an earlier draft of
+   this item recommended, on a description that was missing everything above.
+2. **Reorder the correction branch and make it supersede.** No new verb, but the model's
+   `correction: true` newly reaches a held row, so it engages constraint 5 too — weakly.
+   The mitigating fact, which the owner should weigh rather than have flattened away:
+   `correct_fact` is bound ONLY on the owner's own reply turn (D8/D11, and W4 keeps it off
+   third-party and EMR notes), so the hand on the verb is the owner's typed answer and not
+   the unattended pass. This is the smallest fix that closes both halves.
+3. **Evidence-based retirement needing no verb** — the shape `SETTLE_OWNERSHIP.md` already
+   records under "a future remedy, recorded and NOT scheduled": a fact whose note has been
+   re-ingested and whose `chunk_id` is now NULL has lost its cited text. Producer-agnostic
+   and entirely outside the model's reach, so it does NOT engage constraint 5. It is also a
+   different mechanism with its own care, not a small edit — and it retires rows on
+   evidence about the NOTE, so it would not settle a contest the note itself still states.
+
+**What R1b did do about this is wording, and wording is not a fix.** The hold result names
+the owner as the next move rather than advising it, and a re-assert of an already-held row
+says so explicitly instead of `ok … already recorded` (the `STILL_HELD` line). That makes
+the dead end honest and visible instead of silent — which is why this is a recorded
+residual rather than a live loss — but no row is retired by any of it.
 
 **O11 and O12 are the same shape as O10, and should be decided together.** All three are
 about a thread that WAITS: nothing tells the owner it is waiting (O10), nothing survives

@@ -83,8 +83,12 @@ and removed, on a proof rather than a bug count:
 
 - a release is justified only when a producer RE-DERIVED the note and dropped X;
 - within one session this producer never drops anything — it asserts once and revises by
-  supersession, `correct_fact` supersedes and PINS rather than retracting, and a
-  re-assert returns `ALREADY` with the same `fact_id` — so its ledger never SHRINKS;
+  supersession; `correct_fact` supersedes an ACTIVE head and PINS the new value rather
+  than retracting (against a `pending_review` head it holds BESIDE rather than
+  superseding, which is O15 in `AGENT_INGEST_REWRITE.md` and does not change this); and a
+  re-assert refreshes the SAME row in place, returning `ALREADY` when that row is live and
+  `HELD` when it was already held. No path retracts and every one yields a row id, so its
+  ledger never SHRINKS;
 - therefore the only claims a release could remove are OTHER sessions';
 - and judging those needs a complete current READING of the note, which
   `NoteConversationRepo.writes()` — a record of what a pass WROTE — structurally is not.

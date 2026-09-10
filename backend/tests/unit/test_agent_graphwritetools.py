@@ -584,7 +584,9 @@ def test_a_reciprocal_refused_in_favour_of_a_primary_is_reported_on_its_source()
     )
     line = gw._write_line(0, "Ada", "spouse", "Bo", write, [])
     assert "the reciprocal edge was recorded but NOT live" in line
-    assert "Bo's spouse is Cy." in line
+    # The statement's own full stop is trimmed: it is embedded in this line's prose,
+    # and no other clause on the line terminates either (`_trim_stop`).
+    assert line.endswith("it clashes with Bo's spouse is Cy")
 
 
 def test_a_write_that_left_the_notes_domain_says_where_it_landed() -> None:
