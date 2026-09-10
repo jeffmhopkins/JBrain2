@@ -3251,9 +3251,13 @@ function mockReclaimed(): number {
 function mockRecordingsPage(): SdrRecordingsPage {
   const bytes = MOCK_RECORDINGS.reduce((total, r) => total + r.bytes, 0);
   return {
-    recordings: [...MOCK_RECORDINGS].sort(
-      (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
-    ),
+    recordings: [...MOCK_RECORDINGS]
+      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+      // `peaks` is STRIPPED here because the real list route omits it (400 floats a row
+      // would dwarf the response) and the trim sheet fetches it by id instead. A fixture
+      // that handed the waveform over with the list would make the one path that has to
+      // work on a real box the one path mock mode never exercises.
+      .map(({ peaks: _envelope, ...row }) => row),
     usage: { bytes, count: MOCK_RECORDINGS.length, reclaimed_bytes: mockReclaimed() },
   };
 }
@@ -3341,6 +3345,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
       return json({ recordings: [], usage: { bytes: 0, count: 0, reclaimed_bytes: 0 } });
     }
     return json(mockRecordingsPage());
+  }
+  const oneRec = path.match(/^\/api\/sdr\/recordings\/([^/]+)$/);
+  if (oneRec && method === "GET") {
+    const row = MOCK_RECORDINGS.find((r) => r.id === decodeURIComponent(oneRec[1] ?? ""));
+    if (!row) return json({ detail: "no recording with that id" }, 404);
+    // The by-id route is the ONLY one that carries `peaks` — the list omits it on
+    // purpose — so the fixture has to differ from the list's rows here, or a sheet that
+    // never fetched its waveform would look identical to one that did.
+    return json({ ...row, peaks: row.peaks ?? mockPeaks(row.id.length, row.duration_s) });
   }
   const trimRec = path.match(/^\/api\/sdr\/recordings\/([^/]+)\/trim$/);
   if (trimRec && method === "POST") {

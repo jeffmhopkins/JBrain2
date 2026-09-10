@@ -1402,6 +1402,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_url=settings.supervisor_url, timeout=30.0
         )
         yield
+        # Finalize a recording that is still running, before anything else is torn down.
+        # An Ops → Update while the tape deck is going would otherwise take the clip's
+        # spool file with the container — and an interrupted recording is still a
+        # recording (docs/plans/SDR_RECORDING_PLAN.md §2). Bounded, and here rather than
+        # further down because writing its row needs the pool still alive.
+        sdr_recorder = getattr(app.state, "sdr_recorder", None)
+        if sdr_recorder is not None:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(sdr_recorder.stop(), timeout=10.0)
         warm_keeper_task.cancel()
         if live_task is not None:
             live_task.cancel()

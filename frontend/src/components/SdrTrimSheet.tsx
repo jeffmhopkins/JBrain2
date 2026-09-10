@@ -23,6 +23,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -80,15 +81,37 @@ export function SdrTrimSheet({ recording, onClose, onTrimmed }: TrimSheetProps) 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const dragging = useRef<Handle | null>(null);
 
-  // The list route does not carry `peaks` today, and there is no by-id route to ask for
-  // one row — so the sheet has to work without a picture rather than draw a flat line
-  // and let it read as three minutes of silence.
-  const envelope = recording.peaks ?? [];
+  // The list deliberately omits `peaks` — 400 floats per row would dwarf a hundred-row
+  // library — so the sheet asks for the one clip it is open on, once, when it opens.
+  // A box older than that route, or one whose decode failed, answers without an
+  // envelope; the sheet then works without a picture rather than drawing a flat line
+  // and letting it read as three minutes of silence.
+  const [fetched, setFetched] = useState<number[] | null>(null);
+  const envelope = recording.peaks?.length ? recording.peaks : (fetched ?? []);
   const bars = waveformBars(envelope, BARS);
   const gain = trimGain(selection, totalS, recording.bytes);
   const whole = isWholeClip(selection, totalS);
   const startPct = (selection.startS / Math.max(totalS, FRAME_S)) * 100;
   const endPct = (selection.endS / Math.max(totalS, FRAME_S)) * 100;
+
+  useEffect(() => {
+    if (recording.peaks?.length) return;
+    let live = true;
+    void api
+      .getSdrRecording(recording.id)
+      .then((row) => {
+        if (live) setFetched(row.peaks ?? []);
+      })
+      .catch(() => {
+        // A missing picture is not worth an error banner: the handles, the readout and
+        // the confirm all still work, and the marks row already says there is no
+        // waveform. Failing loudly here would block a trim the owner can still make.
+        if (live) setFetched([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [recording.id, recording.peaks]);
 
   const stopPreview = useCallback(() => {
     audioRef.current?.pause();

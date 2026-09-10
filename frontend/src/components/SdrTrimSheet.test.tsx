@@ -28,10 +28,16 @@ const CLIP: SdrRecording = {
   transcribed_at: null,
 };
 
-function open(over: Partial<SdrRecording> = {}) {
+/** The same clip as the LIBRARY hands it over: no waveform.
+ *
+ *  Built by omitting the key rather than setting it undefined — `exactOptionalPropertyTypes`
+ *  makes those different types, and the list genuinely omits it. */
+const { peaks: _omitted, ...FROM_LIST } = CLIP;
+
+function open(over: Partial<SdrRecording> = {}, base: SdrRecording = CLIP) {
   const onClose = vi.fn();
   const onTrimmed = vi.fn();
-  render(<SdrTrimSheet recording={{ ...CLIP, ...over }} onClose={onClose} onTrimmed={onTrimmed} />);
+  render(<SdrTrimSheet recording={{ ...base, ...over }} onClose={onClose} onTrimmed={onTrimmed} />);
   return { onClose, onTrimmed };
 }
 
@@ -46,6 +52,45 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("where the waveform comes from", () => {
+  it("fetches the envelope by id when the row arrived without one", async () => {
+    // The library omits `peaks` on purpose — 400 floats a row would dwarf a hundred-row
+    // response — so this fetch is the ONLY way the sheet ever gets a picture on a real
+    // box. Without it the sheet is two handles over nothing, which is the shape's whole
+    // argument missing: a cut is placeable because the dead air at each end is visible.
+    const asked = vi
+      .spyOn(api, "getSdrRecording")
+      .mockResolvedValue({ ...CLIP, peaks: [0.02, 0.95, 0.02] });
+
+    open({}, FROM_LIST);
+
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("wx"));
+    await waitFor(() => expect(screen.getByText("drag either handle")).toBeInTheDocument());
+  });
+
+  it("does not ask again when the row already carries one", () => {
+    // A row that came from a trim response has its new envelope already. Re-fetching
+    // would repaint the picture the owner is mid-drag on.
+    const asked = vi.spyOn(api, "getSdrRecording");
+
+    open();
+
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it("stays usable when the envelope cannot be read", async () => {
+    // A box older than the by-id route, or one whose decode failed. The handles, the
+    // readout and the confirm all still work, so failing loudly here would block a trim
+    // the owner can still make — the marks row says what is missing instead.
+    vi.spyOn(api, "getSdrRecording").mockRejectedValue(new Error("nope"));
+
+    open({}, FROM_LIST);
+
+    await waitFor(() => expect(screen.getByText("no waveform stored")).toBeInTheDocument());
+    expect(confirm()).toBeInTheDocument();
+  });
 });
 
 describe("the trim sheet", () => {

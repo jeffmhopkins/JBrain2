@@ -3039,6 +3039,17 @@ export const api = {
     return (await response.json()) as SdrRecordingsPage;
   },
 
+  /** One recording, carrying the waveform the list leaves out.
+   *
+   *  The library omits `peaks` on purpose — 400 floats per row would dwarf a hundred-row
+   *  response — so the trim sheet asks for the one clip it is open on. Without it the
+   *  sheet is two handles over an empty picture, which is the shape's whole argument
+   *  missing: a cut is placeable because the dead air at each end is visible. */
+  async getSdrRecording(id: string): Promise<SdrRecording> {
+    const response = await request(`/api/sdr/recordings/${encodeURIComponent(id)}`);
+    return (await response.json()) as SdrRecording;
+  },
+
   /** Cut to `[startS, endS]`, discard the original, and say what was really cut.
    *
    *  The client asks in SECONDS and the server answers with what it actually did: the

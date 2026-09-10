@@ -35,6 +35,22 @@ class BlobStore(Protocol):
 
     async def exists(self, sha256: str) -> bool: ...
 
+    async def delete(self, sha256: str) -> bool:
+        """Remove a stored blob. True if it was there, False if it already wasn't.
+
+        The one destructive operation here, and the reason it exists is the SDR trim
+        (docs/plans/SDR_RECORDING_PLAN.md §5): a trim writes the cut clip as a new
+        content-addressed blob and repoints the row, so keeping the original would add a
+        blob and free nothing — inverting the feature.
+
+        **Idempotent by contract.** A caller deleting a blob that is already gone has
+        got what it asked for, and raising there would leave a row that has been
+        repointed unable to finish cleaning up after itself. Callers must still check
+        that nothing else references the digest: blobs are content-addressed, so two
+        rows with identical bytes share one file.
+        """
+        ...
+
     def usage(self) -> tuple[int, int]:
         """(blob_count, total_bytes) — fine to walk at personal scale."""
         ...
@@ -89,6 +105,21 @@ class FsBlobStore:
 
     async def exists(self, sha256: str) -> bool:
         return self.path_for(sha256).exists()
+
+    async def delete(self, sha256: str) -> bool:
+        # `missing_ok` rather than a prior `exists()` check: two callers deleting the
+        # same digest at once would both pass the check and one would raise, and the
+        # answer to "is it gone" is the same either way. The now-empty shard directories
+        # are left alone — they cost an inode each and removing them races every put
+        # that is midway through `mkdir`/`rename` into the same shard.
+        path = self.path_for(sha256)
+
+        def _unlink() -> bool:
+            existed = path.exists()
+            path.unlink(missing_ok=True)
+            return existed
+
+        return await asyncio.to_thread(_unlink)
 
     def usage(self) -> tuple[int, int]:
         count = 0

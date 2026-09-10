@@ -42,10 +42,19 @@ def _sidecar(monkeypatch: pytest.MonkeyPatch, payload: Any, *, dead: bool = Fals
     monkeypatch.setattr(sdr_api.httpx, "AsyncClient", build)
 
 
+def _request() -> Any:
+    """A request whose app holds no recorder — a box that has never recorded.
+
+    The route reads the recorder off `app.state` (it is api state, not something
+    /healthz reports), so a request without an app is not a request this route ever
+    sees."""
+    return SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace()))
+
+
 async def _status(monkeypatch: pytest.MonkeyPatch, payload: Any, **kw: Any) -> Any:
     _sidecar(monkeypatch, payload, **kw)
     settings = SimpleNamespace(sdr_url="http://sdr:8000")
-    return await sdr_api.status(settings, OWNER)  # type: ignore[arg-type]
+    return await sdr_api.status(_request(), settings, OWNER)  # type: ignore[arg-type]
 
 
 async def test_the_api_picks_the_icon_even_when_the_sidecar_named_another(
@@ -122,7 +131,7 @@ async def test_an_unreachable_sidecar_reads_as_no_radio_rather_than_an_error(
 async def test_a_box_with_no_radio_configured_never_asks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    out = await sdr_api.status(SimpleNamespace(sdr_url=""), OWNER)  # type: ignore[arg-type]
+    out = await sdr_api.status(_request(), SimpleNamespace(sdr_url=""), OWNER)  # type: ignore[arg-type]
 
     assert out.available is False
 
@@ -143,10 +152,10 @@ async def test_the_debug_twin_shows_exactly_what_the_icon_shows(
     sweep = {"purpose": "spectrum", "session_id": "s-sweep", "serial": WHIP}
     _sidecar(monkeypatch, {"listening": sweep, "sessions": [sweep, aprs]})
     settings = SimpleNamespace(sdr_url="http://sdr:8000")
-    request = SimpleNamespace(state=SimpleNamespace())
+    request = _request()
 
     twin = await debug_api.sdr_sessions_debug(request, settings, None)  # type: ignore[arg-type]
-    owner = await sdr_api.status(settings, OWNER)  # type: ignore[arg-type]
+    owner = await sdr_api.status(_request(), settings, OWNER)  # type: ignore[arg-type]
 
     assert twin.listening is not None and twin.listening["session_id"] == "s-aprs"
     assert twin.model_dump() == owner.model_dump()

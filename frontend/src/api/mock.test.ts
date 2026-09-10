@@ -12,6 +12,7 @@ import type {
   NoteOut,
   ReviewItem,
   ReviewQueue,
+  SdrRecording,
   SdrRecordingsPage,
   SearchOut,
   WikiArticleOut,
@@ -518,7 +519,11 @@ describe("mock API", () => {
     // trim sheet's "frees N" is arguing from a number nobody can check.
     for (const row of page.recordings) {
       expect(row.bytes).toBe(Math.round(row.duration_s * 8000));
-      expect(row.peaks?.length ?? 0).toBeGreaterThan(0);
+      // The LIST carries no waveform, matching the real route: 400 floats a row would
+      // dwarf the response. A fixture that handed it over here would make the by-id
+      // fetch — the one path that has to work on a real box — the one path mock mode
+      // never exercises.
+      expect(row.peaks).toBeUndefined();
     }
     // Newest first — the only order the library is ever read in.
     const times = page.recordings.map((r) => new Date(r.started_at).getTime());
@@ -527,6 +532,23 @@ describe("mock API", () => {
     // report; it is derived from duration_s < captured_s, never from a stored flag.
     expect(page.recordings.some((r) => r.duration_s < r.captured_s)).toBe(true);
     expect(page.usage.reclaimed_bytes).toBeGreaterThan(0);
+  });
+
+  it("carries the waveform on the by-id route, which is the only place it lives", async () => {
+    const page = (await (await call("/api/sdr/recordings")).json()) as SdrRecordingsPage;
+    const first = page.recordings[0];
+    expect(first).toBeDefined();
+
+    const one = (await (await call(`/api/sdr/recordings/${first?.id}`)).json()) as SdrRecording;
+
+    expect(one.id).toBe(first?.id);
+    expect(one.peaks?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("answers a by-id fetch for a recording that is gone with a 404", async () => {
+    // The trim sheet can outlive its row: deleted in another tab, or trimmed away while
+    // the sheet sat open. It has to see a status, not a body it will try to draw.
+    expect((await call("/api/sdr/recordings/nope")).status).toBe(404);
   });
 
   it("offers the empty, error and offline states the screen has to draw", async () => {

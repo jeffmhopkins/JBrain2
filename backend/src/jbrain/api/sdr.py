@@ -15,9 +15,12 @@ here as well as in the sidecar, and the sidecar's base URL is pinned in settings
 That is what keeps `stream.py`'s SSRF guard untouched rather than widened
 (docs/plans/SDR_RADIO_PLAN.md §4.4).
 
-This module touches no LLM (rule 1 n/a), no storage, and no database — the radio is
-process state in the sidecar, not a row — so there is no RLS surface to scope. The
-recordings library, which does have one, is a later wave.
+This module touches no LLM (rule 1 n/a). It does touch storage and the database, but
+only through the recordings library at the bottom of the file: everything about the live
+radio is process state in the sidecar rather than a row, and only a RECORDING becomes
+one. Those routes go through `BlobStore` for the audio (rule 2) and an RLS-scoped
+session for the row (rule 3) — `app.sdr_recordings` is owner-only, and a recording's
+blob is resolved from the row the caller could read, never from a sha in a URL.
 """
 
 from __future__ import annotations
@@ -31,20 +34,23 @@ from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.llm_settings import get_settings_store
-from jbrain.api.notes import SessionMakerDep, ctx_for
+from jbrain.api.notes import BlobStoreDep, SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.audio import cut_clip, levels
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.health import session_for, shown
+from jbrain.sdr.recorder import RecorderRefused, SdrRecorder
+from jbrain.sdr.recordings import RECENT_DEFAULT, RECENT_MAX, RecordingsRepo
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
 from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
 from jbrain.sdr.stations import WINDOWS, StationsReader
@@ -128,6 +134,11 @@ class SdrStatusOut(BaseModel):
     available: bool
     listening: dict[str, Any] | None
     sessions: list[dict[str, Any]] = []
+    #: The recording in progress, or None. Here rather than on a route of its own so the
+    #: tape deck draws its elapsed time and running size off the 1 Hz poll the rest of
+    #: the radio already uses — a second timer in the client would keep counting through
+    #: a stop it had not heard about yet (SDR_RECORDING_PLAN.md §4).
+    recording: dict[str, Any] | None = None
 
 
 def _base(settings: Any) -> str:
@@ -230,16 +241,20 @@ def _detail(resp: httpx.Response, fallback: str) -> str:
         return fallback
 
 
-async def status_of(settings: Any) -> SdrStatusOut:
+async def status_of(settings: Any, recording: dict[str, Any] | None = None) -> SdrStatusOut:
     """What the radio is doing, read from the sidecar's `/healthz`.
 
     Split out of the route so the owner debug console can be shown EXACTLY what the
     composer icon is showing, rather than a second answer to the same question. B7 moved
     that decision here to have one of them; a debug twin that re-derived it would put
     two back (CLAUDE.md #10 — the owner has no terminal, and a console that disagrees
-    with their screen is worse than no console)."""
+    with their screen is worse than no console).
+
+    `recording` is passed IN rather than read here, because the recorder lives on the
+    app rather than in the sidecar and this function is deliberately reachable without
+    one (the debug twin, and every test that has only a fake sidecar)."""
     if not settings.sdr_url:
-        return SdrStatusOut(available=False, listening=None)
+        return SdrStatusOut(available=False, listening=None, recording=recording)
     try:
         async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=5.0) as client:
             resp = await client.get("/healthz")
@@ -247,7 +262,9 @@ async def status_of(settings: Any) -> SdrStatusOut:
     except (httpx.HTTPError, ValueError):
         # The sidecar is configured but unreachable (starting, crashed). Idle is the
         # honest answer — the icon stays dark rather than lit over a dead radio.
-        return SdrStatusOut(available=False, listening=None)
+        # A recording in progress is still reported: the recorder is the api's own state,
+        # and hiding it would leave the tape deck running with nothing to stop.
+        return SdrStatusOut(available=False, listening=None, recording=recording)
     live = health.get("sessions")
     one = health.get("listening")
     # An OLDER sidecar sends no `sessions`; it can hold only one thing, so `listening` IS
@@ -266,14 +283,15 @@ async def status_of(settings: Any) -> SdrStatusOut:
         # session — and reaches this line only through the old-build fallback above.
         listening=shown(sessions),
         sessions=sessions,
+        recording=recording,
     )
 
 
 @router.get("/status")
-async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
+async def status(request: Request, settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
     """What the radio is doing. Answers `available: false` on a box with no radio
     rather than erroring, so the composer can simply never show the icon."""
-    return await status_of(settings)
+    return await status_of(settings, recording_now(request))
 
 
 def _tunable(frequency_mhz: float) -> None:
@@ -1437,3 +1455,342 @@ class _Backlog:
         if len(held) == 1:
             return held[0][0], held[0][1]
         return held[0][0], _merge([wav for _, wav, _ in held])
+
+
+# --- Recordings ---------------------------------------------------------------------
+#
+# docs/plans/SDR_RECORDING_PLAN.md R1/R2. Everything above this line is process state in
+# the sidecar; everything below is a row and a blob, and therefore the only part of this
+# file with an RLS scope and a firewall to keep.
+
+#: The lease purpose the tuner holds. Recording subscribes to THAT session's audio —
+#: `/listen/audio` serves the listening session specifically, so an APRS lease on another
+#: dongle is neither what gets recorded nor what makes Record available.
+LISTEN_PURPOSE = "listen"
+
+#: A recording id as it may appear in a path. `app.sdr_recordings.id` is a uuid, and an
+#: id that is not one reaches Postgres as a cast error — a 500 for what is really a
+#: malformed request. Bounded here so it is a 422 before any query runs.
+_UUID_RE = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+RecordingId = Annotated[str, Path(pattern=_UUID_RE)]
+
+#: The shortest clip a trim may leave. An MP3 frame at the sidecar's 16 kHz is 72 ms, so
+#: anything under this is asking for a handful of frames — and a cut that lands on a
+#: frame boundary could otherwise round a very short selection down to nothing at all.
+MIN_TRIM_S = 0.2
+
+
+def get_recordings_repo(maker: SessionMakerDep) -> RecordingsRepo:
+    return RecordingsRepo(maker)
+
+
+RecordingsDep = Annotated[RecordingsRepo, Depends(get_recordings_repo)]
+
+
+def get_recorder(request: Request) -> SdrRecorder:
+    """The box's one recorder, made on first use and kept on the app.
+
+    One instance is the enforcement of "at most one recording at a time" — a per-request
+    recorder would let two Record presses open two streams and write two rows over one
+    content-addressed blob, so that deleting either would take the other's audio.
+    """
+    state = request.app.state
+    recorder = getattr(state, "sdr_recorder", None)
+    if recorder is None:
+        recorder = SdrRecorder(state.blob_store, RecordingsRepo(state.session_maker))
+        state.sdr_recorder = recorder
+    return cast(SdrRecorder, recorder)
+
+
+RecorderDep = Annotated[SdrRecorder, Depends(get_recorder)]
+
+
+def recording_now(request: Request) -> dict[str, Any] | None:
+    """What the recorder is doing, for `status_of` — tolerant of there being none yet.
+
+    Deliberately does NOT create a recorder: `GET /sdr/status` is polled once a second by
+    every open tab, and "is anything recording" on a box that has never recorded is None
+    without touching the app at all.
+    """
+    recorder = getattr(request.app.state, "sdr_recorder", None)
+    return cast("dict[str, Any] | None", recorder.state()) if recorder is not None else None
+
+
+def _recording_out(row: dict[str, Any]) -> dict[str, Any]:
+    """A row as the PWA sees it — everything except where the bytes live.
+
+    `blob_sha256` is dropped rather than merely unused: a client that had it would
+    eventually ask for a blob BY it, and that request cannot be scoped to the row the
+    caller was allowed to read. The audio route resolves the sha itself, from the row.
+    """
+    return {k: v for k, v in row.items() if k != "blob_sha256"}
+
+
+def _refused_recording(refused: RecorderRefused) -> HTTPException:
+    """The sidecar's refusal, mapped the way `_post` maps every other one.
+
+    409 is the owner-fixable case and keeps the sidecar's own sentence ("nothing is
+    listening"): telling them the box is broken when the fix is to press Listen is the
+    failure this mapping exists to avoid.
+    """
+    if refused.status in (400, 409):
+        return HTTPException(status_code=refused.status, detail=refused.detail)
+    return HTTPException(status_code=502, detail=f"sdr sidecar: {refused.detail}")
+
+
+@router.post("/record")
+async def record(
+    settings: SettingsDep,
+    owner: OwnerDep,
+    recorder: RecorderDep,
+    on: Annotated[bool, Query()],
+) -> dict[str, Any]:
+    """Start or stop recording the live session. Idempotent both ways, like `/sdr/aprs`.
+
+    Recording is one more subscriber on the audio the browser is already playing, so it
+    neither interrupts listening nor needs the radio to be re-tuned. What it stores is
+    the settings in force when Record was pressed — a retune does not restart the
+    pipeline, so a clip may span a frequency change, and the row keeps where it began.
+
+    Turning it on with nothing listening is a **409 with a sentence** rather than a
+    silent no-op: there is no audio to record, and the owner's next move is to press
+    Listen (CLAUDE.md #10 — the sentence is the whole interface they have).
+    """
+    if not on:
+        # No health check on the way out: stopping must work when the sidecar has already
+        # gone, which is precisely when there is a half-finished blob worth keeping.
+        saved = await recorder.stop()
+        return {"recording": None, "saved": _recording_out(saved) if saved else None}
+
+    base = _base(settings)
+    health = await _health(base)
+    if health is None:
+        raise HTTPException(status_code=502, detail="sdr sidecar: the radio isn't reachable")
+    session = session_for(health, LISTEN_PURPOSE)
+    if not session:
+        raise HTTPException(
+            status_code=409,
+            detail="Nothing is listening, so there is no audio to record. "
+            "Start the radio first, then press Record.",
+        )
+    try:
+        state = await recorder.start(
+            ctx_for(owner),
+            base_url=base,
+            frequency_hz=int(session.get("frequency_hz") or 0),
+            mode=str(session.get("mode") or ""),
+            # The sidecar reports 0 for "this session has no channel filter"; None is the
+            # honest column value for that, and keeps the library from printing "0 Hz
+            # wide" under a recording.
+            bandwidth_hz=int(session.get("bandwidth_hz") or 0) or None,
+            gain=session.get("gain"),
+            serial=session.get("serial"),
+        )
+    except RecorderRefused as refused:
+        raise _refused_recording(refused) from refused
+    except httpx.TimeoutException as slow:
+        raise HTTPException(
+            status_code=504, detail="The radio hasn't answered yet. Nothing is recording."
+        ) from slow
+    except httpx.HTTPError as broken:
+        raise HTTPException(status_code=502, detail=f"sdr sidecar: {broken}") from broken
+    return {"recording": state}
+
+
+@router.get("/recordings")
+async def recordings(
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    limit: Annotated[int, Query(ge=1, le=RECENT_MAX)] = RECENT_DEFAULT,
+) -> dict[str, Any]:
+    """The library, newest first, with the disk line beside it.
+
+    `usage` travels with the list because the two are read together and the meter is the
+    argument for trimming — a library that reports its size only on a second request is
+    a library whose size the owner never sees.
+    """
+    ctx = ctx_for(owner)
+    return {
+        "recordings": [_recording_out(row) for row in await repo.recent(ctx, limit=limit)],
+        "usage": await repo.usage(ctx),
+    }
+
+
+@router.get("/recordings/{recording_id}")
+async def recording(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+) -> dict[str, Any]:
+    """One recording, with the waveform the trim sheet draws.
+
+    Separate from the list on purpose. `peaks` is 400 floats, which is worth its bytes
+    for the ONE clip a sheet is open on and would dwarf a hundred-row library — so the
+    list omits it and the sheet asks for it here, once, when it opens.
+
+    Without this the sheet has handles over an empty picture, which is the shape's whole
+    argument missing: a trim is placeable because the silence at each end is visible.
+    """
+    row = await repo.get(ctx_for(owner), recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    return _recording_out(row)
+
+
+@router.get("/recordings/{recording_id}/audio")
+async def recording_audio(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> FileResponse:
+    """The clip itself, as a file Starlette can serve byte ranges out of.
+
+    `FileResponse` is what makes Preview and scrubbing work at all: it answers Range
+    requests natively, so the trim sheet can seek without downloading the clip and
+    without a line of range code here.
+
+    **The sha comes from the row, never from the URL.** Every blob on this box lives in
+    one content-addressed store — attachments, notes, images — so a route that served
+    `path_for(sha)` from a path segment would hand out any of them to anyone who could
+    guess a digest, going around the firewall rather than through it. Resolving it from a
+    row the caller could read under their own scope is what keeps this owner-only.
+    """
+    row = await repo.get(ctx_for(owner), recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    sha = cast(str, row["blob_sha256"])
+    if not await blobs.exists(sha):
+        # The row outlived its audio — a restore of the database without the blob volume.
+        # A 404 with a sentence, rather than the 500 a missing file would become inside
+        # the response.
+        raise HTTPException(status_code=404, detail="That recording's audio is missing.")
+    return FileResponse(blobs.path_for(sha), media_type="audio/mpeg")
+
+
+class TrimIn(BaseModel):
+    """Where to cut, in seconds from the start of the clip as it stands now."""
+
+    start_s: Annotated[float, Field(ge=0)]
+    end_s: Annotated[float, Field(gt=0)]
+
+
+@router.post("/recordings/{recording_id}/trim")
+async def trim_recording(
+    recording_id: RecordingId,
+    body: TrimIn,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> dict[str, Any]:
+    """Cut a recording down to what is worth keeping, and **discard the original**.
+
+    `ffmpeg -c copy` copies the MP3 frames rather than re-encoding: lossless and instant,
+    at the price of landing on a frame boundary within 72 ms of the handle. So the server
+    answers with what it ACTUALLY cut, measured from the result, rather than echoing what
+    was asked for — the client asks in seconds and the truth comes back from here.
+
+    Deleting the old blob is the point of the feature (the plan's §5): a trim that kept
+    the original would add a blob and free nothing. `captured_s` is deliberately left
+    where it was, because `duration_s < captured_s` is what makes a row "trimmed" and
+    prices what trimming has given back.
+    """
+    ctx = ctx_for(owner)
+    row = await repo.get(ctx, recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    duration_s = float(row["duration_s"] or 0.0)
+    _check_trim(body, duration_s)
+
+    old_sha = cast(str, row["blob_sha256"])
+    cut = await cut_clip(blobs.path_for(old_sha), body.start_s, body.end_s)
+    if not cut:
+        # The recording is untouched: nothing has been repointed and no blob deleted.
+        raise HTTPException(
+            status_code=500,
+            detail="The trim did not run, so the recording is unchanged. Try again.",
+        )
+    new_sha = await blobs.put(cut)
+    peaks, measured = await levels(blobs.path_for(new_sha))
+    kept_s = measured if measured is not None else body.end_s - body.start_s
+    updated = await repo.retrim(
+        ctx,
+        recording_id,
+        duration_s=kept_s,
+        blob_sha256=new_sha,
+        bytes_=len(cut),
+        peaks=peaks,
+    )
+    if updated is None:
+        # Deleted from under us between the read and the write. The new blob would
+        # otherwise sit on disk for ever with nothing pointing at it.
+        if not await repo.blob_in_use(ctx, new_sha):
+            await blobs.delete(new_sha)
+        raise HTTPException(status_code=404, detail="No such recording.")
+    # `new_sha == old_sha` is REACHABLE, not paranoia: trimming a clip to its full extent
+    # produces identical bytes and therefore the identical digest, and deleting "the old
+    # blob" there would delete the audio this row was just repointed at.
+    if new_sha != old_sha and not await repo.blob_in_use(ctx, old_sha):
+        await blobs.delete(old_sha)
+    return {
+        "recording": _recording_out(updated),
+        # What was really cut. The start lands on the frame at or before what was asked
+        # for, and the end follows from the measured length of the result.
+        "cut": {"start_s": body.start_s, "end_s": body.start_s + kept_s},
+        "usage": await repo.usage(ctx),
+    }
+
+
+def _check_trim(body: TrimIn, duration_s: float) -> None:
+    """Refuse a cut that cannot mean anything, with a sentence rather than a 422 blob.
+
+    The numbers arrive from a sheet with two draggable handles, so every refusal here is
+    something the owner can see and correct on that sheet — which is why each one says
+    what is wrong instead of naming a field."""
+    if body.end_s <= body.start_s:
+        raise HTTPException(
+            status_code=400, detail="The end of the trim has to come after the start."
+        )
+    if body.end_s - body.start_s < MIN_TRIM_S:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A trim has to keep at least {MIN_TRIM_S:g} seconds of audio.",
+        )
+    if duration_s <= 0:
+        raise HTTPException(status_code=400, detail="That recording has no audio to trim.")
+    if body.start_s >= duration_s:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That recording is only {duration_s:.1f} seconds long, so the trim "
+            "would start after the end of it.",
+        )
+    if body.end_s > duration_s + MIN_TRIM_S:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That recording is only {duration_s:.1f} seconds long.",
+        )
+
+
+@router.delete("/recordings/{recording_id}")
+async def delete_recording(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> dict[str, Any]:
+    """Forget a recording: the row, and then the audio it held.
+
+    The row goes first, under the caller's scope, and its blob is freed only if no other
+    row still points at it — content-addressed storage means two identical clips are one
+    file, and unlinking on the first delete would silently empty the second.
+
+    Returns the new `usage` so the disk meter moves with the list rather than a poll
+    later.
+    """
+    ctx = ctx_for(owner)
+    sha = await repo.remove(ctx, recording_id)
+    if sha is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    if not await repo.blob_in_use(ctx, sha):
+        await blobs.delete(sha)
+    return {"deleted": True, "usage": await repo.usage(ctx)}

@@ -1,8 +1,10 @@
 # SDR recording — capture, library, trim
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1◻️ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4◻️
 > (R0 — the two-round GUI gate — is closed: capture is `docs/mocks/recording/a-tape-deck.html`,
-> trim is `docs/mocks/recording/d-trim-sheet.html`, both binding.)
+> trim is `docs/mocks/recording/d-trim-sheet.html`, both binding. R1–R3 are built: the api
+> records, the library lists and serves, trim cuts and reclaims, and the PWA drives all
+> three. **Not yet run on the box** — no deploy has been asked for.)
 
 The radio can hear but not keep. This adds the third tab of the Radio launcher: press
 Record while listening, and the clip lands in a library you can play, trim and delete.
@@ -75,7 +77,8 @@ mapping (409 busy, 400 refusal-with-a-sentence, 502 `sdr sidecar: …`, 504 time
 | Route | Does |
 | --- | --- |
 | `POST /record?on=true\|false` | Start/stop against the live listen session. Idempotent both ways, like `POST /sdr/aprs`. Starting with nothing listening is a **409 with a sentence**. Returns `{recording, saved?}`. |
-| `GET /recordings?limit=` | `{recordings: [...], usage: {bytes, count, reclaimed_bytes}}` — newest first. |
+| `GET /recordings?limit=` | `{recordings: [...], usage: {bytes, count, reclaimed_bytes}}` — newest first, **without `peaks`**: 400 floats a row would dwarf a hundred-row response. |
+| `GET /recordings/{id}` | One row **with `peaks`**. The trim sheet fetches it when it opens; without it the sheet is two handles over an empty picture, which is the shape's whole argument missing. |
 | `GET /recordings/{id}/audio` | `FileResponse(blobs.path_for(sha), media_type="audio/mpeg")` — Range comes free from Starlette, which is what makes the trim sheet's Preview and scrubbing work. Resolve the sha **from the RLS-scoped row**, never from the URL. |
 | `POST /recordings/{id}/trim` | Body `{start_s, end_s}`. Cuts, repoints, **deletes the old blob**. Returns the row. |
 | `DELETE /recordings/{id}` | Row and blob. |
@@ -124,7 +127,25 @@ which DESIGN.md makes part of done.
 per `SDR_RADIO_PLAN.md` §4.3, transcript re-cut on trim. The library and trim both work
 without it; the rows simply have no transcript preview yet.
 
-## 7. Open
+## 7. What the build found
+
+Three things the plan did not anticipate, all now in the code:
+
+- **A full-length "trim" re-puts identical bytes and gets the identical digest**, so
+  deleting "the old blob" would delete the audio the row was just repointed at. Guarded
+  by a reference check plus `new_sha != old_sha`, and tested. This is the hazard that
+  comes with content-addressed storage the moment anything deletes.
+- **An Ops → Update mid-recording would have taken the spool with the container**, which
+  contradicts "an interrupted recording is still a recording". The lifespan now finalizes
+  an in-flight recording before teardown.
+- **The blob store has no refcount, and `blob_in_use` only consults this one table.** No
+  other table can share a recording's blob today — a radio capture being byte-identical
+  to an attachment or a generated image does not happen by accident. But it would happen
+  *on purpose* the moment "send this recording to chat" exists, and at that point the
+  attachment and the recording would be one file that either side can delete. **That
+  feature must copy, not reference, until the store can count.**
+
+## 8. Open
 
 - **Is Record really arm-then-confirm?** Inherited from `docs/mocks/sdr-tuner/a-tuner-sheet.html`
   and honoured, but starting a recording destroys nothing. Trim has earned the ceremony;

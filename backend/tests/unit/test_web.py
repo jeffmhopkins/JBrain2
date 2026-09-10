@@ -2711,6 +2711,11 @@ class _FakeBlobs:
     async def exists(self, sha256: str) -> bool:
         return sha256 in self.blobs
 
+    async def delete(self, sha256: str) -> bool:
+        # Part of the protocol since the SDR trim (storage.BlobStore.delete): idempotent,
+        # so a digest that is already gone is False rather than an error.
+        return self.blobs.pop(sha256, None) is not None
+
     def usage(self) -> tuple[int, int]:
         return (len(self.blobs), sum(len(b) for b in self.blobs.values()))
 
