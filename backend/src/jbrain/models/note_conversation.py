@@ -294,6 +294,56 @@ NOTE_EXCERPT_CHARS = 160
 
 
 @dataclass(frozen=True)
+class AskedQuestion:
+    """One question of an `ask_owner` set, as the ledger recorded it.
+
+    `id` is assigned at ASK time and stored in the ledger `args`, because that blob is
+    the only thing that persists the question: the PWA replays a settled thread's ask
+    step straight out of the transcript (§3b I9), so an id kept anywhere else would not
+    survive a reopened thread and its answers could not be paired back."""
+
+    id: str
+    question: str
+    blocks: str = ""
+    candidates: str = ""
+
+
+def questions_from_args(args: Mapping[str, Any] | None) -> list[AskedQuestion]:
+    """The question set an `ask_owner` ledger row holds, in the order it was asked.
+
+    It lives beside the ledger rather than beside the tool because its two readers reach
+    it from opposite directions — the reply path through `agent/asktools.py`, the notes
+    tab through `notes_inbox` below — and this is the side both can import.
+
+    **The bare-`args["question"]` shape is a DEPLOY-WINDOW fallback** (R1c). A thread can
+    be sitting in `waiting_on_owner` with a pre-batch row in its ledger the moment this
+    ships, and without the fallback that owner's answer pairs with nothing and their
+    question is silently lost. A positional id is enough for one: nothing structured can
+    name a row that predates ids, so the only answer it can receive is free prose, which
+    pairs by position anyway. It can go once no live thread predates the batch."""
+    raw = (args or {}).get("questions")
+    if not isinstance(raw, list):
+        legacy = _one_line((args or {}).get("question"))
+        return [AskedQuestion(id="q1", question=legacy)] if legacy else []
+    asked: list[AskedQuestion] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            continue
+        question = _one_line(item.get("question"))
+        if not question:
+            continue
+        asked.append(
+            AskedQuestion(
+                id=_one_line(item.get("id")) or f"q{i + 1}",
+                question=question,
+                blocks=_one_line(item.get("blocks")),
+                candidates=_one_line(item.get("candidates")),
+            )
+        )
+    return asked
+
+
+@dataclass(frozen=True)
 class NotesInboxEntry:
     """One note-conversation row of the review inbox's notes tab (D4/D5). Read-only and
     decision-free by construction: it carries what a redirect needs to be worth taking —
@@ -309,7 +359,9 @@ class NotesInboxEntry:
     domain: str
     note_excerpt: str
     captured_at: datetime
-    question: str | None
+    # Every question of the open set (R1c), in the order it was asked. Empty on a
+    # conversation that has not asked yet — a first pass still reading.
+    questions: list[str]
     waiting_since: datetime
     committed: int
     # A first pass still `running` is LISTED but not counted: the agent is reading, and
@@ -512,12 +564,13 @@ class NoteConversationRepo:
         listed so the owner can see the note is being read, and the route leaves it out
         of the count because nothing is waiting on them yet.
 
-        The question is the LAST `ask_owner` of the thread — a conversation resumed after
-        an answer can ask again, and the inbox must point at the open one, not the
-        answered one. `committed` counts distinct fact ids over the thread's SUCCEEDED
-        calls, so it counts what the write path reported rather than a number invented
-        from the arguments the model sent — over BOTH turn paths, since W4c/1 put the
-        owner's reply on the same ledger (`ConversationWrites`' docstring).
+        The questions are the LAST `ask_owner` of the thread — one call now carries the
+        whole set (R1c), and a conversation resumed after an answer can ask again, so the
+        inbox must point at the open set, not an answered one. `committed` counts distinct
+        fact ids over the thread's SUCCEEDED calls, so it counts what the write path
+        reported rather than a number invented from the arguments the model sent — over
+        BOTH turn paths, since W4c/1 put the owner's reply on the same ledger
+        (`ConversationWrites`' docstring).
 
         A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
         conversation survives, and a redirect into a deleted note's thread is a dead end.
@@ -527,10 +580,10 @@ class NoteConversationRepo:
                 text(
                     "SELECT c.session_id, c.note_id, c.state, c.updated_at, s.agent,"
                     " n.domain_code, n.body, n.created_at AS captured_at,"
-                    " (SELECT t.args->>'question'"
+                    " (SELECT t.args"
                     "    FROM app.note_conversation_tool_calls t"
                     "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
-                    "   ORDER BY t.seq DESC LIMIT 1) AS question,"
+                    "   ORDER BY t.seq DESC LIMIT 1) AS ask_args,"
                     " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
                     "         unnest(t2.fact_ids) AS f"
                     "   WHERE t2.session_id = c.session_id AND t2.ok) AS committed"
@@ -552,7 +605,7 @@ class NoteConversationRepo:
                 domain=r.domain_code,
                 note_excerpt=_excerpt(r.body),
                 captured_at=r.captured_at,
-                question=r.question,
+                questions=[q.question for q in questions_from_args(r.ask_args)],
                 waiting_since=r.updated_at,
                 committed=int(r.committed or 0),
                 live=r.state == "running",
@@ -744,6 +797,10 @@ class NoteConversationRepo:
         return ConversationWrites(
             facts=frozenset(facts), entities=frozenset(entities), domains=frozenset(domains)
         )
+
+
+def _one_line(value: object) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _excerpt(body: str) -> str:

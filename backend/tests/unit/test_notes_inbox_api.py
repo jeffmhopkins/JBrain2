@@ -40,7 +40,7 @@ def entry(**over: object) -> NotesInboxEntry:
         "domain": "health",
         "note_excerpt": "Started 10mg of the new one Tuesday.",
         "captured_at": NOW - timedelta(days=1),
-        "question": "Which is “the new one”?",
+        "questions": ["Which is “the new one”?"],
         "waiting_since": NOW - timedelta(hours=6),
         "committed": 2,
         "live": False,
@@ -86,15 +86,23 @@ def test_the_two_producers_interleave_oldest_first() -> None:
 def test_a_staged_approval_says_what_it_is_in_the_server_s_words() -> None:
     (row,) = merge_notes_inbox([], [approval()])
     assert row.quote == "Stop splitting recipe ingredients."
-    assert row.ask is not None and "standing instructions" in row.ask
+    assert len(row.asks) == 1 and "standing instructions" in row.asks[0]
     assert row.note_id is None and row.committed == 0 and row.live is False
     # The persona the redirect must flip to before opening the thread.
     assert row.agent == "curator"
 
 
 def test_a_first_pass_still_reading_is_listed_with_no_question() -> None:
-    (row,) = merge_notes_inbox([entry(question=None, live=True, committed=0)], [])
-    assert row.live is True and row.ask is None
+    (row,) = merge_notes_inbox([entry(questions=[], live=True, committed=0)], [])
+    assert row.live is True and row.asks == []
+
+
+def test_the_whole_question_set_reaches_the_row() -> None:
+    """R1c: one ask carries several questions, and the row is what tells the owner how
+    many are waiting before they spend the tap. The row stays a pure redirect (D4) — the
+    set is quoted, never answered here."""
+    (row,) = merge_notes_inbox([entry(questions=["Which Sarah?", "Which dose?"])], [])
+    assert row.asks == ["Which Sarah?", "Which dose?"]
 
 
 @pytest.fixture

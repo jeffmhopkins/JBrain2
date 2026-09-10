@@ -438,6 +438,15 @@ export interface AppointmentRef {
   title: string;
 }
 
+/** One answer to a note thread's open question, carried by the send that answers it.
+ * `question_id` is the id `ask_owner` recorded with the question — a joined prose string
+ * could not say which answer answers which, and a mispaired answer becomes a wrong
+ * sentence in the owner's own note. */
+export interface ChatAnswer {
+  question_id: string;
+  answer: string;
+}
+
 export interface ChatRequest {
   session_id: string;
   message: string;
@@ -463,6 +472,10 @@ export interface ChatRequest {
    * value and never sends it to a non-reasoning model. (Inline union rather than
    * client.ts's ReasoningEffort: client.ts imports this module.) */
   reasoning_effort?: "none" | "low" | "medium" | "high";
+  /** The owner's answers to a note thread's open question set, riding the same send as
+   * whatever free text is in the composer — one send is one turn (§3b I7). Turn-local
+   * like `appointment_id`; the transcript records `message` verbatim. */
+  answers?: ChatAnswer[];
   /** This turn carries a Proposal ENACT OUTCOME the owner just produced inline (not
    * owner prose): `message` is the server-authored summary, framed as a data report so
    * the assistant acknowledges and continues without re-staging declined items. */

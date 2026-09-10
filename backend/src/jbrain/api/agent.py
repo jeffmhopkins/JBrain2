@@ -74,6 +74,7 @@ from jbrain.analysis.clarify import (
     record_reply_writes,
     reply_profile_for_session,
     settle_conversation,
+    unanswered_notice,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -152,6 +153,18 @@ class ChatMessageIn(BaseModel):
     content: str
 
 
+class AnswerIn(BaseModel):
+    """One answer the note thread's question block sent with this turn (§3b I7).
+
+    `question_id` is the id `ask_owner` assigned when it recorded the set, replayed out
+    of the ask step's own `args` — a joined prose string could not say WHICH answer
+    answers which question, and a block that pairs an answer with the wrong question is a
+    wrong sentence in the owner's own note."""
+
+    question_id: str
+    answer: str
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
@@ -183,6 +196,12 @@ class ChatRequest(BaseModel):
     # tolerance as `model`: an unknown value is dropped rather than 422'd, and the
     # router gates it on the resolved model so a non-reasoning route never receives it.
     reasoning_effort: str | None = None
+    # The owner's answers to a note thread's open question set, sent alongside whatever
+    # free text is in the composer (one send, one turn — §3b I7). Turn-local, exactly
+    # like `appointment_id`: it never reaches the persisted transcript, which records
+    # `message` verbatim. `record_owner_reply` caps the list (MAX_ANSWERS) rather than
+    # 422ing an over-long one, the way `attachment_ids` is capped.
+    answers: list[AnswerIn] = Field(default_factory=list)
     # The turn carries a Proposal ENACT OUTCOME the owner just produced inline, not owner
     # prose (INLINE_APPROVALS_PLAN §3.1). When set, `message` is the server-authored
     # outcome summary and is framed as a DATA report on the conversation channel (the
@@ -929,6 +948,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             session_id=str(session.id),
             agent=session.agent,
             message=body.message,
+            answers=[(a.question_id, a.answer) for a in body.answers],
             owner_authored=body.owner_authored,
         )
 
@@ -1031,6 +1051,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         can_see_images=can_see_images,
     )
     attach_text = content.extra_text
+    # What the owner left open on a PARTIAL send rides the same channel the attachment
+    # blocks do: one DATA-framed sentence on this turn's message (O11 (ii)). It is the
+    # only thing that carries an unanswered question forward — nothing durable holds one
+    # — so the agent can re-ask it, work around it, or drop it.
+    still_open = unanswered_notice(owner_reply)
+    if still_open:
+        attach_text = f"{attach_text}\n\n{still_open}" if attach_text else still_open
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn
     # model can't see. The attachment's id still rides in attach_text, so the model

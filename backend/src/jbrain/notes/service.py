@@ -1,5 +1,6 @@
 """Note capture and retrieval over an abstract repository (same pattern as auth)."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -173,6 +174,27 @@ class NotesRepo(Protocol):
         route for this: the caller is the engine's owner-reply path
         (`jbrain.analysis.clarify`), which pairs the answer with the question
         `ask_owner` recorded.
+
+        One pair; a reply that answers several is `append_clarifications`, of which this
+        is the wrapper.
+        """
+        ...
+
+    async def append_clarifications(
+        self,
+        ctx: SessionContext,
+        note_id: str,
+        *,
+        pairs: Sequence[tuple[str, str]],
+        session_id: str | None = None,
+    ) -> NoteInfo | None:
+        """Append EVERY pair of one reply, in ONE transaction (R1c's batched ask).
+
+        Same contract as `append_clarification` above, and the reason it exists is the
+        `ingest_state` flip and the `ingest_note` enqueue that ride inside it: called in
+        a loop they would queue one re-ingest of the same note per answer, which is the
+        cost the batch was built to remove. An empty `pairs` returns the note untouched:
+        nothing was appended, so nothing is stale and there is nothing to re-ingest.
         """
         ...
 

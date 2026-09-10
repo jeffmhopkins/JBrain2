@@ -1175,12 +1175,13 @@ async def test_a_reply_turn_that_asks_again_records_one_row_not_two(
         )
 
     question = "Which Kaiya do you mean?"
+    asked = {"questions": [{"question": question}]}
     out = await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": question},
+        asked,
         ToolContext(session=owner, scopes=("general",), agent_session_id=sid),
     )
     acc = TranscriptAccumulator()
-    acc.feed(ToolCallEvent(id="a1", name=ASK_OWNER_TOOL, arguments={"question": question}))
+    acc.feed(ToolCallEvent(id="a1", name=ASK_OWNER_TOOL, arguments=asked))
     acc.feed(ToolResultEvent(tool_call_id="a1", ok=True, summary=str(out)))
     acc.feed(DoneEvent(stop_reason=AWAITING_OWNER))
     await _reply_turn(maker, owner, sid, acc.tool_steps())
@@ -1188,8 +1189,9 @@ async def test_a_reply_turn_that_asks_again_records_one_row_not_two(
     async with scoped_session(maker, owner) as s:
         calls = await NoteConversationRepo().tool_calls(s, sid)
     assert [c.name for c in calls] == [ASK_OWNER_TOOL]
-    # The row is the HANDLER's, written with the question as `detail` — which is what
-    # `latest_question` reads to build the clarification block.
+    # The row is the HANDLER's, written with the set's first question as `detail` — the
+    # whole set is in `args`, which is what `open_questions` reads to build the
+    # clarification blocks.
     assert calls[0].detail == question
 
 

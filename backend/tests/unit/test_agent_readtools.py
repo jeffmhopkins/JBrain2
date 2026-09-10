@@ -1656,10 +1656,15 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "b1dc0865b1ab23ba75003028e516adca6f3de47e0863ac06ba97626ffeca5419",
         ),
+        # v2 is R1c's batch: the one `question` string becomes a question SET, and the
+        # prose is rewritten with it — it said "Record ONE question" and "Ask once",
+        # which is now the opposite of the behaviour. Description text IS the calibration
+        # lever (TOOL_SURFACE.md), so the rewrite is the behaviour change, not a footnote
+        # to it.
         "ask_owner.tool": (
             "ask_owner",
-            1,
-            "ebefd192de30fba4950989ce221bb6b6634c176ab8f86fdef55ceb3cd1c5ca79",
+            2,
+            "d8c08e60f32a27aa18a0b8c0694d631b3a75a11e30bd5bae6193e840e10cf5ef",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

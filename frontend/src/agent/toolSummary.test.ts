@@ -217,6 +217,24 @@ describe("the note-conversation write tools", () => {
     expect(step.inline).toBe("Priya, the shop, Dr. Okafor +1");
   });
 
+  it("names each question of a batched ask, so the whole set shows on the row", () => {
+    // R1c: `ask_owner` takes a question SET, so its inline target is an ARRAY and each
+    // element is named by its `question` — the owner sees WHAT is being asked in the
+    // Worked strip, not just that something was.
+    const step = toolStep(
+      tool({
+        name: "ask_owner",
+        args: {
+          questions: [
+            { question: "Which Sarah?", blocks: "who ran with you" },
+            { question: "Which coach?" },
+          ],
+        },
+      }),
+    );
+    expect(step.inline).toBe("Which Sarah?, Which coach?");
+  });
+
   it("names each element of an array of objects by its first legible field", () => {
     const step = toolStep(
       tool({

@@ -11,7 +11,7 @@ function row(over: Partial<NotesInboxRow> = {}): NotesInboxRow {
     note_id: "n1",
     domain: "general",
     quote: "Ran the 10k with Sarah.",
-    ask: "Which Sarah?",
+    asks: ["Which Sarah?"],
     captured_at: "2026-09-01T10:00:00Z",
     waiting_since: "2026-09-01T10:00:00Z",
     committed: 2,
@@ -43,6 +43,23 @@ describe("the notes tab row", () => {
     // The approval row names its domain too — it is a change to standing instructions,
     // and which firewall it sits behind is exactly as legible as for a note.
     expect(screen.getByText(/preferences · general/)).toBeInTheDocument();
+  });
+
+  it("quotes the first of a question SET and counts the rest", () => {
+    // R1c: one ask carries several questions. The row says how much is waiting without
+    // growing to fit — the set itself is one tap away in the thread, which is the only
+    // place it can be answered (D4).
+    render(
+      <NotesTab
+        rows={[row({ asks: ["Which Sarah?", "Which coach?", "Which dose?"] })]}
+        loadError={false}
+        onOpenConversation={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Which Sarah\?/)).toBeInTheDocument();
+    expect(screen.getByText("+2 more")).toBeInTheDocument();
+    expect(screen.queryByText(/Which dose\?/)).not.toBeInTheDocument();
   });
 
   it("says so when a domain code is not one it knows, rather than degrading to a dot", () => {

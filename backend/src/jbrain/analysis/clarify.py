@@ -12,12 +12,15 @@ The chain, end to end:
 
 1. the owner replies in the thread (an ordinary /chat turn — D8: the reply IS the on-reply
    turn, and the persona's reply-time tool set is a sibling's concern, not this module's);
-2. `record_owner_reply` pairs that message with the question the ledger says the thread is
-   waiting on, and appends it as a timestamped clarification block;
-3. `append_clarification` enqueues `ingest_note` INSIDE its own transaction, so the note is
-   re-chunked and re-embedded with the block in it (D7) and the graph re-derives from
-   notes alone — a fact drawn from the answer has a real chunk of a real note to cite;
-4. the conversation returns to `running` and the turn proceeds.
+2. `record_owner_reply` pairs that turn's answers — the structured ones the question
+   block sent, and the free text — with the questions the ledger says the thread is
+   waiting on, and appends each pair as a timestamped clarification block;
+3. `append_clarifications` enqueues `ingest_note` INSIDE its own transaction, ONCE for
+   the whole reply, so the note is re-chunked and re-embedded with the blocks in it (D7)
+   and the graph re-derives from notes alone — a fact drawn from the answer has a real
+   chunk of a real note to cite;
+4. the conversation returns to `running`, the turn proceeds, and anything the owner left
+   open is handed to the agent as a sentence (`unanswered_notice`).
 
 It also holds the note conversation's TOOL-CALL LEDGER — the fold, the recorder, and the
 bind — because both turn paths need them and only one of the two can afford to import
@@ -71,13 +74,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
-from jbrain.agent.asktools import ASK_OWNER_TOOL, latest_question
+from jbrain.agent.asktools import ASK_OWNER_TOOL, open_questions
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
     MAX_ARG_CHARS,
     SETTLED,
+    AskedQuestion,
     NoteConversationRepo,
     note_body_sha,
     state_for_stop,
@@ -88,6 +92,11 @@ if TYPE_CHECKING:  # `analysis/pipeline.py` drags the LLM stack; only the TYPE i
     from jbrain.analysis.pipeline import AnalysisPipeline
 
 log = structlog.get_logger()
+
+# How many structured answers one reply may carry. Capped the way `attachment_ids` is —
+# an over-cap list is truncated, never 422'd — and sized above the ask's own `maxItems`
+# so a legitimate send of every answer can never be the thing that gets clipped.
+MAX_ANSWERS = 10
 
 NOTE_CONVERSE_AGENT = "note_ingest"
 """The persona whose sessions are note conversations. Spelled here rather than imported
@@ -333,12 +342,19 @@ async def record_reply_writes(
 class OwnerReply:
     """What the reply path did with one owner message."""
 
-    question: str
-    """The question the thread was waiting on — "" when the state said it was waiting and
-    the ledger held no recorded ask (a shape only a partial write can produce)."""
+    answered: list[tuple[str, str]]
+    """The (question, answer) pairs this message PAIRED, in the order they were asked —
+    `clarified` says whether they landed. Empty when the thread was waiting and nothing
+    could be paired: a ledger with no recorded ask, or a reply whose every structured
+    answer named a question that is not open."""
+
+    unanswered: list[str]
+    """The questions of the open set this message left open (O11 (ii)). They are not
+    durable state anywhere: this list IS their survival, handed to the agent on its reply
+    turn as a sentence, and the agent re-raises what it is still stuck on."""
 
     clarified: bool
-    """Whether the answer actually landed on the note as a block. False means the note is
+    """Whether the answers actually landed on the note as blocks. False means the note is
     unchanged and no re-ingest was queued: the answer is in the thread and nowhere else."""
 
     note_moved: bool
@@ -406,18 +422,26 @@ async def record_owner_reply(
     session_id: str,
     agent: str,
     message: str,
+    answers: Sequence[tuple[str, str]] = (),
     owner_authored: bool = True,
 ) -> OwnerReply | None:
-    """Turn the owner's reply into a clarification block on the note. `None` when this
+    """Turn the owner's reply into clarification blocks on the note. `None` when this
     message is not an answer to anything — not a note conversation, not waiting, not
     written by the owner, or empty.
+
+    `answers` is the structured half of the send: `(question_id, answer)` pairs the PWA's
+    question block produced, each id one the open set carries (§3b I7 — a joined prose
+    string gives this function no way to say WHICH answer answers which question, and a
+    mispaired block is a wrong sentence in the owner's own note). The free text in
+    `message` is the other half, and the two are paired by the rules below.
 
     `owner_authored=False` for a turn whose `message` the SERVER composed (a proposal
     enact outcome, a deferred-tool result): it is a DATA report on the channel, not
     Jeff's answer, and the docstring above says why filing one is the worst thing this
-    module could do. Defaulted True so a caller must say so deliberately, and checked
-    here rather than only at the call site so the rule is the function's, not the
-    caller's.
+    module could do. The structured `answers` are dropped with it, for exactly the same
+    reason — that turn's payload is the server's, not Jeff's. Defaulted True so a caller
+    must say so deliberately, and checked here rather than only at the call site so the
+    rule is the function's, not the caller's.
 
     Never raises: a reply that cannot be filed must still be a reply the agent can read,
     so every failure here degrades to "the block did not land" and the turn goes on.
@@ -426,10 +450,13 @@ async def record_owner_reply(
         return None
     if not owner_authored:
         return None
-    answer = message.strip()
-    if not answer:
+    prose = message.strip()
+    # Capped the way `attachment_ids` is: an over-long list is truncated, never 422'd, so
+    # a client bug degrades this turn rather than failing it.
+    structured = [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+    if not prose and not structured:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
-        # stays `waiting_on_owner` — the question is still open, which is the truth.
+        # stays `waiting_on_owner` — the questions are still open, which is the truth.
         return None
 
     repo = NoteConversationRepo()
@@ -445,39 +472,52 @@ async def record_owner_reply(
                 return None
             note_id = str(conversation.note_id)
             stored_sha = conversation.note_body_sha
-            question = await latest_question(s, repo, session_id)
-            # The question is consumed HERE, before the append: this transition is what
-            # says "that question has been answered", and it is the latch that stops a
-            # second reply appending the same answer again.
+            open_set = await open_questions(s, repo, session_id)
+            # The question SET is consumed HERE, before the append: this transition is
+            # what says "that set has been consumed", and it is the latch that stops a
+            # second reply appending the same answers again.
+            #
+            # It survives the batch unchanged, and that is O11 (ii) paying for itself.
+            # The claim only has to serialize at the level a reply arrives at, and one
+            # reply consumes one whole set: a second reply finds `running` and files
+            # nothing, so two replies can never answer the same question twice. What a
+            # PARTIAL send leaves behind needs no claim of its own because it is not
+            # durable state — an unanswered question survives as a SENTENCE handed to the
+            # agent on its reply turn (`unanswered_notice`), and the agent re-raises it if
+            # it is still stuck. Hence no per-question claim, no new table, no migration.
             await repo.set_state(s, session_id, "running")
     except Exception as exc:  # noqa: BLE001 — a reply the engine cannot file is still a reply
         log.warning("note_reply.claim_failed", session_id=session_id, error=repr(exc))
         return None
 
-    if not question:
+    if not open_set:
         # `ask_owner` writes the ledger row and the state in one transaction, so this is
         # unreachable short of a hand-edited row — but a block with a fabricated question
         # would be a sentence the owner never said, appended to their own note.
         log.warning("note_reply.no_recorded_question", session_id=session_id, note_id=note_id)
-        return OwnerReply(question="", clarified=False, note_moved=False)
+        return OwnerReply(answered=[], unanswered=[], clarified=False, note_moved=False)
+
+    answered = _pair(open_set, structured, prose, session_id=session_id)
+    pairs = [(q.question, answered[q.id]) for q in open_set if q.id in answered]
+    unanswered = [q.question for q in open_set if q.id not in answered]
 
     moved = False
     try:
         current = await notes.get_note(ctx, note_id)
         moved = current is not None and note_body_sha(current.body) != stored_sha
-        clarified = await notes.append_clarification(
-            ctx, note_id, question=question, answer=answer, session_id=session_id
+        clarified = await notes.append_clarifications(
+            ctx, note_id, pairs=pairs, session_id=session_id
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("note_reply.append_failed", session_id=session_id, error=repr(exc))
-        return OwnerReply(question=question, clarified=False, note_moved=moved)
+        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
     if clarified is None:
-        # The note is gone (soft-deleted). The question cannot be answered onto it, and
+        # The note is gone (soft-deleted). The questions cannot be answered onto it, and
         # the state is already back to `running`, so nothing holds the note's live slot.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
-        return OwnerReply(question=question, clarified=False, note_moved=moved)
+        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
 
-    if not moved:
+    if not moved and pairs:
         with contextlib.suppress(Exception):
             async with scoped_session(maker, ctx) as s:
                 await repo.set_body_sha(s, session_id, note_body_sha(clarified.body))
@@ -486,8 +526,88 @@ async def record_owner_reply(
         session_id=session_id,
         note_id=note_id,
         note_moved=moved,
+        answered=len(pairs),
+        unanswered=len(unanswered),
     )
-    return OwnerReply(question=question, clarified=True, note_moved=moved)
+    return OwnerReply(
+        answered=pairs, unanswered=unanswered, clarified=bool(pairs), note_moved=moved
+    )
+
+
+def _pair(
+    open_set: Sequence[AskedQuestion],
+    structured: Sequence[tuple[str, str]],
+    prose: str,
+    *,
+    session_id: str,
+) -> dict[str, str]:
+    """Which open question each part of one reply answers, keyed by question id.
+
+    Three rules, and each is there because the alternative writes a sentence into the
+    owner's own note that nobody said:
+
+    - **A structured answer naming an id the open set does not carry is DROPPED.** A
+      reopened old thread replays its ask step's `args` straight out of the transcript
+      (§3b I9), so a stale block can post an id from a set that closed weeks ago — and
+      filing it against whatever is open now is precisely the mispairing this channel
+      cannot afford.
+    - **Free text with no structured answers answers the OLDEST open question**, leaving
+      the rest open. This is today's semantics on a one-item set, it never mispairs, and
+      it is what lets the batched ask ship ahead of the PWA block that fills `answers`.
+      Beside a PARTIAL structured set it answers the oldest question that set left open.
+    - **Free text beside a COMPLETE structured set files nothing.** It is chat:
+      `note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
+      no shape for an unprompted block, and inventing a question the agent never asked
+      would put a sentence into the owner's own note that nobody said.
+    """
+    by_id = {q.id: q for q in open_set}
+    answered: dict[str, str] = {}
+    for question_id, answer in structured:
+        if question_id not in by_id:
+            log.warning(
+                "note_reply.answer_for_unknown_question",
+                session_id=session_id,
+                question_id=question_id,
+            )
+            continue
+        answered[question_id] = answer
+    if prose:
+        oldest_open = next((q for q in open_set if q.id not in answered), None)
+        if oldest_open is not None:
+            answered[oldest_open.id] = prose
+    return answered
+
+
+def unanswered_notice(reply: OwnerReply | None) -> str:
+    """The one sentence a PARTIAL send owes the agent, or "" when it owes none.
+
+    O11 is decided (ii): a partial send is allowed, and what makes it safe is THIS — the
+    agent is told which questions went unanswered and that they are still open. It is the
+    deliverable, not the toggle. What must not happen under any option is a partial send
+    that silently closes the rest: that loses the owner's own words about what their note
+    means, which is the one thing this whole channel exists to capture.
+
+    It is also the only place an unanswered question survives. Nothing durable holds one
+    — no per-question claim, no row — so if this sentence is not composed onto the reply
+    turn, the question is gone.
+
+    Framed as DATA about the turn, in the voice `api/agent.py`'s other server-composed
+    preambles use: it reports what the owner did, and leaves what to do about it to the
+    agent."""
+    if reply is None or not reply.unanswered:
+        return ""
+    listed = "; ".join(f"{q!r}" for q in reply.unanswered)
+    # A reply can answer NONE of them — every structured answer named a question that is
+    # not open, say — and telling the agent Jeff "answered part" would then be false.
+    head = (
+        "Jeff answered part of what you asked"
+        if reply.answered
+        else "Jeff's reply answered none of your questions"
+    )
+    return (
+        f"({head}. These questions are still open and still unanswered: {listed}. You may"
+        " re-ask them, proceed without them, or drop them.)"
+    )
 
 
 async def close_owner_reply(
@@ -636,4 +756,5 @@ __all__ = [
     "record_reply_writes",
     "record_turn_writes",
     "settle_conversation",
+    "unanswered_notice",
 ]

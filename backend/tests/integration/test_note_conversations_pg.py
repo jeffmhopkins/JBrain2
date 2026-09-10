@@ -177,8 +177,12 @@ async def test_waiting_threads_list_newest_first(
 async def test_notes_inbox_lists_the_question_the_row_redirects_to(
     maker: async_sessionmaker, owner: SessionContext
 ) -> None:
-    """The notes tab's query (D4/D5): the LAST `ask_owner` of the thread, the note it
-    came from, and the committed count — oldest wait first."""
+    """The notes tab's query (D4/D5): the LAST `ask_owner` of the thread — the whole open
+    SET of it (R1c) — the note it came from, and the committed count, oldest wait first.
+
+    The answered ask is left on the ledger in its PRE-BATCH shape on purpose: the query
+    reads the newest row, and it has to read either shape while a live box can still hold
+    a thread that was asked before the batch shipped."""
     repo = NoteConversationRepo()
     note = await seed_note(maker, owner)
     sid = await seed_session(maker, owner)
@@ -197,7 +201,17 @@ async def test_notes_inbox_lists_the_question_the_row_redirects_to(
             s, sid, name="ask_owner", args={"question": "answered already"}, ok=True, domains=[]
         )
         await repo.record_tool_call(
-            s, sid, name="ask_owner", args={"question": "which shop?"}, ok=True, domains=[]
+            s,
+            sid,
+            name="ask_owner",
+            args={
+                "questions": [
+                    {"id": "qa1", "question": "which shop?"},
+                    {"id": "qa2", "question": "which Tuesday?"},
+                ]
+            },
+            ok=True,
+            domains=[],
         )
         await repo.set_state(s, sid, "waiting_on_owner")
 
@@ -205,7 +219,7 @@ async def test_notes_inbox_lists_the_question_the_row_redirects_to(
         rows = {r.session_id: r for r in await repo.notes_inbox(s)}
 
     row = rows[sid]
-    assert row.question == "which shop?"
+    assert row.questions == ["which shop?", "which Tuesday?"]
     assert row.note_id == note and row.domain == "general"
     assert row.note_excerpt == "repo seed note"
     assert row.committed == 2
@@ -226,7 +240,7 @@ async def test_notes_inbox_lists_a_first_pass_but_marks_it_live(
 
     async with scoped_session(maker, owner) as s:
         row = {r.session_id: r for r in await repo.notes_inbox(s)}[sid]
-    assert row.live is True and row.question is None
+    assert row.live is True and row.questions == []
 
 
 async def test_notes_inbox_drops_a_settled_thread_and_a_deleted_note(

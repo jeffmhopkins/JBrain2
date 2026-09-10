@@ -1803,7 +1803,15 @@ def _steps(res: dict[str, Any], name: str) -> list[dict[str, Any]]:
 
 
 def _questions(res: dict[str, Any]) -> list[str]:
-    return [str(s.get("arguments", {}).get("question", "")) for s in _steps(res, "ask_owner")]
+    """Every question the run asked. One `ask_owner` call now carries a SET (R1c), so a
+    run that asked three times in one call counts three — which is what the ask arms
+    measure, and reading only the call count would now undercount them."""
+    asked: list[str] = []
+    for step in _steps(res, "ask_owner"):
+        batch = step.get("arguments", {}).get("questions")
+        if isinstance(batch, list):
+            asked += [str(q.get("question", "")) for q in batch if isinstance(q, dict)]
+    return asked
 
 
 def _facts(res: dict[str, Any]) -> list[dict[str, Any]]:

@@ -1416,7 +1416,10 @@ export interface NotesInboxRow {
   note_id: string | null;
   domain: string;
   quote: string;
-  ask: string | null;
+  /** What is being asked — the whole open SET (R1c's batched ask), in the order the
+   * agent asked it. Empty on a first pass still reading; a staged approval carries its
+   * one server-written line. */
+  asks: string[];
   captured_at: string | null;
   waiting_since: string;
   committed: number;

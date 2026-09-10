@@ -241,7 +241,9 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   // The reading's legible target is its TITLE — the one line the owner would recognise
   // the note by — with the facts behind it, elementwise, as the second piece.
   close_reading: ["title", "facts"],
-  ask_owner: ["question"],
+  // One ask carries the whole SET (R1c), so its legible target is an ARRAY too — each
+  // element renders as its own question text through BATCH_ELEMENT_KEYS below.
+  ask_owner: ["questions"],
   // The on-reply writes are NOT batched — one disputed value, one pair of entities — so
   // their inline piece is the thing the owner would recognise in the strip: what the
   // fact was corrected TO, and which two records are being folded.
@@ -374,6 +376,7 @@ const BATCH_ELEMENT_KEYS: readonly string[] = [
   "surface",
   "name",
   "subject",
+  "question",
   "statement",
   "text",
   "value",

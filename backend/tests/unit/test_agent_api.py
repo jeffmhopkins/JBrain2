@@ -2834,6 +2834,59 @@ def test_only_a_turn_the_owner_typed_counts_as_owner_authored() -> None:
     assert deferred.owner_authored is False
 
 
+def test_an_over_long_answer_list_is_accepted_and_capped_rather_than_refused() -> None:
+    """The structured answers a note thread's question block sends are capped the way
+    `attachment_ids` is — truncated at `MAX_ANSWERS` inside `record_owner_reply`, never
+    422'd. A stale or buggy client must degrade this turn, not fail it: the owner's typed
+    answer is in the same request."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import MAX_ANSWERS
+
+    body = agent_mod.ChatRequest(
+        session_id="s",
+        message="My sister.",
+        answers=[
+            agent_mod.AnswerIn(question_id=f"q{i}", answer="a") for i in range(MAX_ANSWERS * 2)
+        ],
+    )
+    assert len(body.answers) == MAX_ANSWERS * 2
+    assert body.answers[0].question_id == "q0"
+
+
+def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> None:
+    """O11 (ii)'s deliverable, and it is the SENTENCE, not the toggle. A partial send is
+    allowed, and what makes it safe is that the agent is told what went unanswered — an
+    unanswered question is not durable state anywhere, so this text is the only thing
+    that carries it forward. A partial send that silently closed the rest would lose the
+    owner's own words about what their note means, which is what this channel exists to
+    capture.
+
+    Composed onto the model-facing message the way the attachment blocks are, so it
+    reaches the turn on both render shapes."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply, unanswered_notice
+
+    partial = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?", "Which dose?"],
+        clarified=True,
+        note_moved=False,
+    )
+    notice = unanswered_notice(partial)
+    assert "Which coach?" in notice and "Which dose?" in notice
+    assert "still open" in notice
+    assert "re-ask" in notice
+    # A complete reply owes the agent nothing, and a turn that answered nothing at all
+    # (not a note thread, not waiting) has no reply to speak for.
+    assert unanswered_notice(OwnerReply([], [], clarified=False, note_moved=False)) == ""
+    assert unanswered_notice(None) == ""
+
+    messages = agent_mod._conversation(
+        agent_mod.ChatRequest(session_id="s", message="My sister."), [], notice
+    )
+    assert notice in getattr(messages[-1], "text", "")
+
+
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     """A finished deferred analysis resumes the chat with a short SYSTEM notice (not owner
     input): jerv is told the analysis is ready and to continue the owner's original request,
