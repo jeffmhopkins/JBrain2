@@ -1195,6 +1195,45 @@ message goes when the agent notices the duplicate while reading a LATER note: re
 earlier note's thread, raise it in the current one, or start a thread of its own. All three
 are one channel; they differ in where the owner finds it. Not decided here.
 
+**O9 — May one pass raise SEVERAL questions?** `ask_owner` enforces one open question at a
+time (`agent/asktools.py`: a second call while `waiting_on_owner` is refused and told what
+is outstanding). That cap was sound when the inbox was a card queue and asking was the
+exception. Under one channel it becomes the design's main cost, and it is paid in the
+owner's attention rather than the box's CPU: a note with three ambiguities costs three
+passes, three re-ingests and three trips to the inbox, spread over however long the owner
+takes to answer each — and each pass re-reads the note from scratch while the facts it
+already committed sit unprojected in between.
+
+Batching also *improves the answers*, which is the part that is not just efficiency: the
+owner sees the whole ambiguity at once, so an answer to one question can inform another
+("it's the cardiologist" changes how "the new med" reads), and the candidate context the
+resolver already has — *Dr. Alice Chen, cardiology, 4 notes* vs *Dr. Ray Chen, paediatrics,
+2 notes* — is the information the retired `ambiguous_mention` card was carrying and the
+agent was never handed. Mocked end to end for the owner (an interactive walkthrough of a
+three-question note) rather than argued.
+
+What it costs to build: the one-at-a-time latch is what makes `record_owner_reply`'s claim
+atomic — the `waiting_on_owner → running` flip IS the latch that stops a second reply
+appending the same answer twice, and `latest_question` reads exactly one open ask. A batch
+needs a question SET with per-question answers, so the claim moves from the state flip to
+something addressed per question, and the clarification block composes several Q/A pairs
+rather than one. That is the real work; the tool schema is the easy half. **Not decided.**
+
+**O10 — Nothing tells the owner a thread is waiting.** `waiting_since` is measured and
+rendered in the inbox row, and nothing acts on it. There is a notifications SSE stream
+(`api/notifications.py`) and an `fcm_token` table, and `ask_owner` uses neither — so a
+question is discovered whenever the owner next opens the PWA, and `waiting_on_owner` is
+never reaped, so an unanswered one waits forever while holding the note's single live slot.
+
+That was tolerable while the inbox was one of two channels and cards accumulated quietly.
+It is not tolerable as *the* contract: "the agent asks when it isn't sure" is only a
+contract if asking reaches the owner. Decide the notification (push on first ask? a daily
+digest? nothing, and rely on the habit of opening the app?) and decide the reaper's
+policy separately — a stale-question timeout has to choose between failing the pass, which
+discards a reading the agent already wrote, and settling it unanswered, which commits a
+reading the agent said it could not finish. **Not decided.** Both halves are cheap to build
+and neither is obvious to choose.
+
 **Carried risks, unchanged from ratification.** Intake is third-party text driving an
 owner-identity session (risk 1) — the third frozenset still narrows it and
 `close_reading` replaces `assert_fact` inside that set, so a stranger's words may still
