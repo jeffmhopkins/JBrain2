@@ -138,12 +138,21 @@ Three things the plan did not anticipate, all now in the code:
 - **An Ops → Update mid-recording would have taken the spool with the container**, which
   contradicts "an interrupted recording is still a recording". The lifespan now finalizes
   an in-flight recording before teardown.
-- **The blob store has no refcount, and `blob_in_use` only consults this one table.** No
-  other table can share a recording's blob today — a radio capture being byte-identical
-  to an attachment or a generated image does not happen by accident. But it would happen
-  *on purpose* the moment "send this recording to chat" exists, and at that point the
-  attachment and the recording would be one file that either side can delete. **That
-  feature must copy, not reference, until the store can count.**
+- **The blob store has no refcount, and the first version of this checked one table.**
+  The claim written here — that nothing else could share a recording's blob "by accident"
+  — was **wrong, and an independent review disproved it before this shipped.** The owner
+  can do it in three taps: the library offers Download (.mp3), `agent/attachments.py`
+  allow-lists `audio/mpeg` precisely so audio can be attached for transcription, and
+  `chat_attachments` stores it with `blobs.put` — identical bytes, identical digest, one
+  file with two owners. Deleting the recording then unlinked the chat attachment's audio
+  and its download 500'd. The same reachable path existed for `app.images`, note
+  attachments and jlaunch artifacts.
+
+  The lesson is bigger than this feature: **deleting in a content-addressed store is
+  never a per-table concern.** Dedup means a digest is shared state, and the first
+  feature in a repo to delete a blob inherits responsibility for every other feature
+  that stores one. Anything added later that deletes must consult the same list — or the
+  store must learn to count, which is the real fix.
 
 ## 8. Open
 
