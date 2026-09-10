@@ -25384,9 +25384,18 @@ button.task-band:active {
   font-weight: 640;
   margin: 0;
 }
-/* The tab strip is the shared `.seg-tabs` control (see the session list); what is left
-   here is only the screen's own scroll body — `.subscreen` is a fixed flex column, so
-   the content pane is what scrolls, never the shell. */
+/* The tab strip is the shared `.seg-row`/`.seg` control — the one the job row inside a
+   radio (`.sdr-jobs`) uses, and this supplies only the accent its tint reads from, in the
+   same two lines that file does. Two tab-shaped rows a thumb apart on one screen were
+   drawn two different ways before this; nothing here restyles the control itself. */
+.radio-tabs {
+  --mode: var(--accent);
+  --mode-tint: var(--accent-tint);
+  margin-bottom: 11px;
+}
+
+/* what is left here is only the screen's own scroll body — `.subscreen` is a fixed flex
+   column, so the content pane is what scrolls, never the shell. */
 .radio-body {
   flex: 1;
   overflow-y: auto;
@@ -25872,43 +25881,78 @@ button.task-band:active {
    question"), and a near-identical clone under a different class name would have slipped
    past that test while being exactly what it was written against. Only the count pill and
    the tighter spacing are new. */
+/* THE COMPACT VARIANT (DESIGN.md: "compact-variant rows may reduce to 36px height but
+   never shrink tap areas below 44px including padding"). Measured on the owner's phone,
+   these two rows plus their labels ate roughly a third of the screen before the first
+   station appeared — on a screen whose whole job is the list underneath them.
+   36px painted, 44px live, and the 8px between rows is exactly what the pads claim, so
+   two neighbouring filters can never overlap into one another's target. */
 .aprs-ranges {
-  margin-bottom: 9px;
+  margin-bottom: 8px;
+  /* The hit pad below reaches past the pill, and `.seg-tabs` clips to its radius — which
+     clips hit-testing too, not only paint. So this row keeps the radius on its segments
+     (next rule) instead of on the container. */
+  overflow: visible;
 }
-/* The house control is ~31px tall repo-wide; on this screen it is the primary filter and
-   sits next to the chips, so it gets the phone tap target rather than matching a
-   deviation. */
 .aprs-ranges .seg-tab {
-  min-height: 44px;
+  position: relative;
+  min-height: 36px;
+  font-size: var(--fs-micro);
+}
+/* What `overflow: hidden` was doing for the container: without it the active segment's
+   tint squares off the pill's rounded ends. Inset by the container's 1px border. */
+.aprs-ranges .seg-tab:first-child {
+  border-radius: calc(var(--r-seg) - 1px) 0 0 calc(var(--r-seg) - 1px);
+}
+.aprs-ranges .seg-tab:last-child {
+  border-radius: 0 calc(var(--r-seg) - 1px) calc(var(--r-seg) - 1px) 0;
+}
+/* The 8px the row gave up, handed back as tap area it does not have to paint. Invisible,
+   out of flow, and part of its own button — so the target is 44px while the control reads
+   36px. The repo's other answer to this (`button.vitals`, `.note-menu-btn`) is transparent
+   padding plus a negative margin, which cannot work for either of these: the segment is
+   inside a clipping pill, and the chips WRAP, where negative margins would pull two rows
+   of targets through each other. */
+.aprs-ranges .seg-tab::before,
+.aprs-chip::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
 }
 .seg-count {
   font-size: 10.5px;
   color: var(--text-3);
 }
+/* The counts are the reason these chips are worth their space, so they come UP to the
+   type scale's floor as the rows come down — scoped, because `.seg-count` is shared. */
+.aprs-ranges .seg-count {
+  font-size: var(--fs-micro);
+}
 .seg-tab.on .seg-count {
   color: inherit;
 }
 
+/* Row-gap 8px is load-bearing: it is what the two chip rows' hit pads occupy when the row
+   wraps. Column-gap can be tighter — nothing extends sideways. */
 .aprs-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 11px;
+  gap: 8px 6px;
+  margin-bottom: 8px;
 }
 .aprs-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  /* 44px of tap target on a phone (DESIGN.md), even though the pill reads smaller. A
-     filter you have to aim at twice is a filter you stop using. */
-  min-height: 44px;
-  padding: 5px 12px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 .aprs-chip[aria-pressed="true"] {
@@ -25917,11 +25961,29 @@ button.task-band:active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .aprs-chip-n {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 .aprs-chip[aria-pressed="true"] .aprs-chip-n {
   color: inherit;
+}
+/* The provenance chips share the row with the kinds, so they carry the SAME tints the
+   packet rows' provenance badge does — the chip that filters "gated" looks like the
+   "gated" badge the reader is filtering on, which is what tells the two dimensions apart
+   in one row without a divider that would land mid-wrap. */
+.aprs-chip-arr.b-direct {
+  --chip: var(--ok, var(--accent));
+}
+.aprs-chip-arr.b-gated {
+  --chip: var(--text-2);
+}
+.aprs-chip-arr.b-rf {
+  --chip: var(--accent);
+}
+.aprs-chip-arr[aria-pressed="true"] {
+  border-color: var(--chip);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
 }
 
 .aprs-count {

@@ -79,6 +79,9 @@ function roster(over: Record<string, unknown> = {}) {
     truncated: false,
     unclassified: 0,
     kind_stations: { Position: 2, Weather: 1 },
+    // Deliberately OVERLAPPING and summing past `stations_total`: N1MPR-C was heard both
+    // ways in this range, which is the case the provenance filter has to get right.
+    provenance_stations: { direct: 2, gated: 1, rf: 0 },
     stations_total: 2,
     stations: [
       {
@@ -87,6 +90,8 @@ function roster(over: Record<string, unknown> = {}) {
         last_heard_at: new Date().toISOString(),
         kinds: ["Position"],
         gated: false,
+        direct: true,
+        heard: ["direct"],
         relay: null,
         last_kind: "Position",
         last_summary: "Car — 52 knots (60 mph) heading 242° (WSW)",
@@ -103,6 +108,8 @@ function roster(over: Record<string, unknown> = {}) {
         last_heard_at: new Date(Date.now() - 600_000).toISOString(),
         kinds: ["Position", "Weather"],
         gated: true,
+        direct: false,
+        heard: ["direct", "gated"],
         relay: "N4TDX",
         last_kind: "Weather",
         last_summary: "78 °F, from the NNW (338°) at 0 mph, 99 % humidity",
@@ -231,6 +238,8 @@ describe("the APRS tab", () => {
           last_heard_at: new Date().toISOString(),
           kinds: ["Position"],
           gated: false,
+          direct: true,
+          heard: ["direct"],
           relay: null,
           last_kind: "Position",
           last_summary: "Phone",
@@ -310,7 +319,79 @@ describe("the APRS tab", () => {
     // "Show me who is putting out weather" is a question about stations, and the
     // server answers it — a client that downloaded the log to narrow it here would
     // move a year of a 1.2M-row channel to render two lines.
-    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"], null));
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", ["Weather"], null, []));
+  });
+
+  it("narrows the roster by how the frames ARRIVED, on the server", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    const asked = stations();
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Heard gated/ }));
+
+    // Server-side, like the kinds and for the same reason: a year of this channel is
+    // ~1.2M rows to render sixteen lines.
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1d", [], null, ["gated"]));
+    // And the chip is a toggle, not a mode: pressing it again clears it.
+    fireEvent.click(container.querySelector('[aria-pressed="true"].aprs-chip-arr') as Element);
+    await waitFor(() => expect(asked).toHaveBeenLastCalledWith("1d", [], null, []));
+  });
+
+  it("shares one row with the kind chips rather than costing another", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("KE8XYZ-9");
+
+    // MEASURED on the owner's phone: the range row and the type row were eating roughly
+    // a third of the screen before the first station appeared. A second filter that
+    // added a fourth strip of chrome would have made the screen worse in exchange for
+    // making it more capable.
+    expect(container.querySelectorAll(".aprs-chips")).toHaveLength(1);
+    const row = container.querySelector(".aprs-chips") as HTMLElement;
+    expect(row.querySelectorAll(".aprs-chip")).toHaveLength(4); // 2 kinds + 2 provenances
+    expect(row.querySelectorAll(".aprs-chip-arr")).toHaveLength(2);
+  });
+
+  it("counts the range UNFILTERED, so a chip says what it would show before you press it", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+    // The server keeps the counts over the whole range while the list narrows to one
+    // station — which is exactly the payload the real one sends back.
+    vi.spyOn(api, "getAprsStations")
+      .mockResolvedValueOnce(roster() as never)
+      .mockResolvedValue(roster({ stations: [roster().stations[1]], stations_total: 2 }) as never);
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Heard gated/ }));
+    await waitFor(() => expect(container.querySelectorAll(".aprs-station")).toHaveLength(1));
+
+    // Still 2 and 1, not 1 and 1: a chip that recounted itself against the filtered list
+    // would rearrange the row as you used it, and would stop being able to say what
+    // pressing the OTHER chip would give.
+    const counts = [...container.querySelectorAll(".aprs-chip-arr .aprs-chip-n")].map(
+      (n) => n.textContent,
+    );
+    expect(counts).toEqual(["2", "1"]);
+    // The header names the filter that is on. An empty list under a filter and a dead
+    // receiver are the same blank screen otherwise, and the owner has no terminal.
+    expect(screen.getByText(/Stations heard gated/)).toBeInTheDocument();
+  });
+
+  it("says a station arrived more than one way rather than contradicting the chip", async () => {
+    vi.spyOn(api, "getAprsPackets").mockResolvedValue(log() as never);
+    vi.spyOn(api, "getSdrStatus").mockResolvedValue({ available: true, listening: null });
+
+    const { container } = render(<RadioScreen onClose={() => {}} />);
+    await screen.findByText("N1MPR-C");
+
+    // N1MPR-C's newest frame was gated, but it was ALSO heard direct inside the range —
+    // which is why the Direct chip returns it. Without this the row would read "gated
+    // via N4TDX" under a pressed Direct chip and look like a bug in the filter.
+    const rows = [...container.querySelectorAll(".aprs-st-sub")].map((n) => n.textContent);
+    expect(rows.some((t) => t?.includes("gated via N4TDX · also direct"))).toBe(true);
   });
 
   it("puts the meaning on the row and the bytes one tap below", async () => {
@@ -695,7 +776,7 @@ describe("the APRS tab", () => {
     // stations already on screen stay, because throwing them away helps nobody.
     expect(await screen.findByText(/the log is unreadable/)).toBeInTheDocument();
     expect(screen.getByText("KE8XYZ-9")).toBeInTheDocument();
-    expect(asked).toHaveBeenCalledWith("3d", [], null);
+    expect(asked).toHaveBeenCalledWith("3d", [], null, []);
   });
 
   it("ignores a slow response that a newer request has replaced", async () => {
@@ -756,7 +837,7 @@ describe("the APRS tab", () => {
     await screen.findByText("KE8XYZ-9");
     fireEvent.click(screen.getByRole("button", { name: /1 week/ }));
 
-    await waitFor(() => expect(asked).toHaveBeenCalledWith("1w", [], null));
+    await waitFor(() => expect(asked).toHaveBeenCalledWith("1w", [], null, []));
   });
 
   it("says nothing about how much is older until it is worth the read", async () => {
@@ -1040,20 +1121,30 @@ describe("the screen's shell", () => {
     const { container } = render(<RadioScreen onClose={() => {}} />);
     await screen.findByText("KE8XYZ-9");
 
-    // The same control the session list uses for Today / Older / Archived. This screen
-    // had invented an underline tab bar — a second answer to a settled question.
+    // The SAME control as the idle/listen/aprs/spectrum row inside a radio: `.seg-row`
+    // /`.seg`, with `.radio-tabs` supplying only the steel `--mode` the tint reads from,
+    // exactly as `.sdr-jobs` does. Two tab-shaped rows a thumb apart on one screen were
+    // drawn two different ways before this — 13px on a flat tint above, --fs-note on the
+    // mode tint below — and read as two unrelated widgets. This screen had already
+    // invented an underline tab bar once; the rule is to pick a house control and stay
+    // on it, not to keep answering a settled question.
     const tabbar = container.querySelector('[role="tablist"]');
     expect(tabbar).not.toBeNull();
-    expect(tabbar?.classList.contains("seg-tabs")).toBe(true);
+    expect(tabbar?.classList.contains("seg-row")).toBe(true);
+    expect(tabbar?.classList.contains("radio-tabs")).toBe(true);
     // Three: Radios, APRS, Recordings. Shape A makes the RADIO the object, so there is
     // no Tuner tab and no Spectrum tab — both were places where a job lived apart from
     // the radio running it (docs/mocks/sdr-launcher/README.md).
-    expect(tabbar?.querySelectorAll(".seg-tab")).toHaveLength(3);
-    expect(container.querySelector(".radio-tabs")).toBeNull();
-    // And the roster's range control REUSES it rather than cloning it — the near-identical
-    // copy under a different class name is precisely what this test is written against,
-    // and it would have slipped past a count of the whole document.
-    expect(container.querySelectorAll(".seg-tabs")).toHaveLength(2);
+    expect(tabbar?.querySelectorAll(".seg")).toHaveLength(3);
+    // Borrowing an appearance is not borrowing a ROLE. The job row it now looks like is
+    // a set of buttons and says `aria-pressed`; these three switch which panel is shown,
+    // so they stay real tabs — a screen reader must not be told a tab is a toggle.
+    expect(tabbar?.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(container.querySelector('[role="tablist"] [aria-pressed]')).toBeNull();
+    // And the roster's range control still REUSES a house control rather than cloning
+    // one — the near-identical copy under a different class name is precisely what this
+    // test was written against.
+    expect(container.querySelectorAll(".seg-tabs")).toHaveLength(1);
     expect(container.querySelector(".aprs-windows")).toBeNull();
   });
 });
