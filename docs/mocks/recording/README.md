@@ -87,6 +87,12 @@ it, so the part worth keeping is visible.* One place to be careful in, and the o
 with room for Preview — which the other two decisions below make load-bearing rather than
 a nicety. Its cost is a modal on an otherwise flat surface, and the owner took that trade.
 
+**Read D together with A, not instead of it.** The two are split by subject: A specifies
+capture and the library, D specifies the trim. D draws its rows without A's expandable
+body so the eye goes to the scissors — that is focus, not a repeal. The row still expands
+to its transcript and its own Download / Delete; **Delete stays on the row and never
+moves into the trim sheet**, because one sheet should hold one irreversible thing.
+
 E and F are retained below, not built.
 
 **E — `e-trim-inline.html`. Trim is the scrub bar.** No mode, no second surface: a row

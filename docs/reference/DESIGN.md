@@ -2367,6 +2367,18 @@ divided from the tappable body by a hairline — the same anatomy as `.rl-card` 
 `.rl-kebab` in the Research Library, with the action glyph specific to the one thing
 this surface does.
 
+**The row expands; the scissors does not.** Tapping the row body opens an inline
+expansion carrying the transcript and the row's own actions (Download, Delete —
+arm-then-confirm, `.rl-action-del` styling). Tapping the scissors goes straight to the
+trim sheet. The two binding mocks are split by subject — `a-tape-deck.html` specifies
+capture and the library, `d-trim-sheet.html` specifies only the trim — and D draws its
+rows without the expansion for focus, which does not repeal it.
+
+**Delete lives on the row, never in the trim sheet.** A destructive action inside a sheet
+whose purpose is a *different* destructive action is muddy: it would put "discard
+everything" inches from "discard the parts you did not select". One sheet, one
+irreversible thing.
+
 **Sizes are always visible.** The owner runs this box remotely; a library that quietly
 fills a disk is a support call they cannot answer from a phone. The header carries a
 usage meter, and once anything has been trimmed its right-hand line reports how much
