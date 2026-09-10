@@ -31,7 +31,8 @@ the shipped transcript classes (`.fb-act-think` / `.fb-act-work` / `.fb-step-row
 §3b of the plan names every place the two disagree and says which wins — the mock overrules
 the code on the question block and the carry strip; the code overrules the mock on the
 Thought/Worked panel (one body, not two), the live phase line's home, the settled row's
-chip, and the mode row, which the mock hides and the app must not.
+chip, **the ask chip's colour** (the mock draws it rose, which in the shipped palette is the
+MEDICAL domain), and the mode row, which the mock hides and the app must not.
 
 Its own rail names the two gaps it exposed: the ingest verbs missing from `status.ts`'s
 live-phase label map, and a half-filled block with nowhere to live.

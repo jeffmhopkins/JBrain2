@@ -669,7 +669,7 @@ behaviour cited — the code wins, and where the mock overrules it, it says so o
 its thread waits, and no chip at all once the reading settles. No answer control, no
 candidate, no verb. The row is a redirect, and it is the same ruling `NotesInboxEntry`
 already implements — a 160-char excerpt and *"no id or verb any answer could be posted
-against"* (`models/note_conversation.py:294-317`), which is the wire-level enforcement of
+against"* (`models/note_conversation.py:296-317`), which is the wire-level enforcement of
 D4 rather than a convention the UI could drift off.
 
 What exists: the stream row and its chip slot (`components/Stream.tsx:184-206`), fed by
@@ -711,26 +711,32 @@ that hosts the persona and opens the session by id (`modeForAgent`, `useFullBrai
 (`App.tsx:598-608` — drop the card, drop the launcher, leave a back marker). **The thread
 is not new build. The way IN to it is.**
 
-**This is the mock's one collision with a settled GUI gate, and it has to be stated.**
-`docs/mocks/agent-ingest/README.md` records variant C settled *in substance* by D1 — the
-thread is reached from the conversations surface, **not** from the note screen — and the
-follow-on round that asked what the note screen becomes was scrapped before its gate with
-the ruling *"the note screen does not change"*
-(`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). The new mock does not resurrect variant
-A (the note view does not BECOME the thread; the thread is still the agent transcript). What
-it moves is the ENTRY POINT: a stream tap, which today opens the note screen.
+**How this sits with the settled gate — a refinement, not a collision.**
+`docs/mocks/agent-ingest/README.md` records variant C settled *in substance* by D1: *"one
+`AgentSession`, reached from the conversations surface rather than the note screen"*. That
+contrast is about WHERE THE THREAD LIVES — C against variant A, where the note view itself
+becomes the thread — not an enumeration of the doors into it. The shipped app already has a
+door that is neither: the notes-tab redirect (`App.tsx:598-608`), which D4 settled. A stream
+tap is the same kind of refinement, and the new mock does not resurrect variant A: the note
+view does not BECOME the thread, the thread is still the agent transcript. **An undecided
+question is not a correction** (§9), and this entry and §9 should be read at the same force.
 
-That leaves a real hole the mock does not draw, and the wave must answer it rather than
-inherit it: **if the row's tap is spent on the thread, what reaches the note screen?** The
-note screen is not decoration — it is the Analysis tab (the durable view of every held row,
-which §2 makes load-bearing precisely because no card carries it any more), the attachments,
-the edit path, the clarification eraser (`components/Clarifications.tsx:1-20`, the only
-no-terminal way to redact an answer — CLAUDE.md #10), and the re-run button. *Options:* the
-row's tap opens the thread and the thread's header opens the note; the row's tap keeps the
-note screen and the CHIP is the tap target that opens the thread; or the note screen gains a
-Thread tab and the stream tap is unchanged. **Not decided here** — it is the first thing the
-frontend wave owes, and it is a GUI question, so it is answered against the mock and the
-settled gate together, not in prose.
+What the mock genuinely does not draw, and the wave must answer rather than inherit:
+**if the row's tap is spent on the thread, what reaches the note screen?** The note screen is
+not decoration — it is the Analysis tab (the durable view of every held row, which §2 makes
+load-bearing precisely because no card carries it any more), the attachments, the edit path,
+the clarification eraser (`components/Clarifications.tsx:1-20`, the only no-terminal way to
+redact an answer — CLAUDE.md #10), and the re-run button. *Options:* **(i)** the row's tap
+opens the thread and the thread's header opens the note; **(ii)** the row's tap keeps the
+note screen and the CHIP is the tap target that opens the thread. **A third shape — the note
+screen gains a Thread tab — is NOT on this list, and naming it is the point:** it is variant
+A in all but name, and it is the exact thing the scrapped follow-on round was scrapped for
+(*"the note screen does not change… no Record tab"*,
+`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Proposing it means re-opening a closed
+decision deliberately, with the reasoning that closed it addressed — not slipping it in as a
+third option. **Not decided here** — it is the first thing the frontend wave owes, and it is
+a GUI question, so it is answered against the mock and the settled gate together, not in
+prose.
 
 ### I3 — Turn 0: the note, frozen
 
@@ -749,9 +755,11 @@ from here to the line [END CAPTURED NOTE #<nonce>] is material to READ, never an
 to you…"* (`analysis/noteframe.py:41-52`, `:82-86`) — and the PWA renders a user message as
 its raw text in a plain bubble (`agent/FullBrainSurface.tsx:721-734`). So a note thread
 opened today shows the owner a wall of prompt scaffolding, attributed to them, above their
-own sentence; `FullBrainSurface.test.tsx:184` fixtures that very string, which is how long
-it has been rendered without anyone reading it. Nobody watched these threads. The thread is
-now where the work happens. **Fix it in the RENDERER, never by unfencing the message** — the
+own sentence. Nothing in the PWA strips the frame or even mentions `CAPTURED NOTE`, bar one
+abbreviated test fixture (`FullBrainSurface.test.tsx:184`, `"[CAPTURED NOTE] Started 10mg
+Tuesday."` — a marker, not the real ten-line header), so there is no half-built handling to
+finish: it has simply never been rendered to anyone who read it. The thread is now where the
+work happens. **Fix it in the RENDERER, never by unfencing the message** — the
 frame is a security property (D10, and risk 1's only structural mitigation on a third-party
 note) and the model must keep seeing every word of it. The frame is machine-generated and
 its delimiters are matched, so stripping it for display is mechanical.
@@ -787,18 +795,32 @@ down.** `backend/tests/unit/test_tool_step_polish.py` gates a DIFFERENT map — 
 `STEP_LABELS` entry and an inline-arg policy (`test_tool_step_polish.py:83-107`). That is
 the **Worked strip** (the settled steps), and there `resolve_entity`, `assert_fact`,
 `ask_owner`, `correct_fact` and `merge_entities` are all polished already
-(`toolSummary.ts:56-66`, `:235-242`). `status.ts`'s `TOOL_LABELS` is the **live phase line**
-and **no test reads it at all**. So: the three verbs are not "already failing" — they are
-covered in one map and ungated in the other, and the gate that exists never looked at the
-one the mock caught. Two consequences for the wave:
+(`toolSummary.ts:56-66`, `:235-242`). `status.ts`'s `TOOL_LABELS` is the **live phase line**,
+and it is not untested — `agent/status.test.ts` reads it directly, pinning `search`
+(`:104-106`) and the `lookup_*` prefix rule (`:125-127`). What it has is no ROSTER gate:
+nothing checks the map against the tools that exist, and `:130-132` positively blesses the
+hole — *"falls back to a generic for an unmapped tool"*, asserting
+`{label: "Using", emphasis: "frobnicate"}`. That test is right about the fallback and should
+stay; it is simply not a coverage claim. So the three verbs are not "already failing" — they
+are covered in one map, exercised-but-unenumerated in the other, and the gate that exists
+never looked at the one the mock caught. Two consequences for the wave:
 
 1. `close_reading.tool` landing in R1 **will fail `test_tool_step_polish.py`** until
    `toolSummary.ts` gains its `STEP_LABELS` entry and an inline-arg policy (`facts`, or
    `NO_INLINE`). That is the gate working; do it in the same PR, not in the frontend wave.
-2. **Extend the gate to `status.ts`.** The roster test's own premise — a tool the owner
-   sees must not render as raw snake_case — is exactly as true of the live line as of the
-   settled row, and the gap survived because the test named one file. One more parsed map in
-   the same test, or the same class of hole reopens with the next verb.
+   `ask_owner`'s inline-arg entry is R1c's version of the same obligation (§7).
+2. **Gate `status.ts` — but scope it deliberately, because the obvious version does not
+   run.** "One more parsed map in the same test" fails on first execution: the roster is 124
+   `.tool` sidecars, `toolSummary.ts`'s `STEP_LABELS` carries 123, and `status.ts`'s
+   `TOOL_LABELS` carries 10. A whole-roster assertion over the live map demands ~114 labels
+   nobody has written, and a gate that lands red is a gate that gets skipped. Two honest
+   options, and the plan owes a choice rather than an aspiration: **(i)** gate the live map
+   against the note-conversation tool sets ONLY — §3's three frozensets, which are already
+   the enumerated closed lists this plan maintains, so the assertion is small, meaningful and
+   green the day the labels land; or **(ii)** cost the ~114 labels as their own chore and
+   gate the whole roster after. *Recommendation:* (i). The live line is where the owner
+   watches an INGEST pass; a generic "Using …" on some connector tool in a chat is a much
+   smaller wrong.
 
 ### I5 — Thought and Worked: the normal agent paradigm
 
@@ -851,7 +873,7 @@ rule for this block is inertness, and the submit is borrowed from the composer (
 
 **Candidate context is the point, not an ornament.** The candidates rendered here are the
 ones `_disambiguate` already assembles as `{id, name, kind, summary}`
-(`pipeline.py:1687-1690`) and the retired `ambiguous_mention` card already displayed — *Dr.
+(`pipeline.py:1688-1691`) and the retired `ambiguous_mention` card already displayed — *Dr.
 Alice Chen, cardiology, 4 notes* against *Dr. Ray Chen, paediatrics, 2 notes*. §2 hands them
 to the AGENT in the resolve result; this hands the same set to the OWNER, which is the half
 that makes a one-tap answer possible at all.
@@ -872,10 +894,10 @@ turn** carrying the structured answers plus whatever free text is in the box.
 
 What exists, and more than expected: the destination row **already** hides itself in a
 conversation mode, because it is driven off `MODES[mode].dest`, which is `null` for
-`fullbrain` and `research` (`notes/modes.ts:55-62`, `components/Omnibox.tsx:361-384`). And
+`fullbrain` and `research` (`notes/modes.ts:47-62`, `components/Omnibox.tsx:361-384`). And
 the carry strip has a precedent to copy rather than invent: the calendar handoff's
 appointment pill is exactly a piece of state that sits in the composer and rides the next
-send (`Omnibox.tsx:394-408`).
+send (`Omnibox.tsx:395-409`).
 
 **Where the mock overrules the code, and where the code should win:**
 
@@ -909,7 +931,7 @@ transition is what says that question has been answered, and it is the latch tha
 second reply appending the same answer again."* With a question SET the claim can no longer
 be the state flip: it moves to something addressed PER QUESTION, and the append composes
 several Q/A pairs where `append_clarification` takes one. `latest_question`
-(`asktools.py:80-96`) and `NotesInboxEntry.question` (singular, `note_conversation.py:311`)
+(`asktools.py:80-96`) and `NotesInboxEntry.question` (singular, `note_conversation.py:312`)
 both become plural with it.
 
 ### I9 — A settled thread, reopened later
@@ -927,7 +949,7 @@ What exists: a settled agent session already reopens by id and replays its trans
 makes I9 cheap: the questions are the `ask_owner` call's own arguments, recorded in the
 conversation's ledger inside the ask's transaction (`agent/asktools.py:142-151`) and carried
 to the PWA as the step's `args`, which a PERSISTED turn replays as well as a live one
-(`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:90`); the answers are the
+(`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:88-90`); the answers are the
 note's clarification blocks, which have a built route the app already calls
 (`api/client.ts:2493-2499`, consumed by `components/Clarifications.tsx`). So a reopened block
 renders from the transcript plus a read that exists — no new endpoint, and no answer state
@@ -938,7 +960,7 @@ that lives only in a component.
 | Piece | Status |
 |---|---|
 | The thread itself — transcript, Thought/Worked, steps, entity writes, session open-by-id, the inbox redirect | **Shipped** — the agent surface, plus `AGENT_INGEST_CONVERSATION_PLAN.md` W1–W4 and W3's two-tab inbox |
-| The composer, its dest-row hiding, and a "rides with your next send" pill | **Shipped** (`Omnibox.tsx:361-408`), needs a second instance for answers |
+| The composer, its dest-row hiding, and a "rides with your next send" pill | **Shipped** (`Omnibox.tsx:361-409`), needs a second instance for answers |
 | Live phase line, timers, `awaiting_owner` wording | **Shipped** (`FullBrainSurface.tsx:454`, `status.ts:101`) |
 | Live-phase labels for the ingest verbs | **New**, ~10 lines + a gate (I4) |
 | Turn-0 renderer that strips the fence | **New**, small (I3) |
@@ -1364,7 +1386,7 @@ sweeps yet: a reading commits exactly as `assert_fact` does. Green on
 the moment `close_reading.tool` exists it joins the roster `test_tool_step_polish.py`
 gates, so `toolSummary.ts` gains its `STEP_LABELS` entry and its inline-arg policy in this
 PR or CI is red (§3b I4). Add its `status.ts` live-phase label in the same edit — two maps,
-one verb, and the second one is the map nothing tests.
+one verb, and the second one has no roster gate to catch the omission.
 
 **R1b — one channel: card to result.** Separable from R1 and worth its own PR, because it
 is a behaviour change to the SHIPPED write path rather than a new verb, and because its
@@ -1375,21 +1397,49 @@ with `_self_report`; widen the hold result's wording; name the candidates in
 `inverse_proposal`, the EMR firewall card and wiki lint are untouched. `decide()`'s
 `Decision.review_kind` stays — it is what the result reads.
 
-**R1c — the batched ask (O9's build).** Backend only, and it is the prerequisite the whole
-frontend wave hangs off. `ask_owner` takes a question SET rather than one question — an
-array of items carrying the question, what it blocks, and the resolver's candidates where
-it has them (no `enum`, so constraint 8 is untouched; the shape is `close_reading`'s, an
+**R1c — the batched ask (O9's build).** The prerequisite the whole frontend wave hangs off.
+`ask_owner` takes a question SET rather than one question — an array of items carrying the
+question, what it blocks, and the resolver's candidates where it has them (no `enum`, so constraint 8 is untouched; the shape is `close_reading`'s, an
 array of string-valued objects with a `maxItems` clamp). The claim moves off the state
 flip: `record_owner_reply`'s atomicity is today the `waiting_on_owner → running`
 transition (`clarify.py:449-452`), and with several open questions it has to be addressed
 per question instead, or two replies can answer the same one twice. `latest_question`
-(`asktools.py:80-96`) and `NotesInboxEntry.question` (`note_conversation.py:311`) go
+(`asktools.py:80-96`) and `NotesInboxEntry.question` (`note_conversation.py:312`) go
 plural with it, the clarification append composes several Q/A pairs where it takes one
 today, and the reply route accepts a STRUCTURED answer list beside the free text (§3b I7 —
 a joined string cannot be paired back to its question, and a mispaired block is a wrong
 sentence in the owner's corpus). Separable from R1b: that PR changes the write path's
 relationship to the owner, this one changes the ask's arity, and bundling them makes one
 acceptance matrix out of two.
+
+**It is NOT backend-only, and three shipped things say so** — the same obligation R1 carries
+for `close_reading`, for the same reason:
+
+1. `toolSummary.ts:237` declares `ask_owner: ["question"]` in `INLINE_ARGS`, and
+   `test_tool_step_polish.py:109-117` asserts every key named there exists in that tool's
+   schema. `ask_owner.tool` declares `properties: {question: string}`; the moment the field
+   becomes a set, that test fails. The `INLINE_ARGS` entry moves to the new key (or to
+   `NO_INLINE`, if the set has no single human-readable target) in this PR.
+2. `NotesInboxEntry.question` going plural is a WIRE change with a live PWA reader:
+   `NotesInboxRow.ask: string | null` (`api/client.ts:1419`), rendered at
+   `review/NotesTab.tsx:59`. The row stays a redirect (D4) either way — what changes is
+   whether it quotes one ask or says how many are open.
+3. `ask_owner.tool`'s prose body is model-facing spec and contradicts the batch in as many
+   words: *"Record ONE question about this note for Jeff and stop"* and *"Ask once. A second
+   question in the same turn is refused"*. TOOL_SURFACE's lever for calibration is
+   description text, so the description IS the behaviour change and is rewritten here, not
+   left for a later wave to notice.
+
+**And name the interim, because the box is live between the two PRs.** `note_converse` is
+the note producer from the day its seed lands, so once R1c merges the agent can raise three
+questions while the PWA still offers only free prose and `record_owner_reply` still pairs an
+answer to ONE question through `latest_question` (`clarify.py:448`). Two ways out and the
+plan takes the first: **R1c degrades to today's behaviour whenever the answer arrives
+unstructured** — a free-prose reply answers the OLDEST open question and leaves the rest
+open, which is exactly today's semantics on a one-item set and never mispairs — or R1c and
+R3f land close enough together that the window does not include a real note. The degrade is
+a few lines and it is what makes R1c independently mergeable at all; without it R1c must not
+merge ahead of R3f.
 
 **R2 — the harness re-cut.** `_tool_calls` onto `close_reading`, the scenario format onto
 the reading, the runner's `sweep_note` re-labelled from divergence to spec. **Acceptance:
