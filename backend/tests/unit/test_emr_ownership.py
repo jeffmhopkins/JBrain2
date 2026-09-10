@@ -71,10 +71,11 @@ def test_narrowing_removes_every_write_verb_from_the_reply_turn_too() -> None:
 
 
 def test_the_write_verb_set_is_the_two_shipped_sets_write_halves() -> None:
-    # A fifth write verb added to either shipped set without joining
-    # NOTE_GRAPH_WRITE_TOOLS would be a verb the EMR narrowing silently keeps.
+    # A write verb added to either shipped set without joining NOTE_GRAPH_WRITE_TOOLS
+    # would be a verb the EMR narrowing silently keeps — which is exactly the check
+    # `close_reading` had to pass through on its way in (AGENT_INGEST_REWRITE R1).
     assert NOTE_GRAPH_WRITE_TOOLS <= NOTE_INGEST_ON_REPLY_TOOLS
-    assert {"resolve_entity", "assert_fact"} == (
+    assert {"resolve_entity", "assert_fact", "close_reading"} == (
         NOTE_GRAPH_WRITE_TOOLS & NOTE_INGEST_UNATTENDED_TOOLS
     )
 

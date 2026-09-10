@@ -966,6 +966,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # is the binding, not a grant (asserted in test_agent_prefstools.py).
         "prefs_read",
         "prefs_write",
+        # The note conversation's whole-note reading (`AGENT_INGEST_REWRITE.md` R1),
+        # bound on this registry for the same reason `resolve_entity`/`assert_fact` are:
+        # the owner's REPLY into a note thread is an ordinary /chat turn, and a name
+        # allowlisted with no sidecar here is a verb the reply turn can never dispatch.
+        "close_reading",
         *web,
     }
     assert registry.names() == shipped
@@ -996,11 +1001,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "prefs_write",
         "correct_fact",
         "merge_entities",
-        # And the two graph writes, now that this registry binds them for the reply turn
+        # And the graph writes, now that this registry binds them for the reply turn
         # (D8). Dropping their sidecars used to be the outer lock; NEVER_DEFAULT is what
         # replaced it, so a regression here hands `assert_fact` to curator's wildcard.
         "resolve_entity",
         "assert_fact",
+        "close_reading",
     }
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
@@ -1026,8 +1032,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "resolve_entity.tool": (
             "resolve_entity",
+            2,
+            "07c0b3a3be360d97705a033ed9768f964baa1f842f8f505f3105d01a223b4f08",
+        ),
+        # v2 is `distinguish` plus the current-facts half of the result
+        # (`AGENT_INGEST_REWRITE.md` R1/§3.4), and the bump is the point: both are ACI
+        # changes to a version-pinned sidecar.
+        "close_reading.tool": (
+            "close_reading",
             1,
-            "d325ae506ce2725cee495f7130b90088a042184e170d57e53e34b01bc1dfe819",
+            "f3dfcd8085aa905a89cbc7296969d2ec2b3179bf8f897b74c6427ca29a2d0324",
         ),
         # The on-reply half (D8): reachable only from a turn the owner sent, and each
         # force-supersedes or folds, so the wording is the contract for what a reply may

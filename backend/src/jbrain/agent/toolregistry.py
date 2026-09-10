@@ -80,6 +80,7 @@ NEVER_DEFAULT: frozenset[str] = frozenset(
         "prefs_write",
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "ask_owner",
         "correct_fact",
         "merge_entities",

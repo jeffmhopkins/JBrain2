@@ -51,6 +51,9 @@ back. Two suites:
 JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe shape 20
 JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe fields 12
 JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe fields 12 v4_shipping_eight
+JBRAIN_DEBUG_TOKEN=... uv run python -m evals.shape_probe repeats 20
+JBRAIN_DEBUG_TOKEN=... SHAPE_PROBE_DUMP=/tmp/runs uv run python -m evals.shape_probe ask 12
+JBRAIN_DEBUG_TOKEN=... SHAPE_PROBE_DUMP=/tmp/runs uv run python -m evals.shape_probe contradict 8
 ```
 
 `shape` (W2) answered the batched-vs-flat question for `assert_fact` — 20/20 both
@@ -74,6 +77,34 @@ alone on the ones that do not). The third is what decides a field — an
 over-applied `qualifier` splits an identity key so nothing supersedes again, and
 an over-applied `confidence` parks a true fact behind a card. Add an arm to
 `FIELD_ARMS` and a grader to `GRADERS`; keep the old arms, they are the record.
+
+## The three behavioural suites (R0 of `AGENT_INGEST_REWRITE.md`)
+
+`shape` and `fields` ask what the model puts in a field. R0 needed two questions those
+cannot reach — *does a GRAMMAR fare better than a word list*, and *what does the agent DO
+when it cannot settle something* — so the probe grew three suites and a second transport.
+
+- **`repeats`** — one field, three spellings, five recurring notes, scored on what a strict
+  parser ADMITS. Answer: an iCalendar RRULE came back parseable **0 times in 113** values,
+  and **0 in 115** on a sharpened spelling that names the format and forbids English; the
+  note's own phrase parses 80 times in 118 but says what the note says only 28. The model
+  writes `weekly` for "every Tuesday and Thursday" and `monthly` for "the first Monday of
+  the month". **So the PRESENCE-not-MEMBERSHIP rule extends to grammars, not just word
+  lists.** What does work: parsing the model's own verbatim `quote` recovers the rule on
+  **198 of 200** runs, which is why `repeats` became a handler step rather than a field.
+- **`ask`** and **`contradict`** — behavioural, and they run through `/api/debug/replay`
+  instead of `/tool-probe`, because "does it ask" is never visible in a FIRST call. Both
+  attach the real registry tools beside the candidate schema, drive the loop against canned
+  tool results, and use the SHIPPED `note_ingest.prompt` (read from the file, not
+  paraphrased — the persona's exact wording is the independent variable). No handler runs
+  and nothing reaches the graph. `ask` found 1 silent guess in 106 runs on notes with an
+  illegible value; `contradict` found the agent read the graph **0 times in 144** and called
+  `ask_owner` **0 times**, including under a persona that told it to do both.
+
+`SHAPE_PROBE_DUMP=<dir>` appends every raw run as JSONL so an arm can be re-scored offline.
+Use it: the heuristics that classify a behavioural run (was that question about the
+contradiction, is that value a guess or a hedge) are the weakest part of the probe, and a
+count nobody can re-check is not a measurement.
 
 ## Running the live eval
 

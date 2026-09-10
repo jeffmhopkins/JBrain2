@@ -921,3 +921,83 @@ async def test_a_pair_jeff_already_called_distinct_is_refused_not_staged(  # noq
     )
     assert "different people or things" in out
     assert "Nothing was staged" in out
+
+
+@pytest.mark.asyncio
+async def test_a_scope_change_rebuild_carries_the_reading_not_just_the_budgets(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """`close_reading` on the reply turn, and the state a rebuilt writer must not drop.
+
+    The cache is keyed on the turn's read SCOPES as well as its conversation, so a turn
+    whose scopes changed gets a fresh `NoteGraphWriter` — and the rule the rebuild has
+    always carried is "a rebuild must never be a way to buy calls". `Reading` joins the
+    budgets for that reason and for a second one that is worse: `clamped` says this
+    thread's reading is a PREFIX of the note, so a rebuild that dropped it would launder
+    an incomplete reading into a complete-looking one, which is precisely the input the
+    settle's gate exists to refuse."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    ctx = _ctx(owner_ctx, session_id)
+
+    await handlers["resolve_entity"]({"entities": [{"surface": "Kaiya", "kind": "person"}]}, ctx)
+    out = await handlers["close_reading"](
+        {
+            "title": "Kaiya's new medication",
+            "tags": ["kaiya"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "jobTitle",
+                    "object": "student",
+                    "statement": "Kaiya is a student.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "Kaiya is seen by Dr. Patel",
+                }
+            ],
+        },
+        ctx,
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+    assert "close_reading: 5 calls left this note" in str(out)
+
+    # The SAME conversation on a widened turn: a different cache key, so a new writer.
+    widened = str(
+        await handlers["close_reading"](
+            {"title": "", "tags": [], "facts": []},
+            _ctx(owner_ctx, session_id, scopes=("general", "health")),
+        )
+    )
+    # Nothing to record, so nothing landed — but the budget did not reset with the
+    # rebuild, and neither did the reading the first call accumulated.
+    assert "close_reading takes" in widened or "4 calls left" in widened
+    again = str(
+        await handlers["close_reading"](
+            {
+                "title": "More on Kaiya",
+                "tags": [],
+                "facts": [
+                    {
+                        "subject": "e1",
+                        "predicate": "allergy",
+                        "object": "penicillin",
+                        "statement": "Kaiya is allergic to penicillin.",
+                        "when": "",
+                        "when_end": "",
+                        "quote": "Kaiya is seen by Dr. Patel",
+                    }
+                ],
+            },
+            _ctx(owner_ctx, session_id, scopes=("general", "health")),
+        )
+    )
+    # The rebuilt writer continued the count instead of starting over…
+    assert "close_reading: 4 calls left this note" in again
+    # …and kept the title the FIRST call gave the note, which is the reading itself
+    # surviving the rebuild.
+    assert 'titled "Kaiya\'s new medication"' in again

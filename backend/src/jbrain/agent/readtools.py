@@ -248,7 +248,7 @@ OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # them out of curator's `allow=None` wildcard, and D16's closed allowlist admits them to
 # `note_ingest` alone. `analysis.converse` still builds the WORKER's own registry from
 # `graphwritetools.note_registry` — the unattended pass never consults this one.
-NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
+NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact", "close_reading"})
 
 # The verbs that give a turn DURABLE-STATE authority a fetched note body could drive.
 # `read_note` frames the body it returns when the turn holds one of them — see
@@ -263,7 +263,15 @@ NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
 # standing instruction injected into every future note conversation's system prompt, which
 # is exactly the kind of durable authority a stranger's note text must not be able to
 # reach unframed.
-GRAPH_WRITE_AUTHORITY = frozenset({"assert_fact", "correct_fact", "prefs_write"})
+#
+# `close_reading` is here for the plainest reason of all: it IS `assert_fact`'s write
+# authority — same `_assert_one`, same `commit_facts`, same `decide()` — and R1 added it
+# beside rather than instead of, so a set naming one and not the other frames a fetched
+# body for one write verb and not its twin. It becomes load-bearing the moment R2 retires
+# `assert_fact` from the unattended pass: the turn after that, a reply turn holding
+# `close_reading` + `read_note` would fetch a stranger-authored body UNFRAMED (plan risk
+# 1, re-opened by a wave that thought it was only adding a verb).
+GRAPH_WRITE_AUTHORITY = frozenset({"assert_fact", "close_reading", "correct_fact", "prefs_write"})
 _FETCHED_NOTE = "a note you fetched with read_note"
 
 

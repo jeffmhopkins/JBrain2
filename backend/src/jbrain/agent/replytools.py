@@ -87,6 +87,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.graphwritetools import (
     ASSERT_FACT,
+    CLOSE_READING,
     RESOLVE_ENTITY,
     NoteGraphWriter,
     NoteTarget,
@@ -306,6 +307,13 @@ def build_reply_write_handlers(
             writer.resolve_budget = existing[1].resolve_budget
             writer.assert_budget = existing[1].assert_budget
             writer.correct_budget = existing[1].correct_budget
+            # The reading carries too, and it carries for a second reason on top of the
+            # budget one: `Reading.clamped` says this thread's reading is a PREFIX of the
+            # note, and a rebuild that dropped it would launder an incomplete reading into
+            # a complete-looking one — which is the exact input the settle's gate is built
+            # to refuse (`AGENT_INGEST_REWRITE.md` §2).
+            writer.reading_budget = existing[1].reading_budget
+            writer.reading = existing[1].reading
         writers[session_id] = (scopes, writer)
         while len(writers) > _MAX_LIVE_WRITERS:
             writers.popitem(last=False)
@@ -628,6 +636,12 @@ def build_reply_write_handlers(
             return refusal
         return await writer.assert_fact(arguments, ctx)
 
+    async def close_reading_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        writer, _note_id, refusal = await _bound(ctx, CLOSE_READING)
+        if writer is None:
+            return refusal
+        return await writer.close_reading(arguments, ctx)
+
     return {
         CORRECT_FACT: _texted(CORRECT_FACT, correct_fact_tool),
         MERGE_ENTITIES: _texted(MERGE_ENTITIES, merge_entities_tool),
@@ -650,4 +664,16 @@ def build_reply_write_handlers(
         # `toolregistry.NEVER_DEFAULT`, so curator's wildcard cannot absorb them.
         RESOLVE_ENTITY: _texted(RESOLVE_ENTITY, resolve_entity_tool),
         ASSERT_FACT: _texted(ASSERT_FACT, assert_fact_tool),
+        # And the reading, for the same reason and by the same route. The on-reply set is
+        # a SUPERSET of the unattended one, so a reply turn that has re-read the whole
+        # note must be able to state it — a turn that can only add facts one at a time
+        # can never say what the note says NOW, which is the claim the settle needs
+        # (`AGENT_INGEST_REWRITE.md` §1). Its budget and its `Reading` are shared with
+        # every other reply turn on this thread — one writer per conversation, carried
+        # across a scope-change rebuild above — but NOT with the unattended pass, which
+        # ran in the worker: two processes, no shared memory, so a reply turn starts with
+        # an empty reading exactly as it starts with an empty handle table. That is why
+        # the settle's gate reads the pass's own writer at the pass's own terminal block
+        # rather than expecting the flag to survive the trip.
+        CLOSE_READING: _texted(CLOSE_READING, close_reading_tool),
     }

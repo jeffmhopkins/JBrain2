@@ -1,4 +1,4 @@
-"""The two tools that write the graph, at the level that needs no database.
+"""The three tools that write the graph, at the level that needs no database.
 
 The write behaviour itself is `tests/integration/test_note_graph_write_pg.py` — it goes
 through `commit_facts` and `decide()`, and faking those would test the fake. What is
@@ -43,10 +43,11 @@ def test_both_tools_take_the_measured_batch_shape() -> None:
     20/20 well-formed at 7.6 facts and 8.9 entities per turn, against 1.0 for the flat
     one-per-call fallback (TOOL_SURFACE cut 5). A regression to flat scalars would be
     eight round trips per note on a serial GPU with the owner waiting."""
-    facts = _spec("assert_fact").params["properties"]["facts"]
-    assert facts["type"] == "array"
-    assert facts["maxItems"] == gw.MAX_FACTS == 8
-    assert facts["items"]["type"] == "object"
+    for name in ("assert_fact", "close_reading"):
+        facts = _spec(name).params["properties"]["facts"]
+        assert facts["type"] == "array"
+        assert facts["maxItems"] == gw.MAX_FACTS == 8
+        assert facts["items"]["type"] == "object"
 
     entities = _spec("resolve_entity").params["properties"]["entities"]
     assert entities["type"] == "array"
@@ -82,7 +83,29 @@ def test_every_field_the_write_needs_is_required() -> None:
     assert set(item["properties"]) == set(item["required"])
 
     surface = _spec("resolve_entity").params["properties"]["entities"]["items"]
-    assert set(surface["required"]) == {"surface", "kind"} == set(surface["properties"])
+    required = {"surface", "kind", "distinguish"}
+    assert set(surface["required"]) == required == set(surface["properties"])
+
+    # `close_reading` is `assert_fact` v3's item MINUS `confidence` (§3.3 of
+    # AGENT_INGEST_REWRITE, decided by R0: 106 live runs on three illegible values
+    # produced exactly one silently-committed guess, and it came from the arm that HAS
+    # the field). The engine's half of the guard is untouched — `self_confidence` is
+    # still the span check — so what was deleted is a channel measured never to carry
+    # anything. And there is no recurrence field of any spelling: 0 parseable RRULEs in
+    # 228 values across two spellings, so recurrence is read from the `quote` in the
+    # handler (§3.2).
+    reading = _spec("close_reading").params["properties"]["facts"]["items"]
+    assert set(reading["required"]) == {
+        "subject",
+        "predicate",
+        "object",
+        "statement",
+        "when",
+        "when_end",
+        "quote",
+    }
+    assert set(reading["properties"]) == set(reading["required"])
+    assert set(_spec("close_reading").params["required"]) == {"title", "tags", "facts"}
 
 
 def test_the_schemas_the_model_must_never_be_offered_a_domain_or_an_enum() -> None:
@@ -95,11 +118,16 @@ def test_the_schemas_the_model_must_never_be_offered_a_domain_or_an_enum() -> No
     No JSON-Schema `enum` anywhere: the GBNF grammar is built over the WHOLE tool union
     offered that turn, so one enum in one sidecar is enough (plan constraint 8). The
     enumerated values live in the descriptions and are validated in the handler."""
-    for name in ("assert_fact", "resolve_entity"):
+    for name in ("assert_fact", "resolve_entity", "close_reading"):
         blob = json.dumps(_spec(name).params)
         assert '"enum"' not in blob, f"{name} carries an enum — the harmony grammar segfault"
         for banned in ("domain", "sensitive", "inferred", "supersedes", "correction", "note_id"):
             assert f'"{banned}"' not in blob, f"{name} offers a `{banned}` field"
+    # And the two fields R0 measured OFF the reading, by name, so a later wave re-adding
+    # either has to argue with the measurement rather than with a comment.
+    reading = json.dumps(_spec("close_reading").params)
+    for measured_off in ("repeats", "recurrence", "rrule", "confidence"):
+        assert f'"{measured_off}"' not in reading, f"close_reading offers `{measured_off}`"
 
 
 def test_the_kinds_are_described_not_enumerated_in_the_schema() -> None:
@@ -151,12 +179,12 @@ def test_the_registrys_route_to_a_measurement_is_nameable() -> None:
     assert not missing, f"registry types no word reaches: {sorted(missing)}"
 
 
-def test_both_tools_declare_themselves_writes() -> None:
+def test_all_three_tools_declare_themselves_writes() -> None:
     """`permission` is documentation rather than a gate here (`outcome_for` is never
     called by the loop), but the loop DOES read `mutating`/`side_effecting` to decide a
     turn mutated — which drives the reflexion critique — and the roster gate reads the
     class."""
-    for name in ("assert_fact", "resolve_entity"):
+    for name in ("assert_fact", "resolve_entity", "close_reading"):
         spec = _spec(name)
         assert spec.permission == "mutate"
         assert spec.mutating and spec.side_effecting
@@ -260,8 +288,30 @@ def test_the_batch_is_clamped_by_the_handler_not_by_max_items() -> None:
 def test_a_bare_string_element_is_lifted_rather_than_dropped() -> None:
     """A model that sends `["Dana"]` for a two-field shape has named a real surface. The
     schema asks for objects; dropping the element loses the entity outright."""
-    items, _ = gw._batch({"entities": ["Dana", "  ", 7]}, ("entities",), 12)
+    items, clamped = gw._batch({"entities": ["Dana", "  ", 7]}, ("entities",), 12)
     assert items == [{"surface": "Dana", "subject": "Dana"}]
+    # The two elements that could NOT be lifted are a loss, and the clamp is what says
+    # so — see below.
+    assert clamped is True
+
+
+def test_an_element_this_cannot_read_reports_as_a_clamp() -> None:
+    """The silent loss the clamp signal CAN carry. `facts: [{…}, null, {…}]` used to
+    report two facts recorded and no truncation, because the flag was computed AFTER the
+    unreadable element had been dropped — so a reading claimed to be the whole note while
+    missing a fact the model had written. The flag is now computed against what the model
+    SENT.
+
+    (The plan's O13 — the fact the model never writes at all — this cannot carry, and the
+    populations really are disjoint: one is about elements that arrived.)"""
+    items, clamped = gw._batch(
+        {"facts": [{"subject": "e1"}, None, {"subject": "e2"}]}, ("facts",), 8
+    )
+    assert len(items) == 2
+    assert clamped is True
+    # A batch that arrived whole is still not truncated, or the flag says nothing.
+    _clean, ok = gw._batch({"facts": [{"subject": "e1"}]}, ("facts",), 8)
+    assert ok is False
 
 
 def test_no_batch_key_reads_as_an_empty_batch_never_a_crash() -> None:
@@ -610,3 +660,129 @@ def test_the_sidecar_gained_nothing_the_model_can_set() -> None:
     assert spec.version == 3
     for forbidden in ("correction", "provenance", "pinned", "domain"):
         assert forbidden not in item["properties"]
+
+
+# --- the reading (R1 of AGENT_INGEST_REWRITE) ---------------------------------
+
+
+def test_a_reading_unions_its_calls_and_keeps_the_first_title() -> None:
+    """§3.1: "several calls are allowed and are unioned". A long note takes more than one
+    call of eight facts, and what the settle will eventually ask is what the note says
+    NOW — the union, not the last call.
+
+    The title is the FIRST non-empty one on purpose: a continuation call is the one most
+    likely to restate it loosely or blank it, and the call that read the note from the top
+    is the one that named it."""
+    reading = gw.Reading()
+    reading.union(title="Coffee with Dana", tags=["dana"], fact_ids=["f1", "f2"], clamped=True)
+    reading.union(
+        title="More about Dana", tags=["dana", "work"], fact_ids=["f2", "f3"], clamped=False
+    )
+    assert reading.title == "Coffee with Dana"
+    assert reading.tags == ("dana", "work")
+    # Order-preserving and deduplicated: this becomes `sweep_note(touched=…)`.
+    assert reading.fact_ids == ("f1", "f2", "f3")
+    assert reading.calls == 2
+    # And the clamp LATCHES. A reading whose first call was truncated is a prefix of the
+    # note however clean the rest of the pass looks, which is the whole reason the settle's
+    # gate will read this field rather than the last call's result.
+    assert reading.clamped is True
+
+
+def test_tags_are_normalized_deduplicated_and_capped() -> None:
+    """`tagconsolidate` normalizes tag drift ACROSS notes; this is the same tag twice in
+    one call, which no later pass would ever reconcile. A non-string element is dropped
+    rather than stringified — `3` is not a tag."""
+    assert gw._tags({"tags": ["Dana", " dana ", "Work", 3, None, "work"]}) == ("dana", "work")
+    assert gw._tags({"tags": "solo"}) == ("solo",)
+    assert gw._tags({"tags": [f"t{i}" for i in range(20)]}) == tuple(f"t{i}" for i in range(8))
+    assert gw._tags({}) == ()
+
+
+def _candidate(
+    name: str, kind: str = "Person", summary: str = "", domain: str = "general"
+) -> gw.Candidate:
+    import uuid as _uuid
+
+    return gw.Candidate(
+        id=_uuid.uuid4(), subject_id=None, name=name, kind=kind, summary=summary, domain=domain
+    )
+
+
+def test_distinguish_narrows_to_one_candidate_or_refuses() -> None:
+    """§3.4's matcher, and the experiment that section named as a unit test rather than a
+    probe. It runs over exactly what `_file_ambiguous_review` put on the card the result
+    is replacing — name, kind, summary — because that is all the agent is shown and all
+    it can answer from.
+
+    It refuses in both directions that matter, and the tie is the sharp one: two
+    candidates that fit equally well are the ambiguity restated, and picking one is how a
+    fact lands on the wrong person for good."""
+    dana_w = _candidate("Dana Whitfield", summary="staff engineer at Everlane")
+    dana_r = _candidate("Dana Reyes", summary="cardiologist in Boulder")
+    both = [dana_w, dana_r]
+
+    assert gw._distinguish(both, "Dana Whitfield") is dana_w
+    assert gw._distinguish(both, "the one in Boulder") is dana_r
+    assert gw._distinguish(both, "her cardiologist") is dana_r
+    # Nothing in the phrase separates them.
+    assert gw._distinguish(both, "the one from the note") is None
+    # A word both candidates carry is a tie, not a winner.
+    assert gw._distinguish(both, "Dana") is None
+    # Stopwords alone say nothing, and an empty phrase is never a choice.
+    assert gw._distinguish(both, "the one") is None
+    assert gw._distinguish(both, "") is None
+    assert gw._distinguish([], "Dana Whitfield") is None
+
+
+_GENERAL = frozenset({"general"})
+
+
+def test_the_ambiguity_result_names_the_candidates() -> None:
+    """The card named them and the tool result did not (§2, `ambiguous_mention`), so the
+    agent was refused an answer it was never given the means to give. The names, kinds and
+    summaries are what `distinguish` is matched against, so the result has to show all
+    three."""
+    line = gw._candidate_note(
+        [
+            _candidate("Dana Whitfield", summary="staff engineer at Everlane"),
+            _candidate("Dana Reyes", summary="cardiologist in Boulder"),
+        ],
+        _GENERAL,
+    )
+    assert "Dana Whitfield (Person, staff engineer at Everlane)" in line
+    assert "Dana Reyes (Person, cardiologist in Boulder)" in line
+    # Bounded: past a handful the list stops being a question anyone can answer.
+    many = gw._candidate_note([_candidate(f"Dana {i}") for i in range(9)], _GENERAL)
+    assert many.count(";") == gw.MAX_CANDIDATES
+    assert f"{9 - gw.MAX_CANDIDATES} more" in many
+    assert gw._candidate_note([], _GENERAL) == ""
+
+
+def test_a_candidate_outside_the_conversations_scopes_is_counted_never_named() -> None:
+    """The branch `Handle.visible` does not cover, and it renders exactly what that check
+    exists to withhold: an ambiguity result printing "Dr. Anjali Renwick (Person,
+    oncologist at Kaiser)" discloses through the FAILED resolution what the successful one
+    is careful never to say.
+
+    Counted rather than dropped, because the count is not the disclosure: the same surface
+    resolving cleanly already tells the thread a handle is "already known" without saying
+    to what, and the agent needs to know `distinguish` has something to choose from."""
+    line = gw._candidate_note(
+        [
+            _candidate("Dana Whitfield", summary="staff engineer at Everlane"),
+            _candidate("Dr. Anjali Renwick", summary="oncologist at Kaiser", domain="health"),
+        ],
+        _GENERAL,
+    )
+    assert "Dana Whitfield (Person, staff engineer at Everlane)" in line
+    assert "Anjali" not in line and "oncologist" not in line
+    assert "1 in a domain this note cannot see" in line
+    # And when EVERY candidate is out of scope, the COUNT still comes back: it says
+    # nothing about which domain or whose row, and it is the difference between "ask the
+    # owner, I cannot see them" and a bare refusal the agent would try to answer.
+    both_hidden = gw._candidate_note(
+        [_candidate("Renwick", domain="health"), _candidate("Renwick", domain="health")],
+        _GENERAL,
+    )
+    assert both_hidden == " It could be: 2 in a domain this note cannot see."

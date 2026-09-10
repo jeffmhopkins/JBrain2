@@ -1,0 +1,469 @@
+<title>The Note's Own Thread</title>
+<style>
+  /* Tokens from frontend/src/styles/tokens.css — dark default, light override.
+     Transcript classes mirror frontend/src/styles.css (.fb-act-think / .fb-act-work
+     / .fb-step-row / .fb-think-tool) so this reads as the shipped paradigm. */
+  :root {
+    color-scheme: dark;
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66; --surface-composer:#141518;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;  --rose-tint:rgba(207,138,143,.13);
+    --violet:#a493c9;--violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px -24px rgba(0,0,0,.8);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+      --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#ffffff;
+      --shadow-card: 0 1px 2px rgba(0,0,0,.06), 0 14px 34px -22px rgba(0,0,0,.25);
+    }
+  }
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#ffffff;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.06), 0 14px 34px -22px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-size:15px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1230px; margin:0 auto; padding-inline:20px; padding-block:26px 60px; }
+  h1,h2,h3 { margin:0; text-wrap:balance; }
+  .mono { font-family:var(--mono); }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline:2px solid var(--steel); outline-offset:2px; }
+  [hidden] { display:none !important; }
+
+  header { display:flex; flex-wrap:wrap; gap:14px 24px; align-items:flex-end; justify-content:space-between; margin-bottom:22px; }
+  .eyebrow { font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--text-3); }
+  h1 { font-size:27px; font-weight:650; letter-spacing:-.02em; margin-top:6px; }
+  .sub { color:var(--text-2); max-width:60ch; margin:7px 0 0; font-size:14px; }
+  .mockpill { display:inline-flex; align-items:center; gap:6px; flex-shrink:0; background:var(--amber-tint);
+    color:var(--amber); border:1px solid color-mix(in srgb,var(--amber) 34%,transparent);
+    border-radius:var(--r-pill); padding:5px 12px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+
+  .stage { display:grid; grid-template-columns:394px 1fr; gap:26px; align-items:start; }
+  @media (max-width:900px){ .stage{ grid-template-columns:1fr; } }
+
+  .phone { background:var(--bg); border:1px solid var(--border); border-radius:28px; box-shadow:var(--shadow-card);
+    overflow:hidden; display:flex; flex-direction:column; height:730px; }
+  .statusbar { display:flex; justify-content:space-between; align-items:center; padding:11px 20px 7px;
+    font-size:12px; color:var(--text-3); font-variant-numeric:tabular-nums; }
+  .navbar { display:flex; align-items:center; gap:9px; padding:5px 14px 10px; border-bottom:1px solid var(--border); }
+  .back { font:inherit; font-size:20px; line-height:1; background:none; border:0; color:var(--steel); cursor:pointer; padding:2px 4px; }
+  .navtitle { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .navsub { font-size:11px; color:var(--text-3); }
+  .scroll { flex:1; overflow-y:auto; padding:10px 14px 14px; display:flex; flex-direction:column; gap:10px; }
+  .daysep { font-size:11px; color:var(--text-3); text-align:center; padding:6px 0 2px; }
+
+  .row { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-card);
+    padding:11px 13px; display:flex; flex-direction:column; gap:7px; }
+  .row.tap { cursor:pointer; text-align:left; font:inherit; color:inherit; width:100%; }
+  .row.tap:hover { border-color:color-mix(in srgb,var(--rose) 40%,var(--border)); }
+  .rowhead { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text-3); }
+  .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .rowbody { font-size:14px; color:var(--text); }
+  .chip { display:inline-flex; align-items:center; gap:5px; align-self:flex-start; font-size:11px; font-weight:600;
+    border-radius:var(--r-pill); padding:3px 9px; }
+  .chip-ask { background:var(--rose-tint); color:var(--rose); }
+  .chip-ok { background:var(--green-tint); color:var(--green); }
+  .spin { width:9px; height:9px; border:1.5px solid currentColor; border-right-color:transparent; border-radius:50%;
+    animation:sp .7s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+
+  /* turn 0 + user turns */
+  .turn0 { border-left:3px solid var(--rose); background:var(--surface); border-radius:0 var(--r-card) var(--r-card) 0; padding:11px 13px; }
+  .turn0 .lab { font-size:10.5px; font-family:var(--mono); color:var(--rose); letter-spacing:.04em; margin-bottom:5px; }
+  .turn0 .txt { font-size:14px; }
+
+  /* ---- shipped transcript paradigm ---- */
+  .bubble { display:flex; flex-direction:column; gap:8px; }
+  .btext { font-size:14px; }
+  .btext p { margin:0 0 8px; } .btext p:last-child { margin-bottom:0; }
+
+  .acts { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .act { display:flex; align-items:center; gap:7px; font:inherit; font-size:12px; font-weight:500; cursor:pointer;
+    background:none; border:1px solid var(--border); border-radius:var(--r-pill); padding:4px 10px;
+    color:var(--text-2); transition:background .14s, border-color .14s, color .14s; }
+  .act:hover { color:var(--text); }
+  .act .aic { width:13px; height:13px; flex:none; display:grid; place-items:center; font-size:11px; }
+  .act-think .aic { color:var(--violet); }
+  .act-work .aic { color:var(--steel); }
+  .act-think[aria-expanded="true"] { background:var(--violet-tint); border-color:rgba(164,147,201,.3); color:var(--violet); }
+  .act-work[aria-expanded="true"] { background:var(--steel-tint); border-color:rgba(127,167,201,.3); color:var(--steel); }
+  .acount { font-weight:400; color:var(--text-3); }
+  .act[aria-expanded="true"] .acount { opacity:.75; color:inherit; }
+
+  .panelout { border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface); }
+  .reason { font-size:13px; color:var(--text-2); line-height:1.55; }
+  .steps { display:flex; flex-direction:column; gap:2px; }
+  .steprow { display:flex; align-items:center; gap:8px; min-height:34px; padding:4px 6px; border-radius:10px;
+    color:var(--text-2); }
+  .steprow .tw { width:15px; flex:none; text-align:center; font-size:11px; color:var(--steel); }
+  .steprow.q .tw { color:var(--rose); }
+  .steprow .lab { flex:0 0 auto; font-size:12.5px; color:var(--text); }
+  .steprow .arg { flex:1; min-width:0; font-family:var(--mono); font-size:11px; color:var(--text-3);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .thinktool { display:flex; align-items:center; gap:8px; margin:4px 0; min-width:0; font-size:13px; }
+  .thinktool .mk { flex:none; font-size:11px; color:var(--violet); }
+  .thinktool .nm { flex:none; font-weight:600; color:var(--text-2); }
+  .thinktool .ag { flex:1; min-width:0; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .thinktool .el { flex:none; font-family:var(--mono); font-size:11px; color:var(--text-3); font-variant-numeric:tabular-nums; }
+
+  /* question block — fills state only, never sends */
+  .qblock { border:1px solid color-mix(in srgb,var(--rose) 30%,var(--border)); border-radius:var(--r-card);
+    background:var(--surface); padding:11px 12px; display:flex; flex-direction:column; gap:0; }
+  .qhdr { font-size:10.5px; font-family:var(--mono); color:var(--rose); letter-spacing:.04em; margin-bottom:8px; }
+  .q { padding:9px 0; border-top:1px solid var(--border); }
+  .q:first-of-type { border-top:0; padding-top:0; }
+  .qwhy { font-family:var(--mono); font-size:10.5px; color:var(--text-3); margin-bottom:3px; }
+  .qtx { font-size:13.5px; font-weight:600; }
+  .opts { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+  .opt { font:inherit; font-size:12px; cursor:pointer; text-align:left; background:var(--surface-2); color:var(--text);
+    border:1px solid var(--border); border-radius:9px; padding:6px 9px; line-height:1.3; }
+  .opt small { display:block; font-family:var(--mono); font-size:10px; color:var(--text-3); margin-top:1px; }
+  .opt[aria-pressed="true"] { background:var(--rose-tint); border-color:var(--rose); }
+  .opt[aria-pressed="true"] small { color:var(--rose); }
+  .qin { font:inherit; font-size:13px; width:100%; margin-top:7px; background:var(--surface-2); color:var(--text);
+    border:1px solid var(--border); border-radius:9px; padding:7px 9px; }
+  .qnote { margin-top:10px; padding-top:9px; border-top:1px dashed var(--border); font-size:11.5px; color:var(--text-3); }
+
+  /* composer */
+  .composer { background:var(--surface-composer); border-top:1px solid var(--border); padding:10px 12px 13px;
+    display:flex; flex-direction:column; gap:9px; }
+  .seg { display:flex; border:1px solid var(--border); border-radius:var(--r-seg); overflow:hidden; }
+  .seg button { flex:1; font:inherit; font-size:13px; cursor:pointer; padding:8px 4px; background:transparent;
+    color:var(--text-2); border:0; border-right:1px solid var(--border); display:flex; align-items:center; justify-content:center; gap:6px; }
+  .seg button:last-child { border-right:0; }
+  .seg button[aria-pressed="true"] { background:var(--rose-tint); color:var(--rose); font-weight:650; }
+  .gl { width:9px; height:9px; border-radius:3px; background:currentColor; opacity:.85; }
+  .dest { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-2); font-family:var(--mono); }
+  .dest .sel { color:var(--rose); }
+  .carry { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--rose);
+    background:var(--rose-tint); border-radius:9px; padding:6px 9px; }
+  .carry b { font-weight:650; }
+  .box { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-input); padding:9px 11px;
+    min-height:64px; display:flex; }
+  .box textarea { font:inherit; font-size:14px; resize:none; flex:1; background:transparent; color:var(--text);
+    border:0; outline:none; width:100%; }
+  .box textarea::placeholder { color:var(--text-3); }
+  .foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .fnote { font-size:11px; color:var(--text-3); }
+  .send { font:inherit; font-size:13px; font-weight:650; cursor:pointer; background:var(--rose); color:#17181b;
+    border:0; border-radius:var(--r-pill); padding:7px 17px; }
+  .send:disabled { opacity:.4; cursor:not-allowed; }
+
+  /* rail */
+  .rail h2 { font-size:12px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--text-2); margin-bottom:11px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-card); padding:14px; margin-bottom:15px; }
+  .card h3 { font-size:13px; font-weight:650; margin-bottom:6px; }
+  .card p { margin:0; font-size:13px; color:var(--text-2); }
+  .card code { font-family:var(--mono); font-size:11.5px; background:var(--surface-2); border-radius:3px; padding:1px 5px; color:var(--text); }
+  .turns { display:flex; gap:0; border:1px solid var(--border); border-radius:var(--r-card); overflow:hidden; margin-bottom:15px; }
+  .tcell { flex:1; padding:13px 14px; background:var(--surface); }
+  .tcell + .tcell { border-left:1px solid var(--border); }
+  .tcell .k { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-3); }
+  .tcell .n { font-family:var(--mono); font-size:23px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .tcell.good .n { color:var(--green); } .tcell.bad .n { color:var(--text-3); }
+  .tcell .s { font-size:11.5px; color:var(--text-3); margin-top:2px; }
+  .facts { display:flex; flex-direction:column; }
+  .fact { display:flex; flex-wrap:wrap; gap:4px 9px; align-items:baseline; font-family:var(--mono); font-size:11.5px;
+    padding:6px 0; border-bottom:1px solid var(--border); }
+  .fact:last-child { border-bottom:0; }
+  .fact .s { color:var(--steel); } .fact .v { color:var(--text-2); }
+  .fact .d { margin-left:auto; font-size:10px; color:var(--text-3); }
+  .gap { border-color:color-mix(in srgb,var(--amber) 32%,var(--border)); }
+  .gap h3 { color:var(--amber); }
+
+  footer { margin-top:28px; padding-top:18px; border-top:1px solid var(--border); color:var(--text-3); font-size:13px; max-width:78ch; }
+  footer b { color:var(--text-2); font-weight:600; }
+  @media (prefers-reduced-motion:reduce){ *,*::before{ animation:none!important; transition:none!important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <p class="eyebrow">JBrain2 · note ingestion · proposed</p>
+      <h1>The note's own thread</h1>
+      <p class="sub">Open a note and you're in its conversation — the same Thought and Worked chips as any agent thread. The question block only fills state. The omnibox send is the one thing that starts a turn.</p>
+    </div>
+    <span class="mockpill">Mockup · not live data</span>
+  </header>
+
+  <div class="stage">
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span id="sbr">Medical</span></div>
+
+      <div id="navStream" class="navbar" style="justify-content:space-between">
+        <span class="navtitle">Today</span><span class="navsub">3 notes</span>
+      </div>
+      <div class="scroll" id="viewStream">
+        <div class="daysep">Tuesday 9 September</div>
+        <div class="row">
+          <div class="rowhead"><span class="dot" style="background:var(--green)"></span><span>General · 08:12</span></div>
+          <div class="rowbody">Bins out. Recycling was collected, general wasn't.</div>
+        </div>
+        <div class="row">
+          <div class="rowhead"><span class="dot" style="background:var(--violet)"></span><span>Financial · 14:30</span></div>
+          <div class="rowbody">Insurance renewal quote — £412, up from £377.</div>
+        </div>
+        <button class="row tap" id="openThread" type="button">
+          <span class="rowhead"><span class="dot" style="background:var(--rose)"></span><span>Medical · Medications · 21:14</span></span>
+          <span class="rowbody">Kaiya started the new med Dr. Chen put her on — 5 mg, once at night. Picked the Civic up from Meyer's, transmission's covered but the belt isn't. Dinner with Sam Friday if the rain holds.</span>
+          <span class="chip chip-ask" id="streamChip">3 questions</span>
+        </button>
+        <p style="font-size:11.5px;color:var(--text-3);text-align:center;margin:2px 0 0">Tap the note to open its thread</p>
+      </div>
+
+      <div id="navThread" class="navbar" hidden>
+        <button class="back" id="back" type="button" aria-label="Back to stream">‹</button>
+        <div style="min-width:0">
+          <div class="navtitle">Kaiya started the new med…</div>
+          <div class="navsub"><span class="dot" style="display:inline-block;background:var(--rose)"></span> Medical · note thread</div>
+        </div>
+      </div>
+      <div class="scroll" id="viewThread" hidden></div>
+
+      <div class="composer">
+        <div class="seg" role="group" aria-label="Mode" id="segRow">
+          <button type="button" aria-pressed="false"><span class="gl" style="background:var(--green)"></span>Entry</button>
+          <button type="button" aria-pressed="true"><span class="gl"></span>Medical</button>
+          <button type="button" aria-pressed="false"><span class="gl" style="background:var(--violet)"></span>Financial</button>
+        </div>
+        <div class="dest" id="destRow"><span>notes/medical/</span><span class="sel">Medications</span></div>
+        <div class="carry" id="carry" hidden><span>↑</span><span><b id="carryN">0 of 3</b> answered — rides with your next send</span></div>
+        <div class="box">
+          <label for="cin" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Message</label>
+          <textarea id="cin" rows="2" placeholder="Log a lab, note, procedure…"></textarea>
+        </div>
+        <div class="foot">
+          <span class="fnote" id="fnote">⏎ to send · health domain</span>
+          <button class="send" id="csend" type="button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail">
+      <h2>What the turn costs</h2>
+      <div class="turns">
+        <div class="tcell good"><div class="k">This design</div><div class="n" id="turnN">0</div><div class="s">user turns · one send carries all three answers</div></div>
+        <div class="tcell bad"><div class="k">One ask per pass</div><div class="n">3</div><div class="s">three sends, three re-ingests, three passes</div></div>
+      </div>
+
+      <div class="card">
+        <h3>Where a turn can start</h3>
+        <p>Exactly one place: the omnibox send. Selecting a candidate or typing into a question field is local state — it can't fire a turn, so a half-answered block costs nothing and a stray tap can't burn a pass. The block and the composer compose into one message.</p>
+      </div>
+
+      <div class="card" id="cardFacts" hidden>
+        <h3>close_reading — one call, one statement</h3>
+        <div class="facts" id="facts"></div>
+      </div>
+
+      <div class="card gap">
+        <h3>Gaps this exposes</h3>
+        <p style="margin-bottom:8px"><code>resolve_entity</code>, <code>close_reading</code> and <code>ask_owner</code> are absent from the label map in <code>agent/status.ts</code>, so a live pass reads “Using resolve_entity” rather than “Looking up an entity”.</p>
+        <p>And a half-filled block needs somewhere to live if you close the app — draft state per thread, or the answers are gone.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <b>Why the omnibox is the only submit.</b> Interactive components inside a transcript are cheap to add and expensive to get wrong: if each answer posted, three taps would be three turns, three clarification blocks and three re-ingests — the exact cost this batching exists to remove. Making the components inert and letting the composer's existing send carry them means there is one submit affordance in the app, and it is the one already there. <b>Still open:</b> whether a partial send is allowed, and what pushes when the thread starts waiting.
+  </footer>
+</div>
+
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i);};
+  var timers=[], ans={med:"",chen:"",sam:""}, phase="stream", turns=0;
+  function at(ms,fn){ timers.push(setTimeout(fn,ms)); }
+  function clr(){ timers.forEach(clearTimeout); timers=[]; }
+  function esc(s){ return String(s).replace(/</g,"&lt;"); }
+  function sc(){ var v=$("viewThread"); v.scrollTop=v.scrollHeight; }
+  function nAns(){ return ["med","chen","sam"].filter(function(k){ return String(ans[k]).trim()!==""; }).length; }
+
+  var NOTE="Kaiya started the new med Dr. Chen put her on — 5 mg, once at night. Picked the Civic up from Meyer's, transmission's covered but the belt isn't. Dinner with Sam Friday if the rain holds.";
+  var STEPS=[
+    ["Reading","the note","ok"],["Checking","the time → Friday = 12 Sep","ok"],
+    ["Looking up","Kaiya → e:kaiya-p3f2","ok"],["Looking up","the Civic → e:civic-9k1","ok"],
+    ["Looking up","Dr. Chen → 2 candidates","q"],["Looking up","Sam → 3 candidates","q"],
+    ["Asking","you · 3 questions","q"]
+  ];
+
+  function openThread(){
+    clr(); phase="thread"; ans={med:"",chen:"",sam:""};
+    $("viewStream").hidden=true; $("navStream").hidden=true;
+    $("viewThread").hidden=false; $("navThread").hidden=false;
+    $("destRow").hidden=true; $("segRow").hidden=true;
+    $("cin").placeholder="Reply in this thread…";
+    $("cardFacts").hidden=true; $("facts").textContent="";
+    turns=0; $("turnN").textContent="0";
+
+    var v=$("viewThread"); v.textContent="";
+    v.insertAdjacentHTML("beforeend",
+      '<div class="turn0"><div class="lab">turn 0 · the note, frozen</div><div class="txt">'+esc(NOTE)+'</div></div>');
+
+    var live=document.createElement("div"); live.className="thinktool"; live.id="live";
+    live.innerHTML='<span class="mk">◆</span><span class="nm">Thinking</span><span class="ag"></span><span class="el">0.3s</span>';
+    v.appendChild(live); sc();
+
+    STEPS.forEach(function(s,i){
+      at(600+i*640,function(){
+        var l=$("live");
+        if(l) l.innerHTML='<span class="mk">◆</span><span class="nm">'+s[0]+'</span><span class="ag">'
+          +esc(s[1])+'</span><span class="el">'+(0.3+i*0.64).toFixed(1)+'s</span>';
+      });
+    });
+
+    at(600+STEPS.length*640+200, function(){
+      var l=$("live"); if(l) l.remove();
+      bubble(); sc();
+    });
+    updComposer();
+  }
+
+  function bubble(){
+    var v=$("viewThread");
+    var b=document.createElement("div"); b.className="bubble";
+    var steps=STEPS.map(function(s){
+      return '<div class="steprow'+(s[2]==="q"?" q":"")+'"><span class="tw">'+(s[2]==="q"?"?":"✓")
+        +'</span><span class="lab">'+s[0]+'</span><span class="arg">'+esc(s[1])+'</span></div>';
+    }).join("");
+    b.innerHTML =
+      '<div class="btext"><p>I got most of it. Three things the note doesn\'t settle — answer them together and I can finish in one pass.</p></div>'+
+      '<div class="acts">'+
+        '<button class="act act-think" id="tThink" aria-expanded="false"><span class="aic">◆</span>Thought<span class="acount">6s</span></button>'+
+        '<button class="act act-work" id="tWork" aria-expanded="false"><span class="aic">▤</span>Worked<span class="acount">7 steps</span></button>'+
+      '</div>'+
+      '<div class="panelout" id="pThink" hidden><div class="reason">The note runs three ways at once — a medication for Kaiya, the Civic back from a garage, and dinner plans. Take the cast first and see what actually resolves; the date I can settle myself from the capture time. Two names come back with several matches and the medication has a dose but no name, so those three are the owner\'s, not mine.</div></div>'+
+      '<div class="panelout" id="pWork" hidden><div class="steps">'+steps+'</div></div>'+
+      '<div class="qblock" id="qb">'+
+        '<div class="qhdr">3 questions · answers ride with your next send</div>'+
+        '<div class="q"><div class="qwhy">blocks · medication.started on e:kaiya-p3f2</div>'+
+          '<div class="qtx">What\'s the medication called?</div>'+
+          '<input class="qin" id="aMed" type="text" placeholder="5 mg nightly, but no name given" autocomplete="off"></div>'+
+        '<div class="q"><div class="qwhy">blocks · resolve_entity("Dr. Chen")</div>'+
+          '<div class="qtx">Which Dr. Chen?</div><div class="opts" data-k="chen">'+
+          '<button class="opt" type="button" data-v="Dr. Alice Chen">Dr. Alice Chen<small>cardiology · 4 notes</small></button>'+
+          '<button class="opt" type="button" data-v="Dr. Ray Chen">Dr. Ray Chen<small>paediatrics · 2 notes</small></button></div></div>'+
+        '<div class="q"><div class="qwhy">blocks · resolve_entity("Sam")</div>'+
+          '<div class="qtx">Which Sam is dinner with?</div><div class="opts" data-k="sam">'+
+          '<button class="opt" type="button" data-v="Sam Okonkwo">Sam Okonkwo<small>brother-in-law</small></button>'+
+          '<button class="opt" type="button" data-v="Sam Reyes">Sam Reyes<small>climbing gym</small></button>'+
+          '<button class="opt" type="button" data-v="Samira Haddad">Samira Haddad<small>work</small></button></div></div>'+
+        '<div class="qnote">Nothing here sends. Selecting fills the composer below — one send, one turn.</div>'+
+      '</div>';
+    v.appendChild(b);
+
+    $("tThink").addEventListener("click",function(){ tog(this,"pThink"); });
+    $("tWork").addEventListener("click",function(){ tog(this,"pWork"); });
+    $("aMed").addEventListener("input",function(e){ ans.med=e.target.value; updComposer(); });
+    b.querySelectorAll(".opts").forEach(function(g){
+      var k=g.getAttribute("data-k");
+      g.querySelectorAll(".opt").forEach(function(o){
+        o.setAttribute("aria-pressed","false");
+        o.addEventListener("click",function(){
+          g.querySelectorAll(".opt").forEach(function(x){ x.setAttribute("aria-pressed","false"); });
+          o.setAttribute("aria-pressed","true"); ans[k]=o.getAttribute("data-v"); updComposer();
+        });
+      });
+    });
+    $("streamChip").className="chip chip-ask"; $("streamChip").textContent="3 questions";
+    updComposer();
+  }
+
+  function tog(btn,panelId){
+    var open=btn.getAttribute("aria-expanded")==="true";
+    btn.setAttribute("aria-expanded",String(!open));
+    $(panelId).hidden=open; sc();
+  }
+
+  function updComposer(){
+    if(phase!=="thread"){ $("carry").hidden=true; return; }
+    var n=nAns();
+    $("carry").hidden = n===0;
+    $("carryN").textContent = n+" of 3";
+    $("csend").disabled = n===0 && !$("cin").value.trim();
+    $("fnote").textContent = n===3 ? "⏎ sends all three — one turn"
+      : n>0 ? "⏎ sends "+n+" of 3 · the rest stay open"
+      : "answer above, or type a reply";
+  }
+
+  function reply(){
+    if(phase!=="thread") return;
+    var n=nAns(); var extra=$("cin").value.trim();
+    if(n===0 && !extra) return;
+    turns++; $("turnN").textContent=String(turns);
+
+    var qb=$("qb");
+    if(qb){ qb.style.opacity=".5"; qb.querySelectorAll("button,input").forEach(function(e){ e.disabled=true; }); }
+
+    var parts=["med","chen","sam"].filter(function(k){ return String(ans[k]).trim()!==""; })
+      .map(function(k){ return ans[k]; });
+    if(extra) parts.push(extra);
+
+    var v=$("viewThread");
+    v.insertAdjacentHTML("beforeend",
+      '<div class="turn0" style="border-left-color:var(--green)"><div class="lab" style="color:var(--green)">your turn · appended to the note</div>'
+      +'<div class="txt">'+esc(parts.join(" · "))+'</div></div>');
+    $("cin").value=""; $("carry").hidden=true; $("csend").disabled=true;
+    $("fnote").textContent="re-ingesting…";
+
+    var live=document.createElement("div"); live.className="thinktool"; live.id="live2";
+    live.innerHTML='<span class="mk">◆</span><span class="nm">Re-reading</span><span class="ag">the note, with your answers</span>';
+    v.appendChild(live); sc();
+
+    at(1500,function(){
+      var l=$("live2"); if(l) l.remove();
+      var med=ans.med.trim()||"the medication";
+      v.insertAdjacentHTML("beforeend",
+        '<div class="bubble"><div class="btext"><p>Recorded. '+esc(med)+' for Kaiya, 5 mg nightly, prescribed by '
+        +esc(ans.chen||"—")+'. The Civic\'s transmission is done and the belt declined. Dinner with '
+        +esc(ans.sam||"—")+' on Friday 12 September.</p></div>'
+        +'<div class="acts"><button class="act act-work" aria-expanded="false"><span class="aic">▤</span>Worked<span class="acount">1 step · close_reading</span></button></div>'
+        +'<span class="chip chip-ok">5 facts · 2 entities · settled</span></div>');
+      sc();
+      $("streamChip").className="chip chip-ok"; $("streamChip").textContent="analyzed";
+      $("fnote").textContent="⏎ to send · replying in thread";
+      $("cardFacts").hidden=false;
+      [["e:kaiya-p3f2","medication.started",med+" · 5 mg nightly","health"],
+       ["e:kaiya-p3f2","prescribed_by",ans.chen||"—","health"],
+       ["e:civic-9k1","service.completed","transmission · covered","general"],
+       ["e:civic-9k1","service.declined","belt","general"],
+       ["e:owner","appointment.scheduled","dinner · "+(ans.sam||"—")+" · 12 Sep","general"]
+      ].forEach(function(f,i){
+        at(i*150,function(){
+          var d=document.createElement("div"); d.className="fact";
+          d.innerHTML='<span class="s">'+f[0]+'</span><span>'+f[1]+'</span><span class="v">'+esc(f[2])
+            +'</span><span class="d">'+f[3]+'</span>';
+          $("facts").appendChild(d);
+        });
+      });
+    });
+  }
+
+  $("openThread").addEventListener("click",openThread);
+  $("back").addEventListener("click",function(){
+    clr(); phase="stream";
+    $("viewThread").hidden=true; $("navThread").hidden=true;
+    $("viewStream").hidden=false; $("navStream").hidden=false;
+    $("destRow").hidden=false; $("segRow").hidden=false; $("carry").hidden=true;
+    $("cin").placeholder="Log a lab, note, procedure…";
+    $("fnote").textContent="⏎ to send · health domain"; $("csend").disabled=false;
+  });
+  $("csend").addEventListener("click",reply);
+  $("cin").addEventListener("input",updComposer);
+  $("cin").addEventListener("keydown",function(e){
+    if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); if(!$("csend").disabled) reply(); }
+  });
+})();
+</script>

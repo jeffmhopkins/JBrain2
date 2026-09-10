@@ -488,7 +488,15 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # behind it is a tool call that dies in dispatch, and for a whole wave that is what these two
 # were on the reply turn.
 NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
-    {"resolve_entity", "assert_fact", "ask_owner", "find_entity", "read_entity", "current_time"}
+    {
+        "resolve_entity",
+        "assert_fact",
+        "close_reading",
+        "ask_owner",
+        "find_entity",
+        "read_entity",
+        "current_time",
+    }
 )
 
 # The ON-REPLY surface (D8: "the full surface unlocks when you reply"). A SECOND frozenset
@@ -580,11 +588,12 @@ NOTE_INGEST_THIRD_PARTY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS - f
     {"ask_owner"}
 )
 
-# The four verbs that WRITE the entity graph from a note conversation. Named as a set
-# because W4 has to subtract exactly them, in two places, and a hand-listed second copy
-# would drift the day a fifth write verb lands.
+# The verbs that WRITE the entity graph from a note conversation. Named as a set because
+# W4 has to subtract exactly them, in two places, and a hand-listed second copy would
+# drift the day another write verb lands — as `close_reading` (R1 of
+# `AGENT_INGEST_REWRITE.md`) just did.
 NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
-    {"resolve_entity", "assert_fact", "correct_fact", "merge_entities"}
+    {"resolve_entity", "assert_fact", "close_reading", "correct_fact", "merge_entities"}
 )
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
