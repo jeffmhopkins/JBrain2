@@ -7,8 +7,11 @@ turns it into the TOOL CALLS a faithful agent would make — one batched
 (`jbrain.agent.graphwritetools`). Everything downstream is the real engine:
 `commit_facts` resolves the surfaces, anchors the mention spine, and runs every
 fact through `supersession.decide()`, the domain floor and the ratchet;
-`settle_note` then closes the note out ONCE, over the union of every call's
-writes — plan constraint 6, the sweep is whole-conversation, never per call.
+`sweep_note` + `settle_tail` then close the note out ONCE, over the union of every
+call's writes — plan constraint 6, the sweep is whole-conversation, never per call.
+Those two and not `settle_note`: they are exactly what production's conversation
+runs (`analysis/clarify.settle_conversation`), and the third half — the
+`note_analysis` stamp — belongs to a producer with a title, which this one is not.
 
 **What the harness tests is unchanged: the deterministic engine given good model
 output.** What changed is the SHAPE of that output. The old runner compiled an
@@ -115,11 +118,10 @@ from jbrain.agent.graphwritetools import (
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.analysis.entities import ResolvedEntity, get_or_create_me
-from jbrain.analysis.extraction import ExtractedFact, ExtractedMention, Extraction
+from jbrain.analysis.extraction import ExtractedFact, Extraction
 from jbrain.analysis.pipeline import (
     AnalysisPipeline,
     CommitOutcome,
-    _ChunkRef,
     _extract_note,
     local_anchor,
 )
@@ -162,21 +164,6 @@ class _Ledger:
     touched: set[uuid.UUID] = field(default_factory=set)
     projected: set[uuid.UUID] = field(default_factory=set)
     mention_ids: set[uuid.UUID] = field(default_factory=set)
-    mentions: dict[str, ExtractedMention] = field(default_factory=dict)
-    facts: list[ExtractedFact] = field(default_factory=list)
-
-    def as_extraction(self) -> Extraction:
-        """What the conversation, taken whole, asserted about the note — the
-        input `settle_note`'s alias registration and stale-card sweep read. Title
-        and tags are empty because the tool surface has no verb for either, and
-        `dropped_facts` is 0 because no per-note cap runs on a tool call."""
-        return Extraction(
-            title="",
-            tags=[],
-            mentions=list(self.mentions.values()),
-            facts=list(self.facts),
-            tokens=[],
-        )
 
 
 class _LedgerPipeline(AnalysisPipeline):
@@ -199,10 +186,6 @@ class _LedgerPipeline(AnalysisPipeline):
         led.touched |= outcome.touched
         led.projected |= outcome.projected
         led.mention_ids |= outcome.mention_ids
-        extraction: Extraction = kwargs["extraction"]
-        for mention in extraction.mentions:
-            led.mentions.setdefault(mention.name, mention)
-        led.facts.extend(extraction.facts)
         return outcome
 
 
@@ -445,19 +428,6 @@ async def _seed_note(maker: async_sessionmaker[AsyncSession], step: Step) -> _No
     return _Note(note_id, step.domain, created, tz_offset)
 
 
-async def _chunks(session: AsyncSession, note_id: uuid.UUID) -> list[_ChunkRef]:
-    rows = (
-        await session.execute(
-            text(
-                "SELECT id, text FROM app.chunks WHERE note_id = :n"
-                " AND granularity = 'paragraph' ORDER BY seq"
-            ),
-            {"n": str(note_id)},
-        )
-    ).all()
-    return [_ChunkRef(id=r.id, text=r.text) for r in rows]
-
-
 async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _Note) -> None:
     """One note's whole conversation: the tool calls, then one settle over their
     union.
@@ -501,22 +471,30 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # conversation asserted nothing, which is exactly when the note's mentions
     # and facts should be swept. It is a per-CALL settle that constraint 7
     # forbids, and this is not one.
+    #
+    # The two halves production's conversation runs, and only those (S2/S3,
+    # docs/plans/SETTLE_OWNERSHIP.md). It used to call `settle_note` whole, which made
+    # the harness the one place a conversation stamped `note_analysis` — with the empty
+    # title and tags its tool surface has no verb for. `analysis/clarify`'s
+    # `settle_conversation` is the shape being modelled; what stays different is only
+    # the ledger's source, in-process here and `NoteConversationRepo.writes()` there.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        await pipeline.settle_note(
+        # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,
+        # and the producer key groups both of that producer's runs.
+        retracted = await pipeline.sweep_note(
             session,
             note_id=note.note_id,
-            note_domain=note.domain,
-            chunks=await _chunks(session, note.note_id),
-            extraction=led.as_extraction(),
-            extractor=EXTRACTOR,
-            # The harness settles as the CONVERSATION — `EXTRACTOR` is `note_ingest`
-            # here, and the producer key groups both of that producer's runs.
             settle_owner=CONVERSATION,
-            resolved=led.resolved,
             touched=led.touched,
-            projected=led.projected,
-            mention_ids=led.mention_ids,
+            # In-process, so the harness HAS the mention ids production's ledger does
+            # not record — it reconciles where `settle_conversation` must skip.
+            mentions=led.mention_ids,
+        )
+        await pipeline.settle_tail(
+            session,
+            referenced={e.id for e in led.resolved.values() if e is not None},
+            projected=led.projected | retracted,
         )
 
 

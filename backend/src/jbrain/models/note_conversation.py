@@ -100,6 +100,12 @@ AWAITING_OWNER = "awaiting_owner"
 # consecutive tool errors cut off partway.
 CLEAN_STOP = "end_turn"
 
+# The one state a pass may settle on. Named because it is now a GATE and not only a
+# label: `analysis/clarify.settle_conversation` refuses to sweep or project anything
+# unless the pass landed here, so "which string means the ledger is complete" has one
+# spelling that a rename cannot quietly fork.
+SETTLED = "settled"
+
 
 def state_for_stop(stop_reason: str) -> str:
     """The state a pass that ended for `stop_reason` lands in.
@@ -111,7 +117,7 @@ def state_for_stop(stop_reason: str) -> str:
     reading — neither may claim it, so both land somewhere the sweep does not run."""
     if stop_reason == AWAITING_OWNER:
         return "waiting_on_owner"
-    return "settled" if stop_reason == CLEAN_STOP else "failed"
+    return SETTLED if stop_reason == CLEAN_STOP else "failed"
 
 
 # Caps on a recorded call's `args`. The blob is stored, never executed — but a note body

@@ -64,7 +64,7 @@ import contextlib
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
@@ -77,11 +77,15 @@ from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
     MAX_ARG_CHARS,
+    SETTLED,
     NoteConversationRepo,
     note_body_sha,
     state_for_stop,
 )
 from jbrain.notes.service import NotesRepo
+
+if TYPE_CHECKING:  # `analysis/pipeline.py` drags the LLM stack; only the TYPE is needed
+    from jbrain.analysis.pipeline import AnalysisPipeline
 
 log = structlog.get_logger()
 
@@ -493,9 +497,12 @@ async def close_owner_reply(
     session_id: str,
     agent: str,
     stop_reason: str,
-) -> None:
+) -> str | None:
     """End the conversation the owner's reply re-opened, by the same rule the unattended
-    pass ends by (`state_for_stop`).
+    pass ends by (`state_for_stop`). Returns the state it WROTE, or None when it wrote
+    none — which is the caller's gate for `settle_conversation`, so the answer to "did
+    this pass end cleanly?" is given by the call that decided it rather than re-derived
+    beside it.
 
     Something has to: `record_owner_reply` put the thread back in `running`, and `running`
     holds the note's ONE live slot — the re-ingest the answer just queued emits its own
@@ -506,19 +513,84 @@ async def close_owner_reply(
     A turn the agent ended with another `ask_owner` is left exactly where the handler put
     it: the thread is waiting again, and `state_for_stop` says so."""
     if agent != NOTE_CONVERSE_AGENT:
-        return
+        return None
     state = state_for_stop(stop_reason)
     repo = NoteConversationRepo()
     try:
         async with scoped_session(maker, ctx) as s:
             conversation = await repo.get(s, session_id)
             if conversation is None or conversation.state != "running":
-                return
+                return None
             await repo.set_state(s, session_id, state)
     except Exception as exc:  # noqa: BLE001 — the reaper is the backstop
         log.warning("note_reply.close_failed", session_id=session_id, error=repr(exc))
-        return
+        return None
     log.info("note_reply.closed", session_id=session_id, state=state, stop_reason=stop_reason)
+    return state
+
+
+async def settle_conversation(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    pipeline: AnalysisPipeline,
+    *,
+    session_id: str,
+    state: str,
+) -> bool:
+    """Run the note conversation's end-of-pass settle, and say whether it ran.
+
+    The conversation's write path is `commit_facts` and nothing else
+    (`agent/graphwritetools.py`), and `commit_facts` deliberately does nothing
+    whole-note. Everything the graph DERIVES from a note's rows —
+    `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
+    geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
+    and nowhere else in a write path. So before this existed, a conversation-written
+    appointment landed in NO projection and a conversation-written `name.*` fact never
+    refreshed `canonical_name`: the graph held the fact, the appointments view did not.
+    That gap was masked while the analyzer's settle retracted the conversation's facts
+    and then projected the dead rows away; S1 made them survive, which is why S2 is the
+    payment for S1's debt rather than an improvement on it
+    (docs/plans/SETTLE_OWNERSHIP.md).
+
+    **`state` is the gate, and it is the whole safety argument.** The pass settles only
+    from `SETTLED`, which `state_for_stop` gives to a CLEAN stop alone — so a truncated
+    turn (`max_steps`, the cost budget, consecutive tool errors, the wall clock) lands
+    `failed`, a turn that ended on `ask_owner` lands `waiting_on_owner`, and a turn whose
+    ledger did not record lands `failed` too, because both callers degrade the stop reason
+    to `record_failed` when their recorder fails (`converse._run_turn`,
+    `record_reply_writes` + `close_owner_reply` in `api/agent.py`). None of those three
+    reaches this function's body. That matters most for the sweep S3 adds below, where
+    firing on an incomplete ledger retracts the owner's own writes — the bug S1 just
+    closed, re-entered through the front door — but the gate is stated once, here, for
+    both halves rather than being an argument about which half is dangerous.
+
+    Never raises. A pass that settled is already `settled` in the database, and a failed
+    projection refresh is a stale view — recoverable by the next settle of the note, and
+    the direction this whole design fails in deliberately. Raising instead would retry the
+    worker job, which re-enters `note_converse` for a note whose conversation is no longer
+    live and opens a SECOND thread for it.
+    """
+    if state != SETTLED:
+        return False
+    try:
+        async with scoped_session(maker, ctx) as s:
+            repo = NoteConversationRepo()
+            conversation = await repo.get(s, session_id)
+            if conversation is None:
+                return False
+            writes = await repo.writes(s, session_id)
+            entities = set(writes.entities)
+            # NOT `stamp_analysis`: the conversation has no title/tags verb, so it would
+            # blank the analyzer's extracted title (SETTLE_OWNERSHIP.md precondition 3,
+            # still unowned). NOT the `integration_state` flip either (precondition 4) —
+            # a thread that can park on `ask_owner` for days cannot be what declares a
+            # note integrated.
+            await pipeline.settle_tail(s, referenced=entities, projected=entities)
+    except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
+        log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
+        return False
+    log.info("note_settle.done", session_id=session_id, entities=len(entities))
+    return True
 
 
 __all__ = [
@@ -532,4 +604,5 @@ __all__ = [
     "record_owner_reply",
     "record_reply_writes",
     "record_turn_writes",
+    "settle_conversation",
 ]

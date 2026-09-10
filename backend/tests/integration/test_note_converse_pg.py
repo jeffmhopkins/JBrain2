@@ -76,8 +76,10 @@ from jbrain.analysis.clarify import (
     reply_profile_for_session,
 )
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
+from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
+from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.note_conversation import (
     AWAITING_OWNER,
     NOTE_TURN_WALL_CLOCK,
@@ -171,6 +173,11 @@ def _runner(
         transcript=transcript or AgentTranscript(maker),
         executor=executor,
         owner_principal_id=_const(owner.principal_id),
+        # Wired, so the end-of-pass settle (S2/S3) actually RUNS in these tests rather
+        # than being skipped for want of a pipeline — which is the only way the
+        # absences pinned below (no `note_analysis` row, no `integrated` flip) mean
+        # anything. It makes no model call: the settle is deterministic SQL.
+        pipeline=AnalysisPipeline(maker, LlmRouter({"xai": FakeLlmClient()}, {})),
         **override,
     )
 
@@ -962,28 +969,20 @@ async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
 ) -> None:
     """The W5a gate, pinned: `settled` is the CONVERSATION's state, never the note's.
 
-    The conversation's write path is `commit_facts` only (`agent/graphwritetools.py`)
-    and calls `settle_note` nowhere, so a finished pass leaves the note
-    `pending_integration` and writes no `note_analysis` row. `integrate_note` is
-    therefore still the sole producer of both, and of everything else `settle_note`
-    owns — the mention reconcile, the declared-alias sweep, the retraction of facts a
-    re-extraction dropped and the chain repair behind it, the stale-ambiguity and
-    truncation cards, the entity reprojection, the corroboration promotion.
+    S2 gave the conversation part of the settle and this test SURVIVED it, which is the
+    point of keeping it. The pass now ends by calling `settle_tail` — its writes finally
+    project and reproject (`analysis/clarify.settle_conversation`, and the runner above
+    is wired with a real pipeline so that call genuinely runs here). What it still does
+    not call is `stamp_analysis`, because the conversation has no title or tags verb and
+    the stamp's `on_conflict_do_update` is unconditional; and nothing anywhere flips
+    `integration_state`, which `integrate_note` still owns alone.
 
-    Constraint 6's LEDGER precondition is landed (W4c/1): `ConversationWrites.facts` is
-    now the whole-conversation union across both turn paths — the owner's reply turn
-    records through `clarify.record_reply_writes` at the same seam the unattended pass
-    records at — so `settle_note(touched=writes().facts)` would no longer retract the
-    unpinned facts the owner's own reply just added. That did NOT wire the sweep and does
-    not unblock W5a: the sweep is still attributed to nothing (W4c/2) and who owns a
-    note's whole-note settle, the conversation or `integrate_note` or `emr_parse`, is
-    still undecided (W4c/3). This test stays green through W4c/1 for exactly that reason,
-    and goes red the day the sweep is wired — which is when it should be rewritten, not
-    deleted.
-
-    So this asserts an ABSENCE on purpose. Retiring `integrate_note` while it holds
-    strands the corpus at `pending_integration`, which `backfill_pending_integration`
-    and the workflow reconciler both key on, with no whole-note sweep left at all.
+    Both remaining absences are UNOWNED preconditions of retiring `integrate_note`
+    (docs/plans/SETTLE_OWNERSHIP.md, preconditions 3 and 4), not oversights: a title has
+    no second source yet, and a thread that can park on `ask_owner` for days cannot be
+    what declares a note integrated. So this asserts an ABSENCE on purpose. Retiring
+    `integrate_note` while it holds strands the corpus at `pending_integration`, which
+    `backfill_pending_integration` and the workflow reconciler both key on.
     """
     note_id = await _note(maker, owner, "Kaiya started a new medication today.")
 

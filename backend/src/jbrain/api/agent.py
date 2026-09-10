@@ -72,7 +72,9 @@ from jbrain.analysis.clarify import (
     record_owner_reply,
     record_reply_writes,
     reply_profile_for_session,
+    settle_conversation,
 )
+from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.thirdparty import conversation_is_third_party
 from jbrain.api.deps import owner_only
@@ -229,6 +231,30 @@ async def _standing_instructions(request: Request, owner_ctx: SessionContext) ->
         raise HTTPException(
             status_code=503, detail="couldn't read your standing instructions — try again"
         ) from exc
+
+
+def _settle_pipeline(request: Request) -> AnalysisPipeline:
+    """The pipeline the note conversation's end-of-pass settle runs on, built once per
+    process and cached on `app.state`.
+
+    One per process rather than one per turn because `AnalysisPipeline.__init__` builds
+    an `Integrator` and a run log, and the reply turn is on the owner's critical path.
+    Built here rather than at startup because this is the only route that wants one, and
+    an API that never carries a note reply should not pay for it at all.
+
+    The settle itself uses no model — `sweep_note` and `settle_tail` are deterministic
+    SQL — so the router is only what the constructor requires. The settings store IS
+    load-bearing: without it `_promote_corroborated` returns early, and the reply turn
+    would then promote entities the worker's identical pass does."""
+    pipeline = getattr(request.app.state, "note_settle_pipeline", None)
+    if pipeline is None:
+        pipeline = AnalysisPipeline(
+            request.app.state.session_maker,
+            get_llm_router(request),
+            settings=get_settings_store(request),
+        )
+        request.app.state.note_settle_pipeline = pipeline
+    return cast(AnalysisPipeline, pipeline)
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -1553,12 +1579,27 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         run_id=run_id,
                         tool_steps=acc.tool_steps(),
                     )
-                    await close_owner_reply(
+                    closed = await close_owner_reply(
                         request.app.state.session_maker,
                         owner_ctx,
                         session_id=str(session.id),
                         agent=session.agent,
                         stop_reason=stop_reason if recorded else "record_failed",
+                    )
+                    # The reply turn's writes are the conversation's too, so the pass
+                    # settles from HERE as well as from the worker's unattended pass —
+                    # otherwise a conversation that ended by asking a question would
+                    # never project what the answer wrote, and (S3) would never release
+                    # its `conversation` claim at all. `close_owner_reply` returns the
+                    # state it actually wrote, which is the gate: a truncated turn, a
+                    # turn still `waiting_on_owner`, and the `record_failed` degrade
+                    # above all return something other than `settled` and settle nothing.
+                    await settle_conversation(
+                        request.app.state.session_maker,
+                        owner_ctx,
+                        _settle_pipeline(request),
+                        session_id=str(session.id),
+                        state=closed or "",
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

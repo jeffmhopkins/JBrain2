@@ -114,17 +114,21 @@ stale row survives as history. What is NOT available is "another producer tidies
 after it", and that is the point: no producer has ever been able to tell a co-writer's
 row from a stale one of its own.
 
-**What scoping the sweep does NOT give the conversation: the settle TAIL.** Projection
-and reprojection (`_reproject_entities`, `_promote_corroborated`, `project_appointments`,
-`project_emr`, …) run inside `settle_note` and NOWHERE else in a write path — verified:
-`analysis/pipeline.py` and `analysis/purge.py` hold every call. The conversation calls
-`commit_facts` only, so a conversation-written appointment lands in no projection and a
-conversation-written `name.*` fact never refreshes `canonical_name`. That gap predates
+**The settle TAIL, which scoping the sweep did not give the conversation — closed by
+S2.** Projection and reprojection (`_reproject_entities`, `_promote_corroborated`,
+`project_appointments`, `project_emr`, …) run inside `AnalysisPipeline.settle_tail` and
+NOWHERE else in a write path — verified: `analysis/pipeline.py` and `analysis/purge.py`
+hold every call. The conversation calls `commit_facts` only, which does nothing
+whole-note, so a conversation-written appointment landed in no projection and a
+conversation-written `name.*` fact never refreshed `canonical_name`. That gap predated
 this key and was MASKED by the bug: the analyzer's settle retracted the conversation's
-facts and then projected the (now dead) rows away. With the facts surviving, the gap is
-visible instead of fatal — a fact the graph holds that the appointments view does not.
-Closing it is SETTLE_OWNERSHIP.md S2 (give the conversation the tail), which is a
-separate change from attribution and deliberately not bundled here.
+facts and then projected the (now dead) rows away. Scoping the sweep made the facts
+survive, which turned the mask into a fact the graph holds that the appointments view
+does not — which is why S2 is the payment for S1's debt and not an improvement on it.
+`analysis/clarify.settle_conversation` now runs the tail at the end of a clean pass, from
+both turn paths. It does NOT run `stamp_analysis` (the conversation has no title or tags
+verb, and the stamp is unconditional) and does not flip `integration_state`; both are
+still `integrate_note`'s alone.
 
 **Two residuals, both review cards rather than graph rows.** The settle's fact and
 mention halves are producer-scoped; its review-card halves are still note-keyed and

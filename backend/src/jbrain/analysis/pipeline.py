@@ -1147,39 +1147,118 @@ class AnalysisPipeline:
         projected: set[uuid.UUID],
         mention_ids: set[uuid.UUID],
     ) -> None:
-        """Close a note out once everything it asserts has been committed: drop the
-        mentions and retract the facts it no longer says, repair the chains that
-        breaks, retire its stale cards, refresh the projections and stamp the
-        analysis row.
+        """Close a note out once everything it asserts has been committed — the whole
+        settle, for a producer that has an EXTRACTION behind it.
 
-        `touched`, `projected` and `mention_ids` are inputs rather than locals
-        precisely because this step is whole-note: a caller that commits over
-        several passes unions them across all of them and settles once. Settling on
-        one pass's share would retract every fact — and delete every mention — the
-        earlier passes committed.
+        Three of the four steps below are now public seams of their own (S2,
+        docs/plans/SETTLE_OWNERSHIP.md): `sweep_note` releases this producer's claim,
+        `settle_tail` refreshes what the graph derives from the rows, and
+        `stamp_analysis` writes the `note_analysis` row. This method is their
+        composition and stays the ONLY thing `integrate_note` and `emr_parse` call, so
+        the split changed nothing for either of them.
 
-        The mention reconcile leads, because `_promote_corroborated` below counts
-        corroborating notes through `entity_mentions` (`canonical.py`) and must not
-        see a row this run stopped asserting.
+        The split exists because the third caller cannot take all three. The note
+        conversation has no title/tags verb (`agent/agents.py`'s four write verbs), so
+        an `Extraction` it handed a settle would carry `title=""`/`tags=[]` and the
+        unconditional `on_conflict_do_update` in `stamp_analysis` would blank the
+        analyzer's real title. It therefore calls `sweep_note` + `settle_tail` and never
+        `stamp_analysis` (`analysis/clarify.settle_conversation`).
 
-        `settle_owner` is WHOSE settle this is (`analysis/settle_owner.py`), and it
-        bounds both destructive halves. Whole-note is not whole-graph: up to three
-        producers write one note, they do not share a `touched` set, and a sweep that
-        could not name its writer retracted the co-writer's facts — live, on every
-        settle of that note, not as a race (docs/plans/SETTLE_OWNERSHIP.md). What this
-        settle does now is narrower and exact: it RELEASES this producer's claim on the
-        rows it no longer asserts, and retracts only those no producer claims any more.
-        A row two producers assert survives the first one letting go — which is the
-        common case during the D13 window, not an edge case (settle_owner.py).
+        `touched`, `projected` and `mention_ids` are inputs rather than locals precisely
+        because this step is whole-note: a caller that commits over several passes unions
+        them across all of them and settles once. Settling on one pass's share would
+        retract every fact — and delete every mention — the earlier passes committed.
 
-        Know what that costs while the conversation has no settle of its own: it never
-        releases a claim, so a row it asserted (alone or beside the analyzer) is
-        retractable by nothing here, permanently and from today. `settle_owner.py` states
-        the trade and names what can still remove such a row."""
-        await self._reconcile_mentions(session, note_id, mention_ids, settle_owner)
+        Two halves stay HERE rather than moving into `sweep_note`, and that is the one
+        judgement call in the split. `_sweep_stale_ambiguous` and `_sync_truncation_review`
+        are the settle's REVIEW-CARD halves, and they are still note-keyed and
+        producer-blind (S1's residuals, argued in `analysis/settle_owner.py` and tracked
+        as their own tasks): each deletes a co-writer's open card. Putting them in
+        `sweep_note` would have handed that reach to the conversation's new sweep as
+        well — a second producer deleting the analyzer's `ambiguous_mention` and
+        `extraction_truncated` cards, on a path where nothing refiles them. Leaving them
+        in the composition keeps the residual exactly the size S1 left it. They also want
+        the `extraction` the conversation does not have, which is the same fact from the
+        other end. `_register_declared_aliases` is here for that second reason alone.
+        """
+        retracted_entities = await self.sweep_note(
+            session,
+            note_id=note_id,
+            settle_owner=settle_owner,
+            touched=touched,
+            mentions=mention_ids,
+        )
         await self._register_declared_aliases(
             session, extraction, resolved, note_id, note_domain, chunks
         )
+        await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._sync_truncation_review(
+            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
+        )
+        await self.settle_tail(
+            session,
+            # The entities this producer's passes RESOLVED. `CommitOutcome.projected` is
+            # built from exactly this set, so the two agree for every caller in the repo;
+            # it is recomputed here rather than reusing `projected` because the caller has
+            # already unioned other ids into that one and the reprojection must not widen.
+            referenced={e.id for e in resolved.values() if e is not None},
+            projected=projected | retracted_entities,
+        )
+        await self.stamp_analysis(
+            session,
+            note_id=note_id,
+            note_domain=note_domain,
+            title=extraction.title,
+            tags=extraction.tags,
+            extractor=extractor,
+        )
+
+    async def sweep_note(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        settle_owner: str,
+        touched: set[uuid.UUID],
+        mentions: set[uuid.UUID] | None,
+    ) -> set[uuid.UUID]:
+        """Release THIS PRODUCER's claim on the note's rows it no longer asserts, retract
+        the facts that leaves unclaimed, and repair what that breaks. Returns the entity
+        ids of the facts actually retracted, which the caller unions into `settle_tail`'s
+        projection set — a reschedule lands on the same appointment entity, and a dropped
+        mention leaves one with no active scheduledTime, so its row has to be removed.
+
+        Takes no `Extraction`: what a sweep needs is the id sets a pass wrote, and that
+        is the whole reason this is separable from `settle_note`. The note conversation
+        has ledger ids and nothing extraction-shaped, and it can call this directly
+        (S3, `analysis/clarify.settle_conversation`).
+
+        `settle_owner` is WHOSE sweep this is (`analysis/settle_owner.py`), and it bounds
+        both destructive halves. Whole-note is not whole-graph: up to three producers
+        write one note, they do not share a `touched` set, and a sweep that could not name
+        its writer retracted the co-writer's facts — live, on every settle of that note,
+        not as a race (docs/plans/SETTLE_OWNERSHIP.md). What this does now is narrower and
+        exact: it RELEASES this producer's claim on the rows it no longer asserts, and
+        retracts only those no producer claims any more. A row two producers assert
+        survives the first one letting go — which is the common case during the D13
+        window, not an edge case (settle_owner.py).
+
+        `mentions` is the mention half's `asserted` set, and `None` is not the same as
+        an empty set: it means this producer keeps NO mention ledger, so the reconcile is
+        SKIPPED rather than run against nothing. Run with an empty set it would release
+        this producer's claim on every mention of the note — including the spans the
+        facts it still asserts are anchored to — and delete the ones left unclaimed. That
+        is the conversation's case: `NoteConversationRepo.writes()` records fact and
+        entity ids and no mention ids, so its claims on mention rows go unreleased. The
+        leak that costs is bounded, unlike the fact one S3 exists to close:
+        `entity_mentions.chunk_id` is ON DELETE CASCADE, so a re-ingest of the note wipes
+        that chunk generation outright (`analysis/settle_owner.py`).
+        """
+        if mentions is not None:
+            # The mention reconcile LEADS, because `_promote_corroborated` in the tail
+            # counts corroborating notes through `entity_mentions` (`canonical.py`) and
+            # must not see a row this run stopped asserting.
+            await self._reconcile_mentions(session, note_id, mentions, settle_owner)
 
         # Identity keys THIS PRODUCER no longer asserts were removed by the edit:
         # release its claim, then retract quietly whatever no producer claims any more
@@ -1278,17 +1357,74 @@ class AnalysisPipeline:
             # resolved/dismissed items are human history and pinned facts never
             # entered the doomed set, so both survive untouched.
             await purge.delete_review_items(session, set(doomed_links), statuses=("open",))
-        await self._sweep_stale_ambiguous(session, note_id, extraction)
-        await self._sync_truncation_review(
-            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
-        )
-        await self._reproject_entities(session, resolved)
-        await self._promote_corroborated(session, resolved)
+        return {r.entity_id for r in retracted}
 
+    async def settle_tail(
+        self,
+        session: AsyncSession,
+        *,
+        referenced: set[uuid.UUID],
+        projected: set[uuid.UUID],
+    ) -> None:
+        """Refresh everything the graph DERIVES from a note's rows, once they have
+        settled — the half that has nothing to do with who owns the sweep.
+
+        This is the half the note conversation was missing outright, and the reason S2
+        landed with S1 rather than after it. Nothing in `commit_facts` projects (it says
+        so in its own docstring) and `agent/graphwritetools.py` calls no projection, so
+        before this seam existed a conversation-written appointment landed in NO
+        projection and a conversation-written `name.*` fact never refreshed
+        `canonical_name`. That gap was MASKED while the analyzer's settle retracted the
+        conversation's facts and then projected the dead rows away; S1 made the facts
+        survive, which turned the mask into a fact the graph holds that the appointments
+        view does not.
+
+        `referenced` is the entities this producer's passes resolved — what gets its
+        canonical name reprojected and its corroboration re-counted. `projected` is that
+        set PLUS the entities whose facts the sweep just retracted, because a projection
+        row has to be REMOVED when its last supporting fact goes.
+        """
+        await self._reproject_entities(session, referenced)
+        await self._promote_corroborated(session, referenced)
+        await project_appointments(session, projected)
+        await project_emr(session, projected)
+        await project_place_geofences(session, projected)
+        # Bind any touched Device entity to its operational subject row (owner-set,
+        # deterministic, never LLM-chosen). Rides the same full-owner fact-apply
+        # path as the geofence projection so a device note links on apply.
+        await reconcile_device_bindings(session, projected)
+
+    async def stamp_analysis(
+        self,
+        session: AsyncSession,
+        *,
+        note_id: uuid.UUID,
+        note_domain: str,
+        title: str,
+        tags: list[str],
+        extractor: str,
+    ) -> None:
+        """Stamp the note's `note_analysis` row — the settle's third half, and the one
+        with a SINGLE rightful producer.
+
+        The upsert is unconditional: no `WHERE`, no `COALESCE`, no "only if absent". So
+        whoever calls it last wins, and a caller with no title and no tags blanks a real
+        one. That is why this is its own seam rather than a step inside `settle_note`:
+        the note conversation has no title/tags verb at all, and wiring it to a settle
+        that stamped would have written `title = NULL, tags = {}` over the analyzer's
+        extracted title on every note — losing it from `GET /notes/{id}/analysis` (the
+        Analysis tab's heading) and from `agent/externaltools.py`'s dedup line, and
+        emptying what `analysis/tagconsolidate.py` normalizes.
+
+        Where a title comes from the day `integrate_note` is retired is precondition 3 of
+        docs/plans/SETTLE_OWNERSHIP.md and is deliberately still open. Until it is
+        answered, exactly two producers call this — `integrate_note` and `emr_parse`, both
+        through `settle_note` — and S4 decides which of them wins on an `emr_owned` note.
+        """
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
-            title=extraction.title or None,
-            tags=extraction.tags,
+            title=title or None,
+            tags=tags,
             extractor=extractor,
             prompt_version=PROMPT_VERSION,
             analyzed_at=datetime.now(UTC),
@@ -1307,19 +1443,6 @@ class AnalysisPipeline:
                 },
             )
         )
-
-        # Refresh the appointments projection for every entity this note touched —
-        # the ones it re-asserted (`projected`) and the ones whose facts it just
-        # retracted (a reschedule lands on the same appointment entity; a dropped
-        # mention leaves it with no active scheduledTime, so its row is removed).
-        projected = projected | {r.entity_id for r in retracted}
-        await project_appointments(session, projected)
-        await project_emr(session, projected)
-        await project_place_geofences(session, projected)
-        # Bind any touched Device entity to its operational subject row (owner-set,
-        # deterministic, never LLM-chosen). Rides the same full-owner fact-apply
-        # path as the geofence projection so a device note links on apply.
-        await reconcile_device_bindings(session, projected)
 
     async def _sweep_stale_ambiguous(
         self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
@@ -1742,39 +1865,33 @@ class AnalysisPipeline:
                 )
             )
 
-    async def _reproject_entities(
-        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
-    ) -> None:
+    async def _reproject_entities(self, session: AsyncSession, referenced: set[uuid.UUID]) -> None:
         """Once this note's facts have settled, refresh each touched entity's
         canonical_name from its current name.* facts — a projection of current
-        facts (docs/reference/ANALYSIS.md), never the frozen first-mention surface form."""
-        seen: set[uuid.UUID] = set()
-        for entity in resolved.values():
-            if entity is None or entity.id in seen:
-                continue
-            seen.add(entity.id)
-            await reproject_canonical_name(session, entity.id)
+        facts (docs/reference/ANALYSIS.md), never the frozen first-mention surface form.
+
+        Entity IDS rather than the caller's `resolved` map (S2): all this ever read off a
+        `ResolvedEntity` was its `id`, and the note conversation reaches the tail with a
+        ledger of ids and no map to build."""
+        for entity_id in referenced:
+            await reproject_canonical_name(session, entity_id)
 
     async def _promote_corroborated(
-        self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
+        self, session: AsyncSession, referenced: set[uuid.UUID]
     ) -> None:
         """Confirm each touched provisional entity that >= CORROBORATION_THRESHOLD
         distinct same-domain notes now corroborate (docs/reference/entity.md). Eager and
         complete: an entity only crosses the bar on a note that references it, and
-        that note's refs are exactly `resolved`, so no sweep is needed. A
+        that note's refs are exactly `referenced`, so no sweep is needed. A
         contested identity (a live namesake) files a deduped confirm_entity card
         instead of auto-confirming. Gated by the entity_promotion setting
         (default off until the goldens expect confirmation)."""
         if self._settings is None or not await self._settings.entity_promotion(SYSTEM_CTX):
             return
-        seen: set[uuid.UUID] = set()
-        for entity in resolved.values():
-            if entity is None or entity.id in seen:
-                continue
-            seen.add(entity.id)
-            outcome = await promote_if_corroborated(session, entity.id)
+        for entity_id in referenced:
+            outcome = await promote_if_corroborated(session, entity_id)
             if outcome.action == "confirmed":
-                log.info("entity.promoted", entity_id=str(entity.id))
+                log.info("entity.promoted", entity_id=str(entity_id))
             elif outcome.action == "propose":
                 await self._file_confirm_entity_card(session, outcome)
 

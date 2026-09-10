@@ -1,12 +1,19 @@
 # Who owns a note's whole-note settle
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S2◻️ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** S1✅ S2✅ S3◻️ S4◻️ S5◻️
 >
 > **S1 shipped**, with three amendments the build forced. Each is argued in place below
 > and marked **[amended in build]**: the key is a claim SET (`settle_owners text[]`)
 > rather than a single owner, the derived-shadow subquery is deliberately NOT scoped by
-> it, and the column carries a server default. Nothing else in this doc changed — S2-S5
-> stand as written.
+> it, and the column carries a server default.
+>
+> **S2 shipped.** `settle_note` is split into `sweep_note` / `settle_tail` /
+> `stamp_analysis`; `integrate_note` and `emr_parse` still call the composition and are
+> byte-unchanged; the conversation calls `settle_tail` at the end of a clean pass
+> (`analysis/clarify.settle_conversation`, from BOTH turn paths) and never
+> `stamp_analysis`. One thing the recommendation below did not anticipate, argued in S2's
+> section: the two REVIEW-CARD halves stayed in the composition rather than moving into
+> `sweep_note`, so the new caller cannot reach them. S3-S5 stand as written.
 
 The question `AGENT_INGEST_CONVERSATION_PLAN.md`'s W5a blocked on, answered:
 `settle_note` (`backend/src/jbrain/analysis/pipeline.py`) is whole-note and was filtered
@@ -266,7 +273,8 @@ line. `tags` is the input `analysis/tagconsolidate.py:46-57` rewrites, so blanki
 also empties what that sweep normalizes. Real loss, different surface.
 
 **Recommended: (i), split `settle_note`.** `sweep_note(owner=…)`, `settle_tail(resolved,
-projected)`, `stamp_analysis(title, tags, extractor)`. `integrate_note` and `emr_parse`
+projected)`, `stamp_analysis(title, tags, extractor)`. *Shipped in S2, with the signatures
+adjusted as that section records.* `integrate_note` and `emr_parse`
 call all three; the conversation calls the tail only, and the gap in (4) never arises
 because the conversation never stamps. It is a pure refactor: no model-facing surface, no
 sidecar, no schema, nothing to re-pin, no harmony-grammar risk. It also follows a seam this
@@ -330,9 +338,9 @@ source-driven (both amendments above).
 
 Flipped `test_settle_cross_producer_pg.py`'s xfail and `test_emr_import_handler_pg.py`'s
 settle-collision xfail to passing. No producer moved. What S1 did NOT do, and what a
-reader should not assume from "shipped": the conversation still runs no tail (S2), still
-has no sweep of its own (S3), and two producers still stamp `note_analysis` on an EMR
-note (S4).
+reader should not assume from "shipped": the conversation ran no tail and had no sweep of
+its own, and two producers still stamp `note_analysis` on an EMR note (S4). **The first
+of those is now closed by S2** — the conversation runs the tail — and the sweep is S3.
 
 Scoped by the owner key: the fact retraction and the mention reconcile. NOT scoped, and
 still note-keyed and producer-blind, are the settle's two REVIEW-CARD halves —
@@ -352,13 +360,41 @@ and not claims, which is why the shadow sweep must not read a shadow's own set; 
 `Fact(...)` / `EntityMention(...)` type-check with no stamp at all, so the static guard
 has to look for the constructors and not only for raw SQL.
 
-### S2 — Split `settle_note`, give the conversation the tail
+### S2 — Split `settle_note`, give the conversation the tail ✅ SHIPPED
 
 `sweep_note` / `settle_tail` / `stamp_analysis`. `integrate_note` and `emr_parse` keep
-calling all three. The conversation calls `settle_tail` once per pass end (clean end, not
-truncated, not `awaiting_owner`), so its facts finally project and reproject. **Lands with
-S1 or in the PR immediately after** — S1 alone makes conversation facts survive into a
-state where nothing ever projects them.
+calling all three, through a `settle_note` that is now their composition — no behaviour
+change for either. The conversation calls `settle_tail` once per pass end (clean end, not
+truncated, not `awaiting_owner`), so its facts finally project and reproject.
+
+Three things the build settled that this section had left implicit:
+
+- **The seam is `analysis/clarify.settle_conversation`, and BOTH turn paths call it.**
+  The unattended pass calls it from `converse._run_turn` after the state block (the
+  `question_stands` branch can still turn a `settled` verdict into `waiting_on_owner`, so
+  settling before it would project a pass that is in fact still waiting). The owner's
+  reply turn calls it from `api/agent.py` after `close_owner_reply`, which now RETURNS
+  the state it wrote so the gate is the call that decided it rather than a re-derivation
+  beside it. Without the second caller, a conversation that ended by asking a question
+  would never project what the answer wrote — and, after S3, would never release a claim
+  at all, since `ask_owner` is the common ending.
+- **The two REVIEW-CARD halves did NOT move into `sweep_note`.**
+  `_sweep_stale_ambiguous` and `_sync_truncation_review` are S1's residuals: note-keyed,
+  producer-blind, each deleting a co-writer's open card. Putting them in `sweep_note`
+  would have handed that reach to S3's new caller as well — the conversation deleting the
+  analyzer's `ambiguous_mention` and `extraction_truncated` cards, on re-enqueue paths
+  that never refile them. They stay in the `settle_note` composition, which only
+  `integrate_note` and `emr_parse` call, so the residual is exactly the size S1 left it.
+  `_register_declared_aliases` stays there too, for the plainer reason that it reads an
+  `Extraction` the conversation does not have.
+- **`sweep_note` takes no `Extraction` at all** — an id set is all a sweep needs, and
+  that is what makes it callable by a producer with a ledger and no extraction.
+  `settle_tail` likewise takes entity ID SETS rather than the `resolved` map, since all
+  it ever read off a `ResolvedEntity` was its `id`.
+
+`tests/harness/runner.py` moved to the same two calls: it was the one place a
+conversation stamped `note_analysis`, with the empty title its tool surface has no verb
+for.
 
 ### S3 — The conversation's own sweep (W4c/2) — **scheduled, not optional**
 

@@ -222,28 +222,32 @@ survivor in its scenarios' `xfail` strings; collected here:
 The six-gap decision is half of W5a's gate; the other half is D13's per-PR rule, *no
 PR removes a producer before its replacement is merged and green*. That half is **not
 met**, and no scenario here can show it, because the harness drives the write tools
-directly and then calls `settle_note` itself.
+directly and then settles it itself.
 
-Production does not. The note conversation's write path is `commit_facts` only
-(`agent/graphwritetools.py`) and calls `settle_note` **nowhere**, so `integrate_note`
-remains the sole producer of everything the whole-note settle owns — the mention
-reconcile, the declared-alias sweep, the retraction of facts a re-extraction dropped
-and the chain repair behind it, the stale-ambiguity and truncation cards, the entity
-reprojection, the corroboration promotion, the `note_analysis` stamp — plus the
+Production is now CLOSER than it was, and still not there. Since S2
+(`docs/plans/SETTLE_OWNERSHIP.md`) the conversation does run the settle's tail at the end
+of a clean pass — `analysis/clarify.settle_conversation`. This runner calls `sweep_note`
+beside it, which production's conversation gains in S3; what it no longer does is call
+`settle_note` whole, which made the harness the one place a conversation stamped
+`note_analysis` with the empty title its tool surface has no verb for.
+
+What the conversation still does NOT produce,
+and `integrate_note` therefore still owns alone: the `note_analysis` stamp (it has no
+title or tags verb, and the stamp is unconditional — precondition 3), the
 `notes.integration_state = 'integrated'` flip that `queue.backfill_pending_integration`
-and the workflow reconciler key on.
+and the workflow reconciler key on (precondition 4), and the settle's two producer-blind
+review-card halves, which deliberately stay in the `settle_note` composition so a second
+sweeper cannot delete the analyzer's cards.
 
-Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is now the
+Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is the
 whole-conversation union across both turn paths — the owner's reply turn records through
 `analysis/clarify.record_reply_writes` at the same seam the unattended pass records at —
-so `settle_note(touched=writes().facts)` would no longer retract what the owner's own
-reply just added. Wiring it remains blocked on the two decisions after it: the sweep is
-not attributed to anything yet (W4c/2), and who OWNS a note's whole-note settle — the
-conversation, `integrate_note`, or `emr_parse` — is still undecided (W4c/3, and the
-`emr_parse` race below).
+and S3 is what wires the sweep to it (W4c/2). What the harness cannot show is the
+production ledger at all: it unions its outcomes in process, so `mention_ids` are
+available here where `NoteConversationRepo.writes()` records none.
 
 `tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
-pins the absence, so this is a red test rather than a rediscovery.
+pins what remains absent, so this is a red test rather than a rediscovery.
 
 ## Known gaps (current xfail guards)
 

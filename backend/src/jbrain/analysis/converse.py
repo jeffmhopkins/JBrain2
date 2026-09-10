@@ -92,7 +92,7 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import bind_turn_writes, record_turn_writes
+from jbrain.analysis.clarify import bind_turn_writes, record_turn_writes, settle_conversation
 from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -249,6 +249,14 @@ class NoteConverseRunner:
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
     prefs: OwnerPrefsRepo = field(default_factory=OwnerPrefsRepo)
+    # The settle the pass runs at its end (S2/S3): `settle_tail` so its writes finally
+    # project, and `sweep_note` so its `conversation` claim is finally released. Not the
+    # stamp and not the state flip — see `clarify.settle_conversation`.
+    #
+    # None keeps W2's behaviour, which is what the tests that fake a turn with no write
+    # tools use: a pass that CANNOT write has nothing to project and nothing to release.
+    # `note_converse_handler` always sets it, so no production path runs without one.
+    pipeline: AnalysisPipeline | None = None
     # Builds the turn executor for ONE note, so the graph-write tools can be BOUND to
     # that note (W3): `resolve_entity`/`assert_fact` take no note id from the model —
     # a write primitive a hostile body could point at another note is not a tool, it is
@@ -476,6 +484,18 @@ class NoteConverseRunner:
                 state = "waiting_on_owner"
             else:
                 await self.conversations.set_state(s, session_id, state)
+        # AFTER the state block, never before it: the `question_stands` branch above can
+        # still turn a `settled` verdict into `waiting_on_owner`, and a settle run ahead
+        # of it would have projected (and, since S3, swept) a pass that is in fact still
+        # waiting for the owner. `state` here is what the database now says.
+        if self.pipeline is not None:
+            await settle_conversation(
+                self.maker,
+                owner_ctx,
+                self.pipeline,
+                session_id=session_id,
+                state=state,
+            )
         with contextlib.suppress(Exception):
             await self.sessions.touch(owner_ctx, session_id)
         log.info("note_converse.settled", session_id=session_id, state=state, steps=steps)
@@ -651,5 +671,9 @@ def note_converse_handler(
         executor=LoopTurnExecutor(router, ToolRegistry(())),
         owner_principal_id=lambda: _owner_principal_id(maker),
         executor_for_note=executor_for_note,
+        # The SAME pipeline the write tools commit through, so the end-of-pass settle
+        # projects with the worker's embedder and settings store rather than a second,
+        # thinner one.
+        pipeline=analyzer,
     )
     return runner.note_converse
