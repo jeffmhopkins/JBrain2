@@ -8,11 +8,18 @@ can move to S3/MinIO without touching callers.
 import asyncio
 import hashlib
 import re
+import shutil
 import time
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol
+
+#: A stored blob is addressed by its lowercase sha256 hex digest and by nothing else.
+#: Every path this module builds is `root / digest[:2] / digest[2:4] / digest`, so a
+#: string that is not a digest is a string that can point anywhere under (or above) the
+#: root — which matters for exactly one method, `delete`, the only one that unlinks.
+_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class BlobStore(Protocol):
@@ -53,6 +60,15 @@ class BlobStore(Protocol):
 
     def usage(self) -> tuple[int, int]:
         """(blob_count, total_bytes) — fine to walk at personal scale."""
+        ...
+
+    def free_bytes(self) -> int:
+        """Space left on the volume the blobs live on.
+
+        Here rather than a `shutil.disk_usage` at the call site because where the blobs
+        actually are is this abstraction's secret (rule 2), and a caller that had to know
+        the path in order to ask would be a caller that could also write to it.
+        """
         ...
 
 
@@ -107,6 +123,12 @@ class FsBlobStore:
         return self.path_for(sha256).exists()
 
     async def delete(self, sha256: str) -> bool:
+        # The one method here that unlinks, so the one that checks what it was handed.
+        # Every caller today passes a digest read from an RLS-scoped row, which is why
+        # this has never fired — but "unreachable" is a property of today's callers, not
+        # of this method, and the cost of being wrong once is someone else's file.
+        if not _DIGEST_RE.fullmatch(sha256):
+            raise ValueError(f"not a sha256 digest: {sha256!r}")
         # `missing_ok` rather than a prior `exists()` check: two callers deleting the
         # same digest at once would both pass the check and one would raise, and the
         # answer to "is it gone" is the same either way. The now-empty shard directories
@@ -130,6 +152,19 @@ class FsBlobStore:
                     count += 1
                     total += path.stat().st_size
         return count, total
+
+    def free_bytes(self) -> int:
+        # The root may not exist yet on a box that has stored nothing; the volume it will
+        # be created on is the one whose free space the answer is about.
+        probe = self._root if self._root.exists() else self._root.parent
+        try:
+            return shutil.disk_usage(probe).free
+        except OSError:
+            # An unreadable mount is not an empty disk. Answering "loads of room" would
+            # turn a free-space guard into a rubber stamp, so say nothing is left and let
+            # the caller refuse — a refusal with a sentence beats a full volume on a box
+            # whose owner has no terminal (CLAUDE.md #10).
+            return 0
 
 
 # Archives are named by this code or by export-inner.sh — anything else in

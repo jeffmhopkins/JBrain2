@@ -72,6 +72,11 @@ class MemBlobStore:
     def usage(self) -> tuple[int, int]:
         return len(self._blobs), sum(len(b) for b in self._blobs.values())
 
+    def free_bytes(self) -> int:
+        # Part of the protocol since the SDR recorder refuses to start on a nearly-full
+        # volume; memory is not a disk, so this one never runs out.
+        return 1 << 40
+
 
 @pytest.fixture
 async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa: F811

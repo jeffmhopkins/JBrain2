@@ -8,11 +8,22 @@ either. So this opens its own `GET /listen/audio` (the same fan-out the browser'
 into `blobs.put_stream(...)`: a clip is never buffered whole in memory, whatever its
 length, and it lands through the storage abstraction as CLAUDE.md #2 requires.
 
-**One recording at a time.** Not a limitation to work around: there is one listen
-session, and a second recorder would spool a byte-identical second copy of it — which
-content-addressing would then dedupe into one blob with two rows pointing at it, so
-deleting either would take the other's audio. The single active slot is what makes
-`blob_sha256` a one-to-one thing.
+**One recording at a time, enforced with a LOCK.** Not a limitation to work around:
+there is one listen session, and a second recorder would spool a byte-identical second
+copy of it — which content-addressing would then dedupe into one blob with two rows
+pointing at it, so deleting either would take the other's audio. A bare `is None` check
+does not enforce that, because opening the stream awaits: two Record presses both see
+"not recording", both connect, and the loser is orphaned with an unreachable stop event,
+spooling 28.8 MB/hour that nothing can stop. So the check, the connect and the assignment
+happen under one `asyncio.Lock`, and teardown clears the slot only if it still OWNS it —
+an ended recording must never wipe a live one's slot, which is how `/sdr/status` came to
+report nothing recording while Stop hung for ever.
+
+**A capture is bounded, and refused when the disk is nearly full.** Nothing expires by
+design (the plan's §1), so the only thing standing between a forgotten Record press and a
+full volume is this — and the owner has no terminal to clear one with (CLAUDE.md #10).
+The bound stops and SAVES rather than discarding: an interrupted recording is still a
+recording, whether the interruption is the sidecar or us.
 
 **An interrupted recording is still a recording.** The sidecar ending a session, a
 dropped connection, or a retune that outlives the stream all close it from the far end,
@@ -45,6 +56,27 @@ log = structlog.get_logger(__name__)
 #: would also make a sidecar that never accepts the connection hang the Record button
 #: with nothing to say.
 CONNECT_TIMEOUT_S = 10.0
+
+#: The longest one capture may run, as the bytes it costs. 64 kbps mono MP3 is 8 kB/s
+#: (`deploy/sdr/listen.py`), so this is four hours — longer than any net or event the
+#: radio is pointed at, and 115 MB rather than the 691 MB a Record press forgotten for a
+#: day would spool. Reaching it ends the recording the same way the sidecar dropping the
+#: session does: the blob is finalized and the row written, so the owner finds four hours
+#: in the library rather than a gap where a day went.
+MAX_CAPTURE_BYTES = 4 * 60 * 60 * (64_000 // 8)
+
+#: Refuse to start, and stop a running capture, below this much free space on the blob
+#: volume. A box that fills its disk stops being fixable from the PWA — Postgres stops
+#: accepting writes and Ops → Update cannot pull an image — and a recording is the one
+#: thing here that grows without being asked to. 1 GiB leaves room to trim and delete
+#: (which need to WRITE a cut clip before they can free anything).
+MIN_FREE_BYTES = 1 << 30
+
+#: How often the free-space floor is re-checked while spooling. At 8 kB/s this is about
+#: every two minutes — a `statvfs` per 1 MiB of audio is free, and the alternative is
+#: checking only at the start, which is no protection at all against a four-hour capture
+#: running beside everything else the box does.
+_FREE_CHECK_EVERY_BYTES = 1 << 20
 
 
 class RecorderRefused(RuntimeError):
@@ -92,6 +124,11 @@ class _Active:
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     bytes: int = 0
     task: asyncio.Task[None] | None = None
+    #: The row THIS recording wrote, once it has. Held on the recording rather than on
+    #: the recorder so that a stop can only ever be handed the row belonging to the
+    #: recording it stopped — a shared slot lets a clip that finished late be reported as
+    #: the saved result of the next one.
+    saved: dict[str, Any] | None = None
 
 
 class SdrRecorder:
@@ -101,16 +138,19 @@ class SdrRecorder:
         self._blobs = blobs
         self._repo = repo
         self._active: _Active | None = None
-        # The row a recording that ended on its OWN wrote — the sidecar dropped the
-        # session while the owner was still holding Record. Held so the next stop can
-        # hand it back rather than answering "nothing was recording" about audio that is
-        # sitting in the library.
-        self._saved: dict[str, Any] | None = None
-        # The finalize, kept past the end of the recording it belongs to. `_active` is
-        # cleared the moment the stream ends, so a stop arriving while the row is still
-        # being written would otherwise find nothing to wait for and report that nothing
-        # was saved — about a clip that is landing in the library as it answers.
-        self._task: asyncio.Task[None] | None = None
+        # The most recent recording, kept past the end of the stream it belongs to.
+        # `_active` is cleared the moment the stream ends, so a stop arriving while the
+        # row is still being written would otherwise find nothing to wait for and report
+        # that nothing was saved — about a clip that is landing in the library as it
+        # answers. It is also what a stop reads the saved row OFF, which is why the row
+        # lives on the recording: the alternative, one `_saved` slot on the recorder, is
+        # writable by a clip that ended before the current one started.
+        self._finishing: _Active | None = None
+        # Start and stop are mutually exclusive, and the exclusion spans the awaits.
+        # `if self._active is None` then `await open_audio_stream(...)` is a check with a
+        # yield point inside it: two Record presses both pass it, both open a stream, and
+        # the loser becomes an orphan nothing can reach to stop.
+        self._gate = asyncio.Lock()
 
     def state(self, *, now: datetime | None = None) -> dict[str, Any] | None:
         """What `GET /sdr/status` reports, or None when nothing is recording.
@@ -142,33 +182,45 @@ class SdrRecorder:
         The settings stored are the ones in force NOW. A retune does not restart the
         pipeline, so a recording can span a frequency change; the row keeps where it
         started, which is what the library shows (the plan's §2).
+
+        Held under `_gate` for the whole of it — the check, the connect and the
+        assignment. The connect is a real socket, and a second press arriving inside it
+        is the ordinary case (a double tap, two tabs), not a rare one.
         """
-        if self._active is not None:
-            return _state_of(self._active, datetime.now(tz=UTC))
-        client, response = await open_audio_stream(base_url)
-        if response.status_code != 200:
-            detail = await _detail_of(response)
-            await response.aclose()
-            await client.aclose()
-            raise RecorderRefused(detail, status=response.status_code)
-        active = _Active(
-            ctx=ctx,
-            started_at=datetime.now(tz=UTC),
-            frequency_hz=frequency_hz,
-            mode=mode,
-            bandwidth_hz=bandwidth_hz,
-            gain=gain,
-            serial=serial,
-        )
-        self._active = active
-        # Drops a row an earlier recording finalized on its own without ever being
-        # collected by a stop. It is already in the library — only the courtesy copy in
-        # the stop response goes, and reporting a stale one as "just saved" would be
-        # worse than not reporting it.
-        self._saved = None
-        active.task = asyncio.create_task(self._run(active, client, response))
-        self._task = active.task
-        return _state_of(active, active.started_at)
+        async with self._gate:
+            if self._active is not None:
+                return _state_of(self._active, datetime.now(tz=UTC))
+            free = self._blobs.free_bytes()
+            if free < MIN_FREE_BYTES:
+                raise RecorderRefused(
+                    f"There is only {free / (1 << 20):.0f} MB left on the box, so there is "
+                    "nowhere to put a recording. Trim or delete something first.",
+                    status=400,
+                )
+            client, response = await open_audio_stream(base_url)
+            if response.status_code != 200:
+                detail = await _detail_of(response)
+                await response.aclose()
+                await client.aclose()
+                raise RecorderRefused(detail, status=response.status_code)
+            active = _Active(
+                ctx=ctx,
+                started_at=datetime.now(tz=UTC),
+                frequency_hz=frequency_hz,
+                mode=mode,
+                bandwidth_hz=bandwidth_hz,
+                gain=gain,
+                serial=serial,
+            )
+            self._active = active
+            # Whatever an earlier recording finalized on its own is no longer collectable
+            # by a stop: it is already in the library, and reporting a stale row as "just
+            # saved" would be worse than not reporting it. Moving the pointer (rather
+            # than clearing a shared slot) is what makes that safe while that earlier
+            # recording's finalize may still be running — its row lands on ITS object.
+            self._finishing = active
+            active.task = asyncio.create_task(self._run(active, client, response))
+            return _state_of(active, active.started_at)
 
     async def stop(self) -> dict[str, Any] | None:
         """Stop, wait for the blob and the row, and return the row (or None).
@@ -176,16 +228,23 @@ class SdrRecorder:
         None means nothing was captured: either nothing was recording, or the stream gave
         us no bytes at all. It is deliberately not an error — Record off with nothing
         running is the idempotent half of a switch.
+
+        Takes the same gate as `start`, so a stop that arrives while a start is still
+        connecting waits for it and then stops what it started, rather than answering
+        "nothing was recording" about a recording that begins a millisecond later.
         """
-        active = self._active
-        if active is not None:
-            active.stop.set()
-        if self._task is not None:
-            # `_run` swallows its own failures, so this awaits a task that does not
-            # raise; shielding is unnecessary and would only orphan the finalize.
-            await self._task
-        saved, self._saved = self._saved, None
-        return saved
+        async with self._gate:
+            active = self._active
+            if active is not None:
+                active.stop.set()
+            finishing, self._finishing = self._finishing, None
+            if finishing is None:
+                return None
+            if finishing.task is not None:
+                # `_run` swallows its own failures, so this awaits a task that does not
+                # raise; shielding is unnecessary and would only orphan the finalize.
+                await finishing.task
+            return finishing.saved
 
     async def _run(
         self, active: _Active, client: httpx.AsyncClient, response: httpx.Response
@@ -206,7 +265,13 @@ class SdrRecorder:
                 await response.aclose()
             with contextlib.suppress(Exception):
                 await client.aclose()
-            self._active = None
+            # ONLY if this recording still owns the slot. Clearing it unconditionally
+            # lets a recording that ended wipe a live one's — after which `/sdr/status`
+            # reports nothing recording, Stop finds nothing to signal and waits for ever,
+            # and the shutdown finalize burns its whole timeout and then cancels the very
+            # save it exists to perform.
+            if self._active is active:
+                self._active = None
         if sha is None or active.bytes <= 0:
             # A stream that produced nothing is not a clip. Writing the row anyway would
             # put a zero-second entry in the library that plays silence and cannot be
@@ -214,7 +279,7 @@ class SdrRecorder:
             log.info("sdr_recorder.nothing_captured", bytes=active.bytes)
             return
         try:
-            self._saved = await self._save(active, sha)
+            active.saved = await self._save(active, sha)
         except Exception as exc:  # noqa: BLE001 — the blob is on disk either way
             log.warning("sdr_recorder.save_failed", error=repr(exc), sha=sha)
 
@@ -256,9 +321,14 @@ class SdrRecorder:
         because a wedged sidecar can hold a socket open sending nothing at all — and
         Stop must then still answer, rather than the owner watching a button that never
         comes back.
+
+        It is also where a capture ends itself: at `MAX_CAPTURE_BYTES`, or when the blob
+        volume drops below `MIN_FREE_BYTES`. Both return rather than raise, for the same
+        reason as every other ending here — what has been captured is kept.
         """
         stream = response.aiter_bytes().__aiter__()
         stopped = asyncio.ensure_future(active.stop.wait())
+        checked_at = 0
         try:
             while not active.stop.is_set():
                 nxt = asyncio.ensure_future(stream.__anext__())
@@ -275,6 +345,15 @@ class SdrRecorder:
                     return
                 active.bytes += len(chunk)
                 yield chunk
+                if active.bytes >= MAX_CAPTURE_BYTES:
+                    log.info("sdr_recorder.capture_bound_reached", bytes=active.bytes)
+                    return
+                if active.bytes - checked_at >= _FREE_CHECK_EVERY_BYTES:
+                    checked_at = active.bytes
+                    free = self._blobs.free_bytes()
+                    if free < MIN_FREE_BYTES:
+                        log.warning("sdr_recorder.disk_nearly_full", free_bytes=free)
+                        return
         finally:
             stopped.cancel()
 

@@ -45,7 +45,7 @@ from jbrain.api.notes import BlobStoreDep, SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
-from jbrain.sdr.audio import cut_clip, levels
+from jbrain.sdr.audio import cut_clip
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.health import session_for, shown
@@ -1694,6 +1694,12 @@ async def trim_recording(
     the original would add a blob and free nothing. `captured_s` is deliberately left
     where it was, because `duration_s < captured_s` is what makes a row "trimmed" and
     prices what trimming has given back.
+
+    **The original goes only once the replacement has been PROVEN to contain audio.**
+    `ffmpeg -c copy` exits 0 for a seek past the last frame and writes a header with no
+    frames under it, so "the cut ran" is not "there is a clip". `cut_clip` measures its
+    own output before this route stores any of it; an unmeasurable cut is refused here,
+    with the row and its blob untouched and nothing left on disk to collect.
     """
     ctx = ctx_for(owner)
     row = await repo.get(ctx, recording_id)
@@ -1704,22 +1710,34 @@ async def trim_recording(
 
     old_sha = cast(str, row["blob_sha256"])
     cut = await cut_clip(blobs.path_for(old_sha), body.start_s, body.end_s)
-    if not cut:
+    if not cut.data:
         # The recording is untouched: nothing has been repointed and no blob deleted.
         raise HTTPException(
             status_code=500,
             detail="The trim did not run, so the recording is unchanged. Try again.",
         )
-    new_sha = await blobs.put(cut)
-    peaks, measured = await levels(blobs.path_for(new_sha))
-    kept_s = measured if measured is not None else body.end_s - body.start_s
+    if cut.duration_s is None:
+        # The cut ran and produced a file with no audio in it — the selection landed past
+        # the last frame. A 400 rather than a 500 because it IS the owner's selection that
+        # is wrong, and the sheet is where they can fix it (CLAUDE.md #10). Refused BEFORE
+        # anything is stored, so the recording still plays and no blob is orphaned.
+        raise HTTPException(
+            status_code=400,
+            detail="That selection came back with no audio in it, so the recording is "
+            "unchanged. Move the start of the trim back and try again.",
+        )
+    # Never `body.end_s - body.start_s`. A length taken from what was ASKED for is a row
+    # over-stating its own audio, and the next trim then places its handles — and its
+    # bounds check — against seconds the file does not have.
+    kept_s = cut.duration_s
+    new_sha = await blobs.put(cut.data)
     updated = await repo.retrim(
         ctx,
         recording_id,
         duration_s=kept_s,
         blob_sha256=new_sha,
-        bytes_=len(cut),
-        peaks=peaks,
+        bytes_=len(cut.data),
+        peaks=cut.peaks,
     )
     if updated is None:
         # Deleted from under us between the read and the write. The new blob would
@@ -1746,7 +1764,13 @@ def _check_trim(body: TrimIn, duration_s: float) -> None:
 
     The numbers arrive from a sheet with two draggable handles, so every refusal here is
     something the owner can see and correct on that sheet — which is why each one says
-    what is wrong instead of naming a field."""
+    what is wrong instead of naming a field.
+
+    These bounds are a courtesy, NOT the safety net. The sheet is one of several callers
+    (the owner debug API is another), and `duration_s` is only ever as true as the last
+    measurement — so what actually protects the audio is that a cut must be proven to
+    play before the original is deleted, in `trim_recording`. This just means the common
+    mistake gets a sentence instead of a decode."""
     if body.end_s <= body.start_s:
         raise HTTPException(
             status_code=400, detail="The end of the trim has to come after the start."
@@ -1758,7 +1782,10 @@ def _check_trim(body: TrimIn, duration_s: float) -> None:
         )
     if duration_s <= 0:
         raise HTTPException(status_code=400, detail="That recording has no audio to trim.")
-    if body.start_s >= duration_s:
+    # `duration_s - MIN_TRIM_S`, not `duration_s`: a start inside the last fraction of a
+    # second cannot leave a clip, and the copy-cut's answer to it is a header with no
+    # frames under it — the shape that used to pass validation and then delete the audio.
+    if body.start_s > duration_s - MIN_TRIM_S:
         raise HTTPException(
             status_code=400,
             detail=f"That recording is only {duration_s:.1f} seconds long, so the trim "

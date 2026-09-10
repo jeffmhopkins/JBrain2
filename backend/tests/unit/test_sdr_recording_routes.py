@@ -5,7 +5,7 @@ directly with the sidecar and the repo scripted, because what these routes do wr
 not routing — it is what they say when something is missing, and what they leave on
 disk afterwards.
 
-Three properties here are load-bearing enough to be worth naming:
+Four properties here are load-bearing enough to be worth naming:
 
 * **The blob is resolved from the ROW, never from the URL.** Every blob on this box
   lives in one content-addressed store, so a route that took a sha from a path segment
@@ -14,10 +14,14 @@ Three properties here are load-bearing enough to be worth naming:
   full-length trim produces the SAME digest — deleting "the old blob" there would
   unlink the audio the row was just repointed at.
 * **A failed cut changes nothing.** No repoint, no delete, and a sentence saying so.
+* **The original goes only once the replacement is proven to play.** A copy-cut can exit
+  0 and contain no audio, and trusting it repointed the row at silence and then deleted
+  the recording — 200 OK, audio gone. That one is at the bottom, with the trim tests.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,8 +31,13 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
+from jbrain import main
 from jbrain.api import sdr as sdr_api
+from jbrain.config import Settings
+from jbrain.main import create_app
+from jbrain.sdr.audio import Cut
 from jbrain.sdr.recorder import RecorderRefused
 from jbrain.storage import FsBlobStore
 
@@ -205,18 +214,20 @@ def _ffmpeg(
     measured: float | None = 9.0,
     peaks: list[float] | None = None,
 ) -> list[tuple[Path, float, float]]:
-    """Script the two ffmpeg helpers, and record every cut asked for."""
+    """Script the copy-cut, and record every cut asked for.
+
+    `measured=None` with `cut` non-empty is the case that used to destroy a recording:
+    ffmpeg exited 0 and wrote a file, and there is no audio in it. The cut measures
+    itself now, so that arrives here as a `Cut` carrying no duration."""
     asked: list[tuple[Path, float, float]] = []
 
-    async def fake_cut(source: Path, start_s: float, end_s: float) -> bytes:
+    async def fake_cut(source: Path, start_s: float, end_s: float) -> Cut:
         asked.append((source, start_s, end_s))
-        return cut
-
-    async def fake_levels(_path: Path) -> tuple[list[float], float | None]:
-        return (peaks if peaks is not None else [0.3, 0.4]), measured
+        if not cut:
+            return Cut()
+        return Cut(data=cut, peaks=peaks if peaks is not None else [0.3, 0.4], duration_s=measured)
 
     monkeypatch.setattr(sdr_api, "cut_clip", fake_cut)
-    monkeypatch.setattr(sdr_api, "levels", fake_levels)
     return asked
 
 
@@ -524,10 +535,21 @@ async def test_a_full_length_trim_does_not_delete_its_own_audio(
 ) -> None:
     """Reachable, not paranoia: trimming a clip to its whole extent produces identical
     bytes and therefore the identical digest. Deleting "the old blob" there unlinks the
-    audio the row was just repointed at, and the recording plays silence for ever."""
+    audio the row was just repointed at, and the recording plays silence for ever.
+
+    The reference check would also catch this — after the repoint the row points AT the
+    digest, so `blob_in_use` is true on its own. That is exactly why it is disabled here:
+    a test the reference check passes on its behalf does not pin the `new_sha != old_sha`
+    guard at all, and the guard is the half that cannot be wrong. It is local, it needs
+    no round trip, and it holds when the check that queries the database does not."""
     old = await _stored(blobs, CLIP)
     repo = _Repo([_row(old)])
     _ffmpeg(monkeypatch, cut=CLIP, measured=42.0)
+
+    async def nothing_points_at_it(*_a: Any, **_kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(repo, "blob_in_use", nothing_points_at_it)
 
     out = await sdr_api.trim_recording(
         ROW_ID, sdr_api.TrimIn(start_s=0.0, end_s=42.0), fake(OWNER), fake(repo), blobs
@@ -641,21 +663,51 @@ async def test_an_impossible_trim_is_refused_with_a_sentence(
     assert asked == [] and repo.rows[0]["blob_sha256"] == old
 
 
-async def test_a_trim_whose_result_cannot_be_measured_uses_what_was_asked_for(
+async def test_a_cut_that_cannot_be_measured_is_refused_and_the_original_survives(
     blobs: FsBlobStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ffmpeg could not decode the cut clip. A missing waveform must not lose the
-    recording — the row keeps the requested length and an empty envelope."""
+    """**The trim that used to destroy the recording.** ffmpeg exits 0 and writes a
+    ~621-byte header when the seek lands past the last frame, so the cut "succeeded" with
+    no audio in it. Repointing the row on that and deleting the original is a 200 OK that
+    loses the clip — and writing `end_s - start_s` as the length leaves the row
+    over-stating its own audio, so the NEXT trim lands past the real frames too.
+
+    A cut that cannot be decoded is not a clip: 400 with a sentence, the row untouched,
+    the original still on disk, and nothing stored to become an orphan."""
     old = await _stored(blobs, CLIP)
     repo = _Repo([_row(old)])
     _ffmpeg(monkeypatch, measured=None, peaks=[])
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.trim_recording(
+            ROW_ID, sdr_api.TrimIn(start_s=2.0, end_s=8.0), fake(OWNER), fake(repo), blobs
+        )
+
+    assert refused.value.status_code == 400
+    assert "no audio" in str(refused.value.detail)
+    assert repo.rows[0]["blob_sha256"] == old
+    assert repo.rows[0]["duration_s"] == 42.0  # NOT 6.0, and not touched at all
+    assert blobs.path_for(old).read_bytes() == CLIP
+    # The cut bytes never reached the store, so there is nothing to clean up.
+    assert blobs.usage() == (1, len(CLIP))
+
+
+async def test_a_trim_records_the_measured_length_never_the_requested_one(
+    blobs: FsBlobStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`-c copy` lands on a frame boundary, so what was cut is never exactly what was
+    asked for. A row whose `duration_s` came from the REQUEST is a row claiming audio the
+    file does not have, and the next trim's bounds are checked against that claim."""
+    old = await _stored(blobs, CLIP)
+    repo = _Repo([_row(old)])
+    _ffmpeg(monkeypatch, measured=5.832)
 
     out = await sdr_api.trim_recording(
         ROW_ID, sdr_api.TrimIn(start_s=2.0, end_s=8.0), fake(OWNER), fake(repo), blobs
     )
 
-    assert out["recording"]["duration_s"] == 6.0
-    assert out["recording"]["peaks"] == []
+    assert out["recording"]["duration_s"] == 5.832  # not 6.0
+    assert out["cut"] == {"start_s": 2.0, "end_s": 7.832}
 
 
 # --- DELETE /recordings/{id} ---------------------------------------------------------
@@ -691,3 +743,77 @@ async def test_deleting_an_unknown_recording_is_a_404(blobs: FsBlobStore) -> Non
         await sdr_api.delete_recording(ROW_ID, OWNER, _Repo(), blobs)  # type: ignore[arg-type]
 
     assert missing.value.status_code == 404
+
+
+# --- The shutdown finalize ------------------------------------------------------------
+#
+# `main.lifespan` stops an in-flight recording before anything else is torn down, because
+# an Ops → Update mid-recording would otherwise take the spool file with the container —
+# and an interrupted recording is still a recording (the plan's §2). Nothing tested those
+# lines: deleting them broke nothing, which is the state a piece of shutdown code is
+# always in unless something actually runs the shutdown. `TestClient`'s context manager
+# does; the database URL points at nothing, which the lifespan already tolerates.
+
+
+class _Finalizing:
+    """A recorder that records whether shutdown asked it to finish, and can refuse to."""
+
+    def __init__(self, *, wedged: bool = False) -> None:
+        self.stops = 0
+        self._wedged = wedged
+
+    def state(self) -> dict[str, Any] | None:
+        return None
+
+    async def stop(self) -> dict[str, Any] | None:
+        self.stops += 1
+        if self._wedged:
+            await asyncio.Event().wait()
+        return None
+
+
+def _app() -> Any:
+    return create_app(
+        Settings(secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none")
+    )
+
+
+def test_shutdown_finalizes_a_recording_that_is_still_running() -> None:
+    """Delete the finalize from `main.lifespan` and this fails: the tape deck's audio
+    would be spooling in a container that is about to be replaced, and the row that makes
+    it a recording is written by `stop()`."""
+    app = _app()
+    recorder = _Finalizing()
+
+    with TestClient(app):
+        app.state.sdr_recorder = recorder
+        assert recorder.stops == 0  # nothing is finalized while the box is running
+
+    assert recorder.stops == 1
+
+
+def test_shutdown_does_not_wait_for_ever_on_a_wedged_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The finalize is bounded. A sidecar holding the socket open and sending nothing
+    must not turn Ops → Update into a hang the owner has no terminal to break (CLAUDE.md
+    #10) — they would be left with a box mid-deploy and no way to see why."""
+    monkeypatch.setattr(main, "SDR_FINALIZE_TIMEOUT_S", 0.05)
+    app = _app()
+    recorder = _Finalizing(wedged=True)
+
+    with TestClient(app):
+        app.state.sdr_recorder = recorder
+
+    assert recorder.stops == 1
+
+
+def test_shutdown_on_a_box_that_has_never_recorded_is_a_no_op() -> None:
+    """`get_recorder` makes the recorder on first use, so `app.state` has none until a
+    Record press. Shutdown must not create one just to stop it."""
+    app = _app()
+
+    with TestClient(app):
+        pass
+
+    assert getattr(app.state, "sdr_recorder", None) is None

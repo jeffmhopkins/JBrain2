@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -117,8 +117,51 @@ def _install(monkeypatch: pytest.MonkeyPatch, response: _Response) -> tuple[_Cli
     return client, opened
 
 
-def _recorder(tmp_path: Any, repo: _Repo) -> SdrRecorder:
-    return SdrRecorder(FsBlobStore(tmp_path), repo)  # type: ignore[arg-type]
+def _recorder(tmp_path: Any, repo: _Repo, *, blobs: Any = None) -> SdrRecorder:
+    return SdrRecorder(blobs or FsBlobStore(tmp_path), repo)  # type: ignore[arg-type]
+
+
+class _Store(FsBlobStore):
+    """A real store on a volume the test can starve. Everything about the bytes is the
+    real thing; only how much room is left is scripted."""
+
+    def __init__(self, root: Any, free: int = 1 << 40) -> None:
+        super().__init__(root)
+        self.free = free
+
+    def free_bytes(self) -> int:
+        return self.free
+
+
+#: Event-loop turns a test will give the recorder's background task before giving up.
+#: Generous — the finalize is several awaits deep — and finite, so a property that never
+#: becomes true fails with a sentence rather than hanging the suite.
+_TURNS = 1_000
+
+
+async def _until(done: Any) -> None:
+    """Let the recorder's background task run until `done()`.
+
+    A yield-and-recheck loop rather than an event, because what is being waited for is
+    the recorder's own state changing — the whole point is that nothing signals it."""
+    for _ in range(_TURNS):
+        if done():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the recorder never got there")
+
+
+def _ended_elsewhere() -> Any:
+    """An `_Active` the recorder does not hold — a recording whose stream has ended."""
+    return recorder_mod._Active(
+        ctx=OWNER,
+        started_at=datetime.now(tz=UTC),
+        frequency_hz=1,
+        mode="nfm",
+        bandwidth_hz=None,
+        gain=None,
+        serial=None,
+    )
 
 
 async def _start(rec: SdrRecorder, **kw: Any) -> dict[str, Any]:
@@ -251,6 +294,191 @@ async def test_a_second_start_does_not_open_a_second_stream(
     await rec.stop()
     # One stream, one blob, one row — the property the single active slot exists for.
     assert len(repo.rows) == 1
+
+
+async def test_two_presses_that_actually_RACE_still_open_one_stream(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sequential case above proves nothing about a race: its fake opener never
+    yields, so the second press cannot arrive inside the first one's connect.
+
+    Opening the stream is a real socket. `if self._active is None` followed by `await
+    open_audio_stream(...)` is a check with a yield point inside it, so two presses both
+    pass it, both connect, and the loser is orphaned — an `_Active` with a stop event
+    nobody holds, spooling 28.8 MB/hour that no button can stop. This opener awaits, the
+    way a connect does."""
+    opened: list[_Response] = []
+
+    async def opener(base_url: str) -> tuple[Any, Any]:
+        await asyncio.sleep(0)  # the connect the check-then-set used to straddle
+        response = _Response([b"one"], silent=True)
+        opened.append(response)
+        return _Client(), response
+
+    monkeypatch.setattr(recorder_mod, "open_audio_stream", opener)
+
+    async def fake_levels(_path: Any) -> tuple[list[float], float | None]:
+        return PEAKS, MEASURED_S
+
+    monkeypatch.setattr(recorder_mod, "levels", fake_levels)
+    repo = _Repo()
+    rec = _recorder(tmp_path, repo)
+
+    both = await asyncio.gather(_start(rec), _start(rec, frequency_hz=7_200_000, mode="lsb"))
+
+    assert len(opened) == 1
+    # Both presses answer about the SAME recording, so the tape deck cannot draw two.
+    assert both[0]["started_at"] == both[1]["started_at"]
+    await opened[0].drained.wait()
+    saved = await rec.stop()
+    assert saved is not None and len(repo.rows) == 1
+    assert rec.state() is None
+
+
+async def test_a_recording_that_ends_cannot_clear_a_live_ones_slot(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Teardown clears the slot only if it still OWNS it.
+
+    An unconditional `self._active = None` in the finalize is the second half of the same
+    bug: any recording that ends — an orphan, or a clip whose stream dropped while the
+    next one was starting — wipes the live recording's slot. After that `/sdr/status`
+    reports nothing recording, Stop finds no stop event to set and waits for ever, and
+    the shutdown finalize burns its whole timeout and then cancels the save it exists to
+    perform. Here the ended recording is planted directly, because with the lock in place
+    the race that used to create one no longer can."""
+    live = _Response([b"still-going"], silent=True)
+    _install(monkeypatch, live)
+    rec = _recorder(tmp_path, _Repo())
+
+    started = await _start(rec)
+    await live.drained.wait()
+
+    # An earlier recording finishing its teardown, now that it no longer owns the slot.
+    await rec._run(_ended_elsewhere(), _Client(), _Response([]))  # type: ignore[arg-type]
+
+    state = rec.state()  # what /sdr/status reports
+    assert state is not None and state["started_at"] == started["started_at"]
+    saved = await asyncio.wait_for(rec.stop(), timeout=2.0)  # ...and Stop still answers
+    assert saved is not None and saved["bytes_"] == len(b"still-going")
+
+
+async def test_a_stop_returns_the_row_of_the_recording_it_stopped(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The saved row belongs to a recording, not to the recorder.
+
+    A clip whose stream ended on its own finishes writing its row LATE — the slot is
+    cleared the moment the stream ends, but measuring the audio takes as long as ffmpeg
+    takes. On one shared `_saved` slot the next Record press clears it, that late write
+    then fills it in, and the next stop hands back the PREVIOUS recording's row as what
+    it just saved: the tape deck reports the wrong clip, and the owner is told a
+    recording was saved that they did not just make.
+
+    Here the first clip's measuring pass is held open across the second Record press,
+    which is exactly the window that used to swap them."""
+    measuring = asyncio.Event()
+    finished_late = asyncio.Event()
+
+    first = _Response([b"first-clip"])
+    _install(monkeypatch, first)
+
+    async def slow_levels(_path: Any) -> tuple[list[float], float | None]:
+        # Only the first clip is held: the second must be free to finish under stop().
+        if not measuring.is_set():
+            measuring.set()
+            await finished_late.wait()
+        return PEAKS, MEASURED_S
+
+    monkeypatch.setattr(recorder_mod, "levels", slow_levels)
+    repo = _Repo()
+    rec = _recorder(tmp_path, repo)
+
+    await _start(rec)
+    await measuring.wait()  # the first clip's stream has ended; its row is mid-write
+    assert rec.state() is None
+
+    second = _Response([b"second-clip"])
+
+    async def opener(_base_url: str) -> tuple[Any, Any]:
+        return _Client(), second
+
+    monkeypatch.setattr(recorder_mod, "open_audio_stream", opener)
+    await _start(rec)
+    await second.drained.wait()
+    await _until(lambda: len(repo.rows) == 1)  # the SECOND clip's row is written first...
+    finished_late.set()
+    await _until(lambda: len(repo.rows) == 2)  # ...and the first one's lands after it
+
+    saved = await rec.stop()
+
+    assert saved is not None
+    assert saved["bytes_"] == len(b"second-clip")
+    # Both clips are in the library — the first was never lost, only never reported as
+    # the second one's result.
+    assert sorted(row["bytes_"] for row in repo.rows) == [len(b"first-clip"), len(b"second-clip")]
+
+
+async def test_a_capture_stops_itself_at_the_bound_and_keeps_what_it_has(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing expires by design (the plan's §1), so a Record press nobody releases is
+    the one thing here that grows without limit — on a box whose owner has no terminal to
+    clear it from (CLAUDE.md #10). The bound ends the capture the way the sidecar dropping
+    the session does: the blob is finalized and the row written, so four hours land in the
+    library instead of a day going missing."""
+    monkeypatch.setattr(recorder_mod, "MAX_CAPTURE_BYTES", 10)
+    response = _Response([b"12345", b"67890", b"never-read"], silent=True)
+    _install(monkeypatch, response)
+    repo = _Repo()
+    rec = _recorder(tmp_path, repo)
+
+    await _start(rec)
+    # It ends itself; nobody presses Stop.
+    await _until(lambda: rec.state() is None)
+    saved = await asyncio.wait_for(rec.stop(), timeout=2.0)
+
+    assert saved is not None and saved["bytes_"] == 10
+    assert len(repo.rows) == 1
+    assert rec.state() is None
+
+
+async def test_a_capture_stops_itself_when_the_disk_is_nearly_full(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full volume is the failure the owner cannot undo from the PWA: Postgres stops
+    accepting writes and Ops → Update cannot pull an image. So the spool watches the
+    floor as it goes, rather than only at the start — a four-hour capture runs beside
+    everything else the box is doing."""
+    monkeypatch.setattr(recorder_mod, "_FREE_CHECK_EVERY_BYTES", 1)
+    response = _Response([b"first", b"second"], silent=True)
+    _install(monkeypatch, response)
+    store = _Store(tmp_path)
+    rec = _recorder(tmp_path, _Repo(), blobs=store)
+
+    await _start(rec)
+    store.free = 1 << 20  # the volume fills under us
+    await _until(lambda: rec.state() is None)
+    saved = await asyncio.wait_for(rec.stop(), timeout=2.0)
+
+    # Stopped early, and what it caught was kept.
+    assert saved is not None and 0 < saved["bytes_"] <= len(b"firstsecond")
+
+
+async def test_record_is_refused_with_a_sentence_when_there_is_no_room(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal the owner can act on, before a stream is opened — not a recording that
+    fills the last of the disk and takes the box down with it."""
+    _, opened = _install(monkeypatch, _Response([b"x"]))
+    rec = _recorder(tmp_path, _Repo(), blobs=_Store(tmp_path, free=240 << 20))
+
+    with pytest.raises(RecorderRefused) as refused:
+        await _start(rec)
+
+    assert refused.value.status == 400
+    assert "240 MB" in refused.value.detail
+    assert opened == [] and rec.state() is None
 
 
 async def test_nothing_listening_is_refused_with_the_sidecars_own_sentence(

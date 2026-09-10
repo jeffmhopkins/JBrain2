@@ -1,7 +1,11 @@
 import hashlib
 import os
+import shutil
 from pathlib import Path
 
+import pytest
+
+from jbrain import storage
 from jbrain.storage import FsBlobStore
 
 
@@ -83,3 +87,58 @@ async def test_deleting_then_re_putting_the_same_bytes_works(tmp_path: Path) -> 
 
     assert await store.put(data) == digest
     assert await store.get(digest) == data
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../../../etc/passwd",
+        "a" * 63,
+        "A" * 64,  # the store writes lowercase hex; anything else is not one of its names
+        "",
+        "not-a-digest",
+        "a" * 64 + "/../../x",
+    ],
+)
+async def test_delete_refuses_anything_that_is_not_a_digest(tmp_path: Path, bad: str) -> None:
+    """`delete` is the one method here that unlinks, so it is the one that checks.
+
+    Every caller today passes a digest read from an RLS-scoped row, which is why this has
+    never fired in production — but "unreachable" is a property of today's callers, not of
+    this method, and `path_for` will happily build a path out of whatever it is handed.
+    The cost of being wrong once is somebody else's file, and the fence is one regex."""
+    store = FsBlobStore(tmp_path)
+    kept = await store.put(b"someone else's attachment")
+
+    with pytest.raises(ValueError, match="not a sha256 digest"):
+        await store.delete(bad)
+
+    assert await store.exists(kept)
+
+
+def test_free_bytes_reports_the_volume_the_blobs_live_on(tmp_path: Path) -> None:
+    """The recorder refuses to start below a floor, and a capture stops itself at one.
+    Asked of the STORE rather than of a path at the call site: where the blobs are is this
+    abstraction's secret (CLAUDE.md #2), and a caller that had to know the path in order
+    to ask would be a caller that could also write to it."""
+    store = FsBlobStore(tmp_path / "blobs")
+
+    # Answers before anything has been stored — the directory does not exist yet, and the
+    # volume it will be created on is the one the answer is about.
+    assert store.free_bytes() > 0
+    assert store.free_bytes() == shutil.disk_usage(tmp_path).free
+
+
+def test_free_bytes_on_an_unreadable_volume_reports_nothing_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable mount is not an empty disk. Answering "loads of room" would turn the
+    free-space guard into a rubber stamp; answering zero makes the caller refuse, and a
+    refusal with a sentence beats a full volume on a box with no terminal."""
+
+    def _boom(_path: object) -> object:
+        raise OSError("mount gone")
+
+    monkeypatch.setattr(storage.shutil, "disk_usage", _boom)
+
+    assert FsBlobStore(tmp_path).free_bytes() == 0

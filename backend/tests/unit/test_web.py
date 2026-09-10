@@ -2719,6 +2719,11 @@ class _FakeBlobs:
     def usage(self) -> tuple[int, int]:
         return (len(self.blobs), sum(len(b) for b in self.blobs.values()))
 
+    def free_bytes(self) -> int:
+        # Part of the protocol since the SDR recorder refuses to start on a nearly-full
+        # volume; memory is not a disk, so this one never runs out.
+        return 1 << 40
+
 
 class _FakeArtifacts:
     """An in-memory ToolArtifactRepo: upsert-by-url, get, cursor-advance, list — the

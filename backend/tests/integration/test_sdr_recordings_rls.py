@@ -15,6 +15,7 @@ playing it.
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,8 +24,12 @@ from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.api import sdr as sdr_api
+from jbrain.blob_refs import BLOB_REFERENCES, blob_referenced
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.sdr.audio import Cut
 from jbrain.sdr.recordings import BYTES_PER_S, RecordingsRepo
+from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -32,6 +37,9 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
+
+#: The digest a recording and a chat attachment both hold — one file, two owners.
+SHARED_SHA = "5" * 64
 
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
 EVERY_SCOPE = SessionContext(
@@ -302,3 +310,203 @@ async def test_a_non_owner_reads_an_empty_library_through_the_repo(
     assert await repo.blob_in_use(EVERY_SCOPE, "a" * 64) is False
     # ...and the row is still the owner's afterwards.
     assert await repo.get(OWNER, str(saved["id"])) is not None
+
+
+# --- The blob guard, against every table that can hold one ----------------------------
+#
+# `SDR_RECORDING_PLAN.md` §7 argued that no other table could share a recording's blob
+# "by accident", and checked only `app.sdr_recordings` before unlinking. That is false
+# today: the PWA offers Download (.mp3), `agent/attachments.py` allow-lists `audio/mpeg`
+# so the owner can attach audio to a chat, and `api/chat_attachments.py` stores it with
+# `blobs.put(data)`. Identical bytes, identical digest, ONE file, two owners — and
+# deleting the recording unlinked the attachment's audio.
+#
+# These run the real list against the real schema, because the list is a hand-kept
+# mapping of table and column names: nothing above the database can tell that one of them
+# has been renamed, and the symptom of getting it wrong is somebody else's file
+# disappearing months later.
+
+#: The owner principal an agent session hangs off. A fresh template has none — a real box
+#: gets one from the first key rotation — so this makes the minimum one the FK needs.
+_OWNER_PRINCIPAL = text(
+    "WITH existing AS (SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1),"
+    " made AS ("
+    "  INSERT INTO app.principals (id, kind, key_hash, label)"
+    "  SELECT gen_random_uuid(), 'owner', 'test-' || gen_random_uuid()::text, 'test owner'"
+    "  WHERE NOT EXISTS (SELECT 1 FROM existing) RETURNING id)"
+    " SELECT id FROM existing UNION ALL SELECT id FROM made"
+)
+
+
+async def test_every_reference_in_the_list_is_a_real_table_and_column(
+    maker: async_sessionmaker,
+) -> None:
+    """`blob_referenced` fails CLOSED, so a clause that does not compile answers True and
+    the blob is merely kept — safe, but it would silently stop anything ever being freed.
+    On an empty schema the honest answer is False, which is only reachable if every
+    clause ran."""
+    async with scoped_session(maker, OWNER) as s:
+        assert await blob_referenced(s, "0" * 64) is False
+
+    # ...and again one at a time, so a rename says WHICH table it broke rather than
+    # failing the composed statement with one message about all of them.
+    for ref in BLOB_REFERENCES:
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text(f"SELECT 1 FROM {ref.table} WHERE ({ref.where}) LIMIT 1"), {"sha": "0" * 64}
+            )
+
+
+@pytest.fixture
+async def a_chat_attachment(maker: async_sessionmaker) -> AsyncIterator[str]:
+    """The owner downloaded a recording and attached the .mp3 to a chat.
+
+    Not a contrivance: Download (.mp3) is on the recording card, `audio/mpeg` is
+    allow-listed for chat attachments precisely so audio can be attached, and the store
+    is content-addressed — so the attachment and the recording are the same file the
+    moment the bytes are the same.
+    """
+    async with scoped_session(maker, OWNER) as s:
+        principal = (await s.execute(_OWNER_PRINCIPAL)).scalar()
+        session_id = (
+            await s.execute(
+                text(
+                    "INSERT INTO app.agent_sessions (id, principal_id, domain_scopes)"
+                    " VALUES (gen_random_uuid(), :pid, ARRAY['general']) RETURNING id"
+                ),
+                {"pid": principal},
+            )
+        ).scalar()
+        await s.execute(
+            text(
+                "INSERT INTO app.turn_attachments"
+                " (id, session_id, domain_code, sha256, filename, media_type, size_bytes)"
+                " VALUES (gen_random_uuid(), :sid, 'general', :sha, 'net-control.mp3',"
+                " 'audio/mpeg', 336000)"
+            ),
+            {"sid": session_id, "sha": SHARED_SHA},
+        )
+        await s.commit()
+    yield SHARED_SHA
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.turn_attachments"))
+        await s.execute(text("DELETE FROM app.agent_sessions"))
+        await s.execute(text("DELETE FROM app.principals WHERE label = 'test owner'"))
+        await s.commit()
+
+
+async def test_a_recordings_blob_is_in_use_when_a_chat_attachment_shares_it(
+    maker: async_sessionmaker, empty_library: None, a_chat_attachment: str
+) -> None:
+    """The reproduced path, at the level that decides whether to unlink.
+
+    Before this, `blob_in_use` asked `app.sdr_recordings` and nothing else — so with the
+    recording's row already deleted the answer was False, the file went, and the chat
+    attachment's download started returning 500 with nothing to say why."""
+    saved = await _add(maker, blob_sha256=a_chat_attachment)
+    repo = _repo(maker)
+
+    assert await repo.blob_in_use(OWNER, a_chat_attachment) is True
+    # Even excepting the recording itself — which is what a trim asks, and what a DELETE
+    # effectively asks once its row is gone.
+    assert await repo.blob_in_use(OWNER, a_chat_attachment, except_id=str(saved["id"])) is True
+
+
+async def test_a_digest_nothing_else_holds_is_still_free_to_delete(
+    maker: async_sessionmaker, empty_library: None, a_chat_attachment: str
+) -> None:
+    """The guard has to be able to say no, or a trim frees nothing and the feature
+    inverts (the plan's §5)."""
+    lonely = await _add(maker, blob_sha256="3" * 64)
+
+    assert await _repo(maker).blob_in_use(OWNER, "3" * 64, except_id=str(lonely["id"])) is False
+
+
+# --- ...and end to end, through the routes that actually unlink ------------------------
+
+
+class _Owner:
+    """What `OwnerDep` hands a route: `ctx_for` reads only these two fields."""
+
+    def __init__(self, principal_id: str) -> None:
+        self.id = principal_id
+        self.kind = "owner"
+
+
+@pytest.fixture
+async def owner_principal(maker: async_sessionmaker) -> str:
+    async with scoped_session(maker, OWNER) as s:
+        principal = (await s.execute(_OWNER_PRINCIPAL)).scalar()
+        await s.commit()
+    return str(principal)
+
+
+async def test_deleting_a_recording_keeps_audio_a_chat_attachment_still_holds(
+    maker: async_sessionmaker,
+    empty_library: None,
+    a_chat_attachment: str,
+    owner_principal: str,
+    tmp_path: Path,
+) -> None:
+    """**The reproduced data loss, through the route that caused it.**
+
+    Download a recording, attach it to a chat, delete the recording. Content-addressing
+    means the two are one file, so the delete unlinked the attachment's bytes too and its
+    download started answering 500. The recording's ROW must still go — that is what was
+    asked for — and the file must stay."""
+    blobs = FsBlobStore(tmp_path)
+    audio = b"the net control recording, also sitting in a chat"
+    sha = await blobs.put(audio)
+    saved = await _add(maker, blob_sha256=sha)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("UPDATE app.turn_attachments SET sha256 = :sha"), {"sha": sha})
+        await s.commit()
+
+    out = await sdr_api.delete_recording(
+        str(saved["id"]),
+        _Owner(owner_principal),  # type: ignore[arg-type]
+        _repo(maker),
+        blobs,
+    )
+
+    assert out["deleted"] is True
+    assert await _repo(maker).get(OWNER, str(saved["id"])) is None  # the row is gone...
+    assert await blobs.exists(sha)  # ...and the attachment can still be downloaded
+    assert blobs.path_for(sha).read_bytes() == audio
+
+
+async def test_trimming_a_recording_keeps_audio_a_chat_attachment_still_holds(
+    maker: async_sessionmaker,
+    empty_library: None,
+    a_chat_attachment: str,
+    owner_principal: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same file, through the other route that unlinks. A trim repoints the row at
+    the cut clip and frees the original — but "the original" is also somebody's
+    attachment, and freeing it there is the same loss by a different door."""
+    blobs = FsBlobStore(tmp_path)
+    audio = b"the whole capture, also sitting in a chat"
+    sha = await blobs.put(audio)
+    saved = await _add(maker, blob_sha256=sha, duration_s=42.0)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("UPDATE app.turn_attachments SET sha256 = :sha"), {"sha": sha})
+        await s.commit()
+
+    async def fake_cut(source: Path, start_s: float, end_s: float) -> Cut:
+        return Cut(data=b"the kept part", peaks=[0.4], duration_s=9.0)
+
+    monkeypatch.setattr(sdr_api, "cut_clip", fake_cut)
+
+    out = await sdr_api.trim_recording(
+        str(saved["id"]),
+        sdr_api.TrimIn(start_s=4.0, end_s=13.0),
+        _Owner(owner_principal),  # type: ignore[arg-type]
+        _repo(maker),
+        blobs,
+    )
+
+    assert out["recording"]["duration_s"] == 9.0  # the row moved to the trimmed audio...
+    assert await blobs.exists(sha)  # ...and the attachment's file is still there
+    assert blobs.path_for(sha).read_bytes() == audio

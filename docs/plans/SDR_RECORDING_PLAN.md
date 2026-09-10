@@ -129,7 +129,7 @@ without it; the rows simply have no transcript preview yet.
 
 ## 7. What the build found
 
-Three things the plan did not anticipate, all now in the code:
+Six things the plan did not anticipate, all now in the code:
 
 - **A full-length "trim" re-puts identical bytes and gets the identical digest**, so
   deleting "the old blob" would delete the audio the row was just repointed at. Guarded
@@ -153,6 +153,42 @@ Three things the plan did not anticipate, all now in the code:
   feature in a repo to delete a blob inherits responsibility for every other feature
   that stores one. Anything added later that deletes must consult the same list — or the
   store must learn to count, which is the real fix.
+
+  The list is `backend/src/jbrain/blob_refs.py`, enumerated from `information_schema`
+  rather than from memory: a migration that adds a column holding a `blobs.put(...)`
+  digest adds a row there in the same PR, and `test_sdr_recordings_rls.py` runs the list
+  against the real schema so a renamed table fails CI rather than the owner's disk. It
+  fails CLOSED — a check that could not run keeps the blob.
+
+- **A copy-cut can exit 0 and contain no audio.** `ffmpeg -ss <past the audio> -to … -c
+  copy -f mp3` writes a ~621-byte header with no frames under it, so "the cut ran" and
+  "there is a clip" are different facts. Treating non-empty output as success — and
+  falling back to `end_s - start_s` when the result could not be measured — repointed the
+  row at silence, wrote a length the file did not have, and then deleted the original:
+  200 OK, audio gone, and the over-stated `duration_s` left the NEXT trim aimed past the
+  real frames too. `cut_clip` now measures its own output in the temp directory before
+  any of it reaches the store, so **the original is deleted only once the replacement has
+  been proven to play**, an unmeasurable cut is a 400 with everything untouched, and
+  nothing unplayable is ever stored to be orphaned. Client-side bounds are a courtesy,
+  not the guard: the trim sheet is one caller and the debug API is another.
+
+- **A Record press is a check-then-await-then-set.** Two concurrent `POST /record?on=true`
+  both saw "not recording", both opened a stream, and the loser was orphaned with a stop
+  event nobody held — spooling 28.8 MB/hour with no way to stop it. Worse, its teardown
+  cleared `_active` unconditionally and so wiped the LIVE recording's slot, after which
+  `/sdr/status` reported nothing recording, `?on=false` hung for ever, and the shutdown
+  finalize burned its timeout and then cancelled the save it exists to perform. Start and
+  stop now hold one `asyncio.Lock` across their awaits, teardown clears the slot only if
+  it still owns it, and the saved row lives on the recording rather than on the recorder —
+  so a clip that finalizes late can no longer be handed back as the next one's result.
+
+- **Nothing bounded a running capture and nothing looked at free disk.** Nothing expires
+  by design (§1), so a Record press nobody releases was the only thing here that grew
+  without limit — on a box whose owner has no terminal to clear it from (CLAUDE.md #10).
+  A capture now ends itself at four hours (`MAX_CAPTURE_BYTES`, ~115 MB at 64 kbps) or
+  when the blob volume falls below 1 GiB free, and Record is refused with a sentence when
+  there is no room to start. Both bounds finalize rather than discard: an interrupted
+  recording is still a recording, whether the interruption is the sidecar or us.
 
 ## 8. Open
 

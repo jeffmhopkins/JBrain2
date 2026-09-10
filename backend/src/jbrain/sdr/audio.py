@@ -10,7 +10,13 @@ database or a radio.
 **Nothing here may cost a recording.** Every failure returns empty rather than raising:
 a clip whose waveform could not be computed is still a clip, and the library must show
 it. The trim is the one exception — a cut that failed must not repoint the row — and it
-says so by returning no bytes, which the route turns into a refusal.
+says so by returning a `Cut` the route turns into a refusal.
+
+**A cut is not finished until it has been proven to play.** `ffmpeg -c copy` exits 0 and
+writes a ~621-byte header-only file when the seek lands past the last frame, so "the
+process succeeded" and "there is audio in it" are different facts. `cut_clip` measures
+its own output before handing it back, in the temp directory, BEFORE any of it reaches
+the store — so an unplayable cut can neither be stored nor be mistaken for a length.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import array
 import asyncio
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import structlog
@@ -128,19 +135,48 @@ async def _decode(path: Path) -> bytes:
     return stdout
 
 
-async def cut_clip(source: Path, start_s: float, end_s: float) -> bytes:
-    """The clip between two offsets, as MP3 bytes — empty if the cut failed.
+@dataclass(frozen=True)
+class Cut:
+    """What a copy-cut produced, and the proof that it contains audio.
+
+    Three states, and the caller must tell them apart because two of them are refusals
+    and only one of them may repoint a row:
+
+    * `data` empty — ffmpeg did not run, or failed. Nothing was cut.
+    * `data` present, `duration_s` None — ffmpeg exited 0 and wrote a file with no
+      decodable frames. This is the state that destroys a recording if it is trusted: a
+      seek past the end of the audio produces a header and nothing else.
+    * `data` present, `duration_s` set — a real clip, of exactly this measured length.
+    """
+
+    data: bytes = b""
+    peaks: list[float] = field(default_factory=list)
+    duration_s: float | None = None
+
+    @property
+    def plays(self) -> bool:
+        return bool(self.data) and self.duration_s is not None
+
+
+async def cut_clip(source: Path, start_s: float, end_s: float) -> Cut:
+    """The clip between two offsets, measured — see `Cut` for the three ways this ends.
 
     `-c copy`, so the frames are copied rather than re-encoded: lossless and instant, at
     the price of landing on a frame boundary (1152 samples = 72 ms at the sidecar's
     16 kHz). That is why the sheet offers a per-frame nudge instead of implying
-    millisecond precision, and why the caller re-measures the result rather than
-    assuming it got exactly what it asked for.
+    millisecond precision, and why the length comes back MEASURED rather than echoed.
 
     **Both `-ss` and `-to` go BEFORE `-i`**, which makes them input options measured on
     the input's own timeline. Moved after `-i` (the more familiar spelling) `-to` becomes
     an output option relative to the seek point, and every trim would cut `end_s`
     seconds of audio starting at `start_s` — a longer clip than was asked for, silently.
+
+    **The result is measured here, not by the caller.** ffmpeg exits 0 for a seek that
+    lands past the last frame and writes a header-only file, so a caller that treated
+    non-empty output as success would store 621 bytes, record the length it ASKED for,
+    and then delete the original — 200 OK, audio gone. Measuring in the temp directory
+    means an unplayable cut never reaches the store at all, so there is nothing to
+    orphan and nothing to clean up.
     """
     with tempfile.TemporaryDirectory(prefix="sdr-trim-") as tmp:
         out = Path(tmp) / "cut.mp3"
@@ -167,8 +203,14 @@ async def cut_clip(source: Path, start_s: float, end_s: float) -> bytes:
             )
         except (OSError, TimeoutError) as exc:
             log.warning("sdr_audio.cut_failed", error=repr(exc))
-            return b""
+            return Cut()
         if rc != 0 or not out.exists():
             log.warning("sdr_audio.cut_rc", rc=rc, stderr=stderr[:200].decode("utf-8", "replace"))
-            return b""
-        return await asyncio.to_thread(out.read_bytes)
+            return Cut()
+        data = await asyncio.to_thread(out.read_bytes)
+        if not data:
+            return Cut()
+        peaks, measured = await levels(out)
+        if measured is None:
+            log.warning("sdr_audio.cut_has_no_audio", bytes=len(data), start_s=start_s)
+        return Cut(data=data, peaks=peaks, duration_s=measured)

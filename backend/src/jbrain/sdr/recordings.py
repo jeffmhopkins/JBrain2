@@ -22,6 +22,7 @@ from typing import Any, cast
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.blob_refs import blob_referenced
 from jbrain.db.session import SessionContext, scoped_session
 
 #: What a second of the sidecar's audio costs on disk: 64 kbps mono MP3 = 8 kB/s
@@ -214,24 +215,18 @@ class RecordingsRepo:
     async def blob_in_use(
         self, ctx: SessionContext, sha256: str, *, except_id: str | None = None
     ) -> bool:
-        """Whether any recording other than `except_id` still points at this blob.
+        """Whether ANYTHING on the box still points at this blob — not just a recording.
 
-        Blobs are content-addressed, so two rows with identical bytes are one file — and
-        the reachable case is not a coincidence but a trim of the whole clip, which
-        re-`put`s bytes identical to the original and gets the SAME digest back. Deleting
-        "the old blob" there would delete the audio the row was just repointed at.
+        Blobs are content-addressed, so two rows with identical bytes are one file. The
+        obvious case is two recordings (a trim of the whole clip re-`put`s identical
+        bytes and gets the SAME digest back). The one that loses somebody else's data is
+        the other one: the PWA offers Download (.mp3), chat attachments allow-list
+        `audio/mpeg`, and an attached recording is the SAME file as the recording — so a
+        delete that consulted only this table would unlink a live chat attachment. Hence
+        `blob_refs.BLOB_REFERENCES`, which is every blob-holding table in the schema;
+        this method is `app.sdr_recordings`' door onto it.
         """
         async with scoped_session(self._maker, ctx) as session:
-            row = (
-                await session.execute(
-                    text(
-                        # CAST because an untyped bind in `:x IS NULL` is a parameter
-                        # whose type Postgres cannot infer, and asyncpg prepares.
-                        "SELECT 1 FROM app.sdr_recordings WHERE blob_sha256 = :sha"
-                        " AND (CAST(:except_id AS uuid) IS NULL"
-                        " OR id <> CAST(:except_id AS uuid)) LIMIT 1"
-                    ),
-                    {"sha": sha256, "except_id": except_id},
-                )
-            ).first()
-            return row is not None
+            return await blob_referenced(
+                session, sha256, except_row=("app.sdr_recordings", except_id)
+            )
