@@ -194,18 +194,3 @@ def inference_display(*, statement: str, reasons: list[str], snippet: str | None
             "reject": "the fact is discarded.",
         },
     }
-
-
-def confirm_entity_display(*, name: str, kind: str, snippet: str | None = None) -> dict[str, Any]:
-    """confirm_entity card fields: an entity crossed the corroboration bar but its
-    identity is contested (a live namesake), so promotion is held for a human/agent
-    rather than auto-cementing a possibly-wrong identity. accept confirms it;
-    reject leaves it provisional. Both ride the generic accept/reject footer."""
-    return {
-        "summary": f"is this {kind.lower()} “{name}” a single, confirmed entity?",
-        "snippet": snippet,
-        "outcomes": {
-            "accept": "the entity is confirmed — it survives note deletion and isn't auto-purged.",
-            "reject": "left provisional — it stays purge-eligible and is never re-proposed.",
-        },
-    }

@@ -1,6 +1,6 @@
 ---
 name: close_reading
-version: 1
+version: 2
 permission: mutate
 mutating: true
 side_effecting: true
@@ -129,8 +129,8 @@ what ask_owner is for; never guess at it and never write it down as though you r
 the note implies rather than states, the passage the inference rests on. A quote that
 does not appear in the note does not stop the fact being recorded; it records it at a
 low weight, and a low-weight value that disagrees with a confident one already on file
-is HELD for the owner instead of replacing it. That is nearly always worse than just
-quoting accurately.
+is HELD instead of replacing it — inert, and yours to settle. That is nearly always
+worse than just quoting accurately.
 
 A repeating schedule is read off the `quote`, never written as a field: quote the words
 that state it ("every Tuesday and Thursday", "the first Monday of the month") and the
@@ -145,9 +145,14 @@ its start is ignored and the fact is recorded open.
 
 The result tells you what the server did that you did not ask for: a value that replaced
 an older one (the old one is kept as history), a fact already on file (nothing changed),
-or a fact HELD because it clashes with something already recorded at the same time. A
-held fact is not live. Do not re-send it in a different shape — ask the owner which is
-right.
+or a fact HELD because it clashes with something already recorded.
+
+A HELD fact is not live and no one else is going to look at it. Nothing files it
+anywhere, nobody is notified, and it stays inert until you settle it. So settle it in
+this pass: read the note again to see whether you misread the value, and if the note
+really does disagree with what is on file, ask Jeff which is right. Do not re-send the
+same fact in a different shape, and do not leave the hold standing without saying
+anything about it.
 
 You cannot delete, retract or correct anything with this tool, and you do not need to:
 a value you record now supersedes the older one by itself, and anything the note stops

@@ -19,6 +19,8 @@ enforces around it:
 import json
 from pathlib import Path
 
+import pytest
+
 from jbrain.agent import graphwritetools as gw
 from jbrain.agent.agents import AGENTS, NOTE_INGEST_UNATTENDED_TOOLS, agent_for
 from jbrain.agent.asktools import ASK_OWNER_TOOL
@@ -62,13 +64,19 @@ def test_every_field_the_write_needs_is_required() -> None:
     `quote` would mean no fact is ever attested; an optional `object` would mean no fact
     ever has a value.
 
-    v3's two additions are required on the same terms. `when_end` carries the explicit
-    empty-string escape `when` does; `confidence` is a NUMBER, and its type is the point
-    — `evals/shape_probe.py` measured the string spelling coming back "high"/"low" every
-    time, and a JSON type is the only closed vocabulary a tool grammar can enforce
-    without an `enum`. What the model cannot be trusted with is WHEN to fill either one,
-    which is `_close_interval`'s three refusals and `_self_report`'s min, not the
-    schema's job."""
+    `when_end` is required on the same terms, carrying the explicit empty-string escape
+    `when` does. What the model cannot be trusted with is WHEN to fill it, which is
+    `_close_interval`'s three refusals, not the schema's job.
+
+    The two sidecars now carry the SAME item, and that is R1b: `assert_fact` v4 dropped
+    `confidence` to match the reading (§3.3, decided by R0 — 106 live runs on three
+    illegible values produced exactly one silently-committed guess, and it came from the
+    arm that HAS the field). The engine's half of the guard is untouched —
+    `self_confidence` is still the span check — so what was deleted is a channel measured
+    never to carry anything, and one whose cost rose under one channel: a spurious low
+    number now parks a true fact behind a hold nobody but the agent will ever see.
+    Neither carries a recurrence field of any spelling: 0 parseable RRULEs in 228 values
+    across two spellings, so recurrence is read from the `quote` in the handler (§3.2)."""
     item = _spec("assert_fact").params["properties"]["facts"]["items"]
     assert set(item["required"]) == {
         "subject",
@@ -78,7 +86,6 @@ def test_every_field_the_write_needs_is_required() -> None:
         "when",
         "when_end",
         "quote",
-        "confidence",
     }
     assert set(item["properties"]) == set(item["required"])
 
@@ -86,14 +93,6 @@ def test_every_field_the_write_needs_is_required() -> None:
     required = {"surface", "kind", "distinguish"}
     assert set(surface["required"]) == required == set(surface["properties"])
 
-    # `close_reading` is `assert_fact` v3's item MINUS `confidence` (§3.3 of
-    # AGENT_INGEST_REWRITE, decided by R0: 106 live runs on three illegible values
-    # produced exactly one silently-committed guess, and it came from the arm that HAS
-    # the field). The engine's half of the guard is untouched — `self_confidence` is
-    # still the span check — so what was deleted is a channel measured never to carry
-    # anything. And there is no recurrence field of any spelling: 0 parseable RRULEs in
-    # 228 values across two spellings, so recurrence is read from the `quote` in the
-    # handler (§3.2).
     reading = _spec("close_reading").params["properties"]["facts"]["items"]
     assert set(reading["required"]) == {
         "subject",
@@ -125,9 +124,13 @@ def test_the_schemas_the_model_must_never_be_offered_a_domain_or_an_enum() -> No
             assert f'"{banned}"' not in blob, f"{name} offers a `{banned}` field"
     # And the two fields R0 measured OFF the reading, by name, so a later wave re-adding
     # either has to argue with the measurement rather than with a comment.
-    reading = json.dumps(_spec("close_reading").params)
-    for measured_off in ("repeats", "recurrence", "rrule", "confidence"):
-        assert f'"{measured_off}"' not in reading, f"close_reading offers `{measured_off}`"
+    # And the fields R0 measured OFF the write verbs, by name, so a later wave re-adding
+    # any of them has to argue with the measurement rather than with a comment.
+    # `confidence` is on BOTH lists since R1b took it off `assert_fact` as well.
+    for name in ("close_reading", "assert_fact"):
+        blob = json.dumps(_spec(name).params)
+        for measured_off in ("repeats", "recurrence", "rrule", "confidence", "certainty"):
+            assert f'"{measured_off}"' not in blob, f"{name} offers `{measured_off}`"
 
 
 def test_the_kinds_are_described_not_enumerated_in_the_schema() -> None:
@@ -446,22 +449,92 @@ def test_a_result_line_names_what_the_server_did_unasked() -> None:
     assert "already recorded" in gw._write_line(1, "Kaiya", "treatedBy", "Dr. Patel", already, [])
 
 
-def test_a_held_fact_says_it_is_not_live_and_names_decides_own_reason() -> None:
-    """`held` is only what `decide()` returns as unresolvable — a fact_conflict, an
-    attribute_collision, a pinned head. Never a confidence gate: those are gone under
-    Lever A, and a line that implied one would teach the model to hedge."""
+@pytest.mark.parametrize("reason", ["fact_conflict", "attribute_collision", "low_confidence"])
+def test_a_held_fact_says_it_is_not_live_and_names_decides_own_reason(reason: str) -> None:
+    """R1b, and the half of its acceptance matrix that does not need a database: EVERY
+    `review_kind` `decide()` can emit reaches the model here, naming the reason and the
+    statement it clashes with.
+
+    The card that used to be filed beside this line is gone, so the line carries the
+    obligation rather than advice: nothing else raises a held row, and a pass that leaves
+    one standing has left an inert fact nobody will ever look at. `decide()` still owns
+    what LANDS (constraint 5) — this changes only who is told."""
     held = FactWrite(
         gw.uuid.uuid4(),
         HELD,
         "health",
         "Me weighs 178 lb",
-        hold_reason="fact_conflict",
+        hold_reason=reason,
         conflicting="Me weighs 182 lb",
     )
     line = gw._write_line(5, "Me", "bodyWeight", "178 lb", held, [])
     assert line.startswith("held  Me.bodyWeight → 178 lb")
-    assert "fact_conflict" in line and "Me weighs 182 lb" in line
-    assert "NOT live" in line and "Ask the owner" in line
+    assert reason in line and "Me weighs 182 lb" in line
+    assert "NOT live" in line
+    # The obligation, in both of its arms: re-read the note, or ask.
+    assert "nothing else will raise it" in line
+    assert "Re-read the note" in line and "ask the owner" in line
+
+
+def test_a_collision_that_held_the_other_side_too_says_so() -> None:
+    """The one `decide()` branch that changes state the model never named: an attribute
+    collision holds BOTH birthdays. A result that reported only the row it was handed
+    would under-report the write — the agent would think the value on file was still
+    live, and would not know it had just parked the owner's existing answer."""
+    both = FactWrite(
+        gw.uuid.uuid4(),
+        HELD,
+        "general",
+        "Cleo was born November 12, 1985",
+        hold_reason="attribute_collision",
+        conflicting="Cleo was born March 3, 1990",
+        also_held=("Cleo was born March 3, 1990",),
+    )
+    line = gw._write_line(0, "Cleo", "birthDate", "1985-11-12", both, [])
+    assert "was held too, so neither is live" in line
+
+
+def test_a_supersede_that_landed_live_still_names_why_it_was_not_clean() -> None:
+    """`decide()`'s one card site whose row goes ACTIVE: a same-instant supersede, or a
+    preference. It filed a card that was pure notification of a thing that had already
+    happened; under one channel it is a clause on the result and nothing else."""
+    live = FactWrite(
+        gw.uuid.uuid4(),
+        REPLACED,
+        "general",
+        "Me lives at 412 Oak St",
+        replaced=("Me lives at 118 Pine Ave",),
+        hold_reason="fact_conflict",
+    )
+    line = gw._write_line(0, "Me", "homeLocation", "412 Oak St", live, [])
+    assert line.startswith("ok  ")
+    assert "replaced Me lives at 118 Pine Ave, kept as history" in line
+    assert "not a clean update (fact_conflict)" in line
+    # And a CLEAN supersede (Lever B) says nothing of the sort.
+    clean = FactWrite(
+        gw.uuid.uuid4(),
+        REPLACED,
+        "general",
+        "Me lives at 412 Oak St",
+        replaced=("Me lives at 118 Pine Ave",),
+    )
+    assert "not a clean" not in gw._write_line(0, "Me", "homeLocation", "412 Oak St", clean, [])
+
+
+def test_a_reciprocal_refused_in_favour_of_a_primary_is_reported_on_its_source() -> None:
+    """`_materialize_inverse`'s derived-defers-to-primary hold. The reciprocal is a row
+    the model never asked for and cannot address, so it has no result line of its own —
+    it rides the fact whose reciprocal it is."""
+    write = FactWrite(
+        gw.uuid.uuid4(),
+        WRITTEN,
+        "general",
+        "Ada's spouse is Bo",
+        reciprocal_held="Bo's spouse is Cy.",
+    )
+    line = gw._write_line(0, "Ada", "spouse", "Bo", write, [])
+    assert "the reciprocal edge was recorded but NOT live" in line
+    assert "Bo's spouse is Cy." in line
 
 
 def test_a_write_that_left_the_notes_domain_says_where_it_landed() -> None:
@@ -652,12 +725,12 @@ def test_the_capture_api_cannot_mint_a_correction_note() -> None:
 
 def test_the_sidecar_gained_nothing_the_model_can_set() -> None:
     """Constraint 5, restated as a schema property: the elevation is server-side, so
-    `assert_fact` is unchanged — no new field, no version bump, no re-pinned digest, and
-    nothing the model could claim in order to buy a force-supersede. `correct_fact` stays
-    the only place a model asks for one, and it asks by being CALLED, not by a field."""
+    `assert_fact` gained nothing the model could claim in order to buy a force-supersede.
+    `correct_fact` stays the only place a model asks for one, and it asks by being
+    CALLED, not by a field. (The version does move — R1b took `confidence` OFF the item —
+    but every version of it has been a strict subset of this list.)"""
     spec = _spec("assert_fact")
     item = spec.params["properties"]["facts"]["items"]
-    assert spec.version == 3
     for forbidden in ("correction", "provenance", "pinned", "domain"):
         assert forbidden not in item["properties"]
 

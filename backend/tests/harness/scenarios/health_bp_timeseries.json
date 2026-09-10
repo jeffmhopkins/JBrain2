@@ -56,7 +56,7 @@
       {"entity": "Me", "predicate": "bloodPressure", "status": "superseded"}
     ],
     "review_items": [
-      {"kind": "fact_conflict", "domain": "health", "count": 1}
+      {"kind": "fact_conflict", "domain": "health", "count": 0}
     ]
   }
 }

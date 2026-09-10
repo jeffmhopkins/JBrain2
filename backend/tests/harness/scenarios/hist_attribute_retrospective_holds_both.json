@@ -1,6 +1,6 @@
 {
   "name": "a retrospectively-dated conflicting attribute still holds BOTH sides, never buried as history",
-  "description": "Attributes are timeless and a second value is a bug, not news: decide() for kind=='attribute' holds BOTH the existing active fact and the candidate to pending_review and files an attribute_collision (docs/reference/ANALYSIS.md fact kinds: attribute = 'hold pending_review, never auto-supersede'). Adversarial: note A asserts Tomas's birthday is 1990-04-12 (valid_from now). Note B, captured later, gives a CONFLICTING birthday 1991-08-03 but is phrased retrospectively with an old temporal. The attribute branch is taken BEFORE any validity comparison, so the retrospective branch never fires — the old validity must NOT cause the conflicting birthday to be silently filed as closed history. Both birthdays end pending_review and exactly one attribute_collision is filed. Pins that timeless-attribute split detection ignores validity entirely (a backdated wrong birthday is still a split signal, not history).",
+  "description": "Attributes are timeless and a second value is a bug, not news: decide() for kind=='attribute' holds BOTH the existing active fact and the candidate to pending_review and says so in the write's own result (docs/reference/ANALYSIS.md fact kinds: attribute = 'hold pending_review, never auto-supersede'). Adversarial: note A asserts Tomas's birthday is 1990-04-12 (valid_from now). Note B, captured later, gives a CONFLICTING birthday 1991-08-03 but is phrased retrospectively with an old temporal. The attribute branch is taken BEFORE any validity comparison, so the retrospective branch never fires — the old validity must NOT cause the conflicting birthday to be silently filed as closed history. Both birthdays end pending_review and exactly one attribute_collision is filed. Pins that timeless-attribute split detection ignores validity entirely (a backdated wrong birthday is still a split signal, not history). ONE CHANNEL (AGENT_INGEST_REWRITE R1b): the harness IS the note conversation, and a conversation's write path no longer files a review card \u2014 `decide()` reports the hold back in the tool result and the AGENT settles it, by re-reading the note or by asking the owner. So the count is 0 and the ROW STATUSES above are the whole assertion, which is exactly the point: `decide()`'s authority over what LANDS is untouched, only who is told moved.",
   "steps": [
     {
       "domain": "general",
@@ -41,7 +41,7 @@
       {"entity": "Tomas", "predicate": "birthDate", "status": "superseded"}
     ],
     "review_items": [
-      {"kind": "attribute_collision", "summary_contains": "birthDate", "count": 1}
+      {"kind": "attribute_collision", "count": 0}
     ],
     "entities": [
       {"name": "Tomas", "kind": "Person", "status": "provisional"}

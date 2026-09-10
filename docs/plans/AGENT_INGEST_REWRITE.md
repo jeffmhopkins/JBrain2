@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R1b◻️ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R1b✅ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -1643,14 +1643,59 @@ live pass no longer reads "Using resolve_entity". No roster gate was added over 
 second map — it has 10 entries against 124 sidecars and one would land red on ~114 tools;
 the gate belongs to the note-conversation tool sets, which is R3f's.
 
-**R1b — one channel: card to result.** Separable from R1 and worth its own PR, because it
-is a behaviour change to the SHIPPED write path rather than a new verb, and because its
-acceptance test is a matrix rather than a feature. Delete the two `review_kind` card
-blocks, `_file_ambiguous_review`, `_file_confirm_entity_card`, and the `confidence` field
-with `_self_report`; widen the hold result's wording; name the candidates in
-`resolve_entity`. `merge_proposal` becomes a message in the thread. `domain_promotion`,
-`inverse_proposal`, the EMR firewall card and wiki lint are untouched. `decide()`'s
-`Decision.review_kind` stays — it is what the result reads.
+**R1b — one channel: card to result. DONE.** The hold result is widened from advice into
+the pass's obligation (*"recorded but NOT live, and nothing else will raise it: settling it
+is yours"*) and carries what the write did to rows the model never named — the other side
+of an attribute collision (`FactWrite.also_held`) and a reciprocal refused in favour of a
+primary head (`reciprocal_held`, reported on the fact whose reciprocal it is, since the
+reflection has no result line of its own). `_file_confirm_entity_card` is deleted outright
+and a contested promotion is simply left provisional. `assert_fact` is v4 with `confidence`
+and `_self_report` gone. `decide()`'s `Decision.review_kind` stays — it is what the result
+reads. Acceptance is `tests/integration/test_one_channel_pg.py`, nine cases, each pinning
+the row's status, an EMPTY `review_items` for the note, and the result's own words.
+
+*Four things the plan above got wrong, all found by reading the code:*
+
+1. **"Delete the two `review_kind` card blocks" cannot be literal, and the reason is the
+   same one that keeps `_lab_status_transition`.** The block is ONE code path serving
+   three producers: the note conversation, the whole-note analyzer, and the EMR importer,
+   all through `commit_facts`. Deleting it takes the EMR lab card the plan says stays, and
+   it takes the analyzer's cards while `integrate_note` is still a live producer beside
+   `note_converse` (D13 — the replacement lands before the old producer goes). So the
+   block is GATED, not deleted: `commit_facts(file_review_cards=...)` defaults OFF and
+   only `commit_intent` turns it on. That is the structural spelling of the plan's own
+   distinction — a producer with no conversation has nobody to hand a result to — and it
+   is what keeps all 52 green harness scenarios green through this wave rather than
+   through R2. `_file_ambiguous_review` is gated the same way and for the same reason.
+2. **`domain_promotion` is NOT reachable from the note conversation at all**, so it is not
+   a card R1b spares — it is one the conversation could never file. `needs_promotion` is
+   `ratchet_domain` refusing to make a fact LESS restricted than its note, and the only
+   input that could ask for that is a model-supplied per-fact `domain`, which is the one
+   field `assert_fact` deliberately does not have. `_assert_one` passes the NOTE's domain,
+   so both branches a conversation reaches are free ratchets. The deterministic FLOOR does
+   fire and is silent, correctly: a floor that already put the fact where it belongs has
+   nothing to propose. `inverse_proposal` IS reachable and does still file, which makes it
+   the case that proves the gate is a gate.
+3. **TWO `decide()` sites are unreachable from the note path, not one.** `:806` (irrealis
+   vs an asserted head) is the one the plan names; `:703` (non-functional edge, opposite
+   polarity) is the other, and for the same reason — `CURRENT_ASSERTIONS` is
+   `{asserted, negated}` and `_assert_one` writes `assertion="asserted"` unconditionally,
+   so no conversation verb can produce the `negated` peer the branch needs. It stays
+   reachable today only because `integrate_note` writes beside the conversation and CAN
+   emit `negated`; it goes silent for the conversation the day R4 lands.
+4. **`merge_proposal` is already a message in the thread, by structure, and needed no
+   change.** Its producer is `_register_declared_aliases`, which sits in `settle_note` —
+   and the conversation never calls `settle_note`; `clarify.settle_conversation` runs
+   `settle_tail` alone (SETTLE_OWNERSHIP S3, a deliberate removal). So the fold the agent
+   notices is already a question it asks with `ask_owner`, and the enact is still
+   owner-only through `merge_entities`. The card producer belongs to the analyzer and
+   goes with it in R4.
+
+*Left standing deliberately:* `_sweep_stale_ambiguous` and `_sync_truncation_review` stay
+in `settle_note` this wave. R3's paragraph says R1b deleted them and R1b's own scope did
+not list them; the deciding fact is that they still have work to do on a LIVE box — the
+analyzer is still filing both card kinds, and the sweeps are the only thing that retires
+them. They go with the producer, in R3/R4.
 
 **R1c — the batched ask (O9's build).** The prerequisite the whole frontend wave hangs off.
 `ask_owner` takes a question SET rather than one question — an array of items carrying the
@@ -2044,8 +2089,11 @@ selectable and remains the wrong thing to select for a persona holding write too
 
 In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 
-- **`docs/reference/ANALYSIS.md`** — the largest. Its review-gate sections describe a card
-  inbox that mostly stops existing (§2), and "Reprocessing" is the Living doc that
+- **`docs/reference/ANALYSIS.md`** — the largest. **Its review-gate half is reconciled by
+  R1b**: the Lever B disposition paragraph now says where a `decide()` flag GOES depends on
+  the producer, "Review inbox integration" says what the queue is NOT, and the resolution
+  layers end in NO LINK reported to whoever asked rather than in the inbox. What is left
+  for later waves is the extraction half — "Reprocessing" is the Living doc that
   asserts the retraction behaviour; it stays TRUE under this design (unlike under the
   teardown, which would have made it false), but its mechanism changes from an extraction
   by `integrate_note` to a reading by the conversation. Also the review gates, the arbiter

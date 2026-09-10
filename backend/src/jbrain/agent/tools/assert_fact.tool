@@ -1,6 +1,6 @@
 ---
 name: assert_fact
-version: 3
+version: 4
 permission: mutate
 mutating: true
 side_effecting: true
@@ -63,17 +63,7 @@ params:
             description: >-
               The words in the note this fact rests on, copied out exactly — character
               for character, no paraphrase.
-          confidence:
-            type: number
-            description: >-
-              A number from 0 to 1: how sure you are you READ these words correctly.
-              Write 1 for almost every fact — the note's words are plain. Write 0.3 or
-              lower when you had to GUESS at the words themselves: a blurry photo, bad
-              handwriting, an OCR line you could not make out, a digit you could not
-              quite see. This is about legibility, never about whether the fact is true,
-              whether Jeff is right, or how important it is.
-        required:
-          [subject, predicate, object, statement, when, when_end, quote, confidence]
+        required: [subject, predicate, object, statement, when, when_end, quote]
   required: [facts]
 examples:
   - facts:
@@ -84,7 +74,6 @@ examples:
         when: 2026-03
         when_end: ""
         quote: started at Everlane as a staff engineer in March
-        confidence: 1
       - subject: e1
         predicate: allergy
         object: shellfish
@@ -92,7 +81,6 @@ examples:
         when: ""
         when_end: ""
         quote: is allergic to shellfish
-        confidence: 1
       - subject: e1
         predicate: livesIn
         object: e3
@@ -100,7 +88,6 @@ examples:
         when: 2019
         when_end: 2023
         quote: lived in Oakland from 2019 until 2023
-        confidence: 1
 ---
 Record what the note says. One call, up to 8 facts — split the note into the separate
 things it claims and send them together, not one call per fact.
@@ -118,20 +105,19 @@ genuinely unsure of are worth recording with the words the note used, not droppi
 the note implies rather than states, the passage the inference rests on. A quote that
 does not appear in the note does not stop the fact being recorded; it records it at a
 low weight, and a low-weight value that disagrees with a confident one already on file
-is HELD for the owner instead of replacing it. That is nearly always worse than just
-quoting accurately.
+is HELD instead of replacing it — inert, and yours to settle. That is nearly always
+worse than just quoting accurately.
 
 The result tells you what the server did that you did not ask for: a value that replaced
 an older one (the old one is kept as history), a fact already on file (nothing changed),
-or a fact HELD because it clashes with something already recorded at the same time. A
-held fact is not live. Do not re-send it in a different shape — ask the owner which is
-right.
+or a fact HELD because it clashes with something already recorded.
 
-`confidence` is about your EYES, not your judgement. Almost every note is typed text
-and reads as 1. A photo of a pill bottle where the dose is half out of focus is what the
-low end is for: a number you had to guess at is recorded, but it cannot silently replace
-a value already on file — it is held for Jeff instead. Marking a fact you read perfectly
-well as uncertain parks a true fact behind a question he has to answer.
+A HELD fact is not live and no one else is going to look at it. Nothing files it
+anywhere, nobody is notified, and it stays inert until you settle it. So settle it in
+this pass: read the note again to see whether you misread the value, and if the note
+really does disagree with what is on file, ask Jeff which is right. Do not re-send the
+same fact in a different shape, and do not leave the hold standing without saying
+anything about it.
 
 `when_end` closes an interval the note itself closes — "we lived there 2019 to 2023",
 "she was at Pied Piper through 2020". Leave it empty for anything still true, which is

@@ -38,7 +38,6 @@ from jbrain.analysis.arbiter import (
     recover_dropped_fields,
 )
 from jbrain.analysis.canonical import (
-    PromotionOutcome,
     promote_if_corroborated,
     reproject_canonical_name,
 )
@@ -46,7 +45,6 @@ from jbrain.analysis.device_binding import reconcile_device_bindings
 from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
-    confirm_entity_display,
     inference_display,
     mark_snippet,
     merge_display,
@@ -214,7 +212,16 @@ class FactWrite:
     ids — the model addresses facts by meaning, not by id: `read_entity` prints no
     fact id, TOOL_SURFACE "correct_fact addresses by identity key"). `hold_reason` is
     `decide()`'s own `review_kind`, never a confidence gate — those are gone under
-    Lever A."""
+    Lever A.
+
+    Under one channel (AGENT_INGEST_REWRITE R1b) this IS the notice: what `decide()`
+    could not settle reaches the agent here and nowhere else, so it has to carry
+    everything the card it replaced carried. `also_held` is the other side of an
+    attribute collision — the row already on file that this write moved to
+    `pending_review` — and it is the one thing the write CHANGED beyond its own row, so
+    a result that omitted it would under-report what happened. `reciprocal_held` is the
+    primary head a derived reciprocal deferred to, reported on the fact whose reciprocal
+    was refused because that is the only row the agent named."""
 
     fact_id: uuid.UUID
     outcome: str
@@ -223,6 +230,22 @@ class FactWrite:
     replaced: tuple[str, ...] = ()
     hold_reason: str = ""
     conflicting: str = ""
+    also_held: tuple[str, ...] = ()
+    reciprocal_held: str = ""
+
+
+@dataclass(frozen=True)
+class InverseWrite:
+    """What `_materialize_inverse` did, for the caller that has to report it.
+
+    `fact_id` is the reciprocal row, or None when none was written (unknown predicate,
+    or the cross-subject firewall proposed instead). `held_against` is the PRIMARY head
+    on the object's stream that a derived reciprocal was refused in favour of — the one
+    `decide()` outcome on this path the source fact's own result has to carry, because
+    the reciprocal has no result line of its own."""
+
+    fact_id: uuid.UUID | None = None
+    held_against: str = ""
 
 
 @dataclass(frozen=True)
@@ -710,6 +733,9 @@ class AnalysisPipeline:
             settle_owner=settle_owner,
             resolution_override=override,
             held_indices=held_indices,
+            # The deterministic path: no conversation, so an unsettled `decide()` has
+            # nobody to report to and the owner's inbox is the only channel left.
+            file_review_cards=True,
         )
         # Recompute the deterministic signals (pure, cheap) so each held card can
         # carry the same ceiling arithmetic the arbiter used — `commit_intent` is also
@@ -1034,6 +1060,7 @@ class AnalysisPipeline:
         settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
         held_indices: frozenset[int] = frozenset(),
+        file_review_cards: bool = False,
     ) -> CommitOutcome:
         """Commit one pass of a note's extraction: resolve its entities, anchor its
         mentions and temporal tokens, then write each fact through `decide()`.
@@ -1053,7 +1080,19 @@ class AnalysisPipeline:
         exists, never replacing it — which is what later lets `settle_note` release
         this producer's claim without touching a co-writer's. Required, and required
         separately from `extractor`: the extractor names the model, the producer names
-        the writer, and only the second is stable across a model change."""
+        the writer, and only the second is stable across a model change.
+
+        `file_review_cards` is ONE CHANNEL's switch (AGENT_INGEST_REWRITE R1b), and it
+        defaults OFF because the default caller is the note conversation. What
+        `decide()` could not settle is reported back through `CommitOutcome.writes` —
+        the reason, the statement it clashes with, and what else this write held — and
+        the AGENT settles it, by re-reading the note or by asking the owner. A card
+        beside that result is a second channel to the same person, adjudicated
+        somewhere the note is not. Only a producer with no conversation to report into
+        turns it on: `commit_intent`, which is the deterministic whole-note analyzer and
+        the EMR importer. A firewall catch (`domain_promotion`, `inverse_proposal`) is
+        NOT this flag's business and files either way — it is a notice about the writer,
+        not a question for it."""
         resolved = await self._resolve_entities(
             session,
             extraction,
@@ -1063,6 +1102,7 @@ class AnalysisPipeline:
             captured_at,
             settle_owner,
             resolution_override,
+            file_review_cards,
         )
         anchor_for, mention_ids = await self._upsert_mentions(
             session, extraction, resolved, note_id, note_domain, chunks, settle_owner
@@ -1108,6 +1148,7 @@ class AnalysisPipeline:
                     chunks=chunks,
                     extractor=extractor,
                     settle_owner=settle_owner,
+                    file_review_cards=file_review_cards,
                 )
             # Both paths' ids enter `touched` so the settle sweep never retracts a
             # fact this run still asserts — including a still-held pending_review
@@ -1572,6 +1613,7 @@ class AnalysisPipeline:
         captured_at: datetime,
         settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
+        file_review_cards: bool = False,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
         (docs/reference/ANALYSIS.md "Alias resolution & separation"): exact alias, the
@@ -1579,8 +1621,12 @@ class AnalysisPipeline:
         time, embedding similarity, then one batched entity.disambiguate call
         for whatever is still undecided.
 
-        Ambiguous names resolve to None (no link) and file one deduplicated
-        ambiguous_mention review item, stamped with `settle_owner` so only the producer
+        Ambiguous names resolve to None (no link), so no fact can be written against
+        them — the safety property holds without telling anyone. A card is filed on top
+        of that only for a `file_review_cards` producer; the conversation is told by
+        `resolve_entity`'s own result, which names the candidates the card used to carry
+        and offers `distinguish` to pick one (AGENT_INGEST_REWRITE R1/R1b). Where it is
+        filed it is deduplicated and stamped with `settle_owner`, so only the producer
         that filed it can later retire it (`_sweep_stale_ambiguous`).
         """
         kind_hints = {m.name: m.kind for m in extraction.mentions}
@@ -1625,15 +1671,16 @@ class AnalysisPipeline:
                 pending[name] = outcome
             elif isinstance(outcome, AmbiguousEntity):
                 resolved[name] = None
-                await self._file_ambiguous_review(
-                    session,
-                    name,
-                    note_id,
-                    note_domain,
-                    outcome.candidate_ids,
-                    snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
-                    settle_owner=settle_owner,
-                )
+                if file_review_cards:
+                    await self._file_ambiguous_review(
+                        session,
+                        name,
+                        note_id,
+                        note_domain,
+                        outcome.candidate_ids,
+                        snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                        settle_owner=settle_owner,
+                    )
             else:
                 resolved[name] = outcome
         resolved.update(
@@ -1646,6 +1693,7 @@ class AnalysisPipeline:
                 surfaces=surfaces,
                 chunks=chunks,
                 settle_owner=settle_owner,
+                file_review_cards=file_review_cards,
             )
         )
         return resolved
@@ -1661,13 +1709,15 @@ class AnalysisPipeline:
         surfaces: dict[str, str],
         chunks: list[_ChunkRef],
         settle_owner: str,
+        file_review_cards: bool = False,
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
         conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
         cost"). Every failure mode — task not routed (the harness router only
         carries note.extract), bad JSON after the adapter's re-ask, an
-        unanswered mention, a hallucinated id — degrades to the review inbox:
-        an uncertain resolver files a card, it never guesses. A "none of
+        unanswered mention, a hallucinated id — degrades to NO LINK: an uncertain
+        resolver leaves the name unresolved, it never guesses, and its caller is told
+        (a card for `file_review_cards`, the tool result otherwise). A "none of
         these" verdict is an answer, not a failure: the mention is a
         genuinely new entity.
         """
@@ -1728,15 +1778,16 @@ class AnalysisPipeline:
                     )
                     continue
             out[name] = None
-            await self._file_ambiguous_review(
-                session,
-                name,
-                note_id,
-                note_domain,
-                sorted(c.id for c in need.candidates),
-                snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
-                settle_owner=settle_owner,
-            )
+            if file_review_cards:
+                await self._file_ambiguous_review(
+                    session,
+                    name,
+                    note_id,
+                    note_domain,
+                    sorted(c.id for c in need.candidates),
+                    snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                    settle_owner=settle_owner,
+                )
         return out
 
     async def _file_ambiguous_review(
@@ -1946,10 +1997,16 @@ class AnalysisPipeline:
         """Confirm each touched provisional entity that >= CORROBORATION_THRESHOLD
         distinct same-domain notes now corroborate (docs/reference/entity.md). Eager and
         complete: an entity only crosses the bar on a note that references it, and
-        that note's refs are exactly `referenced`, so no sweep is needed. A
-        contested identity (a live namesake) files a deduped confirm_entity card
-        instead of auto-confirming. Gated by the entity_promotion setting
-        (default off until the goldens expect confirmation)."""
+        that note's refs are exactly `referenced`, so no sweep is needed. Gated by the
+        entity_promotion setting (default off until the goldens expect confirmation).
+
+        A contested identity (a live namesake) is left PROVISIONAL and nothing is said.
+        It used to file a `confirm_entity` card, and that card was the wrong shape twice
+        over (AGENT_INGEST_REWRITE §2): it is bookkeeping, not a question — a provisional
+        entity corroborated by a second note — and the owner has no opinion to contribute
+        about a status flag he never sees. Promote on corroboration or stay provisional;
+        do not ask. Nothing downstream reads the flag as a gate: a provisional entity
+        resolves, carries facts and renders exactly as a confirmed one."""
         if self._settings is None or not await self._settings.entity_promotion(SYSTEM_CTX):
             return
         for entity_id in referenced:
@@ -1957,37 +2014,7 @@ class AnalysisPipeline:
             if outcome.action == "confirmed":
                 log.info("entity.promoted", entity_id=str(entity_id))
             elif outcome.action == "propose":
-                await self._file_confirm_entity_card(session, outcome)
-
-    async def _file_confirm_entity_card(
-        self, session: AsyncSession, outcome: "PromotionOutcome"
-    ) -> None:
-        """File a confirm_entity card for a corroborated-but-contested entity,
-        deduped on entity_id across ALL statuses so a dismissed proposal never
-        nags again on re-analysis."""
-        exists = (
-            await session.execute(
-                text(
-                    "SELECT 1 FROM app.review_items WHERE kind = 'confirm_entity'"
-                    " AND payload->>'entity_id' = :id LIMIT 1"
-                ),
-                {"id": str(outcome.entity_id)},
-            )
-        ).first()
-        if exists is not None:
-            return
-        session.add(
-            ReviewItem(
-                kind="confirm_entity",
-                payload={
-                    "entity_id": str(outcome.entity_id),
-                    "entity_name": outcome.name,
-                    "entity_kind": outcome.kind,
-                    **confirm_entity_display(name=outcome.name, kind=outcome.kind),
-                },
-                domain_code=outcome.domain,
-            )
-        )
+                log.info("entity.promotion_contested", entity_id=str(entity_id))
 
     async def _register_declared_aliases(
         self,
@@ -2579,6 +2606,7 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         extractor: str,
         settle_owner: str,
+        file_review_cards: bool = False,
     ) -> FactWrite | None:
         # A still-future fact is `expected`, never an asserted past event; and an
         # undated "used to" relationship is CLOSED, not current — both resolved
@@ -2756,6 +2784,7 @@ class AnalysisPipeline:
                 values["chunk_id"] = refreshed_chunk
                 values["settle_owners"] = self._claimed_by(settle_owner)  # join, never take
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
+            reciprocal_held = ""
             # Re-analysis healing: a row still held purely by WEIGHT (it carries an
             # open low_confidence_inference card) that the arbiter now rates active is
             # PROMOTED in place — editing a note / fixing the pipeline and
@@ -2826,7 +2855,7 @@ class AnalysisPipeline:
                 if fact.kind == "relationship" and object_entity is not None and valid_to is None:
                     anchor = anchor_for.get(fact.entity_ref)
                     base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
-                    await self._materialize_inverse(
+                    reciprocal = await self._materialize_inverse(
                         session,
                         fact=fact,
                         source_fact_id=fact_id,
@@ -2849,9 +2878,15 @@ class AnalysisPipeline:
                         extractor=extractor,
                         settle_owner=settle_owner,
                         snippet=_cite(anchor, chunks),
+                        file_review_cards=file_review_cards,
                     )
+                    reciprocal_held = reciprocal.held_against
             return FactWrite(
-                fact_id, PROMOTED if promoted else ALREADY, fact_domain, fact.statement
+                fact_id,
+                PROMOTED if promoted else ALREADY,
+                fact_domain,
+                fact.statement,
+                reciprocal_held=reciprocal_held,
             )
 
         anchor = anchor_for.get(fact.entity_ref)
@@ -2910,6 +2945,7 @@ class AnalysisPipeline:
             conflict=conflict,
             object_entity_id=object_entity.id if object_entity else None,
             snippet=_cite(anchor, chunks),
+            file_review_cards=file_review_cards,
         )
         # Reciprocity: a directed relationship edge inserted ACTIVE gets its
         # inverse materialized on the object's stream, then the old source's
@@ -2920,14 +2956,14 @@ class AnalysisPipeline:
         # must NOT mint "X employs Me", or that derived edge would answer
         # "who works for X?" with the owner, smuggling a past job back as current
         # (docs/archive/research/legacy-links-plan.md §ledger F1).
-        new_inverse_id: uuid.UUID | None = None
+        reciprocal = InverseWrite()
         if (
             fact.kind == "relationship"
             and object_entity is not None
             and decision.insert_status == "active"
             and (decision.insert_valid_to or valid_to) is None
         ):
-            new_inverse_id = await self._materialize_inverse(
+            reciprocal = await self._materialize_inverse(
                 session,
                 fact=fact,
                 source_fact_id=new_fact.id,
@@ -2944,6 +2980,7 @@ class AnalysisPipeline:
                 extractor=extractor,
                 settle_owner=settle_owner,
                 snippet=_cite(anchor, chunks),
+                file_review_cards=file_review_cards,
             )
         if decision.supersede_ids:
             # Chain the old shadow onto the NEW inverse when one exists (a clean
@@ -2955,7 +2992,7 @@ class AnalysisPipeline:
             await self._propagate_supersession_to_shadows(
                 session,
                 source_ids=[uuid.UUID(i) for i in decision.supersede_ids],
-                successor_id=new_inverse_id,
+                successor_id=reciprocal.fact_id,
                 valid_from=valid_from,
             )
         if needs_promotion:
@@ -2998,6 +3035,11 @@ class AnalysisPipeline:
             replaced=replaced,
             hold_reason=decision.review_kind or "",
             conflicting=conflict.statement if conflict is not None else "",
+            # The rows this write moved to `pending_review` BESIDE its own — the
+            # attribute-collision branch holds both sides, and that is state the caller
+            # did not ask for and cannot see anywhere else.
+            also_held=tuple(by_id[i].statement for i in decision.hold_ids if i in by_id),
+            reciprocal_held=reciprocal.held_against,
         )
 
     async def _entity_name(self, session: AsyncSession, entity_id: uuid.UUID | None) -> str | None:
@@ -3024,6 +3066,7 @@ class AnalysisPipeline:
         conflict: FactView | None,
         object_entity_id: uuid.UUID | None = None,
         snippet: str | None,
+        file_review_cards: bool,
     ) -> None:
         for old_id in decision.supersede_ids:
             values: dict[str, Any] = {"status": "superseded", "superseded_by": new_fact_id}
@@ -3036,7 +3079,14 @@ class AnalysisPipeline:
             await session.execute(
                 update(Fact).where(Fact.id == uuid.UUID(old_id)).values(status="pending_review")
             )
-        if decision.review_kind is not None:
+        if decision.review_kind is not None and file_review_cards:
+            # ONE CHANNEL (AGENT_INGEST_REWRITE R1b): a producer with a conversation
+            # behind it gets this same branch reported back through `FactWrite`
+            # (`hold_reason`, `conflicting`, `also_held`) and its AGENT settles it. Only
+            # a producer with nobody to report to still files — the deterministic
+            # analyzer and the EMR importer, whose `emr_owned` note holds no graph-write
+            # verb and therefore has no agent in the room at all.
+            #
             # Structured fields mirroring the inference card, so a conflict/collision
             # is correctable IN PLACE (predicate + value + modality) and not only by
             # picking fact_a/fact_b verbatim — an edit files a correction note (the #7
@@ -3118,14 +3168,16 @@ class AnalysisPipeline:
         extractor: str,
         settle_owner: str,
         snippet: str | None,
-    ) -> uuid.UUID | None:
+        file_review_cards: bool,
+    ) -> InverseWrite:
         """Write the reciprocal of a directed relationship edge on the object's
         stream, marked derived (docs/archive/research/fix-options/2). Returns the new
         inverse fact id, or None when nothing was written (unknown predicate or
-        the cross-subject gate fired)."""
+        the cross-subject gate fired), beside the primary head a derived-defers-to-
+        primary hold was refused in favour of."""
         inverse_pred = inverse_predicate(fact.predicate)
         if inverse_pred is None:
-            return None  # not a relation we know how to reciprocate — safe default
+            return InverseWrite()  # not a relation we know how to reciprocate
 
         # Cross-subject firewall gate: an inverse lands a fact on the OBJECT's
         # stream. If that object is a DISTINCT security subject, auto-writing it
@@ -3153,7 +3205,7 @@ class AnalysisPipeline:
                     domain_code=fact_domain,
                 )
             )
-            return None
+            return InverseWrite()
 
         statement = f"{fact.object_entity_ref}'s {inverse_pred} is {fact.entity_ref}."
         candidate = Candidate(
@@ -3200,7 +3252,7 @@ class AnalysisPipeline:
                 values["chunk_id"] = chunk_id
                 values["settle_owners"] = self._claimed_by(settle_owner)
             await session.execute(update(Fact).where(Fact.id == existing_id).values(values))
-            return existing_id
+            return InverseWrite(existing_id)
 
         # Derived-defers-to-primary: a derived candidate may supersede another
         # DERIVED shadow, but never a PRIMARY head. If decide() would close a
@@ -3256,8 +3308,8 @@ class AnalysisPipeline:
             if valid_from is not None:
                 values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)
             await session.execute(update(Fact).where(Fact.id == uuid.UUID(old_id)).values(values))
-        if decision.review_kind is not None:
-            conflict = by_id.get(decision.conflicting_id) if decision.conflicting_id else None
+        conflict = by_id.get(decision.conflicting_id) if decision.conflicting_id else None
+        if decision.review_kind is not None and file_review_cards:
             session.add(
                 ReviewItem(
                     kind=decision.review_kind,
@@ -3290,7 +3342,10 @@ class AnalysisPipeline:
                     domain_code=fact_domain,
                 )
             )
-        return new_inverse.id
+        # Reported on the SOURCE fact's result, never on a line of its own: the model
+        # asked for one edge and a reciprocal it never named is not a row it can address.
+        held_against = conflict.statement if decision.review_kind is not None and conflict else ""
+        return InverseWrite(new_inverse.id, held_against)
 
     async def _propagate_supersession_to_shadows(
         self,

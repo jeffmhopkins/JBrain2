@@ -407,7 +407,8 @@ WIKI_LINT_SPEND_PREFIX = "wiki_lint_spend:"
 # Provisional -> confirmed entity promotion (docs/reference/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
 # same-domain notes is auto-confirmed; if its identity is contested (a live
-# namesake), a `confirm_entity` review card is filed instead of auto-confirming.
+# namesake), it is left provisional instead of auto-confirming (AGENT_INGEST_REWRITE
+# R1b: the card that used to ask was bookkeeping the owner had no opinion about).
 # DB-backed; flip live. Default OFF until the goldens are migrated to expect
 # confirmation (the rule deliberately changes entity status across notes).
 ENTITY_PROMOTION_KEY = "entity_promotion"

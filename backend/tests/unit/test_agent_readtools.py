@@ -1025,10 +1025,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # These two descriptions are the model's whole instruction on how to record a
         # note's meaning — the batch shape, the handle discipline, the quote rule — so a
         # silent edit to either is a behaviour change to every note the box ingests.
+        # v4 is R1b: the model's own `confidence` field is DELETED (§3.3/O3b), and the
+        # hold clause is rewritten from advice into the pass's obligation, because the
+        # review card that used to be filed beside it is gone.
         "assert_fact.tool": (
             "assert_fact",
-            3,
-            "eeeb9b746c317fbc570e046c202660a626baaaac181cd9e705b7ce6e00d1ea10",
+            4,
+            "eef75af6cb2b091a5f3a2c5ee3cddf4beb366296ff6f4d9094ddd401d1962875",
         ),
         "resolve_entity.tool": (
             "resolve_entity",
@@ -1038,10 +1041,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v2 is `distinguish` plus the current-facts half of the result
         # (`AGENT_INGEST_REWRITE.md` R1/§3.4), and the bump is the point: both are ACI
         # changes to a version-pinned sidecar.
+        # v2 is R1b's half of the same rewrite: one channel, so the hold clause states
+        # what the pass owes rather than what it might do.
         "close_reading.tool": (
             "close_reading",
-            1,
-            "f3dfcd8085aa905a89cbc7296969d2ec2b3179bf8f897b74c6427ca29a2d0324",
+            2,
+            "7e717520a3361839bed76489e57b695501fc9b5916eb07df90560f24a5d5ce80",
         ),
         # The on-reply half (D8): reachable only from a turn the owner sent, and each
         # force-supersedes or folds, so the wording is the contract for what a reply may
