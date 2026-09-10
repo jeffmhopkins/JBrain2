@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0◻️ R1◻️ R1b◻️ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1◻️ R1b◻️ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -478,7 +478,8 @@ close_reading:
   facts:  array (maxItems 8, clamp REPORTED) of
             subject, predicate, object, statement,
             when, when_end, quote            (assert_fact v3 minus `confidence` — see 3)
-            repeats                          (NEW — see 2)
+  and NO recurrence field — R0 measured `repeats` unfillable at any sharpness and
+  moved it to the HANDLER, which parses the rule out of the fact's `quote` (see 2)
 ```
 
 Rules the sidecar and the handler enforce:
@@ -528,15 +529,46 @@ that made a field the model over-applies 45-times-in-56 safe by admitting 0 of t
   token is written and `app.appointments.rrule` is never read. That is exactly the shape
   of green the harness README warns about, and it is why R0 owes a NEW scenario asserting
   the RRULE end to end rather than re-reading this one.
-- **Uncertain, and the experiment is cheap and already tooled.** *Does the live model
-  write a parseable RRULE through a TOOL schema, as opposed to through the extraction
-  schema?* Run a `backend/evals/shape_probe.py` arm — gpt-oss-120b, reasoning low, 12
-  samples, through `/api/debug/tool-probe`, scored for parseability AND for whether the
-  rule matches the note's phrase — on a corpus of recurring-appointment notes. If it
-  fails, the fallback is `repeats` as the note's own PHRASE ("every Tuesday", "first
-  Monday of the month") parsed server-side, which is strictly easier for the model and
-  strictly harder for the engine. Decide it on the probe, not on argument — that is how
-  all six of the v3 gaps were decided.
+- **MEASURED in R0, and both spellings fail. `repeats` is not a model field.**
+  `backend/evals/shape_probe.py repeats` put the reading schema in front of the live model
+  (gpt-oss-120b, reasoning low, through `/api/debug/tool-probe`) on five recurring notes —
+  "gym every Tuesday and Thursday", "the first Monday of the month", "every other week,
+  Wednesdays at 4", "Tuesdays until March", "standup on weekdays" — 20 samples a note a
+  spelling, scored on what a strict parser ADMITS rather than on what came back non-blank.
+
+  | `repeats` spelling | samples | values on the recurring fact | parse | say what the note says |
+  |---|---|---|---|---|
+  | RRULE, described with three worked examples | 100 | 113 | **0** | 0 |
+  | RRULE, sharpened — format first, "never write English here" | 100 | 115 | **0** | 0 |
+  | the note's own PHRASE, parsed server-side | 100 | 118 | 80 | **28** |
+
+  The model writes the coarse English frequency and drops exactly what makes a rule usable:
+  `weekly` where the note says every Tuesday and Thursday, `monthly` for the first Monday of
+  the month, `biweekly` for every other week, `Tuesdays` for Tuesdays *until March*. It also
+  writes `true`, `yes`, `ongoing`, `once`, `none`, `null` and `N/A`, and it stamps the field
+  on a fact with no recurrence in it 59 times in 113 values (RRULE) and 51 in 118 (phrase).
+  **So the rule this plan already carries extends: `required` buys PRESENCE, not MEMBERSHIP,
+  and a GRAMMAR is no more reachable through a tool description than a word list was.** The
+  ISO-date analogy two bullets up is void, and the reason is now measured rather than
+  assumed: `note.extract`'s filled `rrule` is a structured-output completion, and that is a
+  different grammar from harmony's TOOL grammar.
+
+  **What works is deterministic, and the evidence is in the same runs.** The recurrence is in
+  the note, and it survives in the span the model attests: parsing the model's own `quote`
+  with the reference phrase parser in `shape_probe` recovers the right rule on **198 of 200**
+  runs and is never wrong when it parses, against 28 in 118 for the model's best field. So
+  R1 builds `repeats` as a HANDLER step — the reading writes the fact and its quote, and the
+  handler parses the recurrence out of the attested span. (That parser is the probe's own and
+  was written against these five phrasings. It is evidence the information survives, not an
+  accuracy estimate for arbitrary notes; R1 owes a real implementation with its own corpus.)
+
+  *One thing the control arm turned up that is not about `repeats` at all.* On the same five
+  notes with NO `repeats` field, `when` comes back as `every Tuesday and Thursday at 6am`,
+  `until March`, `present`, `this month`, and `when_end` as `ongoing`, `none`, `unspecified`
+  — the phrases the shipped sidecar explicitly tells it never to write. `_iso_ok` and
+  `_close_interval` discard them all, so nothing lands wrong, but on an undated recurring
+  note the reading's date fields are noise, and R1 must not read a blank `when` as "the note
+  gave no date".
 
 **3. `confidence` — REMOVED from the tool schema. A model field is deleted, on the
 measurement.**
@@ -562,11 +594,32 @@ intact, and `test_note_graph_write_pg.py`'s 0.25-read pin still meaningful. What
 a channel that was measured never to carry anything. `_self_report`
 (`graphwritetools.py:1157-1176`) goes with the field.
 
-*Uncertain, and worth saying:* this bets that a model asked to ASK when it cannot read a
-word does so more reliably than it marks the word down. That is not measured. **The
-experiment:** the same `shape_probe` corpus that produced the 121-fact number, re-run
-against a smudged-note prompt that says "if you cannot read it, ask" — count the asks.
-Cheap, and it belongs in R0 beside the `repeats` arm.
+*MEASURED in R0, and the deletion is safe for a reason this section did not predict.* The
+smudged-note arm (`shape_probe ask`) ran three notes with a genuinely illegible value — a
+pharmacy label whose second line is 25 mg or 2.5 mg, an OCR'd ferritin that reads 18 or 48, a
+half-rubbed-out odometer — through the REAL `note_ingest` persona, multi-turn against
+`/api/debug/replay`, in three conditions: the field ABSENT (36 runs), absent plus one line
+telling the agent to ask when it cannot read a word (34), and the shipped field PRESENT as
+the control (36). 106 runs, two lost to gateway timeouts.
+
+**The failure `confidence` exists to catch does not happen on this box.** One run in 106
+committed a single reading of an illegible value as though it had read it — and that run was
+in the arm that HAS the field, which it filled with `1`. Nothing is lost by deleting it.
+
+**What the model does instead is a third thing.** On 45 of 106 runs it writes the ambiguity
+into the VALUE — "hydrochlorothiazide dose uncertain, possibly 25 mg or 2.5 mg" — which is
+what `assert_fact.tool` already tells it to do ("facts you are genuinely unsure of are worth
+recording with the words the note used"). On 55 it drops the illegible fact altogether.
+Asking is the rarest outcome of the three: **1 of 36** with the field absent, **7 of 34**
+when the persona is told to ask, **6 of 36** with the field present.
+
+So the bet was half right, and the half that failed is worth writing down. The model does not
+mark the word down — across the 15 illegible facts the field was filled for it wrote exactly
+0.5 nine times, under 0.5 twice and 1.0 four times — but it does not reliably ask either.
+**R1 keeps the deletion and owes the ask line**: "told" more than doubled the ask rate at no
+measured cost, and it is a line of prompt rather than a field. The residual risk is neither
+of the two this section was arguing about: half the time the illegible fact is silently
+DROPPED, and no field and no question ever addressed that.
 
 **4. `distinguish` on `resolve_entity` — NEW field, and the price of dropping
 `ambiguous_mention`.**
@@ -1110,11 +1163,15 @@ this box. Sorted by what the redirection actually changes:
 **(a) Newly closable — the blocker was the frozen surface, and it is unfrozen (1).**
 
 - `plan_recurring_gym` is GREEN today on a flattened `value_json` string (§3), so it
-  asserts nothing about recurrence reaching a calendar. **Recurrence in production** is
-  what `repeats` closes, and it is the one capability with no survivor at all today. It
+  asserts nothing about recurrence reaching a calendar. **Recurrence in production** is what
+  `repeats` closes, and it is the one capability with no survivor at all today. It
   needs a NEW scenario asserting the RRULE reaches `app.appointments.rrule` through
   `_upsert_tokens` and `_recurrence_rrule`, and `plan_recurring_gym`'s own assertion
-  should be tightened onto that column rather than left matching a sentence.
+  should be tightened onto that column rather than left matching a sentence. **R0 changed
+  what the scenario is testing** (§3.2): the rule does not come from the model — 0 parseable
+  RRULEs in 228 values across two spellings — it comes from the handler parsing the fact's
+  attested span, so the scenario asserts a DETERMINISTIC path end to end and the harness's
+  synthesised reading needs no recurrence field at all.
 
 **(b) Closed by the reading, or by the agent ASKING (6).** The gap-1 (`assertion`)
 scenarios split. Six of the ten are disposals and endings — `own_acquire_then_dispose`,
@@ -1139,11 +1196,34 @@ and they were previously answered as one:
   always `correct_fact`, and what one channel changes is that reaching it stops being a
   fallback and becomes the designed path.**
 
-That reframes the open question. It is no longer *"can the tool surface say negated"* —
-it cannot, and it does not need to. It is **"does the agent notice the contradiction and
-ask?"** which is a prompt-and-loop question, measurable against the live model rather than
-arguable from the schema. The re-authoring in R0 tests the first case; the second needs a
-live-model scenario, which is R5's adversarial work carrying a second passenger.
+That reframed the open question — no longer *"can the tool surface say negated"*, which it
+cannot and need not, but **"does the agent notice the contradiction and ask?"** **R0 measured
+it, and the answer is no.** `shape_probe contradict` re-authored all six later notes against
+a reading: the earlier note's fact sitting in a canned `read_entity` view, `find_entity`,
+`read_entity` and `ask_owner` all bound from the real registry, driven multi-turn through
+`/api/debug/replay`. Six scenarios × three personas × 8 runs = 144.
+
+| out of 48 runs per persona | shipped persona | + "read the graph first" | + "ask when it contradicts" |
+|---|---|---|---|
+| looked at the graph at all | **0** | **0** | **0** |
+| called `ask_owner` | **0** | **0** | **0** |
+| wrote a `when_end` on the contradicted predicate | 15 | 20 | 20 |
+| …that `_close_interval` would ADMIT | 1 | 4 | 3 |
+
+**The agent never looks and never asks**, and telling it to — in the persona, in the words R1
+would have shipped — moved neither number. What it does instead is state the ending as a fact
+of the note in front of it: a `when_end` on `owns` / `worksFor` / `eventStatus` on 55 of 144
+runs, of which **8 survive** the handler's three refusals (the rest carry a prose `when`, no
+`when`, or an end that does not follow its start). So the channel that closes these is not the
+ask. It is the schema, fired blind, landing 8 times in 144.
+
+**R1 cannot fix this with a prompt — that is what the three personas measured.** It has to
+make noticing STRUCTURAL: `resolve_entity` already loads the entity it resolves, so its
+RESULT can carry that entity's current facts, and the contradiction then arrives inside a
+result the agent already asked for instead of behind a call it never makes. That is the same
+handler and the same result §3.4 is already widening to name candidates, and it is the R1
+work O3 now forces. The ask is what happens AFTER the agent has been shown the conflict; R0
+says it will not go looking for one.
 
 **(c) Genuinely still unreachable through the model (4).** `adv_standalone_negation_active`
 ("I am not diabetic" — a negative fact with no prior to close), `rel_reported_secondhand`
@@ -1217,10 +1297,14 @@ fires on one exact match). Neither is about the producer.
 - **RLS** — every table the wipe touches keeps its isolation test (CLAUDE.md #3); the
   wipe migration adds none, and `analysis/settle_owner.py`'s `tests/unit/test_settle_owner.py`
   guard (no write site in `src/` without `settle_owners`) extends to `close_reading`.
-- **`backend/evals/`** — `shape_probe.py` stays and is the instrument for the `repeats`
-  arm and the bucket-(b) re-authoring. The `integrate_cases` corpus goes; a
-  `close_reading` corpus replaces it, which is one of the two things W3 was briefed to do
-  and did not.
+- **`backend/evals/`** — `shape_probe.py` stays and grew R0's three suites: `repeats`
+  (which spelling of a recurrence the model can write), `ask` (does it ask about a value it
+  cannot read) and `contradict` (does it notice a fact another note wrote). The last two run
+  multi-turn through `/api/debug/replay` against the REAL persona, so they are the
+  instrument for every behavioural question this plan has left — R1's widened
+  `resolve_entity` result is re-measured with the arm that found the problem. The
+  `integrate_cases` corpus goes; a `close_reading` corpus replaces it, which is one of the
+  two things W3 was briefed to do and did not.
 
 ---
 
@@ -1370,16 +1454,32 @@ the rule was protecting is being deleted on purpose. It still shapes the ORDER: 
 replacement lands and is green before the old producer goes, so that a failure between two
 PRs leaves a working box rather than a half-built one.
 
-**R0 — Three measurements, no production code.** The `shape_probe` arm for `repeats`
-(§3.2); the smudged-note ASK arm that decides whether dropping `confidence` is safe
-(§3.3); and the bucket-(b) re-authoring of the six disposal scenarios against a reading
-(§5). All three are cheap, all three change what R1 builds, and each ends with its answer
-written into this doc. The `distinguish` matcher (§3.4) is a unit test rather than a probe
-and can ride R1.
+**R0 — Three measurements, no production code. DONE.** Three new `shape_probe` suites
+(`repeats`, `ask`, `contradict`), 652 live samples against gpt-oss-120b at reasoning low
+through `/api/debug/tool-probe` and `/api/debug/replay`, no production code and nothing
+written to the graph. All three answers are in this doc where the question was asked, and
+two of the three changed what R1 builds:
+
+- **`repeats` (§3.2, O2):** 0 parseable RRULEs in 113 values, 0 in 115 on a sharpened
+  spelling, and the phrase spelling says what the note says 28 times in 118. But parsing the
+  model's own attested `quote` recovers the rule on 198 of 200 runs. **`repeats` moves off
+  the model and into the handler** — R1 builds a span parser, not a field.
+- **`confidence` (§3.3, O3b):** 1 silent guess in 106 runs, and it happened in the arm that
+  HAS the field. The deletion is safe. R1 also adds the one prompt line that raised the ask
+  rate from 1 in 36 to 7 in 34.
+- **The six disposals (§5(b), O3):** 0 of 144 runs read the graph, 0 called `ask_owner`, and
+  three personas — including one told exactly what to do — made no difference. **R1 must make
+  the conflict arrive in `resolve_entity`'s RESULT** rather than expect the agent to go and
+  find it.
+
+The `distinguish` matcher (§3.4) is a unit test rather than a probe and can ride R1.
 
 **R1 — `close_reading`, beside `assert_fact`.** The sidecar, the handler, `_upsert_tokens`
-fed from the reading, `repeats` and its strict parser, the clamp promoted to a reported
-signal, and `resolve_entity` gaining `distinguish` plus the candidate names in its result.
+fed from the reading, the recurrence parser over the fact's own `quote` (R0: not a field —
+§3.2), the clamp promoted to a reported signal, and `resolve_entity` gaining `distinguish`,
+the candidate names, **and the resolved entity's CURRENT FACTS in its result** — R0's third
+arm found the agent will not fetch them itself (§5(b)), so the conflict has to arrive in a
+result it already asked for.
 Bound on the unattended set; `assert_fact` still bound too. Nothing is deleted and nothing
 sweeps yet: a reading commits exactly as `assert_fact` does. Green on
 `test_note_graph_write_pg.py`. **And it carries one frontend obligation it cannot defer:**
@@ -1525,26 +1625,49 @@ it in a follow-on wave once the note path is proven.
 *Recommendation:* (iii). It keeps this rewrite's blast radius on notes, and (ii)'s payoff
 is line count rather than capability.
 
-**O2 — Is `repeats` an RRULE or a phrase?** Decided by R0's probe (§3). If neither works,
-recurrence stays lost and that is a capability regression to record in `ROADMAP.md`, not
-to hide.
+**O2 — Is `repeats` an RRULE or a phrase? DECIDED by R0: NEITHER, and it is not a model
+field.** 0 parseable RRULEs in 113 values and 0 in 115 on the sharpened retry; the phrase
+spelling parses 80 times in 118 but matches the note only 28 (§3.2). Recurrence is NOT lost
+and there is no regression to record: it is recoverable from the fact's attested span on 198
+of 200 runs by a deterministic parser, so R1 builds that parser in the handler and
+`close_reading` carries no recurrence field. What R1 owes with it is a real parser corpus —
+the probe's reference implementation was written against the five phrasings it was scored on,
+and its accuracy on arbitrary notes is unmeasured.
 
-**O3 — Does the agent NOTICE a contradiction with a fact another note wrote, and ask?**
-Reframed by the one-channel decision (§5(b)). The half of the six disposal scenarios whose
-ending is stated in the same note is decided by R0's re-authoring and is a schema question.
-The other half is not a schema question at all and never was: the reading of note 2 cannot
-retract note 1's fact, the agent can SEE that fact through `read_entity`, and the channel
-that closes it is ask → `correct_fact`. So the open question is behavioural — does the
-model reach for the question — and it needs a live-model scenario (R5), not a probe.
-*This is the largest single unknown in the plan.*
+**O3 — Does the agent NOTICE a contradiction with a fact another note wrote, and ask?
+ANSWERED by R0, and the answer is no** (§5(b)). Across 144 live runs on the six disposal
+scenarios, with the earlier note's fact one `read_entity` call away and the tool bound: the
+agent looked **0** times and asked **0** times — under the shipped persona, under a persona
+told to read the graph first, and under a persona told to ask when the note contradicts what
+is on file. The design that ended "the agent SEES the active fact and asks" rests on a step
+this model does not take.
 
-**O3b — Does dropping `confidence` cost anything?** The field is measured never to fire the
-guard it feeds, so removing it costs nothing observable; the bet is that a model told to ask
-when it cannot read a word does so more often than it marked the word down (which was zero
-times in 121 facts, so the bar is low). R0's smudged-note arm counts the asks. If the model
-neither marks down nor asks, the honest conclusion is that this box has no legibility
-channel at all, and that is worth knowing plainly rather than keeping a field that
-simulates one.
+*What follows for the plan.* The ask → `correct_fact` channel is still the only thing that
+can retract another note's fact — nothing measured changes that — but reaching it cannot be
+left to the agent's judgement. **R1's job is to put the conflict in front of it**: widen
+`resolve_entity`'s result to carry the resolved entity's current facts (the handler already
+has them), so a note that contradicts one is a contradiction the agent has been HANDED. Then
+R5 re-runs `shape_probe contradict` against the widened result — the arm exists now — and
+measures whether the ask appears. Until that number exists the retraction story is unproven,
+and it is still the largest single unknown in the plan; what R0 removed is the possibility of
+proving it with prompt wording.
+
+*And the consolation prize is real:* the reading states the ending as its own fact often
+enough that 55 of 144 runs attempt a `when_end` on the contradicted predicate, 8 of which
+`_close_interval` admits. That is a schema path with no ask in it, and R1's handler work (a
+`when` the model actually fills, per §3.2's control finding) is what would raise it.
+
+**O3b — Does dropping `confidence` cost anything? DECIDED by R0: no.** 106 live runs on three
+smudged notes produced exactly one silently-committed guess, and it came from the arm that
+still HAS the field (§3.3). The predicted failure does not occur, so the field guards nothing.
+
+The rest of that arm is the honest conclusion this question asked for, and it is a third
+possibility: this box has no legibility channel and does not need one, because the model
+neither marks down nor guesses — it writes the ambiguity into the value on 45 of 106 runs and
+drops the fact on 55. The ask is rare in every condition (1/36 with the field absent, 7/34
+when told to ask, 6/36 with the field present). R1 ships the deletion, adds the "if you
+cannot read it, ask" line, and carries the dropped-fact half as what it actually is — a
+reading-completeness problem (O5), not a confidence one.
 
 **O4 — The parked-thread edit.** Carried forward from `W5_PRECONDITIONS.md` §2 unsolved: a
 note edited while its conversation is parked on `ask_owner` is skipped by the repointed
@@ -1730,7 +1853,7 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 - **`backend/tests/harness/README.md`** — §5 rewrites its gap table, its "what W5 may not
   delete" section (void) and its "gate this corpus does NOT close" section (closed).
 - **`backend/evals/README.md`** — the `integrate` corpus goes, a `close_reading` corpus
-  arrives.
+  arrives. R0's three suites are already documented there.
 - **`docs/plans/README.md`** — this doc's row, and the three superseded rows.
 - **Migrations to un-seed or amend, not docs:** `0040` (the `note.ingested` →
   `integrate_note` trigger seed, and the `resolution.changed` trigger whose consolidate
