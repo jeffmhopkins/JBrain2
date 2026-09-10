@@ -157,9 +157,9 @@ def test_correct_fact_addresses_by_identity_key_and_never_by_fact_id() -> None:
     assert "replaces" not in props
 
 
-def test_the_four_note_graph_verbs_are_all_bound_for_the_reply_turn() -> None:
-    """`NOTE_INGEST_ON_REPLY_TOOLS` names six tools; four of them write the graph and all
-    four have to be BOUND on the chat registry, which is the reply turn's only registry.
+def test_every_note_graph_verb_is_bound_for_the_reply_turn() -> None:
+    """Every graph-write verb in `NOTE_INGEST_ON_REPLY_TOOLS` has to be BOUND on the chat
+    registry, which is the reply turn's only registry.
 
     For a whole wave two of them were not: `build_registry` dropped the `resolve_entity`
     and `assert_fact` sidecars unconditionally, so the reply turn was offered neither and
@@ -167,7 +167,16 @@ def test_the_four_note_graph_verbs_are_all_bound_for_the_reply_turn() -> None:
     empty-address path commits active + PINNED. Every fact the owner taught a note thread
     was pinned against every later note."""
     handlers = build_reply_write_handlers(_unusable_maker(), _proposals(), _entities(), _notes())
-    assert set(handlers) == {CORRECT_FACT, MERGE_ENTITIES, "resolve_entity", "assert_fact"}
+    assert set(handlers) == {
+        CORRECT_FACT,
+        MERGE_ENTITIES,
+        "resolve_entity",
+        "assert_fact",
+        # R1's reading. A reply turn that has re-read the whole note must be able to
+        # STATE it — a turn that can only add facts one at a time can never say what the
+        # note says now, which is the claim the settle needs.
+        "close_reading",
+    }
     assert set(handlers) <= NOTE_INGEST_ON_REPLY_TOOLS
     # Every one of them has a sidecar in the chat registry's directory, or the name is
     # allowlisted with nothing behind it — the failure this test exists for.

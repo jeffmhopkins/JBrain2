@@ -87,6 +87,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.graphwritetools import (
     ASSERT_FACT,
+    CLOSE_READING,
     RESOLVE_ENTITY,
     NoteGraphWriter,
     NoteTarget,
@@ -628,6 +629,12 @@ def build_reply_write_handlers(
             return refusal
         return await writer.assert_fact(arguments, ctx)
 
+    async def close_reading_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        writer, _note_id, refusal = await _bound(ctx, CLOSE_READING)
+        if writer is None:
+            return refusal
+        return await writer.close_reading(arguments, ctx)
+
     return {
         CORRECT_FACT: _texted(CORRECT_FACT, correct_fact_tool),
         MERGE_ENTITIES: _texted(MERGE_ENTITIES, merge_entities_tool),
@@ -650,4 +657,11 @@ def build_reply_write_handlers(
         # `toolregistry.NEVER_DEFAULT`, so curator's wildcard cannot absorb them.
         RESOLVE_ENTITY: _texted(RESOLVE_ENTITY, resolve_entity_tool),
         ASSERT_FACT: _texted(ASSERT_FACT, assert_fact_tool),
+        # And the reading, for the same reason and by the same route. The on-reply set is
+        # a SUPERSET of the unattended one, so a reply turn that has re-read the whole
+        # note must be able to state it — a turn that can only add facts one at a time
+        # can never say what the note says NOW, which is the claim the settle needs
+        # (`AGENT_INGEST_REWRITE.md` §1). Its writer is the conversation's, so its budget
+        # and its accumulated `Reading` are shared with the pass that opened the thread.
+        CLOSE_READING: _texted(CLOSE_READING, close_reading_tool),
     }

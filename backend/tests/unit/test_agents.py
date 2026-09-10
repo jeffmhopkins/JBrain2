@@ -560,6 +560,7 @@ def test_the_third_party_set_is_the_unattended_write_core_minus_the_owner_channe
     assert {
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "find_entity",
         "read_entity",
         "current_time",
@@ -698,12 +699,14 @@ def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> No
     assert note.tools is not None
     assert isinstance(note.tools, frozenset)
     assert note.tools == NOTE_INGEST_UNATTENDED_TOOLS
-    # W3's whole unattended set, and nothing else: two graph writes, `ask_owner`, two
+    # The whole unattended set, and nothing else: three graph writes, `ask_owner`, two
     # entity reads, the clock. Enumerated rather than derived, so a tool arrives here by
-    # being named and never by inheriting anything.
+    # being named and never by inheriting anything — which is how `close_reading` (R1 of
+    # `AGENT_INGEST_REWRITE.md`) had to arrive.
     assert note.tools == {
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "ask_owner",
         "find_entity",
         "read_entity",
@@ -901,8 +904,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v3",
-            "d3bace60e9d1fbf279ece138fa8360d8193446c23ea1665c0a9eaebb9ec679f5",
+            "agent-note-ingest-v4",
+            "a06c29aea82c98d23409567c6a911e62937da1a610731e2cfacf774a6b75f1ec",
         ),
     }
     assert set(pins) == AGENT_NAMES

@@ -53,6 +53,12 @@ const TOOL_LABELS: Record<string, { label: string; emphasis?: string }> = {
   memory_edit: { label: "Updating", emphasis: "its scratchpad" },
   remember: { label: "Staging", emphasis: "a memory change" },
   propose_correction: { label: "Staging", emphasis: "a proposal" },
+  // The note conversation's own verbs. Without these three a live note pass reads
+  // "Using resolve_entity" — the raw tool name, in the one place the owner watches the
+  // agent work on his own note (AGENT_INGEST_REWRITE §3b I4).
+  resolve_entity: { label: "Working out", emphasis: "who the note means" },
+  close_reading: { label: "Recording", emphasis: "what the note says" },
+  ask_owner: { label: "Asking", emphasis: "you a question" },
 };
 
 function toolStatus(name: string): AgentStatus {

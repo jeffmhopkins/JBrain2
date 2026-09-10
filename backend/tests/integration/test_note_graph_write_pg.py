@@ -29,6 +29,7 @@ What each test is defending:
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -1120,3 +1121,638 @@ async def test_a_self_report_only_ever_lowers_the_engines_own_weight(
         }
     assert rows["jobTitle"] == pytest.approx(0.4)
     assert rows["allergy"] == pytest.approx(1.0)
+
+
+# --- close_reading: the whole-note reading (AGENT_INGEST_REWRITE R1) -----------
+
+
+def _one_fact(subject_line: str) -> dict[str, Any]:
+    """One fact both verbs can write, quoting a body `_own_person` really produced."""
+    return {
+        "subject": "e1",
+        "predicate": "metAt",
+        "object": "Ritual",
+        "statement": f"{subject_line} was at Ritual.",
+        "when": "",
+        "when_end": "",
+        "quote": f"Coffee with {subject_line} at Ritual",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_reading_commits_the_rows_assert_fact_would(maker, tmp_path) -> None:  # noqa: F811
+    """R1's headline, as a row-level comparison: `close_reading` lands BESIDE
+    `assert_fact` and commits identically. It is the same `_assert_one`, the same
+    `commit_facts`, the same `decide()` — the plan's whole claim is that the reading
+    changes who supplies the meaning and nothing about how a write lands (constraint 5).
+
+    Two notes and two people, because both writes are on the same identity key otherwise
+    and the second would supersede the first rather than being comparable to it."""
+    _, asserted = await _own_person(maker, tmp_path, "Dana Asserted")
+    _, read = await _own_person(maker, tmp_path, "Dana Readrow")
+
+    left = await asserted.assert_fact({"facts": [_one_fact("Dana Asserted")]}, _ctx())
+    right = await read.close_reading(
+        {
+            "title": "Coffee with Dana",
+            "tags": ["dana", "coffee"],
+            "facts": [_one_fact("Dana Readrow")],
+        },
+        _ctx(),
+    )
+    assert len(left.facts) == len(right.facts) == 1
+
+    async def _row(fact_id: str) -> tuple:
+        async with scoped_session(maker, SYSTEM_CTX) as s:
+            row = (await s.execute(select(Fact).where(Fact.id == uuid.UUID(fact_id)))).scalar_one()
+        # `self_confidence` and `inferred` are NOT stored columns — they live on the
+        # in-flight `ExtractedFact` and reach `decide()` through the candidate — so what
+        # is comparable here is what landed on the row.
+        return (
+            row.predicate,
+            row.qualifier,
+            row.kind,
+            row.status,
+            row.confidence,
+            row.domain_code,
+            row.value_json,
+            row.temporal_precision,
+            row.pinned,
+            row.chunk_id is not None,
+        )
+
+    assert await _row(left.facts[0].fact_id) == await _row(right.facts[0].fact_id)
+    # And the result the model reads is the same shape, down to the outcome vocabulary.
+    assert str(right).startswith("ok  Dana Readrow.metAt → Ritual")
+    assert right.facts[0].outcome == left.facts[0].outcome
+
+
+@pytest.mark.asyncio
+async def test_a_reading_needs_no_confidence_field_to_commit_at_full_weight(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """§3.3: the MODEL's confidence is deleted, the ENGINE's guard is not.
+
+    R0 ran three smudged notes through the real persona in three conditions, 106 live
+    runs, and the failure the field exists to catch happened once — in the arm that HAS
+    the field, which filled it with `1`. So the field guards nothing and goes. What stays
+    is the ENGINE's span check, which is a signal that really fires: an attested quote
+    commits at full weight with no field to say so, and the next test is the other half."""
+    _, writer = await _own_person(maker, tmp_path, "Dana Nofield")
+    out = await writer.close_reading(
+        {"title": "Coffee", "tags": [], "facts": [_one_fact("Dana Nofield")]}, _ctx()
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        row = (
+            await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
+        ).scalar_one()
+    assert row.confidence == pytest.approx(1.0)
+    assert row.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_the_engines_span_check_still_caps_a_reading(maker, tmp_path) -> None:  # noqa: F811
+    """The half of the guard `confidence`'s deletion does NOT touch: a quote the note
+    does not contain caps the fact at the 0.4 inferred ceiling, well under
+    `supersession.LOW_CONFIDENCE`, so it cannot silently overwrite a value the note
+    actually stated."""
+    _, writer = await _own_person(maker, tmp_path, "Dana Unattested")
+    out = await writer.close_reading(
+        {
+            "title": "Coffee",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "livesIn",
+                    "object": "Oakland",
+                    "statement": "Dana Unattested lives in Oakland.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "a sentence this note does not contain",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert "quote is not in the note" in str(out)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        row = (
+            await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
+        ).scalar_one()
+    assert row.confidence == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_the_reading_accumulates_across_calls_and_carries_title_and_tags(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """`_upsert_tokens` was not the only producer the teardown was about to orphan:
+    `note_analysis`'s title and tags are two more fields on the same call (§1's table).
+    R1 does not stamp them yet — the settle moves in R3 — so what it owes is that they
+    are CARRIED, unioned across the calls a long note takes, with the fact ids beside
+    them for the sweep that will read them."""
+    _, writer = await _own_person(maker, tmp_path, "Dana Union")
+    first = await writer.close_reading(
+        {
+            "title": "Coffee with Dana",
+            "tags": ["Dana", "coffee"],
+            "facts": [_one_fact("Dana Union")],
+        },
+        _ctx(),
+    )
+    second = await writer.close_reading(
+        {
+            "title": "More on Dana",
+            "tags": ["coffee", "ritual"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "visits",
+                    "object": "Ritual",
+                    "statement": "Dana Union visits Ritual.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "at Ritual this morning",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    reading = writer.reading
+    assert reading.calls == 2
+    assert reading.title == "Coffee with Dana"  # the first call named the note
+    assert reading.tags == ("dana", "coffee", "ritual")
+    assert reading.fact_ids == (first.facts[0].fact_id, second.facts[0].fact_id)
+    assert reading.clamped is False
+    assert "close_reading: 4 calls left this note" in str(second)
+
+
+@pytest.mark.asyncio
+async def test_a_clamped_reading_is_reported_as_incomplete_and_latches(maker, tmp_path) -> None:  # noqa: F811
+    """§2's gate clause, and the reason the clamp is promoted from a cosmetic result line
+    to a signal: a clamped reading is a PREFIX of the note, and a sweep against a prefix
+    retracts the tail. R1 does not sweep, so what it owes is the signal itself — said to
+    the model in stronger words than `assert_fact`'s, carried on the step as `truncated`,
+    and LATCHED on the reading so a clean second call cannot clear it."""
+    from jbrain.agent.graphwritetools import MAX_FACTS
+
+    _, writer = await _own_person(maker, tmp_path, "Dana Clamped")
+    out = await writer.close_reading(
+        {
+            "title": "A long note",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": f"likes{i}",
+                    "object": f"thing {i}",
+                    "statement": f"Dana Clamped likes thing {i}.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "Coffee with Dana Clamped",
+                }
+                for i in range(MAX_FACTS + 3)
+            ],
+        },
+        _ctx(),
+    )
+    assert out.truncated is True
+    assert len(out.facts) <= MAX_FACTS
+    assert "this reading is INCOMPLETE" in str(out)
+    assert writer.reading.clamped is True
+
+    clean = await writer.close_reading(
+        {"title": "", "tags": [], "facts": [_one_fact("Dana Clamped")]}, _ctx()
+    )
+    assert clean.truncated is False
+    # The LATCH: the pass produced a prefix, and a later clean call does not make the
+    # reading whole again.
+    assert writer.reading.clamped is True
+
+
+# --- recurrence, read out of the quote (§3.2) ---------------------------------
+
+
+async def _recurring(maker, tmp_path, subject: str, body: str) -> NoteGraphWriter:  # noqa: F811
+    note_id = await _note(maker, tmp_path, body=body)
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": subject, "kind": "event"}]}, _ctx())
+    return writer
+
+
+async def _token_of(maker, fact_id: str):  # noqa: F811, ANN202
+    from jbrain.models.analysis import TemporalToken
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        fact = (await s.execute(select(Fact).where(Fact.id == uuid.UUID(fact_id)))).scalar_one()
+        if fact.temporal_token_id is None:
+            return fact, None
+        token = (
+            await s.execute(select(TemporalToken).where(TemporalToken.id == fact.temporal_token_id))
+        ).scalar_one()
+    return fact, token
+
+
+@pytest.mark.asyncio
+async def test_a_reading_writes_the_recurrence_it_reads_out_of_the_quote(maker, tmp_path) -> None:  # noqa: F811
+    """The capability the tool surface could not express at all, and the one R0 changed
+    the design of: 0 parseable RRULEs in 228 values across two `repeats` spellings, but
+    parsing the model's own attested quote recovered the rule on 198 of 200 runs. So the
+    reading writes the fact and the span, and the HANDLER writes the token.
+
+    `app.temporal_tokens` is what `appointment_projection._recurrence_rrule` reads, and
+    the conversation has been passing `tokens=[]` since W3 — so a conversation-written
+    recurring appointment projected as a one-off. This is that producer."""
+    body = "Gym Sessions every Tuesday and Thursday at 6am at the Y on Oak St."
+    writer = await _recurring(maker, tmp_path, "Gym Sessions", body)
+    out = await writer.close_reading(
+        {
+            "title": "Gym schedule",
+            "tags": ["gym"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "recurrence",
+                    "object": "Tuesdays and Thursdays at 6am",
+                    "statement": "Gym Sessions repeat every Tuesday and Thursday at 6am.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "every Tuesday and Thursday at 6am",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert "repeats FREQ=WEEKLY;BYDAY=TU,TH" in str(out)
+    fact, token = await _token_of(maker, out.facts[0].fact_id)
+    assert token is not None, "the fact must point at the token that carries the rule"
+    assert token.rrule == "FREQ=WEEKLY;BYDAY=TU,TH"
+    assert token.kind == "recurrence"
+    assert token.surface_phrase == "every tuesday and thursday"
+    # An undated recurring note gives the rule no start, and a token must have one — so
+    # it starts when the note says it, which is the note's own capture day.
+    assert fact.valid_from is not None
+    assert fact.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_recurrence_the_parser_refuses_leaves_the_fact_committed_and_undated(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The discard discipline, end to end. "Tuesdays until March" is a BOUNDED rule and
+    the parser will not date the bound, so it discards the whole thing rather than
+    writing an unbounded rule — which would put a Spanish class on the owner's calendar
+    forever. What must not happen is the fact being lost with it."""
+    body = "Spanish Class Tuesdays until March at the community center on Pine."
+    writer = await _recurring(maker, tmp_path, "Spanish Class", body)
+    out = await writer.close_reading(
+        {
+            "title": "Spanish class",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "recurrence",
+                    "object": "Tuesdays",
+                    "statement": "Spanish Class meets Tuesdays until March.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "Tuesdays until March",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert "repeats" not in str(out)
+    fact, token = await _token_of(maker, out.facts[0].fact_id)
+    assert token is None
+    assert fact.status == "active" and fact.valid_from is None
+
+
+@pytest.mark.asyncio
+async def test_an_unattested_quote_states_no_schedule(maker, tmp_path) -> None:  # noqa: F811
+    """The gate on the whole mechanism: a quote the note does not contain is not evidence
+    of anything, so there is nothing to read a rule out of. Without this the model could
+    write a recurrence the note never stated by paraphrasing one into the quote field."""
+    writer = await _recurring(
+        maker, tmp_path, "Book Club", "Book Club meets at Dana's place this month."
+    )
+    out = await writer.close_reading(
+        {
+            "title": "Book club",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "recurrence",
+                    "object": "monthly",
+                    "statement": "Book Club meets every month.",
+                    "when": "",
+                    "when_end": "",
+                    "quote": "Book Club meets every month on the first Monday",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert "repeats" not in str(out)
+    _fact, token = await _token_of(maker, out.facts[0].fact_id)
+    assert token is None
+
+
+# --- resolve_entity, widened (§3.4 and R0's third arm) ------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolving_hands_back_what_the_graph_already_says(maker, tmp_path) -> None:  # noqa: F811
+    """R0's hardest measurement, answered in the RESULT rather than in the prompt.
+
+    Across 144 live runs on notes that contradicted a fact another note wrote — the fact
+    one `read_entity` call away, the tool bound — the agent looked 0 times and asked 0
+    times, under three personas including one told to read the graph first and one told
+    to ask on a contradiction. So the conflict arrives in a result it already asked for:
+    the handler has the entity loaded anyway."""
+    _, first = await _own_person(maker, tmp_path, "Dana Onfile")
+    await first.close_reading(
+        {
+            "title": "Coffee",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "livesIn",
+                    "object": "Oakland",
+                    "statement": "Dana Onfile lives in Oakland.",
+                    "when": "2019",
+                    "when_end": "",
+                    "quote": "Coffee with Dana Onfile at Ritual",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    # A LATER note, and a fresh writer: the second pass is where a contradiction lands.
+    note_id = await _note(maker, tmp_path, body="Dana Onfile moved to Boulder last month.")
+    later = await _writer(maker, note_id)
+    text = str(
+        await later.resolve_entity(
+            {"entities": [{"surface": "Dana Onfile", "kind": "person"}]}, _ctx()
+        )
+    )
+    assert "already known" in text
+    # The CANONICAL predicate, as the registry rewrote it on the way in — the result
+    # names the graph's own spelling, which is the one a later write has to match.
+    assert "on file: homeLocation — Dana Onfile lives in Oakland." in text
+
+
+@pytest.mark.asyncio
+async def test_the_facts_a_resolve_hands_back_are_capped(maker, tmp_path) -> None:  # noqa: F811
+    """The cap is not decoration: `resolve_entity` takes up to 12 surfaces, and an entity
+    with a long history would otherwise put hundreds of statements in front of a model
+    that has to hold the note too. Per entity AND per call, and when it bites the result
+    says so and names the read that lifts it."""
+    from jbrain.agent.graphwritetools import FACTS_PER_ENTITY
+
+    _, seed = await _own_person(maker, tmp_path, "Dana Manyfacts")
+    for batch in range(2):
+        await seed.close_reading(
+            {
+                "title": "Coffee",
+                "tags": [],
+                "facts": [
+                    {
+                        "subject": "e1",
+                        "predicate": f"likes{batch}{i}",
+                        "object": f"thing {batch}{i}",
+                        "statement": f"Dana Manyfacts likes thing {batch}{i}.",
+                        "when": "",
+                        "when_end": "",
+                        "quote": "Coffee with Dana Manyfacts at Ritual",
+                    }
+                    for i in range(8)
+                ],
+            },
+            _ctx(),
+        )
+    note_id = await _note(maker, tmp_path, body="Dana Manyfacts again.")
+    later = await _writer(maker, note_id)
+    text = str(
+        await later.resolve_entity(
+            {"entities": [{"surface": "Dana Manyfacts", "kind": "person"}]}, _ctx()
+        )
+    )
+    assert text.count("on file:") == FACTS_PER_ENTITY
+    assert "more on file — read_entity" in text
+
+
+@pytest.mark.asyncio
+async def test_a_cross_domain_entitys_facts_are_withheld_with_its_name(maker, tmp_path) -> None:  # noqa: F811
+    """Constraint 2, applied to the new half of the result. The narrowing that already
+    withholds a health entity's canonical NAME from a general note's conversation has to
+    withhold what the health graph SAYS about it, or the widening reopens the firewall in
+    the one place the note's own cast is guaranteed to reach."""
+    note_id = await _note(maker, tmp_path, body="Called Renwick about the trip.")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        health_entity = Entity(
+            id=uuid.uuid4(),
+            kind="Person",
+            canonical_name="Dr. Anjali Renwick",
+            domain_code="health",
+            status="confirmed",
+        )
+        s.add(health_entity)
+        await s.flush()
+        from jbrain.models.analysis import EntityAlias
+
+        s.add(
+            EntityAlias(
+                entity_id=health_entity.id,
+                alias="Renwick",
+                alias_norm=normalize_alias("Renwick"),
+                domain_code="health",
+            )
+        )
+        s.add(
+            Fact(
+                id=uuid.uuid4(),
+                entity_id=health_entity.id,
+                predicate="specialty",
+                qualifier="",
+                kind="attribute",
+                statement="Dr. Anjali Renwick is an oncologist.",
+                value_json={"value": "oncologist"},
+                assertion="asserted",
+                status="active",
+                domain_code="health",
+                confidence=1.0,
+                reported_at=datetime(2026, 9, 1, tzinfo=UTC),
+                note_id=uuid.UUID(note_id),
+                extractor="test",
+                prompt_version="test",
+            )
+        )
+    writer = await _writer(maker, note_id, read_scopes=("general",))
+    text = str(
+        await writer.resolve_entity(
+            {"entities": [{"surface": "Renwick", "kind": "person"}]}, _ctx()
+        )
+    )
+    assert "e1  Renwick" in text
+    assert "oncologist" not in text and "Anjali" not in text
+    assert "on file:" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_floored_fact_is_withheld_even_when_its_entity_is_visible(maker, tmp_path) -> None:  # noqa: F811
+    """The half an entity-level check alone would miss, and the sharper of the two.
+
+    `Me` is a `general` entity carrying floored `health` and `finance` facts — the domain
+    ratchet's whole purpose — so a narrowing keyed on the SUBJECT's domain would hand a
+    general note's thread the owner's medications the moment it resolved his own name.
+    The narrowing is on the FACT's domain, which is where the floor put it."""
+    note_id = await _note(maker, tmp_path, body="Ran into Kestrel Vane at the market.")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        person = Entity(
+            id=uuid.uuid4(),
+            kind="Person",
+            canonical_name="Kestrel Vane",
+            domain_code="general",
+            status="confirmed",
+        )
+        s.add(person)
+        await s.flush()
+        for domain, predicate, statement in (
+            ("general", "worksFor", "Kestrel Vane works for Everlane."),
+            ("health", "medication", "Kestrel Vane takes lisinopril 10mg."),
+        ):
+            s.add(
+                Fact(
+                    id=uuid.uuid4(),
+                    entity_id=person.id,
+                    predicate=predicate,
+                    qualifier="",
+                    kind="attribute",
+                    statement=statement,
+                    value_json={"value": "x"},
+                    assertion="asserted",
+                    status="active",
+                    domain_code=domain,
+                    confidence=1.0,
+                    reported_at=datetime(2026, 9, 1, tzinfo=UTC),
+                    note_id=uuid.UUID(note_id),
+                    extractor="test",
+                    prompt_version="test",
+                )
+            )
+    writer = await _writer(maker, note_id, read_scopes=("general",))
+    text = str(
+        await writer.resolve_entity(
+            {"entities": [{"surface": "Kestrel Vane", "kind": "person"}]}, _ctx()
+        )
+    )
+    assert "on file: worksFor — Kestrel Vane works for Everlane." in text
+    assert "lisinopril" not in text and "medication" not in text
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_name_names_its_candidates_and_distinguish_picks_one(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """§3.4, both halves in one flow. The `ambiguous_mention` CARD names the candidate
+    entities and the tool result never did — so the agent was told "say which one" and
+    shown nothing to choose between. The result names them; `distinguish` is how it
+    answers, in the note's own words.
+
+    What it cannot do is widen: a match hands the resolver a row that ALREADY matched the
+    surface, so nothing here can point a fact at an entity the deterministic layer would
+    not have considered."""
+    note_id = await _note(
+        maker, tmp_path, body="Dana Twin — the one in Boulder — is starting at Everlane."
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        boulder = Entity(
+            id=uuid.uuid4(),
+            kind="Person",
+            canonical_name="Dana Twin",
+            domain_code="general",
+            status="confirmed",
+            summary="cardiologist in Boulder",
+        )
+        oakland = Entity(
+            id=uuid.uuid4(),
+            kind="Person",
+            canonical_name="Dana Twin",
+            domain_code="general",
+            status="confirmed",
+            summary="staff engineer in Oakland",
+        )
+        s.add_all([boulder, oakland])
+
+    writer = await _writer(maker, note_id)
+    ambiguous = str(
+        await writer.resolve_entity(
+            {"entities": [{"surface": "Dana Twin", "kind": "person"}]}, _ctx()
+        )
+    )
+    assert "this is ambiguous" in ambiguous
+    assert "cardiologist in Boulder" in ambiguous and "staff engineer in Oakland" in ambiguous
+    assert writer.lookup("e1") is None  # no handle, so no fact can be written against it
+
+    answered = await writer.resolve_entity(
+        {
+            "entities": [
+                {"surface": "Dana Twin", "kind": "person", "distinguish": "the one in Boulder"}
+            ]
+        },
+        _ctx(),
+    )
+    assert "e1  Dana Twin" in str(answered)
+    handle = writer.lookup("e1")
+    assert handle is not None and handle.entity.id == boulder.id
+
+
+@pytest.mark.asyncio
+async def test_a_distinguish_that_does_not_separate_them_stays_ambiguous(maker, tmp_path) -> None:  # noqa: F811
+    """The refusal is the safety property. A tie is the ambiguity restated, and picking
+    one of them is how a fact lands on the wrong person for good — so the phrase that
+    fits both resolves nothing, exactly as no phrase at all does."""
+    note_id = await _note(maker, tmp_path, body="Dana Tie came by.")
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        s.add_all(
+            [
+                Entity(
+                    id=uuid.uuid4(),
+                    kind="Person",
+                    canonical_name="Dana Tie",
+                    domain_code="general",
+                    status="confirmed",
+                    summary="works at Everlane",
+                ),
+                Entity(
+                    id=uuid.uuid4(),
+                    kind="Person",
+                    canonical_name="Dana Tie",
+                    domain_code="general",
+                    status="confirmed",
+                    summary="also works at Everlane",
+                ),
+            ]
+        )
+    writer = await _writer(maker, note_id)
+    out = str(
+        await writer.resolve_entity(
+            {
+                "entities": [
+                    {"surface": "Dana Tie", "kind": "person", "distinguish": "works at Everlane"}
+                ]
+            },
+            _ctx(),
+        )
+    )
+    assert "this is ambiguous" in out
+    assert writer.lookup("e1") is None

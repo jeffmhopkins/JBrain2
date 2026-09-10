@@ -248,7 +248,7 @@ OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # them out of curator's `allow=None` wildcard, and D16's closed allowlist admits them to
 # `note_ingest` alone. `analysis.converse` still builds the WORKER's own registry from
 # `graphwritetools.note_registry` — the unattended pass never consults this one.
-NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact"})
+NOTE_GRAPH_TOOLS = frozenset({"resolve_entity", "assert_fact", "close_reading"})
 
 # The verbs that give a turn DURABLE-STATE authority a fetched note body could drive.
 # `read_note` frames the body it returns when the turn holds one of them — see

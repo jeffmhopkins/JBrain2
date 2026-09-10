@@ -1,4 +1,4 @@
-"""`resolve_entity` and `assert_fact` — the two tools that write the graph.
+"""`resolve_entity`, `assert_fact` and `close_reading` — the tools that write the graph.
 
 W3/T2a of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, built to the ratified design in
 docs/research/agent-ingest/TOOL_SURFACE.md. These are the note-ingestion persona's
@@ -61,6 +61,18 @@ conversation's scopes is confirmed as a handle — the model needs that to avoid
 duplicate — but its canonical name is withheld, so the note's own words are all the
 conversation ever learns about a cross-domain row.
 
+**`close_reading` is the WHOLE-NOTE reading** (R1 of `docs/plans/AGENT_INGEST_REWRITE.md`).
+It commits exactly as `assert_fact` does — same `_assert_one`, same `commit_facts`, same
+`decide()` — and differs in three things, each of which is a property the settle needs and
+an incremental write can never have: it carries the note's `title` and `tags`, it
+accumulates into `Reading` so a later wave can ask "what does the note say NOW", and it
+reads a repeating schedule out of each fact's own attested span (`analysis/recurrence.py`,
+because R0 measured that no `repeats` FIELD can be filled on this box).
+
+Nothing here sweeps yet. The reading commits and the pass ends exactly as it does today;
+what R1 adds is the producer of the complete current reading a retraction needs
+(§1 of the plan), and `Reading.clamped` is the signal the sweep's gate will read.
+
 **An OWNER CORRECTION NOTE elevates its attested facts here** (W5's stated precondition
 for retiring the correction-note machinery). `file_correction`, `POST
 /api/wiki/{id}/corrections` and the lint card's `correct` verb all mint one note with
@@ -84,18 +96,19 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.contracts import EntityRef, FactWriteRef, write_status
 from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
-from jbrain.analysis.entities import ResolvedEntity
+from jbrain.analysis.entities import ResolvedEntity, normalize_alias
 from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
     ExtractedTemporal,
+    ExtractedToken,
     Extraction,
     parse_datetime,
 )
@@ -111,6 +124,7 @@ from jbrain.analysis.pipeline import (
     _ChunkRef,
     local_anchor,
 )
+from jbrain.analysis.recurrence import parse_recurrence
 from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.analysis.weight import ConfidenceSignals, effective_weight
 from jbrain.db.session import SessionContext, scoped_session
@@ -123,17 +137,32 @@ log = structlog.get_logger()
 
 RESOLVE_ENTITY = "resolve_entity"
 ASSERT_FACT = "assert_fact"
+CLOSE_READING = "close_reading"
 
-# The two write tools, named once. `agents.NOTE_INGEST_TOOLS` allowlists them and
+# The graph-write tools, named once. `agents.NOTE_INGEST_TOOLS` allowlists them and
 # `toolregistry.NEVER_DEFAULT` excludes them from the curator's `allow=None` wildcard —
 # both are asserted in tests, because either alone is not enough (plan constraint 9).
-GRAPH_WRITE_TOOLS = frozenset({RESOLVE_ENTITY, ASSERT_FACT})
+GRAPH_WRITE_TOOLS = frozenset({RESOLVE_ENTITY, ASSERT_FACT, CLOSE_READING})
 
 # Batch ceilings, from the measured shapes. `maxItems` may not survive llama.cpp's own
 # grammar build (it composes nothing with the json_schema validator), so the handler
 # clamps and SAYS SO rather than trusting the schema (TOOL_SURFACE, registry note 3).
 MAX_ENTITIES = 12
 MAX_FACTS = 8
+# The reading's tag list. Not a batch ceiling like the two above — a tag costs nothing to
+# write and everything to browse, and `note.extract`'s own prompt asks for a few.
+MAX_TAGS = 8
+# How many same-named candidates an ambiguity result names. Past a handful the list stops
+# being a question the agent can answer and starts being a wall of text on a turn that
+# already holds the note.
+MAX_CANDIDATES = 5
+
+# Words a `distinguish` phrase is built out of that say nothing about WHICH entity. The
+# note's own phrasing is "the one in Boulder", "her cardiologist" — the discriminator is
+# always the word this set does not contain.
+_STOPWORDS = frozenset(
+    {"the", "one", "who", "that", "this", "with", "from", "her", "his", "their", "and", "for"}
+)
 
 # Per-CONVERSATION call ceilings, engine-side because a prompt-stated cap does not hold
 # (the deep-research scout's in-repo lesson). Per conversation rather than per turn: the
@@ -143,6 +172,27 @@ MAX_FACTS = 8
 # any note carries — so hitting one is a runaway, not ordinary work.
 RESOLVE_CALL_BUDGET = 8
 ASSERT_CALL_BUDGET = 10
+# `close_reading` counts separately from `assert_fact` because it is a different job with
+# a different ceiling: the reading is the WHOLE note, and the extraction path's own cap is
+# 40 facts (`note_extract.prompt`), so six calls of eight is already more than any note
+# carries. Past it the model is re-reading rather than finishing.
+READING_CALL_BUDGET = 6
+
+# What a resolved entity's facts cost the context, bounded twice — per entity and per
+# call. R0 measured the agent reading the graph 0 times in 144 runs under three personas,
+# one of them told to read it first, so the conflict has to arrive in a result it already
+# asked for (§5(b)/O3) — but `resolve_entity` takes up to 12 surfaces and an entity with
+# a long history would otherwise put hundreds of statements in front of a model that has
+# to hold the note too.
+#
+# The ORDERING is newest-state-first, and the reason it is not "the predicates the reading
+# is about" is structural rather than a preference: the cast is resolved BEFORE the
+# reading is written, so at this point in the pass nothing knows which predicates the
+# note will touch. Newest first is the best available proxy — a note contradicts an
+# entity's CURRENT state, and the value most recently reported is the one it is most
+# likely to restate or overturn.
+FACTS_PER_ENTITY = 10
+FACTS_PER_RESOLVE = 30
 # `correct_fact` is un-batched (one disputed value, one identity key), so its budget is
 # a count of DISAGREEMENTS, not of round trips. Six is more than any one reply carries;
 # past it the model is arguing with the graph rather than recording what Jeff said.
@@ -454,6 +504,67 @@ class NoteTarget:
         return local_anchor(self.captured_at, self.tz_offset_minutes)
 
 
+@dataclass(frozen=True)
+class Candidate:
+    """One entity a surface could mean, as the retired `ambiguous_mention` card rendered
+    it — `_file_ambiguous_review` files `{id, name, kind, summary}` and the tool result
+    said none of it (§3.4). Read at the writer's FULL scope, like every other resolution
+    here, so `_candidate_note` is what decides how much of one the conversation sees."""
+
+    id: uuid.UUID
+    subject_id: uuid.UUID | None
+    name: str
+    kind: str
+    summary: str
+    domain: str
+
+
+@dataclass
+class Reading:
+    """What this conversation has said the note says — the union of its `close_reading`
+    calls.
+
+    A reading is not a write ledger, and the difference is the whole point of the verb
+    (plan §1): a ledger records what a producer WROTE, so a pass that read the note and
+    chose to write nothing is indistinguishable from one that never looked. This records
+    that the model RESTATED the note, which is the claim a retraction needs. R1 only
+    accumulates it — nothing reads it yet — but the two fields the settle's gate will
+    want are here and are filled honestly from the start: `calls` (did a reading happen
+    at all) and `clamped` (was it a PREFIX of the note).
+
+    `title` keeps the FIRST call's non-empty line rather than the last. A long note takes
+    several calls and the continuation calls are the ones most likely to restate the
+    title loosely or blank it; the call that read the note from the top is the one that
+    named it."""
+
+    title: str = ""
+    tags: tuple[str, ...] = ()
+    fact_ids: tuple[str, ...] = ()
+    calls: int = 0
+    clamped: bool = False
+
+    def union(
+        self, *, title: str, tags: Sequence[str], fact_ids: Sequence[str], clamped: bool
+    ) -> None:
+        """Fold one `close_reading` call into the reading. Order-preserving and
+        deduplicated: `fact_ids` becomes `sweep_note(touched=…)`'s input, where a repeat
+        is harmless but an order that churns makes a diff unreadable."""
+        self.calls += 1
+        self.clamped = self.clamped or clamped
+        if not self.title:
+            self.title = title
+        seen_tags = list(self.tags)
+        for tag in tags:
+            if tag not in seen_tags:
+                seen_tags.append(tag)
+        self.tags = tuple(seen_tags)
+        seen_ids = list(self.fact_ids)
+        for fact_id in fact_ids:
+            if fact_id not in seen_ids:
+                seen_ids.append(fact_id)
+        self.fact_ids = tuple(seen_ids)
+
+
 @dataclass
 class Handle:
     """One surface the conversation has resolved, and the run handle standing for it."""
@@ -516,6 +627,8 @@ class NoteGraphWriter:
         self.resolve_budget = ToolCallBudget(RESOLVE_CALL_BUDGET)
         self.assert_budget = ToolCallBudget(ASSERT_CALL_BUDGET)
         self.correct_budget = ToolCallBudget(CORRECT_CALL_BUDGET)
+        self.reading_budget = ToolCallBudget(READING_CALL_BUDGET)
+        self.reading = Reading()
 
     # --- handles ---------------------------------------------------------------
 
@@ -591,6 +704,22 @@ class NoteGraphWriter:
     # --- resolve_entity --------------------------------------------------------
 
     async def resolve_entity(self, arguments: dict, ctx: ToolContext) -> ToolOutput:
+        """Turn the note's names into handles — and hand back what the graph already says
+        about each one.
+
+        The second half is R1's answer to R0's hardest measurement (§5(b)/O3): across 144
+        live runs on notes that CONTRADICTED a fact another note wrote, with the fact one
+        `read_entity` call away and the tool bound, the agent looked 0 times and asked 0
+        times — under the shipped persona, under a persona told to read the graph first,
+        and under a persona told to ask on a contradiction. Prompting does not reach it.
+        So the conflict arrives in a result the agent already asked for: this handler has
+        the entity loaded anyway, and the note's own cast is exactly the set of entities a
+        contradiction could be with.
+
+        Bounded twice (`FACTS_PER_ENTITY`, `FACTS_PER_RESOLVE`) and withheld entirely for
+        an entity outside the conversation's read scopes — the same narrowing that already
+        withholds such an entity's NAME (constraint 2). A general note's thread learns
+        that a handle exists, never what the owner's health graph says about it."""
         del ctx  # the write session is the note's, never the turn's read scope
         items, clamped = _batch(arguments, ("entities", "surfaces", "items"), MAX_ENTITIES)
         if not items:
@@ -607,6 +736,7 @@ class NoteGraphWriter:
 
         lines: list[str] = []
         refs: list[EntityRef] = []
+        budget = FACTS_PER_RESOLVE
         async with scoped_session(self._maker, self._write_ctx) as session:
             chunks = await self._load_note(session)
             for idx, item in enumerate(items):
@@ -620,9 +750,25 @@ class NoteGraphWriter:
                     refs.append(_entity_ref(known))
                     continue
                 kind = _KIND_HINTS.get(_text(item, "kind", "type").casefold(), _DEFAULT_KIND)
+                # `distinguish` is free text FROM THE NOTE — "the cardiologist", "Dana
+                # Whitfield", "the one in Boulder" — and it is the price of retiring the
+                # `ambiguous_mention` card (§3.4): the card named the candidates and the
+                # result did not, so the agent was being refused an answer it was never
+                # given the means to give. It narrows candidates, and it can never widen:
+                # a match hands the resolver an entity that ALREADY matched the name, so
+                # nothing here can point a fact at a row the deterministic layer would not
+                # have considered.
+                distinguish = _text(item, "distinguish", "which", "detail")
+                override = (
+                    _distinguish(await self._candidates(session, surface), distinguish)
+                    if distinguish
+                    else None
+                )
                 try:
                     async with session.begin_nested():
-                        handle = await self._resolve_one(session, surface, kind, chunks)
+                        handle = await self._resolve_one(
+                            session, surface, kind, chunks, override=override
+                        )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.resolve_failed", surface=surface, error=repr(exc))
                     lines.append(f"err  entities[{idx}] '{surface}': not resolved (internal).")
@@ -630,8 +776,10 @@ class NoteGraphWriter:
                 if handle is None:
                     lines.append(
                         f"err  entities[{idx}] '{surface}': several of the owner's entities"
-                        " share that name, so this is ambiguous. Say which one from the note,"
-                        " or leave it out."
+                        " share that name, so this is ambiguous."
+                        f"{_candidate_note(await self._candidates(session, surface))}"
+                        " Re-send it with `distinguish` set to what the note says about"
+                        " which one, or leave it out and ask the owner."
                     )
                     continue
                 self._remember(handle)
@@ -639,6 +787,12 @@ class NoteGraphWriter:
                     f"{handle.handle}  {handle.label} [{handle.kind}] ({handle.domain}) —"
                     f" {'new entity' if handle.entity.created else 'already known'}"
                 )
+                if not handle.entity.created and budget > 0:
+                    on_file = await self._current_facts(
+                        session, handle, min(budget, FACTS_PER_ENTITY)
+                    )
+                    budget -= len(on_file)
+                    lines.extend(on_file)
                 refs.append(_entity_ref(handle))
         if clamped:
             lines.append(
@@ -651,7 +805,13 @@ class NoteGraphWriter:
         return ToolOutput("\n".join(lines), entities=tuple(refs), truncated=clamped)
 
     async def _resolve_one(
-        self, session: AsyncSession, surface: str, kind: str, chunks: list[_ChunkRef]
+        self,
+        session: AsyncSession,
+        surface: str,
+        kind: str,
+        chunks: list[_ChunkRef],
+        *,
+        override: Candidate | None = None,
     ) -> Handle | None:
         """Resolve one surface through W1's `commit_facts` — the shipped layered
         resolver, the provisional mint, and the mention spine, in one call with no facts.
@@ -662,7 +822,12 @@ class NoteGraphWriter:
         The mention's NAME is the surface, never the handle: `_resolve_entities` resolves
         (and, failing that, MINTS) on `mention.name`, so naming it `e1` would create an
         entity literally called `e1`. The handle is this module's own addressing and must
-        never reach the resolver."""
+        never reach the resolver.
+
+        `override` is a candidate the AGENT picked out with `distinguish`, and it goes in
+        through the same `resolution_override` seam the reply turn's `correct_fact` uses.
+        It can only ever name a row that already matched the surface, so it narrows an
+        ambiguity and can never mint or re-point."""
         ref = f"e{len(self._by_handle) + 1}"
         extraction = Extraction(
             title="",
@@ -680,6 +845,11 @@ class NoteGraphWriter:
             extraction=extraction,
             extractor=self._extractor,
             settle_owner=CONVERSATION,
+            resolution_override=(
+                None
+                if override is None
+                else {surface: ResolvedEntity(id=override.id, subject_id=override.subject_id)}
+            ),
         )
         entity = outcome.resolved.get(surface)
         if entity is None:
@@ -703,6 +873,86 @@ class NoteGraphWriter:
             domain=row.domain_code,
             visible=row.domain_code in self._read_scopes,
         )
+
+    async def _candidates(self, session: AsyncSession, surface: str) -> list[Candidate]:
+        """Every live entity whose canonical name or an alias IS this surface.
+
+        The same layer-1 predicate `entities._exact_matches` resolves on, widened to the
+        columns a person needs to tell two Danas apart. Two matches is what makes the
+        surface ambiguous, so this is both the candidate list the result names and the
+        set `distinguish` chooses from."""
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT e.id, e.subject_id, e.canonical_name, e.kind,
+                           coalesce(e.summary, '') AS summary, e.domain_code
+                    FROM app.entities e
+                    LEFT JOIN app.entity_aliases a ON a.entity_id = e.id
+                    WHERE e.status != 'merged'
+                      AND (lower(e.canonical_name) = :norm OR a.alias_norm = :norm)
+                    ORDER BY e.canonical_name
+                    """
+                ),
+                {"norm": normalize_alias(surface)},
+            )
+        ).all()
+        return [
+            Candidate(
+                id=r.id,
+                subject_id=r.subject_id,
+                name=r.canonical_name,
+                kind=r.kind or _DEFAULT_KIND,
+                summary=r.summary,
+                domain=r.domain_code,
+            )
+            for r in rows
+        ]
+
+    async def _current_facts(self, session: AsyncSession, handle: Handle, cap: int) -> list[str]:
+        """What the graph already says about a resolved entity, newest state first.
+
+        Narrowed to the conversation's own read scopes TWICE, and both are needed
+        (constraint 2). The entity's domain is the first: a general note's thread gets a
+        health entity's handle and never its name, so it must not get its graph either.
+        The FACT's domain is the second, and it is the one an entity check alone would
+        miss — `Me` is a `general` entity carrying floored `health` and `finance` facts,
+        so filtering on the subject would hand a general note's thread the owner's
+        medications. The write session is the owner at full scope by design (resolution
+        layer 1 carries no domain predicate), so this narrowing is the module's own, the
+        way the withheld NAME already is.
+
+        The cap is the caller's remaining per-call budget, and when it bites the line says
+        so and names the read that lifts it — an agent that wants the rest has a verb."""
+        if not handle.visible or cap <= 0:
+            return []
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT f.predicate, f.qualifier, f.statement
+                    FROM app.facts f
+                    WHERE f.entity_id = :id AND f.status = 'active'
+                      AND f.domain_code = ANY(:scopes)
+                    ORDER BY coalesce(f.valid_from, f.reported_at) DESC,
+                             f.reported_at DESC, f.created_at DESC
+                    LIMIT :cap
+                    """
+                ),
+                {
+                    "id": str(handle.entity.id),
+                    "cap": cap + 1,
+                    "scopes": sorted(self._read_scopes),
+                },
+            )
+        ).all()
+        lines = [
+            f"     on file: {r.predicate}{'.' + r.qualifier if r.qualifier else ''} — {r.statement}"
+            for r in rows[:cap]
+        ]
+        if lines and len(rows) > cap:
+            lines.append(f"     …more on file — read_entity {handle.entity.id} for the rest")
+        return lines
 
     # --- assert_fact -----------------------------------------------------------
 
@@ -747,6 +997,80 @@ class NoteGraphWriter:
         # `clamped` IS D3's `truncated`: the call asserted a prefix of what it was given.
         # The model is told in prose above; the owner's step has to say it too, or a
         # clamped batch renders as though the whole list landed.
+        return ToolOutput(
+            "\n".join(lines), entities=tuple(refs), facts=tuple(writes), truncated=clamped
+        )
+
+    # --- close_reading ---------------------------------------------------------
+
+    async def close_reading(self, arguments: dict, ctx: ToolContext) -> ToolOutput:
+        """The whole-note reading: title, tags, and everything the note says.
+
+        Commits through `_assert_one`, element by element, exactly as `assert_fact` does
+        — this adds no second write path (constraint 5), it adds a second CLAIM about
+        what was written. Two things it does that `assert_fact` does not:
+
+        - it reads a repeating schedule out of each fact's attested quote and writes the
+          temporal token that carries it, which is what gives `_upsert_tokens` input
+          again and `appointment_projection._recurrence_rrule` an RRULE to read;
+        - it reports a clamp as an INCOMPLETE READING rather than as a truncated batch.
+          `_batch`'s clamp has always been a result line; here it is also `Reading
+          .clamped`, because a clamped reading is a PREFIX of the note and a sweep
+          against a prefix retracts the tail.
+        """
+        del ctx  # the write session is the note's, never the turn's read scope
+        items, clamped = _batch(arguments, ("facts", "items"), MAX_FACTS)
+        title = _text(arguments, "title", "headline", "summary")
+        tags = _tags(arguments)
+        if not items and not title and not tags:
+            return ToolOutput(
+                "close_reading takes `title`, `tags` and `facts`: everything the note"
+                " says, as a list of {subject, predicate, object, statement, when,"
+                " when_end, quote} objects. Nothing was recorded."
+            )
+        if self.reading_budget.exhausted:
+            return ToolOutput(
+                "close_reading is out of budget for this note. Say what is left"
+                " unrecorded rather than reading it again."
+            )
+        self.reading_budget.used += 1
+
+        lines: list[str] = []
+        refs: list[EntityRef] = []
+        writes: list[FactWriteRef] = []
+        async with scoped_session(self._maker, self._write_ctx) as session:
+            chunks = await self._load_note(session)
+            for idx, item in enumerate(items):
+                try:
+                    async with session.begin_nested():
+                        line, write, touched = await self._assert_one(
+                            session, idx, item, chunks, read_recurrence=True
+                        )
+                except Exception as exc:  # noqa: BLE001 — one element, not the batch
+                    log.warning("graphwrite.reading_failed", index=idx, error=repr(exc))
+                    lines.append(f"err  facts[{idx}]: not recorded (internal).")
+                    continue
+                lines.append(line)
+                if write is not None:
+                    writes.append(write)
+                refs.extend(touched)
+        self.reading.union(
+            title=title,
+            tags=tags,
+            fact_ids=[w.fact_id for w in writes],
+            clamped=clamped,
+        )
+        if title:
+            lines.append(f'reading  titled "{self.reading.title}"' + _tag_note(self.reading.tags))
+        if clamped:
+            # Louder than `assert_fact`'s clamp line, and deliberately so: there it means
+            # "some facts did not land", here it also means "this reading is not the
+            # whole note", which is the claim the settle will one day act on.
+            lines.append(
+                f"note  only the first {MAX_FACTS} facts were taken, so this reading is"
+                " INCOMPLETE — send the rest in another close_reading call."
+            )
+        lines.append(f"close_reading: {self.reading_budget.remaining} calls left this note")
         return ToolOutput(
             "\n".join(lines), entities=tuple(refs), facts=tuple(writes), truncated=clamped
         )
@@ -838,6 +1162,7 @@ class NoteGraphWriter:
         chunks: list[_ChunkRef],
         *,
         correction: bool = False,
+        read_recurrence: bool = False,
     ) -> tuple[str, FactWriteRef | None, list[EntityRef]]:
         subject_token = _text(item, "subject", "entity", "about")
         subject = self.lookup(subject_token)
@@ -958,6 +1283,48 @@ class NoteGraphWriter:
                     "this note is your correction, so it out-argues what was on file and"
                     " is pinned against later notes"
                 )
+        # RECURRENCE, read out of the span the model attested rather than asked for as a
+        # field (§3.2 of the rewrite plan, decided by R0's 0-in-228 measurement). Gated on
+        # `attested` for the reason the whole design rests on: a quote the note does not
+        # contain is not evidence of anything, so there is nothing to read a schedule out
+        # of. `_upsert_tokens` writes the token from `Extraction.tokens` BEFORE the facts,
+        # keyed on (phrase, start), and `_token_for_fact` then finds that key rather than
+        # minting a second token — which is how the RRULE reaches the fact's own row.
+        tokens: list[ExtractedToken] = []
+        if read_recurrence and attested:
+            repeats = parse_recurrence(_text(item, "quote", "span", "evidence"))
+            if repeats is not None:
+                # An undated recurring note ("gym every Tuesday and Thursday") gives the
+                # rule no start, and a token must have one — so the rule starts when the
+                # note says it, which is the note's own capture day. That is what
+                # `note.extract`'s temporal tokens have always resolved against, and it is
+                # what lets a later note restating the schedule supersede this one.
+                dated = temporal is not None and temporal.resolved_start is not None
+                start = temporal.resolved_start if temporal is not None else None
+                precision = temporal.precision if dated and temporal is not None else "day"
+                start = start or self._target.anchor
+                tokens.append(
+                    ExtractedToken(
+                        phrase=repeats.phrase,
+                        kind="recurrence",
+                        resolved_start=start,
+                        resolved_end=temporal.resolved_end if temporal is not None else None,
+                        precision=precision,
+                        rrule=repeats.rrule,
+                    )
+                )
+                temporal = (
+                    replace(temporal, phrase=repeats.phrase)
+                    if temporal is not None
+                    else ExtractedTemporal(
+                        phrase=repeats.phrase,
+                        resolved_start=start,
+                        resolved_end=None,
+                        precision=precision,
+                    )
+                )
+                notes.append(f"repeats {repeats.rrule}, read from the words you quoted")
+
         confidence = effective_weight(1.0, signals)
         # The model's own read-confidence, and the ONE rule that makes the field safe:
         # it can only ever LOWER (TOOL_SURFACE cut 3's own words, which were the reason
@@ -1035,7 +1402,7 @@ class NoteGraphWriter:
         override: dict[str, ResolvedEntity | None] = {
             h.surface: h.entity for h in (subject, obj) if h is not None
         }
-        extraction = Extraction(title="", tags=[], mentions=mentions, facts=[fact], tokens=[])
+        extraction = Extraction(title="", tags=[], mentions=mentions, facts=[fact], tokens=tokens)
         outcome = await self._pipeline.commit_facts(
             session,
             note_id=self._target.note_id,
@@ -1182,6 +1549,79 @@ def _entity_ref(handle: Handle) -> EntityRef:
     )
 
 
+def _candidate_note(candidates: Sequence[Candidate]) -> str:
+    """The candidates, named. The card that used to carry them is going away (§2), and
+    naming them is half of what replaces it — the other half is `distinguish`, which the
+    agent cannot use against a list it cannot see.
+
+    Every candidate matched the note's own surface, so the NAME is already something the
+    note said; what is added is the kind and the summary, which is what tells two of them
+    apart. `_disambiguate` assembles the same four fields for the cheap model that has
+    been making this call without the note in front of it (O7)."""
+    if not candidates:
+        return ""
+    shown = [
+        f"{c.name} ({c.kind}{', ' + c.summary if c.summary else ''})"
+        for c in candidates[:MAX_CANDIDATES]
+    ]
+    rest = len(candidates) - MAX_CANDIDATES
+    more = f" and {rest} more" if rest > 0 else ""
+    return f" It could be: {'; '.join(shown)}{more}."
+
+
+def _distinguish(candidates: Sequence[Candidate], detail: str) -> Candidate | None:
+    """The one candidate the note's own words point at, or None.
+
+    A deliberately dull matcher over the words the candidates already carry — name, kind,
+    summary — because that is all `_file_ambiguous_review` ever had to show and all the
+    agent can answer from. It refuses in both directions that matter: nothing matched, or
+    SEVERAL matched equally well. A tie is the ambiguity restated, and picking off one of
+    them is how a fact lands on the wrong person for good.
+
+    Stopwords are dropped so "the one in Boulder" scores on `boulder` alone; a candidate
+    scores by how many of the remaining words its own text contains."""
+    words = {w for w in re.split(r"[^a-z0-9]+", detail.casefold()) if len(w) > 2} - _STOPWORDS
+    if not words:
+        return None
+    scored: list[tuple[int, Candidate]] = []
+    for candidate in candidates:
+        haystack = _norm(f"{candidate.name} {candidate.kind} {candidate.summary}")
+        hits = sum(1 for w in words if w in haystack)
+        if hits:
+            scored.append((hits, candidate))
+    if not scored:
+        return None
+    best = max(hits for hits, _ in scored)
+    winners = [c for hits, c in scored if hits == best]
+    return winners[0] if len(winners) == 1 else None
+
+
+def _tags(arguments: Mapping[str, Any]) -> tuple[str, ...]:
+    """The reading's tags: short strings, lowercased, deduplicated, clamped.
+
+    Lowercased here rather than left to `analysis/tagconsolidate.py` because that module
+    normalizes tag DRIFT across notes and this is the same tag twice in one call. A
+    non-string element is dropped rather than stringified — `["work", 3]` means the model
+    reached for a shape the schema does not have, and `"3"` is not a tag."""
+    raw = arguments.get("tags", arguments.get("labels"))
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ()
+    out: list[str] = []
+    for element in raw:
+        if not isinstance(element, str):
+            continue
+        tag = " ".join(element.split()).casefold()
+        if tag and tag not in out:
+            out.append(tag)
+    return tuple(out[:MAX_TAGS])
+
+
+def _tag_note(tags: Sequence[str]) -> str:
+    return f", tagged {', '.join(tags)}" if tags else ""
+
+
 def _text(item: Mapping[str, Any], *keys: str) -> str:
     """One string field, tolerant of the near-miss key names a model reaches for. Not
     laxity: the schema names one key and the grammar fills it, but a synonym arriving as
@@ -1240,7 +1680,11 @@ class NoteToolset:
 
     def handlers(self) -> dict[str, ToolHandler]:
         writes: dict[str, ToolHandler] = (
-            {RESOLVE_ENTITY: self.writer.resolve_entity, ASSERT_FACT: self.writer.assert_fact}
+            {
+                RESOLVE_ENTITY: self.writer.resolve_entity,
+                ASSERT_FACT: self.writer.assert_fact,
+                CLOSE_READING: self.writer.close_reading,
+            }
             if self.writes_graph
             else {}
         )

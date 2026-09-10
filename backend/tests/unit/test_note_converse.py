@@ -373,15 +373,16 @@ async def test_a_third_party_note_s_registry_does_not_bind_ask_owner() -> None:
     assert registry.names() == {
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "find_entity",
         "read_entity",
         "current_time",
     }
     assert "ask_owner" not in registry.names()
     assert "ask_owner" in owned.registry.names()
-    # Both graph writes survive: D10 is "unrestricted in WHAT it may write", and this
+    # Every graph write survives: D10 is "unrestricted in WHAT it may write", and this
     # narrowing takes a channel away, never the write path.
-    assert {"resolve_entity", "assert_fact"} <= registry.names()
+    assert {"resolve_entity", "assert_fact", "close_reading"} <= registry.names()
 
     # The two locks agree at the gate the loop consults, under the turn's own scopes.
     profile = narrow(agent_for(NOTE_CONVERSE_AGENT))
@@ -561,11 +562,12 @@ def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:
     assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS
     assert profile.tools is not None and profile.tools != frozenset()
     assert profile.extra_tools == frozenset()
-    # The unattended surface, exactly: two graph writes, `ask_owner`, two entity reads,
+    # The unattended surface, exactly: three graph writes, `ask_owner`, two entity reads,
     # the clock.
     assert profile.tools == {
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "ask_owner",
         "find_entity",
         "read_entity",
@@ -575,10 +577,10 @@ def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:
     # ordinary chat turn by the `allow=None` wildcard. Only the writes — the three reads
     # are curator's already and belong in its wildcard, so asserting the whole allowlist
     # against NEVER_DEFAULT would be asserting the wrong thing.
-    assert {"resolve_entity", "assert_fact", "ask_owner"} <= NEVER_DEFAULT
+    assert {"resolve_entity", "assert_fact", "close_reading", "ask_owner"} <= NEVER_DEFAULT
 
 
-async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_six() -> None:
+async def test_the_registry_converse_builds_resolves_the_whole_allowlist() -> None:
     """The allowlist resolved through the registry `note_converse_handler` ACTUALLY
     builds — the merge's own assertion, which neither task that made it could write.
 
@@ -618,16 +620,17 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
     finally:
         await engine.dispose()
 
-    six = {
+    unattended = {
         "resolve_entity",
         "assert_fact",
+        "close_reading",
         "ask_owner",
         "find_entity",
         "read_entity",
         "current_time",
     }
-    assert registry.names() == six
-    assert six == NOTE_INGEST_UNATTENDED_TOOLS
+    assert registry.names() == unattended
+    assert unattended == NOTE_INGEST_UNATTENDED_TOOLS
     # Neither prefs tool reaches the persona, from either side of the lock.
     assert not ({"prefs_read", "prefs_write"} & registry.names())
     assert not ({"prefs_read", "prefs_write"} & NOTE_INGEST_UNATTENDED_TOOLS)
@@ -638,7 +641,7 @@ async def test_the_registry_converse_builds_resolves_the_allowlist_to_exactly_si
     admitted = registry.allowed_names(
         frozenset({"health", "general"}), profile.tools, profile.extra_tools
     )
-    assert admitted == six
+    assert admitted == unattended
 
 
 async def test_the_unattended_pass_never_gets_the_on_reply_surface() -> None:

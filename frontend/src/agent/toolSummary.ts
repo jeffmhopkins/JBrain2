@@ -55,6 +55,10 @@ const STEP_LABELS: Record<string, string> = {
   // to the owner's graph, and the expanded rung says what landed and in which domain.
   resolve_entity: "Resolved who the note means",
   assert_fact: "Recorded what the note says",
+  // `close_reading` is the whole-note reading (AGENT_INGEST_REWRITE R1), not one more
+  // fact — the label says "read", because what it recorded is everything the note says
+  // and the difference is what the settle acts on.
+  close_reading: "Read the whole note",
   ask_owner: "Asked you a question",
   prefs_read: "Read your standing instructions",
   prefs_write: "Staged a standing instruction",
@@ -234,6 +238,9 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   // their one legible target is an ARRAY — `inlinePiece` renders those elementwise.
   resolve_entity: ["entities"],
   assert_fact: ["facts"],
+  // The reading's legible target is its TITLE — the one line the owner would recognise
+  // the note by — with the facts behind it, elementwise, as the second piece.
+  close_reading: ["title", "facts"],
   ask_owner: ["question"],
   // The on-reply writes are NOT batched — one disputed value, one pair of entities — so
   // their inline piece is the thing the owner would recognise in the strip: what the

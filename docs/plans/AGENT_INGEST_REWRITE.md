@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1◻️ R1b◻️ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R1b◻️ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -105,8 +105,8 @@ Everything the teardown was blocked on collapses into it:
 |---|---|
 | Retraction after `integrate_note` (`W5_PRECONDITIONS.md` §4 — the largest loss, "no retraction of any row, by any producer, ever") | The reading's fact ids are `touched`; `sweep_note` runs unchanged. |
 | Precondition 3, `note_analysis` title/tags | `title` and `tags` are two more fields on the same call, exactly as they are two more keys on `note.extract`'s JSON. |
-| `app.temporal_tokens` losing its only producer | The reading carries `when` / `when_end` / `repeats`, so `_upsert_tokens` has input again. |
-| Appointment recurrence (RRULE read off the fact's token, `appointment_projection.py:422-438`) | `repeats` — the one genuinely NEW field the surface needs. |
+| `app.temporal_tokens` losing its only producer | The reading carries `when` / `when_end`, and its handler parses recurrence out of each fact's attested `quote`, so `_upsert_tokens` has input again. (R0 struck the `repeats` FIELD this row first named — §3.2.) |
+| Appointment recurrence (RRULE read off the fact's token, `appointment_projection.py:422-438`) | A deterministic parser over the span the model attested, in the handler — R0 measured no field spelling reachable and the same runs measured the span parse at 198/200. Built in R1 as `analysis/recurrence.py`; O14 is what is still owed. |
 | The settle's two review-card halves being unreachable from the conversation (`pipeline.py:1180-1187`: they "want the `extraction` the conversation does not have") | Moot, twice over. The conversation now HAS an extraction — and the one-channel decision deletes both halves outright (§2), so the settle is three steps rather than five. |
 | A key-based sweep as a *new mechanism* with its own failure surface (`W5_PRECONDITIONS.md` §4(a)) | Not needed. The reading COMMITS, so it produces ids, so the shipped id-based sweep works. |
 
@@ -501,6 +501,17 @@ Rules the sidecar and the handler enforce:
   `is_final` flag. See §1 — the engine knows the pass ended clean and unclamped; the
   model only writes content.
 
+**BUILT in R1, and three shapes this section did not specify.** The union lives on the
+writer as `graphwritetools.Reading` — `title`, `tags`, `fact_ids`, `calls`, `clamped` —
+because the settle that will read it (R3) runs after the pass and needs the whole pass's
+claim rather than the last call's result. `title` keeps the FIRST non-empty line rather
+than the last: a continuation call is the one most likely to restate it loosely or blank
+it, and the call that read the note from the top is the one that named it. `clamped`
+LATCHES, so a clean second call cannot clear a first call's prefix. And the reading has its
+OWN call budget (6 × 8 = 48 facts, against the extraction path's own 40-fact ceiling)
+rather than sharing `assert_fact`'s: they are different jobs with different ceilings, and a
+shared counter would let a reply turn's incremental writes starve the reading.
+
 **2. `repeats` — recurrence. NEW field, and the only capability the tool surface cannot
 express at all today.**
 
@@ -643,6 +654,19 @@ The flow is then one channel end to end: resolve → *"'Dana' is ambiguous: Dana
 (person, staff engineer at Everlane), Dana Reyes (person, Boulder). Re-send with
 `distinguish`, or ask the owner"* → the agent either answers from the note or calls
 `ask_owner`. No card at any step.
+
+**BUILT in R1, and the answer to the uncertainty below is yes, with one refusal that
+matters.** `graphwritetools._distinguish` scores each candidate on how many of the phrase's
+own words (stopwords dropped) appear in its name, kind or summary — the same fields
+`_file_ambiguous_review` puts on the card and `_disambiguate` hands the cheap model. It
+separates "Dana Whitfield", "the one in Boulder" and "her cardiologist" on the two-Dana
+case, and it REFUSES A TIE: two candidates that fit equally well are the ambiguity
+restated, and picking one is how a fact lands on the wrong person for good. It can never
+widen — a match reaches `commit_facts` as a `resolution_override` naming a row that already
+matched the surface. The candidate names ride the ambiguity result itself, capped at five.
+The widened half — the entity's CURRENT FACTS — is capped at 10 an entity and 30 a call,
+newest state first, and withheld entirely for an entity outside the conversation's read
+scopes; §7's R1 entry has the reasoning for each.
 
 *Uncertain, and named:* whether a free-text `distinguish` actually narrows. Layer 1 of the
 resolver is `_exact_matches` on name (`entities.py:563-580`) and carries no notion of a
@@ -1474,19 +1498,63 @@ two of the three changed what R1 builds:
 
 The `distinguish` matcher (§3.4) is a unit test rather than a probe and can ride R1.
 
-**R1 — `close_reading`, beside `assert_fact`.** The sidecar, the handler, `_upsert_tokens`
-fed from the reading, the recurrence parser over the fact's own `quote` (R0: not a field —
-§3.2), the clamp promoted to a reported signal, and `resolve_entity` gaining `distinguish`,
-the candidate names, **and the resolved entity's CURRENT FACTS in its result** — R0's third
-arm found the agent will not fetch them itself (§5(b)), so the conflict has to arrive in a
-result it already asked for.
-Bound on the unattended set; `assert_fact` still bound too. Nothing is deleted and nothing
-sweeps yet: a reading commits exactly as `assert_fact` does. Green on
-`test_note_graph_write_pg.py`. **And it carries one frontend obligation it cannot defer:**
-the moment `close_reading.tool` exists it joins the roster `test_tool_step_polish.py`
-gates, so `toolSummary.ts` gains its `STEP_LABELS` entry and its inline-arg policy in this
-PR or CI is red (§3b I4). Add its `status.ts` live-phase label in the same edit — two maps,
-one verb, and the second one has no roster gate to catch the omission.
+**R1 — `close_reading`, beside `assert_fact`. DONE.** The sidecar
+(`tools/close_reading.tool`, v1: `title`, `tags`, and `assert_fact` v3's item minus
+`confidence` — no `enum`, no recurrence field of any spelling), the handler
+(`NoteGraphWriter.close_reading`, which is `_assert_one` per element and so commits the
+same rows `assert_fact` does, asserted field-for-field in
+`test_a_reading_commits_the_rows_assert_fact_would`), `_upsert_tokens` fed from the
+reading, the recurrence parser over the fact's own `quote` (`analysis/recurrence.py`), the
+clamp promoted to a reported signal, `resolve_entity` v2 with `distinguish`, the candidate
+names and the resolved entity's current facts, and the prompt at v4 with R0's measured ask
+line. Bound on all three sets — `NOTE_INGEST_UNATTENDED_TOOLS` is seven now — plus
+`NEVER_DEFAULT`, `NOTE_GRAPH_WRITE_TOOLS`, `readtools.NOTE_GRAPH_TOOLS` and `replytools`,
+because an allowlisted name with no handler behind it dies in dispatch. `assert_fact` is
+untouched, at v3, still bound everywhere it was. Nothing sweeps.
+
+*The three decisions R1 had to make and the plan did not:*
+
+1. **The widened result is capped at 10 facts an entity and 30 a call, ordered newest
+   state first** (`coalesce(valid_from, reported_at) DESC`), and narrowed to the
+   conversation's read scopes TWICE — on the ENTITY's domain (the narrowing that already
+   withholds a cross-domain entity's name, constraint 2) and on the FACT's. The second is
+   the one an entity check alone would miss and is the sharper of the two: `Me` is a
+   `general` entity carrying floored `health` and `finance` facts, so filtering on the
+   subject would hand a general note's thread the owner's medications the moment it
+   resolved his own name. Without both, the widening reopens the firewall in the one place
+   the note's cast is guaranteed to reach.
+
+   Ordering by "the predicates the reading is about" was considered and is not buildable
+   here: the cast is resolved BEFORE the reading is written, so nothing at that point in
+   the pass knows which predicates the note will touch. Newest-first is the best available
+   proxy — a note contradicts an entity's CURRENT state. When the cap bites, the line says
+   so and names the `read_entity` that lifts it.
+2. **The recurrence parser discards on three refusals, and one of them is a deliberate
+   tightening of the probe's reference implementation.** No recurrence marker (`every`/
+   `each`, a PLURAL weekday, a frequency adverb, `weekdays`/`weekends`, an nth-of-the-month
+   shape) — so "coffee with Dana on Tuesday" states an occasion, not a rule, which the
+   probe's five all-recurring notes never had to distinguish. Two different rules in one
+   span. And **a BOUND it cannot date**: "Tuesdays until March" is discarded WHOLE, where
+   the probe admitted it by putting the raw English in `UNTIL`. Resolving the bound is date
+   inference the handler must not do (`_close_interval`'s "not a date, no end"), and
+   emitting the rule without its bound is worse than emitting nothing — an unbounded rule
+   says something the note does not, on the owner's calendar, forever. Everything the
+   parser builds is then validated as an RFC-5545 RECUR before it is stored, because
+   `appointments.rrule` is plain text everywhere on the box and a malformed rule would
+   reach the .ics feed the owner's phone subscribes to.
+3. **Recurrence is read only on the READING**, not on `assert_fact`. The quote is the
+   evidence, and it is gated on the span check for the same reason the weight is: a quote
+   the note does not contain is not evidence of anything, so there is nothing to read a
+   schedule out of. Without that gate a paraphrase into the `quote` field would be a
+   channel for a recurrence the note never stated.
+
+The frontend obligation landed with it: `toolSummary.ts` has `close_reading`'s
+`STEP_LABELS` entry ("Read the whole note") and its `INLINE_ARGS` policy
+(`["title", "facts"]`), so `test_tool_step_polish.py`'s roster gate is green, and
+`status.ts`'s `TOOL_LABELS` gained `resolve_entity`, `close_reading` and `ask_owner` so a
+live pass no longer reads "Using resolve_entity". No roster gate was added over that
+second map — it has 10 entries against 124 sidecars and one would land red on ~114 tools;
+the gate belongs to the note-conversation tool sets, which is R3f's.
 
 **R1b — one channel: card to result.** Separable from R1 and worth its own PR, because it
 is a behaviour change to the SHIPPED write path rather than a new verb, and because its
@@ -1633,6 +1701,23 @@ of 200 runs by a deterministic parser, so R1 builds that parser in the handler a
 `close_reading` carries no recurrence field. What R1 owes with it is a real parser corpus —
 the probe's reference implementation was written against the five phrasings it was scored on,
 and its accuracy on arbitrary notes is unmeasured.
+
+**BUILT in R1** as `analysis/recurrence.py`, with its corpus in
+`tests/unit/test_analysis_recurrence.py`: the five R0 scored, fourteen further phrasings,
+and the REFUSALS — which are the half the probe could not have had, because all five of its
+notes recur. Two of them are production behaviour its reference parser does not have. A
+span with no recurrence MARKER (`every`/`each`, a PLURAL weekday, a frequency adverb,
+`weekdays`/`weekends`, an nth-of-the-month shape) states an occasion rather than a rule, so
+"coffee with Dana on Tuesday" reads as nothing — the probe could safely read a weekly rule
+out of a bare weekday and production cannot, because the cost is a phantom every-Tuesday
+event on the owner's calendar. And a BOUNDED rule ("Tuesdays until March") is discarded
+WHOLE where the probe admitted it by putting raw English in `UNTIL`: dating the bound is
+inference the handler must not do, and an unbounded rule says something the note does not.
+Every built rule is validated as RFC-5545 RECUR before it is stored, because
+`appointments.rrule` is plain text everywhere on the box. *Still owed, and recorded as
+**O14**:* the end-to-end scenario. The token is written and carries the rule, but
+`_recurrence_rrule` reads one only off a fact whose predicate is `recurrence`, so nothing
+yet proves an RRULE reaching `app.appointments.rrule`.
 
 **O3 — Does the agent NOTICE a contradiction with a fact another note wrote, and ask?
 ANSWERED by R0, and the answer is no** (§5(b)). Across 144 live runs on the six disposal
@@ -1798,6 +1883,44 @@ box, and lost with a cache clear); a draft on the conversation, saved as the own
 answer — a shape D6's question/answer block has no room for, so it needs its own home);
 or accept the loss and make re-answering cheap, which tapped candidates already are and a
 typed answer never is.
+
+**O13 — the fact the model silently DROPS. 55 of 106, and nothing was tracking it.**
+*Surfaced by R0's ask arm (§3.3), and it is neither of the two things that arm set out to
+measure.* On three notes with a genuinely illegible value, the live model wrote the
+ambiguity into the VALUE on 45 of 106 runs ("dose uncertain, possibly 25 mg or 2.5 mg"),
+asked on 1–7 depending on the condition, and on **55 dropped the illegible fact
+altogether**. Nothing wrong lands, so it is not a correctness bug today — and it is exactly
+the failure that becomes one the day the sweep runs, because a reading that omits a fact is
+a reading that RETRACTS it. That makes O13 the same risk as O5 arriving through a different
+door: O5 is the model forgetting, O13 is the model deciding not to say. R1 did not try to
+solve it and nothing here does yet.
+
+*Can the clamp signal carry it?* **No, and it is worth writing down why**, because the two
+look adjacent and are not. The clamp is a fact about the CALL — the handler took eight of
+the eleven items the model sent — so it fires on facts the model DID write and can never
+fire on one it never wrote. The populations do not overlap. What could carry it is a
+different property of the same `Reading`: the reading names the note's cast through
+`resolve_entity` and then states facts about a subset of it, so **an entity the pass
+resolved and then said nothing about** is a cheap, deterministic signal that something was
+read and not stated. That is a candidate, not a design: a note legitimately names people it
+says nothing about, so the false-positive rate is unmeasured and it must not gate a sweep
+until it is. *Recommendation:* fold it into O5's measurement rather than building anything
+— when the first N retractions after the wipe are logged and read (O5), log the resolved-
+but-unstated entities beside them and see whether the two correlate.
+
+**O14 — nothing yet proves an RRULE reaching `app.appointments.rrule`.** *Opened by R1's
+own build.* The reading writes a recurrence-kind temporal token carrying the parsed rule and
+the fact points at it, which is `_upsert_tokens` having a producer again — but
+`appointment_projection._recurrence_rrule` selects the token off a fact whose predicate is
+`recurrence` specifically, so a rule parsed onto a `scheduledTime` fact is stored and
+unread. R0's own §3.2 named this ("R0 owes a NEW scenario asserting the RRULE end to end
+rather than re-reading `plan_recurring_gym.json`") and R0 spent itself on the three
+measurements instead. *Options:* **(i)** the scenario alone, in R2, where the harness
+re-cut lands anyway — it may simply pass, since the registry declares `recurrence` and the
+model reaches for it; **(ii)** widen `_recurrence_rrule` to read the rule off any active
+fact's token when no `recurrence` fact exists. *Recommendation:* (i) first. (ii) is a
+projection change made on a guess about what the model writes, and the scenario is what
+turns that guess into a number.
 
 **O11 and O12 are the same shape as O10, and should be decided together.** All three are
 about a thread that WAITS: nothing tells the owner it is waiting (O10), nothing survives
