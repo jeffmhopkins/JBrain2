@@ -254,8 +254,12 @@ class NoteConverseRunner:
     # stamp and not the state flip — see `clarify.settle_conversation`.
     #
     # None keeps W2's behaviour, which is what the tests that fake a turn with no write
-    # tools use: a pass that CANNOT write has nothing to project and nothing to release.
-    # `note_converse_handler` always sets it, so no production path runs without one.
+    # tools use. Note what that reasoning is NOT: "a pass that cannot write has nothing to
+    # release" is false, and believing it is how S3's first cut shipped a bug — a
+    # whole-note sweep handed an empty ledger releases the whole NOTE, including what
+    # every earlier conversation on it claimed. `settle_conversation` refuses that case
+    # explicitly rather than relying on the ledger being empty to make it harmless.
+    # `note_converse_handler` always sets this, so no production path runs without one.
     pipeline: AnalysisPipeline | None = None
     # Builds the turn executor for ONE note, so the graph-write tools can be BOUND to
     # that note (W3): `resolve_entity`/`assert_fact` take no note id from the model —
@@ -493,6 +497,7 @@ class NoteConverseRunner:
                 self.maker,
                 owner_ctx,
                 self.pipeline,
+                self.notes,
                 session_id=session_id,
                 state=state,
             )

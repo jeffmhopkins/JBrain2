@@ -227,10 +227,14 @@ directly and then settles it itself.
 Production is now CLOSER than it was, and still not there. Since S2
 (`docs/plans/SETTLE_OWNERSHIP.md`) the conversation does run the settle's tail at the end
 of a clean pass — `analysis/clarify.settle_conversation`. Since S3 it releases its own
-`conversation` claim there too, over the ledger's `facts` — so this runner's
-`sweep_note` + `settle_tail` pair is exactly what production runs, and what it no longer
-does is call `settle_note` whole, which made the harness the one place a conversation
-stamped `note_analysis` with the empty title its tool surface has no verb for.
+`conversation` claim there too — so this runner's `sweep_note` + `settle_tail` pair is
+exactly what production runs, and what it no longer does is call `settle_note` whole,
+which made the harness the one place a conversation stamped `note_analysis` with the
+empty title its tool surface has no verb for. One scenario shape this corpus cannot
+express: production scopes the sweep's `touched` to every conversation session that read
+the same note text and refuses to release at all on three conditions
+(SETTLE_OWNERSHIP.md S3), while a harness run is one conversation over one note, so those
+gates are exercised in `test_conversation_settle_pg.py` and nowhere here.
 
 What the conversation still does NOT produce,
 and `integrate_note` therefore still owns alone: the `note_analysis` stamp (it has no

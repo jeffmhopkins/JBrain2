@@ -83,7 +83,7 @@ from jbrain.models.note_conversation import (
     note_body_sha,
     state_for_stop,
 )
-from jbrain.notes.service import NotesRepo
+from jbrain.notes.service import NoteInfo, NotesRepo
 
 if TYPE_CHECKING:  # `analysis/pipeline.py` drags the LLM stack; only the TYPE is needed
     from jbrain.analysis.pipeline import AnalysisPipeline
@@ -505,12 +505,6 @@ async def close_owner_reply(
     this pass end cleanly?" is given by the call that decided it rather than re-derived
     beside it.
 
-    Something has to: `record_owner_reply` put the thread back in `running`, and `running`
-    holds the note's ONE live slot — the re-ingest the answer just queued emits its own
-    `note.ingested`, and the pass that event opens is suppressed while this one stands. So
-    a reply turn that never closed would leave the answered note un-re-read, until the
-    stale-conversation reaper eventually called it `failed` an hour later.
-
     A turn the agent ended with another `ask_owner` is left exactly where the handler put
     it: the thread is waiting again, and `state_for_stop` says so."""
     if agent != NOTE_CONVERSE_AGENT:
@@ -534,6 +528,7 @@ async def settle_conversation(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
     pipeline: AnalysisPipeline,
+    notes: NotesRepo,
     *,
     session_id: str,
     state: str,
@@ -563,6 +558,33 @@ async def settle_conversation(
     claim both producers wrote and the graph went on asserting it: a note no longer the
     sole source of truth for its own facts. `sweep_note` here is what stops that.
 
+    **The sweep needs THREE more refusals than the state gate gives it, because the
+    sweep is note-scoped and this producer is not a wholesale re-extractor.** The
+    analyzer re-derives the whole note every pass, so its silence about a fact is a
+    statement. This one asserts what is new and revises by supersession, so its silence
+    is not — and it runs once per INGEST, in a fresh session, over a note earlier
+    sessions of the same producer already wrote to. Each refusal below is a case where
+    an empty or partial ledger would otherwise have been read as "the note no longer
+    says that":
+
+    - **the note moved under this thread.** `note_conversations.note_body_sha` is the
+      text this pass read; if it no longer matches the note's composed body, the pass is
+      judging a note that has changed since, and the conversation opened by that change
+      is the one entitled to release. (`record_owner_reply` deliberately leaves the sha
+      stale on a mismatch, so this is reachable without an edit racing the pass.)
+    - **the pass held no graph-write verb.** On an `emr_owned` note, `narrow_for_emr`
+      and the per-note registry leave the conversation unable to write anything
+      (D9). Its empty ledger means "never asked", not "nothing to say" — and
+      `emr_owned` reads note state that MUTATES, so a note whose PDF lands after the
+      body was ingested flips from writable to not between two ordinary passes.
+    - **an empty generation ledger.** With nothing asserted by any pass over this text,
+      there is no re-derivation to compare against, so the release has no evidence
+      behind it and would run on the whole note.
+
+    All three fail toward a LEAK — a `conversation` claim nobody releases — which is the
+    direction this design fails in deliberately (`analysis/settle_owner.py`). The tail
+    still runs in every one of them: projecting is never destructive.
+
     **`state` is the gate, and it is the whole safety argument.** The pass settles only
     from `SETTLED`, which `state_for_stop` gives to a CLEAN stop alone — so a truncated
     turn (`max_steps`, the cost budget, consecutive tool errors, the wall clock) lands
@@ -585,31 +607,54 @@ async def settle_conversation(
     """
     if state != SETTLED:
         return False
+    retracted: set[uuid.UUID] = set()
+    swept = False
     try:
         async with scoped_session(maker, ctx) as s:
             repo = NoteConversationRepo()
             conversation = await repo.get(s, session_id)
             if conversation is None:
                 return False
-            writes = await repo.writes(s, session_id)
-            entities = set(writes.entities)
-            # The whole-CONVERSATION union, both turn paths (W4c/1). A per-TURN share
-            # here would release the OTHER turn's claim — and on a row only the
-            # conversation asserts, that is the last claim, so the row would be retracted
-            # with full authority (`models/note_conversation.ConversationWrites`).
-            #
-            # `mentions=None` SKIPS the mention reconcile rather than running it against
-            # an empty set. The ledger has no mention-id column, and an empty set would
-            # release this producer's claim on every mention of the note — including the
-            # spans the facts it still asserts are anchored to. `sweep_note` states what
-            # that leaks and why it is the bounded half.
-            retracted = await pipeline.sweep_note(
-                s,
-                note_id=conversation.note_id,
-                settle_owner=CONVERSATION,
-                touched=set(writes.facts),
-                mentions=None,
-            )
+            note_id = conversation.note_id
+            # This pass's own writes drive the TAIL: what it touched is what wants
+            # reprojecting. The sweep's `touched` is a different set entirely, below.
+            entities = set((await repo.writes(s, session_id)).entities)
+        note = await notes.get_note(ctx, str(note_id))
+        refusal = _sweep_refusal(note, conversation.note_body_sha)
+        async with scoped_session(maker, ctx) as s:
+            if refusal is None:
+                repo = NoteConversationRepo()
+                # NOTE-scoped, not session-scoped, because the sweep is: every pass over
+                # THIS TEXT is one derivation by one producer, and a per-session share
+                # would release the claims every earlier session of the note laid down
+                # (`NoteConversationRepo.writes_for_generation`).
+                touched = set(
+                    (
+                        await repo.writes_for_generation(
+                            s,
+                            session_id=session_id,
+                            note_id=note_id,
+                            body_sha=conversation.note_body_sha,
+                        )
+                    ).facts
+                )
+                if touched:
+                    # `mentions=None` SKIPS the mention reconcile rather than running it
+                    # against an empty set. The ledger has no mention-id column, and an
+                    # empty set would release this producer's claim on every mention of
+                    # the note — including the spans the facts it still asserts are
+                    # anchored to. `sweep_note` states what that leaks and why it is the
+                    # bounded half.
+                    retracted = await pipeline.sweep_note(
+                        s,
+                        note_id=note_id,
+                        settle_owner=CONVERSATION,
+                        touched=touched,
+                        mentions=None,
+                    )
+                    swept = True
+                else:
+                    refusal = "empty_generation_ledger"
             # NOT `stamp_analysis`: the conversation has no title/tags verb, so it would
             # blank the analyzer's extracted title (SETTLE_OWNERSHIP.md precondition 3,
             # still unowned). NOT the `integration_state` flip either (precondition 4) —
@@ -623,9 +668,28 @@ async def settle_conversation(
         "note_settle.done",
         session_id=session_id,
         entities=len(entities),
+        swept=swept,
         retracted=len(retracted),
+        refused=refusal,
     )
     return True
+
+
+def _sweep_refusal(note: NoteInfo | None, read_sha: str) -> str | None:
+    """Why this pass may not RELEASE anything, or None when it may — the three refusals
+    `settle_conversation` documents, in the order they are cheapest to check.
+
+    Fails closed: a note it cannot read refuses, because every one of these questions is
+    about the note and an unanswerable one is not a licence."""
+    if note is None:
+        return "note_unreadable"
+    if emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments]):
+        # The same predicate `converse.note_owned_by_emr` and `reply_profile_for_session`
+        # narrow on, so "could this pass write?" has one answer across all three.
+        return "no_write_verb"
+    if note_body_sha(note.body) != read_sha:
+        return "note_moved"
+    return None
 
 
 __all__ = [

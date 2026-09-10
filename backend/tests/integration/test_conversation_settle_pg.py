@@ -47,14 +47,17 @@ from jbrain.analysis.clarify import (
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.note_conversation import SETTLED, NoteConversationRepo, note_body_sha
+from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
 from tests.integration.test_extraction_pg import (  # noqa: F401
     ingest,
     make_note,
     maker,
+    reingest_a_rewritten_body,
 )
 from tests.integration.test_note_conversation_rls import owner_ctx
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -77,8 +80,31 @@ async def owner(maker) -> SessionContext:  # noqa: F811
 
 def _pipeline(maker) -> AnalysisPipeline:  # noqa: F811
     """The settle's pipeline. It makes no model call — `sweep_note` and `settle_tail`
-    are deterministic SQL — so the router exists only to satisfy the constructor."""
+    are deterministic SQL — so the router exists only to satisfy the constructor.
+
+    Built with NO settings store, which makes one part of the tail thinner here than in
+    production: `_promote_corroborated` returns early without one, so nothing below
+    covers the corroboration promotion. Everything else in `settle_tail` runs."""
     return AnalysisPipeline(maker, LlmRouter({"xai": FakeLlmClient()}, {}))
+
+
+async def _settle(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    session_id: str,
+    *,
+    state: str = SETTLED,
+) -> bool:
+    """`settle_conversation` as both callers invoke it — with the note repo it reads the
+    note's CURRENT composed body and attachments through."""
+    return await settle_conversation(
+        maker,
+        owner,
+        _pipeline(maker),
+        SqlNotesRepo(maker),
+        session_id=session_id,
+        state=state,
+    )
 
 
 async def _conversation(maker, owner: SessionContext, note_id: str) -> str:  # noqa: F811
@@ -198,9 +224,7 @@ async def test_a_conversation_written_appointment_finally_projects(
 
     session_id = await _conversation(maker, owner, note_id)
     await _ledger(maker, owner, session_id, outs)
-    assert await settle_conversation(
-        maker, owner, _pipeline(maker), session_id=session_id, state=SETTLED
-    )
+    assert await _settle(maker, owner, session_id)
 
     assert await _appointment_rows(maker, entity_id) == 1
 
@@ -232,9 +256,7 @@ async def test_the_conversations_settle_never_stamps_the_analysis_row(
 
     session_id = await _conversation(maker, owner, note_id)
     await _ledger(maker, owner, session_id, outs)
-    assert await settle_conversation(
-        maker, owner, _pipeline(maker), session_id=session_id, state=SETTLED
-    )
+    assert await _settle(maker, owner, session_id)
 
     async with scoped_session(maker, SYSTEM_CTX) as s:
         row = (
@@ -260,9 +282,7 @@ async def test_the_conversations_settle_does_not_flip_the_note_to_integrated(
     note_id, _, outs = await _books_an_appointment(maker, tmp_path)
     session_id = await _conversation(maker, owner, note_id)
     await _ledger(maker, owner, session_id, outs)
-    assert await settle_conversation(
-        maker, owner, _pipeline(maker), session_id=session_id, state=SETTLED
-    )
+    assert await _settle(maker, owner, session_id)
 
     async with scoped_session(maker, SYSTEM_CTX) as s:
         state = (
@@ -287,45 +307,236 @@ async def test_the_facts_the_conversation_still_asserts_keep_their_claim(
     session_id = await _conversation(maker, owner, note_id)
     await _ledger(maker, owner, session_id, outs)
 
-    await settle_conversation(maker, owner, _pipeline(maker), session_id=session_id, state=SETTLED)
+    await _settle(maker, owner, session_id)
 
     row = await _fact_row(maker, fact_id)
     assert row.status == "active"
     assert row.settle_owners == [CONVERSATION]
 
 
-async def test_a_fact_the_note_no_longer_says_is_retracted_once_the_claim_is_released(
+async def _rewrites_the_note(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+    note_id: str,
+    body: str,
+) -> tuple[str, list[ToolOutput]]:
+    """The note is edited and re-ingested, and `note.ingested` opens a SECOND
+    conversation over the new text — which asserts something of its own.
+
+    This is the shape a release is legitimate in, and the only one: the note's composed
+    body CHANGED, so the earlier session's `note_body_sha` no longer matches and its
+    ledger falls outside the settling pass's generation."""
+    await reingest_a_rewritten_body(maker, note_id, tmp_path, body)
+    session_id = await _conversation(maker, owner, note_id)
+    writer = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    surface = f"Bramwell Ashcote {uuid.uuid4().hex[:8]}"
+    resolved = await writer.resolve_entity(
+        {"entities": [{"surface": surface, "kind": "person"}]}, ctx
+    )
+    asserted = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "occupation",
+                    "object": "dentist",
+                    "statement": f"{surface} is a dentist.",
+                    "when": "",
+                    "quote": "is a dentist",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(resolved, ToolOutput) and isinstance(asserted, ToolOutput)
+    assert len(asserted.facts) == 1, str(asserted)
+    outs = [resolved, asserted]
+    await _ledger(maker, owner, session_id, outs)
+    return session_id, outs
+
+
+async def test_a_fact_the_edited_note_no_longer_says_is_retracted(
     maker,  # noqa: F811
     owner: SessionContext,
     tmp_path,
 ) -> None:
-    """S3's payoff, in the shape the corpus actually produces it.
+    """S3's payoff, in the ONE shape that licenses a release.
 
-    A note is re-ingested — an attachment lands, a clarification block is appended, the
-    body is edited — and `note.ingested` opens a SECOND conversation over it
+    The note's text changes and `note.ingested` opens a second conversation over it
     (`converse.note_converse`; the first is `settled`, so the one-live index allows it).
-    That pass reads the note as it now stands and no longer asserts what the first one
-    did. Its settle releases the `conversation` claim on the rows outside ITS ledger, and
-    a row nobody claims any more is retracted.
+    That pass reads the note as it now stands, asserts something else, and does not
+    assert what the first one did — so the first's claim falls outside the settling
+    generation, is released, and a row nobody claims any more is retracted.
 
     Before S3 nothing released that claim at any point in the note's life, so the row
-    stood active forever — a note that is no longer the sole source of truth for its own
-    facts, and the set of such rows grew with every co-asserted claim."""
+    stood active forever — a note no longer the sole source of truth for its own facts,
+    and the set of such rows grew with every co-asserted claim.
+
+    What makes this test mean anything is the three tests after it, which hold the
+    release OFF every shape that is not this one. Its first version had the second
+    conversation read nothing and write nothing, and asserted the retraction anyway —
+    which is not S3 working, it is the note-scoped-release bug with a benign story
+    attached."""
     note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     first = await _conversation(maker, owner, note_id)
     await _ledger(maker, owner, first, outs)
-    await settle_conversation(maker, owner, _pipeline(maker), session_id=first, state=SETTLED)
+    await _settle(maker, owner, first)
     assert (await _fact_row(maker, fact_id)).status == "active"
 
     async with scoped_session(maker, owner) as s:
         await NoteConversationRepo().set_state(s, first, SETTLED)
-    second = await _conversation(maker, owner, note_id)
-    await settle_conversation(maker, owner, _pipeline(maker), session_id=second, state=SETTLED)
+    second, _ = await _rewrites_the_note(
+        maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
+    )
+    assert await _settle(maker, owner, second)
 
     row = await _fact_row(maker, fact_id)
     assert row.status == "retracted"
     assert row.settle_owners == []
+
+
+async def test_a_second_pass_over_an_UNCHANGED_note_retracts_nothing(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The conversation is not a wholesale re-extractor, and the sweep is NOTE-scoped —
+    so a per-session ledger as `touched` is a data-loss bug, not a nuance.
+
+    A note is re-ingested for a reason that does not change its text (an attachment
+    lands; `analysis/converse.py` names that as ordinary), a second conversation opens,
+    and the agent — which holds `find_entity`/`read_entity` and is told to read before it
+    writes — reads, concludes nothing is new, and answers in prose. Its ledger is empty.
+    Handed in as `touched`, that empty set released the `conversation` claim on EVERY row
+    of the note and retracted every one no other producer held.
+
+    `writes_for_generation` is what closes it: the first session read the same text, so
+    its ledger is part of what this producer still asserts."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs)
+    await _settle(maker, owner, first)
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    second = await _conversation(maker, owner, note_id)  # same body, so the same sha
+    assert await _settle(maker, owner, second)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "a silent second pass retracted the first pass's fact"
+    assert row.settle_owners == [CONVERSATION]
+
+
+async def test_a_pass_with_no_write_verb_releases_nothing(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The deterministic half, and the one no model variance is needed to reach.
+
+    `emr_owned` reads note state that MUTATES. The owner captures a health `Records`
+    note; the body ingests before any attachment lands, which `analysis/converse.py`
+    names as an ordinary shipped re-ingest. Conversation #1 therefore runs with the FULL
+    write surface and asserts facts. Then the PDF lands, the note re-ingests, and
+    conversation #2 opens on a note that is now `emr_owned` — `narrow_for_emr` and the
+    per-note registry leave it no write verb at all (D9). It reads, replies in prose, and
+    ends cleanly with an empty ledger.
+
+    Its empty ledger means "never asked", not "the note no longer says that". Releasing
+    on it retracted every row conversation #1 uniquely wrote, silently, with no model
+    variance anywhere in the chain."""
+    note_id = await make_note(maker, domain="health", body=APPOINTMENT_BODY)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.notes SET destination = :d WHERE id = CAST(:n AS uuid)"),
+            {"d": EMR_DESTINATION, "n": note_id},
+        )
+    await ingest(maker, note_id, tmp_path)
+    writer = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("health", "general"))
+    surface = f"Dr Ellery Vance {uuid.uuid4().hex[:8]}"
+    await writer.resolve_entity({"entities": [{"surface": surface, "kind": "person"}]}, ctx)
+    asserted = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "occupation",
+                    "object": "dentist",
+                    "statement": f"{surface} is a dentist.",
+                    "when": "",
+                    "quote": "Booked it this morning",
+                }
+            ]
+        },
+        ctx,
+    )
+    assert isinstance(asserted, ToolOutput) and len(asserted.facts) == 1, str(asserted)
+    fact_id = uuid.UUID(asserted.facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+
+    # The PDF lands. Nothing about the note's TEXT changed, so this is not the
+    # edited-note case — only the write surface flipped underneath the producer.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.attachments (id, note_id, domain_code, sha256, filename,"
+                " media_type, size_bytes)"
+                " VALUES (gen_random_uuid(), CAST(:n AS uuid), 'health', :sha, 'lab.pdf',"
+                " :mt, 1024)"
+            ),
+            {"n": note_id, "sha": uuid.uuid4().hex, "mt": PDF_MEDIA_TYPE},
+        )
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    second = await _conversation(maker, owner, note_id)
+    assert await _settle(maker, owner, second)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "an EMR-narrowed pass retracted what an earlier one wrote"
+    assert row.settle_owners == [CONVERSATION]
+
+
+async def test_a_pass_that_read_a_note_that_has_since_moved_releases_nothing(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """`note_conversations.note_body_sha` is the text this pass READ, and a pass judging
+    a note that has changed since has no authority to release anything about it — the
+    conversation the change opened is the one entitled to.
+
+    Without this refusal the generation union turns on its head: a STALE settler unions
+    only its own generation, so the CURRENT generation's writes fall outside `touched`
+    and are retracted by a pass that never read the text they came from. Reachable
+    without a race — `record_owner_reply` deliberately leaves the stored sha stale when
+    the note moved under the thread, so a reply turn can settle against text that is two
+    generations old."""
+    note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
+    stale = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, stale, outs)
+    stale_fact = uuid.UUID(outs[1].facts[0].fact_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, stale, SETTLED)
+
+    # Something OTHER than that thread rewrites the note, and the conversation the
+    # rewrite opened writes over the new text. The stale thread's stored sha now names
+    # text that no longer exists.
+    _current, current_outs = await _rewrites_the_note(
+        maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
+    )
+    current_fact = uuid.UUID(current_outs[1].facts[0].fact_id)
+
+    assert await _settle(maker, owner, stale)
+
+    assert (await _fact_row(maker, current_fact)).status == "active", (
+        "a pass reading two-generations-old text retracted the current generation's write"
+    )
+    assert (await _fact_row(maker, stale_fact)).status == "active"
 
 
 async def test_a_co_asserted_row_survives_the_conversation_letting_go(
@@ -336,12 +547,18 @@ async def test_a_co_asserted_row_survives_the_conversation_letting_go(
     """The other half of the claim SET, from the side S1 could not exercise: the
     conversation releases and the ANALYZER still says so, therefore the row stands.
 
-    Until now this direction was untestable, because the conversation had no settle to
+    Until S3 this direction was untestable, because the conversation had no settle to
     release with. It is the case the doc calls ordinary rather than exceptional — both
     producers read the same note off one `note.ingested` event, and a salient claim is
-    exactly what both write down, at which point `decide()` refreshes ONE row."""
+    exactly what both write down, at which point `decide()` refreshes ONE row.
+
+    Run over an EDITED note, because that is the only shape in which the conversation
+    releases at all — the point is that a release which DOES fire still cannot reach a
+    row the analyzer holds."""
     note_id, _entity_id, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs)
     async with scoped_session(maker, SYSTEM_CTX) as s:
         # The analyzer JOINING the claim, exactly as `_claimed_by` writes it: the same
         # remove-then-append, so a re-run cannot duplicate its own claim.
@@ -353,8 +570,13 @@ async def test_a_co_asserted_row_survives_the_conversation_letting_go(
             ),
             {"f": str(fact_id)},
         )
-    first = await _conversation(maker, owner, note_id)
-    await settle_conversation(maker, owner, _pipeline(maker), session_id=first, state=SETTLED)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+
+    second, _ = await _rewrites_the_note(
+        maker, owner, tmp_path, note_id, "Bramwell Ashcote is a dentist. No appointment booked."
+    )
+    assert await _settle(maker, owner, second)
 
     row = await _fact_row(maker, fact_id)
     assert row.status == "active", "the conversation retracted a row the analyzer asserts"
@@ -394,9 +616,7 @@ async def test_the_sweep_does_not_fire_on_a_pass_that_did_not_end_cleanly(
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     session_id = await _conversation(maker, owner, note_id)
 
-    assert not await settle_conversation(
-        maker, owner, _pipeline(maker), session_id=session_id, state=state
-    ), why
+    assert not await _settle(maker, owner, session_id, state=state), why
 
     row = await _fact_row(maker, fact_id)
     assert row.status == "active"

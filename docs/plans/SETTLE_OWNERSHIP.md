@@ -423,17 +423,54 @@ a per-TURN share would release the OTHER turn's claim, and on a row only the con
 asserts that is the last claim. With S1 in place the blast radius is its own claims: it
 releases `conversation` and retracts only rows no producer asserts any more.
 
-**The gate is one condition, and the collapse is the argument.** All three refusals in
-(2) above are the same fact about the pass — `state_for_stop` gives `settled` to a CLEAN
-stop alone. A truncated turn (`max_steps`, the cost budget, consecutive tool errors, the
-wall clock) lands `failed`; a turn that ended on `ask_owner` lands `waiting_on_owner`; and
-a turn whose ledger did not record lands `failed` too, because both callers degrade the
-stop reason to `record_failed` — `api/agent.py` when `record_reply_writes` returns False,
-`converse._run_turn` when its own `_record` raises. So the sweep reads a state written by
-the code that knows how the pass ended, rather than re-deriving the question beside it,
-and `close_owner_reply` returns that state for exactly this reason. The unattended pass
-settles AFTER its state block, because the `question_stands` branch can still turn a
-`settled` verdict into `waiting_on_owner`.
+**The state gate is necessary and was not sufficient.** All three refusals in (2) above
+are the same fact about the pass — `state_for_stop` gives `settled` to a CLEAN stop
+alone. A truncated turn lands `failed`; a turn that ended on `ask_owner` lands
+`waiting_on_owner`; and a turn whose ledger did not record lands `failed` too, because
+both callers degrade the stop reason to `record_failed` — `api/agent.py` when
+`record_reply_writes` returns False, `converse._run_turn` when its own `_record` raises.
+So the sweep reads a state written by the code that knows how the pass ended, rather than
+re-deriving the question beside it, and `close_owner_reply` returns that state for exactly
+this reason. The unattended pass settles AFTER its state block, because the
+`question_stands` branch can still turn a `settled` verdict into `waiting_on_owner`.
+
+**The first cut shipped that gate and nothing else, and an independent review found the
+hole before it merged. It is worth writing down, because it is this design's recurring
+mistake in a new place: `touched` was SESSION-scoped while the sweep is NOTE-scoped.** A
+conversation session that asserted nothing therefore released the `conversation` claim on
+every unpinned row of the note — including every claim laid down by every EARLIER
+conversation on it — and retracted whatever that left unclaimed. No model variance is
+needed to reach it. `emr_owned` reads note state that MUTATES: the owner captures a health
+`Records` note, the body ingests before any attachment lands (`analysis/converse.py` names
+that as an ordinary shipped re-ingest), so conversation #1 runs with the full write surface
+and asserts facts; the PDF then lands, the note re-ingests, and conversation #2 opens on a
+note that is now `emr_owned`, with `narrow_for_emr` and the per-note registry leaving it no
+write verb at all. It reads, replies, ends cleanly — and released the lot.
+
+The correction is three refusals BEYOND the state gate, and one change of key. The key:
+`touched` is `NoteConversationRepo.writes_for_generation`, the union of every conversation
+session on the note whose `note_body_sha` matches — passes over the SAME TEXT are one
+derivation by one producer — plus the settling session unconditionally, since a pass
+vouches for its own writes whatever its sha. The refusals, each a case where an empty or
+partial ledger would otherwise read as "the note no longer says that":
+
+- **the note moved under this thread** (`note_body_sha` no longer matches the composed
+  body). The pass is judging text that has changed since; the conversation that change
+  opened is the one entitled to release. Without it the generation union inverts: a stale
+  settler unions only its own generation and retracts the CURRENT one's writes.
+- **the pass held no graph-write verb** — the EMR case above, keyed on the same
+  `emr_owned` predicate `narrow_for_emr` and `reply_profile_for_session` use, so "could
+  this pass write?" has one answer across all three.
+- **an empty generation ledger.** With nothing asserted over this text by any pass, there
+  is no re-derivation to compare against and the release would run on the whole note.
+
+Why this is not the "union releases nothing" objection that killed the first idea of a
+note-scoped `touched`: an UNCONDITIONAL union spares every id the conversation ever wrote,
+so it can never release. Scoped by sha, an edited note drops the previous generation out of
+the union — which is exactly, and only, the case the sweep exists for.
+
+All three refusals fail toward a LEAK, which is the direction this design fails in
+deliberately. The tail still runs in every one of them: projecting is never destructive.
 
 Three things S3 does NOT close, each stated so the next reader does not assume otherwise:
 
@@ -448,14 +485,6 @@ Three things S3 does NOT close, each stated so the next reader does not assume o
   gate is what makes that correct rather than unfortunate — a thread still waiting has not
   finished reading the note — but the claim stands until the owner replies or the note is
   re-ingested and a later conversation settles over it.
-
-One consequence worth naming because the tests pin it: a note gets a NEW conversation on
-every re-ingest (`converse.note_converse`), and `writes()` is per SESSION. So it is the
-SECOND conversation's settle that releases the first one's claims on rows the note no
-longer supports. That is the sweep's own rule applied to the producer — a re-derivation of
-the same note by the same producer — and it is what makes the release reachable at all: a
-union across every session of the note would put every id the conversation ever wrote into
-`touched` and release nothing, which is a sweep that cannot do its job.
 
 ### S4 — One stamper per note
 

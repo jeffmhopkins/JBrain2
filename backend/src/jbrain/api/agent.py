@@ -1598,6 +1598,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         request.app.state.session_maker,
                         owner_ctx,
                         _settle_pipeline(request),
+                        cast(NotesRepo, request.app.state.notes_repo),
                         session_id=str(session.id),
                         state=closed or "",
                     )

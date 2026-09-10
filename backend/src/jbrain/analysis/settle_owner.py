@@ -91,13 +91,28 @@ the note no longer says". The second is visible, correctable and recoverable; th
 is none of those. That did not make it free, which is why S3 followed immediately.
 
 **What closed it.** `analysis/clarify.settle_conversation` runs at the end of a clean
-pass, from both turn paths, and calls `sweep_note(settle_owner=CONVERSATION,
-touched=NoteConversationRepo.writes().facts)`. `touched` is the whole-CONVERSATION union
-across the unattended pass and the owner's reply turn (W4c/1); a per-turn share would
-release the other turn's claim, and on a row only the conversation asserts that is the
-last claim. It fires ONLY from the `settled` state, which is what keeps it off a
-truncated turn, a turn still waiting on the owner, and a turn whose ledger did not record
-— all three degrade to a state that is not `settled`.
+pass, from both turn paths, and calls `sweep_note(settle_owner=CONVERSATION, touched=…)`.
+It fires ONLY from the `settled` state, which keeps it off a truncated turn, a turn still
+waiting on the owner, and a turn whose ledger did not record — all three degrade to a
+state that is not `settled`.
+
+**The `touched` set is NOTE-scoped, and getting that wrong is this key's characteristic
+failure.** The sweep releases claims across the whole note, so a ledger scoped to one
+SESSION says nothing about what earlier sessions of the same producer claimed — and the
+conversation gets a fresh session on every re-ingest. Handed a session's share, a pass
+that wrote nothing released the note's entire `conversation` claim set. That is not a
+variance risk: `emr_owned` reads note state that MUTATES, so a health `Records` note whose
+PDF lands after its body was ingested is writable for one conversation and narrowed to no
+write verb for the next, deterministically. So `touched` is
+`NoteConversationRepo.writes_for_generation` — every session on the note that read the
+SAME TEXT, plus the settling session unconditionally — and the sweep additionally refuses
+when the note has moved under this thread, when the pass held no graph-write verb, or when
+that generation's ledger is empty. Each refusal leaks rather than deletes.
+
+Within one session, `writes()` is still the whole-CONVERSATION union across the unattended
+pass and the owner's reply turn (W4c/1): both runs stamp the one `conversation` key, so a
+per-TURN share would release the other turn's claim, and on a row only the conversation
+asserts that is the last claim.
 
 **The MENTION half of that leak is still open, and is the bounded one.** The two tables
 sit behind different foreign keys (migration 0006): `entity_mentions.chunk_id` is
