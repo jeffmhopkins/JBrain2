@@ -141,15 +141,14 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .acts button { flex: 1; min-height: 48px; border-radius: var(--r-input); border: 1px solid var(--border);
   background: transparent; color: var(--text-2); font: inherit; font-size: 14px; }
 .acts .keep { flex: 1.5; border-color: var(--ok); background: var(--green-tint); color: var(--text); font-weight: 500; }
-.copy { display: flex; align-items: center; gap: 9px; margin: 12px 2px 0; font-size: 12px; color: var(--text-2); }
-.copy input { width: 20px; height: 20px; accent-color: var(--accent); }
-.foot { margin: 10px 2px 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
+.foot b { color: var(--text-2); font-weight: 500; }
+.foot { margin: 12px 2px 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 <button class="theme" id="theme" type="button">Light</button>
 <div class="phone">
-  <div class="note"><b>D &mdash; Trim in a sheet.</b> A capture is a rough take: you pressed record before it started and stopped after it ended. Tapping the scissors on a row opens a <b>dedicated trim sheet</b> &mdash; the whole clip drawn as a waveform, two handles, and one place to be careful in.<br><br>The waveform is the argument. Radio has real silence in it, so the part worth keeping is <em>visible</em>: you can see the dead air at both ends and pull the handles in to meet the signal. Nudge buttons move an edge by a frame for when a fingertip is not enough, and Preview plays only the selection so you commit to something you have heard.<br><br><b>Try it on the 3:06 weather clip.</b> Its useful twenty seconds cost 1.4&nbsp;MB to keep whole.</div>
+  <div class="note"><b style="color:var(--ok)">BINDING SPEC &mdash; chosen 2026-09-09.</b> Trim discards the original, and nothing expires.<br><br><b>D &mdash; Trim in a sheet.</b> A capture is a rough take: you pressed record before it started and stopped after it ended. Tapping the scissors on a row opens a <b>dedicated trim sheet</b> &mdash; the whole clip drawn as a waveform, two handles, and one place to be careful in.<br><br>The waveform is the argument. Radio has real silence in it, so the part worth keeping is <em>visible</em>: you can see the dead air at both ends and pull the handles in to meet the signal. Nudge buttons move an edge by a frame for when a fingertip is not enough, and Preview plays only the selection so you commit to something you have heard.<br><br><b>Try it on the 3:06 weather clip.</b> Its useful twenty seconds cost 1.4&nbsp;MB to keep whole.</div>
   <div class="swap" role="tablist">
     <button id="t-listen" role="tab" aria-pressed="false" type="button">Listen</button>
     <button id="t-lib" role="tab" aria-pressed="true" type="button">Recordings</button>
@@ -198,12 +197,12 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
       <div class="acts">
         <button type="button" id="sprev">Preview</button>
         <button type="button" id="scancel">Cancel</button>
-        <button type="button" class="keep" id="skeep">Keep the trim</button>
+        <button type="button" class="keep" id="skeep">Trim &amp; discard rest</button>
       </div>
-      <label class="copy"><input type="checkbox" id="scopy"> Keep the full capture as well</label>
-      <p class="foot">Cut on an MP3 frame boundary with <code>-c copy</code>: lossless and instant, landing
-        within 72&nbsp;ms of the handle. Discarding the original is what actually frees the disk &mdash; and
-        needs a <code>delete()</code> the blob store does not have yet.</p>
+      <p class="foot"><b>The full capture is discarded.</b> That is what frees the disk, and it is why the
+        trim is confirmed rather than applied on the way past &mdash; Preview first, because there is no undo.
+        Cut on an MP3 frame boundary with <code>-c copy</code>: lossless and instant, landing within
+        72&nbsp;ms of the handle.</p>
     </div>
   </div>
 </div>
@@ -256,7 +255,7 @@ const savedTotal = () => CLIPS.reduce((n, c) => n + (c.cut ? (c.secs - dur(c)) *
 function paintDisk() {
   const saved = savedTotal();
   document.getElementById("freed").innerHTML = saved
-    ? `<b>${fmtSize(saved)} reclaimed by trimming</b>` : "oldest kept 90 days";
+    ? `<b>${fmtSize(saved)} reclaimed by trimming</b>` : "kept until you delete them";
   document.getElementById("barfill").style.width = (24 - saved / 1048576 * 0.9).toFixed(2) + "%";
   const el = document.getElementById("libCount");
   if (el) el.textContent = CLIPS.length + " clips";
@@ -310,7 +309,6 @@ function openTrim(c) {
   document.getElementById("tsub").textContent =
     `${c.mode} ${c.bw} · ${c.at} · full capture ${fmtDur(c.secs)}, ${fmtSize(c.secs * BPS)}`;
   document.getElementById("mend").textContent = fmtDur(c.secs);
-  document.getElementById("scopy").checked = false;
   scrim.classList.add("open");
   paintWave();
   document.getElementById("skeep").focus();
@@ -407,10 +405,6 @@ document.getElementById("skeep").addEventListener("click", () => {
   if (!editing) return;
   const whole = inS <= 0.05 && outS >= editing.secs - 0.05;
   editing.cut = whole ? null : [inS, outS];
-  if (document.getElementById("scopy").checked && !whole) {
-    CLIPS.splice(CLIPS.indexOf(editing) + 1, 0,
-      { ...editing, id: Date.now(), cut: null, tx: editing.tx });
-  }
   closeTrim(); draw(); paintDisk();
 });
 document.getElementById("scancel").addEventListener("click", closeTrim);

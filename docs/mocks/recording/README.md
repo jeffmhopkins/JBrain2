@@ -73,19 +73,21 @@ save would land in.
 **C — `c-the-log.html`.** The tab is a search over what was said, and a watched channel
 fills the log unattended. Its transcript-first stance survives into round 2 as shape F.
 
-## Round 2 — how you trim. **Open.**
+## Round 2 — how you trim. **Chosen: D** (2026-09-09)
 
 All three carry A's settled capture unchanged; the Listen tab is identical in each. They
 differ only in where the trim lives. Each shows the same library, including one clip that
 is **already trimmed** and one with **no speech at all**, because both are cases the
 chosen shape has to handle.
 
-**D — `d-trim-sheet.html`. Trim in a sheet.** The scissors on a row opens a dedicated
-sheet: the whole clip as a waveform, two handles, per-frame nudge buttons, Preview that
-plays only the selection, and a "keep the full capture as well" escape hatch. *The
-waveform is the argument — radio has real silence in it, so the part worth keeping is
-visible.* One place to be careful in, and the only shape with room for Preview.
-**Costs a modal**, on a surface that is otherwise flat.
+**D — `d-trim-sheet.html`. THE BINDING SPEC.** The scissors on a row opens a dedicated
+sheet: the whole clip as a waveform, two handles, per-frame nudge buttons, and Preview
+that plays only the selection. *The waveform is the argument — radio has real silence in
+it, so the part worth keeping is visible.* One place to be careful in, and the only shape
+with room for Preview — which the other two decisions below make load-bearing rather than
+a nicety. Its cost is a modal on an otherwise flat surface, and the owner took that trade.
+
+E and F are retained below, not built.
 
 **E — `e-trim-inline.html`. Trim is the scrub bar.** No mode, no second surface: a row
 expands into a player whose two end caps are the handles. Trimming and listening become
@@ -110,15 +112,28 @@ arrow keys and Shift for a coarse step; words in F are focusable buttons), and L
 inline icons rather than glyphs. Each was driven end to end in Chromium — drag, apply, and
 the disk meter moving — with no console errors in either theme.
 
-## Still open alongside the shape
+## The two decisions taken with the shape (2026-09-09)
 
-1. **Does a trim discard the original?** The mocks default to yes, with D offering a
-   "keep the full capture as well" checkbox. Keeping both is the safe answer and the one
-   that saves nothing.
-2. **Is Record really arm-then-confirm?** `../sdr-tuner/a-tuner-sheet.html` is a binding
-   spec and says yes. All mocks honour it, but starting a recording destroys nothing —
-   worth deciding explicitly rather than by inheritance. Trim, by contrast, genuinely is
-   destructive, and gets the ceremony in every shape here.
-3. **What is the retention?** The mocks show "oldest kept 90 days" as a placeholder, which
-   the disk meter replaces the moment anything is trimmed. A clip the owner deliberately
-   kept and trimmed probably should not expire at all.
+**A trim discards the original.** There is no "keep both" — that was the safe answer and
+the one that saves nothing, and saving disk is the reason trim exists. Three consequences,
+all of them now requirements rather than preferences:
+
+- **`BlobStore` grows a `delete()`.** Nothing in this repo deletes a blob today; without
+  it a trim would *add* a blob and free nothing, which is the opposite of the point.
+- **Preview stops being a nicety.** It is the only chance to hear the cut before the
+  original stops existing, so it ships with the sheet rather than after it — which is
+  most of why D won.
+- **The confirm says what it costs** ("Trim & discard rest"), and the trim is applied
+  from a sheet you had to open, not from a control you can brush past.
+
+**Nothing expires.** No retention prune, no age-out. A recording the owner deliberately
+made — and then deliberately trimmed — is not the same kind of data as the APRS log,
+which ages out at 14 days because it is a log of strangers' traffic that nobody chose.
+The disk meter does the arguing instead: it reports usage, and trimming is how the owner
+answers it. So the library's resting line reads *"kept until you delete them"*, and the
+per-clip delete plus trim are the only things that ever remove audio.
+
+Still open, and inherited rather than decided here: **is Record really arm-then-confirm?**
+`../sdr-tuner/a-tuner-sheet.html` is a binding spec and says yes, so the mocks honour it —
+but starting a recording destroys nothing. Trim genuinely is destructive and has earned
+the ceremony; Record may not have.

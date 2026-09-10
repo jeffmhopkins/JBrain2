@@ -2351,6 +2351,56 @@ does **not** gate sends; the parent turn stays the single gated turn, and the
 in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
 child session rows — see the build plan's "Execution model").
 
+## SDR recordings — capture, library, trim (settled in a two-round GUI review; binding mocks `docs/mocks/recording/a-tape-deck.html` for capture and `docs/mocks/recording/d-trim-sheet.html` for trim; rivals "rolling buffer" / "the log" / "trim on the scrub bar" / "trim by transcript" retained in `docs/mocks/recording/README.md`)
+
+The Radio launcher's third tab. Build plan: `docs/plans/SDR_RECORDING_PLAN.md`.
+
+**Capture is a tape deck.** `Record` sits in the tuner's `.sdr-actions` row beside
+`Release`, arm-then-confirm (inherited from `docs/mocks/sdr-tuner/a-tuner-sheet.html`),
+and while recording it carries its own elapsed time and running size. A recording is a
+file: a frequency, a mode, a bandwidth, a time, a length, a size.
+
+**The library is a list grouped by day**, newest first, each row a play control, the
+frequency with its mode/bandwidth chip, a two-line transcript preview, and a right-hand
+column of time / duration / size. A trailing 44px action column carries the scissors,
+divided from the tappable body by a hairline — the same anatomy as `.rl-card` +
+`.rl-kebab` in the Research Library, with the action glyph specific to the one thing
+this surface does.
+
+**Sizes are always visible.** The owner runs this box remotely; a library that quietly
+fills a disk is a support call they cannot answer from a phone. The header carries a
+usage meter, and once anything has been trimmed its right-hand line reports how much
+trimming has reclaimed.
+
+**Nothing expires.** No retention prune. A recording the owner chose to make is not the
+APRS log, which ages out because nobody chose it. The resting header line is
+*"kept until you delete them"*; trim and delete are the only things that remove audio.
+
+### Destructive editing of stored media — the reusable pattern
+
+Settled here, and the first surface in the app to edit stored content in place rather
+than only create or delete it:
+
+1. **An irreversible edit gets its own sheet, never an inline control.** The edit is
+   entered deliberately (a distinct action glyph on the row), and the sheet is the one
+   place the user is being careful. Trimming from the row's own scrub bar was mocked
+   (`e-trim-inline.html`) and rejected for this reason: a control you can brush past
+   should not be able to destroy anything.
+2. **Preview before commit is mandatory when the original will not survive.** If the
+   edit discards data, the sheet must be able to play/show exactly what will remain
+   before the confirm is pressed. This is what makes the sheet worth its cost.
+3. **The confirm names the loss** — "Trim & discard rest", not "Save". Arm-then-confirm
+   is for actions with no preview; a sheet with a preview has already done that work,
+   and doubling it reads as nagging.
+4. **A selection over a continuous medium is drawn, not typed.** Two `role="slider"`
+   handles on a rendered waveform, draggable, arrow-key operable (Shift for a coarse
+   step), plus explicit nudge buttons at the medium's own smallest honest unit — for
+   MP3 that is one frame, 72 ms at 16 kHz, and the UI must not imply finer precision
+   than the format can deliver.
+5. **The saving is stated, not implied.** "Discards 1:05 of dead air — frees 509 kB",
+   computed and shown live as the handles move, because the whole reason the feature
+   exists is disk.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components
