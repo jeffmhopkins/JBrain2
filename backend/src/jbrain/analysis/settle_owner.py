@@ -170,6 +170,18 @@ The column is nullable with no default, deliberately unlike `settle_owners` abov
 for the rest — *no settling producer claims this card* — and a swept-kind filer that
 forgets to stamp gets a card no sweep can retire rather than one silently joining
 someone else's claim. Migration 0197 argues both choices in full.
+
+**The conversation's cards inherit the row leak, and for the same reason.** An
+`ambiguous_mention` card is filed by whichever producer reaches `_file_ambiguous_review`
+first, and on an ordinary note both fan out of one `note.ingested`, so that is a race the
+conversation sometimes wins. A card it filed is stamped `conversation`, the analyzer's
+sweep is now scoped away from it, and the conversation has no sweep at all (S3, dropped) —
+so it stands until the owner dismisses it or `purge.purge_note_artifacts` runs. That is
+the same permanent leak the rows carry, in the same safe direction: before the scoping,
+the analyzer would have retired it, and a co-writer retiring a card on evidence it does
+not have is what this key exists to stop. Read "a piggybacking producer re-files on its
+own next run" above with that caveat — it is true of the analyzer and the importer, and
+not of the conversation, which never re-files because it never releases.
 """
 
 from __future__ import annotations
