@@ -597,9 +597,11 @@ async def settle_conversation(
     `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too, because
     both callers degrade the stop reason to `record_failed` when their recorder fails
     (`converse._run_turn`, `record_reply_writes` + `close_owner_reply` in `api/agent.py`).
-    The gate costs nothing now that the destructive half is gone — projecting is never
-    destructive — and it is kept because it is the shape the plan specifies for a pass end,
-    and because a caller who did add a sweep would otherwise inherit no gate at all.
+    The gate guards nothing DESTRUCTIVE now that the sweep is gone — projecting never
+    retracts — but it is not free: a pass that committed facts and then truncated lands
+    `failed`, so its writes go unprojected until some later settle of the note happens to
+    touch the same entities. It is kept because it is the shape the plan specifies for a
+    pass end, and because a caller who did add a sweep would otherwise inherit no gate.
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
     projection refresh is a stale view, recoverable by the next settle of the note.

@@ -356,10 +356,7 @@ class ConversationWrites:
     Who owns a note's settle is no longer open (W4c/3, docs/plans/SETTLE_OWNERSHIP.md):
     each producer sweeps the rows it stamped and cannot reach a co-writer's — which
     closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
-    outright. **The conversation's own sweep now reads this** (W4c/2 / S3), at the end of
-    a pass that reached `settled` — which is what keeps it off an incomplete ledger
-    (`record_reply_writes` returning False degrades the close to `record_failed`), off a
-    truncated turn, and off one ending `awaiting_owner`.
+    outright.
 
     **There is no conversation sweep, and `facts` is not a retraction input.** One was
     built over this field (S3) and removed. An empty `facts` means "this session's

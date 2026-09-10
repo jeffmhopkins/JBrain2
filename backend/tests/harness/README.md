@@ -231,11 +231,14 @@ of a clean pass — `analysis/clarify.settle_conversation`. It does NOT release 
 producer has can license a retraction (SETTLE_OWNERSHIP.md S3).
 
 This runner still calls `sweep_note` beside the tail, and that is a deliberate divergence
-rather than drift. The harness is one conversation over one note with an in-process
-ledger, so its `touched` IS the complete record of everything the producer wrote here —
-the condition production can never establish, and the whole reason the sweep is
-unavailable there. Keeping it means a scenario can still express "the re-run dropped a
-fact", which is what several of them are for. What the runner no longer does is call
+rather than drift — but NOT because an in-process ledger is somehow more complete. That
+reading would license a sweep for a single production session too, which is the exact
+inference S3 was removed to block. The real reason is that each harness STEP is a
+whole-note re-derivation: the harness IS the model, emitting a complete extraction per
+step, so it satisfies the sweep's invariant the way the analyzer's `Extraction` does and
+a write ledger never can. That is also why `rerun_retracts_removed_fact.json` works —
+step 2 re-derives the note and its sweep retracts what step 1 asserted and step 2 does
+not, which is a re-derivation dropping a fact, not a ledger accumulating one. What the runner no longer does is call
 `settle_note` whole, which made the harness the one place a conversation stamped
 `note_analysis` with the empty title its tool surface has no verb for.
 
@@ -250,10 +253,9 @@ sweeper cannot delete the analyzer's cards.
 Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is the
 whole-conversation union across both turn paths — the owner's reply turn records through
 `analysis/clarify.record_reply_writes` at the same seam the unattended pass records at —
-and S3 wired the sweep to it (W4c/2). What the harness cannot show is the production
-ledger at all: it unions its outcomes in process, so `mention_ids` are available here
-where `NoteConversationRepo.writes()` records none and production's sweep therefore
-skips the mention reconcile.
+but no sweep reads it (W4c/2 is closed as unbuildable). The ledger records no mention
+ids at all, which is one more reason the reconstruction was unavailable; the harness has
+`mention_ids` only because it unions its outcomes in process.
 
 `tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
 pins what remains absent, so this is a red test rather than a rediscovery.

@@ -478,13 +478,19 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     #
     # The `sweep_note` below is a DELIBERATE divergence from production, which runs the
     # tail alone (`analysis/clarify.settle_conversation`; a conversation sweep was built
-    # and dropped — SETTLE_OWNERSHIP.md S3). The difference is the ledger, and it is the
-    # whole reason the sweep is unavailable there: a harness run is one conversation over
-    # one note with an in-process accumulator, so `led.touched` IS the complete record of
-    # everything this producer wrote about this note. Production's ledger is per session,
-    # records writes rather than readings, and gets a fresh session on every re-ingest, so
-    # it can never establish that. Keeping the sweep here is what lets a scenario express
-    # "the re-run dropped a fact"; it is not a claim that production does the same.
+    # and dropped — SETTLE_OWNERSHIP.md S3).
+    #
+    # The difference is NOT that an in-process accumulator makes `led.touched` more
+    # complete. Read that way it would license a sweep for a single production session
+    # too, which is the inference S3 was removed to block — and it is false here anyway:
+    # `run_scenario` reuses a note across steps and `_run_step` builds a fresh pipeline
+    # per step, so `led.touched` covers THIS step only.
+    #
+    # What licenses it is that each step is a whole-note RE-DERIVATION. The harness is the
+    # model, emitting a complete extraction per step, so it satisfies the sweep's
+    # invariant the way the analyzer's `Extraction` does and a write ledger never can.
+    # That is exactly why `rerun_retracts_removed_fact.json` works: step 2 re-derives the
+    # note, and the sweep retracts what step 1 asserted and step 2 no longer does.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
         # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,
