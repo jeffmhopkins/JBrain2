@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from jbrain.analysis.arbiter import plan_intent
 from jbrain.analysis.extraction import Extraction
 from jbrain.analysis.pipeline import AnalysisPipeline, _ChunkRef
+from jbrain.analysis.settle_owner import EMR as EMR_SETTLE_OWNER
 from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.candidates import ParseResult
@@ -309,6 +310,7 @@ class EmrNoteCommit:
                     title=self.title,
                     tags=self.tags,
                     extractor=EXTRACTOR,
+                    settle_owner=EMR_SETTLE_OWNER,
                 )
             if applied is None:  # rejected plan — nothing written, nothing to settle
                 continue
@@ -362,6 +364,7 @@ class EmrNoteCommit:
                 chunks=self._chunks,
                 extraction=union,
                 extractor=EXTRACTOR,
+                settle_owner=EMR_SETTLE_OWNER,
                 resolved=self._resolved,
                 touched=self._touched,
                 projected=self._projected,

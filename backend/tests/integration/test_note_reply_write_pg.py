@@ -42,10 +42,15 @@ from typing import Any
 import pytest
 from sqlalchemy import select, text
 
+from jbrain.agent.contracts import DoneEvent, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.replytools import CORRECT_FACT, MERGE_ENTITIES, build_reply_write_handlers
+from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.transcript_accumulator import TranscriptAccumulator
+from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.analysis.clarify import NOTE_CONVERSE_AGENT, record_reply_writes
 from jbrain.analysis.entities import merge_entity_pair, normalize_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -263,10 +268,10 @@ async def test_a_correction_force_supersedes_the_head_and_pins_the_new_value(  #
     assert live[0].pinned is True
     # Sourced to the conversation's OWN note — the note whose reading Jeff corrected.
     assert str(live[0].note_id) == note_id
-    # And the tool reported a real fact write, so the D3 chip sees it. The 0191 ledger
-    # does NOT: `record_tool_call` is reached only from the worker's unattended pass,
-    # and this is a `/chat` turn. That gap is W4's to close before it wires the settle
-    # sweep — see `ConversationWrites`.
+    # And the tool reported a real fact write, so the D3 chip sees it — and, since
+    # W4c/1, so does the 0191 ledger: `/chat` records the reply turn's calls at the same
+    # seam the unattended pass records at. The test below is where that is asserted end
+    # to end, off THIS tool's own output.
     assert isinstance(out, ToolOutput) and len(out.facts) == 1
     # D3's supersession state, with the "before" the diff needs. `ClaimDiffView` — the
     # reason the app's one diff renderer was extracted from `ClaimDiff.tsx` — renders
@@ -323,6 +328,94 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
     live = [f for f in await _rows(maker, jeff, "homeLocation") if f.status == "active"]
     assert len(live) == 1
     assert live[0].pinned is True
+
+
+@pytest.mark.asyncio
+async def test_a_reply_turn_correction_lands_on_the_ledger_with_the_real_fact_id(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """W4c/1, off this file's own tool rather than a synthesised chip.
+
+    The reply turn is an ordinary `/chat` turn, so until W4c/1 a `correct_fact` here
+    reached `app.facts` and the D3 rung and reached `app.note_conversation_tool_calls`
+    nowhere. `api/agent.py` now runs the turn's steps through the same recorder the
+    unattended pass uses (`clarify.record_reply_writes`), so the ids the WRITE PATH
+    reported — not the ones the model asked for — are what the settle sweep will read
+    back as `touched`. Asserted on the row, and on the id matching the fact that is
+    actually live, because a ledger that records a plausible-looking id it did not write
+    is worse than one that records nothing: it SPARES a fact the sweep should retract."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    jeff = await _entity(maker, "Jeff of the recorded correction")
+
+    out = await _handlers(maker)[CORRECT_FACT](
+        {
+            "entity": "Jeff of the recorded correction",
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "object": "9 Ledger Row",
+            "statement": "Jeff lives at 9 Ledger Row.",
+            "when": "",
+        },
+        _ctx(owner_ctx, session_id),
+    )
+    assert isinstance(out, ToolOutput) and len(out.facts) == 1
+
+    # The turn ends: the transcript first (the `done` path), then the ledger in the
+    # `finally`, both under the same run id — the order `api/agent.py` runs them in, and
+    # the reason the rows can bind to this run's assistant turn at all.
+    # A REAL run row: `agent_turns.run_id` is a foreign key into `app.runs`.
+    run_id = await AgentRunLog(maker).start(
+        owner_ctx, session_id=session_id, prompt_version="reply-turn-test"
+    )
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="k1", name=CORRECT_FACT, arguments={"predicate": "homeLocation"}))
+    acc.feed(
+        ToolResultEvent(
+            tool_call_id="k1",
+            ok=True,
+            summary=str(out),
+            entities=list(out.entities),
+            facts=list(out.facts),
+        )
+    )
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+    steps = acc.tool_steps()
+    await AgentTranscript(maker).record_exchange(
+        owner_ctx,
+        session_id=session_id,
+        run_id=run_id,
+        user_text="No — 9 Ledger Row.",
+        assistant_text="Corrected.",
+        tools=steps,
+        reasoning="",
+    )
+    assert await record_reply_writes(
+        maker,
+        owner_ctx,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        run_id=run_id,
+        tool_steps=steps,
+    )
+
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner_ctx) as s:
+        calls = await repo.tool_calls(s, session_id)
+        writes = await repo.writes(s, session_id)
+    assert [c.name for c in calls] == [CORRECT_FACT]
+    row = calls[0]
+    assert row.ok is True
+    assert [str(f) for f in row.fact_ids] == [out.facts[0].fact_id]
+    assert row.domains == ["general"]
+    assert row.turn_id is not None
+
+    live = [f for f in await _rows(maker, jeff, "homeLocation") if f.status == "active"]
+    assert [str(f.id) for f in live] == [out.facts[0].fact_id]
+    assert writes.facts == {uuid.UUID(out.facts[0].fact_id)}
 
 
 @pytest.mark.asyncio

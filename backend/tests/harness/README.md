@@ -233,12 +233,14 @@ reprojection, the corroboration promotion, the `note_analysis` stamp — plus th
 `notes.integration_state = 'integrated'` flip that `queue.backfill_pending_integration`
 and the workflow reconciler key on.
 
-Wiring it is blocked on a precondition the plan states and W4 did not land:
-`ConversationWrites.facts` is filled by the unattended pass and **empty for the owner's
-reply turn**, so `settle_note(touched=writes().facts)` today would retract every
-unpinned fact the owner's own reply just added (`models/note_conversation.py`). The
-recorder has to move into the tool dispatch, or the sweep be scoped to the unattended
-pass, first.
+Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is now the
+whole-conversation union across both turn paths — the owner's reply turn records through
+`analysis/clarify.record_reply_writes` at the same seam the unattended pass records at —
+so `settle_note(touched=writes().facts)` would no longer retract what the owner's own
+reply just added. Wiring it remains blocked on the two decisions after it: the sweep is
+not attributed to anything yet (W4c/2), and who OWNS a note's whole-note settle — the
+conversation, `integrate_note`, or `emr_parse` — is still undecided (W4c/3, and the
+`emr_parse` race below).
 
 `tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
 pins the absence, so this is a red test rather than a rediscovery.
