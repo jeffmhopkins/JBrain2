@@ -1512,17 +1512,70 @@ line. Bound on all three sets — `NOTE_INGEST_UNATTENDED_TOOLS` is seven now �
 because an allowlisted name with no handler behind it dies in dispatch. `assert_fact` is
 untouched, at v3, still bound everywhere it was. Nothing sweeps.
 
+*Corrected on review, and each is worth reading as a property rather than a patch:*
+
+- **The recurrence parser had a word-boundary hole and a coverage hole**, and the first
+  was the sharp one: `mon(?:day)?s?` matched the first three letters of "month", so
+  "blood pressure check every month" parsed as `FREQ=WEEKLY;BYDAY=MO` — a monthly check as
+  a weekly Monday event on the owner's subscribed calendar, forever, and reported back to
+  the model as a rule it had stated. `parse_rrule` cannot catch that: the rule is well
+  formed and about a different thing. Nothing caught it because the corpus had no bare
+  `every <unit>` case at all. Every day token now carries its own word boundary, and the
+  corpus has the missing branch. The coverage hole was `_BOUNDED` as a keyword list —
+  "for seven weeks", "for a few weeks", "this month", "in March", "over the summer",
+  "while the cast is on" all produced UNBOUNDED rules, and "physio every day for nine
+  days" was one number-word away from a case already in the corpus. The number vocabulary
+  is now shared with `_NUMBER_WORDS` so the two cannot drift, and the clause shapes are
+  covered. Two more refusals joined them: a hyphenated compound is a different word
+  (`semi-annual` was matching `annual`), and a plural weekday can name PAST occasions
+  ("the last two Tuesdays"), which contradicted the module's own claim that a plural
+  weekday is a safe marker.
+- **`close_reading` was missing from `readtools.GRAPH_WRITE_AUTHORITY`** — the set that
+  decides whether a fetched note body arrives DATA-framed. It is `assert_fact`'s write
+  authority under another name, and it becomes load-bearing the moment R4 takes
+  `assert_fact` off the unattended pass: the turn after that, a reply turn holding
+  `close_reading` + `read_note` would fetch a stranger-authored body unframed. Plan risk 1,
+  re-opened by a wave that thought it was only adding a verb.
+- **The ambiguity branch of `resolve_entity` had neither narrowing.** Candidates are read
+  at full scope, so a general note's thread was handed
+  "Dr. Anjali Renwick (Person, oncologist at Kaiser)" — the exact disclosure
+  `Handle.visible` withholds on the branch where resolution SUCCEEDS. Out-of-scope
+  candidates are now counted, never named, and `Candidate.domain` stopped being a field
+  nothing read.
+- **The clamp latch had two holes.** The reply turn's writer is rebuilt on a scope change
+  and carried only the budgets, so a rebuild laundered an incomplete reading into a
+  complete-looking one; and the budget-exhaustion path returned BEFORE the union, so a
+  pass refused the call it still had facts for looked unclamped — which is the input the
+  settle's gate exists to refuse. Both fixed, both tested. What is genuinely NOT carried
+  is the worker → API hop: two processes, no shared memory, so a reply turn starts with an
+  empty reading exactly as it starts with an empty handle table, and R3 must read the
+  pass's own writer at the pass's own terminal block rather than expect the flag to
+  survive the trip.
+- **`_batch` computed its clamp AFTER dropping unreadable elements**, so
+  `facts: [{…}, null, {…}]` reported two recorded and no truncation — a reading claiming
+  to be the whole note while missing a fact the model wrote. The flag is computed against
+  what the model SENT now. That is the one silent loss the clamp signal can carry; O13's
+  is a different population and it still cannot.
+
 *The three decisions R1 had to make and the plan did not:*
 
 1. **The widened result is capped at 10 facts an entity and 30 a call, ordered newest
    state first** (`coalesce(valid_from, reported_at) DESC`), and narrowed to the
-   conversation's read scopes TWICE — on the ENTITY's domain (the narrowing that already
-   withholds a cross-domain entity's name, constraint 2) and on the FACT's. The second is
-   the one an entity check alone would miss and is the sharper of the two: `Me` is a
-   `general` entity carrying floored `health` and `finance` facts, so filtering on the
-   subject would hand a general note's thread the owner's medications the moment it
-   resolved his own name. Without both, the widening reopens the firewall in the one place
-   the note's cast is guaranteed to reach.
+   conversation's read scopes three ways. The ENFORCEMENT is Postgres: the facts are read
+   on a second session — the owner narrowed to the conversation's own scopes
+   (`owner_scoped=True`, migration 0015) — after the write session closes, because the
+   WRITE session has to stay at full scope (resolution layer 1 carries no domain
+   predicate, and narrowing it mints duplicates of entities the owner already has) while a
+   read has no such need and CLAUDE.md #3 wants the firewall in the database. Verified
+   rather than assumed: with that session widened and the SQL predicate removed the health
+   fact leaks, and with the session narrowed and the predicate still removed it does not.
+   The predicate stays anyway as the legible second lock, and `handle.visible` is the
+   third — the entity's own domain, the same narrowing that already withholds a
+   cross-domain entity's name (constraint 2). The one an entity-level check alone would
+   miss is the FACT's domain: `Me` is a `general` entity carrying floored `health` and
+   `finance` facts, so filtering on the subject would hand a general note's thread the
+   owner's medications the moment it resolved his own name. The ambiguity branch is
+   narrowed too, and was not until review — see the corrections above.
 
    Ordering by "the predicates the reading is about" was considered and is not buildable
    here: the cast is resolved BEFORE the reading is written, so nothing at that point in
@@ -1929,10 +1982,24 @@ it (O11). The batch makes the wait longer and the half-answered state possible, 
 what turns three separate omissions into one question — *what does a waiting thread owe the
 owner between the ask and the answer?* — and that is worth one round rather than three.
 
-**Carried risks, unchanged from ratification.** Intake is third-party text driving an
-owner-identity session (risk 1) — the third frozenset still narrows it and
-`close_reading` replaces `assert_fact` inside that set, so a stranger's words may still
-cause a fact and nothing else. Cost: the reading restates the note in full on every pass,
+**Carried risks, and R1 sharpened one of them.** Intake is third-party text driving an
+owner-identity session (risk 1) — the third frozenset still narrows it, and after R1
+`close_reading` sits BESIDE `assert_fact` in that set rather than replacing it (the swap
+this line described is R4's; the set is `UNATTENDED - {ask_owner}` and holds both until
+then). "A stranger's words may cause a fact and nothing else" survives, but only because
+R1 put two clauses in to keep it true, and neither was in this plan before review:
+
+- **no recurrence token on a third-party note.** A recurrence is what
+  `appointment_projection._recurrence_rrule` turns into a repeating entry on the calendar
+  the owner's phone subscribes to. A fact that repeats forever is more than a fact, and it
+  is a durable consequence of un-reviewed text. The fact still commits, undated.
+- **no on-file block in `resolve_entity`'s result on a third-party note.** The widened
+  result returns the owner's own graph as CONTENT into a thread whose turn 0 a stranger
+  wrote, for every name that text chose to write. The third-party set drops
+  `search`/`read_note`/`relate` precisely so a stranger's words cannot AIM the corpus, and
+  a resolve that answers with what is on file is the same reach through a verb that
+  stayed. Nothing egresses — no set holds an outward verb and `ask_owner` is unbound — so
+  this was never exfiltration; it is the same rule the dropped reads are there for. Cost: the reading restates the note in full on every pass,
 which is comparable to what `note.extract` cost and cheaper than the 5–10× the parent plan
 accepted, because the Integrator's second call is gone. The abliterated checkpoint remains
 selectable and remains the wrong thing to select for a persona holding write tools.

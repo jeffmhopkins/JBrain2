@@ -19,7 +19,9 @@ import pytest
 
 from jbrain.analysis.recurrence import parse_recurrence, parse_rrule
 
-# The five R0 scored, first, so the corpus starts where the measurement did.
+# Four of the five notes R0 scored (the fifth, "Tuesdays until March", is BOUNDED and is
+# a refusal here — see `test_a_bounded_rule_is_discarded_whole`), first, so the corpus
+# starts where the measurement did.
 R0_NOTES = [
     (
         "Signed up at the Y on Oak St. Gym every Tuesday and Thursday at 6am.",
@@ -66,6 +68,20 @@ def test_the_phrasings_r0_measured_are_recovered(quote: str, rrule: str) -> None
         # never stated.
         ("in the office every Monday through Friday", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
         ("weekends at the cabin", "FREQ=WEEKLY;BYDAY=SA,SU"),
+        # A bare `every <unit>`, which had NO case here at all and for `month` was
+        # unreachable: `mon(?:day)?s?` matched the first three letters of "month" and the
+        # day-list clause won the tie, so a monthly blood-pressure check parsed as
+        # FREQ=WEEKLY;BYDAY=MO — a weekly Monday event on the owner's subscribed calendar
+        # for a note that said nothing of the kind, with a well-formed rule `parse_rrule`
+        # could never catch.
+        ("blood pressure check every month", "FREQ=MONTHLY"),
+        ("mortgage payment every month on the 1st", "FREQ=MONTHLY"),
+        ("shots every week", "FREQ=WEEKLY"),
+        ("every day at 6am", "FREQ=DAILY"),
+        ("service the furnace every year", "FREQ=YEARLY"),
+        # The same missing boundary on the TRAILING day group: this was
+        # INTERVAL=2;BYDAY=MO, off "Monterey".
+        ("every two weeks Monterey trip", "FREQ=WEEKLY;INTERVAL=2"),
     ],
 )
 def test_the_wider_corpus_parses(quote: str, rrule: str) -> None:
@@ -106,6 +122,18 @@ def test_a_span_with_no_rule_in_it_is_refused(quote: str) -> None:
         "physio every day for two weeks",
         "standup on weekdays until the launch",
         "chemo every three weeks for the next six months",
+        # The holes a keyword list grows, each of which produced an UNBOUNDED rule: a
+        # count word the list happened not to carry ("physio every two days" is in the
+        # corpus above and this is one number-word away from it), a vague count, and the
+        # three clause shapes that bound a rule without naming an end at all.
+        "every Tuesday for seven weeks",
+        "physio every day for nine days",
+        "every Tuesday for a few weeks",
+        "gym every Tuesday this month",
+        "every Tuesday in March",
+        "yoga Wednesdays over the summer",
+        "every Monday while the cast is on",
+        "infusions every three weeks during chemo",
     ],
 )
 def test_a_bounded_rule_is_discarded_whole(quote: str) -> None:
@@ -119,6 +147,61 @@ def test_a_bounded_rule_is_discarded_whole(quote: str) -> None:
     note does not say, and it says it on the owner's calendar forever — so the whole rule
     is discarded and the fact commits with the dates it had."""
     assert parse_recurrence(quote) is None
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "he called me the last two Tuesdays",
+        "I worked the past three Saturdays",
+        "she has been late these last few Mondays",
+        "quiet the last two weeks",
+    ],
+)
+def test_a_span_naming_past_occasions_is_refused(quote: str) -> None:
+    """The refusal that is not a bound: a PLURAL weekday is this module's own marker for
+    a rule, and "the last two Tuesdays" wears it while describing something already over.
+    Reading a rule out of one puts a weekly event in the owner's future off a span about
+    his past."""
+    assert parse_recurrence(quote) is None
+
+
+@pytest.mark.parametrize(
+    ("quote", "rrule"),
+    [
+        # The singular ordinal survives it — "the last Friday of the month" is the
+        # nth-of-month rule, not a retrospective.
+        ("payday the last Friday of the month", "FREQ=MONTHLY;BYDAY=-1FR"),
+    ],
+)
+def test_the_retrospective_refusal_spares_the_ordinal(quote: str, rrule: str) -> None:
+    found = parse_recurrence(quote)
+    assert found is not None and found.rrule == rrule
+
+
+@pytest.mark.parametrize("quote", ["semi-annual review", "tri-weekly staff meeting"])
+def test_a_hyphenated_compound_is_a_different_word(quote: str) -> None:
+    """A hyphen IS a word boundary, so `\b` let `semi-annual` match `annual` and
+    `tri-weekly` match `weekly`. A compound built on the word means something the word
+    does not — and nothing here can tell what — so it reads as no rule. The compounds
+    this DOES know (`bi-weekly`) are spelled keys of their own."""
+    assert parse_recurrence(quote) is None
+    assert parse_recurrence("bi-weekly paycheck") is not None
+
+
+def test_a_range_of_plural_days_is_an_accepted_over_refusal() -> None:
+    """Pinned as a known limit rather than left to be discovered: the day-range expansion
+    rewrites "Mondays through Wednesdays" into singular day names, which strips the plural
+    marker the span was relying on, so it reads as no rule.
+
+    That is the safe direction and it is deliberate — every refusal costs a schedule the
+    handler does not write, and every false parse costs a phantom event on the owner's
+    calendar — but it IS a miss, and a corpus that did not say so would be claiming the
+    parser refuses only what it means to."""
+    assert parse_recurrence("she works Mondays through Wednesdays") is None
+    # Marked, it parses: the marker is what the expansion cannot supply for itself.
+    found = parse_recurrence("she works every Monday through Wednesday")
+    assert found is not None and found.rrule == "FREQ=WEEKLY;BYDAY=MO,TU,WE"
 
 
 def test_two_different_rules_in_one_span_are_refused() -> None:

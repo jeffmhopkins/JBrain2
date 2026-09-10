@@ -126,6 +126,7 @@ from jbrain.analysis.pipeline import (
 )
 from jbrain.analysis.recurrence import parse_recurrence
 from jbrain.analysis.settle_owner import CONVERSATION
+from jbrain.analysis.thirdparty import is_third_party
 from jbrain.analysis.weight import ConfidenceSignals, effective_weight
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
@@ -498,6 +499,20 @@ class NoteTarget:
         return self.provenance == "owner_correction"
 
     @property
+    def is_third_party(self) -> bool:
+        """This note's BODY is somebody else's words (D10) — an approved intake
+        submission, today. Server-read provenance, exactly like `is_correction`, and the
+        two are the same field pointing in opposite directions.
+
+        What it gates here is the two things R1 added that are not "a fact": the
+        recurrence token (a stranger's text may cause a fact, and a fact that repeats
+        forever on the owner's subscribed calendar is more than one) and the on-file
+        block in `resolve_entity`'s result (which returns the owner's own graph CONTENT
+        into a thread whose turn 0 a stranger wrote — the third-party set drops
+        `search`/`read_note`/`relate` precisely so that text cannot aim the corpus)."""
+        return is_third_party(self.provenance)
+
+    @property
     def anchor(self) -> datetime:
         """The capture instant in the note's LOCAL time — what "this morning" in a note
         resolves against (`pipeline.local_anchor`)."""
@@ -543,6 +558,13 @@ class Reading:
     calls: int = 0
     clamped: bool = False
 
+    def mark_incomplete(self) -> None:
+        """The pass tried to say more and the engine refused it — a budget exhausted, a
+        clamp on a call that never ran. Not a `union`: no call landed, so `calls` must not
+        move; what moved is the only thing that matters to the gate, which is that this
+        reading is no longer the whole note."""
+        self.clamped = True
+
     def union(
         self, *, title: str, tags: Sequence[str], fact_ids: Sequence[str], clamped: bool
     ) -> None:
@@ -557,7 +579,10 @@ class Reading:
         for tag in tags:
             if tag not in seen_tags:
                 seen_tags.append(tag)
-        self.tags = tuple(seen_tags)
+        # Re-clamped, not just deduplicated: `_tags` caps ONE call, and a long note takes
+        # up to `READING_CALL_BUDGET` of them, so the union of six capped lists is six
+        # times the cap. `MAX_TAGS` is a property of the note, not of the call.
+        self.tags = tuple(seen_tags[:MAX_TAGS])
         seen_ids = list(self.fact_ids)
         for fact_id in fact_ids:
             if fact_id not in seen_ids:
@@ -614,6 +639,17 @@ class NoteGraphWriter:
         self._target = target
         self._write_ctx = write_ctx
         self._read_scopes = frozenset(read_scopes)
+        # The session the module READS the graph on, and it is not the one it writes on.
+        # The write session is the owner at full scope by design (constraint 2: layer 1
+        # of resolution carries no domain predicate, so narrowing it mints duplicates) —
+        # but a READ has no such need, and CLAUDE.md #3 wants the firewall enforced in
+        # Postgres rather than in a WHERE clause a later edit can drop. `owner_scoped`
+        # is migration 0015's narrowing of the owner himself, so this is the same lock
+        # the conversation's own turns run under. Empty `read_scopes` therefore sees
+        # nothing, which is the correct reading of "this conversation may read nothing".
+        self._read_ctx = replace(
+            write_ctx, domain_scopes=tuple(sorted(read_scopes)), owner_scoped=True
+        )
         self._extractor = extractor
         self._by_handle: dict[str, Handle] = {}
         self._by_surface: dict[str, Handle] = {}
@@ -734,19 +770,21 @@ class NoteGraphWriter:
             )
         self.resolve_budget.used += 1
 
-        lines: list[str] = []
+        # `str` is a finished line; a `Handle` is a line already emitted whose ON-FILE
+        # block is still to come. The facts are read AFTER the write session closes, on a
+        # session narrowed to the conversation's own scopes — see `_fill_on_file`.
+        rows: list[str | Handle] = []
         refs: list[EntityRef] = []
-        budget = FACTS_PER_RESOLVE
         async with scoped_session(self._maker, self._write_ctx) as session:
             chunks = await self._load_note(session)
             for idx, item in enumerate(items):
                 surface = _text(item, "surface", "name", "entity")
                 if not surface:
-                    lines.append(f"err  entities[{idx}]: no surface. Give the name as written.")
+                    rows.append(f"err  entities[{idx}]: no surface. Give the name as written.")
                     continue
                 known = self.lookup(surface)
                 if known is not None:
-                    lines.append(f"{known.handle}  {known.label} — already resolved this note")
+                    rows.append(f"{known.handle}  {known.label} — already resolved this note")
                     refs.append(_entity_ref(known))
                     continue
                 kind = _KIND_HINTS.get(_text(item, "kind", "type").casefold(), _DEFAULT_KIND)
@@ -771,29 +809,28 @@ class NoteGraphWriter:
                         )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.resolve_failed", surface=surface, error=repr(exc))
-                    lines.append(f"err  entities[{idx}] '{surface}': not resolved (internal).")
+                    rows.append(f"err  entities[{idx}] '{surface}': not resolved (internal).")
                     continue
                 if handle is None:
-                    lines.append(
+                    named = _candidate_note(
+                        await self._candidates(session, surface), self._read_scopes
+                    )
+                    rows.append(
                         f"err  entities[{idx}] '{surface}': several of the owner's entities"
-                        " share that name, so this is ambiguous."
-                        f"{_candidate_note(await self._candidates(session, surface))}"
-                        " Re-send it with `distinguish` set to what the note says about"
-                        " which one, or leave it out and ask the owner."
+                        f" share that name, so this is ambiguous.{named} Re-send it with"
+                        " `distinguish` set to what the note says about which one, or"
+                        " leave it out and ask the owner."
                     )
                     continue
                 self._remember(handle)
-                lines.append(
+                rows.append(
                     f"{handle.handle}  {handle.label} [{handle.kind}] ({handle.domain}) —"
                     f" {'new entity' if handle.entity.created else 'already known'}"
                 )
-                if not handle.entity.created and budget > 0:
-                    on_file = await self._current_facts(
-                        session, handle, min(budget, FACTS_PER_ENTITY)
-                    )
-                    budget -= len(on_file)
-                    lines.extend(on_file)
+                if not handle.entity.created:
+                    rows.append(handle)
                 refs.append(_entity_ref(handle))
+        lines = await self._fill_on_file(rows)
         if clamped:
             lines.append(
                 f"note  only the first {MAX_ENTITIES} surfaces were taken; send the rest in a"
@@ -909,23 +946,63 @@ class NoteGraphWriter:
             for r in rows
         ]
 
-    async def _current_facts(self, session: AsyncSession, handle: Handle, cap: int) -> list[str]:
-        """What the graph already says about a resolved entity, newest state first.
+    async def _fill_on_file(self, rows: Sequence[str | Handle]) -> list[str]:
+        """Render the resolve result, reading each already-known entity's current facts.
 
-        Narrowed to the conversation's own read scopes TWICE, and both are needed
-        (constraint 2). The entity's domain is the first: a general note's thread gets a
-        health entity's handle and never its name, so it must not get its graph either.
-        The FACT's domain is the second, and it is the one an entity check alone would
-        miss — `Me` is a `general` entity carrying floored `health` and `finance` facts,
-        so filtering on the subject would hand a general note's thread the owner's
-        medications. The write session is the owner at full scope by design (resolution
-        layer 1 carries no domain predicate), so this narrowing is the module's own, the
-        way the withheld NAME already is.
+        Two-phase on purpose. The reads run AFTER the write session closes and on a
+        DIFFERENT session — `self._read_ctx`, the owner narrowed to this conversation's
+        own domain scopes — so what may come back is decided by Postgres RLS rather than
+        by a predicate in this file (CLAUDE.md #3). The write session cannot be that
+        session: resolution layer 1 carries no domain predicate, and narrowing it would
+        mint duplicates of entities the owner already has (constraint 2).
+
+        One budget for the whole call, spent in the order the model sent its surfaces."""
+        # Short-circuit rather than open a session that can only come back empty: a note
+        # a stranger wrote gets no on-file block at all, and neither does a call whose
+        # every handle is new or out of scope. The withholding RULES live in
+        # `_current_facts`, which still applies each of them per entity — this is only
+        # about not paying for a connection to be told nothing.
+        if self._target.is_third_party or not any(
+            isinstance(row, Handle) and row.visible for row in rows
+        ):
+            return [row for row in rows if isinstance(row, str)]
+        lines: list[str] = []
+        budget = FACTS_PER_RESOLVE
+        async with scoped_session(self._maker, self._read_ctx) as reads:
+            for row in rows:
+                if isinstance(row, str):
+                    lines.append(row)
+                    continue
+                found, shown = await self._current_facts(reads, row, min(budget, FACTS_PER_ENTITY))
+                budget -= shown
+                lines.extend(found)
+        return lines
+
+    async def _current_facts(
+        self, session: AsyncSession, handle: Handle, cap: int
+    ) -> tuple[list[str], int]:
+        """What the graph already says about a resolved entity, newest state first, and
+        how much of the caller's budget that spent — the "…more on file" pointer is a
+        line and is not a fact.
+
+        Narrowed to the conversation's own read scopes THREE ways, none of which is
+        redundant. RLS on the caller's session is the ENFORCEMENT (`_fill_on_file`). The
+        FACT's domain is asserted here as well, so the narrowing is legible where the
+        query is and a session widened by a later edit does not silently widen this: it is
+        also the check an entity-level test alone would miss, since `Me` is a `general`
+        entity carrying floored `health` and `finance` facts and filtering on the SUBJECT
+        would hand a general note's thread the owner's medications. And `handle.visible`
+        is the entity's own domain — the same narrowing that already withholds a
+        cross-domain entity's NAME.
+
+        Withheld entirely on a THIRD-PARTY note: this returns graph CONTENT into a thread
+        whose turn 0 a stranger wrote, and the third-party set drops
+        `search`/`read_note`/`relate` for exactly that reason (D10, `agents.py`).
 
         The cap is the caller's remaining per-call budget, and when it bites the line says
         so and names the read that lifts it — an agent that wants the rest has a verb."""
-        if not handle.visible or cap <= 0:
-            return []
+        if not handle.visible or cap <= 0 or self._target.is_third_party:
+            return [], 0
         rows = (
             await session.execute(
                 text(
@@ -950,9 +1027,10 @@ class NoteGraphWriter:
             f"     on file: {r.predicate}{'.' + r.qualifier if r.qualifier else ''} — {r.statement}"
             for r in rows[:cap]
         ]
+        shown = len(lines)
         if lines and len(rows) > cap:
             lines.append(f"     …more on file — read_entity {handle.entity.id} for the rest")
-        return lines
+        return lines, shown
 
     # --- assert_fact -----------------------------------------------------------
 
@@ -1029,6 +1107,12 @@ class NoteGraphWriter:
                 " when_end, quote} objects. Nothing was recorded."
             )
         if self.reading_budget.exhausted:
+            # LATCH before returning. A pass that still had facts to state and was refused
+            # the call has produced a prefix of the note, exactly as a clamped call does —
+            # and the failure of NOT latching here is the worst one this design has: the
+            # settle would read a `Reading` that says "complete, unclamped" and retract
+            # the tail the budget refused to let the model write.
+            self.reading.mark_incomplete()
             return ToolOutput(
                 "close_reading is out of budget for this note. Say what is left"
                 " unrecorded rather than reading it again."
@@ -1291,7 +1375,13 @@ class NoteGraphWriter:
         # keyed on (phrase, start), and `_token_for_fact` then finds that key rather than
         # minting a second token — which is how the RRULE reaches the fact's own row.
         tokens: list[ExtractedToken] = []
-        if read_recurrence and attested:
+        # NOT on a note a stranger wrote. D10 permits a stranger's words to cause a FACT
+        # and nothing else, and a recurrence token is more than one: it is what
+        # `appointment_projection._recurrence_rrule` turns into a repeating entry on the
+        # calendar the owner's phone subscribes to, which is a durable, recurring
+        # consequence of un-reviewed text. The fact still commits, with the dates it had —
+        # the same shape as every other refusal in this path.
+        if read_recurrence and attested and not self._target.is_third_party:
             repeats = parse_recurrence(_text(item, "quote", "span", "evidence"))
             if repeats is not None:
                 # An undated recurring note ("gym every Tuesday and Thursday") gives the
@@ -1549,24 +1639,36 @@ def _entity_ref(handle: Handle) -> EntityRef:
     )
 
 
-def _candidate_note(candidates: Sequence[Candidate]) -> str:
-    """The candidates, named. The card that used to carry them is going away (§2), and
-    naming them is half of what replaces it — the other half is `distinguish`, which the
-    agent cannot use against a list it cannot see.
+def _candidate_note(candidates: Sequence[Candidate], read_scopes: frozenset[str]) -> str:
+    """The candidates, named — and only the ones this conversation may see.
 
-    Every candidate matched the note's own surface, so the NAME is already something the
-    note said; what is added is the kind and the summary, which is what tells two of them
-    apart. `_disambiguate` assembles the same four fields for the cheap model that has
-    been making this call without the note in front of it (O7)."""
+    The card that used to carry them is going away (§2), and naming them is half of what
+    replaces it; the other half is `distinguish`, which the agent cannot use against a
+    list it cannot see. What each named candidate adds over the note's own surface is the
+    kind and the summary, which is what tells two of them apart — and that is exactly what
+    a cross-domain row must not hand over. `Handle.visible` withholds a health entity's
+    canonical NAME from a general note's thread; an ambiguity result that printed
+    "Dr. Anjali Renwick (Person, oncologist at Kaiser)" beside it would be the same
+    disclosure through the branch where resolution FAILED.
+
+    A hidden candidate is still COUNTED, because its existence is already disclosed on the
+    path where the same surface resolves — the thread is told a handle is "already known"
+    without being told to what — and the count is what tells the agent that
+    `distinguish` has something to choose from."""
     if not candidates:
         return ""
+    visible = [c for c in candidates if c.domain in read_scopes]
+    hidden = len(candidates) - len(visible)
     shown = [
         f"{c.name} ({c.kind}{', ' + c.summary if c.summary else ''})"
-        for c in candidates[:MAX_CANDIDATES]
+        for c in visible[:MAX_CANDIDATES]
     ]
-    rest = len(candidates) - MAX_CANDIDATES
-    more = f" and {rest} more" if rest > 0 else ""
-    return f" It could be: {'; '.join(shown)}{more}."
+    rest = len(visible) - MAX_CANDIDATES
+    if rest > 0:
+        shown.append(f"{rest} more")
+    if hidden:
+        shown.append(f"{hidden} in a domain this note cannot see")
+    return f" It could be: {'; '.join(shown)}."
 
 
 def _distinguish(candidates: Sequence[Candidate], detail: str) -> Candidate | None:
@@ -1641,7 +1743,16 @@ def _batch(
     """The batch, clamped. A bare string element (the model sending `["Dana"]` for a
     two-field shape) is lifted into a one-key object rather than dropped, and the clamp
     is REPORTED because `maxItems` is not reliably compiled into llama.cpp's tool
-    grammar — the handler is the only real ceiling."""
+    grammar — the handler is the only real ceiling.
+
+    **A DROPPED element reports as a clamp too**, and the flag is computed against what
+    the model SENT rather than against what survived reading it. An element this cannot
+    read — a `null`, a bare number, a nested list — is one the model meant to land and
+    that did not, which is the same fact about the result as a truncation and matters more
+    on a reading: `facts: [{…}, null, {…}]` reported two facts recorded and no truncation,
+    which is a reading claiming to be the whole note while missing a fact the model wrote.
+    (This is the one silent loss the clamp signal CAN carry; the plan's O13 — the fact the
+    model never writes at all — it cannot, and the two are different populations.)"""
     raw: Any = None
     for key in keys:
         if isinstance(arguments.get(key), list):
@@ -1655,7 +1766,7 @@ def _batch(
             items.append(element)
         elif isinstance(element, str) and element.strip():
             items.append({"surface": element.strip(), "subject": element.strip()})
-    return items[:cap], len(items) > cap
+    return items[:cap], len(raw) > cap or len(items) < len(raw)
 
 
 @dataclass

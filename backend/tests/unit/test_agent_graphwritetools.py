@@ -288,8 +288,30 @@ def test_the_batch_is_clamped_by_the_handler_not_by_max_items() -> None:
 def test_a_bare_string_element_is_lifted_rather_than_dropped() -> None:
     """A model that sends `["Dana"]` for a two-field shape has named a real surface. The
     schema asks for objects; dropping the element loses the entity outright."""
-    items, _ = gw._batch({"entities": ["Dana", "  ", 7]}, ("entities",), 12)
+    items, clamped = gw._batch({"entities": ["Dana", "  ", 7]}, ("entities",), 12)
     assert items == [{"surface": "Dana", "subject": "Dana"}]
+    # The two elements that could NOT be lifted are a loss, and the clamp is what says
+    # so — see below.
+    assert clamped is True
+
+
+def test_an_element_this_cannot_read_reports_as_a_clamp() -> None:
+    """The silent loss the clamp signal CAN carry. `facts: [{…}, null, {…}]` used to
+    report two facts recorded and no truncation, because the flag was computed AFTER the
+    unreadable element had been dropped — so a reading claimed to be the whole note while
+    missing a fact the model had written. The flag is now computed against what the model
+    SENT.
+
+    (The plan's O13 — the fact the model never writes at all — this cannot carry, and the
+    populations really are disjoint: one is about elements that arrived.)"""
+    items, clamped = gw._batch(
+        {"facts": [{"subject": "e1"}, None, {"subject": "e2"}]}, ("facts",), 8
+    )
+    assert len(items) == 2
+    assert clamped is True
+    # A batch that arrived whole is still not truncated, or the flag says nothing.
+    _clean, ok = gw._batch({"facts": [{"subject": "e1"}]}, ("facts",), 8)
+    assert ok is False
 
 
 def test_no_batch_key_reads_as_an_empty_batch_never_a_crash() -> None:
@@ -677,11 +699,13 @@ def test_tags_are_normalized_deduplicated_and_capped() -> None:
     assert gw._tags({}) == ()
 
 
-def _candidate(name: str, kind: str = "Person", summary: str = "") -> gw.Candidate:
+def _candidate(
+    name: str, kind: str = "Person", summary: str = "", domain: str = "general"
+) -> gw.Candidate:
     import uuid as _uuid
 
     return gw.Candidate(
-        id=_uuid.uuid4(), subject_id=None, name=name, kind=kind, summary=summary, domain="general"
+        id=_uuid.uuid4(), subject_id=None, name=name, kind=kind, summary=summary, domain=domain
     )
 
 
@@ -711,6 +735,9 @@ def test_distinguish_narrows_to_one_candidate_or_refuses() -> None:
     assert gw._distinguish([], "Dana Whitfield") is None
 
 
+_GENERAL = frozenset({"general"})
+
+
 def test_the_ambiguity_result_names_the_candidates() -> None:
     """The card named them and the tool result did not (§2, `ambiguous_mention`), so the
     agent was refused an answer it was never given the means to give. The names, kinds and
@@ -720,12 +747,42 @@ def test_the_ambiguity_result_names_the_candidates() -> None:
         [
             _candidate("Dana Whitfield", summary="staff engineer at Everlane"),
             _candidate("Dana Reyes", summary="cardiologist in Boulder"),
-        ]
+        ],
+        _GENERAL,
     )
     assert "Dana Whitfield (Person, staff engineer at Everlane)" in line
     assert "Dana Reyes (Person, cardiologist in Boulder)" in line
     # Bounded: past a handful the list stops being a question anyone can answer.
-    many = gw._candidate_note([_candidate(f"Dana {i}") for i in range(9)])
-    assert many.count(";") == gw.MAX_CANDIDATES - 1
-    assert f"and {9 - gw.MAX_CANDIDATES} more" in many
-    assert gw._candidate_note([]) == ""
+    many = gw._candidate_note([_candidate(f"Dana {i}") for i in range(9)], _GENERAL)
+    assert many.count(";") == gw.MAX_CANDIDATES
+    assert f"{9 - gw.MAX_CANDIDATES} more" in many
+    assert gw._candidate_note([], _GENERAL) == ""
+
+
+def test_a_candidate_outside_the_conversations_scopes_is_counted_never_named() -> None:
+    """The branch `Handle.visible` does not cover, and it renders exactly what that check
+    exists to withhold: an ambiguity result printing "Dr. Anjali Renwick (Person,
+    oncologist at Kaiser)" discloses through the FAILED resolution what the successful one
+    is careful never to say.
+
+    Counted rather than dropped, because the count is not the disclosure: the same surface
+    resolving cleanly already tells the thread a handle is "already known" without saying
+    to what, and the agent needs to know `distinguish` has something to choose from."""
+    line = gw._candidate_note(
+        [
+            _candidate("Dana Whitfield", summary="staff engineer at Everlane"),
+            _candidate("Dr. Anjali Renwick", summary="oncologist at Kaiser", domain="health"),
+        ],
+        _GENERAL,
+    )
+    assert "Dana Whitfield (Person, staff engineer at Everlane)" in line
+    assert "Anjali" not in line and "oncologist" not in line
+    assert "1 in a domain this note cannot see" in line
+    # And when EVERY candidate is out of scope, the COUNT still comes back: it says
+    # nothing about which domain or whose row, and it is the difference between "ask the
+    # owner, I cannot see them" and a bare refusal the agent would try to answer.
+    both_hidden = gw._candidate_note(
+        [_candidate("Renwick", domain="health"), _candidate("Renwick", domain="health")],
+        _GENERAL,
+    )
+    assert both_hidden == " It could be: 2 in a domain this note cannot see."

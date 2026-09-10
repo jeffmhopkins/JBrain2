@@ -27,13 +27,19 @@ the fact and the span it rests on, and this module reads the rule out of that sp
    nothing in between to catch it. `parse_rrule` is that catch, and it is the same strict
    RFC-5545 RECUR reader R0 scored the model's own output with.
 
-**And one refusal that is NOT in the probe's reference parser, because the probe never
-had to be wrong.** Its five notes all recur, so a bare weekday could safely mean a weekly
+**And the refusals are NOT in the probe's reference parser, because the probe never had
+to be wrong.** Its five notes all recur, so a bare weekday could safely mean a weekly
 rule; in production "coffee with Dana on Tuesday" is a single appointment, and reading a
 weekly rule out of it would put a phantom every-Tuesday event on the owner's calendar
 forever. So a recurrence MARKER is required — `every`/`each`, a PLURAL weekday, a
 frequency adverb, `weekdays`/`weekends`, or an nth-of-the-month — and a singular weekday
 alone is not one.
+
+A marker is necessary and it is not sufficient, which is the correction this module took
+on review: a plural weekday can name PAST occasions ("he called me the last two
+Tuesdays"), and every marker can sit inside a span the note itself bounds in words no
+parser can date ("every Tuesday in March", "every Monday while the cast is on"). Both are
+refusals, `_RETROSPECTIVE` and `_BOUNDED`, and both fail toward silence.
 """
 
 from __future__ import annotations
@@ -161,9 +167,18 @@ _DAY_PLURAL: tuple[tuple[str, str], ...] = (
 )
 _ANY_DAY = "|".join(p for _, p in _DAY_ANY)
 _ANY_PLURAL = "|".join(p for _, p in _DAY_PLURAL)
+# EVERY day token carries its own trailing `\b`, and that word boundary is load-bearing
+# rather than tidy: without it `mon(?:day)?s?` matches the first three letters of
+# "month", so "blood pressure check every month" read as FREQ=WEEKLY;BYDAY=MO — a
+# monthly check as a weekly Monday event on the owner's subscribed calendar, forever,
+# reported back to the model as a rule it had stated. `parse_rrule` cannot catch that:
+# the rule is well formed, it is just about a different thing. Same boundary, same
+# reason, on the trailing-days group: "every two weeks Monterey trip" was BYDAY=MO.
+_DAY_ONE = rf"(?:{_ANY_DAY})\b"
+_PLURAL_ONE = rf"(?:{_ANY_PLURAL})\b"
 _JOIN = r"(?:\s*(?:,|and|&|/|\+)\s*)"
-_DAY_LIST = rf"(?:{_ANY_DAY})(?:{_JOIN}(?:{_ANY_DAY}))*"
-_PLURAL_LIST = rf"(?:{_ANY_PLURAL})(?:{_JOIN}(?:{_ANY_PLURAL}))*"
+_DAY_LIST = rf"{_DAY_ONE}(?:{_JOIN}{_DAY_ONE})*"
+_PLURAL_LIST = rf"{_PLURAL_ONE}(?:{_JOIN}{_PLURAL_ONE})*"
 
 _LONG_DAYS = dict(
     zip(
@@ -179,8 +194,11 @@ _NUMBER_WORDS = {
     "four": 4,
     "five": 5,
     "six": 6,
+    "seven": 7,
     "eight": 8,
+    "nine": 9,
     "ten": 10,
+    "eleven": 11,
     "twelve": 12,
 }
 _UNIT_FREQ = {"day": "DAILY", "week": "WEEKLY", "month": "MONTHLY", "year": "YEARLY"}
@@ -208,9 +226,39 @@ _ADVERB: dict[str, tuple[str, int]] = {
 # note does not say, and it says it on the owner's calendar forever. (The probe's
 # reference parser kept these by putting the raw English in `UNTIL`, which `parse_rrule`
 # rejects; that arm was scoring whether the INFORMATION survives, not writing rows.)
+_MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
+_COUNTS = "|".join(
+    ("next", "another", "rest", "remainder", "a", "few", r"\d+", "one", *_NUMBER_WORDS)
+)
 _BOUNDED = re.compile(
-    r"\b(?:until|untill|til|till|through|thru|ending|ends|ended|stops|stopping|"
-    r"for\s+(?:the\s+)?(?:next|another|\d+|one|two|three|four|five|six|eight|ten|twelve))\b"
+    r"\b(?:"
+    # An explicit end.
+    r"until|untill|til|till|through|thru|ending|ends|ended|stops|stopping|"
+    # A CONDITION rather than a schedule — "while the cast is on", "during chemo".
+    r"while|during|"
+    # A count of repetitions. The number vocabulary is shared with `_NUMBER_WORDS` so
+    # the two can never drift apart: "physio every two days" parses and "physio every
+    # day for nine days" must not, and the second was one number-word away from the
+    # first in this module's own corpus.
+    rf"for\s+(?:the\s+)?(?:a\s+few|{_COUNTS})|"
+    # A named window. "every Tuesday in March", "gym every Tuesday this month", "yoga
+    # Wednesdays over the summer" — each is a rule with an end the note states in words
+    # this cannot date.
+    r"this\s+(?:week|month|year|term|semester|summer|winter|spring|fall|autumn|season)|"
+    r"over\s+the\s+\w+|"
+    rf"in\s+(?:{_MONTHS})"
+    r")\b"
+)
+
+# The RETROSPECTIVE refusal, which is not a bound at all: it is a span that names PAST
+# occasions. "He called me the last two Tuesdays" is a plural weekday — this module's
+# own stated marker for a rule — describing something that has already stopped, and
+# reading a rule out of it puts a weekly event in the owner's future. Singular
+# ordinals survive ("the last Friday of the month" is an nth-of-month rule), which is
+# why this requires a PLURAL day or a plural period.
+_RETROSPECTIVE = re.compile(
+    rf"\b(?:last|past|previous|these)\s+(?:(?:{'|'.join(_NUMBER_WORDS)}|\d+|few|several)\s+)?"
+    rf"(?:{_ANY_PLURAL}|weeks|months|years)\b"
 )
 
 
@@ -332,12 +380,17 @@ _CLAUSES: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str | None]], .
         re.compile(r"\b(?:(?:every|each)\s+weekend|weekends)\b"),
         lambda _m: _rule("WEEKLY", byday="SA,SU"),
     ),
+    # `(?<![\w-])` and not `\b`: a hyphen IS a word boundary, so `semi-annual` matched
+    # `annual` and `tri-weekly` matches `weekly` — a compound built on the word means
+    # something the word does not, and none of them are rules this can read. The spelled
+    # compounds it DOES know (`bi-weekly`) are keys of their own and match at their own
+    # first letter, where the lookbehind sees a space.
     (
-        re.compile(rf"\b(?P<word>{'|'.join(_ADVERB)})\b(?:\s+on\s+(?P<days>{_DAY_LIST}))?"),
+        re.compile(rf"(?<![\w-])(?P<word>{'|'.join(_ADVERB)})\b(?:\s+on\s+(?P<days>{_DAY_LIST}))?"),
         _adverb,
     ),
-    (re.compile(rf"\b(?P<days>{_PLURAL_LIST})\b"), _every_days),
-    (re.compile(r"\bannual\b"), lambda _m: _rule("YEARLY")),
+    (re.compile(rf"\b(?P<days>{_PLURAL_LIST})"), _every_days),
+    (re.compile(r"(?<![\w-])annual\b"), lambda _m: _rule("YEARLY")),
 )
 
 
@@ -370,8 +423,11 @@ def parse_recurrence(text: str) -> Recurrence | None:
       `every`/`each`, a PLURAL weekday, a frequency adverb, `weekdays`/`weekends` or an
       nth-of-the-month shape, so a span that states an occasion ("coffee with Dana on
       Tuesday") matches none of them and reads as no rule at all.
-    - **a bound this cannot date.** "Tuesdays until March", "every day for two weeks" —
-      see `_BOUNDED`.
+    - **a bound this cannot date.** "Tuesdays until March", "every day for nine days",
+      "every Tuesday in March", "every Monday while the cast is on" — see `_BOUNDED`.
+    - **a span that names PAST occasions.** "He called me the last two Tuesdays" wears
+      this module's own marker for a rule and describes something already over — see
+      `_RETROSPECTIVE`.
     - **two different rules in one span.** A span that states both "every Tuesday" and
       "the first Monday of the month" is a fact the reading should have split; picking
       one of them silently is the failure mode this module exists to avoid.
@@ -379,7 +435,7 @@ def parse_recurrence(text: str) -> Recurrence | None:
       builders are allowed to be simple against.
     """
     body = _expand_day_range(" ".join(text.lower().split()))
-    if not body or _BOUNDED.search(body) is not None:
+    if not body or _BOUNDED.search(body) is not None or _RETROSPECTIVE.search(body) is not None:
         return None
     first = _first_clause(body)
     if first is None:

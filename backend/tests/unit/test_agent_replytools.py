@@ -225,7 +225,16 @@ def test_the_frame_is_keyed_on_the_turns_write_authority_not_its_persona() -> No
     graph, so the trigger asks the turn (`ToolContext.agent_tools`, the loop's admitted
     set) rather than guessing at who wired what — the same mechanical-boundary idiom
     `jmoltobservetools` uses."""
-    assert {"assert_fact", "correct_fact", "prefs_write"} == GRAPH_WRITE_AUTHORITY
+    assert {
+        "assert_fact",
+        # R1's reading is `assert_fact`'s write authority under another name — same
+        # `_assert_one`, same `commit_facts`, same `decide()` — so a set holding one and
+        # not the other frames a fetched body for one write verb and not its twin. It is
+        # what R2 leaves behind when `assert_fact` comes off the unattended pass.
+        "close_reading",
+        "correct_fact",
+        "prefs_write",
+    } == GRAPH_WRITE_AUTHORITY
     assert not _holds_graph_writes(_ctx())
     for verb in GRAPH_WRITE_AUTHORITY:
         assert _holds_graph_writes(
