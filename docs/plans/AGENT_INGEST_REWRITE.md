@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0◻️ R1◻️ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0◻️ R1◻️ R1b◻️ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -23,6 +23,14 @@ scenarios read as permanent limits, and `W5_PRECONDITIONS.md`'s COALESCE-seam /
 first-line-title / keep-the-analyzer's-title-half recommendations. They were correct
 answers to *"how do we take this out without breaking the corpus"*. There is no corpus
 to break.
+
+A second owner decision, settled the same way and folded in here: **"the agent asks when
+it isn't sure, one channel."** That replaces D2's *commit clear facts, ask only when
+blocked* with something stronger — **uncertainty reaches the owner as a CONVERSATION,
+never as a card** — and it turns the write path's "I could not settle this" from a row the
+owner adjudicates into a RESULT the agent reads and acts on. §2 works out what it costs;
+the short answer is that it shrinks the plan, the tool surface and the schema, and most of
+it is already built.
 
 What does NOT change: the binding constraints of the parent plan that are properties of
 the box rather than of the old path — **no JSON-Schema `enum` anywhere in a tool
@@ -99,7 +107,7 @@ Everything the teardown was blocked on collapses into it:
 | Precondition 3, `note_analysis` title/tags | `title` and `tags` are two more fields on the same call, exactly as they are two more keys on `note.extract`'s JSON. |
 | `app.temporal_tokens` losing its only producer | The reading carries `when` / `when_end` / `repeats`, so `_upsert_tokens` has input again. |
 | Appointment recurrence (RRULE read off the fact's token, `appointment_projection.py:422-438`) | `repeats` — the one genuinely NEW field the surface needs. |
-| The settle's two review-card halves being unreachable from the conversation (`pipeline.py:1180-1187`: they "want the `extraction` the conversation does not have") | The conversation now has one. `_sweep_stale_ambiguous` and `_sync_truncation_review` move onto it. |
+| The settle's two review-card halves being unreachable from the conversation (`pipeline.py:1180-1187`: they "want the `extraction` the conversation does not have") | Moot, twice over. The conversation now HAS an extraction — and the one-channel decision deletes both halves outright (§2), so the settle is three steps rather than five. |
 | A key-based sweep as a *new mechanism* with its own failure surface (`W5_PRECONDITIONS.md` §4(a)) | Not needed. The reading COMMITS, so it produces ids, so the shipped id-based sweep works. |
 
 That last row is the one worth dwelling on. `W5_PRECONDITIONS.md` §4(a) worried that an
@@ -152,15 +160,18 @@ The sweep fires **iff** all of:
 - the pass produced at least one `close_reading` call, and
 - the pass ended cleanly — `state_for_stop` gave `SETTLED` (not truncated, not
   `waiting_on_owner`, not `record_failed`), and
-- no `close_reading` call reported a clamp.
+- no `close_reading` call reported a clamp, and
+- the pass is not on the third-party surface.
 
-That third clause is `_batch`'s existing clamp report (`graphwritetools.py:1198-1218`),
-promoted from a cosmetic result line to a safety gate. `_batch`'s own docstring is the
-reason it must be: *"`maxItems` is not reliably compiled into llama.cpp's tool grammar —
-the handler is the only real ceiling."* A clamped reading is a PREFIX of the note, and a
-sweep against a prefix retracts the tail. A clamp files a `reading_truncated` card
-instead — which is `_sync_truncation_review` doing the job it already does for
-`extraction.dropped_facts` (`pipeline.py:1496`), against a different truncation signal.
+...and, on a third-party note, the pass is not third-party (§2, "where one channel has no
+channel").
+
+The clamp clause is `_batch`'s existing report (`graphwritetools.py:1198-1218`), promoted
+from a cosmetic result line to a safety gate. `_batch`'s own docstring is the reason it
+must be: *"`maxItems` is not reliably compiled into llama.cpp's tool grammar — the handler
+is the only real ceiling."* A clamped reading is a PREFIX of the note, and a sweep against
+a prefix retracts the tail. **A clamp files no card** — the agent says so in the thread;
+see "The clamped pass" below.
 
 **Fail toward not sweeping.** Every degraded ending — truncation, a park on `ask_owner`,
 a failed ledger record, a clamp, a pass that simply never called `close_reading` —
@@ -171,7 +182,8 @@ new mechanism degrades to the state the box is in today rather than to data loss
 
 ### Where `ask_owner` fits, and why the S3 failure-4 shape cannot recur
 
-The agent asks only when it cannot proceed (D2). The pass parks `waiting_on_owner`,
+The agent asks whenever it is not sure — the one-channel rule, which widens D2's "only
+when blocked" and is worked out in "One channel" below. The pass parks `waiting_on_owner`,
 unbounded and deliberately never reaped (`models/note_conversation.py:70-71`). It stamps
 and flips; it does not sweep. The owner's answer is appended as a timestamped
 clarification block (D6, `app.note_clarifications`), the note re-ingests, and the reply
@@ -251,28 +263,164 @@ complete reading — and that `app.temporal_tokens` starts being written again, 
 `appointment_projection._recurrence_rrule` (`:422-438`) has an RRULE to read and a
 recurring appointment stops projecting as a one-off.
 
-### What the review inbox is for
+### One channel — the write path REPORTS, the agent DECIDES, the owner is asked
 
-Narrower than today, and honestly so. Surviving card kinds and their producers:
+The owner settled this after it was put to them explicitly: **"the agent asks when it
+isn't sure, one channel."** That is stronger than D2 (*commit clear facts, ask only when
+blocked*) and it replaces it. **Uncertainty reaches the owner as a CONVERSATION, never as
+a card.** A card is a second channel to the owner, adjudicated somewhere the note is not,
+by a person who has to reconstruct what the sentence meant — and it exists because the
+deterministic write path had no one to tell.
 
-| Kind | Filed by | Survives |
+**The structural change.** Today `supersession.decide()` both DECIDES and FILES: it hits
+a conflict, picks `pending_review`, and `pipeline.py:3042` writes a `ReviewItem` the owner
+later adjudicates. Under one channel it reports and stops. What it could not settle
+becomes a **tool result the agent reads**, and the agent decides — because the agent has
+what `decide()` never had: the note's full text, the graph it just read, and a channel to
+the owner.
+
+**Most of this is already built, which is the finding that makes the change small.**
+`_upsert_fact` already returns `FactWrite(hold_reason=decision.review_kind,
+conflicting=conflict.statement)` (`pipeline.py:2992-2999`), and `_write_line` already
+renders it to the model as:
+
+> `held  Me.homeLocation → 412 Oak St — clashes with <the other statement> (fact_conflict)
+> — recorded but NOT live. Ask the owner which is right`
+> — `graphwritetools.py:1094-1100`
+
+The agent-facing channel exists, carries the reason AND the conflicting statement, and
+already tells the agent to ask. The card is filed **beside** it, from the `if
+decision.review_kind is not None:` block immediately below the same branch
+(`pipeline.py:3042`, and its twin on the inverse path at `:3259`). **Removing the second
+channel is deleting those two blocks**, plus the wording change that turns "Ask the owner
+which is right" from advice into the pass's obligation.
+
+`decide()` stays authoritative on what LANDS. Constraint 5 is untouched: supersession is
+the implementation of a write tool and never a model-facing verb, so the model cannot
+force a supersede, cannot un-hold a held row, and cannot set `pinned`. What moves is only
+who is told.
+
+#### Every `decide()` card site, and what it becomes
+
+| Site | Today | Becomes |
 |---|---|---|
-| `fact_conflict` | `supersession.decide()` (8 sites) | yes — constraint 4, and `_lab_status_transition` needs `pending_review` regardless |
-| `attribute_collision` | `supersession.decide()` (`:663`, `:671`) | yes — the only thing between an undeclared measurement and a silent overwrite |
-| `low_confidence` | `supersession.decide()` (`:477`, `:778`, `:830`) | yes — the v3 `confidence` channel's consumer |
-| `ambiguous_mention` | `_file_ambiguous_review`, inside `_resolve_entities` (`pipeline.py:1628`) | **yes** — a correction to the parent plan, which listed this as an arbiter kind. It is on the RESOLVE path `commit_facts` runs, so the conversation files it today. |
-| `confirm_entity` | `_file_confirm_entity_card` (`pipeline.py:1962`) | yes |
-| `merge_proposal` / `distinct_from` | `_propose_merge` / `_propose_near_duplicate` (`pipeline.py:2037`, `:2069`), `merge_entities` staging | yes |
-| `extraction_truncated` → `reading_truncated` | `_sync_truncation_review`, re-keyed onto the clamp/step-limit signal | yes, renamed |
-| `low_confidence_inference` | `_file_inference_reviews` (`pipeline.py:791`) — the arbiter's I5 net | **dies with the arbiter's model half**, unless EMR keeps it (O1) |
-| `new_predicate` | the pre-two-tier consolidation loop; `worker.py:531` already retires the open backlog | dies — superseded by the two-tier model in `ENTITY_GRAPH_REFOCUS_PLAN.md` |
+| `supersession.py:648` — event/measurement, same instant, different value | `fact_conflict` + hold | **result.** "same metric at the same instant, different value — held." The agent has both readings in front of it and either re-reads the note or asks. |
+| `:662` — attribute whose current head is PINNED | `attribute_collision` + hold | **result.** "the owner pinned a different value here." The agent must not argue with a pin; it asks. |
+| `:669` — attribute collision, BOTH sides held | `attribute_collision` + hold both | **result, and it must say the OTHER row was held too** — this is the one site that changes existing state, and a result that omits it under-reports what the write did. |
+| `:703` — non-functional edge, opposite-polarity same object | `fact_conflict` + hold | **result.** |
+| `:766` — closed-interval correction of a pinned head | `fact_conflict` + hold | **result.** |
+| `:777` — closed-interval correction below the confidence floor | `low_confidence` + hold | **result** — and see the `confidence` decision in §3: with the model field gone this fires only on the ENGINE's span check, i.e. on a quote the note does not contain, which is a thing the agent can fix by re-quoting. |
+| `:806` — irrealis candidate vs an asserted head | `fact_conflict` + hold | **unreachable from the note path** — the tool surface has no `assertion` field, so only the EMR importer and `correct_fact` can produce an irrealis candidate. Silent for the conversation; kept for those two. |
+| `:814` — open head is PINNED | `fact_conflict` + hold | **result.** |
+| `:829` — open head, candidate below the confidence floor | `low_confidence` + hold | **result**, same note as `:777`. |
+| `:855` — a supersede that is not Lever-B-silent (same-instant, or a `preference`) | `fact_conflict`, **status `active`** | **result, and the clearest case for the change**: the write LANDS LIVE and files a card anyway. That card is pure notification of a thing that already happened. It becomes a line in the result and nothing else. |
+| `pipeline.py:3215` — derived-defers-to-primary on the inverse path | `fact_conflict` + hold | **result**, reported on the fact whose reciprocal was refused. |
+| `supersession.py:476` — `_lab_status_transition`, a preliminary FHIR reading | `low_confidence` | **stays a card, and it is the genuine exception.** It is on the EMR path, and the conversation holds NO graph-write verbs on an `emr_owned` note (`NoteToolset.writes_graph=False`, `graphwritetools.py:1234-1243`) — there is no agent in that room to hand a result to. |
 
-So the inbox is **not** an approval queue and never was under the ratified posture (D2):
-it holds what deterministic code could not settle — a genuine conflict, a collision on one
-identity key, a value read at low legibility, a name that matches several entities, a
-proposed fold — plus the one card that says *"this pass did not see the whole note."*
-D4's two tabs stand: a notes tab that only redirects into the conversation, and a wiki tab
-for findings that never start from a note.
+**What happens to a held row with no card to promote it.** Two routes, both already built:
+a later reading rates it live (`PROMOTED`, `pipeline.py:206` — "a previously held row this
+pass rates live"), or the owner answers and the reply turn's `correct_fact`
+force-supersedes. And it is not invisible in the meantime: `GET /notes/{id}/analysis`
+selects every fact of the note with its `status` and no filter (`analysis/repo.py:146-160`,
+`:234`), so a held row renders on the note's Analysis tab. The thread is the channel at
+the time; the tab is the durable view. No card is load-bearing for either.
+
+#### `ambiguous_mention` and the resolve path
+
+`resolve_entity` **already** returns the ambiguity to the agent, and refuses to guess:
+
+> `err  entities[2] 'Dana': several of the owner's entities share that name, so this is
+> ambiguous. Say which one from the note, or leave it out.`
+> — `graphwritetools.py:632-637`
+
+No handle comes back, so no fact can be written against it — the safety property holds
+without a card. What the result does NOT do is **name the candidates**, while
+`_file_ambiguous_review` files a card that does (`pipeline.py:1778-1787`, `entity_ids`).
+So the card was carrying information the agent needed and was never given. **That is the
+change**: the result names them, and the card goes.
+
+It needs one thing back from the agent, which is §3's second new field: a way to say
+which. Today `resolve_entity` takes `{surface, kind}` and nothing else.
+
+#### What is left in the inbox
+
+The distinction that does the work is not *how confident* — it is **who the notice is
+for**.
+
+- **A question about THIS note's reading** — a conflict, a collision, a low-legibility
+  read, an ambiguous name, a truncated pass. The agent has the note and a channel.
+  **These become results, and the agent asks.** Every card kind above is one of these.
+- **A firewall catch** — `domain_promotion` (`pipeline.py:2963`, a novel predicate the
+  agent asked to file above its note's domain, D18) and `inverse_proposal`
+  (`pipeline.py:3137`, a reciprocal that would land a fact on a DISTINCT security
+  subject's stream, which writes nothing and proposes). **These STAY cards, and handing
+  them to the agent as results would be backwards**: the agent is the party the control
+  fired on. A firewall catch is not a question, it is a notice, and its correct behaviour
+  — wrote nothing, told the owner — is already right. The EMR location firewall's card
+  (`ingest/emr/firewall.py`) is the same shape.
+- **A corpus-scoped proposal** — `confirm_entity` (`pipeline.py:1962`, promoting a
+  corroborated-but-contested provisional entity) and `merge_proposal` / `distinct_from`
+  (`:2037`, `:2069`). Neither is a question about this note.
+  - `merge_proposal` **should become a conversation**: a fold IS a question, the reply
+    turn already holds `merge_entities` (which stages and can never enact, constraint 12),
+    and "I think these two Danas are the same person — want me to fold them?" is a
+    message. The enact stays owner-only and full-owner-only. *Uncertain whether a merge
+    the agent notices on a LATER note should re-open the earlier note's thread or start
+    its own — see O7.*
+  - `confirm_entity` **should go silent.** It is bookkeeping — a provisional entity
+    corroborated by a second note — and the owner has no opinion to contribute. Promote
+    on corroboration or leave it provisional; do not ask.
+- **The wiki linter** — `wiki_contradiction`, `wiki_stale_claim` (`wiki/lint.py:536`,
+  `:671`). Never starts from a note. Stays.
+
+So `review_items` survives (constraint 4 is untouched — `pending_review` as a STATUS is
+what represents a preliminary FHIR lab, and `emr_projection.py` reads it back), and it
+shrinks to **firewall catches plus wiki-lint findings**. Everything a person would call an
+inbox item about their own note becomes a message in that note's thread.
+
+**D4's two tabs collapse to one channel with two lists.** The notes tab was already only a
+redirector, and under one channel it is not a card table at all — it is a query over
+`note_conversations.state = 'waiting_on_owner'`, which is literally the list of threads
+waiting on the owner. Beside it, a much shorter findings list: firewall catches and lint.
+D5 stands unchanged — questions live in their note's conversation, no push, no badge.
+
+**And a consequence for the settle.** With no `ambiguous_mention` cards and no truncation
+card, the settle's two review-card halves have nothing to retire:
+`_sweep_stale_ambiguous` (`pipeline.py:1458-1495`) and `_sync_truncation_review`
+(`:1496-1564`) both go, and the settle collapses back to `sweep_note` + `settle_tail` +
+`stamp_analysis`. `review_items.settle_owner` (migration 0197, S1b) loses every reader —
+the surviving card producers are never retired by a settle — so the column is dead and can
+be dropped in the same migration as the wipe, or left; it is one line either way.
+
+#### The clamped pass: a message, not a card
+
+The gate above still refuses to sweep on a clamp. **What it does NOT do any more is file a
+`reading_truncated` card** — that was this doc's earlier answer and it does not survive
+one channel. A truncation is not a question the owner can answer, so `ask_owner` is wrong
+too. It is a thing to SAY: the agent ends the pass with "this note is long — I recorded
+what I got through and did not finish it," which is the one channel doing exactly its job,
+costs nothing, and needs no kind, no payload renderer and no resolution arm. The engine's
+whole responsibility is the gate.
+
+#### The third-party surface, where one channel has no channel
+
+`NOTE_INGEST_THIRD_PARTY_TOOLS` drops `ask_owner` deliberately: a stranger's note must not
+open an unreviewed inbound message channel wearing the owner's own agent's voice
+(`agents.py:579` and the reasoning above it). So on an `untrusted_origin` note the agent
+**cannot** ask, and one channel has no channel. The answer, stated rather than inherited:
+
+1. **Uncertainty is silence.** D2's clause survives here and only here — *what is clear
+   commits, what is not is left alone*. An ambiguous name returns no handle, so no fact is
+   written; that is already the behaviour and it needs nothing.
+2. **A `decide()` hold still holds, and no card is filed.** The row lands
+   `pending_review`, inert, not live, visible on the note's Analysis tab. The agent gets
+   the result and can do nothing with it, which is correct: a stranger's text has no
+   standing to argue with a value already on file.
+3. **A third-party reading COMMITS but does not SWEEP.** This is a new clause on the gate
+   and it is a safety fix the question surfaced: without it, a stranger-shaped `untrusted
+   origin` body would license a retraction of the owner's facts. A reading is a write, not
+   a licence, when the reader is not the owner. One clause, and it removes the only path
+   by which third-party text can cause a retraction anywhere in the system.
 
 ### The wiki
 
@@ -329,8 +477,8 @@ close_reading:
   tags:   array of string
   facts:  array (maxItems 8, clamp REPORTED) of
             subject, predicate, object, statement,
-            when, when_end, quote, confidence   (assert_fact v3, unchanged)
-            repeats                              (NEW — see 2)
+            when, when_end, quote            (assert_fact v3 minus `confidence` — see 3)
+            repeats                          (NEW — see 2)
 ```
 
 Rules the sidecar and the handler enforce:
@@ -390,7 +538,67 @@ that made a field the model over-applies 45-times-in-56 safe by admitting 0 of t
   strictly harder for the engine. Decide it on the probe, not on argument — that is how
   all six of the v3 gaps were decided.
 
-**3. What is deliberately NOT added.**
+**3. `confidence` — REMOVED from the tool schema. A model field is deleted, on the
+measurement.**
+
+This is the simplification one channel buys, and it is decided by evidence rather than by
+taste. `confidence` was closed as v3 gap 6 and its only consumer is the `low_confidence`
+hold in `supersession.decide()` (`:777`, `:829`). The measurement that shipped with it says
+the model's number **never reaches the threshold on this box**: across 121 facts on three
+notes the live model marked down zero legible ones, and on a note whose middle line is
+explicitly unreadable it converges on exactly **0.5**, which is not `< LOW_CONFIDENCE`
+(0.5). Sharpening the wording made it more consistent without moving it under the line, and
+moving `LOW_CONFIDENCE` to meet it was deliberately not done. So the field is filled
+perfectly, acted on never.
+
+Under one channel it is also the wrong shape: a model that is unsure is supposed to ASK,
+not to write a number that something else quietly acts on.
+
+**What is NOT removed is the guard.** `self_confidence` is `min(engine span check, model
+number)` — *only ever lowers* — and the ENGINE's half is a real signal that fires: a quote
+the note does not contain caps the fact at 0.4, well under the floor, and the hold does
+happen. Deleting the model's half leaves `self_confidence = the span check`, the guard
+intact, and `test_note_graph_write_pg.py`'s 0.25-read pin still meaningful. What is lost is
+a channel that was measured never to carry anything. `_self_report`
+(`graphwritetools.py:1157-1176`) goes with the field.
+
+*Uncertain, and worth saying:* this bets that a model asked to ASK when it cannot read a
+word does so more reliably than it marks the word down. That is not measured. **The
+experiment:** the same `shape_probe` corpus that produced the 121-fact number, re-run
+against a smudged-note prompt that says "if you cannot read it, ask" — count the asks.
+Cheap, and it belongs in R0 beside the `repeats` arm.
+
+**4. `distinguish` on `resolve_entity` — NEW field, and the price of dropping
+`ambiguous_mention`.**
+
+The card the resolve path files names the candidate entities; the tool result does not
+(§2). Naming them in the result is half the change; the agent needs a way to answer. So
+`resolve_entity`'s item grows a third field:
+
+```
+resolve_entity:
+  entities: array of { surface, kind, distinguish }
+```
+
+`distinguish` is free text from the NOTE — "the cardiologist", "Dana Whitfield", "the one
+in Boulder" — matched by the resolver against the candidates' names, kinds and summaries,
+which `_disambiguate` already assembles as `{id, name, kind, summary}`
+(`pipeline.py:1687-1690`). Empty on the ordinary call. No enum, no vocabulary, so
+constraint 8 is untouched.
+
+The flow is then one channel end to end: resolve → *"'Dana' is ambiguous: Dana Whitfield
+(person, staff engineer at Everlane), Dana Reyes (person, Boulder). Re-send with
+`distinguish`, or ask the owner"* → the agent either answers from the note or calls
+`ask_owner`. No card at any step.
+
+*Uncertain, and named:* whether a free-text `distinguish` actually narrows. Layer 1 of the
+resolver is `_exact_matches` on name (`entities.py:563-580`) and carries no notion of a
+discriminator, so this needs a small matcher over the candidate summaries the card already
+renders. **The experiment is a unit test, not a probe**: build the matcher against the
+candidate shapes and check it separates the cases `_file_ambiguous_review` currently files.
+It also raises O7 — whether the LLM disambiguator (layer 3) survives at all.
+
+**5. What is deliberately NOT added.**
 
 - **`kind`.** 7 legal in 80 as a string; 88 of 96 false-fires as a boolean. Closing it is
   registry work — `_fact_kind` already prefers a declared predicate's `kind`
@@ -410,6 +618,11 @@ that made a field the model over-applies 45-times-in-56 safe by admitting 0 of t
   registry declares `name.nickname`, 0 of 39), and that is registry work too.
 - **A structured `value_json`.** The model is never asked to nest — TOOL_SURFACE gap 5's
   deliberate narrowing, kept.
+- **Any field that reports the model's own uncertainty.** `confidence` is the one that
+  existed and it is removed above; nothing replaces it. Under one channel a model that is
+  unsure asks, and the write path's own signals (the span check, the domain floor,
+  `decide()`'s outcome) are the engine's business and are reported back to the agent as
+  results rather than solicited from it.
 
 ### The three sets after the rewrite
 
@@ -460,7 +673,23 @@ Two tiers. Tier 1 is unconditional. Tier 2 depends on **O1** (§8), the EMR ques
 | `analysis/arbiter.py` — `derive_kinship_gender` (`:345-402`), `recover_dropped_fields` (`:403-493`), `dedup_intent_facts` (`:494-574`) | 230 | one production caller each, all in `integrate_note` (`pipeline.py:505`, `:510`, `:519`) |
 | `analysis/flow_trace.py` — the `extract` / `intent` / `plan` arms | ~120 of 266 | the `vision` arm survives (`ingest/ocr.py:289`) |
 | `evals/integrate_runner.py` + `evals/integrate_cases/00_core.json` | 362 | scores a prompt that will not exist |
-| **Tier 1 `src/` subtotal** | **~3,290** | |
+| **subtotal, the old chain** | **~3,290** | |
+
+And the card machinery one channel closes — a second, independent deletion the review-inbox
+decision buys:
+
+| Module / span | Lines | Note |
+|---|---|---|
+| `analysis/pipeline.py:3042-3100` + `:3259-3290` — the two `if decision.review_kind is not None:` card blocks | ~100 | the `FactWrite` report beside them already carries the reason and the conflicting statement (`:2992-2999`) |
+| `analysis/pipeline.py:1742-1790` `_file_ambiguous_review` | 49 | replaced by naming the candidates in `resolve_entity`'s result |
+| `analysis/pipeline.py:1496-1564` `_sync_truncation_review` | 69 | a clamped pass says so in the thread |
+| `analysis/pipeline.py:1458-1495` `_sweep_stale_ambiguous` | 38 | nothing left to retire |
+| `analysis/pipeline.py:1962-1990` `_file_confirm_entity_card` | 29 | `confirm_entity` goes silent |
+| `agent/graphwritetools.py:1157-1176` `_self_report` | 20 | the `confidence` field goes |
+| `analysis/repo.py` — the resolution arms for `fact_conflict` / `attribute_collision` / `low_confidence` / `ambiguous_mention` / `extraction_truncated` / `confirm_entity` (`:1505-1595`, `:1621-1630`, `:1813-…`) | ~150 | `merge_proposal` and `domain_promotion` arms survive |
+| `analysis/display.py` — the card-field renderers for the dead kinds | ~80 of 211 | |
+| **subtotal, the card machinery** | **~535** | |
+| **Tier 1 `src/` total** | **~3,825** | |
 
 Tests, all Tier 1:
 
@@ -473,7 +702,8 @@ Tests, all Tier 1:
 | `tests/integration/test_integrate_persist_pg.py` | 276 |
 | `tests/integration/test_integrate_note_pg.py` | 255 |
 | `tests/unit/test_integrate_eval.py` | 241 |
-| **subtotal** | **6,948** |
+| `tests/integration/test_settle_review_cards_pg.py` | 404 |
+| **subtotal** | **7,352** |
 
 Partially rewritten rather than deleted, so not counted as deletions:
 `tests/integration/test_analysis_gating_pg.py` (509 — the ingest/OCR gate survives, its
@@ -482,7 +712,7 @@ premise is gone; keep the file as the ONE-producer settle pin),
 `test_conversation_settle_pg.py:243` (currently pins that the conversation does NOT stamp —
 now the inverse).
 
-**Tier 1 total: ~10,240 lines.** Against the parent plan's "~940 LOC", which was
+**Tier 1 total: ~11,180 lines.** Against the parent plan's "~940 LOC", which was
 `pipeline.py:305-478` + `arbiter.py` read as a span. The real number is an order of
 magnitude larger because the chain is a chain: an Integrator prompt, its schema, its
 parser, its graph-context builder, its run log, its pins, its trace, its eval corpus, and
@@ -562,18 +792,34 @@ this box. Sorted by what the redirection actually changes:
   `_upsert_tokens` and `_recurrence_rrule`, and `plan_recurring_gym`'s own assertion
   should be tightened onto that column rather than left matching a sentence.
 
-**(b) Re-expressible as an interval close, now that the reading states the note's CURRENT
-truth (6, uncertain).** The gap-1 (`assertion`) scenarios split. Six of the ten are
-disposals and endings — `own_acquire_then_dispose`, `own_theft_ends_ownership`,
-`own_reacquire_same_entity`, `own_dispose_refresh_swallows_negation`, `plan_cancelled`,
-`adv_negation_then_reassert`. Under a *ledger* those needed a negation channel, because
-note 2 had to reach back and negate note 1's fact. Under a *reading* the question changes
-shape: the reading of the note that says "I sold the Civic" states `owns Civic` as
-ENDED (`when_end`), or does not state it at all and the sweep retracts it. Both channels
-exist. **Uncertain, and this is the experiment that decides how much the redirection is
-worth:** re-author these six against the reading and run them. If they pass, the
-`assertion` gap shrinks from ten scenarios to four. If they do not, the measurement says
-where.
+**(b) Closed by the reading, or by the agent ASKING (6).** The gap-1 (`assertion`)
+scenarios split. Six of the ten are disposals and endings — `own_acquire_then_dispose`,
+`own_theft_ends_ownership`, `own_reacquire_same_entity`,
+`own_dispose_refresh_swallows_negation`, `plan_cancelled`, `adv_negation_then_reassert`.
+Under a *ledger* those needed a negation channel, because note 2 had to reach back and
+negate note 1's fact.
+
+**One channel changes the answer, and sharpens it.** Two distinct cases hide in the six,
+and they were previously answered as one:
+
+- *The ending is in THIS note.* "We lived there from 2019 until 2023" — the reading states
+  the fact with `when_end` and `_close_interval` admits it. Nothing new is needed; this is
+  v3's shipped channel, and it is what makes these scenarios re-authorable rather than
+  merely re-labelled.
+- *The ending is in a LATER note.* "I finally sold the Civic" against an `owns Civic`
+  written by a note from last year. The reading of note 2 cannot retract note 1's fact and
+  never could — the sweep is per-note by construction. But the agent holds `read_entity`
+  and is told to read before it writes, so it SEES the active `owns Civic`. Under one
+  channel that is not a card to file, it is a question to ask; the owner confirms; the
+  reply turn's `correct_fact` force-supersedes. **So the channel that closes these was
+  always `correct_fact`, and what one channel changes is that reaching it stops being a
+  fallback and becomes the designed path.**
+
+That reframes the open question. It is no longer *"can the tool surface say negated"* —
+it cannot, and it does not need to. It is **"does the agent notice the contradiction and
+ask?"** which is a prompt-and-loop question, measurable against the live model rather than
+arguable from the schema. The re-authoring in R0 tests the first case; the second needs a
+live-model scenario, which is R5's adversarial work carrying a second passenger.
 
 **(c) Genuinely still unreachable through the model (4).** `adv_standalone_negation_active`
 ("I am not diabetic" — a negative fact with no prior to close), `rel_reported_secondhand`
@@ -599,8 +845,9 @@ roots — the sharpest argument for the tier-1 declaration work, and it belongs 
   extraction prompt forbids inference (*"Do not infer unstated facts (a gender from
   'wife')"*, `note_extract.prompt`) and the inference was bolted back on afterwards by a
   deterministic helper. The reading is not the capture stage of a two-stage pipeline; it
-  is the agent stating what the note MEANS, and D2's posture is that a clear inference
-  commits. **So this becomes a line in the reading's prompt, not a helper and not an
+  is the agent stating what the note MEANS, and the ratified posture is that a clear
+  inference commits (D2's surviving half — one channel widened when the agent ASKS, it did
+  not narrow what commits). **So this becomes a line in the reading's prompt, not a helper and not an
   `xfail`.** Re-author it as a live scenario; if the model does not fan the roster out,
   record the loss then, with a measurement rather than an inheritance.
 - `i5_inferred_sensitive_holds_for_review` — passes today asserting the OPPOSITE of its
@@ -633,7 +880,16 @@ fires on one exact match). Neither is about the producer.
   wave honest.
 - **`tests/integration/test_note_graph_write_pg.py`** — grows `close_reading`: title/tags
   reach `note_analysis`, `repeats` reaches `app.appointments.rrule`, a re-assert returns
-  `ALREADY` with the same id so the reading's `touched` covers unchanged facts.
+  `ALREADY` with the same id so the reading's `touched` covers unchanged facts. Its
+  0.25-read pin **stays and must still pass** — with the model's `confidence` gone the read
+  is capped by the span check instead, and that is the pin that proves the guard survived
+  the field's deletion.
+- **Card-to-result, and this is the acceptance test for §2.** Each of the ten reachable
+  `decide()` sites asserts (a) the row's `status` is unchanged from today, (b) NO
+  `review_items` row is written, and (c) the result text names the reason and the
+  conflicting statement. (a) is what keeps constraint 5 honest: the model gained no power
+  over what lands. `test_settle_review_cards_pg.py` (404 lines) goes — it pins the
+  retirement of cards that are no longer filed.
 - **RLS** — every table the wipe touches keeps its isolation test (CLAUDE.md #3); the
   wipe migration adds none, and `analysis/settle_owner.py`'s `tests/unit/test_settle_owner.py`
   guard (no write site in `src/` without `settle_owners`) extends to `close_reading`.
@@ -790,16 +1046,28 @@ the rule was protecting is being deleted on purpose. It still shapes the ORDER: 
 replacement lands and is green before the old producer goes, so that a failure between two
 PRs leaves a working box rather than a half-built one.
 
-**R0 — Decide `repeats`, and re-read the six.** No production code. The `shape_probe` arm
-for `repeats` (§3), and the bucket-(b) re-authoring of the six disposal scenarios against
-a reading (§5). Both are measurements, both are cheap, and both change what R1 builds.
-Ends with the two answers written into this doc.
+**R0 — Three measurements, no production code.** The `shape_probe` arm for `repeats`
+(§3.2); the smudged-note ASK arm that decides whether dropping `confidence` is safe
+(§3.3); and the bucket-(b) re-authoring of the six disposal scenarios against a reading
+(§5). All three are cheap, all three change what R1 builds, and each ends with its answer
+written into this doc. The `distinguish` matcher (§3.4) is a unit test rather than a probe
+and can ride R1.
 
 **R1 — `close_reading`, beside `assert_fact`.** The sidecar, the handler, `_upsert_tokens`
 fed from the reading, `repeats` and its strict parser, the clamp promoted to a reported
-signal. Bound on the unattended set; `assert_fact` still bound too. Nothing is deleted and
-nothing sweeps yet: a reading commits exactly as `assert_fact` does. Green on
+signal, and `resolve_entity` gaining `distinguish` plus the candidate names in its result.
+Bound on the unattended set; `assert_fact` still bound too. Nothing is deleted and nothing
+sweeps yet: a reading commits exactly as `assert_fact` does. Green on
 `test_note_graph_write_pg.py`.
+
+**R1b — one channel: card to result.** Separable from R1 and worth its own PR, because it
+is a behaviour change to the SHIPPED write path rather than a new verb, and because its
+acceptance test is a matrix rather than a feature. Delete the two `review_kind` card
+blocks, `_file_ambiguous_review`, `_file_confirm_entity_card`, and the `confidence` field
+with `_self_report`; widen the hold result's wording; name the candidates in
+`resolve_entity`. `merge_proposal` becomes a message in the thread. `domain_promotion`,
+`inverse_proposal`, the EMR firewall card and wiki lint are untouched. `decide()`'s
+`Decision.review_kind` stays — it is what the result reads.
 
 **R2 — the harness re-cut.** `_tool_calls` onto `close_reading`, the scenario format onto
 the reading, the runner's `sweep_note` re-labelled from divergence to spec. **Acceptance:
@@ -807,16 +1075,18 @@ every currently-green scenario stays green** (52 of 75 at this doc's `Last verif
 carries everything the old surface carried, and it runs before anything is removed.
 
 **R3 — the settle moves.** `settle_conversation` runs the whole settle for a pass with a
-reading: `sweep_note`, the two review-card halves, `settle_tail`, `stamp_analysis`. The
-gate of §2. The `integration_state` flip moves to the terminal block and the reconciler,
+reading: `sweep_note`, `settle_tail`, `stamp_analysis` — and NOT the two review-card
+halves, which R1b deleted, so the settle is three steps rather than five. The gate of §2,
+third-party clause included. The `integration_state` flip moves to the terminal block and the reconciler,
 `has_active_analysis`, `POST /notes/{id}/analyze` and `_integration_drained` repoint with
 it, in this PR — they are one change, and splitting them leaves a box that re-enqueues a
 dead job kind every five minutes.
 
-**R4 — the deletion.** Tier 1 of §4, in one PR, because the chain is a chain and a
-half-deleted one does not typecheck. `assert_fact` narrows to the reply set.
-`review_items` loses `low_confidence_inference` and `new_predicate` (subject to O1). The
-docs of §9 are reconciled in the same PR.
+**R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
+and a half-deleted one does not typecheck. `assert_fact` narrows to the reply set.
+`review_items` loses `low_confidence_inference` and `new_predicate` (subject to O1), and
+`review_items.settle_owner` loses its last reader. The docs of §9 are reconciled in the
+same PR.
 
 **R5 — the wipe, and the two things W3 owed.** The migration of §6. Beside it, the two
 items W3 was briefed to build and did not, now unblocked because their targets exist: a
@@ -860,9 +1130,22 @@ is line count rather than capability.
 recurrence stays lost and that is a capability regression to record in `ROADMAP.md`, not
 to hide.
 
-**O3 — Do the six disposal scenarios pass through a reading?** Decided by R0's
-re-authoring (§5(b)). This is the largest single unknown in the plan: it is the difference
-between the `assertion` gap costing ten scenarios and costing four.
+**O3 — Does the agent NOTICE a contradiction with a fact another note wrote, and ask?**
+Reframed by the one-channel decision (§5(b)). The half of the six disposal scenarios whose
+ending is stated in the same note is decided by R0's re-authoring and is a schema question.
+The other half is not a schema question at all and never was: the reading of note 2 cannot
+retract note 1's fact, the agent can SEE that fact through `read_entity`, and the channel
+that closes it is ask → `correct_fact`. So the open question is behavioural — does the
+model reach for the question — and it needs a live-model scenario (R5), not a probe.
+*This is the largest single unknown in the plan.*
+
+**O3b — Does dropping `confidence` cost anything?** The field is measured never to fire the
+guard it feeds, so removing it costs nothing observable; the bet is that a model told to ask
+when it cannot read a word does so more often than it marked the word down (which was zero
+times in 121 facts, so the bar is low). R0's smudged-note arm counts the asks. If the model
+neither marks down nor asks, the honest conclusion is that this box has no legibility
+channel at all, and that is worth knowing plainly rather than keeping a field that
+simulates one.
 
 **O4 — The parked-thread edit.** Carried forward from `W5_PRECONDITIONS.md` §2 unsolved: a
 note edited while its conversation is parked on `ask_owner` is skipped by the repointed
@@ -889,6 +1172,29 @@ so, and named rather than assumed away.
 **O6 — Must `file_correction` still mint a note?** Re-openable now that the wiki is being
 rebuilt (§2). Not this rewrite's question; recorded so Phase 6 starts from the question.
 
+**O7 — Does the LLM disambiguator (resolver layer 3) survive?** *Not decidable from the
+code, and surfaced by the one-channel decision rather than by the rewrite.*
+`_disambiguate` (`pipeline.py:1653-1741`) is a second, cheaper model making an identity
+call — with a snippet of context, a list of candidates, and none of the note. The ingesting
+agent has the whole note, the graph it just read, and a channel to the owner. Under one
+channel, a second model deciding what the first could decide is a third party in a design
+that just went to one.
+*Options:* **(i)** keep it as a cheap pre-pass and let `distinguish` handle what it
+declines — no deletion, two deciders; **(ii)** delete it and let the resolver return
+candidates straight to the agent (`_disambiguate` ~89 lines, `entity_disambiguate.prompt`
+35, `evals/disambiguate_runner.py` 128 and its corpus — ~260 more lines, and one fewer
+model call per note); **(iii)** keep it but demote it to a HINT in the result rather than a
+verdict.
+*Recommendation:* (ii), decided after R1's `distinguish` matcher exists and can be measured
+against the cases layer 3 currently answers. Do not bundle it into R1b — that PR is already
+changing the write path's relationship to the owner, and this changes the resolver's.
+
+**O8 — Where does a staged merge appear?** §2 says a fold becomes a message rather than a
+card, and the reply turn already holds `merge_entities`. What is undecided is where the
+message goes when the agent notices the duplicate while reading a LATER note: re-open the
+earlier note's thread, raise it in the current one, or start a thread of its own. All three
+are one channel; they differ in where the owner finds it. Not decided here.
+
 **Carried risks, unchanged from ratification.** Intake is third-party text driving an
 owner-identity session (risk 1) — the third frozenset still narrows it and
 `close_reading` replaces `assert_fact` inside that set, so a stranger's words may still
@@ -903,15 +1209,19 @@ selectable and remains the wrong thing to select for a persona holding write too
 
 In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 
-- **`docs/reference/ANALYSIS.md`** — the largest. "Reprocessing" is the Living doc that
+- **`docs/reference/ANALYSIS.md`** — the largest. Its review-gate sections describe a card
+  inbox that mostly stops existing (§2), and "Reprocessing" is the Living doc that
   asserts the retraction behaviour; it stays TRUE under this design (unlike under the
   teardown, which would have made it false), but its mechanism changes from an extraction
   by `integrate_note` to a reading by the conversation. Also the review gates, the arbiter
   holds, the I5 net, `_apply`'s decomposition.
 - **`docs/reference/ASSISTANT.md`** — #10 (untrusted-origin content and background jobs),
   the memory model, `owner_prefs`.
-- **`docs/reference/DESIGN.md`** — the inbox's two tabs, the Analysis tab's fate, the
-  write chip.
+- **`docs/reference/DESIGN.md`** — the largest change after ANALYSIS.md. The inbox's two
+  tabs collapse to one channel with two lists (§2); the notes list stops being a card table
+  and becomes a query over `note_conversations.state`; the held-fact treatment on the
+  Analysis tab becomes load-bearing, since it is now the durable view of anything the write
+  path could not settle. The write chip and D3's rendering are unchanged.
 - **`docs/reference/ARCHITECTURE.md`**, **`docs/ROADMAP.md`** — Phase 2/3 no longer
   describe a two-stage extract→integrate pipeline.
 - **`docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`** — bucket (d) of §5 is its tier-1
