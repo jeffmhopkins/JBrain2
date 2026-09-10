@@ -1055,7 +1055,14 @@ class AnalysisPipeline:
         separately from `extractor`: the extractor names the model, the producer names
         the writer, and only the second is stable across a model change."""
         resolved = await self._resolve_entities(
-            session, extraction, note_id, note_domain, chunks, captured_at, resolution_override
+            session,
+            extraction,
+            note_id,
+            note_domain,
+            chunks,
+            captured_at,
+            settle_owner,
+            resolution_override,
         )
         anchor_for, mention_ids = await self._upsert_mentions(
             session, extraction, resolved, note_id, note_domain, chunks, settle_owner
@@ -1171,15 +1178,13 @@ class AnalysisPipeline:
 
         Two halves stay HERE rather than moving into `sweep_note`, and that is the one
         judgement call in the split. `_sweep_stale_ambiguous` and `_sync_truncation_review`
-        are the settle's REVIEW-CARD halves, and they are still note-keyed and
-        producer-blind (S1's residuals, argued in `analysis/settle_owner.py` and tracked
-        as their own tasks): each deletes a co-writer's open card. Putting them in
-        `sweep_note` would have handed that reach to the conversation's new sweep as
-        well — a second producer deleting the analyzer's `ambiguous_mention` and
-        `extraction_truncated` cards, on a path where nothing refiles them. Leaving them
-        in the composition keeps the residual exactly the size S1 left it. They also want
-        the `extraction` the conversation does not have, which is the same fact from the
-        other end. `_register_declared_aliases` is here for that second reason alone.
+        are the settle's REVIEW-CARD halves, and they want the `extraction` the
+        conversation does not have — the same reason `_register_declared_aliases` is
+        here. They are producer-scoped too now (migration 0197): each takes
+        `settle_owner` and touches only the cards THAT producer filed, so they no longer
+        reach a co-writer's the way S1's residuals did. The scoping is on the card's own
+        `settle_owner` column rather than on where the call sits, so moving them would
+        cost correctness nothing; they stay for the `extraction`.
         """
         retracted_entities = await self.sweep_note(
             session,
@@ -1191,9 +1196,15 @@ class AnalysisPipeline:
         await self._register_declared_aliases(
             session, extraction, resolved, note_id, note_domain, chunks
         )
-        await self._sweep_stale_ambiguous(session, note_id, extraction)
+        await self._sweep_stale_ambiguous(session, note_id, extraction, settle_owner)
         await self._sync_truncation_review(
-            session, note_id, note_domain, chunks, extraction.dropped_facts, len(extraction.facts)
+            session,
+            note_id,
+            note_domain,
+            chunks,
+            extraction.dropped_facts,
+            len(extraction.facts),
+            settle_owner,
         )
         await self.settle_tail(
             session,
@@ -1445,12 +1456,26 @@ class AnalysisPipeline:
         )
 
     async def _sweep_stale_ambiguous(
-        self, session: AsyncSession, note_id: uuid.UUID, extraction: Extraction
+        self,
+        session: AsyncSession,
+        note_id: uuid.UUID,
+        extraction: Extraction,
+        settle_owner: str,
     ) -> None:
-        """Retire open ambiguous_mention cards for names the re-extraction no
-        longer references — the dedup in _file_ambiguous_review only stops new
-        duplicates, it never retires obsolete ones. Open-only: a resolved or
-        dismissed card is a human decision and survives any re-run."""
+        """Retire THIS PRODUCER's open ambiguous_mention cards for names its
+        re-extraction no longer references — the dedup in _file_ambiguous_review only
+        stops new duplicates, it never retires obsolete ones. Open-only: a resolved or
+        dismissed card is a human decision and survives any re-run.
+
+        `settle_owner` bounds it to the cards this producer FILED (migration 0197), and
+        the `NOT IN :names` clause is not a substitute for that: any commit path can
+        file one (`_file_ambiguous_review` sits in `_resolve_entities`) and the names
+        are not a shared vocabulary. Against the EMR importer the clause excludes
+        nothing at all — an EMR `Extraction`'s refs are semantic keys (`org:Quest`,
+        `cond:E11.9`), which share no surface with anything the analyzer cards — so an
+        unscoped EMR settle deleted essentially every open card on the note, on a
+        re-enqueue path (`queue.backfill_pending_integration`, `analysis/rebuild.py`)
+        that never re-runs the filer to re-file them."""
         names = {m.name for m in extraction.mentions}
         for fact in extraction.facts:
             for ref in (fact.entity_ref, fact.object_entity_ref):
@@ -1460,9 +1485,9 @@ class AnalysisPipeline:
         stmt = text(
             "DELETE FROM app.review_items"
             " WHERE kind = 'ambiguous_mention' AND status = 'open'"
-            " AND payload->>'note_id' = :nid" + clause
+            " AND settle_owner = :owner AND payload->>'note_id' = :nid" + clause
         )
-        params: dict[str, Any] = {"nid": str(note_id)}
+        params: dict[str, Any] = {"nid": str(note_id), "owner": settle_owner}
         if names:
             stmt = stmt.bindparams(bindparam("names", expanding=True))
             params["names"] = sorted(names)
@@ -1476,30 +1501,43 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
         dropped: int,
         kept: int,
+        settle_owner: str,
     ) -> None:
         """Surface a hit fact-budget as a review card, and clear it once a re-run
         no longer truncates. The cap keeps the model's salient head and drops the
         tail silently (extraction.parse_extraction); for a genuinely long note
         (a pasted article, a medical-history dump) that tail is real signal, so
         the owner gets a dismissible notice with the re-run hint. One open card
-        per note: dedup like the ambiguous sweep so re-analysis never stacks
-        duplicates, and a larger-budget re-run that fits retires the stale card."""
+        per note per producer: dedup like the ambiguous sweep so re-analysis never
+        stacks duplicates, and a larger-budget re-run that fits retires the stale card.
+
+        Every branch is scoped to the producer settling (migration 0197), and the clear
+        branch is why: a producer whose own extraction did not truncate says nothing
+        about anyone else's. Unscoped, the EMR importer — which CANNOT truncate, so it
+        takes this branch on every settle (`ingest/emr/integrate.py`) — deleted the
+        analyzer's card on the exact note this card exists for, a health `Records` note
+        both producers settle off one `note.ingested`, and the owner was never told the
+        tail of their medical records had been dropped. The refresh branch is scoped for
+        the mirror reason: a truncating producer must not rewrite another's counts onto
+        a card it did not file."""
         if dropped <= 0:
             await session.execute(
                 text(
                     "DELETE FROM app.review_items WHERE kind = 'extraction_truncated'"
-                    " AND status = 'open' AND payload->>'note_id' = :nid"
+                    " AND status = 'open' AND settle_owner = :owner"
+                    " AND payload->>'note_id' = :nid"
                 ),
-                {"nid": str(note_id)},
+                {"nid": str(note_id), "owner": settle_owner},
             )
             return
         existing = (
             await session.execute(
                 text(
                     "SELECT id FROM app.review_items WHERE kind = 'extraction_truncated'"
-                    " AND status = 'open' AND payload->>'note_id' = :nid LIMIT 1"
+                    " AND status = 'open' AND settle_owner = :owner"
+                    " AND payload->>'note_id' = :nid LIMIT 1"
                 ),
-                {"nid": str(note_id)},
+                {"nid": str(note_id), "owner": settle_owner},
             )
         ).first()
         payload = {
@@ -1508,13 +1546,20 @@ class AnalysisPipeline:
         }
         if existing is not None:
             # Refresh the counts in place — a re-run may clip a different amount —
-            # without churning the row's identity or its open status.
+            # without churning the row's identity or its open status. `payload` is
+            # REPLACED wholesale, which is one reason the filer is a column and not a
+            # payload key: a key would be dropped here on every refresh.
             await session.execute(
                 update(ReviewItem).where(ReviewItem.id == existing.id).values(payload=payload)
             )
             return
         session.add(
-            ReviewItem(kind="extraction_truncated", payload=payload, domain_code=note_domain)
+            ReviewItem(
+                kind="extraction_truncated",
+                payload=payload,
+                domain_code=note_domain,
+                settle_owner=settle_owner,
+            )
         )
 
     async def _resolve_entities(
@@ -1525,6 +1570,7 @@ class AnalysisPipeline:
         note_domain: str,
         chunks: list[_ChunkRef],
         captured_at: datetime,
+        settle_owner: str,
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
@@ -1534,7 +1580,8 @@ class AnalysisPipeline:
         for whatever is still undecided.
 
         Ambiguous names resolve to None (no link) and file one deduplicated
-        ambiguous_mention review item.
+        ambiguous_mention review item, stamped with `settle_owner` so only the producer
+        that filed it can later retire it (`_sweep_stale_ambiguous`).
         """
         kind_hints = {m.name: m.kind for m in extraction.mentions}
         # A fact-only reference has no mention surface; the name itself is
@@ -1585,6 +1632,7 @@ class AnalysisPipeline:
                     note_domain,
                     outcome.candidate_ids,
                     snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                    settle_owner=settle_owner,
                 )
             else:
                 resolved[name] = outcome
@@ -1597,6 +1645,7 @@ class AnalysisPipeline:
                 kind_hints=kind_hints,
                 surfaces=surfaces,
                 chunks=chunks,
+                settle_owner=settle_owner,
             )
         )
         return resolved
@@ -1611,6 +1660,7 @@ class AnalysisPipeline:
         kind_hints: dict[str, str],
         surfaces: dict[str, str],
         chunks: list[_ChunkRef],
+        settle_owner: str,
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
         conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
@@ -1685,6 +1735,7 @@ class AnalysisPipeline:
                 note_domain,
                 sorted(c.id for c in need.candidates),
                 snippet=_cite(_locate(surfaces.get(name, name), chunks), chunks),
+                settle_owner=settle_owner,
             )
         return out
 
@@ -1697,7 +1748,19 @@ class AnalysisPipeline:
         candidate_ids: list[uuid.UUID],
         *,
         snippet: str | None,
+        settle_owner: str,
     ) -> None:
+        """File one open card per (name, note), stamped with the producer that filed it.
+
+        The dedup stays whole-note rather than per-producer, and that is the decision
+        that makes the filer SINGULAR where `facts.settle_owners` is a set: the card is
+        one notice to the owner about one name, so a second producer hitting the same
+        ambiguity must not put a second identical row in the inbox. It therefore
+        piggybacks on the first filer's card and the row keeps one owner. Safe because
+        the scoped delete is evidence-backed — only the filer retires it, only on a
+        settle where it re-read the note and stopped referencing the name — and a
+        piggybacking producer that still cannot resolve the name re-files on its own
+        next run (migration 0197)."""
         # Re-analysis must not multiply identical open items.
         existing = (
             await session.execute(
@@ -1721,6 +1784,7 @@ class AnalysisPipeline:
                     **ambiguous_display(name=name, snippet=snippet),
                 },
                 domain_code=note_domain,
+                settle_owner=settle_owner,
             )
         )
 

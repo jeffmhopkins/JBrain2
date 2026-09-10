@@ -311,6 +311,17 @@ class EmrNoteCommit:
                     tags=self.tags,
                     extractor=EXTRACTOR,
                     settle_owner=EMR_SETTLE_OWNER,
+                    # Explicit, not defaulted: this path CANNOT truncate, and the
+                    # difference between "no facts were dropped" and "nobody measured"
+                    # is the whole content of the `extraction_truncated` card. The
+                    # per-note fact cap is `analysis/extraction.parse_extraction`'s, on
+                    # the LLM path; the EMR path is deterministic and `lower_parse_result`
+                    # lowers EVERY parsed encounter and orphan observation into this
+                    # intent. The only two things it declines to emit are carded or
+                    # deliberate: a Layer-2 firewall catch (`file_firewall_cards`) and a
+                    # non-committable pathology rule-out. This is the seam a real count
+                    # would arrive on the day a cap lands here.
+                    dropped_facts=0,
                 )
             if applied is None:  # rejected plan — nothing written, nothing to settle
                 continue
@@ -354,6 +365,9 @@ class EmrNoteCommit:
             mentions=[m for e in self._extractions for m in e.mentions],
             facts=[f for e in self._extractions for f in e.facts],
             tokens=[t for e in self._extractions for t in e.tokens],
+            # Zero by construction rather than by measurement — see `commit_source`,
+            # which passes the count in explicitly. Summed rather than written `0` so a
+            # cap threaded through that seam reaches the card with no edit here.
             dropped_facts=sum(e.dropped_facts for e in self._extractions),
         )
         async with scoped_session(self.maker, self.ctx) as session:

@@ -134,30 +134,42 @@ anybody's reading from a write ledger. It is a different mechanism from the sett
 needs its own care (a fact can lose its chunk for reasons other than its text
 disappearing). Nothing depends on it. Do not read this paragraph as planned work.
 
-**Two residuals, both review cards rather than graph rows.** The settle's fact and
-mention halves are producer-scoped; its review-card halves are still note-keyed and
-producer-blind, so a settle by one producer deletes cards another filed:
+**The review cards carry the key too, and singular.** The settle's card halves
+(`_sweep_stale_ambiguous`, `_sync_truncation_review`, both in `analysis/pipeline.py`)
+were the last note-keyed, producer-blind destructive paths — S1's two residuals — and
+they are closed by `review_items.settle_owner` (migration 0197). The EMR direction was
+the deterministic one: on a health `Records` note `note.ingested` fans out to
+`integrate_note` and `emr_parse`, EMR cannot truncate (`ingest/emr/integrate.py` says
+why, at the seam), so its settle always took `_sync_truncation_review`'s clear branch
+and deleted the analyzer's open `extraction_truncated` card — the owner never told that
+the tail of their medical records had been dropped. `_sweep_stale_ambiguous` was worse
+in that direction and quieter: an EMR `Extraction`'s refs are semantic keys
+(`org:Quest`, `cond:E11.9` — `ingest/emr/importer.py`) sharing no surface with anyone
+else's names, so its `NOT IN :names` clause spared nothing and an EMR settle deleted
+essentially every open `ambiguous_mention` card on the note, on re-enqueue paths
+(`queue.backfill_pending_integration`, `analysis/rebuild.py`) that re-run
+`integrate_note`/`emr_parse` and so never give the filer a chance to re-file.
 
-- `_sweep_stale_ambiguous` retires open `ambiguous_mention` cards whole-note, sparing
-  only those whose `payload->>'name'` the SETTLING producer still references — and any
-  producer can file one (`_file_ambiguous_review` sits in `_resolve_entities`, which
-  every commit path runs). When the analyzer settles, its names and the conversation's
-  are both surface names off the same note, so the `NOT IN :names` clause spares most
-  of the co-writer's cards and the loss is occasional. In the EMR direction it spares
-  nothing: an EMR `Extraction`'s mentions and entity refs are SEMANTIC keys
-  (`org:Quest`, `cond:E11.9`, `obs:<code>` — `ingest/emr/importer.py`), which share no
-  surface with the names anyone else cards, so the clause excludes none of them and an
-  EMR settle deletes essentially EVERY open `ambiguous_mention` card on that note. No
-  graph row is lost and the filer refiles on its next run — but the re-enqueue paths
-  that matter here do not give it one: `queue.backfill_pending_integration` and
-  `analysis/rebuild.py` re-enqueue `integrate_note`/`emr_parse` only, so on those paths
-  the card is deleted and never refiled, and the owner never gets to resolve that
-  ambiguity.
-- `_sync_truncation_review` (`analysis/pipeline.py`) is the same note-keyed,
-  producer-blind shape: it deletes the note's open `extraction_truncated` card whenever
-  the settling producer's own extraction did not truncate, so whichever of the two
-  settlers runs second clears the card the other raised while that producer's tail is
-  still dropped. Tracked as its own task, not fixed here.
+**One filer, not a claim set — the one place the card model differs from the row
+model.** A fact states something about the world, which is why two producers reading one
+note land the same identity key and the column above has to be a SET. A card states
+something about a READING — *this producer could not resolve this name*, *this
+producer's extraction hit the cap* — and a reading has one reader. `_file_ambiguous_review`
+keeps its dedup whole-note (one card per name per note, so the inbox never stacks
+duplicates), so a second producer that hits the same ambiguity files nothing and the row
+keeps its first filer. First-writer-keeps-it is unsound for a fact and sound here for
+two reasons that do not transfer: the scoped delete is evidence-backed — a card is
+retired only by the producer that filed it, only on a settle where that producer re-read
+the note and no longer has the problem — and a missing card costs no citable truth,
+since resolving either kind is a dismissal that writes no graph state
+(`analysis/repo.py`). A piggybacking producer that still cannot resolve the name
+re-files on its own next run.
+
+The column is nullable with no default, deliberately unlike `settle_owners` above:
+`review_items` holds a dozen kinds and only two are swept, so NULL states the true thing
+for the rest — *no settling producer claims this card* — and a swept-kind filer that
+forgets to stamp gets a card no sweep can retire rather than one silently joining
+someone else's claim. Migration 0197 argues both choices in full.
 """
 
 from __future__ import annotations

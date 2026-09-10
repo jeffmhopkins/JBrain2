@@ -230,6 +230,11 @@ class ReviewItem(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     status: Mapped[str] = mapped_column(Text, default="open", server_default="open")
     resolution: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Which producer FILED this card, for the two kinds the whole-note settle sweeps
+    # (`analysis/settle_owner.py`). Singular: a card records one producer's READING, so
+    # unlike `facts.settle_owners` it has one filer and needs no claim set. NULL on
+    # every other kind — nobody's sweep may retire those (migration 0197).
+    settle_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
