@@ -204,7 +204,13 @@ async def _seed_ambiguity(maker, name: str) -> None:  # noqa: F811
 async def _analyzer_ambiguous_card(maker, note_id: str, name: str) -> None:  # noqa: F811
     """File one `ambiguous_mention` card through the analyzer's REAL path: a mention
     the resolver cannot decide goes through `_file_ambiguous_review` inside
-    `_resolve_entities`, which every commit path runs."""
+    `_resolve_entities`, which every commit path runs.
+
+    `settle_owner=ANALYZER` is what makes this the ANALYZER's path rather than the
+    conversation's, and under one channel (AGENT_INGEST_REWRITE R1b) it is what makes the
+    card get filed at all — card-filing is DERIVED from the producer key, since a
+    producer with an agent behind it is told in the tool result and files nothing. So the
+    one argument already names both halves of what this file is about."""
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
         await _pipeline(maker).commit_facts(

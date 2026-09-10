@@ -39,7 +39,7 @@
       {"entity": "Ingrid", "predicate": "seatPreference", "kind": "preference", "status": "active", "count": 1}
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "seatPreference", "count": 1}
+      {"kind": "fact_conflict", "count": 0}
     ],
     "entities": [
       {"name": "Ingrid", "kind": "Person", "status": "provisional"}

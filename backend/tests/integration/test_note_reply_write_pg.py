@@ -218,6 +218,92 @@ async def _rows(maker, entity_id: str, predicate: str) -> list[Any]:  # noqa: F8
 
 
 @pytest.mark.asyncio
+async def test_the_owner_answering_with_a_contested_value_settles_nothing(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """O15's crux, pinned as CURRENT behaviour because it is a dead end and the owner is
+    being asked to choose a fix for it (`AGENT_INGEST_REWRITE.md` §8).
+
+    Under one channel the agent's obligation on a hold ends at "ask the owner which is
+    right". The natural answer is one of the two contested values — and that answer
+    changes nothing. `decide()`'s idempotency short-circuit matches the `pending_review`
+    row carrying that value and returns `refresh_id` BEFORE the correction branch is
+    reached, and the refresh path writes neither `status` nor `pinned`. So the row stays
+    held and unpinned, nothing goes live, and the result says "ask the owner which is
+    right" — to the owner who just answered.
+
+    The correction branch's own comment is honest about the assumption that fails here:
+    "An identical-value restatement was already refreshed above, so reaching here means
+    a genuine override." True when the restatement is idempotent noise; false when the
+    matched row is a HELD side of a live contest and the restatement is the verdict.
+
+    In-tree precedent for the fix is eight lines up: `_lab_status_transition` is
+    deliberately placed ahead of the same short-circuit "so a same-value correction still
+    supersedes". Ordering alone is not sufficient though — the correction branch puts
+    `pending_review` heads in `hold_ids`, so it would still leave the loser held. O15
+    needs both halves, which is why it is the owner's call and not a patch.
+
+    **When O15 is resolved this test flips**, and what it becomes is the acceptance
+    check: the answered value active and pinned, the other side no longer a live head."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    jeff = await _entity(maker, "Jeff Hopkins")
+    # The state an attribute collision leaves behind: two birthdays, neither live.
+    a = await _fact(
+        maker,
+        jeff,
+        note_id,
+        predicate="birthDate",
+        statement="Jeff was born 1990-03-03.",
+        value="1990-03-03",
+    )
+    b = await _fact(
+        maker,
+        jeff,
+        note_id,
+        predicate="birthDate",
+        statement="Jeff was born 1985-11-12.",
+        value="1985-11-12",
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.facts SET status = 'pending_review' WHERE id IN (:a, :b)"),
+            {"a": a, "b": b},
+        )
+
+    # The owner answers the question the hold result told the agent to ask.
+    out = await _handlers(maker)[CORRECT_FACT](
+        {
+            "entity": jeff,
+            "predicate": "birthDate",
+            "qualifier": "",
+            "object": "1985-11-12",
+            "statement": "Jeff was born 1985-11-12.",
+            "when": "",
+            "replaces": "",
+        },
+        _ctx(owner_ctx, session_id),
+    )
+
+    rows = {str(f.id): f for f in await _rows(maker, jeff, "birthDate")}
+    # No third row: the correction was absorbed as a refresh of the row it names.
+    assert len(rows) == 2
+    # And it settled NOTHING — neither value is live, and the answer is not pinned.
+    assert rows[b].status == "pending_review"
+    assert rows[b].pinned is False
+    assert rows[a].status == "pending_review"
+    assert not [f for f in rows.values() if f.status == "active"]
+    # The result is honest about the outcome (F1's STILL_HELD line) and that is the
+    # sharp end of it: the only advice left is to ask the person who just answered.
+    body = str(out)
+    assert "already recorded, and STILL NOT LIVE" in body
+    assert "ask the owner which is right" in body
+
+
+@pytest.mark.asyncio
 async def test_a_correction_force_supersedes_the_head_and_pins_the_new_value(  # noqa: F811
     maker,  # noqa: F811
     tmp_path,

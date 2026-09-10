@@ -1,6 +1,6 @@
 {
   "name": "a derived reciprocal never auto-overwrites a primary fact",
-  "description": "Celine already has a PRIMARY spouse edge (-> Aldo) from her own note. A later note 'Jeff married Celine' would reflect a derived Celine.spouse -> Jeff, which on the functional key would supersede the primary. The derived-defers-to-primary rule forbids that (docs/research/fix-options/2): the primary stays active, the reflection parks in pending_review behind a fact_conflict whose copy marks one side derived.",
+  "description": "Celine already has a PRIMARY spouse edge (-> Aldo) from her own note. A later note 'Jeff married Celine' would reflect a derived Celine.spouse -> Jeff, which on the functional key would supersede the primary. The derived-defers-to-primary rule forbids that (docs/research/fix-options/2): the primary stays active and the reflection parks in pending_review, reported on the result line of the fact whose reciprocal was refused \u2014 the reflection is a row the model never named, so it has no result line of its own. ONE CHANNEL (AGENT_INGEST_REWRITE R1b): the harness IS the note conversation, and a conversation's write path no longer files a review card \u2014 `decide()` reports the hold back in the tool result and the AGENT settles it, by re-reading the note or by asking the owner. So the count is 0 and the ROW STATUSES above are the whole assertion, which is exactly the point: `decide()`'s authority over what LANDS is untouched, only who is told moved.",
   "steps": [
     {
       "domain": "general",
@@ -47,7 +47,7 @@
       {"entity": "Celine", "predicate": "spouse", "value_contains": "Aldo", "status": "superseded"}
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "spouse values disagree for Celine"}
+      {"kind": "fact_conflict", "count": 0}
     ]
   }
 }

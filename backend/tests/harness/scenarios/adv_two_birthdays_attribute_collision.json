@@ -1,6 +1,6 @@
 {
   "name": "two conflicting birthdays hold BOTH sides and file attribute_collision",
-  "description": "Adversarial attribute-collision / split-detection probe. Two notes assert a different birthDate (attribute kind) for the SAME entity Cleo. Per supersession.decide attribute branch, neither side wins: BOTH active heads move to pending_review and an attribute_collision review fires (a 'two birthdays is a bug, not news' guard). Pins that an attribute conflict never auto-supersedes — both candidate values are held, exactly one attribute_collision is raised, and no value is silently active. DOCUMENTED GAP (not xfail, since the implemented surfacing is attribute_collision): docs/reference/ANALYSIS.md 'Split detection' says conflicting attributes should propose an ENTITY SPLIT (hidden two-people merge), but the pipeline has no entity_split review kind — it only files attribute_collision and never proposes re-resolving the mention spans into two entities. The deterministic hold-both behaviour is asserted here; the missing split proposal is the residual risk.",
+  "description": "Adversarial attribute-collision / split-detection probe. Two notes assert a different birthDate (attribute kind) for the SAME entity Cleo. Per supersession.decide attribute branch, neither side wins: BOTH active heads move to pending_review and the hold is reported back to the agent (a 'two birthdays is a bug, not news' guard). Pins that an attribute conflict never auto-supersedes — both candidate values are held, no card is filed, and no value is silently active. DOCUMENTED GAP (not xfail, since the implemented surfacing is attribute_collision): docs/reference/ANALYSIS.md 'Split detection' says conflicting attributes should propose an ENTITY SPLIT (hidden two-people merge), but the pipeline has no entity_split review kind — it only files attribute_collision and never proposes re-resolving the mention spans into two entities. The deterministic hold-both behaviour is asserted here; the missing split proposal is the residual risk. ONE CHANNEL (AGENT_INGEST_REWRITE R1b): the harness IS the note conversation, and a conversation's write path no longer files a review card \u2014 `decide()` reports the hold back in the tool result and the AGENT settles it, by re-reading the note or by asking the owner. So the count is 0 and the ROW STATUSES above are the whole assertion, which is exactly the point: `decide()`'s authority over what LANDS is untouched, only who is told moved.",
   "steps": [
     {
       "domain": "general",
@@ -40,7 +40,7 @@
       {"entity": "Cleo", "predicate": "birthDate", "status": "active"}
     ],
     "review_items": [
-      {"kind": "attribute_collision", "summary_contains": "Cleo", "count": 1}
+      {"kind": "attribute_collision", "count": 0}
     ]
   }
 }

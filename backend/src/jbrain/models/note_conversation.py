@@ -362,9 +362,12 @@ class ConversationWrites:
     built over this field (S3) and removed. An empty `facts` means "this session's
     successful calls wrote no fact", and never "nothing was recorded" — but it also never
     means "the note no longer says that", which is the reading a sweep needs. The
-    conversation asserts once and revises by supersession, `correct_fact` supersedes and
-    pins, and a re-assert returns `ALREADY` with the same `fact_id`: this ledger never
-    SHRINKS. So a session can only ever release another session's claims, and judging
+    the conversation asserts once and revises by supersession; `correct_fact`
+    supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
+    holds beside rather than superseding — O15); and a re-assert refreshes the SAME row in
+    place, returning `ALREADY` when that row is live and `HELD` when it was already held.
+    No path retracts, and every one of them yields a row id: this ledger never SHRINKS.
+    So a session can only ever release another session's claims, and judging
     those needs a complete current reading of the note, which a record of writes
     structurally is not — the agent is told to read before it writes and rewarded for not
     restating what is already there, so a silent pass is the designed output. A sound

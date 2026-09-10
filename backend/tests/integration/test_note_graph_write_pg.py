@@ -43,7 +43,7 @@ from jbrain.analysis.entities import normalize_alias
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
-from jbrain.models.analysis import Entity, EntityMention, Fact, ReviewItem
+from jbrain.models.analysis import Entity, EntityMention, Fact
 from jbrain.models.note_conversation import NoteConversationRepo
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
@@ -992,105 +992,22 @@ async def test_a_fact_quoted_from_an_attachment_is_marked_from_the_attachment(  
 
 
 @pytest.mark.asyncio
-async def test_a_low_self_report_is_held_even_when_the_quote_is_perfect(
+async def test_the_span_check_is_the_only_weight_the_write_carries(
     maker,  # noqa: F811
     tmp_path,
 ) -> None:  # noqa: F811
-    """The SAFETY gap (TOOL_SURFACE gap 6): a 0.25 read of a blurry pharmacy label must
-    not overwrite a confident prior, and before v3 there was no channel for the model to
-    say so — the engine's span check was the only self-report, and a blurry photo whose
-    text IS in the note's OCR chunk passes it at full weight.
+    """R1b deleted the model's own `confidence` field, so this is the whole of what is
+    left to distrust a fact with — and it is the half the model cannot talk its way past.
+    A claim of certainty on a quote the note does not contain still lands at the 0.4
+    inferred ceiling; there is no longer any field with which to claim it at all.
 
-    `confidence` is a JSON `number`, and the type is the point rather than a detail:
-    probed against the live model the string spelling came back "high"/"low" every time
-    (0/24 legal), and a JSON type is the only closed vocabulary a tool grammar can
-    enforce without an `enum` (plan constraint 8).
+    R0 measured what the field bought before it went: 1 silent guess in 106 runs, and it
+    happened in the arm that HAS the field (§3.3/O3b). What it cost rose under one
+    channel — a spurious low number parks a TRUE fact behind a hold that no card will
+    ever raise — so the measurement and the cost pointed the same way.
 
-    The prior head is deliberately another note's, on the same grounds as the sibling
-    quote test: `_facts_at_key` carries no `note_id` predicate, so the head at risk is
-    any note's."""
-    note_id, writer = await _own_person(maker, tmp_path, "Dana Blurry")
-    confident = await writer.assert_fact(
-        {
-            "facts": [
-                {
-                    "subject": "e1",
-                    "predicate": "homeLocation",
-                    "object": "118 Pine Ave",
-                    "statement": "Dana Blurry lives at 118 Pine Ave.",
-                    "when": "",
-                    "when_end": "",
-                    "quote": "Coffee with Dana Blurry at Ritual",
-                    "confidence": 1,
-                }
-            ]
-        },
-        _ctx(),
-    )
-    prior = uuid.UUID(confident.facts[0].fact_id)
-
-    other = await _note(maker, tmp_path, body="Dana Blurry moved, the photo is smudged.")
-    second = await _writer(maker, other)
-    await second.resolve_entity(
-        {"entities": [{"surface": "Dana Blurry", "kind": "person"}]}, _ctx()
-    )
-    out = await second.assert_fact(
-        {
-            "facts": [
-                {
-                    "subject": "e1",
-                    "predicate": "homeLocation",
-                    "object": "412 Oak St",
-                    "statement": "Dana Blurry lives at 412 Oak St.",
-                    "when": "",
-                    "when_end": "",
-                    # Verbatim: the span check PASSES, so nothing but the model's own
-                    # number can hold this write.
-                    "quote": "Dana Blurry moved, the photo is smudged.",
-                    "confidence": 0.25,
-                }
-            ]
-        },
-        _ctx(),
-    )
-
-    async with scoped_session(maker, SYSTEM_CTX) as s:
-        row = (
-            await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
-        ).scalar_one()
-        head = (await s.execute(select(Fact).where(Fact.id == prior))).scalar_one()
-        # `decide()`'s card references the proposed fact as payload.fact_b — there is
-        # no fact_id column on review_items.
-        cards = list(
-            (
-                await s.execute(
-                    select(ReviewItem.kind).where(
-                        ReviewItem.payload["fact_b"].astext == str(row.id)
-                    )
-                )
-            ).scalars()
-        )
-    # It COMMITS (D2) and it is NOT live, and the confident prior is untouched.
-    assert row.status == "pending_review"
-    assert row.confidence == pytest.approx(0.25)
-    assert head.status == "active"
-    assert str(head.note_id) == note_id
-    assert cards == ["low_confidence"]
-    assert "held" in str(out)
-
-
-@pytest.mark.asyncio
-async def test_a_self_report_only_ever_lowers_the_engines_own_weight(
-    maker,  # noqa: F811
-    tmp_path,
-) -> None:  # noqa: F811
-    """TOOL_SURFACE cut 3's own words — "only ever lowers a ceiling" — which were the
-    reason to cut the field and are the reason it is safe to add. A model claiming 1.0
-    on a quote the note does not contain still lands at the 0.4 inferred ceiling, so the
-    field cannot be used to talk the engine out of its own span check. A value that is
-    not a number in [0, 1] is discarded rather than clamped: a model that wrote 95 meant
-    a percentage, and reading that as 1.0 would CANCEL a self-report trying to be
-    cautious."""
+    The ceiling is carried on the candidate's `self_confidence` as well as its
+    `confidence`, because `decide()`'s low-confidence guard keys on the first alone."""
     _, writer = await _own_person(maker, tmp_path, "Dana Ceiling")
     out = await writer.assert_fact(
         {
@@ -1103,6 +1020,8 @@ async def test_a_self_report_only_ever_lowers_the_engines_own_weight(
                     "when": "",
                     "when_end": "",
                     "quote": "a passage this note does not contain",
+                    # Sent anyway: the field is gone from the schema, so a model that
+                    # still writes one must not be able to raise its own weight with it.
                     "confidence": 1,
                 },
                 {
@@ -1112,8 +1031,8 @@ async def test_a_self_report_only_ever_lowers_the_engines_own_weight(
                     "statement": "Dana Ceiling is allergic to shellfish.",
                     "when": "",
                     "when_end": "",
-                    "quote": "Coffee with Dana Ceiling at Ritual",
-                    "confidence": 95,
+                    "quote": "Coffee with Dana Ceiling at Ritual this morning.",
+                    "confidence": 0.1,
                 },
             ]
         },
@@ -1121,15 +1040,16 @@ async def test_a_self_report_only_ever_lowers_the_engines_own_weight(
     )
     async with scoped_session(maker, SYSTEM_CTX) as s:
         rows = {
-            r.predicate: r.confidence
+            r.predicate: r
             for r in (
                 await s.execute(
                     select(Fact).where(Fact.id.in_([uuid.UUID(w.fact_id) for w in out.facts]))
                 )
             ).scalars()
         }
-    assert rows["jobTitle"] == pytest.approx(0.4)
-    assert rows["allergy"] == pytest.approx(1.0)
+    assert rows["jobTitle"].confidence == pytest.approx(0.4)
+    # The attested one is 1.0 despite the 0.1 the model sent: the field is not read.
+    assert rows["allergy"].confidence == pytest.approx(1.0)
 
 
 # --- close_reading: the whole-note reading (AGENT_INGEST_REWRITE R1) -----------

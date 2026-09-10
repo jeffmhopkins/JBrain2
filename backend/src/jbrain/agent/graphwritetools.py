@@ -119,6 +119,7 @@ from jbrain.analysis.pipeline import (
     HISTORICAL,
     PROMOTED,
     REPLACED,
+    STILL_HELD,
     AnalysisPipeline,
     FactWrite,
     _ChunkRef,
@@ -521,10 +522,11 @@ class NoteTarget:
 
 @dataclass(frozen=True)
 class Candidate:
-    """One entity a surface could mean, as the retired `ambiguous_mention` card rendered
-    it — `_file_ambiguous_review` files `{id, name, kind, summary}` and the tool result
-    said none of it (§3.4). Read at the writer's FULL scope, like every other resolution
-    here, so `_candidate_note` is what decides how much of one the conversation sees."""
+    """One entity a surface could mean, in the shape the retired `ambiguous_mention`
+    card rendered — `{id, name, kind, summary}`, which the card carried and the tool
+    result said none of (§3.4). The card is gone (R1b) and this result is the only
+    channel left. Read at the writer's FULL scope, like every other resolution here, so
+    `_candidate_note` is what decides how much of one the conversation sees."""
 
     id: uuid.UUID
     subject_id: uuid.UUID | None
@@ -888,8 +890,11 @@ class NoteGraphWriter:
         entity = outcome.resolved.get(surface)
         if entity is None:
             # The resolver found several live entities on that name (or nothing it could
-            # decide). It files its own ambiguity card; the model gets no handle, which
-            # is the honest answer — a guess here is a mislinked fact forever.
+            # decide), so the model gets no handle — the honest answer, since a guess
+            # here is a mislinked fact forever. It files no card on this path any more
+            # (R1b): card-filing is derived from `settle_owner`, and this is the
+            # conversation. `resolve_entity` names the candidates in its own result
+            # instead, and `distinguish` is how the note answers.
             return None
         row = (
             await session.execute(
@@ -1419,28 +1424,15 @@ class NoteGraphWriter:
                 )
                 notes.append(f"repeats {repeats.rrule}, read from the words you quoted")
 
+        # The ENGINE's span check and nothing else. There was a model-facing
+        # `confidence` field here that could only ever LOWER this number, and R0
+        # measured what it bought: 1 silent guess in 106 runs, in the arm that HAS the
+        # field (AGENT_INGEST_REWRITE §3.3/O3b). It cost more than it bought — a
+        # spurious low number parks a TRUE fact behind a hold, and under one channel a
+        # hold is the agent's own problem to settle rather than a card someone clears.
+        # What remains is the check the model cannot talk its way past: a quote the note
+        # does not contain.
         confidence = effective_weight(1.0, signals)
-        # The model's own read-confidence, and the ONE rule that makes the field safe:
-        # it can only ever LOWER (TOOL_SURFACE cut 3's own words, which were the reason
-        # to cut it and are the reason it is safe to add). A model claiming 1.0 on a
-        # quote the note does not contain still lands at the 0.4 inferred ceiling; a
-        # model reporting 0.25 on a blurry OCR read of a blood-pressure medication lands
-        # under `supersession.LOW_CONFIDENCE` and is HELD instead of overwriting a
-        # confident prior. Measured over 94 facts on the live model, zero legible facts
-        # were marked down — which is the direction that matters, because the cost of a
-        # spurious low number is a true fact parked behind a card on a box whose owner
-        # has no inbox to clear it from.
-        # Skipped for a correction — and now for a correction NOTE's attested fact too,
-        # which is the arbiter's `weight = 1.0 if fact_correction` restored exactly.
-        # `effective_weight(1.0, _ATTESTED)` is already 1.0; letting the model's own
-        # self-report drag the owner's stated correction down to a 0.4 guess is the one
-        # way the ported rule could have landed at a different number from the rule it
-        # replaces, and the stored weight is what `decide()`'s low-confidence guard and
-        # every later note read back.
-        self_report = None if correction else _self_report(item)
-        if self_report is not None and self_report < confidence:
-            confidence = self_report
-            notes.append(f"you recorded this as a {self_report:g} read")
 
         if not statement:
             statement = _statement(subject.label, predicate, obj.label if obj else literal)
@@ -1470,10 +1462,9 @@ class NoteGraphWriter:
             # never on `confidence`, so a cap written to `confidence` alone is stored and
             # read by nobody: the unattested row went active and superseded the attested
             # head it was supposed not to touch, while the result line said it could not.
-            # Since v3 the number is the MINIMUM of the engine's span check and the
-            # model's own `confidence` — two independent reasons to distrust a fact, and
-            # the lower one wins. They stay on both fields because `decide()` compares
-            # `candidate.self_confidence` against the incumbent's `confidence`.
+            # The number is the engine's span check alone since the model's own
+            # `confidence` was cut (R1b). It stays on both fields because `decide()`
+            # compares `candidate.self_confidence` against the incumbent's `confidence`.
             self_confidence=confidence,
             # Recomputed, never asserted by the model (TOOL_SURFACE: no `inferred` field).
             inferred=not attested,
@@ -1543,24 +1534,86 @@ class NoteGraphWriter:
         )
 
 
+def _trim_stop(text: str) -> str:
+    """A fact `statement` with its full stop removed, for embedding in a longer sentence.
+
+    Statements are written as sentences ("Cleo was born March 3, 1990."), and the result
+    line quotes them inside its own prose. Left alone they either double the stop
+    ("…born March 3, 1990..") or plant one mid-clause ("…1990. was held too"). This is
+    cosmetic, and it is worth a helper because the ONE channel a hold has is read by a
+    model that is being asked to act on it."""
+    return text.rstrip().rstrip(".").rstrip()
+
+
 def _write_line(
     idx: int, subject: str, predicate: str, value: str, write: FactWrite, notes: Sequence[str]
 ) -> str:
     """One fact's landing, in the result shape TOOL_SURFACE specifies: the identity key,
-    then what the SERVER did that the model did not ask for."""
+    then what the SERVER did that the model did not ask for.
+
+    This is the ONLY channel a hold has (AGENT_INGEST_REWRITE R1b). The write path used
+    to file a review card beside this line, so "ask the owner which is right" could read
+    as advice — a second reader would reach it anyway. There is no second reader now:
+    an unsettled hold this pass leaves alone stays inert until some later note happens to
+    restate it. So the line states the obligation, and it states what the write did to
+    rows the model never named — the other side of a collision, and a reciprocal edge
+    refused in favour of a primary head."""
     head = f"{'held' if write.outcome == HELD else 'ok'}  {subject}.{predicate} → {value}"
     tail: list[str] = list(notes)
     if write.outcome == REPLACED and write.replaced:
-        tail.insert(0, f"replaced {'; '.join(write.replaced)}, kept as history")
+        tail.insert(
+            0, f"replaced {'; '.join(_trim_stop(r) for r in write.replaced)}, kept as history"
+        )
+        if write.hold_reason:
+            # It LANDED LIVE and still was not a clean update: same value-instant, or a
+            # preference. Nothing is held and nothing is owed — but the model asked for
+            # one write and got a supersession it did not name, so it is told.
+            tail.insert(1, f"not a clean update ({write.hold_reason})")
+    elif write.outcome == HELD and write.hold_reason == STILL_HELD:
+        # The row was already held before this write, and restating it changed nothing.
+        # It must not read `ok … already recorded`: that is what `ALREADY` said before
+        # R1b, when a card stood behind the row and this line was not the only channel.
+        # It must also not read as a FRESH clash — the model did nothing wrong, and
+        # telling it to "re-read the note" would send it round a loop it has already
+        # run. The one move left is the owner's.
+        clash = (
+            f" It still clashes with {_trim_stop(write.conflicting)}." if write.conflicting else ""
+        )
+        tail.insert(
+            0,
+            "already recorded, and STILL NOT LIVE — it was held before this pass and"
+            f" restating it changed nothing.{clash} Re-reading will not settle this;"
+            " ask the owner which is right",
+        )
     elif write.outcome == HELD:
-        clash = f" with {write.conflicting}" if write.conflicting else ""
+        clash = f" with {_trim_stop(write.conflicting)}" if write.conflicting else ""
         reason = write.hold_reason or "unresolved"
         tail.insert(
             0,
-            f"clashes{clash} ({reason}) — recorded but NOT live. Ask the owner which is right",
+            f"clashes{clash} ({reason}) — recorded but NOT live, and nothing else will"
+            " raise it: settling it is yours. Re-read the note, or ask the owner which"
+            " is right",
         )
     elif write.outcome in _OUTCOME_WORDS:
         tail.insert(0, _OUTCOME_WORDS[write.outcome])
+    if write.also_held:
+        # Rendered for EVERY outcome, not only HELD. `decide()` sets `hold_ids` on two
+        # branches and only one of them holds the candidate too: an owner correction
+        # inserts ACTIVE and parks the heads it out-argues, so the write lands
+        # `replaced`/`written` while still moving rows the model never named. Reporting
+        # `also_held` only under HELD would drop exactly those — the under-reporting
+        # this field was added to stop, in the one case the field is the sole witness.
+        others = "; ".join(_trim_stop(h) for h in write.also_held)
+        tail.append(
+            f"{others} was held too, so neither is live"
+            if write.outcome == HELD
+            else f"{others} was held — this value is the live one now"
+        )
+    if write.reciprocal_held:
+        tail.append(
+            f"the reciprocal edge was recorded but NOT live — it clashes with"
+            f" {_trim_stop(write.reciprocal_held)}"
+        )
     if write.domain != "general":
         tail.append(f"filed under {write.domain}")
     return head + (f" — {'; '.join(tail)}" if tail else "")
@@ -1615,26 +1668,6 @@ def _takes_entity_object(registry: Any, entity_kind: str, predicate: str) -> boo
     return str(declared.value_shape) == "ref"
 
 
-def _self_report(item: Mapping[str, Any]) -> float | None:
-    """The model's own `confidence`, or None for anything that is not a number in [0, 1].
-
-    A JSON `number` rather than a string, and that is the whole reason this field
-    exists at all where `kind` and `assertion` do not: measured against the live model,
-    the string spelling came back "high" and "low" every time, and a JSON type is the
-    only closed vocabulary a tool grammar can enforce without an `enum` (plan constraint
-    8). A value outside the range is discarded rather than clamped — a model that wrote
-    `95` meant a percentage, and reading it as 1.0 would silently CANCEL a self-report
-    that was trying to be cautious."""
-    raw = item.get("confidence", item.get("certainty"))
-    if isinstance(raw, bool) or raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if 0.0 <= value <= 1.0 else None
-
-
 def _entity_ref(handle: Handle) -> EntityRef:
     return EntityRef(
         entity_id=str(handle.entity.id),
@@ -1660,7 +1693,7 @@ def _resolved_line(handle: Handle) -> str:
 def _candidate_note(candidates: Sequence[Candidate], read_scopes: frozenset[str]) -> str:
     """The candidates, named — and only the ones this conversation may see.
 
-    The card that used to carry them is going away (§2), and naming them is half of what
+    The card that used to carry them is gone (R1b), and naming them is half of what
     replaces it; the other half is `distinguish`, which the agent cannot use against a
     list it cannot see. What each named candidate adds over the note's own surface is the
     kind and the summary, which is what tells two of them apart — and that is exactly what
@@ -1693,10 +1726,10 @@ def _distinguish(candidates: Sequence[Candidate], detail: str) -> Candidate | No
     """The one candidate the note's own words point at, or None.
 
     A deliberately dull matcher over the words the candidates already carry — name, kind,
-    summary — because that is all `_file_ambiguous_review` ever had to show and all the
-    agent can answer from. It refuses in both directions that matter: nothing matched, or
-    SEVERAL matched equally well. A tie is the ambiguity restated, and picking off one of
-    them is how a fact lands on the wrong person for good.
+    summary — because that is all the retired `ambiguous_mention` card ever had to show
+    and all the agent can answer from. It refuses in both directions that matter: nothing
+    matched, or SEVERAL matched equally well. A tie is the ambiguity restated, and picking
+    off one of them is how a fact lands on the wrong person for good.
 
     Stopwords are dropped so "the one in Boulder" scores on `boulder` alone; a candidate
     scores by how many of the remaining words its own text contains."""

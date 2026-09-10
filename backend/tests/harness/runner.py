@@ -73,16 +73,15 @@ two fields that ship are one of each shape or a plain ISO date.
     undeclared predicate, and asserting `kind: relationship` on an object edge
     is now a tautology. Closing it means DECLARING the predicate, not asking the
     model.
-  - **A `confidence` self-report is sayable (closed).** As a JSON `number`, not
-    a string — the string spelling came back "high"/"low" every time. It only
-    ever LOWERS: `min(engine weight, model number)`, so a model claiming 1.0 on
-    an unattested quote still lands at 0.4. Measured over 94 items, the live
-    model marked down zero legible facts, which is the direction that matters
-    for a guard that HOLDS. It under-reports rather than over-reports: on an
-    unreadable line it converges on exactly 0.5, which is not `< LOW_CONFIDENCE`,
-    so a scenario scripting a self-report BELOW the threshold is scripting a
-    better model than the box has — which is the harness's contract, not a
-    cheat.
+  - **No `confidence` self-report — closed, then DELETED (accepted).** It shipped
+    as a JSON `number` in v3 and R1b took it out again on R0's measurement: 1
+    silent guess in 106 runs, and the guess came from the arm that HAS the field.
+    What tipped it was the cost side rising under one channel — a spurious low
+    number parks a TRUE fact behind a hold that no card will ever raise. So the
+    engine's span check is the whole weight, and the faithful agent below sends
+    no such field, because the live model has none to send. A scenario cannot
+    script a self-report at all; `ExtractedFact.confidence` still exists and is
+    still what the ANALYZER's path reads, which is why the goldens keep it.
   - **No arbiter (accepted).** `derive_kinship_gender` and the rest of the
     arbiter's derivations do not run on this path, so facts main inferred are
     simply absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote
@@ -324,7 +323,6 @@ def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[di
             "statement": fact.statement,
             "when": _when(fact),
             "when_end": _when_end(fact),
-            "confidence": fact.confidence,
             "quote": surface_by_name.get(fact.entity_ref) or body_quote,
         }
         for fact in extraction.facts
