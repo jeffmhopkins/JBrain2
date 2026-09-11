@@ -370,8 +370,9 @@ def _calls(
     step that skipped the tool: it is the model saying the note says nothing, which is
     the one claim a sweep acts on destructively (`rerun_retracts_removed_fact`), and
     emitting no call at all would leave the harness scripting a pass that never read."""
-    readings = [{"facts": facts[i : i + MAX_FACTS]} for i in range(0, len(facts), MAX_FACTS)]
-    readings = readings or [{"facts": []}]
+    readings: list[dict[str, Any]] = [
+        {"facts": facts[i : i + MAX_FACTS]} for i in range(0, len(facts), MAX_FACTS)
+    ] or [{"facts": []}]
     readings[0] = {"title": title, "tags": list(tags), **readings[0]}
     return (
         [
