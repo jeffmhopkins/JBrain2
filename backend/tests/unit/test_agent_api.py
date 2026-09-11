@@ -3119,6 +3119,23 @@ def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
     assert owner_turn_text("Q: rhetorically?", None, []) == "Q: rhetorically?"
 
 
+def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
+    """The two renderings of one turn must stay BYTE-IDENTICAL — that is what F1's fix
+    bought, and a sanitiser that drifts between them un-buys it silently: the optimistic
+    bubble would say one thing and the reload another, which is the class of bug this
+    whole wave keeps finding. There is no cross-language test runner here, so the gate is
+    the shape `test_tap_targets.py` uses — Python reading the frontend source that is the
+    single source of truth for its half."""
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _PAIR_LABEL
+
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    assert f'text.replace(/{_PAIR_LABEL.pattern}/gm, "")' in asked
+
+
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
     """`clarified=False` with paired answers means the append raised or the note was
     soft-deleted, so the block — the answers' durable home — does not exist. The agent
