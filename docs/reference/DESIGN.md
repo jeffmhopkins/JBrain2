@@ -1120,13 +1120,28 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 
 - Text contrast ≥ 4.5:1 against its surface in both themes (the muted accents
   are for chrome/tints; body text is always `--text`/`--text-2`).
-- **Never dim a container with `opacity`.** It multiplies every colour beneath it,
-  a descendant cannot undo it, and the figures above are token-to-token: one
+- **Never dim a TEXT container with `opacity`.** It multiplies every colour beneath
+  it, a descendant cannot undo it, and the figures above are token-to-token: one
   `opacity: 0.72` on a block took four of its lines under the floor, `--text-2`
   included, and each had to be bought back by hand. Dim by token — give up the
   fill, the accent border, the inviting head colour — so the words keep the
   contrast their tokens certify. (Gated for the question block by
   `backend/tests/unit/test_block_contrast.py`.)
+  - **Scope, and the sweep this does not pretend to have done.** It binds a
+    container whose own words have to stay readable — a card, a row, a block. It
+    says nothing about `opacity` on a chip's fill, an icon, a divider, a bar, a
+    disabled control's whole affordance, or a transition, and `styles.css` uses it
+    that way about a hundred times. The rule arrived here (R3f, fourth review) as a
+    categorical ban with no scope clause, which the shipped app broke in more than a
+    dozen places the day it was written — `.auto-card.off` (0.62, **on the owner's
+    own Ops screen**), `.task-card.off` (0.60), `.loc-card-revoked`,
+    `.imgsteps.locked` and `.graph-filter.is-off` (0.55), `.cal-wev.cancelled`
+    (0.50), `.vitals[data-sync="unreachable"]` (0.42). Those are not this wave's to
+    fix and are not filed as its debt: they belong to the muted-token contrast
+    audit, which is where a sweep of dimmed text across every screen is tracked. A
+    binding rule the code contradicts on the Ops screen is worse than no rule, so
+    the scope is the part that binds today and the audit is the part that closes the
+    rest.
 - Visible focus rings on `:focus-visible`; full keyboard operability on
   desktop layouts.
 - Status conveyed by dot color is always paired with text.

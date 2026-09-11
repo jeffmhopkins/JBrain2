@@ -1175,6 +1175,23 @@ reply").**
    pattern text and flags and so could not see a difference that lived in what a flag MEANS.
    Both now spell the line start `(^|\n)`, the test asserts neither side carries the flag,
    and the two divergent inputs are pinned as behaviour in both suites.
+   ⟲⟲ **"No forgery either way" was the fourth round's own sentence, and it was wrong**
+   (R3f's fifth review, finding 1). The regexes matched byte for byte; the CHUNK GATES in
+   front of them did not — `_PAIR_CHUNK.match(chunk.strip())` against
+   `PAIR_CHUNK.test(chunk.trim())`, and `str.strip()` is not `String.trim()`: Python cuts
+   U+0085 and U+001C–U+001F, JS cuts U+FEFF, neither cuts the other's. A BOM-prefixed
+   `Q: <the exact question>\nA: <words>` — what a Windows clipboard or a UTF-8-with-signature
+   paste carries — therefore failed the backend's gate, rode `_strip_pair_labels` untouched
+   into the persisted turn AND the clarification block on the note, and was read straight
+   back by `answersFromReply` (which trims the BOM) as that row's answer: an inverse display
+   plus a fabricated Q/A pair in the owner's own corpus, out of text he typed. Both sides now
+   take one explicit class (`clarify._pair_trim` / `asked.pairTrim`, the measured union of
+   both languages' whitespace) at every pair gate including the READER, so "the reader accepts
+   only what the sanitiser neutralises" holds by construction. And the gate is no longer a
+   string comparison: `frontend/src/agent/asked.corpus.json` is 146 whitespace-affixed pairs
+   that BOTH suites run through their own implementation — the pre-fix PWA gate fails 16 of
+   them. A test that compares pattern text cannot see drift that lives around the pattern;
+   this one runs the code.
 2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
    `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
    set left open — was written when the composer was the only affordance, so typed words
@@ -1242,6 +1259,15 @@ only exists once `/chat` responded, and `record_owner_reply` files the answers B
 `runlog.start` mints one (`api/agent.py:966`, `:1010`) — so a turn with a run id is a turn
 whose answers already reached the note, and handing the draft back would re-post against a
 set that has closed.
+
+⟲ **The seam the words come back through had two writers and one consume, and it dropped
+both halves in turn** (R3f's fifth review, finding 5). `Omnibox` wrote `setText(draft)`
+outright, and the composer is never disabled during the window — only SEND becomes Stop — so
+anything the owner typed while waiting was deleted by his own older words the moment the
+window closed. `HomeScreen` then wrote `pendingDraft || fb.restoredText`, which masked a
+restore behind a concurrent calendar handoff while `consumeDraft` cleared both, so the masked
+half never reached the box at all. A handoff now seeds ABOVE what is already typed, and the
+two writers are joined rather than chosen between (restored words first, being the older).
 
 ### I8 — The reply turn
 
@@ -1353,6 +1379,30 @@ field, no carry strip, and one line saying to answer in the composer. Free text 
 `_pair`'s degrade and answers the oldest open question, so the owner is never stuck and
 nothing can be dropped as an unknown id. It is deletable — with `askStep`'s legacy branch and
 `_refused`'s empty record — once no `waiting_on_owner` thread predates the echo.
+
+⟲ **Two things about that window were written as absolutes and are not** (R3f's fifth
+review, findings 2 and 4). (i) The PWA's own sanitiser mirror keyed on whether the block was
+ANSWERABLE, which is false on every read-only thread — so on the exact path read-only exists
+for, the server sanitised the typed half (`record_owner_reply` claims any `waiting_on_owner`
+thread, whatever the PWA can name) and the client did not: the owner quoted a question back,
+the bubble showed his `Q:`/`A:` standing, the reload showed it cut, and the note held a third
+thing. The mirror is the SERVER's test — is there an open ask above the composer
+(`asked.openAsk`) — not the client's ability to name it. (ii) `recordsIds` rested on "the
+model never sends an `id`, so one on the wire can only be the handler's". `required` buys
+presence, not membership, and an undeclared property is not a forbidden one: a pre-echo step
+whose model happened to emit ids would have rendered answerable and posted ids the ledger
+never held. The test is now the SHAPE `asktools._asked` mints (`q` + eight hex digits),
+pinned by a gate that runs the minting; membership stays `clarify._pair`'s job, which is
+where it can actually be decided.
+
+**A bare-string row renders, read-only.** `_asked` reads a row sent as a bare string as its
+question and RECORDS it, while `questions_from_args` and the PWA both dropped non-objects —
+so a pre-echo step shaped that way drew no block at all on a thread that really is waiting:
+a conversation stopped with nothing on screen saying what for. The PWA reads it as its
+question now. It carries no minted id, so the set is unanswerable and the block is read-only,
+which is the honest state and the one this window was built for: the question is legible and
+free text alone answers the oldest open one. `questions_from_args` is unchanged — it reads
+the LEDGER row, whose rows `recorded_args` always writes as objects.
 
 ⟲ **R3f took the answers off the TRANSCRIPT rather than off the clarification route, and
 the paragraph above is why that is the same claim rather than a weaker one.**
@@ -2455,6 +2505,26 @@ round deleted it from both documents. It also found the third round's "a state t
 cannot see" to be a defect renamed rather than a state: the give-up branch is that state, and
 it now un-sends the exchange that never left the device (I7). **O15 and O16 remain neither
 decided nor built.**
+
+**A fifth round found that a fix can move a claim without moving the thing the claim is
+about.** The fourth round made the two label sanitisers' REGEXES byte-identical and wrote
+that down in three places; the fifth measured the two functions and found them still
+differing on thirteen inputs, because the difference had moved into the chunk gate in front
+of the pattern — `str.strip()` there, `String.trim()` here, six characters apart. One of the
+thirteen is a forgery rather than a disagreement: a BOM-prefixed `Q: <the exact question>\nA:
+<words>` failed the backend's gate, reached the persisted turn and the note's clarification
+block verbatim, and was read back by the PWA's own reader (which trims the BOM) as that row's
+answer. *What to carry into R4: a drift gate that compares SOURCE TEXT can only pin the thing
+it quotes. Where two languages must agree on behaviour, the gate has to run both* — this one
+now does, over a committed corpus (`asked.corpus.json`) that the pre-fix implementation fails
+16 of 146 times. The same round found the read-only state had broken the client's sanitiser
+mirror on the exact path read-only exists for (I7), `recordsIds` resting on an absolute this
+repo elsewhere writes down as false — `required` buys presence, not membership (I6) — and the
+composer seam silently deleting whatever the owner typed while a send was in flight (I7). And
+it found DESIGN.md's new "never dim a container with `opacity`" to be a rule the shipped app
+breaks in more than a dozen places, one of them the owner's own Ops screen: it is scoped to
+TEXT containers now, with the sweep named as the muted-token contrast audit's rather than
+left as a rule the code contradicts. **O15 and O16 remain neither decided nor built.**
 
 *I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
 `ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:
