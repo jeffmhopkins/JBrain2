@@ -100,6 +100,16 @@ field is fillable). The harness quotes its subject's own `surface_text`, which i
 name and not a schedule, so the faithful default reaches `parse_recurrence` on no
 scenario in the suite — a scenario wanting an RRULE off the quote has to author one.
 
+    That gap is DELIBERATE here and covered elsewhere, which review confirmed:
+    `test_note_graph_write_pg.py` drives the recurrence read directly. Closing it in
+    this suite means aiming a quote at the schedule — `plan_recurring_gym` is one
+    string away, its body carrying "gym every Monday at 6am" verbatim — and that is
+    NEW COVERAGE, which this wave's acceptance ("every green scenario stays green,
+    nothing changes state") exists to keep out. It is the synthesiser being unfaithful
+    on exactly one behaviour, though, and `close_reading.tool` tells the model the
+    opposite ("include the words that say WHEN or HOW OFTEN"), so it is worth a wave
+    of its own rather than a footnote forever.
+
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
     against the shared testcontainers database fixture.
@@ -559,9 +569,35 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # It is why `rerun_retracts_removed_fact.json` works — step 2 re-reads the note, its
     # reading names no `homeLocation` fact, and the sweep retracts what step 1 asserted.
     #
-    # ONE thing here remains the harness's alone, and it is `mentions`: a reading carries
-    # fact ids and no mention ids, so R3's settle will pass `mentions=None` and SKIP the
-    # mention reconcile (`sweep_note` says what that leaks and why it is bounded).
+    # THREE things here are still not production, and R3 has to close two of them. Naming
+    # them precisely matters because R4 deletes the old pipeline citing this harness:
+    #
+    # 1. `mentions`. A reading carries fact ids and no mention ids, so R3's settle passes
+    #    `mentions=None` and SKIPS the mention reconcile (`sweep_note` says what that
+    #    leaks and why it is bounded). The harness's alone, and it stays that way.
+    #
+    # 2. **One fact verb here, TWO in production.** `assert_fact` is still bound on the
+    #    unattended pass (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) until R4 narrows it to
+    #    the reply set, and `_calls` emits only `close_reading` — so the MIXED pass is
+    #    untested and, by the default synthesiser, unrepresentable. That pass is exactly
+    #    where a reading-derived sweep is destructive: assert F, then close with a reading
+    #    that omits F, and the sweep releases F's claim and retracts a fact the SAME pass
+    #    wrote. A complete reading re-absorbs it (re-asserting an identity key returns
+    #    `ALREADY` with the same `fact_id`, so it lands in `fact_ids` anyway) — the hole is
+    #    the INCOMPLETE reading, which is the case the sweep is dangerous in.
+    #    **R3 must close this, not inherit it**: either narrow `assert_fact` off the
+    #    unattended path when the settle moves, or union the pass's `assert_fact` writes
+    #    into `touched`. The first is cleaner and is what R4 was going to do anyway; the
+    #    second keeps the verb but re-admits the ledger the S3 argument above rejects,
+    #    for the bounded case of facts THIS pass wrote.
+    #
+    # 3. The sweep here is UNGATED. The spec fires it only on a clean, unclamped pass that
+    #    produced a reading; nothing below consults `writer.reading.clamped`. Inert at the
+    #    suite's sizes — the largest step is 6 facts — but the ceiling moved with the verb:
+    #    `READING_CALL_BUDGET` 6 x 8 = 48 facts per step, where the retired
+    #    `ASSERT_CALL_BUDGET` 10 x 8 gave 80. A 49-fact step would write 48, latch
+    #    `clamped`, and be swept anyway, retracting the previous step's tail where
+    #    production would refuse.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
         # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,

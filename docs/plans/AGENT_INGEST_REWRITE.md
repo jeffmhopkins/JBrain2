@@ -1840,11 +1840,25 @@ are another session's. A RE-DERIVATION licenses a release, and the reading is on
 rather than asserted: with the old accumulation restored beside the new input,
 `led.touched == {UUID(f) for f in writer.reading.fact_ids}` held on every step of every
 green scenario, which is the wave's thesis — the reading carries what the two-call surface
-carried — in the one form that can fail. **It is "spec, except X", and X is two things, both
+carried — in the one form that can fail. **It is "spec, except X", and X is THREE things, all
 named in `_run_step`:** `settle_conversation` still runs the tail ALONE until R3 moves these
-two calls into it, and the harness passes `mentions=led.mention_ids` where R3's settle must
+two calls into it; the harness passes `mentions=led.mention_ids` where R3's settle must
 pass `None`, because a reading carries fact ids and the 0191 ledger records no mention ids
-at all. Recorded and not fixed: `close_reading` reads a repeating schedule out of each
+at all; and **the harness models ONE fact verb where production binds two.** That third one
+is R3's to close and is the reason this paragraph was corrected after review: `assert_fact`
+stays on the unattended pass (`NOTE_INGEST_UNATTENDED_TOOLS`) until R4 narrows it to the
+reply set, so a pass can assert F and then close with a reading that omits F — and a
+reading-derived sweep then releases F's claim and retracts a fact THAT SAME PASS wrote. A
+complete reading re-absorbs it (re-asserting an identity key returns `ALREADY` with the same
+`fact_id`), so the hole is the INCOMPLETE reading, which is precisely the case the sweep is
+destructive in. **R3 must close it rather than inherit it:** either narrow `assert_fact` off
+the unattended path when the settle moves — cleaner, and what R4 does anyway — or union the
+pass's own `assert_fact` writes into `touched`, which keeps the verb but re-admits, for the
+bounded case of facts this pass wrote, the ledger the S3 argument rejects. A fourth, smaller
+gap rides with it: the harness sweep is UNGATED where the spec fires only on a clean,
+unclamped pass, and the per-step ceiling moved from 80 facts to 48 when the verb changed
+(`READING_CALL_BUDGET` 6 x 8 against the retired `ASSERT_CALL_BUDGET` 10 x 8). Inert at the
+suite's sizes — the largest step is 6 facts — and live above 48. Recorded and not fixed: `close_reading` reads a repeating schedule out of each
 fact's ATTESTED QUOTE, and the harness quotes its subject's own `surface_text` — a name, not
 a schedule — so the faithful default reaches `parse_recurrence` on no scenario in the suite.
 A scenario wanting an RRULE off the quote has to author one.

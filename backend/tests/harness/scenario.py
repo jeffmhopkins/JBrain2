@@ -36,8 +36,11 @@ class Step:
     # The ARGUMENTS this step's agent sends, addressed per tool —
     # `{"entities": [...], "reading": {"title": ..., "tags": [...], "facts": [...]}}`,
     # batched by the runner at each tool's own ceiling. The surfaces go to
-    # `resolve_entity` and the reading to `close_reading`, which is the whole turn:
-    # there is no third block because the agent has no third write verb on this path.
+    # `resolve_entity` and the reading to `close_reading`, which is the whole turn AS
+    # THIS HARNESS MODELS IT — not as the allowlist bounds it. `assert_fact` is still
+    # bound unattended (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) until R4 narrows it to the
+    # reply set, so a real pass can mix the two verbs and no block here can say so. See
+    # `runner._run_step` on why that gap is R3's to close, not this format's.
     # `title`/`tags` are optional and default to the step's scripted extraction.
     # Omit the field entirely and the runner derives the whole turn faithfully from the
     # extraction (every named surface resolved, every fact read back, each quoting its

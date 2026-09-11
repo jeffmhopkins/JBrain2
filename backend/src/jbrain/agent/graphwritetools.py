@@ -1822,8 +1822,9 @@ def _batch(
 
 @dataclass
 class NoteToolset:
-    """The tools one note conversation runs with: the two graph writes bound to its
-    note, plus whatever handlers the caller passes alongside them. Today that is
+    """The tools one note conversation runs with: the three graph writes bound to its
+    note — `resolve_entity`, `assert_fact` and `close_reading`, until R4 narrows the
+    second to the reply set — plus whatever handlers the caller passes alongside them. Today that is
     find_entity / read_entity / current_time — inherited unchanged, and reached only
     because the persona now reads the knowledge base — and `ask_owner`, which is a write
     but not a note-BOUND one: it finds its conversation through the turn's session id,

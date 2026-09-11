@@ -15,7 +15,8 @@ faithful agent would send — the surfaces to resolve, then the note restated: i
 title, its tags and every fact it says — and `NoteGraphWriter`
 (`jbrain.agent.graphwritetools`) executes them: real resolution, real
 `commit_facts`, real `supersession.decide()`, real domain floor and ratchet, real
-citation anchoring, then ONE `sweep_note` + `settle_tail` over the whole reading. What is **not** run is the model itself, the `AgentLoop`,
+citation anchoring, then ONE `sweep_note` + `settle_tail` over the whole reading.
+What is **not** run is the model itself, the `AgentLoop`,
 `max_steps`, the budgets, the tool sidecars' schemas, and — since W3 — the
 **arbiter**, which the old `integrate_note` path ran and this one does not.
 
