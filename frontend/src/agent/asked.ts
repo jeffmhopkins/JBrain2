@@ -25,7 +25,11 @@
 // "this call recorded a set", so it is the one the selection is made on.
 //
 // This module is the frontend mirror of `models/note_conversation.questions_from_args`,
-// including its deploy-window fallback for a pre-batch `args["question"]`. Two parsers of
+// including its deploy-window fallback for a pre-batch `args["question"]` — with one
+// deliberate divergence, `askRow`, which exists because the two are not always reading the
+// same blob: that function reads the LEDGER row, whose rows `recorded_args` always writes
+// as objects, while a pre-echo step here carries the model's raw arguments, where a
+// bare-string row is one `asktools._asked` accepted and recorded. Two parsers of
 // one shape is a drift risk, and the alternative — a third wire field carrying what the
 // args already carry — is worse: it would be a second source of truth for the SET the
 // reply path pairs against, and a block that offers a question the ledger no longer holds
