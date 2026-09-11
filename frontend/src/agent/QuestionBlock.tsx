@@ -99,6 +99,7 @@ function QuestionRow({
   answer,
   onAnswer,
   outcome,
+  readOnly,
 }: {
   question: AskedQuestion;
   answer: string;
@@ -106,6 +107,8 @@ function QuestionRow({
   /** What the reply that settled this block did to THIS question — null while it is
    * live. Its presence is what freezes the row. */
   outcome: SentOutcome | null;
+  /** The row can be READ but not answered here — see `QuestionBlock`. */
+  readOnly: boolean;
 }): ReactNode {
   const q = question;
   const frozen = outcome !== null;
@@ -114,6 +117,17 @@ function QuestionRow({
   // Revealed by a tap, and revealed anyway while it holds words that are not a candidate
   // — a draft restored after a failed send has to come back visible, not stranded.
   const typing = q.candidates.length > 0 && (escaped || (answer !== "" && !picked));
+  // The question and what it blocks, and nothing to answer WITH. Not disabled controls:
+  // a greyed candidate invites a tap that cannot work, and the whole point of the state
+  // is that this row has no id worth posting. The block's foot says where to answer.
+  if (readOnly) {
+    return (
+      <div className="fb-q">
+        {q.blocks && <p className="fb-q-why">blocks · {q.blocks}</p>}
+        <p className="fb-q-text">{q.question}</p>
+      </div>
+    );
+  }
   return (
     <div className="fb-q">
       {q.blocks && <p className="fb-q-why">blocks · {q.blocks}</p>}
@@ -190,11 +204,30 @@ function QuestionRow({
   );
 }
 
+/** The whole block: the header's count, a row per question, and the foot that says what
+ * the block does not do.
+ *
+ * **READ-ONLY is a third state, and it is the deploy window** (R3f's fourth review,
+ * finding 2). Every ask persisted before the id echo shipped has a step carrying the
+ * model's raw arguments and no ids, while its ledger row holds the real `q########` ones —
+ * so a thread left waiting across the deploy would render tappable rows whose ids are
+ * `asked.askedQuestions`' positional stand-ins. Sending those posts ids no open question
+ * has: `clarify._pair` drops every one, `claim_waiting` consumes the set anyway, nothing
+ * reaches the note, and the turn text then degrades to bare prose — which the frozen block
+ * reads back as "answered in your reply" over rows that were never answered. Day one on
+ * the live box, on the one screen the owner has.
+ *
+ * So the questions are SHOWN and nothing is offered to answer them with. The composer
+ * still works: free text alone is `_pair`'s degrade and answers the oldest open question,
+ * which is the first row here, so he is never stuck and nothing can be dropped as an
+ * unknown id. **This state can be deleted once no `waiting_on_owner` thread predates the
+ * echo** — with it, `askStep`'s legacy fallback and `asktools._refused`'s empty record. */
 export function QuestionBlock({
   questions,
   answers,
   onAnswer,
   sent,
+  readOnly = false,
 }: {
   questions: readonly AskedQuestion[];
   /** The live draft, keyed by question id — the caller holds it until the composer
@@ -207,6 +240,8 @@ export function QuestionBlock({
    * or null while the block is live. Its presence is what freezes the block, and its
    * contents are what the header is allowed to claim. */
   sent: Readonly<Record<string, SentOutcome>> | null;
+  /** The block can be read but not answered — see above. Live blocks only. */
+  readOnly?: boolean;
 }): ReactNode {
   if (questions.length === 0) return null;
   const n = questions.length;
@@ -224,13 +259,15 @@ export function QuestionBlock({
     >
       <p className="fb-qblock-head">
         {n} question{n === 1 ? "" : "s"}
-        {sent === null
-          ? " · answers ride with your next send"
-          : answered === n
+        {sent !== null
+          ? answered === n
             ? " · answered"
             : answered === 0
               ? " · still open"
-              : ` · ${answered} answered, ${n - answered} still open`}
+              : ` · ${answered} answered, ${n - answered} still open`
+          : readOnly
+            ? " · answer in your reply"
+            : " · answers ride with your next send"}
       </p>
       {questions.map((q) => (
         <QuestionRow
@@ -239,11 +276,19 @@ export function QuestionBlock({
           answer={answers[q.id] ?? ""}
           onAnswer={onAnswer}
           outcome={sent === null ? null : (sent[q.id] ?? { kind: "open" })}
+          readOnly={readOnly && sent === null}
         />
       ))}
-      {sent === null && (
-        <p className="fb-q-foot">Nothing here sends — your answers ride with the composer.</p>
-      )}
+      {sent === null &&
+        (readOnly ? (
+          <p className="fb-q-foot">
+            This ask predates the update, so it can only be answered in words: reply in the composer
+            and your words answer the first question above. The rest stay open, and the agent is
+            told so.
+          </p>
+        ) : (
+          <p className="fb-q-foot">Nothing here sends — your answers ride with the composer.</p>
+        ))}
     </section>
   );
 }

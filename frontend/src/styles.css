@@ -27402,9 +27402,28 @@ button.wf-sigpill {
   background: var(--surface);
 }
 .fb-shell .fb-qblock-done {
-  /* Answered and spent: still legible on a reopened thread (§3b I9), no longer inviting. */
+  /* Answered and spent: still legible on a reopened thread (§3b I9), no longer inviting.
+     DIMMED BY TOKEN, never by opacity, and that is R3f's fourth review, finding 4. An
+     `opacity: 0.72` here multiplied every colour under it, so computed over --bg it put
+     the "still open" line at 1.81:1 in light, the answer's own words at 3.41:1 (--text-2 —
+     DESIGN.md's CERTIFIED body text, failing for no reason but this) and a candidate's
+     detail at 1.81:1, against a binding 4.5:1 floor. A descendant cannot undo an
+     ancestor's opacity, so the last round could only buy back one line at a time by
+     re-colouring it; dropping the opacity buys all four at once.
+     What carries "spent" instead is the neutral border, the head going from amber to
+     --text, and the CANDIDATES giving up their raised fill below — dimming the things that
+     look like controls rather than the words the owner has to read. */
   border-color: var(--border);
-  opacity: 0.72;
+}
+/* The chips stop reading as controls: no raised --surface-2 fill, the label at --text-2.
+   The one he PICKED keeps its amber tint and full-strength label, so a reopened thread
+   shows what he chose rather than a uniformly grey row. Every measured line comes out
+   ABOVE where the opacity left it — the candidate detail included (1.81 → 2.72 light,
+   1.90 → 2.78 dark; still the --text-3 token's own shortfall, which is filed as a
+   design-system call and is the same on a live block). */
+.fb-shell .fb-qblock-done .fb-q-opt:not(.fb-q-picked) {
+  background: transparent;
+  color: var(--text-2);
 }
 .fb-shell .fb-qblock-head {
   margin: 0 0 8px;
@@ -27414,14 +27433,14 @@ button.wf-sigpill {
   letter-spacing: 0.04em;
 }
 .fb-shell .fb-qblock-done .fb-qblock-head {
-  /* --text, not the --text-3 this used to take. The block's own `opacity: 0.72` multiplies
-     whatever colour lands here and an ancestor's opacity cannot be undone by a descendant,
-     so the colour is the only lever: --text-3 under it computes ~2.0:1 against the block,
-     in both themes, where DESIGN.md's accessibility floor is a binding 4.5:1. This line is
-     the count of what the send actually LANDED — the first thing the owner reads on a
-     frozen block (`QuestionBlock.tsx`), and the one place R3f's second review found lying
-     outright — so it is the last line here allowed to be hard to read. --text under 0.72 is ~7.9:1 dark and
-     ~6.9:1 light. (R3f's third review, finding 4.) */
+  /* --text, not the --text-3 this used to take, and not the live block's amber either.
+     This line is the count of what the send actually LANDED — the first thing the owner
+     reads on a frozen block (`QuestionBlock.tsx`), and the one place R3f's second review
+     found lying outright — so it is the last line here allowed to be hard to read, and
+     --text is what DESIGN.md certifies for text that must be read (14.4:1 dark, 17.2:1
+     light over the block's --surface). Amber stays on the LIVE head, where it is the
+     invitation rather than the report. (R3f's third review finding 4, kept after the
+     fourth review removed the opacity that first forced it.) */
   color: var(--text);
 }
 .fb-shell .fb-q {
@@ -27511,13 +27530,20 @@ button.wf-sigpill {
   color: var(--text-2);
   font-size: var(--fs-secondary);
 }
-/* A row the send did NOT answer, on a block that is otherwise spent. Amber, the open-ask
-   register the block and the stream chip already wear, because this is the one line on a
-   dimmed block the owner has to notice: the agent may re-ask exactly these, and a row
-   that read as answered is what sent him round that loop (R3f's second review). */
+/* A row the send did NOT answer, on a block that is otherwise spent — the one line on a
+   frozen block the owner has to notice: the agent may re-ask exactly these, and a row that
+   read as answered is what sent him round that loop (R3f's second review).
+   --text WITH AN AMBER RULE, not amber text (R3f's fourth review, finding 4). Amber body
+   text is 2.35:1 on the light theme's --surface whatever the block does — that is the
+   token, not this wave — and DESIGN.md is explicit that the muted accents are for chrome
+   and tints while body text is --text/--text-2. So the open-ask register is carried by the
+   rule, which is chrome, and the sentence itself is readable in both themes. The state is
+   in the words either way, which is the app's own rule about colour. */
 .fb-shell .fb-q-open {
   margin: 7px 0 0;
-  color: var(--amber);
+  padding-left: 7px;
+  border-left: 2px solid var(--amber);
+  color: var(--text);
   font-size: var(--fs-secondary);
 }
 /* States what the block cannot do, where the owner would otherwise assume it does. */

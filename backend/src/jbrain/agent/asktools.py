@@ -42,6 +42,11 @@ now about the SET rather than about arity. One reply consumes one open set
 a second set opened behind the first would be answered by nothing and would leave two
 "open" sets the reply path has no rule to choose between. The first ask already ended the
 turn; everything the pass is stuck on belongs in it.
+
+Refused, and the refusal REPORTS the set that is actually open — `AgentLoop` finishes the
+round it is in before it honours a halt, so a model that emits two `ask_owner` calls in one
+message runs the second one after the first has already ended the turn, and the owner's
+question block is built from an `ask_owner` step. See `_already_waiting`.
 """
 
 from __future__ import annotations
@@ -229,28 +234,36 @@ def build_ask_owner_handlers(
     "hit an internal error" the model learns nothing from) — and every failure leaves the
     turn RUNNING, deliberately: a question that was not recorded must not stop the pass,
     or a note whose ask failed settles with its reading half-written and no question to
-    show for it."""
+    show for it.
+
+    **Every path echoes what it recorded**, which is R3f's fourth review. A refusal is
+    text to the MODEL and was nothing at all to the transcript, so its step kept the
+    model's raw arguments — and the PWA, which builds the owner's question block off that
+    step, drew a block for a question the ledger had never held (findings 1 and 3). The
+    invariant is now one sentence: an `ask_owner` step's `args` are this tool's own record
+    of what the conversation now holds — the set it just recorded, the set it is already
+    waiting on, or nothing (`_refused`)."""
 
     repo = NoteConversationRepo()
 
     async def ask_owner(arguments: Mapping[str, object], ctx: ToolContext) -> str:
         asked = _asked(arguments)
         if not asked:
-            return (
+            return _refused(
                 "ask_owner needs `questions`: one or more items, each with a `question`"
                 " naming a specific thing you cannot settle from the note. Nothing was"
                 " recorded."
             )
         session_id = ctx.agent_session_id
         if session_id is None:
-            return (
+            return _refused(
                 "ask_owner works only inside a note's conversation, and this turn is not"
                 " one. Nothing was recorded; answer from what you have."
             )
         async with scoped_session(maker, ctx.session) as s:
             conversation = await repo.get(s, session_id)
             if conversation is None:
-                return (
+                return _refused(
                     "ask_owner works only inside a note's conversation, and this one has no"
                     " note behind it. Nothing was recorded; answer from what you have."
                 )
@@ -316,7 +329,12 @@ def build_ask_owner_handlers(
             return await ask_owner(arguments, ctx)
         except Exception as exc:  # noqa: BLE001 — a failed ask is an observation, not a crash
             log.warning("ask_owner.failed", error=repr(exc))
-            return (
+            # Including the `InvalidStateTransition` re-raise below — an ask on a
+            # `settled`/`failed` thread. That one rolls its ledger row back, so the
+            # conversation holds nothing and the block must render nothing: without the
+            # echo the step kept the model's raw questions and the PWA offered them on a
+            # thread the server is not waiting on (R3f's fourth review, finding 3).
+            return _refused(
                 "ask_owner could not record the question, so the note is NOT waiting on"
                 " anyone. Do not tell Jeff you asked him something. Carry on with what you"
                 " can settle from the note itself."
@@ -329,16 +347,44 @@ def _count(n: int) -> str:
     return "1 question" if n == 1 else f"{n} questions"
 
 
-def _already_waiting(open_set: list[AskedQuestion]) -> str:
-    """The refusal, at the level the latch works at: one open SET, not one question."""
+def _refused(text: str) -> ToolOutput:
+    """A refusal: the words the model reads, and the EMPTY record the transcript keeps.
+
+    Empty rather than absent, because absent is indistinguishable from a step written
+    before the echo existed — and the PWA treats those two opposite ways (`asked.askStep`):
+    a pre-echo step is a live ask it shows read-only, a refusal is a set that does not
+    exist and must not be drawn at all.
+
+    No `halt` — every refusal leaves the turn running, which is this module's own rule."""
+    return ToolOutput(text, recorded_args={"questions": []})
+
+
+def _already_waiting(open_set: list[AskedQuestion]) -> ToolOutput:
+    """The refusal, at the level the latch works at: one open SET, not one question.
+
+    **It echoes the OPEN SET, not nothing**, and that is R3f's fourth review, finding 1.
+    `AgentLoop` keeps iterating `turn.tool_calls` after a halt, so a model that puts two
+    `ask_owner` calls in one message runs the second one into this branch after the first
+    has already ended the turn. The refusal was a bare string, so the second step kept the
+    model's raw second question — and `askStep` took the LAST ask step: the owner was shown
+    a question the ledger never held while the two real ones stayed invisible. A tap posted
+    `q1`, `clarify._pair` dropped it as naming no open question, the note received nothing,
+    and the agent re-asked the set it had been told was unanswered.
+
+    The set this hands back is the one `open_questions` just read out of the ledger, so the
+    step and the row carry the same ids whichever call the block ends up built from."""
     if not open_set:
-        return (
+        # Reachable only through a row that parsed to nothing (`_fit` makes that
+        # unreachable in practice) — the thread waits on a set the ledger cannot show, so
+        # there is nothing honest to put on the block.
+        return _refused(
             "This note is already waiting on Jeff for your last question. One open set at"
             " a time — this ask was not recorded."
         )
-    return (
+    return ToolOutput(
         f"This note is already waiting on Jeff for {_count(len(open_set))}, starting with:"
-        f" {open_set[0].question!r}. One open set at a time — this ask was not recorded."
+        f" {open_set[0].question!r}. One open set at a time — this ask was not recorded.",
+        recorded_args=recorded_args(open_set),
     )
 
 

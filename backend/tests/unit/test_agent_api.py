@@ -3153,29 +3153,59 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     finding 3c): dropping `re.MULTILINE` would have diverged the two renderers with this
     test still green. The flags are now read off the compiled object, and the second
     pattern — the chunk shape that DECIDES whether a chunk is sanitised at all (finding
-    3b) — is pinned beside it, because that is the half a drift would now silently move."""
+    3b) — is pinned beside it, because that is the half a drift would now silently move.
+
+    ⟲ **And then the flags matched while the patterns did not MEAN the same thing** (R3f's
+    fourth review, finding 6): `/m` counts a lone CR and U+2028/U+2029 as line starts where
+    `re.MULTILINE` counts only a newline. Both now write the line start into the pattern,
+    so this asserts neither side carries the flag at all — and
+    `test_the_two_sanitisers_agree_on_the_inputs_that_diverged` pins the behaviour the
+    pattern comparison cannot see, against the same inputs asserted in `asked.test.ts`."""
     import re
     from pathlib import Path
 
     from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL
 
-    # The flags, not just the pattern. `re.MULTILINE` is what makes `^` a line start; its
-    # loss turns the sanitiser into a first-line-only one on the backend alone.
-    assert _PAIR_LABEL.flags & re.MULTILINE
+    # NEITHER pattern may carry a line-start flag, and that is the finding this line was
+    # rewritten for. `re.MULTILINE` and JS's `/m` are not the same flag: `/m` makes `^`
+    # match after a lone `\r` and after U+2028/U+2029 too, so two sanitisers that agreed on
+    # pattern text and on "multiline: yes" still diverged on pasted CR-bearing input. The
+    # line start is spelled `(^|\n)` in both languages now, which is why this asserts the
+    # flag is ABSENT rather than present.
+    assert not _PAIR_LABEL.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
     assert not _PAIR_CHUNK.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
 
     asked = (
         Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
     ).read_text(encoding="utf-8")
-    # `gm` is the JS spelling of the two flags the label pattern needs: `m` for
-    # `re.MULTILINE`, `g` for `sub`'s replace-every (Python's `sub` is global by default).
-    assert f'chunk.replace(/{_PAIR_LABEL.pattern}/gm, "")' in asked
+    # `g` is the one flag the label pattern still needs — the JS spelling of `sub`'s
+    # replace-every (Python's `sub` is global by default). The captured line start is put
+    # back by the replacement, `$1` there and a backslash-1 here.
+    assert f'chunk.replace(/{_PAIR_LABEL.pattern}/g, "$1")' in asked
     # And the chunk shape both sides now gate on — the PWA's single `PAIR_CHUNK` const,
     # which `answersFromReply` READS with and `stripPairLabels` decides with, so one edit
     # moves the writer and the reader together.
     assert f"const PAIR_CHUNK = /{_PAIR_CHUNK.pattern}/;" in asked
     assert "PAIR_CHUNK.test(chunk.trim())" in asked
     assert "PAIR_CHUNK.exec(chunk.trim())" in asked
+
+
+def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
+    """The behaviour the pattern comparison above cannot see (R3f's fourth review, finding
+    6). Measured over twenty-three inputs, exactly two diverged, and both carried a line
+    terminator JS counts and Python does not — so they are the two pinned here, with the
+    same inputs and the same expected output asserted in `asked.test.ts`. Two suites in two
+    languages is the only cross-language gate available; what makes it a gate rather than
+    two coincidences is that the strings are identical in both files."""
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    # A lone CR: a line start to JS's `/m`, an ordinary character to Python. The trailing
+    # `A: c` is NOT at a line start, so its label is the owner's word and stays.
+    assert _strip_pair_labels("Q: a\nA: b\rA: c") == "a\nb\rA: c"
+    # U+2028, the same divergence through a rich-text paste rather than a Windows one.
+    assert _strip_pair_labels("Q: a\nA: b\u2028A: c") == "a\nb\u2028A: c"
+    # And the shape the cut IS for, unchanged: a real pair loses both labels.
+    assert _strip_pair_labels("Q: a\nA: b") == "a\nb"
 
 
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:

@@ -18,6 +18,12 @@
 // (`ToolResultEvent.args` → `transcript.ts` / `TranscriptAccumulator`), which is what makes
 // the sentence above true rather than merely intended.
 //
+// ⟲ **And the echo is what SELECTS the step, which is R3f's fourth review.** Echoing the
+// ids fixed the block's contents and left its choice of step reading `ok === true` — "no
+// exception escaped", which is true of every refusal `asktools` returns as text. See
+// `askStep`: the presence of the minted ids is the only signal on the wire that means
+// "this call recorded a set", so it is the one the selection is made on.
+//
 // This module is the frontend mirror of `models/note_conversation.questions_from_args`,
 // including its deploy-window fallback for a pre-batch `args["question"]`. Two parsers of
 // one shape is a drift risk, and the alternative — a third wire field carrying what the
@@ -25,7 +31,7 @@
 // reply path pairs against, and a block that offers a question the ledger no longer holds
 // posts an id `_pair` then drops.
 
-import type { ToolActivity, TranscriptMessage } from "./transcript";
+import type { TranscriptMessage } from "./transcript";
 
 /** One tappable candidate of a question: what the resolver already knows about each
  * person the note could mean. `label` is the name, `detail` the parenthetical that tells
@@ -150,19 +156,75 @@ export function askedQuestions(args: Record<string, unknown> | undefined): Asked
   return asked;
 }
 
-/** The LAST succeeded `ask_owner` step of a turn, or null. Last and succeeded for the
- * reason `notes_inbox` filters the same way: a failed call asked nothing, and the reply
- * path pairs against the open set, so a block rendered off any other row would offer
- * questions the ledger does not hold. */
-export function askStep(message: TranscriptMessage): ToolActivity | null {
-  const asks = message.tools.filter((t) => t.name === "ask_owner" && t.ok === true);
-  return asks[asks.length - 1] ?? null;
+/** Does this step's `args` carry the TOOL's own record of the set, rather than the
+ * model's raw arguments? The test is the minted ids: `ask_owner` declares no `id`, so the
+ * model never sends one and an id on the wire can only be the one the handler minted and
+ * the ledger row holds (`asktools.recorded_args`).
+ *
+ * ⟲ **This is the signal `askStep` used to get wrong, and R3f's fourth review, finding
+ * 1/2/3 are one bug wearing three coats.** It selected on `ok === true`, which means "no
+ * exception escaped" and NOT "this call recorded a question set": `_dispatch` marks every
+ * string a handler returns `is_error=False` (`loop.py`), and `asktools` returns every
+ * refusal as text on purpose — the already-waiting latch, the not-a-note-conversation
+ * refusal, the `_guarded` catch-all, the `InvalidStateTransition` re-raise. Each of those
+ * left a step carrying the model's RAW arguments, which the block then rendered as if the
+ * ledger held them.
+ *
+ * Every row is required to carry one, not merely some row: a partly-id'd blob is not a
+ * shape either writer produces, so it is the model's own and must not be trusted to name
+ * anything `clarify._pair` will match. */
+function recordsIds(args: Record<string, unknown> | undefined): boolean {
+  const raw = args?.questions;
+  if (!Array.isArray(raw)) return false;
+  const rows = raw.filter(
+    (item): item is Record<string, unknown> =>
+      typeof item === "object" &&
+      item !== null &&
+      oneLine((item as Record<string, unknown>).question) !== "",
+  );
+  return rows.length > 0 && rows.every((row) => oneLine(row.id) !== "");
 }
 
-/** The question set a turn ended on, empty when it did not end on one. */
-export function turnQuestions(message: TranscriptMessage): AskedQuestion[] {
-  const step = askStep(message);
-  return step ? askedQuestions(step.args) : [];
+/** The ask a turn ended on: the questions, and whether they can be ANSWERED from the
+ * block. */
+export interface TurnAsk {
+  questions: AskedQuestion[];
+  /** True when the step carries the tool's own minted ids — the ids `clarify._pair`
+   * matches an answer against. False for a DEPLOY-WINDOW step (see `askStep`), whose ids
+   * are `askedQuestions`' positional stand-ins: the block renders read-only, because an
+   * answer posted against `q1` names no open question and is dropped. */
+  answerable: boolean;
+}
+
+/** The `ask_owner` step a block is built from: the LAST one that RECORDED a set.
+ *
+ * "Recorded" rather than "succeeded", for the reason above — and the three refusals that
+ * used to win this selection are exactly the three findings it closes:
+ *
+ * - **Two `ask_owner` calls in one message.** `AgentLoop` keeps iterating `turn.tool_calls`
+ *   after `halt_seen`, so a model that asks twice runs the second call into the
+ *   already-waiting latch. That refusal is a plain refusal, its step keeps the model's raw
+ *   second question, and last-wins put a question the ledger never held on screen while
+ *   the two real ones were invisible — a tap then posted `q1`, `_pair` dropped it, nothing
+ *   landed, and the agent re-asked. (The latch now echoes the REAL open set too, so this
+ *   step is trustworthy when it does win; this filter is what makes the block right
+ *   whether or not it does.)
+ * - **An ask refused on a `settled`/`failed` thread.** Nothing was recorded, the server is
+ *   not waiting, and the block must not offer to answer. No ids, no block.
+ * - **A step persisted BEFORE the id echo shipped.** Detected rather than silently falling
+ *   through to the positional fallback — see `TurnAsk.answerable`.
+ *
+ * The deploy-window fallback is the last succeeded ask, and it is reachable only because
+ * `asktools` echoes an EMPTY record (`{"questions": []}`) from every refusal path: a
+ * refusal therefore lands here as a step with no questions, not as one with the model's
+ * raw ones. The day that echo is older than every waiting thread, both halves go. */
+export function askStep(message: TranscriptMessage): TurnAsk {
+  const asks = message.tools.filter((t) => t.name === "ask_owner" && t.ok === true);
+  const recorded = asks.filter((t) => recordsIds(t.args));
+  const step = recorded[recorded.length - 1];
+  if (step) return { questions: askedQuestions(step.args), answerable: true };
+  const legacy = asks[asks.length - 1];
+  return { questions: legacy ? askedQuestions(legacy.args) : [], answerable: false };
 }
 
 /** The open question set of a thread: the questions of the LAST message when that message
@@ -176,7 +238,11 @@ export function turnQuestions(message: TranscriptMessage): AskedQuestion[] {
 export function openQuestions(messages: readonly TranscriptMessage[]): AskedQuestion[] {
   const last = messages[messages.length - 1];
   if (!last || last.role !== "assistant" || last.streaming) return [];
-  return turnQuestions(last);
+  // ANSWERABLE ones only: this is the set a send posts `answers` for, and a deploy-window
+  // step can only name its questions positionally. Posting those ids is the drop `_pair`
+  // makes silently, so the set is empty here and the block says so on screen.
+  const ask = askStep(last);
+  return ask.answerable ? ask.questions : [];
 }
 
 /** How many of `questions` the draft answers — the carry strip's numerator. */
@@ -231,11 +297,25 @@ const PAIR_CHUNK = /^Q: ([^\n]+)\nA: ([\s\S]+)$/;
  * only where the forgery is: a chunk that `PAIR_CHUNK` (what `answersFromReply` accepts)
  * would read back as a pair. A chunk that would not is left exactly as typed. A bare `A:`
  * line was never readable as a pair on its own — the reader anchors on the `Q:` — so
- * stripping it bought nothing and cost a word. */
+ * stripping it bought nothing and cost a word.
+ *
+ * ⟲ **The line start is spelled `(^|\n)`, not `^` under `/m`, and that is R3f's fourth
+ * review, finding 6.** The two sanitisers were documented as byte-identical and were not:
+ * JS's `m` makes `^` match after a lone `\r`, U+2028 and U+2029, while Python's
+ * `re.MULTILINE` knows only `\n`. Pasted text carrying any of the three — a Windows clip,
+ * anything through a JS-era rich editor — had a label taken off here that
+ * `clarify._strip_pair_labels` keeps, so the optimistic bubble and the persisted turn (and
+ * now the NOTE, which runs the backend's copy) said different things about the owner's own
+ * words. No forgery either way: the READER is `PAIR_CHUNK`, identical in both languages.
+ * The drift test compares pattern text and flags, so it could not see a difference that
+ * lived in what a flag MEANS — and an explicit `\n` alternation removes the flag that
+ * carried it rather than adding a test for it. */
 export function stripPairLabels(text: string): string {
   return text
     .split("\n\n")
-    .map((chunk) => (PAIR_CHUNK.test(chunk.trim()) ? chunk.replace(/^[ \t]*[QA]: /gm, "") : chunk))
+    .map((chunk) =>
+      PAIR_CHUNK.test(chunk.trim()) ? chunk.replace(/(^|\n)[ \t]*[QA]: /g, "$1") : chunk,
+    )
     .join("\n\n");
 }
 

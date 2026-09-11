@@ -389,8 +389,15 @@ export function HomeScreen({
               }
             : undefined
         }
-        draft={pendingDraft}
-        onConsumeDraft={clearDraft}
+        // Two writers, one seam: a calendar handoff, and the typed half of a note-thread
+        // send that reached the server not at all (`useFullBrain.restoredText` — the block
+        // takes its own half back at the same moment). Both hand the composer words the
+        // owner still has to send himself.
+        draft={pendingDraft || (conversational ? fb.restoredText : "")}
+        onConsumeDraft={() => {
+          clearDraft();
+          fb.consumeRestoredText();
+        }}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation

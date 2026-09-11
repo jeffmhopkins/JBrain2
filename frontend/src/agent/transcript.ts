@@ -487,3 +487,25 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
 export function endStream(messages: TranscriptMessage[], reason: string): TranscriptMessage[] {
   return applyEvent(messages, { type: "done", stop_reason: reason });
 }
+
+/** Did this exchange reach the server AT ALL? True when the buffer ends in the optimistic
+ * pair a send appends — the owner's turn and an assistant bubble that never received a
+ * token, a tool step, a view or a line of reasoning.
+ *
+ * The one state in which un-sending is honest: the recovery window closed with no live run
+ * to ride and nothing persisted (`useFullBrain.recover`), so nothing above is a record of
+ * anything. A bubble that took even one delta is a turn the server HAS, and dropping it
+ * would misreport in the other direction. */
+export function unsent(messages: TranscriptMessage[] | undefined): boolean {
+  if (!messages || messages.length < 2) return false;
+  const last = messages[messages.length - 1];
+  const before = messages[messages.length - 2];
+  return (
+    before?.role === "user" &&
+    last?.role === "assistant" &&
+    last.text === "" &&
+    last.reasoning === "" &&
+    last.tools.length === 0 &&
+    last.views.length === 0
+  );
+}

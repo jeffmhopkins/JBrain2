@@ -901,7 +901,13 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     return "\n\n".join(parts)
 
 
-_PAIR_LABEL = re.compile(r"^[ \t]*[QA]: ", re.MULTILINE)
+# The label cut, with the line start spelled OUT rather than left to a flag. `^` under
+# `re.MULTILINE` is a line start after `\n` alone; `^` under JS's `/m` is one after a lone
+# `\r` and after U+2028/U+2029 as well — so the two "byte-identical" sanitisers diverged on
+# any pasted CR- or U+2028-bearing reply, the PWA taking a label off a line the backend
+# (and therefore the NOTE) kept. The alternation says the same thing in both languages, and
+# the flag that meant different things is gone. (R3f's fourth review, finding 6.)
+_PAIR_LABEL = re.compile(r"(^|\n)[ \t]*[QA]: ")
 # The exact shape the read-back accepts — `asked.answersFromReply` runs this over each
 # `\n\n`-separated chunk, trimmed. It is the DEFINITION of a forged pair, and the
 # sanitiser below neutralises nothing else, so the two must move together (pinned by
@@ -941,6 +947,16 @@ def _strip_pair_labels(text: str) -> str:
     line cannot be read back by anything (`answersFromReply` anchors on the `Q:`), so
     taking its label off bought nothing and cost a word.
 
+    ⟲ **"Mirrored byte for byte" was measured and was false, on two inputs of
+    twenty-three** (R3f's fourth review, finding 6). Both sanitisers took their line start
+    from a flag — `re.MULTILINE` here, `/m` there — and the flags do not mean the same
+    thing: JS counts a lone `\\r` and U+2028/U+2029 as line terminators, Python counts only
+    `\\n`. `Q: a\\nA: b\\rA: c` came out of the PWA as `a\\nb\\rc` and out of this function as
+    `a\\nb\\rA: c`, so a pasted Windows-clipboard reply showed one thing in the optimistic
+    bubble and persisted another — and, since finding 3a, wrote the other one into the
+    note. Both now spell the line start `(^|\\n)`, which is the same text in both languages
+    and needs no flag.
+
     **The coupling this accepts, stated so it cannot be broken quietly:** the sanitiser is
     now defined by what the reader accepts rather than by being maximally destructive. The
     reader is `asked.answersFromReply`, it is display-only (no backend path parses pairs
@@ -948,7 +964,7 @@ def _strip_pair_labels(text: str) -> str:
     one drift test. Loosening that reader without loosening this is what would re-open the
     hole."""
     return "\n\n".join(
-        _PAIR_LABEL.sub("", chunk) if _PAIR_CHUNK.match(chunk.strip()) else chunk
+        _PAIR_LABEL.sub(r"\1", chunk) if _PAIR_CHUNK.match(chunk.strip()) else chunk
         for chunk in text.split("\n\n")
     )
 

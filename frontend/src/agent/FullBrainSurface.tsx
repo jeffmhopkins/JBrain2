@@ -29,13 +29,7 @@ import { ProposalsPanel } from "./ProposalsPanel";
 import { QuestionBlock } from "./QuestionBlock";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
-import {
-  type AskedQuestion,
-  type SentOutcome,
-  sentAnswers,
-  sentOutcomes,
-  turnQuestions,
-} from "./asked";
+import { type AskedQuestion, type SentOutcome, askStep, sentAnswers, sentOutcomes } from "./asked";
 import { attachmentKind } from "./attachmentKind";
 import { stepWriteState, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
@@ -703,6 +697,7 @@ function ask(
   | {
       questions: readonly AskedQuestion[];
       live: boolean;
+      readOnly: boolean;
       answers: Readonly<Record<string, string>>;
       sent: Readonly<Record<string, SentOutcome>> | null;
       onAnswer: (questionId: string, answer: string) => void;
@@ -710,7 +705,7 @@ function ask(
   | undefined {
   const message = messages[i];
   if (!message || message.role !== "assistant" || message.streaming) return undefined;
-  const questions = turnQuestions(message);
+  const { questions, answerable } = askStep(message);
   if (questions.length === 0) return undefined;
   const live = i === messages.length - 1;
   const reply = messages[i + 1];
@@ -718,6 +713,11 @@ function ask(
   return {
     questions,
     live,
+    // A LIVE block whose step predates the id echo: shown, never tappable (§3b I9, R3f's
+    // fourth review, finding 2). Only the live one — a frozen block offers nothing to tap
+    // either way, and its rows read out of the reply turn's own text by question STRING,
+    // which a deploy-window step carries exactly as the ledger does.
+    readOnly: live && !answerable,
     answers: live ? draft : sentAnswers(questions, replyText),
     // Not just the words — WHICH questions the reply actually answered. A frozen block
     // that assumes the set was answered tells the owner his open questions were settled,
@@ -785,6 +785,9 @@ function Bubble({
     | {
         questions: readonly AskedQuestion[];
         live: boolean;
+        /** Shown, but with nothing to answer it WITH — a live block built from a step that
+         * predates the id echo (`QuestionBlock`). */
+        readOnly: boolean;
         answers: Readonly<Record<string, string>>;
         sent: Readonly<Record<string, SentOutcome>> | null;
         onAnswer: (questionId: string, answer: string) => void;
@@ -1243,6 +1246,7 @@ function Bubble({
       answers={ask.answers}
       onAnswer={ask.onAnswer}
       sent={ask.sent}
+      readOnly={ask.readOnly}
     />
   ) : null;
 

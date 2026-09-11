@@ -37,17 +37,23 @@ const TURN_0 = [
   `\n${NOTE}\n[END CAPTURED NOTE #${NONCE}]`,
 ].join("");
 
+/** The ask as the TOOL recorded it — ids included, which is the whole of the seam R3f's
+ * third review found and its fourth review re-selected on. They are minted (`q` + 8 hex,
+ * `asktools._asked`) rather than `q1`/`q2`/`q3`: a positional fixture is byte-identical to
+ * `askedQuestions`' deploy-window fallback, so every assertion here would pass over a block
+ * that ignored `row.id` entirely — the exact bug the block shipped with (R3f's fourth
+ * review, finding 8). */
 const ASK_ARGS = {
   questions: [
-    { id: "q1", question: "What's the medication called?", blocks: "medication.started" },
+    { id: "qf2011e6f", question: "What's the medication called?", blocks: "medication.started" },
     {
-      id: "q2",
+      id: "q38035b59",
       question: "Which Dr. Chen?",
       blocks: 'resolve_entity("Dr. Chen")',
       candidates: "Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)",
     },
     {
-      id: "q3",
+      id: "q7c1a904d",
       question: "Which Sam is dinner with?",
       blocks: 'resolve_entity("Sam")',
       candidates: "Sam Okonkwo (brother-in-law), Sam Reyes (climbing gym)",
@@ -131,6 +137,9 @@ function Thread({ d }: { d: FullBrainDeps }) {
       {/* The draft itself, which the carry strip cannot show once the block is no longer
           the last message — what finding 7 is about. */}
       <output data-testid="draft">{JSON.stringify(fb.answers)}</output>
+      {/* The typed half a failed send hands back — HomeScreen feeds this to the omnibox's
+          own `draft` seam, the one a calendar handoff already uses. */}
+      <output data-testid="restored">{fb.restoredText}</output>
       {/* The in-flight flag and the control the composer's send BECOMES while it is set
           (`Omnibox.tsx`, wired to `fb.stop` on this surface by `HomeScreen.tsx`) — the
           recovery two review rounds described as unavailable. */}
@@ -236,9 +245,9 @@ describe("the reply turn", () => {
     await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
     const body = chat.mock.calls[0]?.[0] as ChatRequest;
     expect(body.answers).toEqual([
-      { question_id: "q1", answer: "amlodipine" },
-      { question_id: "q2", answer: "Dr. Alice Chen" },
-      { question_id: "q3", answer: "Sam Okonkwo" },
+      { question_id: "qf2011e6f", answer: "amlodipine" },
+      { question_id: "q38035b59", answer: "Dr. Alice Chen" },
+      { question_id: "q7c1a904d", answer: "Sam Okonkwo" },
     ]);
     // A joined prose string could not say which answer answers which; the message is the
     // composer's free text, which here is empty.
@@ -269,8 +278,8 @@ describe("the reply turn", () => {
     // The wire is unchanged and was never the bug: structured answers, free text beside.
     expect(body.message).toBe("also the dinner is cancelled");
     expect(body.answers).toEqual([
-      { question_id: "q1", answer: "amlodipine" },
-      { question_id: "q2", answer: "Dr. Ray Chen" },
+      { question_id: "qf2011e6f", answer: "amlodipine" },
+      { question_id: "q38035b59", answer: "Dr. Ray Chen" },
     ]);
     // The BUBBLE is the whole turn — the same rendering `clarify.owner_turn_text`
     // persists, so a reload replays it byte for byte.
@@ -354,8 +363,8 @@ describe("the reply turn", () => {
       vi.useRealTimers();
     }
     expect(JSON.parse(screen.getByTestId("draft").textContent ?? "{}")).toEqual({
-      q1: "amlodipine",
-      q2: "Dr. Ray Chen",
+      qf2011e6f: "amlodipine",
+      q38035b59: "Dr. Ray Chen",
     });
   });
 
@@ -402,15 +411,106 @@ describe("the reply turn", () => {
       vi.useRealTimers();
     }
     expect(JSON.parse(screen.getByTestId("draft").textContent ?? "{}")).toEqual({
-      q1: "amlodipine",
-      q2: "Dr. Ray Chen",
+      qf2011e6f: "amlodipine",
+      q38035b59: "Dr. Ray Chen",
     });
-    // The window ends; the MISREPORT does not. The optimistic user bubble is still the
-    // message after the ask, so the block stays frozen and still reads two rows answered
-    // until a transcript reload replaces it (`turnSessionRef` is cleared, so leaving the
-    // thread and returning does that, with the answers back in the draft). Pinned as the
-    // residue it is — closing it is open work, and DESIGN.md now says so.
-    expect(screen.getByText("3 questions · 2 answered, 1 still open")).toBeInTheDocument();
+    // ⟲ **And the misreport ends WITH the window** (R3f's fourth review, finding 6). It
+    // used to outlive it: the optimistic user bubble stayed put, so the block stayed frozen
+    // reading "2 answered" about a send that reached nothing, until a transcript reload
+    // replaced it. The third review called that "a state the block cannot currently see" —
+    // it is this state, so the give-up branch drops the exchange it can see never left the
+    // device. The block is live again, holding the answers, over a thread the server still
+    // has `waiting_on_owner`.
+    await waitFor(() =>
+      expect(
+        screen.getByText("3 questions · answers ride with your next send"),
+      ).toBeInTheDocument(),
+    );
+    expect(document.querySelector(".fb-qblock-done")).toBeNull();
+    expect(document.querySelectorAll(".bubble.me")).toHaveLength(0);
+    expect(screen.getByTestId("carry")).toHaveTextContent("2 of 3 answered");
+    expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  // The other half of the same hand-back: a MIXED send loses nothing either. The bubble
+  // that held the typed aside is gone with the turn, so the words go back to the composer
+  // the way a calendar handoff seeds it (`restoredText`), beside the answers that go back
+  // to the block.
+  it("hands the typed half back to the composer when the send reached nothing", async () => {
+    const chat = vi.fn(
+      // biome-ignore lint/correctness/useYield: the generator throws before it yields
+      async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {
+        throw new Error("offline");
+      },
+    );
+    await openThread(deps({ chat }));
+    fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
+    fireEvent.change(screen.getByLabelText("Composer"), {
+      target: { value: "also the dinner is cancelled" },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+      fireEvent.click(screen.getByRole("button", { name: "stop" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      await waitFor(() => expect(screen.getByTestId("busy")).toHaveTextContent("false"));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(screen.getByTestId("restored")).toHaveTextContent("also the dinner is cancelled");
+    expect(JSON.parse(screen.getByTestId("draft").textContent ?? "{}")).toEqual({
+      q38035b59: "Dr. Ray Chen",
+    });
+  });
+
+  // R3f's fourth review, finding 2 — the deploy window. A thread already waiting when this
+  // ships has a step with the model's raw args and no ids, while its ledger row holds the
+  // real ones: tapping would post `q1`/`q2`/`q3`, `_pair` would drop all three, and
+  // `claim_waiting` would consume the set anyway. So the questions are READ-ONLY, and the
+  // composer — whose prose answers the oldest open question — is the way through.
+  it("shows a pre-echo ask read-only rather than offering ids the ledger never held", async () => {
+    const preEcho: TranscriptTurn[] = [
+      { role: "user", content: TURN_0, tools: [] },
+      {
+        role: "assistant",
+        content: "I got most of it.",
+        tools: [
+          {
+            id: "c1",
+            name: "ask_owner",
+            ok: true,
+            args: { questions: ASK_ARGS.questions.map(({ id: _id, ...rest }) => rest) },
+            sources: [],
+          },
+        ],
+      },
+    ];
+    const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {});
+    render(<Thread d={deps({ chat, getTranscript: vi.fn(async () => preEcho) })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // Every question is on screen — the owner can see what is being asked.
+    await screen.findByText("Which Dr. Chen?");
+    expect(screen.getByText("3 questions · answer in your reply")).toBeInTheDocument();
+    // And nothing on it can be answered: no candidates, no field, no carry strip.
+    expect(screen.queryByRole("button", { name: /Dr\. Alice Chen/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("What's the medication called?")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("carry")).not.toBeInTheDocument();
+    expect(screen.getByText(/predates the update/)).toBeInTheDocument();
+
+    // The composer still works, and the send carries prose ALONE — which the backend pairs
+    // with the oldest open question rather than dropping as an unknown id.
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "amlodipine" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+    const body = chat.mock.calls[0]?.[0] as ChatRequest;
+    expect(body.message).toBe("amlodipine");
+    expect(body.answers).toBeUndefined();
   });
 
   it("does not send an untouched block — an empty answer list behaves as before", async () => {

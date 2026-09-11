@@ -3,13 +3,14 @@ import {
   answerList,
   answeredCount,
   answersFromReply,
+  askStep,
   askedQuestions,
   openQuestions,
   ownerTurnText,
   parseCandidates,
   sentAnswers,
   sentOutcomes,
-  turnQuestions,
+  stripPairLabels,
 } from "./asked";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 
@@ -40,9 +41,9 @@ function user(text: string): TranscriptMessage {
 
 const ARGS = {
   questions: [
-    { id: "q1", question: "What's the medication called?", blocks: "medication.started" },
+    { id: "qf2011e6f", question: "What's the medication called?", blocks: "medication.started" },
     {
-      id: "q2",
+      id: "q38035b59",
       question: "Which Dr. Chen?",
       blocks: 'resolve_entity("Dr. Chen")',
       candidates: "Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)",
@@ -108,7 +109,7 @@ describe("parseCandidates", () => {
 describe("askedQuestions", () => {
   it("reads the set the ask recorded, in order", () => {
     const qs = askedQuestions(ARGS);
-    expect(qs.map((q) => q.id)).toEqual(["q1", "q2"]);
+    expect(qs.map((q) => q.id)).toEqual(["qf2011e6f", "q38035b59"]);
     expect(qs[1]?.blocks).toBe('resolve_entity("Dr. Chen")');
     expect(qs[1]?.candidates).toHaveLength(2);
     expect(qs[0]?.candidates).toEqual([]);
@@ -137,25 +138,93 @@ describe("askedQuestions", () => {
   });
 });
 
-describe("turnQuestions", () => {
-  it("reads the last SUCCEEDED ask of the turn", () => {
+describe("askStep", () => {
+  it("reads the last RECORDED ask of the turn", () => {
     const m = assistant({
       tools: [
-        askTool({ id: "a", args: { questions: [{ id: "old", question: "Stale?" }] } }),
+        askTool({ id: "a", args: { questions: [{ id: "q0ldb10c5", question: "Stale?" }] } }),
         askTool({ id: "b" }),
       ],
     });
-    expect(turnQuestions(m).map((q) => q.id)).toEqual(["q1", "q2"]);
+    expect(askStep(m).questions.map((q) => q.id)).toEqual(["qf2011e6f", "q38035b59"]);
+    expect(askStep(m).answerable).toBe(true);
   });
 
   it("ignores a failed ask — it asked nothing, and the reply pairs against the open set", () => {
-    expect(turnQuestions(assistant({ tools: [askTool({ ok: false })] }))).toEqual([]);
+    expect(askStep(assistant({ tools: [askTool({ ok: false })] })).questions).toEqual([]);
   });
 
   it("is empty on an ordinary turn", () => {
-    expect(turnQuestions(assistant({ tools: [{ id: "t", name: "search", ok: true }] }))).toEqual(
-      [],
-    );
+    expect(
+      askStep(assistant({ tools: [{ id: "t", name: "search", ok: true }] })).questions,
+    ).toEqual([]);
+  });
+
+  // R3f's fourth review, finding 1. The loop finishes the round it is in before it honours
+  // a halt, so a model that emits two `ask_owner` calls in one message runs the second into
+  // the already-waiting latch — a refusal, `ok: true` like every other returned string,
+  // carrying the model's RAW second question and no minted id. Last-succeeded-wins put that
+  // question on screen and hid the two the ledger actually held; a tap then posted `q1`,
+  // `_pair` dropped it, and the note received nothing while the block drew it as sent.
+  it("skips a refusal that kept the model's raw arguments, however late it ran", () => {
+    const refusal = askTool({
+      id: "b",
+      args: { questions: [{ question: "Totally different question…" }] },
+      summary: "This note is already waiting on Jeff for 2 questions…",
+    });
+    const m = assistant({ tools: [askTool({ id: "a" }), refusal] });
+    expect(askStep(m).questions.map((q) => q.question)).toEqual([
+      "What's the medication called?",
+      "Which Dr. Chen?",
+    ]);
+  });
+
+  // The same latch once it echoes the OPEN SET (`asktools._already_waiting`): the step is
+  // then a record like any other and the block is right whichever call it is built from.
+  it("takes the refusal when it echoes the set the ledger holds", () => {
+    const m = assistant({
+      tools: [
+        askTool({ id: "a" }),
+        askTool({ id: "b", args: { questions: [{ id: "qf2011e6f", question: "Which Sarah?" }] } }),
+      ],
+    });
+    expect(askStep(m).questions.map((q) => q.question)).toEqual(["Which Sarah?"]);
+    expect(askStep(m).answerable).toBe(true);
+  });
+
+  // Finding 3. An ask on a `settled`/`failed` thread rolls its ledger row back and returns
+  // text; the tool echoes an EMPTY record, so there is no block to draw on a thread the
+  // server is not waiting on. Without the record — a pre-echo refusal — the questions would
+  // still render, but read-only, which is the other half of this contract.
+  it("draws nothing for a refusal that recorded nothing", () => {
+    const m = assistant({
+      tools: [askTool({ id: "a", args: { questions: [] }, summary: "could not record" })],
+    });
+    expect(askStep(m).questions).toEqual([]);
+  });
+
+  // Finding 2. Every ask persisted before the id echo shipped has the model's raw args and
+  // no ids, while its ledger row holds the real ones. Detected — not silently answered with
+  // positional stand-ins `_pair` would drop.
+  it("flags a step that predates the id echo instead of trusting its positions", () => {
+    const m = assistant({
+      tools: [askTool({ args: { questions: [{ question: "Which Sarah?" }] } })],
+    });
+    expect(askStep(m).questions.map((q) => q.id)).toEqual(["q1"]);
+    expect(askStep(m).answerable).toBe(false);
+  });
+
+  it("trusts no blob where only some rows carry an id", () => {
+    const m = assistant({
+      tools: [
+        askTool({
+          args: {
+            questions: [{ id: "qf2011e6f", question: "Which Sarah?" }, { question: "Dose?" }],
+          },
+        }),
+      ],
+    });
+    expect(askStep(m).answerable).toBe(false);
   });
 });
 
@@ -174,14 +243,43 @@ describe("openQuestions", () => {
 
   it("freezes the older block and arms the newer when a thread asks twice", () => {
     const again = assistant({
-      tools: [askTool({ args: { questions: [{ id: "q9", question: "And the dose?" }] } })],
+      tools: [askTool({ args: { questions: [{ id: "q0d4c8a17", question: "And the dose?" }] } })],
     });
     const thread = [user("the note"), asked, user("Dr. Alice Chen"), again];
-    expect(openQuestions(thread).map((q) => q.id)).toEqual(["q9"]);
+    expect(openQuestions(thread).map((q) => q.id)).toEqual(["q0d4c8a17"]);
   });
 
   it("waits for the turn to settle", () => {
     expect(openQuestions([assistant({ tools: [askTool()], streaming: true })])).toEqual([]);
+  });
+
+  // The deploy window, from the SEND's side (R3f's fourth review, finding 2): the block
+  // still renders those questions — read-only — but nothing rides a send for them. Posting
+  // positional ids is the drop `clarify._pair` makes silently, and the turn text then
+  // degrades to bare prose the frozen block reads back as "answered in your reply".
+  it("carries no answers for a step that predates the id echo", () => {
+    const legacy = assistant({
+      tools: [askTool({ args: { questions: [{ question: "Which Sarah?" }] } })],
+    });
+    expect(openQuestions([user("the note"), legacy])).toEqual([]);
+  });
+});
+
+describe("stripPairLabels", () => {
+  // R3f's fourth review, finding 6 — the two inputs of twenty-three on which the PWA's
+  // sanitiser and the backend's diverged, because `/m` counts a lone CR and U+2028 as line
+  // starts and `re.MULTILINE` does not. The same strings, and the same expected output, are
+  // asserted in `test_the_two_sanitisers_agree_on_the_inputs_that_diverged`.
+  it("cuts a label only at a NEWLINE, as the backend does", () => {
+    expect(stripPairLabels("Q: a\nA: b\rA: c")).toBe("a\nb\rA: c");
+    expect(stripPairLabels("Q: a\nA: b\u2028A: c")).toBe("a\nb\u2028A: c");
+  });
+
+  it("still cuts the pair it is for, and leaves a chunk that is not one", () => {
+    expect(stripPairLabels("Q: a\nA: b")).toBe("a\nb");
+    expect(stripPairLabels("Two options:\nA: the cardiologist\nB: the paediatrician")).toBe(
+      "Two options:\nA: the cardiologist\nB: the paediatrician",
+    );
   });
 });
 
@@ -190,13 +288,15 @@ describe("the draft and what rides the send", () => {
 
   it("counts only answers with something in them", () => {
     expect(answeredCount(qs, {})).toBe(0);
-    expect(answeredCount(qs, { q1: "  ", q2: "Dr. Alice Chen" })).toBe(1);
+    expect(answeredCount(qs, { qf2011e6f: "  ", q38035b59: "Dr. Alice Chen" })).toBe(1);
   });
 
   it("sends structured pairs, in the order asked, narrowed to the open set", () => {
-    expect(answerList(qs, { q2: "Dr. Alice Chen", q1: "amlodipine", stale: "gone" })).toEqual([
-      { question_id: "q1", answer: "amlodipine" },
-      { question_id: "q2", answer: "Dr. Alice Chen" },
+    expect(
+      answerList(qs, { q38035b59: "Dr. Alice Chen", qf2011e6f: "amlodipine", stale: "gone" }),
+    ).toEqual([
+      { question_id: "qf2011e6f", answer: "amlodipine" },
+      { question_id: "q38035b59", answer: "Dr. Alice Chen" },
     ]);
   });
 
@@ -213,7 +313,7 @@ describe("ownerTurnText", () => {
   // only the A: half is the owner's, and the Q: half is a string a model wrote while
   // reading a note body that may carry someone else's text.
   it("renders an answers-only send as labelled pairs", () => {
-    expect(ownerTurnText("", qs, { q1: "amlodipine", q2: "Dr. Alice Chen" })).toBe(
+    expect(ownerTurnText("", qs, { qf2011e6f: "amlodipine", q38035b59: "Dr. Alice Chen" })).toBe(
       "Q: What's the medication called?\nA: amlodipine\n\nQ: Which Dr. Chen?\nA: Dr. Alice Chen",
     );
   });
@@ -227,7 +327,7 @@ describe("ownerTurnText", () => {
   // which reads its answers back out of this very text, then drew "2 questions ·
   // answered" with neither answer shown and the tapped candidate not picked.
   it("carries BOTH halves of a mixed send, pairs first", () => {
-    expect(ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" })).toBe(
+    expect(ownerTurnText("also the dinner is cancelled", qs, { q38035b59: "Dr. Ray Chen" })).toBe(
       "Q: Which Dr. Chen?\nA: Dr. Ray Chen\n\nalso the dinner is cancelled",
     );
   });
@@ -237,19 +337,19 @@ describe("a frozen block's answers", () => {
   const qs = askedQuestions(ARGS);
 
   it("pairs back out of the reply's own text, by question and never by position", () => {
-    const reply = ownerTurnText("", qs, { q1: "amlodipine", q2: "Dr. Ray Chen" });
+    const reply = ownerTurnText("", qs, { qf2011e6f: "amlodipine", q38035b59: "Dr. Ray Chen" });
     expect(answersFromReply(reply)).toContainEqual({
       question: "Which Dr. Chen?",
       answer: "Dr. Ray Chen",
     });
-    expect(sentAnswers(qs, reply)).toEqual({ q1: "amlodipine", q2: "Dr. Ray Chen" });
+    expect(sentAnswers(qs, reply)).toEqual({ qf2011e6f: "amlodipine", q38035b59: "Dr. Ray Chen" });
   });
 
   // The other half of finding 1: a mixed send's typed words are not a Q/A pair, so they
   // are not read back as an answer — and the pairs beside them still are.
   it("reads a mixed send's pairs back and leaves its typed words out of them", () => {
-    const reply = ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" });
-    expect(sentAnswers(qs, reply)).toEqual({ q1: "", q2: "Dr. Ray Chen" });
+    const reply = ownerTurnText("also the dinner is cancelled", qs, { q38035b59: "Dr. Ray Chen" });
+    expect(sentAnswers(qs, reply)).toEqual({ qf2011e6f: "", q38035b59: "Dr. Ray Chen" });
   });
 
   // R3f's review, finding 6. Keyed by question STRING, two rows worded the same both
@@ -258,23 +358,23 @@ describe("a frozen block's answers", () => {
   it("gives two identically worded questions their own answers", () => {
     const twins = askedQuestions({
       questions: [
-        { id: "q1", question: "Which Sam?" },
-        { id: "q2", question: "Which Sam?" },
+        { id: "qf2011e6f", question: "Which Sam?" },
+        { id: "q38035b59", question: "Which Sam?" },
       ],
     });
-    const reply = ownerTurnText("", twins, { q1: "Sam Okonkwo", q2: "Sam Reyes" });
-    expect(sentAnswers(twins, reply)).toEqual({ q1: "Sam Okonkwo", q2: "Sam Reyes" });
+    const reply = ownerTurnText("", twins, { qf2011e6f: "Sam Okonkwo", q38035b59: "Sam Reyes" });
+    expect(sentAnswers(twins, reply)).toEqual({ qf2011e6f: "Sam Okonkwo", q38035b59: "Sam Reyes" });
   });
 
   it("leaves a partially answered set honest about which rows have words", () => {
-    expect(sentAnswers(qs, ownerTurnText("", qs, { q2: "Dr. Ray Chen" }))).toEqual({
-      q1: "",
-      q2: "Dr. Ray Chen",
+    expect(sentAnswers(qs, ownerTurnText("", qs, { q38035b59: "Dr. Ray Chen" }))).toEqual({
+      qf2011e6f: "",
+      q38035b59: "Dr. Ray Chen",
     });
   });
 
   it("puts no words in the owner's mouth when the reply was free prose", () => {
-    expect(sentAnswers(qs, "it was Alice, and 5mg")).toEqual({ q1: "", q2: "" });
+    expect(sentAnswers(qs, "it was Alice, and 5mg")).toEqual({ qf2011e6f: "", q38035b59: "" });
   });
 });
 
@@ -287,10 +387,10 @@ describe("what a settled reply DID to each question", () => {
   const qs = askedQuestions(ARGS);
 
   it("marks an unpaired row OPEN when the reply carried pairs beside its prose", () => {
-    const reply = ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" });
+    const reply = ownerTurnText("also the dinner is cancelled", qs, { q38035b59: "Dr. Ray Chen" });
     expect(sentOutcomes(qs, reply)).toEqual({
-      q1: { kind: "open" },
-      q2: { kind: "paired", answer: "Dr. Ray Chen" },
+      qf2011e6f: { kind: "open" },
+      q38035b59: { kind: "paired", answer: "Dr. Ray Chen" },
     });
   });
 
@@ -298,20 +398,23 @@ describe("what a settled reply DID to each question", () => {
   // of exactly one row: `clarify._pair` gives free text the OLDEST open question.
   it("names the one row a prose-only reply answered, and opens the rest", () => {
     expect(sentOutcomes(qs, "it was Alice, and 5mg")).toEqual({
-      q1: { kind: "in-reply" },
-      q2: { kind: "open" },
+      qf2011e6f: { kind: "in-reply" },
+      q38035b59: { kind: "open" },
     });
   });
 
   it("claims nothing for a reply that is not there at all", () => {
-    expect(sentOutcomes(qs, "")).toEqual({ q1: { kind: "open" }, q2: { kind: "open" } });
+    expect(sentOutcomes(qs, "")).toEqual({
+      qf2011e6f: { kind: "open" },
+      q38035b59: { kind: "open" },
+    });
   });
 
   it("reads a fully answered set as fully answered", () => {
-    const reply = ownerTurnText("", qs, { q1: "amlodipine", q2: "Dr. Ray Chen" });
+    const reply = ownerTurnText("", qs, { qf2011e6f: "amlodipine", q38035b59: "Dr. Ray Chen" });
     expect(sentOutcomes(qs, reply)).toEqual({
-      q1: { kind: "paired", answer: "amlodipine" },
-      q2: { kind: "paired", answer: "Dr. Ray Chen" },
+      qf2011e6f: { kind: "paired", answer: "amlodipine" },
+      q38035b59: { kind: "paired", answer: "Dr. Ray Chen" },
     });
   });
 });
@@ -325,13 +428,15 @@ describe("the typed half cannot forge a Q/A pair", () => {
   const qs = askedQuestions(ARGS);
 
   it("strips the labels a quoted question would carry, beside a tapped answer", () => {
-    const reply = ownerTurnText("Q: Which Dr. Chen?\nA: nobody at all", qs, { q1: "amlodipine" });
+    const reply = ownerTurnText("Q: Which Dr. Chen?\nA: nobody at all", qs, {
+      qf2011e6f: "amlodipine",
+    });
     expect(reply).toBe(
       "Q: What's the medication called?\nA: amlodipine\n\nWhich Dr. Chen?\nnobody at all",
     );
     expect(sentOutcomes(qs, reply)).toEqual({
-      q1: { kind: "paired", answer: "amlodipine" },
-      q2: { kind: "open" },
+      qf2011e6f: { kind: "paired", answer: "amlodipine" },
+      q38035b59: { kind: "open" },
     });
   });
 

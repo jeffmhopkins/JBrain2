@@ -14,6 +14,7 @@ import {
   applyEvent,
   endStream,
   streamingAssistant,
+  unsent,
   userMessage,
 } from "./transcript";
 import type {
@@ -341,6 +342,12 @@ export interface FullBrain {
   /** Record one answer of the open set. It changes THIS map and nothing else: no request,
    * no enqueue, no conversation-state flip (§3b I6). */
   setAnswer: (questionId: string, answer: string) => void;
+  /** The typed half of a block send that reached the server not at all, for the composer
+   * to take back (the same seam a calendar handoff uses). "" whenever there is none, or
+   * when the chat it belongs to is not the open one. */
+  restoredText: string;
+  /** The composer took it. */
+  consumeRestoredText: () => void;
   /** The active conversation's per-conversation agent-model pick (the omnibox
    * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
    * kept per session in memory, rides every send of that chat, and clears on reload. */
@@ -483,6 +490,16 @@ export function useFullBrain(
   // it on every open/turn and re-pick the session).
   const activeRef = useRef(active);
   activeRef.current = active;
+  // The same trick for a RUNNING turn: its recovery loop closes over the buffer as it was
+  // when the send started, and what it has to know at the end is what the buffer holds now
+  // (did any of this turn actually arrive?).
+  const messagesRef = useRef(messagesBySession);
+  messagesRef.current = messagesBySession;
+  // A send that reached nothing, handed back: the typed half goes to the composer the way
+  // a calendar handoff does, while `answerDrafts` takes the tapped half. Session-scoped, so
+  // a turn that gave up while the owner was reading another chat cannot seed that chat's
+  // box with words meant for this one.
+  const [handedBack, setHandedBack] = useState<{ session: string; text: string } | null>(null);
   // Guards a single auto-create per mode entry against a fast double-fire.
   const creatingFor = useRef<ConvMode | null>(null);
 
@@ -835,17 +852,16 @@ export function useFullBrain(
     // re-tapped three candidates against a block claiming he had already answered. The
     // snapshot rides the turn and comes back if it settles as an error.
     //
-    // What that DOES NOT buy, stated plainly because the plan and DESIGN.md both used to
-    // claim it (R3f's second review, finding 3a): a prompt retry. The restore is inside
-    // `recover()`'s give-up branch, which is `RECONCILE_TIMEOUT_MS` — 62 minutes — away,
-    // and for all of it `busy` stays true, so the composer's send is disabled; both
-    // transcript-reload effects bail while this chat holds the live turn, so navigating
-    // away and back does not re-arm the block either. A full PWA reload clears the hold
-    // and the server (holding no turn for a POST that never landed) replays the ask as the
-    // last message — but `answerDrafts` is React state, so the answers are gone anyway.
-    // The window is the chat recovery loop's, inherited rather than introduced here; the
-    // cost it carries into a note thread is an hour in which the one screen the owner has
-    // offers him no way to send his answers again.
+    // ⟲ **What this comment used to say about recovering, and did not check** (R3f's
+    // fourth review, finding 5 — the same paragraph the third review had already deleted
+    // from DESIGN.md and the plan, left here word for word): that the restore is 62
+    // minutes away, the send disabled throughout, and the owner with "no way to send his
+    // answers again for an hour". Driven, it is not: while `busy` the composer's send IS
+    // the Stop button (`Omnibox`, wired to this surface's `stop`), one tap ends the wait
+    // inside a `RECONCILE_INTERVAL_MS` sleep — ~3 s — and takes `recover()`'s give-up
+    // branch, which hands the answers back AND drops the optimistic turn, so the block
+    // re-arms in place with them still in it. `RECONCILE_TIMEOUT_MS` is the ceiling on
+    // being patient, not the cost of recovering.
     const spent = answers.length > 0 ? draft : undefined;
     if (answers.length > 0) clearAnswers(turnSessionId);
     void runTurn(body, controller, turnSessionId, baseline, undefined, 0, spent);
@@ -962,17 +978,42 @@ export function useFullBrain(
         if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
       }
       if (!recovered) {
-        setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
         // The one outcome that means the turn reached nothing: no live run to ride and no
-        // persisted exchange for the whole recovery window. Give the answers back, under
-        // anything typed into the block since, so a retry does not start from blank. It
-        // is the END of the window, not a prompt hand-back — see `send`'s note on what
-        // the owner can and cannot do while it runs.
+        // persisted exchange for the whole recovery window (or a Stop, which ends that
+        // window early). Give the answers back, under anything typed into the block since,
+        // so a retry does not start from blank — and put the THREAD back where the server
+        // still has it.
+        //
+        // ⟲ **Dropping the optimistic exchange is R3f's fourth review, finding 6.** The
+        // third review wrote that the frozen block "reports an outcome it does not itself
+        // produce, and 'the POST reached nothing' is a state it cannot currently see" —
+        // which named a defect as open work. It CAN see it: this is that state, and the
+        // block is frozen for exactly one reason (the ask is no longer the last message,
+        // `asked.openQuestions`). So the user turn that never left the device goes with
+        // the answers, and the block re-arms live, holding them, with the server still
+        // `waiting_on_owner` on the same set — instead of reading "2 answered" about a
+        // send that reached nothing until a transcript reload replaced it.
+        //
+        // Only when NOTHING of the turn arrived, and only for a send the BLOCK made: a
+        // stream that delivered text or a tool step before it dropped is a turn the server
+        // has, whatever the recovery window then failed to reload, and un-sending that
+        // would be the same misreport the other way up. Every other failed send keeps the
+        // errored bubble it has always had — the owner's words stay on screen.
+        const neverLeft = spentAnswers !== undefined && unsent(messagesRef.current[turnSessionId]);
+        setSessionMessages(turnSessionId, (ms) =>
+          neverLeft ? ms.slice(0, -2) : endStream(ms, "error"),
+        );
         if (spentAnswers) {
           setAnswerDrafts((prev) => ({
             ...prev,
             [turnSessionId]: { ...spentAnswers, ...(prev[turnSessionId] ?? {}) },
           }));
+        }
+        // The typed half of a MIXED send goes back with the tapped half — the bubble that
+        // held it is gone, so without this the aside beside the answers is the one thing
+        // the hand-back loses.
+        if (neverLeft && body.message.trim() !== "") {
+          setHandedBack({ session: turnSessionId, text: body.message });
         }
       }
     };
@@ -1282,6 +1323,8 @@ export function useFullBrain(
     openQuestions: openAsk,
     answers,
     setAnswer,
+    restoredText: handedBack !== null && handedBack.session === activeId ? handedBack.text : "",
+    consumeRestoredText: () => setHandedBack(null),
     modelOverride,
     setModelOverride,
     effortOverride,
