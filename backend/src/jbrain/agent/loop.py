@@ -360,8 +360,9 @@ class ToolOutput(str):
     registered component the PWA renders, e.g. a checklist), a `job` it deferred to
     the queue, the `facts` a write tool actually landed, a turn-ending `deferred`
     handle (a background job whose
-    `task_status` card takes over — the turn ends), and/or a bare `halt` reason (the
-    turn ends here, with no job and no card). It *is* the model-facing text (a
+    `task_status` card takes over — the turn ends), a bare `halt` reason (the
+    turn ends here, with no job and no card), and/or the `recorded_args` it wants the
+    transcript to carry in place of the model's own. It *is* the model-facing text (a
     str subclass), so handlers keep their `-> str` contract and existing call sites
     are untouched; `_dispatch` pulls the extras off when present."""
 
@@ -375,6 +376,7 @@ class ToolOutput(str):
     facts: tuple[FactWriteRef, ...]
     halt: str | None
     truncated: bool
+    recorded_args: dict[str, Any] | None
 
     def __new__(
         cls,
@@ -389,6 +391,7 @@ class ToolOutput(str):
         facts: tuple[FactWriteRef, ...] = (),
         halt: str | None = None,
         truncated: bool = False,
+        recorded_args: dict[str, Any] | None = None,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -406,6 +409,12 @@ class ToolOutput(str):
         # that clamped, never inferred downstream — nothing below can tell a short list
         # from a clamped one.
         out.truncated = truncated
+        # What the tool ACTUALLY recorded, where that is not what the model sent. It
+        # replaces the step's `args` on the transcript and on the live stream, so the two
+        # cannot disagree — a tool that leaves it None (every tool but `ask_owner`) keeps
+        # the model's arguments and is untouched by any of this. See `ToolResultEvent.args`
+        # for the seam it closes.
+        out.recorded_args = recorded_args
         return out
 
 
@@ -473,6 +482,12 @@ def _persisted_step(
     }
     if call.arguments:
         step["args"] = call.arguments
+    # The tool's own record of what it took, where it kept something the model never sent
+    # — `ask_owner`'s minted question ids. Last, so it WINS over the raw arguments: the
+    # persisted step is what a reopened thread's question block is built from, and a block
+    # built from ids the ledger does not hold posts answers `clarify._pair` drops.
+    if dispatched.recorded_args:
+        step["args"] = dispatched.recorded_args
     if dispatched.web_sources:
         step["web_sources"] = [s.model_dump() for s in dispatched.web_sources]
     if dispatched.proposal is not None:
@@ -505,6 +520,9 @@ class _Dispatched:
     deferred: DeferredRef | None = None
     facts: tuple[FactWriteRef, ...] = ()
     truncated: bool = False
+    # The arguments the tool RECORDED, where they differ from the ones the model sent
+    # (`ToolResultEvent.args`). None for every tool that records the model's own.
+    recorded_args: dict[str, Any] | None = None
     # A tool that ENDS THE TURN on its own, with no background job behind it and no card
     # to stream: the string is the stop_reason the loop finishes on. `deferred` is the
     # same contract with a job attached; this is the bare one, for a tool whose whole
@@ -1357,6 +1375,7 @@ class AgentLoop:
                     entities=list(dispatched.entities),
                     facts=list(dispatched.facts),
                     truncated=dispatched.truncated,
+                    args=dispatched.recorded_args,
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1684,6 +1703,7 @@ class AgentLoop:
                         entities=list(dispatched.entities),
                         facts=list(dispatched.facts),
                         truncated=dispatched.truncated,
+                        args=dispatched.recorded_args,
                     )
                 )
                 if dispatched.view is not None:
@@ -1855,6 +1875,7 @@ class AgentLoop:
             facts=out.facts if out else (),
             truncated=out.truncated if out else False,
             halt=out.halt if out else None,
+            recorded_args=out.recorded_args if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

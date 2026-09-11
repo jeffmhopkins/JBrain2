@@ -292,6 +292,23 @@ def build_ask_owner_handlers(
             " turn ends here — what you already wrote stands. When he answers, each"
             " answer is appended to the note and you pick the thread up from there.",
             halt=AWAITING_OWNER,
+            # THE IDS GO WITH IT, onto the transcript step as well as the ledger row, and
+            # this is R3f's third review, finding 1. The tool declares no `id`, so the
+            # model never sends one and `_asked` mints them here; the ledger kept them and
+            # the transcript — a DIFFERENT blob, the model's raw `call.arguments` — did
+            # not. The PWA builds its question block from the transcript, so it fell to
+            # `asked.ts`'s positional `q${i+1}` fallback and posted ids the open set has
+            # never held: `clarify._pair` dropped every tapped answer as unknown, the note
+            # received nothing, the frozen block claimed answers it had not sent, and the
+            # agent — told truthfully that nothing was answered — re-asked the whole set.
+            # Echoing beats the two alternatives: declaring `id` on the tool would have the
+            # MODEL invent them (`required` buys presence, not membership) when uniqueness
+            # across a conversation is load-bearing, and pairing on the question STRING is
+            # the key `sentAnswers` was already fixed for — `ask_owner` does not dedupe
+            # question text. Positional ids stay refused for R1c's reason: a reply turn
+            # asks again on the same conversation, so an id that repeated across sets would
+            # let a stale block file against a question nobody asked.
+            recorded_args=recorded_args(asked),
         )
 
     async def _guarded(arguments: Mapping[str, object], ctx: ToolContext) -> str:

@@ -146,6 +146,12 @@ export interface ToolResultEvent {
    * turns on this distinction, so the step says it out loud rather than showing a
    * short list as if it were the whole one. */
   truncated?: boolean;
+  /** The arguments the TOOL recorded, where they differ from the ones the model sent —
+   * they REPLACE the step's `args`. Only `ask_owner` sends them, and only because it mints
+   * its question ids server-side: the step this client builds its question block from is
+   * otherwise the model's raw arguments, which carry no ids at all. Absent for every other
+   * tool, whose step keeps what the model sent. */
+  args?: Record<string, unknown> | null;
 }
 export interface ToolViewEvent {
   type: "tool_view";

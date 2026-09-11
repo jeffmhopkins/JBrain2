@@ -1,10 +1,22 @@
 // The open question set of a note thread, read off the transcript — the data the
 // question block renders (AGENT_INGEST_REWRITE §3b I6/I9).
 //
-// Pure, and reading only what is ALREADY on the wire: the questions are the `ask_owner`
-// call's own recorded `args`, which a persisted turn replays exactly as a live one does
+// Pure, and reading only what is ALREADY on the wire: the questions are the ask step's
+// `args`, which a persisted turn replays exactly as a live one does
 // (`useFullBrain.fromTurn`, `transcript.ts`), so a thread reopened weeks later renders
 // the same block with no new endpoint and no answer state that lives only in a component.
+//
+// ⟲ **Those args are the ones the TOOL recorded, and saying so is R3f's third review,
+// finding 1.** This comment used to call them "the `ask_owner` call's own recorded args",
+// which read as one blob and is two: the ledger row `asktools` writes (which carries the
+// server-minted question ids) and the step the transcript persists (the model's raw
+// arguments, which carry none — the tool declares no `id` property, so the model never
+// sends one). The block therefore fell to `askedQuestions`' positional `q${i+1}` fallback
+// and posted ids the open set had never held; `clarify._pair` dropped every tapped answer
+// as unknown, so the note received nothing while the frozen block drew them as sent. The
+// tool now echoes its recorded args onto the step it streams and the step it persists
+// (`ToolResultEvent.args` → `transcript.ts` / `TranscriptAccumulator`), which is what makes
+// the sentence above true rather than merely intended.
 //
 // This module is the frontend mirror of `models/note_conversation.questions_from_args`,
 // including its deploy-window fallback for a pre-batch `args["question"]`. Two parsers of
@@ -125,6 +137,10 @@ export function askedQuestions(args: Record<string, unknown> | undefined): Asked
     const question = oneLine(row.question);
     if (!question) return;
     asked.push({
+      // The server-minted id the ask recorded. The positional fallback is for the
+      // pre-batch ledger shape only (see above and `questions_from_args`) — for a real
+      // ask it is the id `clarify._pair` matches against, and a positional stand-in would
+      // be dropped as naming no open question.
       id: oneLine(row.id) || `q${i + 1}`,
       question,
       blocks: oneLine(row.blocks),

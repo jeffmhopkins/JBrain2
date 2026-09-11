@@ -320,6 +320,12 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         ...(event.web_sources?.length ? { webSources: event.web_sources } : {}),
         ...(event.facts?.length ? { facts: event.facts } : {}),
         ...(event.truncated ? { truncated: true } : {}),
+        // The arguments as the TOOL recorded them, replacing what the model sent. It is
+        // how `ask_owner`'s server-minted question ids reach this step at all, and the
+        // live thread has to take them the same way a reopened one does — the backend
+        // folds the same replacement into the persisted step, and a block rendered off
+        // one and answered against the other posts ids `clarify._pair` drops.
+        ...(event.args ? { args: event.args } : {}),
       };
       next.tools = next.tools.map((t) => {
         if (t.id !== event.tool_call_id) return t;

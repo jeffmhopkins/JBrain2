@@ -35,6 +35,10 @@ What each test defends:
 - **the two readers of the open set agree.** The notes tab and the reply path both take
   the newest SUCCEEDED `ask_owner` row and whatever it parses to — showing one set and
   consuming another files the owner's words against a question he was never shown.
+- **the PWA's ids are the ledger's ids.** Every other test here takes its ids from the
+  ledger, which is the one thing the PWA cannot do: it reads the TRANSCRIPT step, a blob
+  written by a different writer, and posts what that carries. Crossing that seam is what
+  proved the two had never agreed (R3f's third review, finding 1).
 """
 
 import asyncio
@@ -79,6 +83,7 @@ from jbrain.models.note_conversation import (
     InvalidStateTransition,
     NoteConversationRepo,
     note_body_sha,
+    questions_from_args,
 )
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import LoopTurnExecutor
@@ -1239,6 +1244,100 @@ async def test_the_inbox_and_the_reply_path_read_the_same_open_set(
 
     assert [q.question for q in open_set] == [QUESTION]
     assert entry.questions == [QUESTION]
+
+
+async def test_the_ids_the_pwa_posts_are_the_ids_the_ledger_holds(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """THE SEAM NOBODY CROSSED, and R3f's third review, finding 1.
+
+    Every other test here hands `record_owner_reply` ids taken from the LEDGER — from
+    `_open_set`, which reads the row the handler wrote. The PWA cannot do that. It builds
+    its question block out of the TRANSCRIPT step (§3b I9, `asked.askedQuestions`), which
+    is a different blob written by a different writer, and posts whatever ids that blob
+    carries. So this test takes the ids the way the PWA takes them — off the persisted
+    transcript, through `questions_from_args`, which is `askedQuestions`' backend mirror
+    down to its positional fallback — and only then answers with them.
+
+    Before the fix the two disagreed completely. `ask_owner.tool` declares no `id`, so the
+    model sends none and `asktools._asked` MINTS one per question; the ledger kept them and
+    the step kept `call.arguments`, which has none. The block fell to the positional
+    `q1`/`q2` fallback, `_pair` dropped both as naming no open question, and the note
+    received nothing while the frozen block drew them as sent and the agent was told his
+    reply answered nothing at all. Driven through the real runner, the real loop and the
+    real registry, because the whole finding is that the two writers are different code.
+    """
+    note_id = await _note(maker, owner)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                "",
+                (ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION, COACH)),),
+                "tool_use",
+                LlmUsage(10, 3),
+            )
+        ]
+    )
+    transcript = AgentTranscript(maker)
+    runner = NoteConverseRunner(
+        maker,
+        notes=SqlNotesRepo(maker),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=transcript,
+        executor=LoopTurnExecutor(
+            LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}),
+            note_registry(TOOLS_DIR, build_ask_owner_handlers(maker)),
+        ),
+        owner_principal_id=_const(owner.principal_id),
+    )
+    await runner.note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid FROM app.note_conversations"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+    session_id = row.sid
+
+    # What the PWA READS: the ask step of the persisted transcript, and nothing else. No
+    # ledger read anywhere above this line.
+    steps = [
+        step
+        for turn in await transcript.load(owner, session_id)
+        for step in turn.tools
+        if step.get("name") == ASK_OWNER_TOOL and step.get("ok") is True
+    ]
+    assert len(steps) == 1
+    posted = questions_from_args(steps[0].get("args"))
+    assert [q.question for q in posted] == [QUESTION, COACH]
+
+    # And they are the ledger's own ids — the assertion that fails without the echo, where
+    # `posted` reads ["q1", "q2"] and the ledger holds two random `q########`.
+    async with scoped_session(maker, owner) as s:
+        ledger_ids = [q.id for q in await open_questions(s, NoteConversationRepo(), session_id)]
+    assert [q.id for q in posted] == ledger_ids
+
+    # The whole point of them: an answer posted against a transcript-read id PAIRS.
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(posted[0].id, "My sister."), (posted[1].id, "Her own.")],
+    )
+    assert reply is not None and reply.clarified is True
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
+    assert reply.dropped == []
+    assert reply.unanswered == []
+    assert await _blocks(maker, owner, note_id) == reply.answered
 
 
 async def test_two_overlapping_replies_and_exactly_one_claims_the_set(
