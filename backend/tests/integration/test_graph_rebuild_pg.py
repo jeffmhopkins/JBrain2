@@ -144,7 +144,9 @@ async def test_rebuild_removes_artifacts_and_requeues_integration(
     assert (
         await count(
             maker,
-            "SELECT count(*) FROM app.jobs WHERE kind = 'integrate_note'"
+            # `note_converse` since R3: re-integration re-enqueues the note's graph
+            # producer, and that is the conversation now (`queue`'s reconciler).
+            "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
             " AND status = 'queued' AND payload->>'note_id' = :id",
             id=note,
         )
@@ -474,9 +476,9 @@ async def test_the_drain_waits_for_the_emr_parse_too(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """`emr_parse` writes facts and moves the EMR projections but flips no
-    `integration_state` of its own, so a drain gate watching only `integrate_note` would
-    chain the wiki repair over a graph the parser was still writing — the exact damage
-    (0045/0046) the chain exists to prevent."""
+    `integration_state` of its own, so a drain gate watching only the note's graph
+    producer would chain the wiki repair over a graph the parser was still writing — the
+    exact damage (0045/0046) the chain exists to prevent."""
     await quiesce(maker)
     note = await emr_note(maker, media_types=("application/pdf",))
     await rebuild.rebuild_batch(maker, start=True)
@@ -598,7 +600,7 @@ async def test_rebuild_chains_into_a_wiki_rebuild_once_integration_drains(
 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(text("UPDATE app.notes SET integration_state = 'integrated'"))
-        await s.execute(text("UPDATE app.jobs SET status = 'done' WHERE kind = 'integrate_note'"))
+        await s.execute(text("UPDATE app.jobs SET status = 'done' WHERE kind = 'note_converse'"))
 
     progress = await rebuild.rebuild_batch(maker)
 

@@ -765,8 +765,10 @@ async def test_dropped_ingest_event_self_heals_and_is_idempotent(
 async def test_dropped_integration_event_self_heals_and_is_idempotent(
     maker: async_sessionmaker,
 ) -> None:
-    """Same guarantee for integration: an indexed-but-unintegrated note with NO
-    integrate job and NO event gets exactly one integrate_note job, idempotently."""
+    """Same guarantee for integration: an indexed-but-unintegrated note with NO job and
+    NO event gets exactly one `note_converse` job, idempotently — the note's graph
+    producer since R3, which is also what flips the `integration_state` this sweep keys
+    on."""
     note_id = await _seed_note(
         maker, ingest_state="indexed", integration_state="pending_integration"
     )
@@ -776,14 +778,14 @@ async def test_dropped_integration_event_self_heals_and_is_idempotent(
 
     fired = await fire_trigger(maker, _registry(), ids["trigger"])
     assert fired.pipeline == ids["pipeline"]
-    assert await _jobs_for_note(maker, "integrate_note", note_id) == 0
+    assert await _jobs_for_note(maker, "note_converse", note_id) == 0
 
     handler = reconcile_pending_integration_handler(maker)
     await handler({})
-    assert await _jobs_for_note(maker, "integrate_note", note_id) == 1
+    assert await _jobs_for_note(maker, "note_converse", note_id) == 1
 
     await handler({})
-    assert await _jobs_for_note(maker, "integrate_note", note_id) == 1
+    assert await _jobs_for_note(maker, "note_converse", note_id) == 1
 
 
 async def test_dropped_embed_self_heals_and_is_idempotent(
