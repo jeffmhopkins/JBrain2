@@ -3156,7 +3156,7 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     3b) — is pinned beside it, because that is the half a drift would now silently move.
 
     ⟲ **And then the flags matched while the patterns did not MEAN the same thing** (R3f's
-    fourth review, finding 6): `/m` counts a lone CR and U+2028/U+2029 as line starts where
+    fourth review, finding 7): `/m` counts a lone CR and U+2028/U+2029 as line starts where
     `re.MULTILINE` counts only a newline. Both now write the line start into the pattern,
     so this asserts neither side carries the flag at all — and
     `test_the_two_sanitisers_agree_on_the_inputs_that_diverged` pins the behaviour the

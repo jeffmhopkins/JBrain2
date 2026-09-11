@@ -1167,7 +1167,7 @@ reply").**
    maximally destructive — the reader is display-only, no backend path parses pairs back out
    of turn text, and one drift test pins both patterns, both flags and both call sites.
    ⟲ **"Byte-identical" was measured over twenty-three inputs and was false on two** (R3f's
-   fourth review, finding 6): both sides took the line start from a flag, and the flags do
+   fourth review, finding 7): both sides took the line start from a flag, and the flags do
    not mean the same thing — JS's `/m` counts a lone `\r` and U+2028/U+2029 as line starts
    where `re.MULTILINE` counts only `\n`, so a pasted Windows clipboard had a label cut in
    the optimistic bubble that the persisted turn (and, since 3(a), the note) kept. No forgery

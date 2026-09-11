@@ -266,7 +266,7 @@ describe("openQuestions", () => {
 });
 
 describe("stripPairLabels", () => {
-  // R3f's fourth review, finding 6 — the two inputs of twenty-three on which the PWA's
+  // R3f's fourth review, finding 7 — the two inputs of twenty-three on which the PWA's
   // sanitiser and the backend's diverged, because `/m` counts a lone CR and U+2028 as line
   // starts and `re.MULTILINE` does not. The same strings, and the same expected output, are
   // asserted in `test_the_two_sanitisers_agree_on_the_inputs_that_diverged`.

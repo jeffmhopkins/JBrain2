@@ -906,7 +906,7 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
 # `\r` and after U+2028/U+2029 as well — so the two "byte-identical" sanitisers diverged on
 # any pasted CR- or U+2028-bearing reply, the PWA taking a label off a line the backend
 # (and therefore the NOTE) kept. The alternation says the same thing in both languages, and
-# the flag that meant different things is gone. (R3f's fourth review, finding 6.)
+# the flag that meant different things is gone. (R3f's fourth review, finding 7.)
 _PAIR_LABEL = re.compile(r"(^|\n)[ \t]*[QA]: ")
 # The exact shape the read-back accepts — `asked.answersFromReply` runs this over each
 # `\n\n`-separated chunk, trimmed. It is the DEFINITION of a forged pair, and the
@@ -948,7 +948,7 @@ def _strip_pair_labels(text: str) -> str:
     taking its label off bought nothing and cost a word.
 
     ⟲ **"Mirrored byte for byte" was measured and was false, on two inputs of
-    twenty-three** (R3f's fourth review, finding 6). Both sanitisers took their line start
+    twenty-three** (R3f's fourth review, finding 7). Both sanitisers took their line start
     from a flag — `re.MULTILINE` here, `/m` there — and the flags do not mean the same
     thing: JS counts a lone `\\r` and U+2028/U+2029 as line terminators, Python counts only
     `\\n`. `Q: a\\nA: b\\rA: c` came out of the PWA as `a\\nb\\rc` and out of this function as
