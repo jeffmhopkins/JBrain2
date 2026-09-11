@@ -604,11 +604,36 @@ button.vitals:focus-visible {
    it is the tap target that opens the note's conversation — the row's own tap still
    opens the NOTE SCREEN, which is the only no-terminal way to the Analysis tab, the
    attachments, the edit path and the clarification eraser. It keeps chip-pending's amber:
-   rose is the medical domain, and this row already wears its domain as a dot. */
+   rose is the medical domain, and this row already wears its domain as a dot.
+
+   As a control the DRAWING is unchanged — only the hit area grows, the same trade the
+   vitals chart makes one surface over. A `.chip` is 3px of padding around 9px of text,
+   about 17px tall, and DESIGN.md's 44px minimum is binding; it matters more here than
+   almost anywhere because this chip sits INSIDE a row whose own tap opens the note
+   screen, so a near-miss does not no-op, it opens the wrong screen. The pseudo-element
+   is out of flow, so the chip's own box and the row's density are untouched, and the
+   chips row claims the height it bleeds into so the growth cannot reach the body text
+   above it. */
 button.chip-ask {
+  position: relative;
   font: inherit;
   font-size: var(--fs-micro);
   cursor: pointer;
+}
+button.chip-ask::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  min-width: 44px;
+  min-height: 44px;
+  transform: translate(-50%, -50%);
+}
+.note-chips:has(.chip-ask) {
+  align-items: center;
+  min-height: 44px;
 }
 
 /* The calendar handoff's appointment pill — the agent reference, in the attach
@@ -27409,10 +27434,19 @@ button.wf-sigpill {
   gap: 5px;
   margin-top: 7px;
 }
+/* 44×44 minimum (DESIGN.md), and here the BOX grows rather than a bleeding hit area —
+   which is the one place this departs from the vitals chart's precedent, on purpose. The
+   candidates WRAP: an out-of-flow hit area 44px tall centred on a 26px chip reaches ~9px
+   into the row above and below it, so on a two-row set the wrong candidate is what a tap
+   near the edge lands on. Offering a mistaken pick is exactly the mispairing this block
+   exists to refuse, and the block has the vertical room the top bar did not. */
 .fb-shell .fb-q-opt {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 1px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -27423,6 +27457,12 @@ button.wf-sigpill {
   line-height: 1.3;
   text-align: left;
   cursor: pointer;
+}
+/* The typed escape (§3b I6, R3f's review finding 4) — the same chip, reading as the way
+   out of the list rather than as one more name in it. */
+.fb-shell .fb-q-else {
+  border-style: dashed;
+  color: var(--text-2);
 }
 .fb-shell .fb-q-opt:disabled {
   cursor: default;
@@ -27441,6 +27481,7 @@ button.wf-sigpill {
 }
 .fb-shell .fb-q-input {
   width: 100%;
+  min-height: 44px;
   margin-top: 7px;
   padding: 7px 9px;
   border: 1px solid var(--border);

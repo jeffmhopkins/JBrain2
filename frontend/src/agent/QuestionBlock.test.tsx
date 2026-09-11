@@ -81,6 +81,43 @@ describe("the question block", () => {
     expect(onAnswer).toHaveBeenCalledWith("q1", "amlodipine");
   });
 
+  // R3f's review, finding 4. A candidate row rendered candidates OR a field, never both,
+  // so a candidate the model's prose lost — one unclosed paren is enough — was
+  // unanswerable. The escape is the robust fix; hardening the parser is not, because
+  // every repair invents candidates the model never wrote.
+  describe("the typed escape", () => {
+    it("reveals the same field a candidate row otherwise never gets", () => {
+      const onAnswer = block();
+      expect(screen.queryByLabelText("Which Dr. Chen?")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Something else" }));
+      fireEvent.change(screen.getByLabelText("Which Dr. Chen?"), {
+        target: { value: "Dr. Ray Chen's locum" },
+      });
+      expect(onAnswer).toHaveBeenCalledWith("q2", "Dr. Ray Chen's locum");
+    });
+
+    it("drops the pick it replaces, and is undoable like every other tap", () => {
+      const onAnswer = block({ answers: { q2: "Dr. Alice Chen" } });
+      fireEvent.click(screen.getByRole("button", { name: "Something else" }));
+      expect(onAnswer).toHaveBeenCalledWith("q2", "");
+      fireEvent.click(screen.getByRole("button", { name: "Something else" }));
+      expect(screen.queryByLabelText("Which Dr. Chen?")).not.toBeInTheDocument();
+    });
+
+    // A draft restored after a failed send has to come back visible, not stranded
+    // behind a tap the owner has no reason to make twice.
+    it("comes back open on words that are not one of the candidates", () => {
+      block({ answers: { q2: "the locum" } });
+      expect(screen.getByLabelText("Which Dr. Chen?")).toHaveValue("the locum");
+    });
+
+    it("is not offered on a frozen block", () => {
+      block({ frozen: true, answers: { q1: "amlodipine", q2: "the locum" } });
+      expect(screen.queryByRole("button", { name: "Something else" })).not.toBeInTheDocument();
+      expect(screen.getByText("the locum")).toBeInTheDocument();
+    });
+  });
+
   it("says out loud that nothing here sends", () => {
     block();
     expect(screen.getByText(/Nothing here sends/)).toBeInTheDocument();
@@ -124,6 +161,8 @@ describe("the block cannot start a turn", () => {
     fireEvent.change(screen.getByLabelText("What's the medication called?"), {
       target: { value: "amlodipine" },
     });
+    // The escape is one more piece of local state, not a second submit.
+    fireEvent.click(screen.getByRole("button", { name: "Something else" }));
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

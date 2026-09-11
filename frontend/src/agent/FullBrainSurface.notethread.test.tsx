@@ -229,19 +229,55 @@ describe("the reply turn", () => {
     expect(body.message).toBe("");
   });
 
-  it("carries the typed reply alongside the tapped answers", async () => {
+  // THE COMPOSITE SEND, walked end to end — the one §3b I7 designs and the omnibox
+  // invites ("answer above, or just reply"), and the one R3f's review proved displayed
+  // the exact inverse of what happened. Typed text won outright in the turn text, so the
+  // bubble said only the aside; the frozen block reads its answers back out of that same
+  // text, so it drew "2 questions · answered" with neither answer shown and the tapped
+  // candidate not picked — while the note held the opposite (the two answers landed as
+  // clarification blocks, and the aside reached no note at all).
+  it("carries the typed reply AND the tapped answers, on the wire and in the thread", async () => {
     const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {});
     await openThread(deps({ chat }));
+    fireEvent.change(screen.getByLabelText("What's the medication called?"), {
+      target: { value: "amlodipine" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
     fireEvent.change(screen.getByLabelText("Composer"), {
-      target: { value: "and the dinner is cancelled" },
+      target: { value: "also the dinner is cancelled" },
     });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
     const body = chat.mock.calls[0]?.[0] as ChatRequest;
-    expect(body.message).toBe("and the dinner is cancelled");
-    expect(body.answers).toEqual([{ question_id: "q2", answer: "Dr. Ray Chen" }]);
+    // The wire is unchanged and was never the bug: structured answers, free text beside.
+    expect(body.message).toBe("also the dinner is cancelled");
+    expect(body.answers).toEqual([
+      { question_id: "q1", answer: "amlodipine" },
+      { question_id: "q2", answer: "Dr. Ray Chen" },
+    ]);
+    // The BUBBLE is the whole turn — the same rendering `clarify.owner_turn_text`
+    // persists, so a reload replays it byte for byte.
+    await waitFor(() =>
+      expect(document.querySelector(".bubble.me")?.textContent).toBe(
+        "Q: What's the medication called?\nA: amlodipine\n\n" +
+          "Q: Which Dr. Chen?\nA: Dr. Ray Chen\n\n" +
+          "also the dinner is cancelled",
+      ),
+    );
+    // And the BLOCK, frozen against that text, shows what was actually answered.
+    await waitFor(() => expect(document.querySelector(".fb-qblock-done")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("amlodipine")).toBeInTheDocument();
+    // The third question was not answered, and the block says so by picking nothing —
+    // the typed aside is not read back as an answer to it.
+    expect(screen.getByRole("button", { name: /Sam Okonkwo/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("shows the owner's turn as the Q/A rendering the server records", async () => {
@@ -279,7 +315,9 @@ describe("a settled thread, reopened later", () => {
     {
       role: "user",
       content:
-        "Q: What's the medication called?\nA: amlodipine\n\nQ: Which Dr. Chen?\nA: Dr. Ray Chen",
+        "Q: What's the medication called?\nA: amlodipine\n\n" +
+        "Q: Which Dr. Chen?\nA: Dr. Ray Chen\n\n" +
+        "also the dinner is cancelled",
       tools: [],
     },
     {
@@ -300,6 +338,13 @@ describe("a settled thread, reopened later", () => {
       "true",
     );
     expect(screen.getByText("amlodipine")).toBeInTheDocument();
+    // The typed aside is part of the same persisted turn and carries no Q:/A: labels, so
+    // it is read as what it is — the owner's words, not an answer to a third question.
+    expect(screen.getByText("Which Sam is dinner with?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sam Reyes/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     // No live line, no carry strip, no re-arm.
     expect(screen.queryByTestId("carry")).not.toBeInTheDocument();
     expect(screen.queryByText(/Nothing here sends/)).not.toBeInTheDocument();
