@@ -62,6 +62,19 @@ class FakeJobQueue:
         return ("integrate_note", "note_id", note_id) in self.active
 
 
+@pytest.fixture(autouse=True)
+def no_live_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The re-run route's second refusal reads `app.note_conversations`, and these tests
+    run against no database. Held at "no live thread" so every case below is about the
+    branch it names; the refusal itself is asserted by overriding this."""
+    import jbrain.api.notes as notes_api
+
+    async def _none(*_a: object, **_k: object) -> bool:
+        return False
+
+    monkeypatch.setattr(notes_api, "_live_conversation", _none)
+
+
 @dataclass
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
@@ -766,9 +779,15 @@ def _indexed_note(c: TestClient, repo: FakeNotesRepo, client_id: str = "rn1") ->
     return note["id"]
 
 
-def test_analyze_note_enqueues_an_integrate_job(
+def test_analyze_note_enqueues_the_note_conversation(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
+    """The PWA's re-run button, repointed in R3 with the `integration_state` flip.
+
+    `note_converse` and not `integrate_note`: the conversation is what writes that state
+    now, so a re-run of the analyzer would move the graph without moving the column the
+    stream chip and the integration reconciler read — and would aim the owner's only
+    no-terminal re-analysis lever at a producer the next wave deletes (CLAUDE.md #10)."""
     c, repo, jobs = client
     note_id = _indexed_note(c, repo)
     jobs.enqueued.clear()
@@ -776,8 +795,8 @@ def test_analyze_note_enqueues_an_integrate_job(
     resp = c.post(f"/api/notes/{note_id}/analyze")
     assert resp.status_code == 202
     assert resp.json()["job_id"]
-    # A plain integrate_note job — no special re-run kind, no mode payload.
-    assert jobs.enqueued == [("integrate_note", {"note_id": note_id})]
+    # A plain note_converse job — no special re-run kind, no mode payload.
+    assert jobs.enqueued == [("note_converse", {"note_id": note_id})]
 
 
 def test_analyze_note_404_unknown(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
@@ -792,9 +811,36 @@ def test_analyze_note_409_when_analysis_in_flight(
 ) -> None:
     c, repo, jobs = client
     note_id = _indexed_note(c, repo)
-    jobs.active.add(("integrate_note", "note_id", note_id))
+    jobs.active.add(("note_converse", "note_id", note_id))
     jobs.enqueued.clear()
 
+    resp = c.post(f"/api/notes/{note_id}/analyze")
+    assert resp.status_code == 409
+    assert "already queued" in resp.json()["detail"]
+    assert jobs.enqueued == []
+
+
+def test_analyze_note_409_when_the_notes_thread_is_already_live(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal that has no job behind it, and the reason it is worth a database read.
+
+    `note_converse` declines outright for a note that already has a live thread
+    (`already_live`), so without this the owner taps re-run, gets a 202 and a job id, and
+    nothing whatever happens — including on a thread parked on a question he has not
+    answered, where re-reading is not what he wants anyway. A silent no-op is the failure
+    CLAUDE.md #10 exists to stop, and it would look exactly like a working button."""
+    import jbrain.api.notes as notes_api
+
+    c, repo, jobs = client
+    note_id = _indexed_note(c, repo)
+    jobs.enqueued.clear()
+
+    async def _live(*_a: object, **_k: object) -> bool:
+        return True
+
+    monkeypatch.setattr(notes_api, "_live_conversation", _live)
     resp = c.post(f"/api/notes/{note_id}/analyze")
     assert resp.status_code == 409
     assert "already queued" in resp.json()["detail"]

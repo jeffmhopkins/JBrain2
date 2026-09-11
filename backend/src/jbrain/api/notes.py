@@ -446,6 +446,20 @@ async def attachment_extracts(
     )
 
 
+async def _live_conversation(
+    maker: "async_sessionmaker[AsyncSession]", ctx: SessionContext, note_id: str
+) -> bool:
+    """Whether this note already has a live thread — a pass running, or one parked on a
+    question. Named rather than inlined so the re-run route's two refusals can be
+    exercised apart: a queued twin is the job queue's answer, this is the conversation
+    table's, and only one of them needs a database.
+
+    `live_for_note` RECLAIMS a stale `running` row on its way past, so a thread stranded
+    by a killed worker does not make the re-run button refuse forever."""
+    async with scoped_session(maker, ctx) as session:
+        return await NoteConversationRepo().live_for_note(session, note_id) is not None
+
+
 @router.post("/notes/{note_id}/analyze", status_code=202)
 async def analyze_note(
     note_id: str,
@@ -478,11 +492,9 @@ async def analyze_note(
     # double-processing. `has_active` rather than `has_active_analysis`: that helper's
     # three other callers are each about the `integrate_note` twin THEY enqueue, and it
     # keeps that subject until R4 takes the kind.
-    live = await jobs.has_active(ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id)
-    if not live:
-        async with scoped_session(maker, ctx) as session:
-            live = await NoteConversationRepo().live_for_note(session, note_id) is not None
-    if live:
+    if await jobs.has_active(
+        ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id
+    ) or await _live_conversation(maker, ctx, note_id):
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
         ctx, note_id

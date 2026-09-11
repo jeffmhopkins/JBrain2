@@ -141,9 +141,14 @@ RESOLVE_ENTITY = "resolve_entity"
 ASSERT_FACT = "assert_fact"
 CLOSE_READING = "close_reading"
 
-# The graph-write tools, named once. `agents.NOTE_INGEST_TOOLS` allowlists them and
-# `toolregistry.NEVER_DEFAULT` excludes them from the curator's `allow=None` wildcard —
-# both are asserted in tests, because either alone is not enough (plan constraint 9).
+# The graph-write tools this module implements, named once. `toolregistry.NEVER_DEFAULT`
+# excludes every one of them from the curator's `allow=None` wildcard, and a note
+# persona's allowlist admits them — both are asserted in tests, because either alone is
+# not enough (plan constraint 9).
+#
+# Not the set any ONE registry binds. Since R3 the unattended pass binds two of them
+# (`NoteToolset.handlers`) and `assert_fact` is reached only through the chat registry's
+# session-addressed copy, on the owner's reply turn (`agent/replytools.py`).
 GRAPH_WRITE_TOOLS = frozenset({RESOLVE_ENTITY, ASSERT_FACT, CLOSE_READING})
 
 # Batch ceilings, from the measured shapes. `maxItems` may not survive llama.cpp's own

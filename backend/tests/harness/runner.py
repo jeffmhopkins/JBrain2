@@ -539,19 +539,19 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # and facts should be swept. What constraint 7 forbids is a per-CALL settle, and
     # this is not one.
     #
-    # NOT `settle_note` whole: that also runs the two review-card halves R3 retires, and
-    # its `note_analysis` stamp is R3's to hand the reading — the reading now HAS a title
-    # and tags, which is why the stamp becomes sayable at all, but stamping it is that
-    # wave's and no scenario reads the row.
+    # NOT `settle_note` whole: that also runs the two review-card halves, which belong to
+    # the producers that FILE those cards and which the conversation's settle does not
+    # run. Its `note_analysis` stamp is production's now (R3 hands it the reading's title
+    # and tags) and is skipped here only because no scenario reads the row.
     #
     # The `sweep_note` below is the SPEC, and it was a divergence until the reading
-    # existed. Production's `settle_conversation` still runs the tail alone
-    # (`analysis/clarify.settle_conversation`; a conversation sweep was built and dropped
-    # — SETTLE_OWNERSHIP.md S3), and the reason it was dropped is the reason no LEDGER can
-    # license a release: a ledger records what a producer WROTE, so a pass that read the
-    # note and wrote nothing is indistinguishable from one that never looked, and the only
-    # claims a release could then remove are another session's. That argument is closed
-    # and still stands.
+    # existed. Production's `settle_conversation` runs exactly this since R3 —
+    # `sweep_note` off the reading, then the tail — and the reason a conversation sweep
+    # was dropped once (SETTLE_OWNERSHIP.md S3) is the reason no LEDGER can license a
+    # release: a ledger records what a producer WROTE, so a pass that read the note and
+    # wrote nothing is indistinguishable from one that never looked, and the only claims
+    # a release could then remove are another session's. That argument is closed and
+    # still stands.
     #
     # What it demands is a producer that RE-DERIVED the note and dropped X, and that is
     # what `close_reading` is (plan §1): the model restates the whole note, so
@@ -569,35 +569,33 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # It is why `rerun_retracts_removed_fact.json` works — step 2 re-reads the note, its
     # reading names no `homeLocation` fact, and the sweep retracts what step 1 asserted.
     #
-    # THREE things here are still not production, and R3 has to close two of them. Naming
-    # them precisely matters because R4 deletes the old pipeline citing this harness:
+    # TWO things here are still not production. R2 named three; R3 closed the middle one
+    # in production rather than here. Naming them precisely matters because R4 deletes the
+    # old pipeline citing this harness:
     #
-    # 1. `mentions`. A reading carries fact ids and no mention ids, so R3's settle passes
-    #    `mentions=None` and SKIPS the mention reconcile (`sweep_note` says what that
-    #    leaks and why it is bounded). The harness's alone, and it stays that way.
+    # 1. `mentions`. A reading carries fact ids and no mention ids, so production's settle
+    #    passes `mentions=None` and SKIPS the mention reconcile (`sweep_note` says what
+    #    that leaks and why it is bounded). The harness HAS those ids in process and
+    #    reconciles with them. Its own, and it stays that way.
     #
-    # 2. **One fact verb here, TWO in production.** `assert_fact` is still bound on the
-    #    unattended pass (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) until R4 narrows it to
-    #    the reply set, and `_calls` emits only `close_reading` — so the MIXED pass is
-    #    untested and, by the default synthesiser, unrepresentable. That pass is exactly
-    #    where a reading-derived sweep is destructive: assert F, then close with a reading
-    #    that omits F, and the sweep releases F's claim and retracts a fact the SAME pass
-    #    wrote. A complete reading re-absorbs it (re-asserting an identity key returns
-    #    `ALREADY` with the same `fact_id`, so it lands in `fact_ids` anyway) — the hole is
-    #    the INCOMPLETE reading, which is the case the sweep is dangerous in.
-    #    **R3 must close this, not inherit it**: either narrow `assert_fact` off the
-    #    unattended path when the settle moves, or union the pass's `assert_fact` writes
-    #    into `touched`. The first is cleaner and is what R4 was going to do anyway; the
-    #    second keeps the verb but re-admits the ledger the S3 argument above rejects,
-    #    for the bounded case of facts THIS pass wrote.
-    #
-    # 3. The sweep here is UNGATED. The spec fires it only on a clean, unclamped pass that
-    #    produced a reading; nothing below consults `writer.reading.clamped`. Inert at the
-    #    suite's sizes — the largest step is 6 facts — but the ceiling moved with the verb:
+    # 2. The sweep here is UNGATED. The spec fires it only on a clean, unclamped pass that
+    #    produced a reading, and `clarify.settle_conversation` now enforces exactly that;
+    #    nothing below consults `writer.reading.clamped`. Inert at the suite's sizes — the
+    #    largest step is 6 facts — but the ceiling moved with the verb:
     #    `READING_CALL_BUDGET` 6 x 8 = 48 facts per step, where the retired
     #    `ASSERT_CALL_BUDGET` 10 x 8 gave 80. A 49-fact step would write 48, latch
     #    `clamped`, and be swept anyway, retracting the previous step's tail where
     #    production would refuse.
+    #
+    # CLOSED, and closed in production: R2's third divergence was that the harness models
+    # ONE fact verb where the unattended pass bound two, so a pass could `assert_fact` F
+    # and then close a reading that omits F — and a reading-derived sweep would retract a
+    # fact that same pass wrote. R3 took `assert_fact` off
+    # `agents.NOTE_INGEST_UNATTENDED_TOOLS` (and off the third-party set derived from it)
+    # rather than unioning that pass's writes into `touched`, which would have re-admitted
+    # the ledger the S3 argument above rejects. One fact verb on the pass is now what
+    # production means, so this runner's single verb is faithful rather than a
+    # simplification.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
         # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,

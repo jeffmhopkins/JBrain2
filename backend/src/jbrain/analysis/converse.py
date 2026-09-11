@@ -260,7 +260,7 @@ class NoteTurnTools:
     writer: NoteGraphWriter
 
 
-def _pass_reading(tools: NoteTurnTools | None, note: NoteInfo) -> PassReading | None:
+def pass_reading(writer: NoteGraphWriter | None, note: NoteInfo) -> PassReading | None:
     """The pass's closing reading, in the shape `settle_conversation` gates on — or None
     when this pass closed none, which is every pass that truncated before it read the
     note out, ended on `ask_owner`, or held no `close_reading` verb at all (an EMR note's
@@ -268,20 +268,20 @@ def _pass_reading(tools: NoteTurnTools | None, note: NoteInfo) -> PassReading | 
 
     `calls`, not `fact_ids`: a reading that names NO fact is a claim — the model read the
     note and says it says nothing — and it is exactly the case a sweep should act on."""
-    if tools is None or tools.writer.reading.calls == 0:
+    if writer is None or writer.reading.calls == 0:
         return None
-    reading = tools.writer.reading
+    reading = writer.reading
     return PassReading(
         facts=frozenset(uuid.UUID(fact_id) for fact_id in reading.fact_ids),
         note_domain=note.domain,
-        extractor=tools.writer.extractor,
+        extractor=writer.extractor,
         title=reading.title,
         tags=reading.tags,
         clamped=reading.clamped,
         # Read off the note row the writer was BUILT from, never off the turn: the
         # provenance is what decides whether this reading may retract, and a stranger's
         # body must not be able to reach the field that decides it.
-        third_party=tools.writer.target.is_third_party,
+        third_party=writer.target.is_third_party,
     )
 
 
@@ -546,7 +546,7 @@ class NoteConverseRunner:
                 self.pipeline,
                 session_id=session_id,
                 state=state,
-                reading=_pass_reading(tools, note),
+                reading=pass_reading(tools.writer if tools is not None else None, note),
             )
         await self._mark_integrated(owner_ctx, note.id)
         with contextlib.suppress(Exception):

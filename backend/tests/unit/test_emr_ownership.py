@@ -75,7 +75,9 @@ def test_the_write_verb_set_is_the_two_shipped_sets_write_halves() -> None:
     # would be a verb the EMR narrowing silently keeps — which is exactly the check
     # `close_reading` had to pass through on its way in (AGENT_INGEST_REWRITE R1).
     assert NOTE_GRAPH_WRITE_TOOLS <= NOTE_INGEST_ON_REPLY_TOOLS
-    assert {"resolve_entity", "assert_fact", "close_reading"} == (
+    # Two of the five on the unattended pass since R3 — `assert_fact` moved to the reply
+    # set — and the narrowing has to subtract exactly those two there.
+    assert {"resolve_entity", "close_reading"} == (
         NOTE_GRAPH_WRITE_TOOLS & NOTE_INGEST_UNATTENDED_TOOLS
     )
 

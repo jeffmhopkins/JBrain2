@@ -239,7 +239,13 @@ def test_the_allowlist_and_the_bound_registry_are_the_same_set() -> None:
     as a change here, which is exactly how this assertion earned its keep."""
     profile = agent_for("note_ingest")
     assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS
-    assert gw.GRAPH_WRITE_TOOLS | NOTE_READ_TOOLS | {ASK_OWNER_TOOL} == NOTE_INGEST_UNATTENDED_TOOLS
+    # `GRAPH_WRITE_TOOLS` is what this module IMPLEMENTS, and since R3 that is one verb
+    # more than the unattended pass binds: `assert_fact` is reached only through the chat
+    # registry's session-addressed copy, on the owner's reply turn, because a second fact
+    # verb beside the closing reading would let a pass write a fact its own reading omits
+    # and the settle's sweep then retract it.
+    unattended_writes = gw.GRAPH_WRITE_TOOLS - {gw.ASSERT_FACT}
+    assert unattended_writes | NOTE_READ_TOOLS | {ASK_OWNER_TOOL} == NOTE_INGEST_UNATTENDED_TOOLS
     # The three are disjoint — no tool is bound twice, by two different builders.
     assert not (gw.GRAPH_WRITE_TOOLS & NOTE_READ_TOOLS)
     assert ASK_OWNER_TOOL not in gw.GRAPH_WRITE_TOOLS | NOTE_READ_TOOLS
