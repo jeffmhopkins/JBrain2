@@ -996,8 +996,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # The first round keyed this on the thread's STATE, read before `claim_waiting`
         # could flip it. That is a proxy, and it is a different set: the designed send of
         # §3b I7 carries the tapped answers AND free text, and `_pair` drops the prose
-        # when the structured set is complete (`note_clarifications.question` is NOT
-        # NULL — the O16 gap); an append can fail; an `owner_authored=False` turn returns
+        # beside any structured answer (`note_clarifications.question` is NOT NULL, and
+        # pairing it with a question the owner was not answering with it is the worse
+        # failure — the O16 gap); an append can fail; an `owner_authored=False` turn returns
         # before the claim with the state still reading `waiting_on_owner`. Each of those
         # is a `waiting_on_owner` turn on which the agent could record something the note
         # never receives. So the verb is bound to the OUTCOME, which is why this call

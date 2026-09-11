@@ -82,7 +82,9 @@ interface OmniboxProps {
   /** Per-segment label overrides. The active research-mode tab reads "Teacher"
    * while a Teacher session is open, otherwise the mode's own label stands. */
   labels?: Partial<Record<Mode, string>> | undefined;
-  /** Text to seed the composer with (e.g. a calendar "reschedule" handoff). */
+  /** Text to seed the composer with — a calendar "reschedule" handoff, or the typed half
+   * of a note-thread send that reached nothing. Seeded ABOVE anything already typed rather
+   * than over it; the seam has two writers and neither may discard the other's words. */
   draft?: string;
   onConsumeDraft?: () => void;
   /** A calendar handoff's appointment, shown as a removable pill in the attach
@@ -116,6 +118,11 @@ interface OmniboxProps {
   /** Tap the plan pill → open the plan popover (status + Continue now / Stop). Absent =
    * the pill is a non-interactive status chip. */
   onPlanPillTap?: (() => void) | undefined;
+  /** A note thread with an open question block: how many of its questions are answered
+   * in the transcript above, waiting to ride the next send (§3b I7). Shown as the carry
+   * strip over the input, and it makes SEND live on an empty box — an answers-only reply
+   * is a real turn. Absent/null outside a note thread, which is everywhere else. */
+  carry?: { answered: number; total: number } | null | undefined;
 }
 
 export function Omnibox({
@@ -138,6 +145,7 @@ export function Omnibox({
   modelLabel,
   planStatus,
   onPlanPillTap,
+  carry,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -156,9 +164,18 @@ export function Omnibox({
 
   // A handoff (e.g. the calendar's "reschedule") seeds the composer once, then
   // clears so a re-render can't re-seed; the owner reviews and sends themselves.
+  //
+  // ⟲ **It used to `setText(draft)` outright, which DELETED whatever was typed** (R3f's
+  // fifth review, finding 5). That was survivable while the only writer was a calendar tap
+  // the owner had just made; the second writer is a note-thread send that reached nothing
+  // (`useFullBrain.restoredText`), and it fires while the box is live — the composer is
+  // never disabled during a turn, only SEND becomes Stop — so anything typed while waiting
+  // was overwritten the moment the window closed, silently, by the owner's own older
+  // words. Neither half is this seam's to throw away: a handoff goes ABOVE what is already
+  // there (it is the older text in both cases, and the owner can see both and edit).
   useEffect(() => {
     if (draft) {
-      setText(draft);
+      setText((cur) => (cur.trim() === "" ? draft : `${draft}\n\n${cur}`));
       onConsumeDraft?.();
       inputRef.current?.focus();
     }
@@ -191,7 +208,8 @@ export function Omnibox({
       // the model (perhaps still loading) spins up. Staged files clear only once the
       // send confirms, since an upload can still fail; on any failure the text comes
       // back (unless a new one's been typed) so the owner can retry without re-typing.
-      if (body === "" && files.length === 0) return;
+      // An answers-only send is a real turn: the block above holds the message (§3b I7).
+      if (body === "" && files.length === 0 && !carrying) return;
       const staged = files;
       setText("");
       const result = onConversation(body, staged);
@@ -299,6 +317,8 @@ export function Omnibox({
     [],
   );
 
+  // A send is worth making when there are answers to carry, even with nothing typed.
+  const carrying = (carry?.answered ?? 0) > 0;
   const boxStyle = { "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties;
   const ModeIcon = MODE_ICON[seg.mode];
 
@@ -381,6 +401,22 @@ export function Omnibox({
                 + New
               </button>
             </div>
+          )}
+
+          {/* The carry strip: what rides the next send. Modelled on the calendar handoff's
+              appointment pill — a piece of state that sits in the composer and goes with
+              the turn — and it is also what says "you are replying in a thread", which is
+              why the MODE ROW still renders above it (the mock hides it; the mock is
+              wrong: it is the app's primary navigation and the only way back to capture). */}
+          {carry && carry.total > 0 && (
+            <output className="omni-carry">
+              <span className="omni-carry-n">
+                {carry.answered} of {carry.total}
+              </span>
+              {carry.answered === 0
+                ? "answered — answer above, or just reply"
+                : "answered — rides with your next send"}
+            </output>
           )}
 
           <textarea
@@ -491,7 +527,9 @@ export function Omnibox({
                   aria-label="Send"
                   onClick={send}
                   disabled={
-                    busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))
+                    busy ||
+                    (text.trim() === "" &&
+                      !(meta.domain === null && (files.length > 0 || carrying)))
                   }
                 >
                   <SendIcon size={24} />

@@ -320,6 +320,12 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         ...(event.web_sources?.length ? { webSources: event.web_sources } : {}),
         ...(event.facts?.length ? { facts: event.facts } : {}),
         ...(event.truncated ? { truncated: true } : {}),
+        // The arguments as the TOOL recorded them, replacing what the model sent. It is
+        // how `ask_owner`'s server-minted question ids reach this step at all, and the
+        // live thread has to take them the same way a reopened one does — the backend
+        // folds the same replacement into the persisted step, and a block rendered off
+        // one and answered against the other posts ids `clarify._pair` drops.
+        ...(event.args ? { args: event.args } : {}),
       };
       next.tools = next.tools.map((t) => {
         if (t.id !== event.tool_call_id) return t;
@@ -480,4 +486,30 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
 
 export function endStream(messages: TranscriptMessage[], reason: string): TranscriptMessage[] {
   return applyEvent(messages, { type: "done", stop_reason: reason });
+}
+
+/** Did this exchange reach the server AT ALL? True when the buffer ends in the optimistic
+ * pair a send appends — the owner's turn and an assistant bubble that never received a
+ * token, a tool step, a view or a line of reasoning.
+ *
+ * NECESSARY, not sufficient, and that distinction is R3f's fifth review, finding 1. This
+ * reads the BUFFER, and a POST that succeeded and then lost its socket before the first
+ * frame leaves a buffer indistinguishable from one that never left the device. The proof
+ * of the other half is the run id (`useFullBrain.recover`): `X-Run-Id` exists only once
+ * `/chat` responded, and `record_owner_reply` files the answers before `runlog.start`
+ * mints one. So un-sending is honest only when this is true AND no run id was minted —
+ * a bubble that took a delta, or a turn that has a run id, is a turn the server HAS, and
+ * dropping either would misreport in the other direction. */
+export function unsent(messages: TranscriptMessage[] | undefined): boolean {
+  if (!messages || messages.length < 2) return false;
+  const last = messages[messages.length - 1];
+  const before = messages[messages.length - 2];
+  return (
+    before?.role === "user" &&
+    last?.role === "assistant" &&
+    last.text === "" &&
+    last.reasoning === "" &&
+    last.tools.length === 0 &&
+    last.views.length === 0
+  );
 }

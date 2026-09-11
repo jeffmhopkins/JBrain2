@@ -210,6 +210,43 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.tools[0]?.truncated).toBe(true);
   });
 
+  it("lets a tool's recorded args replace the ones the model sent", () => {
+    // R3f's third review, finding 1: the ask step the question block is built from carried
+    // the model's raw arguments, and `ask_owner`'s question ids are minted server-side, so
+    // the block posted positional ids the ledger had never held and every tapped answer
+    // was dropped. The result event now carries what the tool recorded, and it WINS.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "tool_call",
+      id: "c1",
+      name: "ask_owner",
+      arguments: { questions: [{ question: "Which Sarah?" }] },
+    });
+    expect(ms[0]?.tools[0]?.args).toEqual({ questions: [{ question: "Which Sarah?" }] });
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "Recorded, one question.",
+      args: { questions: [{ id: "q8f21ab03", question: "Which Sarah?" }] },
+    });
+    expect(ms[0]?.tools[0]?.args).toEqual({
+      questions: [{ id: "q8f21ab03", question: "Which Sarah?" }],
+    });
+  });
+
+  it("leaves a step's args alone when the tool recorded none of its own", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "tool_call",
+      id: "c1",
+      name: "search_notes",
+      arguments: { query: "sarah" },
+    });
+    ms = applyEvent(ms, { type: "tool_result", tool_call_id: "c1", ok: true, summary: "3 hits" });
+    expect(ms[0]?.tools[0]?.args).toEqual({ query: "sarah" });
+  });
+
   it("attaches web sources (favicon citation chips) from a tool result to its tool", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "web_search", arguments: {} });

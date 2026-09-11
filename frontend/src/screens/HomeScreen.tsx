@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import { PlanSheet } from "../agent/PlanSheet";
+import { answeredCount } from "../agent/asked";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, modeForAgent, useFullBrain } from "../agent/useFullBrain";
 import { useReadAloud } from "../agent/useReadAloud";
@@ -14,6 +15,7 @@ import { useRegisterHomeBack } from "../homeBack";
 import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
+import { useNoteThreads } from "../notes/useNoteThreads";
 import type { NotesController, StreamItem } from "../notes/useNotes";
 import { anyHeld, useSdrSession } from "../sdrSession";
 
@@ -38,6 +40,12 @@ interface HomeScreenProps {
   onOpenNoteById?: (noteId: string) => void;
   /** Open an entity page by id (from a Full Brain response chip). */
   onOpenEntity?: (entityId: string) => void;
+  /** A stream row's ask chip → open that note's conversation (§3b I1/I2). Flips to the
+   * tab that hosts the persona and opens the thread by id. The same handoff the notes-tab
+   * redirect makes, MINUS the card to drop: the stream is already on home, so there is no
+   * back marker to leave (`App.tsx`) — the conversation tab IS home, and Entry is one tap
+   * left. */
+  onOpenThread?: (sessionId: string, agent: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
   /** Leave for the Radio screen (it opens on the APRS log) — the radio sheet's way
@@ -75,6 +83,7 @@ export function HomeScreen({
   onOpenVitals,
   onOpenNoteById,
   onOpenEntity,
+  onOpenThread,
   compose,
   onComposeConsumed,
   openSession,
@@ -111,7 +120,6 @@ export function HomeScreen({
       onComposeConsumed?.();
     }
   }, [compose, onComposeConsumed]);
-  const clearDraft = useCallback(() => setPendingDraft(""), []);
   const clearAppt = useCallback(() => setPendingAppt(null), []);
   // Research and Full Brain are both conversation surfaces, integral to the home
   // page: the transcript and its lateral panels render in the body while the
@@ -120,6 +128,14 @@ export function HomeScreen({
   // a fresh one) on entry.
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
+  // The composer seam has two writers — a calendar handoff, and the typed half of a
+  // note-thread send that reached the server not at all — and one consume. Stable, because
+  // the omnibox seeds off this identity and would re-seed on every render otherwise.
+  const consumeRestored = fb.consumeRestoredText;
+  const consumeDraft = useCallback(() => {
+    setPendingDraft("");
+    consumeRestored();
+  }, [consumeRestored]);
 
   // Let the app-level back gesture climb the conversation surface's own layers before it
   // reaches the bare chat: an open Proposal (ProposalTree) sits atop the Proposals panel,
@@ -210,6 +226,9 @@ export function HomeScreen({
 
   // Research and Full Brain are conversation surfaces; everything else is capture.
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
+  // Which stream rows have a thread waiting on an answer. Only polled while the stream is
+  // actually on screen — a conversation tab has no rows to chip.
+  const threads = useNoteThreads(!conversational && onOpenThread !== undefined);
   // The box's in-flight model load, off the same 1 Hz stream the top bar's trace already
   // rides — no second poll, and no way for the chat line and the vitals surface to report
   // different models. Read here rather than in the surface so the conversation surface
@@ -308,6 +327,13 @@ export function HomeScreen({
           items={notes.items}
           onOpenSearch={onOpenSearch}
           onOpenNote={onOpenNote}
+          // I2, decided (ii): the row's tap keeps the NOTE SCREEN — the only no-terminal
+          // route to the Analysis tab, the attachments, the edit path, the clarification
+          // eraser and the re-run button — and the chip is what opens the thread.
+          threads={threads}
+          onOpenThread={
+            onOpenThread ? (thread) => onOpenThread(thread.sessionId, thread.agent) : undefined
+          }
           onEdit={(item) => {
             if (item.id !== null)
               actions.startEdit({
@@ -370,8 +396,19 @@ export function HomeScreen({
               }
             : undefined
         }
-        draft={pendingDraft}
-        onConsumeDraft={clearDraft}
+        // The typed half of a send that reached nothing comes back here, beside the
+        // calendar handoff — the block takes its own half back at the same moment
+        // (`useFullBrain.restoredText`). Both hand the composer words the owner still has
+        // to send himself.
+        //
+        // ⟲ **JOINED, not `||`** (R3f's fifth review, finding 5). With two writers on one
+        // seam and one consume, `a || b` masked `b` — and `consumeDraft` then cleared both,
+        // so a restore that landed in the same render as a calendar handoff was dropped
+        // without ever reaching the box. Restored words first: they are the older ones.
+        draft={[conversational ? fb.restoredText : "", pendingDraft]
+          .filter((t) => t !== "")
+          .join("\n\n")}
+        onConsumeDraft={consumeDraft}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation
@@ -402,6 +439,17 @@ export function HomeScreen({
         // opens the plan popover. A draft shows inline in the chat, so the pill is null then.
         planStatus={pillStatus}
         onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
+        // A note thread's open question block, counted for the carry strip. The strip is
+        // the composer's half of §3b I7: the block fills state, the omnibox send is the
+        // one submit, and one send is one turn carrying every answer plus any typed text.
+        carry={
+          conversational && fb.openQuestions.length > 0
+            ? {
+                answered: answeredCount(fb.openQuestions, fb.answers),
+                total: fb.openQuestions.length,
+              }
+            : null
+        }
       />
       {sdrSheet && (
         // Open on the radio the icon was reflecting; the sheet re-anchors itself if

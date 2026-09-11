@@ -600,6 +600,48 @@ button.vitals:focus-visible {
   cursor: pointer;
 }
 
+/* The stream's waiting-thread chip (AGENT_INGEST_REWRITE §3b I1/I2). A button, because
+   it is the tap target that opens the note's conversation — the row's own tap still
+   opens the NOTE SCREEN, which is the only no-terminal way to the Analysis tab, the
+   attachments, the edit path and the clarification eraser. It keeps chip-pending's amber:
+   rose is the medical domain, and this row already wears its domain as a dot.
+
+   DESIGN.md's 44px minimum is binding, and it matters more here than almost anywhere: a
+   `.chip` is 3px of padding around 9px of text — 18.6px of box at the default text size —
+   and this one sits INSIDE a row whose own tap opens the note screen, so a near-miss does
+   not no-op, it opens the wrong screen.
+
+   The BOX grows, the way `.fb-q-opt` grows and NOT the way the vitals chart's out-of-flow
+   hit area does (R3f's second review, finding 2). The bleeding pseudo-element was right
+   for a chart, which has no tappable siblings; here `.note-chips` is `flex-wrap: wrap`
+   and holds the attachment links BEFORE this chip. On one line the arithmetic held. On
+   two it did not: 18.6 + 6 + 18.6 = 43.2px of content stretched to the row's 44px floor
+   gives ~19px lines, so the wrapped chip's centre sat at y≈34.5 and a 44px pseudo spanned
+   y≈12.5–56.5 — over the bottom third of line 1. Being absolutely positioned on a
+   relative button, it painted above the static flex items and WON THE HIT TEST: a tap
+   near the bottom of an attachment chip opened the thread instead of the attachment,
+   reachable at ~400px with two ordinary filenames. That is the builder's own argument for
+   `.fb-q-opt` — "the candidates WRAP, so a tap near the edge lands on the wrong one" —
+   and this row wraps too.
+
+   The cost, stated rather than denied: the chip's own drawing is no longer untouched, and
+   a WRAPPED chips row now grows to ~68px instead of claiming 44 and overlapping itself. A
+   single-line row is unchanged — it was already floored at 44px by the rule below, which
+   is where the ~27px every waiting row pays has always come from. */
+button.chip-ask {
+  font: inherit;
+  font-size: var(--fs-micro);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 16px;
+  justify-content: center;
+  cursor: pointer;
+}
+.note-chips:has(.chip-ask) {
+  /* The short attachment chips centre against the tall one they share a line with. */
+  align-items: center;
+}
+
 /* The calendar handoff's appointment pill — the agent reference, in the attach
    row, in the steel of the Full Brain mode it rides into. */
 .chip-appt {
@@ -27311,4 +27353,222 @@ button.wf-sigpill {
 }
 [data-theme="light"] .trim-drop {
   background: rgba(0, 0, 0, 0.42);
+}
+
+/* --- The note's own thread (AGENT_INGEST_REWRITE §3b, binding mock
+   docs/mocks/agent-ingest-thread/note-thread.html) ---------------------------------- */
+
+/* Turn 0: the note, frozen. Not a bubble — it is not something the owner just said, it
+   is the thing the conversation is about — so it is ruled rather than filled, in the
+   NOTE'S OWN domain colour (the mock fixes it rose, which in this palette is the medical
+   domain and would say something false on a financial note). Steel when the session
+   stored no scopes to read a domain off. */
+.fb-shell .fb-turn0 {
+  --note-rule: var(--steel);
+  align-self: stretch;
+  padding: 10px 13px;
+  border-left: 3px solid var(--note-rule);
+  border-radius: 0 var(--r-card) var(--r-card) 0;
+  background: var(--surface);
+}
+.fb-shell .fb-turn0-label {
+  margin: 0 0 5px;
+  color: var(--note-rule);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-turn0-body {
+  font-size: var(--fs-secondary);
+  /* The note's own line breaks are part of it; the frame's are gone with the frame. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The question block. AMBER, not the mock's rose, for the reason the stream chip is
+   amber: rose is the MEDICAL domain here, so a rose block says the same thing twice on a
+   medical note. Amber is the open-ask register, and the words carry it regardless. */
+.fb-shell .fb-qblock {
+  display: flex;
+  flex-direction: column;
+  /* Its own frame under the turn, like the sub-agent fan — stretched to the column
+     because it is a separate object, not because the bubble is narrow: `.bubble.ai` is
+     already `max-width: 100%` and only `.bubble.me` keeps the 80% cap. */
+  align-self: stretch;
+  margin-top: -2px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.fb-shell .fb-qblock-done {
+  /* Answered and spent: still legible on a reopened thread (§3b I9), no longer inviting.
+     DIMMED BY TOKEN, never by opacity, and that is R3f's fourth review, finding 4. An
+     `opacity: 0.72` here multiplied every colour under it, so computed over --bg it put
+     the "still open" line at 1.81:1 in light, the answer's own words at 3.41:1 (--text-2 —
+     DESIGN.md's CERTIFIED body text, failing for no reason but this) and a candidate's
+     detail at 1.81:1, against a binding 4.5:1 floor. A descendant cannot undo an
+     ancestor's opacity, so the last round could only buy back one line at a time by
+     re-colouring it; dropping the opacity buys all four at once.
+     What carries "spent" instead is the neutral border, the head going from amber to
+     --text, and the CANDIDATES giving up their raised fill below — dimming the things that
+     look like controls rather than the words the owner has to read. */
+  border-color: var(--border);
+}
+/* The chips stop reading as controls: no raised --surface-2 fill, the label at --text-2.
+   The one he PICKED keeps its amber tint and full-strength label, so a reopened thread
+   shows what he chose rather than a uniformly grey row. Every measured line comes out
+   ABOVE where the opacity left it — the candidate detail included (1.81 → 2.72 light,
+   1.90 → 2.78 dark; still the --text-3 token's own shortfall, which is filed as a
+   design-system call and is the same on a live block). */
+.fb-shell .fb-qblock-done .fb-q-opt:not(.fb-q-picked) {
+  background: transparent;
+  color: var(--text-2);
+}
+.fb-shell .fb-qblock-head {
+  margin: 0 0 8px;
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-qblock-done .fb-qblock-head {
+  /* --text, not the --text-3 this used to take, and not the live block's amber either.
+     This line is the count of what the send actually LANDED — the first thing the owner
+     reads on a frozen block (`QuestionBlock.tsx`), and the one place R3f's second review
+     found lying outright — so it is the last line here allowed to be hard to read, and
+     --text is what DESIGN.md certifies for text that must be read (14.4:1 dark, 17.2:1
+     light over the block's --surface). Amber stays on the LIVE head, where it is the
+     invitation rather than the report. (R3f's third review finding 4, kept after the
+     fourth review removed the opacity that first forced it.) */
+  color: var(--text);
+}
+.fb-shell .fb-q {
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.fb-shell .fb-q:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.fb-shell .fb-q-why {
+  margin: 0 0 3px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-text {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.fb-shell .fb-q-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+/* 44×44 minimum (DESIGN.md), and here the BOX grows rather than a bleeding hit area —
+   which is the one place this departs from the vitals chart's precedent, on purpose. The
+   candidates WRAP: an out-of-flow hit area 44px tall centred on a 26px chip reaches ~9px
+   into the row above and below it, so on a two-row set the wrong candidate is what a tap
+   near the edge lands on. Offering a mistaken pick is exactly the mispairing this block
+   exists to refuse, and the block has the vertical room the top bar did not. */
+.fb-shell .fb-q-opt {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+/* The typed escape (§3b I6, R3f's review finding 4) — the same chip, reading as the way
+   out of the list rather than as one more name in it. */
+.fb-shell .fb-q-else {
+  border-style: dashed;
+  color: var(--text-2);
+}
+.fb-shell .fb-q-opt:disabled {
+  cursor: default;
+}
+.fb-shell .fb-q-picked {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.fb-shell .fb-q-opt-detail {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-picked .fb-q-opt-detail {
+  color: var(--amber);
+}
+.fb-shell .fb-q-input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.fb-shell .fb-q-answered {
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+/* A row the send did NOT answer, on a block that is otherwise spent — the one line on a
+   frozen block the owner has to notice: the agent may re-ask exactly these, and a row that
+   read as answered is what sent him round that loop (R3f's second review).
+   --text WITH AN AMBER RULE, not amber text (R3f's fourth review, finding 4). Amber body
+   text is 2.35:1 on the light theme's --surface whatever the block does — that is the
+   token, not this wave — and DESIGN.md is explicit that the muted accents are for chrome
+   and tints while body text is --text/--text-2. So the open-ask register is carried by the
+   rule, which is chrome, and the sentence itself is readable in both themes. The state is
+   in the words either way, which is the app's own rule about colour. */
+.fb-shell .fb-q-open {
+  margin: 7px 0 0;
+  padding-left: 7px;
+  border-left: 2px solid var(--amber);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+/* States what the block cannot do, where the owner would otherwise assume it does. */
+.fb-shell .fb-q-foot {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The composer's carry strip — what rides the next send (§3b I7). Sits where the
+   appointment pill sits, and reads as a statement rather than a control, because it is
+   not one: the send below is the submit. */
+.omnibox .omni-carry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  font-size: var(--fs-micro);
+}
+.omnibox .omni-carry-n {
+  font-weight: 650;
 }

@@ -35,6 +35,10 @@ What each test defends:
 - **the two readers of the open set agree.** The notes tab and the reply path both take
   the newest SUCCEEDED `ask_owner` row and whatever it parses to — showing one set and
   consuming another files the owner's words against a question he was never shown.
+- **the PWA's ids are the ledger's ids.** Every other test here takes its ids from the
+  ledger, which is the one thing the PWA cannot do: it reads the TRANSCRIPT step, a blob
+  written by a different writer, and posts what that carries. Crossing that seam is what
+  proved the two had never agreed (R3f's third review, finding 1).
 """
 
 import asyncio
@@ -67,6 +71,7 @@ from jbrain.analysis.clarify import (
     MAX_ANSWERS,
     close_owner_reply,
     owner_reply_notice,
+    owner_turn_text,
     owner_words_reached_note,
     record_owner_reply,
 )
@@ -78,6 +83,7 @@ from jbrain.models.note_conversation import (
     InvalidStateTransition,
     NoteConversationRepo,
     note_body_sha,
+    questions_from_args,
 )
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.tasks.runner import LoopTurnExecutor
@@ -263,11 +269,19 @@ async def test_a_second_ask_is_refused_while_the_first_set_is_open(
 
     second = await handler(_ask(DOSE), _ctx(owner, session_id))
 
-    assert not isinstance(second, ToolOutput)  # no halt: the turn was not ended again
+    assert isinstance(second, ToolOutput)
+    assert second.halt is None  # the turn was not ended again
     assert "already waiting" in second
     assert "2 questions" in second
     assert QUESTION in second
     assert len(await _ledger(maker, owner, session_id)) == 1
+    # And the STEP it leaves carries the set the ledger holds, not the question this call
+    # made up (R3f's fourth review, finding 1). The block is built from an `ask_owner`
+    # step; a refusal that echoed nothing left the model's own second question there.
+    (row,) = await _ledger(maker, owner, session_id)
+    assert second.recorded_args is not None
+    assert [q["id"] for q in second.recorded_args["questions"]] == _ids(row)
+    assert [q["question"] for q in second.recorded_args["questions"]] == [QUESTION, COACH]
 
 
 async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
@@ -279,7 +293,12 @@ async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
 
     out = await handler(_ask("   "), _ctx(owner, session_id))
 
-    assert not isinstance(out, ToolOutput)
+    assert isinstance(out, ToolOutput)
+    assert out.halt is None
+    # It recorded NOTHING, and the step says so rather than keeping the model's arguments:
+    # an empty record is the one shape the PWA can tell apart from a step written before
+    # the echo existed (`asked.askStep`), and it draws no block at all.
+    assert out.recorded_args == {"questions": []}
     assert await _ledger(maker, owner, session_id) == []
     state, _ = await _state(maker, owner, session_id)
     assert state == "running"
@@ -299,6 +318,34 @@ async def test_outside_a_note_conversation_it_refuses_in_words(
     assert "only inside a note's conversation" in await handler(
         _ask(QUESTION), _ctx(owner, orphan.id)
     )
+
+
+async def test_an_ask_on_a_closed_thread_records_nothing_and_says_so(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's fourth review, finding 3. `settled`/`failed` are terminal, so the state flip
+    raises and the ledger row rolls back with it — the conversation holds nothing and the
+    server is not waiting on anyone. The refusal reaches the model as text (a raised
+    exception would teach it nothing), and it used to reach the TRANSCRIPT as the model's
+    raw questions: the PWA then drew a live question block, with an answer field, on a
+    thread whose reply path would file the words nowhere. An empty record draws nothing."""
+    note_id = await _note(maker, owner)
+    # Opened live and settled the way a finished pass settles it — a conversation cannot be
+    # opened into a terminal state (it would release a note it never read).
+    session_id = await _conversation(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, session_id, "settled")
+    handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
+
+    out = await handler(_ask(QUESTION), _ctx(owner, session_id))
+
+    assert isinstance(out, ToolOutput)
+    assert out.halt is None
+    assert "NOT waiting on anyone" in out
+    assert out.recorded_args == {"questions": []}
+    assert await _ledger(maker, owner, session_id) == []
+    state, _ = await _state(maker, owner, session_id)
+    assert state == "settled"
 
 
 async def test_a_waiting_conversation_cannot_be_settled(
@@ -916,6 +963,62 @@ async def test_an_answer_naming_a_question_that_is_not_open_files_nothing(
     assert note is not None and "canal loop" not in note.body
 
 
+async def test_the_composite_send_end_to_end(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """THE SEND R3f's acceptance walk is: two answers tapped, one sentence typed.
+
+    It is the send §3b I7 designs and the omnibox invites ("answer above, or just
+    reply"), and R3f's review proved the thread displayed the exact inverse of it. This
+    asserts the whole outcome in one place — what the TURN says, what the NOTE gets, what
+    reaches no note, and what the agent is told — because the failure was that those four
+    disagreed: the turn carried only the aside, the note carried only the answers, and the
+    frozen block (which reads its answers back out of the turn's text) therefore drew
+    "answered" with no answers and the tapped candidate not picked."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    answers = [(ids[0], "My sister."), (ids[1], "Her own.")]
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="also the dinner is cancelled",
+        answers=answers,
+    )
+    assert reply is not None
+
+    # 1. THE NOTE gets the two tapped answers, each under the question it answers, and
+    #    nothing else. The typed sentence is not filed against DOSE.
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
+    assert await _blocks(maker, owner, note_id) == reply.answered
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and "dinner is cancelled" not in note.body
+
+    # 2. THE THIRD QUESTION is still open — not silently spent on a sentence that does
+    #    not answer it.
+    assert reply.unanswered == [DOSE]
+
+    # 3. THE TURN says both halves, pairs first, in the order the owner did them. This
+    #    is the string the transcript persists and the frozen block reads back, and it is
+    #    byte-identical to `asked.ownerTurnText`'s optimistic bubble.
+    assert owner_turn_text("also the dinner is cancelled", reply, answers) == (
+        f"Q: {QUESTION}\nA: My sister.\n\nQ: {COACH}\nA: Her own.\n\nalso the dinner is cancelled"
+    )
+
+    # 4. THE AGENT is told the sentence reached no note, and that DOSE is still open —
+    #    and the turn holds no `assert_fact` off the back of it.
+    assert reply.dropped == ["also the dinner is cancelled"]
+    assert owner_words_reached_note(reply) is False
+    notice = owner_reply_notice(reply)
+    assert "dinner is cancelled" in notice and "did NOT reach the note" in notice
+    assert DOSE in notice and "still open" in notice
+
+
 async def test_free_prose_alone_answers_the_oldest_open_question(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
@@ -943,12 +1046,92 @@ async def test_free_prose_alone_answers_the_oldest_open_question(
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
 
 
-async def test_free_prose_beside_a_partial_set_answers_the_oldest_it_left_open(
+async def test_the_note_and_the_turn_carry_the_same_sanitised_words(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """One send carries both halves (§3b I7): the taps AND whatever was typed. The typed
-    part cannot answer a question the taps already answered, so it takes the oldest one
-    they left."""
+    """R3f's third review, finding 3a. The sanitiser reached the TURN and not the NOTE.
+
+    `record_owner_reply` took the message raw, `_pair` filed it under the oldest open
+    question, and `compose.clarification_block` renders `A: {answer}` verbatim — so the
+    durable note kept a quoted `Q:`/`A:` pair the transcript had already broken, on every
+    prose-only reply. The note is the sole source of truth (D6): the next reading takes
+    that text as the channel's own labelling of words that are the owner's.
+
+    The second half is finding 3b, which is why the fix is not a blunt strip: an enumerated
+    reply is not a pair, so it reaches the note exactly as he typed it. Deleting his `A:`
+    while keeping his `B:` would be a sentence nobody wrote in his own corpus — which is
+    what this whole module exists to refuse."""
+    note_id = await _note(maker, owner)
+    session_id, _ = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+
+    quoted = f"Q: {COACH}\nA: nobody at all"
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message=quoted,
+        answers=[],
+    )
+    assert reply is not None and reply.clarified is True
+
+    # THE NOTE holds the broken pair, not the quoted one — and it is byte-identical to what
+    # the turn says, which is the disagreement this closes.
+    sanitised = f"{COACH}\nnobody at all"
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, sanitised)]
+    assert reply.answered == [(QUESTION, sanitised)]
+    # The prose-only send's turn text IS the prose (there are no structured answers to
+    # render pairs from), so this is the two strings side by side: what the turn says and
+    # what the note now holds.
+    assert owner_turn_text(quoted, reply, []) == sanitised
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and f"Q: {COACH}" not in note.body
+
+
+async def test_an_enumerated_reply_reaches_the_note_with_every_word_he_typed(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The other side of the sanitiser, and the reason it is not a blunt per-line strip
+    (R3f's third review, finding 3b). `Two options:` / `A: …` / `B: …` is not a shape
+    anything reads back as a pair, so nothing is neutralised and the block on the note says
+    what he said."""
+    note_id = await _note(maker, owner)
+    session_id, _ = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+
+    enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician"
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message=enumerated,
+    )
+
+    assert reply is not None and reply.clarified is True
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, enumerated)]
+    assert owner_turn_text(enumerated, reply, []) == enumerated
+
+
+async def test_free_prose_beside_a_partial_set_is_not_filed_as_an_answer(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's review, finding 5 — the rule R1c wrote when the composer was the only
+    affordance, reversed now that §3b I7 puts the block beside it and invites the free
+    reply.
+
+    The prose used to answer the oldest question the taps left open. On a three-question
+    set that means the owner taps two, types "this note is about Kaiya not me", and that
+    sentence is appended to his own note as the answer to a question it does not answer —
+    permanently, searchably, with the clarification eraser as the only undo. A block that
+    pairs an answer with the wrong question is a wrong sentence in the owner's corpus, so
+    the typed half is no longer paired at all: it rides the turn's text for the agent to
+    read, and `dropped` says it reached no note."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
@@ -960,16 +1143,23 @@ async def test_free_prose_beside_a_partial_set_answers_the_oldest_it_left_open(
         owner,
         session_id=session_id,
         agent=NOTE_CONVERSE_AGENT,
-        message="Her own, she hired him in March.",
+        message="this note is about Kaiya not me",
         answers=[(ids[0], "My sister.")],
     )
 
     assert reply is not None
-    assert reply.answered == [
-        (QUESTION, "My sister."),
-        (COACH, "Her own, she hired him in March."),
-    ]
-    assert reply.unanswered == [DOSE]
+    assert reply.answered == [(QUESTION, "My sister.")]
+    # The two the taps did not answer are still OPEN — neither was silently spent on a
+    # sentence that does not answer it.
+    assert reply.unanswered == [COACH, DOSE]
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
+    assert reply.dropped == ["this note is about Kaiya not me"]
+    assert owner_words_reached_note(reply) is False
+    # And the agent hears both halves: the sentence that reached no note, and the
+    # questions still open.
+    notice = owner_reply_notice(reply)
+    assert "Kaiya" in notice and "did NOT reach the note" in notice
+    assert COACH in notice and "still open" in notice
 
 
 async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
@@ -1167,6 +1357,177 @@ async def test_the_inbox_and_the_reply_path_read_the_same_open_set(
 
     assert [q.question for q in open_set] == [QUESTION]
     assert entry.questions == [QUESTION]
+
+
+async def test_the_ids_the_pwa_posts_are_the_ids_the_ledger_holds(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """THE SEAM NOBODY CROSSED, and R3f's third review, finding 1.
+
+    Every other test here hands `record_owner_reply` ids taken from the LEDGER — from
+    `_open_set`, which reads the row the handler wrote. The PWA cannot do that. It builds
+    its question block out of the TRANSCRIPT step (§3b I9, `asked.askedQuestions`), which
+    is a different blob written by a different writer, and posts whatever ids that blob
+    carries. So this test takes the ids the way the PWA takes them — off the persisted
+    transcript, through `questions_from_args`, which is `askedQuestions`' backend mirror
+    down to its positional fallback — and only then answers with them.
+
+    Before the fix the two disagreed completely. `ask_owner.tool` declares no `id`, so the
+    model sends none and `asktools._asked` MINTS one per question; the ledger kept them and
+    the step kept `call.arguments`, which has none. The block fell to the positional
+    `q1`/`q2` fallback, `_pair` dropped both as naming no open question, and the note
+    received nothing while the frozen block drew them as sent and the agent was told his
+    reply answered nothing at all. Driven through the real runner, the real loop and the
+    real registry, because the whole finding is that the two writers are different code.
+    """
+    note_id = await _note(maker, owner)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                "",
+                (ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION, COACH)),),
+                "tool_use",
+                LlmUsage(10, 3),
+            )
+        ]
+    )
+    transcript = AgentTranscript(maker)
+    runner = NoteConverseRunner(
+        maker,
+        notes=SqlNotesRepo(maker),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=transcript,
+        executor=LoopTurnExecutor(
+            LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}),
+            note_registry(TOOLS_DIR, build_ask_owner_handlers(maker)),
+        ),
+        owner_principal_id=_const(owner.principal_id),
+    )
+    await runner.note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid FROM app.note_conversations"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+    session_id = row.sid
+
+    # What the PWA READS: the ask step of the persisted transcript, and nothing else. No
+    # ledger read anywhere above this line.
+    steps = [
+        step
+        for turn in await transcript.load(owner, session_id)
+        for step in turn.tools
+        if step.get("name") == ASK_OWNER_TOOL and step.get("ok") is True
+    ]
+    assert len(steps) == 1
+    posted = questions_from_args(steps[0].get("args"))
+    assert [q.question for q in posted] == [QUESTION, COACH]
+
+    # And they are the ledger's own ids — the assertion that fails without the echo, where
+    # `posted` reads ["q1", "q2"] and the ledger holds two random `q########`.
+    async with scoped_session(maker, owner) as s:
+        ledger_ids = [q.id for q in await open_questions(s, NoteConversationRepo(), session_id)]
+    assert [q.id for q in posted] == ledger_ids
+
+    # The whole point of them: an answer posted against a transcript-read id PAIRS.
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(posted[0].id, "My sister."), (posted[1].id, "Her own.")],
+    )
+    assert reply is not None and reply.clarified is True
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
+    assert reply.dropped == []
+    assert reply.unanswered == []
+    assert await _blocks(maker, owner, note_id) == reply.answered
+
+
+async def test_two_asks_in_one_message_leave_the_pwa_the_set_the_ledger_holds(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's fourth review, finding 1, driven rather than described.
+
+    `AgentLoop` finishes the round it is in before it honours a halt (it iterates
+    `turn.tool_calls` and stops after), so a model that emits TWO `ask_owner` calls in one
+    message runs the second one after the first has already ended the turn. The second hits
+    the already-waiting latch — a refusal, and `_dispatch` marks every returned string
+    `is_error=False`, so its step is `ok: true` like any other.
+
+    That is the step the PWA used to build the block from (last succeeded ask wins), and it
+    carried the model's raw second question: the owner was shown a question the ledger had
+    never held while the two real ones were invisible, and a tap posted an id `_pair`
+    dropped. Both halves are fixed and both are asserted here — the refusal echoes the OPEN
+    set, so every ask step on this turn names the questions the ledger holds, with its ids.
+    """
+    note_id = await _note(maker, owner)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                "",
+                (
+                    ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION, COACH)),
+                    ToolCall("c2", ASK_OWNER_TOOL, _ask(DOSE)),
+                ),
+                "tool_use",
+                LlmUsage(10, 3),
+            )
+        ]
+    )
+    transcript = AgentTranscript(maker)
+    runner = NoteConverseRunner(
+        maker,
+        notes=SqlNotesRepo(maker),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=transcript,
+        executor=LoopTurnExecutor(
+            LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}),
+            note_registry(TOOLS_DIR, build_ask_owner_handlers(maker)),
+        ),
+        owner_principal_id=_const(owner.principal_id),
+    )
+    await runner.note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid FROM app.note_conversations"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+    session_id = row.sid
+
+    steps = [
+        step
+        for turn in await transcript.load(owner, session_id)
+        for step in turn.tools
+        if step.get("name") == ASK_OWNER_TOOL and step.get("ok") is True
+    ]
+    # BOTH calls ran, and both look succeeded — which is exactly why `ok` was never the
+    # signal to select on.
+    assert len(steps) == 2
+    assert DOSE not in str(steps)
+    # One ledger row: the second ask was refused, not recorded.
+    assert len(await _ledger(maker, owner, session_id)) == 1
+    async with scoped_session(maker, owner) as s:
+        open_set = await open_questions(s, NoteConversationRepo(), session_id)
+    for step in steps:
+        posted = questions_from_args(step.get("args"))
+        assert [(q.id, q.question) for q in posted] == [(q.id, q.question) for q in open_set]
 
 
 async def test_two_overlapping_replies_and_exactly_one_claims_the_set(

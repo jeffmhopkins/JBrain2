@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -830,6 +830,17 @@ route (`notes_inbox`, `models/note_conversation.py:504`). Either the notes list 
 carry it or the stream fetches the waiting set once and joins client-side; the wave decides
 on cost, but nothing here is free.
 
+**R3f took the CLIENT-SIDE JOIN** (`notes/useNoteThreads.ts`), and the reason is that
+`/api/review/notes` is already exactly this set — every live conversation with its note id,
+its session id, its persona and its whole open question set, under the same D4 wire rule
+that it carries no verb. Widening `NoteOut` would put a second, differently-shaped copy of
+that state on the route every note in the corpus pages through, for a set that is normally
+empty. What the join costs is one request beside the stream's own poll (20 s, foreground
+only, and only while the stream is on screen); what it buys is that the chip and the notes
+tab cannot disagree about what is waiting. The chip is also a `<button>`, because I2 (ii)
+makes it the way in — and the lifecycle chip yields to it, since a pass that has asked has
+stopped and "analyzing…" is no longer what is happening.
+
 **Where the mock overrules the code, and where it does not:**
 
 - The mock draws a green `analyzed` chip on the settled row. **Rejected — keep the shipped
@@ -868,22 +879,31 @@ tap is the same kind of refinement, and the new mock does not resurrect variant 
 view does not BECOME the thread, the thread is still the agent transcript. **An undecided
 question is not a correction** (§9), and this entry and §9 should be read at the same force.
 
-What the mock genuinely does not draw, and the wave must answer rather than inherit:
-**if the row's tap is spent on the thread, what reaches the note screen?** The note screen is
-not decoration — it is the Analysis tab (the durable view of every held row, which §2 makes
-load-bearing precisely because no card carries it any more), the attachments, the edit path,
-the clarification eraser (`components/Clarifications.tsx:1-20`, the only no-terminal way to
-redact an answer — CLAUDE.md #10), and the re-run button. *Options:* **(i)** the row's tap
-opens the thread and the thread's header opens the note; **(ii)** the row's tap keeps the
-note screen and the CHIP is the tap target that opens the thread. **A third shape — the note
-screen gains a Thread tab — is NOT on this list, and naming it is the point:** it is variant
-A in all but name, and it is the exact thing the scrapped follow-on round was scrapped for
+What the mock genuinely does not draw: **if the row's tap is spent on the thread, what
+reaches the note screen?** The note screen is not decoration — it is the Analysis tab (the
+durable view of every held row, which §2 makes load-bearing precisely because no card
+carries it any more), the attachments, the edit path, the clarification eraser
+(`components/Clarifications.tsx:1-20`, the only no-terminal way to redact an answer —
+CLAUDE.md #10), and the re-run button. *The options were:* **(i)** the row's tap opens the
+thread and the thread's header opens the note; **(ii)** the row's tap keeps the note screen
+and the CHIP is the tap target that opens the thread. **A third shape — the note screen
+gains a Thread tab — was NOT on this list, and naming it was the point:** it is variant A
+in all but name, and it is the exact thing the scrapped follow-on round was scrapped for
 (*"the note screen does not change… no Record tab"*,
-`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Proposing it means re-opening a closed
-decision deliberately, with the reasoning that closed it addressed — not slipping it in as a
-third option. **Not decided here** — it is the first thing the frontend wave owes, and it is
-a GUI question, so it is answered against the mock and the settled gate together, not in
-prose.
+`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`).
+
+**Decided (ii), in R3f** (`components/Stream.tsx`, `AskChip`). Three reasons, in order.
+The owner's own framing is that *"all interactions from a note should be within a
+conversation after opening the top level note"* — **the note stays the front door**, and
+(i) spends the front door on the thread and then has to build a way back. The note screen
+is the only no-terminal route to five things the wave does not replace (the list above),
+so under (i) every one of them would sit behind a header affordance in a surface the owner
+reaches by a different tap than the one he has used since Phase 1. And the chip already
+EXISTS as the row's spare affordance: (ii) needed one `<span>` to become a `<button>`,
+where (i) needed a new header control on the conversation surface four personas share.
+The cost of (ii) is that the thread is reachable only while the chip is up — a settled
+thread is reopened from the Chats panel, where every `note_ingest` session is already
+listed (`useFullBrain.MODE_AGENTS`), which is exactly where D1 put it.
 
 ### I3 — Turn 0: the note, frozen
 
@@ -910,6 +930,14 @@ work happens. **Fix it in the RENDERER, never by unfencing the message** — the
 frame is a security property (D10, and risk 1's only structural mitigation on a third-party
 note) and the model must keep seeing every word of it. The frame is machine-generated and
 its delimiters are matched, so stripping it for display is mechanical.
+
+**Built in R3f** as `agent/noteFrame.ts` + the `.fb-turn0` branch of `Bubble`. The strip
+requires the OPENING header, the same nonce on the close, and the close at the very end of
+the message — so a body that writes its own marker is left visible as note text, which is
+what it is, and the nonce (drawn so it does not occur in the body) is what makes that a
+property rather than a hope. The block is ruled in the note's own domain colour, read off
+the session's `domain_scopes`, which a note conversation sets from its note and no
+owner-facing route can widen (`converse.note_read_scopes`, `AgentSessionRepo.set_scopes`).
 
 ### I4 — The live phase
 
@@ -950,7 +978,13 @@ hole — *"falls back to a generic for an unmapped tool"*, asserting
 `{label: "Using", emphasis: "frobnicate"}`. That test is right about the fallback and should
 stay; it is simply not a coverage claim. So the three verbs are not "already failing" — they
 are covered in one map, exercised-but-unenumerated in the other, and the gate that exists
-never looked at the one the mock caught. Two consequences for the wave:
+never looked at the one the mock caught. **Both consequences are now discharged: R1 landed
+the three labels with `close_reading`'s verb, and R3f landed the gate as (i)** —
+`backend/tests/unit/test_live_phase_labels.py` asserts every verb of §3's three frozensets
+carries a `TOOL_LABELS` entry, which took five more labels (`current_time`, `assert_fact`,
+`correct_fact`, `merge_entities`, `prefs_write`) and is green. `status.test.ts:130-132`'s
+blessing of the generic fallback stays: it is right about the fallback and was never a
+coverage claim. Two consequences for the wave:
 
 1. `close_reading.tool` landing in R1 **will fail `test_tool_step_polish.py`** until
    `toolSummary.ts` gains its `STEP_LABELS` entry and an inline-arg policy (`facts`, or
@@ -1004,7 +1038,14 @@ that stays: a pass that wrote a reading and asked nothing shows Worked alone.
 bubble is followed by a **question block**: one row per question, each carrying *why it
 blocks* (the predicate or the resolve call it is stuck on), the question in plain words, and
 its answer affordance — tappable candidates where the resolver has them, a text field where
-it does not.
+it does not, and **on a candidate row both**: a "Something else" chip reveals the same
+field. (That last is R3f's review, finding 4. The row rendered candidates OR a field and
+never both, so when the model's own prose lost a candidate — one unclosed paren is enough,
+measured against real output — there was no way at all to name that person. Hardening the
+parser cannot be the fix: every repair available to it invents candidates the model never
+wrote, and a candidate the owner taps becomes a sentence in his own note. The escape also
+answers the ordinary case the mock never drew, which is that none of the candidates is
+right.)
 
 **The block cannot start a turn.** Selecting a candidate or typing in a field is LOCAL
 STATE. Nothing posts, nothing enqueues, nothing flips a conversation state. A half-answered
@@ -1032,6 +1073,28 @@ as a collapsed Worked step** — "Asked you a question" with the question as its
 The owner has to expand a disclosure to read what they are being asked. That is the single
 biggest gap between the shipped thread and the mock, and it is the wave's core deliverable.
 
+**Built in R3f** as `agent/QuestionBlock.tsx` over `agent/asked.ts`, and the inertness is
+pinned rather than asserted: `QuestionBlock.test.tsx` taps two candidates, types in a field,
+and asserts `fetch` was never called; a second test asserts the block contains no `<form>`
+and no control that is not `type="button"`. The component takes `onAnswer` and imports no
+client, so there is nothing for it to post THROUGH. A second tap on the chosen candidate
+unpicks it, because "a stray tap cannot burn a pass" has to be undoable to be true.
+
+⟲ **One correction to the paragraph above, found in the build.** The candidates do NOT
+reach the PWA as `_disambiguate`'s `{id, name, kind, summary}`. `ask_owner.tool` (v2)
+declares `candidates` as a **string** — "the candidates as a short comma-separated list" —
+and the ledger stores what the model wrote (`questions_from_args` `_one_line`s it). So §2
+hands the structured set to the AGENT and the agent retypes it as prose for the owner.
+`asked.parseCandidates` therefore splits on TOP-LEVEL commas and semicolons only (the
+detail carries its own: *"Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics,
+2 notes)"* is two candidates, not four; the semicolon is R3f's review, finding 4 again — a
+semicolon-joined list parsed as ONE candidate naming both people, which a tap would have
+written into the note as the owner's answer) and answers with the name, falling back to the
+whole candidate string when two share one — because a name that does not say which candidate was tapped is the
+mispairing this channel exists to refuse. The one-tap answer still works and the context is
+still there; what is lost is the entity ID, which the owner's answer never carried anyway
+(it becomes note text, D6, and the next reading re-resolves it).
+
 ### I7 — The composer: two modes, and the carry strip
 
 **Decided.** The omnibox send is the ONE submit in the app, inside a thread as everywhere
@@ -1055,11 +1118,181 @@ send (`Omnibox.tsx:395-409`).
   strip is what says *you are replying in a thread*.
 - The mock's send composes the answers into one prose string (`"A · B · C"`). **That cannot
   be the wire.** `record_owner_reply` pairs an answer with the question the ledger says is
-  open (`analysis/clarify.py:436-452`); a joined string gives it no way to say WHICH answer
+  open (`analysis/clarify.py`); a joined string gives it no way to say WHICH answer
   answers which question, and a block that pairs an answer with the wrong question is a wrong
   sentence in the owner's own corpus (`asktools.py:35-37`). The send carries a **structured
   answer list** — question id → answer — alongside the free text, and the prose the mock
   shows is the RENDERING of the user turn, not its payload.
+
+⟲ **Two corrections from R3f's review, and they are the two halves of one bug — the MIXED
+send, which is the send this entry designs and the omnibox invites ("answer above, or just
+reply").**
+
+1. **The turn's text carries BOTH halves.** `asked.ownerTurnText` and
+   `clarify.owner_turn_text` let typed text win outright and threw the `Q:`/`A:` pairs
+   away. The turn text is not only prose for the model: it is the transcript's own record
+   of what the owner did, and it is what the frozen block reads its answers back out of
+   (I9). So tapping two candidates and typing a sentence beside them displayed the exact
+   inverse of what happened — the block said "2 questions · answered" with neither answer
+   shown and the tapped candidate drawn as not-picked, live and on every reopen, while the
+   note held the opposite (the two answers landed as blocks, the typed sentence reached no
+   note). Both renderers now write the pairs, then the typed words, which is the order the
+   owner did them in; the typed half is STRIPPED of `Q:`/`A:` labels on both renderers
+   (`asked.stripPairLabels`, `clarify._strip_pair_labels`), so it cannot be read back as an
+   answer. ⟲ R3f's second review, finding 3b: "the typed half carries no labels" described
+   what the owner usually types, not what the code permits. The composer is a bare
+   `<textarea>` with no key handling and the questions sit on screen directly above it, so
+   quoting one back — `Q: Which coach?` / `A: nobody at all` — became its own chunk, matched
+   the read-back, and showed that question answered in words the backend had dropped and
+   reported as still open. Finding 4 is the same boundary from a non-PWA client:
+   `AnswerIn.answer` is an unconstrained `str`, so `capped_answers` now flattens it to one
+   line the way `_one_line` flattens the question.
+
+   ⟲⟲ **The sanitiser reached the TURN and not the NOTE, and it deleted the owner's own
+   words** (R3f's third review, finding 3). Two halves, and the second is why the first could
+   not simply be applied as it stood. (a) `record_owner_reply` took `message` raw, `_pair`
+   filed it under the oldest open question, and `notes.compose.clarification_block` renders
+   `A: {answer}` verbatim — so on every prose-only reply the transcript showed the sanitised
+   words and the durable note kept the quoted pair. The note is the sole source of truth
+   (D6), so the next reading takes that text as the channel's own labelling of words that are
+   the owner's. (b) The instrument was a per-LINE strip, and `Two options:` / `A: the
+   cardiologist` / `B: the paediatrician` came out with his `A:` deleted and his `B:` kept —
+   an enumerated reply mangled into nonsense, while three documents claimed every owner word
+   survived. Survivable while it stopped at the transcript; putting it on the path to the
+   note makes it a sentence nobody wrote in his own corpus, which is the one thing this
+   channel exists to refuse. So the cut is now made **only on a chunk the read-back would
+   actually accept as a pair** (`clarify._PAIR_CHUNK` / `asked.PAIR_CHUNK`, the same constant
+   `answersFromReply` reads with), and everything else is left exactly as typed. The trade
+   that buys: the sanitiser is defined by what the reader accepts rather than by being
+   maximally destructive — the reader is display-only, no backend path parses pairs back out
+   of turn text, and one drift test pins both patterns, both flags and both call sites.
+   ⟲ **"Byte-identical" was measured over twenty-three inputs and was false on two** (R3f's
+   fourth review, finding 7): both sides took the line start from a flag, and the flags do
+   not mean the same thing — JS's `/m` counts a lone `\r` and U+2028/U+2029 as line starts
+   where `re.MULTILINE` counts only `\n`, so a pasted Windows clipboard had a label cut in
+   the optimistic bubble that the persisted turn (and, since 3(a), the note) kept. No forgery
+   either way — the READER is identical in both languages — but the drift test compares
+   pattern text and flags and so could not see a difference that lived in what a flag MEANS.
+   Both now spell the line start `(^|\n)`, the test asserts neither side carries the flag,
+   and the two divergent inputs are pinned as behaviour in both suites.
+   ⟲⟲ **"No forgery either way" was the fourth round's own sentence, and it was wrong**
+   (R3f's fifth review, finding 1). The regexes matched byte for byte; the CHUNK GATES in
+   front of them did not — `_PAIR_CHUNK.match(chunk.strip())` against
+   `PAIR_CHUNK.test(chunk.trim())`, and `str.strip()` is not `String.trim()`: Python cuts
+   U+0085 and U+001C–U+001F, JS cuts U+FEFF, neither cuts the other's. A BOM-prefixed
+   `Q: <the exact question>\nA: <words>` — what a Windows clipboard or a UTF-8-with-signature
+   paste carries — therefore failed the backend's gate, rode `_strip_pair_labels` untouched
+   into the persisted turn AND the clarification block on the note, and was read straight
+   back by `answersFromReply` (which trims the BOM) as that row's answer: an inverse display
+   plus a fabricated Q/A pair in the owner's own corpus, out of text he typed. Both sides now
+   take one explicit class (`clarify._pair_trim` / `asked.pairTrim`, the measured union of
+   both languages' whitespace) at every pair gate including the READER, so "the reader accepts
+   only what the sanitiser neutralises" holds by construction. And the gate is no longer a
+   string comparison: `frontend/src/agent/asked.corpus.json` is 146 whitespace-affixed pairs
+   that BOTH suites run through their own implementation — the pre-fix PWA gate fails 16 of
+   them. A test that compares pattern text cannot see drift that lives around the pattern;
+   this one runs the code.
+   The same round's sweep for other trims found one more (I9): `sentOutcomes` asked "was
+   this reply prose alone?" with `String.trim()`, while `_pair` asks it of a trimmed string
+   the backend cut its own way — so a reply of nothing but U+0085 read as prose here and as
+   empty there, and the block reported the oldest row "answered in your reply" over a reply
+   `record_owner_reply` filed nowhere. It takes `pairTrim` too.
+2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
+   `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
+   set left open — was written when the composer was the only affordance, so typed words
+   could only ever be an answer. With both on screen it is actively wrong: three questions,
+   the owner taps q2 and q3 and types "this note is about Kaiya not me", and that sentence
+   is appended to his own note as the answer to *"What's the medication called?"* —
+   permanently, searchably, with the clarification eraser as the only undo. It now rides
+   the turn as his words and goes into `dropped`, so `owner_reply_notice` tells the agent
+   he said something that reached no note. **Free text ALONE still answers the oldest open
+   question**: that is the genuine degrade path for a client that cannot render the block,
+   and it cannot mispair because there is only one thing it could be answering. Refusing to
+   guess is the same choice §3 makes four times over, and the cost — a typed aside beside
+   one tap lands nowhere durable — is the O16 gap, reported rather than papered over.
+
+**Built in R3f.** The draft lives per session on `useFullBrain` (beside the model and
+effort picks, and turn-local like them); `send` narrows it to the OPEN set before filling
+`ChatRequest.answers`, so a draft left over from a set the thread has moved past cannot
+post an id `_pair` would only drop, and it clears the draft the moment the turn starts so
+a second send cannot re-post it. An answers-only send arrives with `message` blank, which
+the shipped guard would have refused — that guard now also admits a non-empty answer list,
+and the optimistic user bubble mirrors `clarify.owner_turn_text` exactly (`asked.ownerTurnText`)
+so the bubble the owner sees is byte-identical to the one a reload replays. The carry strip
+is `.omni-carry`, above the input, where the appointment pill sits — `2 of 3 answered —
+rides with your next send`, and at zero `0 of 3 answered — answer above, or just reply`,
+which names both affordances at the one moment neither has been used. The mode row stays,
+as ruled. ⟲ R3f's review, finding 7: the draft is cleared as the turn starts, and a turn
+that reaches the server NOT AT ALL now hands it back, rather than leaving a frozen block
+claiming he has already answered.
+
+⟲⟲ **What that hand-back is worth, corrected TWICE — and the second correction is that the
+first one was also false** (R3f's second review, finding 3a; its third, finding 2). The
+second round wrote that the restore is 62 minutes away and that "the composer's send is
+disabled… the one screen he has offers him no way to send them again for an hour". Driven,
+it is not: while `busy` the send button **becomes a Stop button** (`Omnibox.tsx:501-511`),
+and a note thread wires it to `fb.stop` like every other surface (`HomeScreen.tsx:376`). One
+tap aborts the controller, `recover()`'s loop exits at its next check — it sleeps
+`RECONCILE_INTERVAL_MS`, 3 s, between attempts — and falls into the same give-up branch:
+`busy` clears, the draft comes back under anything typed since, and `turnSessionRef` is
+cleared in the `finally`, so leaving the thread and returning re-arms the block with the
+answers in it. `RECONCILE_TIMEOUT_MS` is what happens if he does nothing, not what he has to
+wait for. *Two rounds asserted this window from the code's shape rather than by running it;
+the third ran it. Neither the plan nor DESIGN.md should describe a recovery path without
+driving it.*
+
+**What both rounds missed, and the fourth review closed.** For the whole window the frozen
+block read `2 answered` about a send that reached nothing, while the server still held the
+thread `waiting_on_owner` — the same misreport class as I9's finding 1, one path over. The
+third round called that "a state the block cannot see" and filed it as open work; the fourth
+found that sentence written from the code's shape rather than from the code (finding 5). The
+give-up branch IS that state — no live run to ride and nothing persisted for the whole window
+— and it already hands the draft back two lines above. So it now drops the optimistic
+exchange as well — but **the buffer alone is not the test, and shipping it as the test was
+this wave's own worst defect.** `transcript.unsent` (the assistant bubble took no token, no
+step, no view, no reasoning) is also exactly what a POST that SUCCEEDED and then lost its
+socket looks like. The fifth review drove it: run id received, `claim_waiting` already
+committed, the owner's turn erased from the screen, the block re-armed live over a closed
+set — and his second send then hit `state != waiting_on_owner`, returned `None`, and was
+discarded in silence while the block said it landed. `stop()` having cancelled the run left
+the thread `running` with no turn, so the chip left the stream for ~4h10m until
+`reclaim_stale`.
+
+So the un-send requires **both** `runIdRef.current === null` and the buffer test, and **both
+Stop paths ride that one predicate** — which also retires the coin-flip the same review
+found (Stop in the reconcile sleep un-sent and handed back; Stop inside `resumeLive` did
+neither, and which you got was a race on where the 3s loop happened to be). The run id is
+the load-bearing half: `record_owner_reply` files the answers BEFORE `runlog.start` mints
+one (`api/agent.py`), so a turn with a run id is a turn whose answers already reached the
+note, and handing the draft back would re-post against a set that has closed. That invariant
+was written in this very section and applied in the `resumeLive` branch while the branch
+beside it, deciding the same thing, did not use it.
+
+**The rule that falls out, and it is the wave's lesson:** when the code already states the
+predicate that decides a branch, apply it in every branch deciding the same thing.
+
+The block re-arms live, holding the answers, over a thread the server still has open; the
+typed half of a mixed send goes back to the composer through the same seam a calendar
+handoff uses (`useFullBrain.restoredText`). Every other failed send keeps the errored bubble
+it has always had. `FullBrainSurface.notethread.test.tsx` drives both Stop paths and asserts
+the re-armed block, the carry strip, the words coming back, and — against a generator that
+yields a run id and then fails — that a committed turn is NOT un-sent.
+
+*The window the predicate narrows but cannot close.* `runIdRef.current === null` means "no
+`X-Run-Id` reached me", not "the server has nothing": the id only rides the response
+headers, so a POST that committed and lost its socket before them leaves it null. `recover()`
+polls the transcript every 3s for the whole window and finds the detached turn, so reaching
+it needs the turn to die too — an `Ops → Update` restart mid-turn is the realistic one. The
+answers are on the note either way; what is wrong is the block's account of the second send.
+
+⟲ **The seam the words come back through had two writers and one consume, and it dropped
+both halves in turn** (R3f's fifth review, finding 5). `Omnibox` wrote `setText(draft)`
+outright, and the composer is never disabled during the window — only SEND becomes Stop — so
+anything the owner typed while waiting was deleted by his own older words the moment the
+window closed. `HomeScreen` then wrote `pendingDraft || fb.restoredText`, which masked a
+restore behind a concurrent calendar handoff while `consumeDraft` cleared both, so the masked
+half never reached the box at all. A handoff now seeds ABOVE what is already typed, and the
+two writers are joined rather than chosen between (restored words first, being the older).
 
 ### I8 — The reply turn
 
@@ -1109,14 +1342,124 @@ needs no card.
 
 What exists: a settled agent session already reopens by id and replays its transcript. And
 **the persisted state the block needs is already on the wire**, which is the finding that
-makes I9 cheap: the questions are the `ask_owner` call's own arguments, recorded in the
-conversation's ledger inside the ask's transaction (`agent/asktools.py:142-151`) and carried
-to the PWA as the step's `args`, which a PERSISTED turn replays as well as a live one
-(`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:88-90`); the answers are the
-note's clarification blocks, which have a built route the app already calls
+makes I9 cheap: the questions are the ask step's `args`, which a PERSISTED turn replays as
+well as a live one (`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:88-90`); the
+answers are the note's clarification blocks, which have a built route the app already calls
 (`api/client.ts:2493-2499`, consumed by `components/Clarifications.tsx`). So a reopened block
 renders from the transcript plus a read that exists — no new endpoint, and no answer state
 that lives only in a component.
+
+⟲ **"The `ask_owner` call's own arguments" was ONE phrase covering TWO blobs, and that is
+R3f's third review, finding 1 — the wave's blocking bug.** The ledger row the ask writes
+inside its transaction (`agent/asktools.py`) carries a question id per question, minted
+server-side because the tool declares no `id` property and the model therefore never sends
+one. The transcript step is `call.arguments` — the model's raw arguments, with no ids at all
+— written by a different writer (`loop.py`, `transcript_accumulator.py`). So the block fell
+to `asked.askedQuestions`' positional `q${i+1}` fallback and posted ids the open set had
+never held; `clarify._pair` dropped every one as unknown. **Every tapped answer was
+discarded, on every real send**: the note received nothing, `clarified` stayed False so no
+re-ingest and no graph, the frozen block drew rows as answered that had sent nothing, and
+the agent — told truthfully that the reply answered none of them — re-asked the whole set,
+forever. Fixed by ECHOING the recorded args onto the step the loop streams and the step it
+persists (`ToolOutput.recorded_args` → `ToolResultEvent.args`), which is the only option of
+the three that keeps ids unique: declaring `id` on the tool would have the MODEL invent them
+(`required` buys presence, not membership), and pairing on the question STRING is the key
+`sentAnswers` was already fixed away from. Ids stay random for R1c's reason. What let three
+rounds miss it is that both test fixtures hand-built a shape the wire could not produce —
+`FullBrainSurface.notethread.test.tsx` wrote its own ids into `ASK_ARGS`, `test_ask_owner_pg`
+took its ids from the ledger — so `backend/tests/integration/test_ask_owner_pg.py` now
+carries the one test that CROSSES the seam: it drives a real ask through the real runner,
+reads the ids off the persisted transcript the way the PWA does, and answers with them.
+(The frontend fixture's `q1`/`q2`/`q3` were byte-identical to the positional fallback, so
+every assertion over it would have passed with `row.id` ignored entirely — R3f's fourth
+review, finding 8. Both fixtures now use minted ids.)
+
+⟲⟲ **And the echo fixed the block's CONTENTS while leaving its CHOICE OF STEP reading
+`ok === true` — R3f's fourth review, findings 1, 2 and 3, which are one bug wearing three
+coats.** `ok` means "no exception escaped `_dispatch`", not "this call recorded a set":
+every string a handler returns is `is_error=False` (`loop.py`), and `asktools` returns every
+refusal as text on purpose. So the block could be built off a refusal — and was, in three
+ways. (1) `AgentLoop` finishes the round it is in before honouring a halt, so a model that
+emits TWO `ask_owner` calls in one message runs the second into the already-waiting latch;
+its step kept the model's raw second question, last-succeeded-wins selected it, and the owner
+was shown a question the ledger never held while the two real ones stayed invisible. (2) An
+ask refused on a `settled`/`failed` thread — the row rolled back, the server waiting on
+nobody — still drew a live block with a field. (3) A step persisted before the echo shipped
+fell silently through to the positional fallback, which is the deploy window below.
+
+The signal that means "the ledger holds this" is the ECHOED IDS, so `asked.askStep` selects
+on those, and every `ask_owner` path now echoes what it recorded — the set it just recorded,
+the set it is already waiting on (`_already_waiting`, so the block shows the REAL open
+questions whichever call it is built from), or an empty record (`_refused`, so a refusal
+draws nothing rather than the model's own words). An empty record rather than none, because
+"none" is indistinguishable from a pre-echo step, and those two are handled oppositely.
+
+**The deploy window, decided and built.** A thread already `waiting_on_owner` when this ships
+has a step with the model's raw args and no ids while its ledger row holds the real ones:
+tapping would post `q1`/`q2`/`q3`, `_pair` would drop all three, `claim_waiting` would consume
+the set anyway, nothing would reach the note — and `owner_turn_text` would then fall to bare
+prose, which the frozen block reads back as "answered in your reply" over rows that were never
+answered. So such a block renders **read-only**: every question visible, no candidates, no
+field, no carry strip, and one line saying to answer in the composer. Free text alone is
+`_pair`'s degrade and answers the oldest open question, so the owner is never stuck and
+nothing can be dropped as an unknown id. It is deletable — with `askStep`'s legacy branch and
+`_refused`'s empty record — once no `waiting_on_owner` thread predates the echo.
+
+⟲ **Two things about that window were written as absolutes and are not** (R3f's fifth
+review, findings 2 and 4). (i) The PWA's own sanitiser mirror keyed on whether the block was
+ANSWERABLE, which is false on every read-only thread — so on the exact path read-only exists
+for, the server sanitised the typed half (`record_owner_reply` claims any `waiting_on_owner`
+thread, whatever the PWA can name) and the client did not: the owner quoted a question back,
+the bubble showed his `Q:`/`A:` standing, the reload showed it cut, and the note held a third
+thing. The mirror is the SERVER's test — is there an open ask above the composer
+(`asked.openAsk`) — not the client's ability to name it. (ii) `recordsIds` rested on "the
+model never sends an `id`, so one on the wire can only be the handler's". `required` buys
+presence, not membership, and an undeclared property is not a forbidden one: a pre-echo step
+whose model happened to emit ids would have rendered answerable and posted ids the ledger
+never held. The test is now the SHAPE `asktools._asked` mints (`q` + eight hex digits),
+pinned by a gate that runs the minting; membership stays `clarify._pair`'s job, which is
+where it can actually be decided.
+
+**A bare-string row renders, read-only.** `_asked` reads a row sent as a bare string as its
+question and RECORDS it, while `questions_from_args` and the PWA both dropped non-objects —
+so a pre-echo step shaped that way drew no block at all on a thread that really is waiting:
+a conversation stopped with nothing on screen saying what for. The PWA reads it as its
+question now. It carries no minted id, so the set is unanswerable and the block is read-only,
+which is the honest state and the one this window was built for: the question is legible and
+free text alone answers the oldest open one. `questions_from_args` is unchanged — it reads
+the LEDGER row, whose rows `recorded_args` always writes as objects.
+
+⟲ **R3f took the answers off the TRANSCRIPT rather than off the clarification route, and
+the paragraph above is why that is the same claim rather than a weaker one.**
+`listClarifications` is keyed by NOTE id, and nothing on the session wire carries one —
+`AgentSession` has no `note_id`, and `notes_inbox` only maps LIVE conversations, which a
+settled thread is not. Reading it would have meant widening the session wire for a
+note-only concern. The reply turn's own text is the same rendering
+`clarify.owner_turn_text` persists, so `asked.sentAnswers` pairs by the exact question
+string the ask recorded, CONSUMING each rendered pair as it claims it (⟲ R3f's review,
+finding 6: a map keyed by the question string made two identically worded rows — which
+`ask_owner` does not dedupe — both replay the second answer; both sides walk the open set
+in its asked order, so the n-th same-worded row now gets the n-th answer). Never by
+position alone. The typed half of a MIXED send is his words on the turn and not an answer
+to any row: it is appended after the pairs and stripped of `Q:`/`A:` labels, so nothing
+reads it back as one. Both halves of the claim hold: no new endpoint, and nothing living
+only in a component. The clarification list keeps its own job, which is the note screen's
+durable, ERASABLE view — one tap away under I2 (ii).
+
+⟲ **A frozen row says which of THREE things happened to it, and that is R3f's second
+review, finding 1.** `sentAnswers` returns `""` both for "the reply carried no words for
+this row" and for "the reply did not answer this row at all", and both renderings read
+that `""` as *answered in your reply*. On the send I7 designs — one candidate tapped, two
+rows left blank, an aside typed — the block told the owner that the two rows it had left
+OPEN were answered somewhere in his reply, live and on every reopen, while the aside had
+reached no note, the questions were still open, and `owner_reply_notice` had said so. The
+agent's next turn then re-asked exactly the rows the block called answered: **the screen
+says you answered it and the agent asks again**, on the one screen the owner has. So
+`asked.sentOutcomes` distinguishes *paired* (its words are on the turn), *answered in your
+reply* (the reply was PROSE ALONE, which `_pair` gives to the oldest open question — so
+exactly ONE row may say it), and *still open*; the header counts what landed rather than
+assuming the set did. Both the partial send and the prose-only send are pinned by tests
+that assert the open rows read as open.
 
 ### What is genuinely new build
 
@@ -1125,12 +1468,12 @@ that lives only in a component.
 | The thread itself — transcript, Thought/Worked, steps, entity writes, session open-by-id, the inbox redirect | **Shipped** — the agent surface, plus `AGENT_INGEST_CONVERSATION_PLAN.md` W1–W4 and W3's two-tab inbox |
 | The composer, its dest-row hiding, and a "rides with your next send" pill | **Shipped** (`Omnibox.tsx:361-409`), needs a second instance for answers |
 | Live phase line, timers, `awaiting_owner` wording | **Shipped** (`FullBrainSurface.tsx:454`, `status.ts:101`) |
-| Live-phase labels for the ingest verbs | **New**, ~10 lines + a gate (I4) |
-| Turn-0 renderer that strips the fence | **New**, small (I3) |
-| Stream chip's waiting state + the conversation state reaching the notes list | **New**, and it is a wire change (I1) |
-| Where a stream tap lands, and how the note screen stays reachable | **Undecided** (I2) |
-| The question block — render, candidates, local answer state, answered/frozen state | **New**, the wave's core (I6); its persisted state is already on the wire (I9) |
-| The carry strip + the structured-answer send | **New**, and blocked on the batched ask (I7) |
+| Live-phase labels for the ingest verbs | **Shipped** — the three verbs rode R1; R3f added its gate over §3's tool sets and the five labels that gate demanded (I4) |
+| Turn-0 renderer that strips the fence | **Shipped** — R3f, `agent/noteFrame.ts` (I3) |
+| Stream chip's waiting state + the conversation state reaching the notes list | **Shipped** — R3f, joined client-side off `/api/review/notes` rather than widening `NoteOut` (I1) |
+| Where a stream tap lands, and how the note screen stays reachable | **Decided (ii)** and shipped — the row keeps the note screen, the chip opens the thread (I2) |
+| The question block — render, candidates, local answer state, answered/frozen state | **Shipped** — R3f, `agent/QuestionBlock.tsx` + `agent/asked.ts`; its inertness is pinned by a test that taps and asserts no request (I6/I9) |
+| The carry strip + the structured-answer send | **Shipped** — R3f fills R1c's `ChatRequest.answers` (I7) |
 | Batched `ask_owner` and the multi-pair clarification append | **Shipped** — R1c. No per-question claim was needed: O11 (ii) makes the unanswered question a sentence, not state (I8) |
 
 ---
@@ -2104,30 +2447,155 @@ held row a retirement path it did not have; the decision stays the owner's.
    re-enqueues from. That is what a rebuild of an agent-written graph is, and
    `analysis/converse.py`'s module docstring says so where it used to say the opposite.
 
-**R3f — the note's thread (the PWA wave).** §3b, built. **One wave, not a fold into R1/R1b/R3
-— and that is a decision, not a default.** Its acceptance is an owner walking a
-three-question note end to end in the app, which no backend PR can demonstrate and which
-splitting across three of them would leave unprovable until the last. It is also the only
-wave in this plan whose reviewer is the owner rather than CI.
+**R3f — the note's thread (the PWA wave). DONE.** §3b, built — one wave, not a fold into
+R1/R1b/R3, because its acceptance is an owner walking a three-question note end to end in
+the app, which no backend PR can demonstrate. It is the only wave here whose reviewer is
+the owner rather than CI, and the first one he sees at all.
 
-*Sequenced against the rest:* the question block (I6) and the carry strip (I7) **cannot
-ship before R1c**, because there is no question set to render and no structured answer to
-carry. Everything else in the wave is independent of R2–R4 and could ship the day R1c
-lands: the turn-0 renderer (I3), the live-phase labels (I4 — though those ride R1 with
-their verb, above), the stream chip's waiting state (I1), and the entry-point decision
-(I2). It must land **before R5**, the wipe: the first note the new system sees is the first
-one the owner watches being read, and shipping the wipe onto a thread that still renders
-the prompt fence and hides the question inside a disclosure wastes exactly that.
+*What landed, against §3b's closing table.* **I2 is decided (ii)** and recorded as such
+in its own entry: the row's tap keeps the NOTE SCREEN and the chip is the tap target that
+opens the thread. **I3** — `agent/noteFrame.ts` strips the matched nonce pair for display
+only and `FullBrainSurface` renders turn 0 as a ruled, labelled, frozen block in the
+NOTE'S domain colour (read off the thread session's own read scopes), never by unfencing
+the message. **I6** — `agent/QuestionBlock.tsx` plus `agent/asked.ts`, which parses the
+ask step's recorded `args` into questions, what each blocks, and its candidates; the block
+holds no state of its own and reaches no client, and `QuestionBlock.test.tsx` taps a
+candidate and asserts no request was made. **I7** — the draft lives per session on
+`useFullBrain`, the composer shows `2 of 3 answered — rides with your next send` (and
+`answer above, or just reply` at zero), and one send posts one turn filling R1c's
+`ChatRequest.answers` with `{question_id, answer}` pairs beside whatever free text is in
+the box. **I8/I9** — the block freezes because it is no longer the last message, and a
+reopened thread reads out of the reply turn's own Q/A rendering not only the answers but
+which questions the reply LEFT OPEN, which is the one thing on that screen reporting the
+outcome of a send. **I1** — the waiting set is joined client-side off
+`/api/review/notes` (`notes/useNoteThreads.ts`), which IS that set already, so no note
+route grew a second copy of the conversation's state.
 
-*What it does NOT build, because it is already shipped:* the thread (a note conversation is
-an ordinary agent session), the Thought/Worked foot and its step rows, the live status line,
-the two-tab inbox and its read-only redirect rows (W3), and the composer's dest-row hiding
-and its rides-with-your-next-send pill. §3b's closing table is the split.
+*Two things it did differently from the brief, and why.* **I9's frozen answers come from
+the TRANSCRIPT, not from `listClarifications`.** That route needs a note id and nothing on
+the session wire carries one, so reading it would have meant widening `AgentSession` for a
+note-only concern; the reply turn's own text is the same rendering
+`clarify.owner_turn_text` persists, so the pairing is by the exact question string, and a
+free-prose reply says "answered in your reply" — over the ONE question `_pair` gives it,
+the oldest open one, and never over the rest of the set (R3f's second review, finding 1). The
+clarification list stays what it is — the note screen's durable, erasable view, which I2
+(ii) keeps one tap away. **I6's candidates arrive as the model's comma-separated STRING**
+(`ask_owner.tool`'s `candidates` param), not as the `{id, name, kind, summary}` the
+resolver assembles: `asked.parseCandidates` splits it on top-level commas only (the detail
+carries its own) and answers with the name, falling back to the whole candidate when two
+share one.
 
-*Its own gate:* I2 is undecided and it is a GUI question, so it is answered the way this
-repo answers those — against the mock, in a round, before the wave rather than inside it
-(`PROCESS.md` "GUI gate"). Nothing in the wave needs a terminal (CLAUDE.md #10): it is the
-PWA.
+*What its four review rounds cost, since R3f is the first wave the owner sees.* The first
+round fixed the MIXED send — the turn text, the bubble, the frozen block and `_pair`'s
+rule — and a second, independent round found the PARTIAL send still wrong in the same
+place: a block that said "answered" over questions it had left open, while the agent, told
+the truth, re-asked them. The pattern behind both is worth carrying into R4: the block
+reports an outcome it does not itself produce, so every state the reply path can end in
+needs its own rendering, and the ones nobody walks are the ones that lie. The same round
+turned two remaining ASSUMPTIONS into properties — the `Q:`/`A:` boundary against the
+owner's own typed words and against a non-PWA client's newlines — and replaced the ask
+chip's bleeding hit area with a grown box, because that row wraps and an out-of-flow target
+takes its wrapped neighbour's taps.
+
+**A third round found the wave's acceptance walk itself broken**, and its lesson is not the
+same as the first two. The question ids the PWA posted were never the ids the ledger held
+(I9), so every tapped answer was dropped — the block, the turn text and the three-outcome
+display were all correct as code and all defeated by one seam nothing tested. The seam was
+between two blobs one sentence in this plan called by one name, and both test fixtures
+hand-built a shape the wire could not produce, which is how three rounds walked past it.
+*What to carry into R4: a component that renders one writer's data and posts to another
+needs a test that goes from the first to the second — a fixture written by hand asserts the
+renderer, never the join.* The same round found a THIRD false claim in binding DESIGN.md,
+inside the paragraph written to replace the second (the "no way to send them again for an
+hour" window, which a Stop button ends in seconds — see I7), and the label sanitiser
+reaching the turn and not the note while deleting the owner's own `A:` labels (I7 again).
+Two rounds had described that recovery window from the code's shape; the third drove it.
+
+**A fourth round found the same seam one layer up, and the finding generalises past this
+wave.** The third round's fix put the ledger's ids on the step; the fourth found the block
+still choosing WHICH step by `ok === true` — which means "no exception escaped", not "this
+call recorded a set", and `ask_owner` returns every refusal as text on purpose. One bug
+wearing three coats: a second `ask_owner` in one message (the loop finishes its round before
+honouring a halt) showed a question the ledger never held; an ask refused on a closed thread
+drew a live block on a thread the server was not waiting on; and a step written before the
+echo fell silently to the positional fallback the third round had just proved fatal. *What to
+carry into R4: when a fix adds the field that means "this is real", make the SELECTION read
+that field too — otherwise the renderer is right and the row it renders is not.* The same
+round measured the two "byte-identical" label sanitisers and found them differing on two
+inputs of twenty-three (`/m` is not `re.MULTILINE`), found this wave's own `opacity: 0.72`
+dragging four lines under DESIGN.md's 4.5:1 floor — including the "still open" line the
+second round had added and `--text-2`, which DESIGN.md certifies as body text — and found the
+fourth stale claim about the 62-minute window, this time left in the code after the third
+round deleted it from both documents. It also found the third round's "a state the block
+cannot see" to be a defect renamed rather than a state: the give-up branch is that state, and
+it now un-sends the exchange that never left the device (I7). **O15 and O16 remain neither
+decided nor built.**
+
+**A fifth round found that a fix can move a claim without moving the thing the claim is
+about.** The fourth round made the two label sanitisers' REGEXES byte-identical and wrote
+that down in three places; the fifth measured the two functions and found them still
+differing on thirteen inputs, because the difference had moved into the chunk gate in front
+of the pattern — `str.strip()` there, `String.trim()` here, six characters apart. One of the
+thirteen is a forgery rather than a disagreement: a BOM-prefixed `Q: <the exact question>\nA:
+<words>` failed the backend's gate, reached the persisted turn and the note's clarification
+block verbatim, and was read back by the PWA's own reader (which trims the BOM) as that row's
+answer. *What to carry into R4: a drift gate that compares SOURCE TEXT can only pin the thing
+it quotes. Where two languages must agree on behaviour, the gate has to run both* — this one
+now does, over a committed corpus (`asked.corpus.json`) that the pre-fix implementation fails
+16 of 146 times. The same round found the read-only state had broken the client's sanitiser
+mirror on the exact path read-only exists for (I7), `recordsIds` resting on an absolute this
+repo elsewhere writes down as false — `required` buys presence, not membership (I6) — and the
+composer seam silently deleting whatever the owner typed while a send was in flight (I7). And
+it found DESIGN.md's new "never dim a container with `opacity`" to be a rule the shipped app
+breaks in more than a dozen places, one of them the owner's own Ops screen: it is scoped to
+TEXT containers now, with the sweep named as the muted-token contrast audit's rather than
+left as a rule the code contradicts. **O15 and O16 remain neither decided nor built.**
+
+*I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
+`ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:
+`backend/tests/unit/test_live_phase_labels.py` asserts every verb of §3's three frozensets
+has a live-phase label, which is option (i) of I4 and which took five more labels
+(`current_time`, `assert_fact`, `correct_fact`, `merge_entities`, `prefs_write`).
+
+*What the independent review changed, and it is worth reading as one finding rather than
+six.* Every one of them is a place the SURFACE and the NOTE could disagree about what the
+owner said. **The mixed send** — tap two candidates, type a sentence — rendered the exact
+inverse of what happened, and the same rule that dropped the pairs from the turn text was
+what let the typed sentence be filed against a question it did not answer; both halves are
+fixed in I7, and free text alone still answers the oldest open question because that one
+cannot mispair. **The candidate row** now carries a typed escape ("Something else"),
+because the candidates are a model's prose and a parser that repairs prose invents
+candidates nobody wrote (I6). **The tap targets** — the stream's ask chip, the candidates
+and the field — were 17–29px against DESIGN.md's binding 44px, which matters most on the
+chip, since it sits inside a row whose own tap opens a different screen; the chip grows
+only its hit area (DESIGN.md's own vitals precedent) while the candidates grow their box,
+because they wrap and a bleeding hit area would put a tap on the wrong candidate.
+`backend/tests/unit/test_tap_targets.py` gates the three, the way `test_live_phase_labels.py`
+gates `status.ts`. And three smaller ones: two identically worded questions keep their own
+answers (I9), a failed send hands the draft back (I7), and `useNoteThreads` keeps its last
+good value through a flaky poll rather than taking every chip off the stream — the chip
+being the only stream route to the thread. *One claim the review retired:* the question
+block does not sit outside the bubble for ROOM. `.fb-shell .bubble.ai` is already
+`max-width: 100%` and the 80% cap is on the owner's own bubble; the placement is right and
+the reason is that the block is its own object, not part of the answer's prose. The commit
+that carried the false reason in its subject (`13a652619`) cannot be amended; the three
+fixable sites, DESIGN.md included, now give the real one.
+
+*Where the mock and the shipped code disagreed, the code won,* as §3b says: the
+Thought/Worked foot stays one segmented body, the live phase stays `AgentStatusLine` above
+the composer rather than moving into the scroll, a settled row keeps no chip, and the MODE
+ROW still renders inside a thread. The one place §3b's own ruling was extended rather than
+followed: the question block is **amber**, not the mock's rose, for I1's reason — rose is
+the MEDICAL domain in this palette, so a rose block says the same thing twice on a medical
+note and something false on a financial one.
+
+*It reads no reading off the reply-writer cache,* so risk 1's ⚠ LRU laundering hazard
+stays inert: nothing in this wave touches `replytools`' writer cache or the `reading=None`
+the reply path settles with.
+
+*Nothing in it needs a terminal* (CLAUDE.md #10): it is the PWA. It must land **before
+R5**, the wipe — the first note the new system reads is the first one the owner watches
+being read.
 
 **R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
 and a half-deleted one does not typecheck. `review_items` loses
@@ -2558,12 +3026,21 @@ still lost, he is just told so.
 
 ⟲ **And the gap is WIDER than "a settled thread", which is what the second review found.**
 The same dead end is reached on a thread that IS waiting, by the send §3b I7 designs: one
-send carries the structured answers and whatever free text is in the box, and when the
-structured set is complete `_pair` drops the prose — so "tap the answer AND type one more
-thing" is an ordinary, correct interaction that loses the typed half. The refusal now
-covers it (the narrowing keys on the append's outcome, and `owner_reply_notice` says the
-words reached no note), which makes O16's cost more visible rather than larger: option 1's
-"an unprompted note addendum" is exactly the shape that send already produces.
+send carries the structured answers and whatever free text is in the box, and `_pair` drops
+the prose — so "tap the answer AND type one more thing" is an ordinary, correct interaction
+that loses the typed half. The refusal now covers it (the narrowing keys on the append's
+outcome, and `owner_reply_notice` says the words reached no note), which makes O16's cost
+more visible rather than larger: option 1's "an unprompted note addendum" is exactly the
+shape that send already produces.
+
+⟲⟲ **R3f's review widened it once more, and this is a description of the residue rather
+than a move on the decision.** The drop used to need a COMPLETE structured set; beside a
+PARTIAL one the prose was filed as the answer to the oldest question the taps left open.
+That rule mispaired — it put the owner's sentence into his own note under a question it
+does not answer — so it is gone (§3b I7), and the prose beside ANY tap now lands in
+`dropped` with the rest. The words the refusal loses are therefore a slightly larger set
+than before, and every one of them is a word that would otherwise have been filed WRONG.
+It changes none of the three options below; it raises how often option 3's cost is paid.
 
 **Why the two obvious shortcuts are worse, not cheaper.**
 
@@ -2671,16 +3148,18 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
   tabs collapse to one channel with two lists (§2); the notes list stops being a card table
   and becomes a query over `note_conversations.state`; the held-fact treatment on the
   Analysis tab becomes load-bearing, since it is now the durable view of anything the write
-  path could not settle. The write chip and D3's rendering are unchanged. **And §3b's
-  interaction spec lands here in R3f** — the note thread, the question block's inertness,
+  path could not settle. The write chip and D3's rendering are unchanged. **§3b's
+  interaction spec landed here in R3f** — the note thread, the question block's inertness,
   the omnibox as the one submit and the carry strip — with
   `docs/mocks/agent-ingest-thread/note-thread.html` cited as its binding mock, the way every
-  other settled surface in that doc cites one.
+  other settled surface in that doc cites one. The inbox/notes-list half is still R4's.
 - **`docs/mocks/agent-ingest/README.md`** — its settled gate says the thread is reached
   from the conversations surface and the note screen does not change. §3b I2 moves the
   ENTRY POINT to the note itself, which that gate did not decide and its scrapped follow-on
-  round did not either. Reconciled by whichever round answers I2, not before — an
-  undecided question is not a correction.
+  round did not either. **Reconciled by R3f**, which decided I2 (ii): the gate's own ruling
+  is untouched — the thread still LIVES on the conversations surface and the note screen
+  still does not change — and what R3f added is one more door into it, the stream row's
+  chip, beside the notes-tab redirect that gate already allowed.
 - **`docs/reference/ARCHITECTURE.md`**, **`docs/ROADMAP.md`** — Phase 2/3 no longer
   describe a two-stage extract→integrate pipeline.
 - **`docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`** — bucket (d) of §5 is its tier-1

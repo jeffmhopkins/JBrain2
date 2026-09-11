@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-09
+> **Status:** Living · **Last verified:** 2026-09-11
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1120,6 +1120,28 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 
 - Text contrast ≥ 4.5:1 against its surface in both themes (the muted accents
   are for chrome/tints; body text is always `--text`/`--text-2`).
+- **Never dim a TEXT container with `opacity`.** It multiplies every colour beneath
+  it, a descendant cannot undo it, and the figures above are token-to-token: one
+  `opacity: 0.72` on a block took four of its lines under the floor, `--text-2`
+  included, and each had to be bought back by hand. Dim by token — give up the
+  fill, the accent border, the inviting head colour — so the words keep the
+  contrast their tokens certify. (Gated for the question block by
+  `backend/tests/unit/test_block_contrast.py`.)
+  - **Scope, and the sweep this does not pretend to have done.** It binds a
+    container whose own words have to stay readable — a card, a row, a block. It
+    says nothing about `opacity` on a chip's fill, an icon, a divider, a bar, a
+    disabled control's whole affordance, or a transition, and `styles.css` uses it
+    that way about a hundred times. The rule arrived here (R3f, fourth review) as a
+    categorical ban with no scope clause, which the shipped app broke in more than a
+    dozen places the day it was written — `.auto-card.off` (0.62, **on the owner's
+    own Ops screen**), `.task-card.off` (0.60), `.loc-card-revoked`,
+    `.imgsteps.locked` and `.graph-filter.is-off` (0.55), `.cal-wev.cancelled`
+    (0.50), `.vitals[data-sync="unreachable"]` (0.42). Those are not this wave's to
+    fix and are not filed as its debt: they belong to the muted-token contrast
+    audit, which is where a sweep of dimmed text across every screen is tracked. A
+    binding rule the code contradicts on the Ops screen is worse than no rule, so
+    the scope is the part that binds today and the audit is the part that closes the
+    rest.
 - Visible focus rings on `:focus-visible`; full keyboard operability on
   desktop layouts.
 - Status conveyed by dot color is always paired with text.
@@ -1467,6 +1489,114 @@ the step that made it. Not a surface of its own and not a note-screen change: th
 - It renders from the **persisted turn** — the writes ride the tool result and are stored
   on the turn — so a conversation reopened days later says exactly what it said live,
   with no second fetch and no second source of truth.
+
+### The note's own thread (build plan `docs/plans/AGENT_INGEST_REWRITE.md` §3b — binding mock: `docs/mocks/agent-ingest-thread/note-thread.html`)
+
+Every interaction about a note happens inside that note's conversation, and that
+conversation is **the ordinary agent transcript** — the violet Thought chip, the steel
+Worked chip, the step rows and their write rungs, the live status line above the composer.
+There is no bespoke ingest view and no second idiom for the same information.
+
+- **The stream row is a redirect.** A note whose thread is parked on an answer carries one
+  chip — `3 questions` — and nothing else: no answer control, no candidate, no verb. It is
+  **amber**, the open-ask register, never rose: rose is the MEDICAL domain and the row
+  already wears its domain as a dot. A settled note wears no chip at all; "analyzed" is the
+  quiet end state, and only the waiting state earns one.
+- **The chip is the door; the row is not.** Tapping the row opens the NOTE SCREEN, which is
+  the only no-terminal route to the Analysis tab, the attachments, the edit path, the answer
+  eraser and the re-run button. Tapping the chip opens the thread. The note screen itself
+  does not change and gains no tab. The chip is a full **44px box** rather than a small
+  drawing with a bleeding hit area: it shares a **wrapping** row with the attachment links,
+  and an out-of-flow target that reaches a wrapped neighbour takes that neighbour's tap —
+  the same reason the question block's candidates grow their boxes. A near-miss here does
+  not no-op, so the row it costs height is the right trade.
+- **Turn 0 is the note, frozen** — ruled in the note's own domain colour, labelled as THE
+  NOTE rather than as something the owner said, and with its injection fence stripped **for
+  display only**. The frame is a security property the model must keep seeing whole; the
+  renderer strips a matched nonce pair and leaves anything unmatched visible.
+- **The question block is INERT.** When a pass ends on a question set, the answer bubble is
+  followed by one row per question carrying what it blocks, the question in plain words, and
+  its answer affordance — tappable candidates where the resolver had them, a field where it
+  did not, and on a candidate row BOTH: **"Something else"** reveals the same field, so a
+  candidate the model's own prose lost is still answerable in words. It renders under the
+  turn and across the full column, OUTSIDE the bubble — the same placement the sub-agent
+  fan takes, and for the same reason: it is its own object rather than part of the answer's
+  prose, and a ruled block inside the bubble's own border is a frame in a frame. (Not for
+  room: an AI bubble is already full width; the 80% cap is on the owner's own bubble.)
+  **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
+  flips a conversation state, and a chosen candidate unpicks on a second tap. This is a
+  deliberate exception to the inline-component rule below, where `InlineProposal` posts its
+  own outcome: there the enact IS the event, here three answers that each posted would cost
+  three turns and three re-reads of the note.
+- **The omnibox send is the one submit**, inside a thread as everywhere else. A carry strip
+  above the input reads `2 of 3 answered — rides with your next send`, and at zero
+  `0 of 3 answered — answer above, or just reply` (the 0-state names both affordances,
+  because at that point neither has been used) — the same shape as the calendar handoff's
+  appointment pill. One send is **one user turn** carrying every answer, structured and
+  paired to its question, beside whatever free text is in the box; the turn's own text
+  carries **both halves**, the `Q:`/`A:` pairs and then the typed words, so the transcript
+  is a complete record of what the owner did. The destination row gives way inside a
+  conversation mode; **the mode row does not**, since it is the app's primary navigation and
+  the only way back to capture.
+- **Typed words beside a tap are NOT filed as an answer.** Free text sent alone answers the
+  oldest open question — with nothing else in the send there is only one thing it could be
+  answering. Beside any tapped answer it is an aside: it rides the turn for the agent to
+  read and reaches no note, and the agent is told so. Pairing it with whichever question the
+  taps left open would put a sentence into the owner's own note under a question it does not
+  answer, and a mispaired answer is a wrong sentence in his corpus, not a cosmetic slip.
+- **Sent is spent, and a frozen block claims only what the reply actually did.** The block
+  goes quiet and its controls go inert the moment the send goes; a settled thread reopened
+  later replays the same transcript with the block frozen in its answered state, no live line
+  and no carry strip. Each row then reads back out of the reply turn's own text: the words that
+  were paired to it, or — where the reply was prose alone, which answers the oldest open
+  question and nothing else — that it was answered in the reply, or that it is **still
+  open**. The header counts what landed rather than the size of the set. A block that says
+  "answered" over a question the send left open is the worst thing on this screen: the
+  agent was told the truth and re-asks exactly those questions on its next turn, so the
+  screen and the assistant contradict each other in front of the one person who cannot
+  check either.
+- **"Spent" is dimmed by TOKEN, never by `opacity`.** An ancestor's opacity multiplies every
+  colour beneath it and no descendant can undo it, so a dimmed block silently re-prices every
+  line inside it: R3f shipped `opacity: 0.72` on the frozen block and put four lines under the
+  4.5:1 floor above — the "still open" line at 1.81:1 in light, and `--text-2`, which this
+  document certifies as body text, at 3.41:1. A spent object recedes by giving up the things
+  that read as controls (a raised chip fill, an accent border, an inviting head colour), which
+  is a statement about the controls; opacity is a statement about the words.
+- **A block that cannot be answered says so, and offers nothing to tap.** The one state
+  where the questions are real but their ids are not — a thread left waiting across the
+  deploy that gave the question set its ids — renders read-only: every question visible, no
+  candidates, no field, no carry strip, and a line saying to answer in the composer (free
+  text alone answers the oldest open question, so the owner is never stuck). Disabled
+  controls would be the wrong shape: a greyed candidate invites a tap that cannot work, and
+  the reason nothing is offered is that nothing tapped here could be filed.
+- **A send that reaches the server not at all is UN-SENT, and Stop is how the owner says
+  so.** While the turn counts as in flight the composer's send IS the Stop button (the same
+  control, swapped), wired to this surface's own stop, so recovery is one tap and a few
+  seconds; left alone, the same thing happens when the reconnect window closes, which is the
+  ceiling on being patient rather than the cost of recovering. What comes back is the whole
+  send: the answers to the block, the typed words to the composer, and the optimistic turn
+  itself is dropped — so the block re-arms live, holding them, over a thread the server still
+  holds `waiting_on_owner`. For the length of the window the frozen block does read
+  *"2 answered"* about a send that never left the device; that is the cost of showing the
+  owner his turn immediately, and it ends when the window does rather than lasting until the
+  thread is reopened. **Only when the server provably has nothing — and the buffer is the
+  weaker half of that test.** Two things must both hold: no `X-Run-Id` ever reached the
+  client, AND the optimistic bubble took no frame. The run id is the load-bearing one:
+  `record_owner_reply` files the answers onto the note BEFORE `runlog.start` mints it
+  (`api/agent.py`), so a run id is proof the note already has them — while a stream that
+  opened and died before its first token is indistinguishable, on the buffer alone, from one
+  that never left. An earlier revision of this rule tested the buffer only; that un-sent a
+  committed turn, re-armed the block over a set `claim_waiting` had already consumed, and the
+  owner's second send was discarded in silence while the block said it landed. Both Stop
+  paths ride the one predicate now, so where the tap lands no longer decides the outcome. A
+  turn that delivered even one token, or that minted a run id, keeps its errored bubble with
+  the owner's words still on screen.
+- **The chip is not permanent, and the thread does not expire.** The stream shows the last
+  two days, so a note parked longer than that scrolls off it and loses its chip — the ask
+  itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review
+  inbox's notes tab and the Chats panel still list the waiting thread. The stream is the
+  recent view, not the backlog; a door that never closes belongs to the two surfaces that
+  are a list of open things.
 
 ## Agent tool views (registered components, never bespoke markup)
 

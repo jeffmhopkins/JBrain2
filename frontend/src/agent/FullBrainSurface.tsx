@@ -9,7 +9,15 @@
 // to expand in place); each step is itself a pulldown showing its arguments,
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -18,12 +26,15 @@ import { EntityWrites } from "./EntityWrites";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
+import { QuestionBlock } from "./QuestionBlock";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
+import { type AskedQuestion, type SentOutcome, askStep, sentAnswers, sentOutcomes } from "./asked";
 import { attachmentKind } from "./attachmentKind";
 import { stepWriteState, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import { noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -273,6 +284,10 @@ export function FullBrainSurface({
   // an armed plan continuation take the line over with its interruptible countdown; absent
   // that, the settled turn's own "Answered/Stopped" status shows as before.
   const turnStatus = agentStatus(fb.messages, fb.active?.id);
+  // The note this thread is about, by domain, for turn 0's rule (§3b I3). Read off the
+  // session's own read scopes, which a note conversation sets from its note and nothing
+  // else can widen (`analysis/converse.note_read_scopes`).
+  const threadDomain = noteDomain(fb.active?.domain_scopes);
   const liveStatus =
     turnStatus &&
     (turnStatus.kind === "thinking" ||
@@ -315,6 +330,13 @@ export function FullBrainSurface({
                 // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
                 key={i}
                 message={m}
+                // A turn that ended on `ask_owner` carries its question block. It is LIVE
+                // only while it is the last turn — a reply after it is what settles the
+                // set, live and on reopen alike (§3b I8/I9) — and a settled block reads
+                // its answers back out of that reply's own Q/A rendering, so nothing the
+                // owner answered lives only in a component.
+                ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
+                noteDomainCode={threadDomain}
                 onOpenNote={onOpenNote}
                 onOpenEntity={onOpenEntity}
                 onOpenProposal={(id) => {
@@ -662,6 +684,49 @@ function mdFlags(message: TranscriptMessage): MdFlag[] {
   return v.ungroundedClaims.map((claim, i) => ({ id: `ug-${i}`, claim, reason: FLAG_REASON }));
 }
 
+/** The question block a turn carries, or undefined. Pure, and the whole of the block's
+ * lifecycle: it is LIVE only when it is the last message (see `openQuestions` for why
+ * that, rather than a stop reason, is the test), and a frozen one reads its answers out
+ * of the reply that settled it. */
+function ask(
+  messages: readonly TranscriptMessage[],
+  i: number,
+  draft: Readonly<Record<string, string>>,
+  onAnswer: (questionId: string, answer: string) => void,
+):
+  | {
+      questions: readonly AskedQuestion[];
+      live: boolean;
+      readOnly: boolean;
+      answers: Readonly<Record<string, string>>;
+      sent: Readonly<Record<string, SentOutcome>> | null;
+      onAnswer: (questionId: string, answer: string) => void;
+    }
+  | undefined {
+  const message = messages[i];
+  if (!message || message.role !== "assistant" || message.streaming) return undefined;
+  const { questions, answerable } = askStep(message);
+  if (questions.length === 0) return undefined;
+  const live = i === messages.length - 1;
+  const reply = messages[i + 1];
+  const replyText = reply?.role === "user" ? reply.text : "";
+  return {
+    questions,
+    live,
+    // A LIVE block whose step predates the id echo: shown, never tappable (§3b I9, R3f's
+    // fourth review, finding 2). Only the live one — a frozen block offers nothing to tap
+    // either way, and its rows read out of the reply turn's own text by question STRING,
+    // which a deploy-window step carries exactly as the ledger does.
+    readOnly: live && !answerable,
+    answers: live ? draft : sentAnswers(questions, replyText),
+    // Not just the words — WHICH questions the reply actually answered. A frozen block
+    // that assumes the set was answered tells the owner his open questions were settled,
+    // and the agent's next turn re-asks them (R3f's second review, finding 1).
+    sent: live ? null : sentOutcomes(questions, replyText),
+    onAnswer,
+  };
+}
+
 function Bubble({
   message,
   onOpenNote,
@@ -676,6 +741,8 @@ function Bubble({
   onPlanChanged,
   audio,
   readAloud,
+  ask,
+  noteDomainCode,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -709,6 +776,25 @@ function Bubble({
   readAloud?:
     | { playing: string | null; onToggle: (key: string, markdown: string) => void }
     | undefined;
+  /** This turn ended on an `ask_owner`: its question block, and how it is answered
+   * (§3b I6). `live` means the set is still open — the controls fill LOCAL state and
+   * nothing else; otherwise the owner already replied, `sent` says what that reply did to
+   * each question, and `answers` carries the words it paired.
+   * Absent on every turn that asked nothing, which is every turn outside a note thread. */
+  ask?:
+    | {
+        questions: readonly AskedQuestion[];
+        live: boolean;
+        /** Shown, but with nothing to answer it WITH — a live block built from a step that
+         * predates the id echo (`QuestionBlock`). */
+        readOnly: boolean;
+        answers: Readonly<Record<string, string>>;
+        sent: Readonly<Record<string, SentOutcome>> | null;
+        onAnswer: (questionId: string, answer: string) => void;
+      }
+    | undefined;
+  /** The note's own domain, for the rule down turn 0's left edge. Null = no colour. */
+  noteDomainCode?: string | null | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -720,6 +806,26 @@ function Bubble({
   const shownText = usePacedText(message.text, message.streaming);
   if (message.role === "user") {
     const attachments = message.attachments ?? [];
+    // Turn 0 of a note thread is the note itself, fenced as untrusted data for the model
+    // (§3b I3). Rendered as the owner's own bubble it showed them ten lines of injection
+    // guard attributed to them, above their own sentence. Strip the frame HERE and show
+    // the note as what it is — frozen, labelled, ruled in its own domain's colour — and
+    // never by unfencing the message, which the model must keep seeing whole.
+    const framed = unframeNote(message.text);
+    if (framed) {
+      const color = noteDomainCode ? (DOMAIN_COLOR[noteDomainCode] ?? null) : null;
+      return (
+        <div
+          className="fb-turn0"
+          style={color ? ({ "--note-rule": color } as CSSProperties) : undefined}
+        >
+          <p className="fb-turn0-label">
+            the note{framed.captured ? ` · captured ${framed.captured}` : ""}
+          </p>
+          <div className="fb-turn0-body">{framed.body}</div>
+        </div>
+      );
+    }
     return (
       <div className="bubble me">
         {attachments.length > 0 && (
@@ -1125,6 +1231,25 @@ function Bubble({
   // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
   // down and the persisted `subagent_synthesis` roster card (rendered with the answer's
   // views) takes its place — so a finished fan looks the same live as it does on reopen.
+  // The block sits directly under the turn it belongs to, but OUTSIDE the bubble — the
+  // same placement the sub-agent fan takes, and for the same reason: it is its OWN
+  // object, not part of the answer's prose. It is interactive where the bubble is read,
+  // it freezes on its own, and drawing an amber-ruled block inside the bubble's own
+  // border would be a frame inside a frame. Width is NOT the reason (R3f's review,
+  // finding 3): `.fb-shell .bubble.ai` is already `max-width: 100%` — the 80% cap is on
+  // the owner's own bubble. Only this render path carries the block; the image-split and
+  // analysis-card paths belong to tools a note conversation's tool set does not hold, so
+  // a question can never land in one.
+  const questionBlock = ask ? (
+    <QuestionBlock
+      questions={ask.questions}
+      answers={ask.answers}
+      onAnswer={ask.onAnswer}
+      sent={ask.sent}
+      readOnly={ask.readOnly}
+    />
+  ) : null;
+
   return (
     <>
       <div className="bubble ai">
@@ -1133,6 +1258,7 @@ function Bubble({
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
+      {questionBlock}
       {standaloneFanBlocks}
     </>
   );

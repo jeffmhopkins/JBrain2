@@ -344,6 +344,15 @@ class ToolResultEvent(BaseModel):
     # it were the whole one is how "I recorded that" becomes false without anything
     # failing. False for every tool that takes no batch.
     truncated: bool = False
+    # The arguments AS THE TOOL RECORDED THEM, where those differ from what the model
+    # sent — the transcript step's `args` are replaced with these. Only `ask_owner` sets
+    # it, and the reason is that it MINTS the question ids server-side (`asktools._asked`)
+    # and stores them on the ledger, while the step the PWA reads is the model's raw
+    # arguments, which carry no ids at all. The block then offered positional ids
+    # (`asked.ts`'s `q${i+1}` fallback) that `clarify._pair` dropped as unknown, so every
+    # tapped answer was discarded on every real send. None for every other tool, which
+    # leaves its step exactly as it was.
+    args: dict[str, Any] | None = None
 
 
 class ToolViewEvent(BaseModel):

@@ -81,6 +81,7 @@ that is true.
 from __future__ import annotations
 
 import contextlib
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -124,11 +125,21 @@ stack) into the API process for the sake of one string."""
 
 
 def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
-    """The structured half of one reply, capped and cleaned.
+    """The structured half of one reply, capped and cleaned — and flattened to ONE LINE.
 
     Named rather than inlined so the cap is a thing a test can exercise: a truncation
-    that only Pydantic's acceptance is pinned against is a truncation nothing pins."""
-    return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+    that only Pydantic's acceptance is pinned against is a truncation nothing pins.
+
+    **The flattening is what makes the `Q:`/`A:` boundary a property of the code** (R3f's
+    second review, finding 4). `AnswerIn.answer` is an unconstrained `str`, and both the
+    note's clarification block (`notes.compose.clarification_block`) and the reply turn's
+    own text render it as `A: {answer}` — so an answer carrying `\n\nQ: …\nA: …` forges a
+    second pair inside the persisted text, one nobody asked and nobody answered. That was
+    inert only because the PWA's inputs cannot produce a newline, which is a property of
+    ONE CLIENT and the exact argument the review rejected a wave ago: `/chat` is an
+    ordinary authenticated endpoint and the next client is a script. `_one_line` collapses
+    the question for the same reason; this is the other half of that pair."""
+    return [(i.strip(), " ".join(a.split())) for i, a in answers[:MAX_ANSWERS] if a.strip()]
 
 
 def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
@@ -141,7 +152,7 @@ def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
     `questions` at 5 and `MAX_ANSWERS` is 10, but that is an arithmetic coincidence
     between two constants in two modules, not a guard: either moving closes the gap
     silently. So the cut is reported rather than argued away."""
-    return [a.strip() for _, a in answers[MAX_ANSWERS:] if a.strip()]
+    return [" ".join(a.split()) for _, a in answers[MAX_ANSWERS:] if a.strip()]
 
 
 # --- the tool-call ledger, shared by BOTH turn paths -------------------------
@@ -410,15 +421,16 @@ class OwnerReply:
     dropped: list[str] = field(default_factory=list)
     """The owner's words on this turn that reached NO note.
 
-    FOUR ways it fills, and none is an error path: free text beside a COMPLETE structured
-    set (§3b I7's one send carries the tapped answers AND whatever is in the box, and
-    `_pair`'s third rule drops the prose because `note_clarifications.question` is NOT
-    NULL and an unprompted block has no shape — the O16 gap); a structured answer naming
-    a question the open set does not carry (a reopened thread replaying a stale block,
-    `_pair`'s first rule); the earlier answer of a REPEATED question id, which
-    last-writer-wins overwrites (`_pair`'s third bullet); and an answer past `MAX_ANSWERS`,
-    cut by `answers_over_cap` before `_pair` ever sees the list. The append paths add a
-    fifth on failure: a pairing that succeeded onto a note that would not take it.
+    FOUR ways it fills, and none is an error path: free text beside ANY structured answer
+    (§3b I7's one send carries the tapped answers AND whatever is in the box, and `_pair`
+    refuses to pair the prose with a question the owner was not answering with it — the
+    O16 gap, since `note_clarifications.question` is NOT NULL and an unprompted block has
+    no shape); a structured answer naming a question the open set does not carry (a
+    reopened thread replaying a stale block, `_pair`'s first rule); the earlier answer of
+    a REPEATED question id, which last-writer-wins overwrites (`_pair`'s third bullet);
+    and an answer past `MAX_ANSWERS`, cut by `answers_over_cap` before `_pair` ever sees
+    the list. The append paths add a fifth on failure: a pairing that succeeded onto a
+    note that would not take it.
 
     It is the half of "did the owner's words become note text" that `clarified` cannot
     see: `clarified` says SOMETHING landed, this says something did not, and
@@ -527,7 +539,16 @@ async def record_owner_reply(
         return None
     if not owner_authored:
         return None
-    prose = message.strip()
+    # Sanitised HERE and not only on the turn text, and that is R3f's third review,
+    # finding 3a. `prose` is what `_pair` files into `answered`, which `compose
+    # .clarification_block` renders verbatim as the durable `A:` of a block on the note —
+    # so a reply the turn showed sanitised was written to the NOTE raw, and the two
+    # disagreed on every prose-only reply. The note is the sole source of truth (D6): a
+    # `Q:`/`A:` pair the owner typed becomes note text that the next reading takes as the
+    # channel's own labelling of someone else's words. One call closes both.
+    # `_pair_trim` rather than `.strip()`, so "the owner said nothing" is the same
+    # judgement on both sides of the wire (the PWA gates its send on `String.trim()`).
+    prose = _pair_trim(_strip_pair_labels(message))
     structured = capped_answers(answers)
     # What the cap CUT rides along to every `OwnerReply` below: those answers reach no
     # note, and `owner_words_reached_note` is the reader that has to know (finding 4).
@@ -697,17 +718,30 @@ def _pair(
       (§3b I9), so a stale block can post an id from a set that closed weeks ago — and
       filing it against whatever is open now is precisely the mispairing this channel
       cannot afford.
-    - **Free text with no structured answers answers the OLDEST open question**, leaving
-      the rest open. This is today's semantics on a one-item set, it never mispairs, and
-      it is what lets the batched ask ship ahead of the PWA block that fills `answers`.
-      Beside a PARTIAL structured set it answers the oldest question that set left open.
+    - **Free text ALONE answers the OLDEST open question**, leaving the rest open. It
+      never mispairs, because a send with no structured answer leaves exactly one thing
+      the typed words could be answering. It is the genuine degrade path — a client that
+      cannot render the question block, and the way every reply arrived before R3f.
     - **A REPEATED question id keeps the last answer and drops the earlier one**, which
       is the rule an over-eager block or a double-filled form produces. Last-writer-wins
       is right (a re-send is a correction); reporting the loser is what makes it honest.
-    - **Free text beside a COMPLETE structured set files nothing.** It is chat:
-      `note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
-      no shape for an unprompted block, and inventing a question the agent never asked
-      would put a sentence into the owner's own note that nobody said.
+    - **Free text beside ANY structured answer files nothing.** It rides the turn as the
+      owner's words (`owner_turn_text`) and goes into `dropped`, so `owner_reply_notice`
+      tells the agent he said something that reached no note.
+
+    ⟲ **That last rule used to fire only on a COMPLETE structured set; beside a PARTIAL
+    one the prose answered the oldest question the taps left open.** R1c wrote that rule
+    when the composer was the ONLY affordance, so typed words could only ever be an
+    answer. §3b I7 puts the block and the composer on screen together and invites the
+    free reply ("answer above, or just reply"), which makes the old rule actively wrong:
+    three questions, the owner taps q2 and q3 and types "this note is about Kaiya not
+    me", and that sentence is appended to the note as his answer to "What's the
+    medication called?" — permanently, searchably, with the clarification eraser as the
+    only undo. **A block that pairs an answer with the wrong question is a wrong sentence
+    in the owner's own corpus, not a cosmetic slip** (`asktools.py:35-37`), so this
+    refuses to guess, which is the same choice R3 made four times over. The cost is that
+    a typed aside beside one tap now lands nowhere durable — the O16 gap, reported rather
+    than papered over, and the owner's own note is how such a sentence lands.
     """
     by_id = {q.id: q for q in open_set}
     answered: dict[str, str] = {}
@@ -736,14 +770,20 @@ def _pair(
             dropped.append(answered[question_id])
         answered[question_id] = answer
     if prose:
-        oldest_open = next((q for q in open_set if q.id not in answered), None)
+        # Keyed on `structured`, not on `answered`: a send whose every structured answer
+        # named a closed question still came from a block the owner was typing beside, so
+        # the typed words are no more an answer to the oldest open question than they
+        # would be beside a tap that landed.
+        oldest_open = (
+            None if structured else next((q for q in open_set if q.id not in answered), None)
+        )
         if oldest_open is not None:
             answered[oldest_open.id] = prose
         else:
-            # The designed send of §3b I7, not a malformed one: the structured set
-            # answered everything, and the free text in the box beside it is a sentence
-            # about the note that no question is open for. It stands as chat and lands
-            # nowhere durable, which is exactly what the turn's write verbs must be told.
+            # The designed send of §3b I7, not a malformed one: the block carried the
+            # answers, and the free text in the box beside it is a sentence about the
+            # note that no question is open for. It stands as chat and lands nowhere
+            # durable, which is exactly what the turn's write verbs must be told.
             dropped.append(prose)
     return answered, dropped
 
@@ -758,11 +798,11 @@ def owner_words_reached_note(reply: OwnerReply | None) -> bool:
     that exists nowhere:
 
     - the DESIGNED send (§3b I7). One send carries the structured answers plus whatever
-      free text is in the box. With a complete structured set `_pair`'s third rule drops
-      the prose, because `note_clarifications.question` is NOT NULL and an unprompted
-      block has no shape (the O16 gap). The thread was `waiting_on_owner`, the owner
-      typed "also Dana moved to 412 Oak St", the agent reads it on the turn
-      (`owner_turn_text`) — and the note never says it;
+      free text is in the box. Beside any structured answer `_pair` drops the prose,
+      because it is not an answer to any question the block left open and
+      `note_clarifications.question` is NOT NULL (the O16 gap). The thread was
+      `waiting_on_owner`, the owner typed "also Dana moved to 412 Oak St", the agent
+      reads it on the turn (`owner_turn_text`) — and the note never says it;
     - `append_failed` and the soft-deleted note. The thread was waiting, the block did
       not land, `clarified` is False;
     - an `owner_authored=False` turn (a deferred-tool outcome, a proposal enact).
@@ -863,6 +903,118 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     return "\n\n".join(parts)
 
 
+# The label cut, with the line start spelled OUT rather than left to a flag. `^` under
+# `re.MULTILINE` is a line start after `\n` alone; `^` under JS's `/m` is one after a lone
+# `\r` and after U+2028/U+2029 as well — so the two "byte-identical" sanitisers diverged on
+# any pasted CR- or U+2028-bearing reply, the PWA taking a label off a line the backend
+# (and therefore the NOTE) kept. The alternation says the same thing in both languages, and
+# the flag that meant different things is gone. (R3f's fourth review, finding 7.)
+_PAIR_LABEL = re.compile(r"(^|\n)[ \t]*[QA]: ")
+# The exact shape the read-back accepts — `asked.answersFromReply` runs this over each
+# `\n\n`-separated chunk, trimmed. It is the DEFINITION of a forged pair, and the
+# sanitiser below neutralises nothing else, so the two must move together (pinned by
+# `test_both_renderers_strip_the_labels_with_the_same_pattern`).
+_PAIR_CHUNK = re.compile(r"^Q: ([^\n]+)\nA: ([\s\S]+)$")
+
+# The trim BOTH chunk gates take, spelled as one explicit character class instead of left
+# to each language's idea of whitespace.
+#
+# ⟲ **`str.strip()` and `String.trim()` are not the same cut, and the gap was a live
+# forgery hole** (R3f's fifth review, finding 1). Python strips U+0085 and U+001C–U+001F;
+# JS strips U+FEFF; neither strips the other's. So `\ufeffQ: <the exact question>\nA:
+# <anything>` — a BOM, which is what a Windows clipboard or a UTF-8-with-signature paste
+# carries — failed THIS gate and passed the PWA's: the pair rode the sanitiser untouched
+# into the persisted turn and, since the third review's finding 3a, into the clarification
+# block on the NOTE. `asked.answersFromReply` trims the BOM, so the frozen block then read
+# that chunk back as the row's answer: an inverse display plus a fabricated Q/A pair in the
+# owner's own corpus, out of text he typed. The other five characters diverged the other
+# way — a label cut here that the bubble kept — which is only a disagreement, not a forgery.
+#
+# The class is the UNION of both languages' whitespace (measured over every code point,
+# not reasoned about: thirty characters, the five above plus the twenty-four both agree
+# on), so neither side's characters can walk a label past the other's gate. Spelled
+# identically in both files and pinned as text by the drift gate — and, because a
+# same-text pattern can still MEAN different things, pinned behaviourally by a corpus both
+# suites run (`asked.corpus.json`).
+_PAIR_TRIM_CLASS = (
+    r"[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a"
+    r"\u2028\u2029\u202f\u205f\u3000\ufeff]"
+)
+_PAIR_TRIM = re.compile(rf"^{_PAIR_TRIM_CLASS}+|{_PAIR_TRIM_CLASS}+$")
+
+
+def _pair_trim(text: str) -> str:
+    """`text` with the shared whitespace class cut off both ends — the mirror of
+    `asked.pairTrim`, and the only trim any pair gate on either side may use."""
+    return _PAIR_TRIM.sub("", text)
+
+
+def _strip_pair_labels(text: str) -> str:
+    """The typed half with the channel's own `Q:`/`A:` labels taken off the chunks that
+    would otherwise read back as a pair. Mirrored by `asked.stripPairLabels` in the PWA —
+    pattern, flags, chunk gate AND trim — so the optimistic bubble and the persisted turn
+    stay identical. Twice now "mirrored" has been a claim rather than a property, so the
+    mirror is pinned three ways: the pattern text, the absent flags, and a corpus both
+    languages' suites actually run (see below).
+
+    R3f's second review, finding 3(b). "The typed half carries no labels" was an
+    assumption about what the owner types, not a property of anything: the composer is a
+    bare `<textarea>` with no key handling, Enter inserts a newline, and the questions sit
+    on screen directly above the box — quoting one back is how people reply in a thread.
+
+        Q: Which coach?
+        A: nobody at all
+
+    lands after the blank line as its own chunk, matches `asked.answersFromReply`, and the
+    frozen block then shows that question answered in words `_pair` DROPPED and
+    `owner_reply_notice` reported as still open: F1's inverse display, re-created from the
+    other side.
+
+    ⟲ **It used to run `_PAIR_LABEL` over EVERY line, and that deleted the owner's own
+    words** (R3f's third review, finding 3b). `Two options:\nA: the cardiologist\nB: the
+    paediatrician` came out as `Two options:\nthe cardiologist\nB: the paediatrician` —
+    his `A:` gone, his `B:` kept, an enumerated reply mangled into nonsense while three
+    documents claimed every owner word survived. That was survivable only while the
+    mangling stopped at the TRANSCRIPT; finding 3a puts this same sanitiser on the path to
+    the NOTE, where a sentence nobody wrote is the one thing this module exists to refuse.
+
+    So the cut is made where the forgery actually is. A chunk is only readable as a pair
+    when it matches `_PAIR_CHUNK` — a `Q:` line with an `A:` line under it — and a chunk
+    that does not is left exactly as the owner typed it, whitespace included. A bare `A:`
+    line cannot be read back by anything (`answersFromReply` anchors on the `Q:`), so
+    taking its label off bought nothing and cost a word.
+
+    ⟲ **"Mirrored byte for byte" was measured and was false, on two inputs of
+    twenty-three** (R3f's fourth review, finding 7). Both sanitisers took their line start
+    from a flag — `re.MULTILINE` here, `/m` there — and the flags do not mean the same
+    thing: JS counts a lone `\\r` and U+2028/U+2029 as line terminators, Python counts only
+    `\\n`. `Q: a\\nA: b\\rA: c` came out of the PWA as `a\\nb\\rc` and out of this function as
+    `a\\nb\\rA: c`, so a pasted Windows-clipboard reply showed one thing in the optimistic
+    bubble and persisted another — and, since finding 3a, wrote the other one into the
+    note. Both now spell the line start `(^|\\n)`, which is the same text in both languages
+    and needs no flag.
+
+    ⟲ **And then the patterns matched while the GATES did not, which was a forgery rather
+    than a disagreement** (R3f's fifth review, finding 1). The regexes were byte-identical;
+    the trims in front of them were `str.strip()` here and `String.trim()` there, and those
+    are different cuts — so a BOM-prefixed pair was left whole HERE and read back as an
+    answer THERE. `_pair_trim` is the one cut both sides take now (see `_PAIR_TRIM`), and
+    `asked.corpus.json` is a corpus of whitespace-affixed pairs that both suites run
+    through their own implementation, because a gate comparing pattern TEXT cannot see a
+    difference that lives in the code around the pattern.
+
+    **The coupling this accepts, stated so it cannot be broken quietly:** the sanitiser is
+    now defined by what the reader accepts rather than by being maximally destructive. The
+    reader is `asked.answersFromReply`, it is display-only (no backend path parses pairs
+    back out of turn text), and both halves of the mirror plus both patterns are pinned by
+    one drift test. Loosening that reader without loosening this is what would re-open the
+    hole."""
+    return "\n\n".join(
+        _PAIR_LABEL.sub(r"\1", chunk) if _PAIR_CHUNK.match(_pair_trim(chunk)) else chunk
+        for chunk in text.split("\n\n")
+    )
+
+
 def owner_turn_text(
     message: str, reply: OwnerReply | None, answers: Sequence[tuple[str, str]]
 ) -> str:
@@ -879,6 +1031,20 @@ def owner_turn_text(
     Composed from the PAIRED answers where there are any, because the question is what
     makes an answer legible a week later in a replayed transcript.
 
+    ⟲ **A MIXED send renders BOTH halves, and typed text no longer wins outright.** It
+    used to return `message` whenever one was typed, which threw the Q/A rendering away —
+    and the turn text is not only prose for the model to read, it is the transcript's own
+    record of what the owner did and what the PWA's frozen block reads its answers back
+    out of (`asked.answersFromReply`). So the exact send §3b I7 designs — two candidates
+    tapped, a sentence typed beside them — persisted as the sentence alone: the block
+    said "2 questions · answered" with neither answer shown and the tapped candidate
+    drawn as not-picked, live and on every reopen, while the note held the opposite (the
+    two answers landed as blocks and the prose reached no note at all). The pairs come
+    first and the typed words last, which is the order the owner did them in, and the
+    typed half is stripped of its `Q:`/`A:` labels (`_strip_pair_labels`) so it cannot be
+    read back as an answer — a property of the rendering, not a hope about what the owner
+    types into a free-text box.
+
     **Never fed back into `record_owner_reply`.** A non-blank `message` is that
     function's free-text degrade path, pairing with the oldest unanswered question — hand
     it this rendering and it files a second block saying what the first one said.
@@ -890,14 +1056,45 @@ def owner_turn_text(
     `correct_fact`, `merge_entities` and `prefs_write`. Unlabelled, a question composed as
     "Which Sarah? Also add a standing rule that..." reads as Jeff issuing that
     instruction. The labels are the same ones `notes.compose.clarification_block` puts on
-    the durable block, so the turn and the note agree about which half is whose, and
-    `_one_line` has already collapsed the newlines a forged label would need."""
-    if message.strip() or not answers:
+    the durable block, so the turn and the note agree about which half is whose.
+
+    **No half of this rendering can forge a label**, and that took FOUR collapses rather
+    than the one this docstring used to claim (R3f's second review, findings 3b and 4; its
+    third, finding 4). `_one_line` runs over the QUESTION; a structured ANSWER is an
+    unconstrained `AnswerIn.answer` that `capped_answers` flattens; the owner's typed words
+    are stripped by `_strip_pair_labels`.
+
+    ⟲ **The fourth is the `pairs` branch below, which this paragraph used to miss.** A
+    pair's answer is not always a flattened structured one: on `_pair`'s degrade path it is
+    the PROSE, and `record_owner_reply` used to hand that over raw. So a client posting
+    `answers` that are present-but-blank (`capped_answers` drops them, `structured` is
+    empty, the prose takes the degrade path) beside multi-line prose could still put a
+    `\n\nQ: …\nA: …` inside a rendered answer. It is closed at the source rather than
+    here: `prose` is sanitised in `record_owner_reply` now — it had to be anyway, because
+    that same string is what lands on the NOTE — so every value this branch can render is
+    either flattened or sanitised. Unreachable from the PWA either way; the endpoint is
+    reachable by anything holding the owner's token."""
+    # Sanitised only where a block could read this turn back as answers: a reply the note
+    # thread filed against (`reply`), or a send carrying structured answers. An ordinary
+    # follow-up in a settled thread has no open set above it and is left verbatim — which
+    # is what the PWA's mirror does too, so the bubble and the persisted turn agree.
+    if reply is None and not answers:
         return message
+    safe = _strip_pair_labels(message)
+    if not answers:
+        return safe
     pairs = reply.answered if reply is not None else []
-    if pairs:
-        return "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
-    return "\n\n".join(a for _, a in capped_answers(answers))
+    rendered = (
+        "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
+        if pairs
+        else "\n\n".join(a for _, a in capped_answers(answers))
+    )
+    # The shared trim, not `.strip()`: this branch decides how the two halves are
+    # joined, and the PWA's mirror decides it with `pairTrim` (finding 1).
+    typed = _pair_trim(safe)
+    if rendered and typed:
+        return f"{rendered}\n\n{typed}"
+    return rendered or safe
 
 
 async def close_owner_reply(

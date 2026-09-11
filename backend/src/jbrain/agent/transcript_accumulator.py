@@ -97,6 +97,14 @@ class TranscriptAccumulator:
                 # their [^n] targets replay on reopen.
                 if event.web_sources:
                     step["web_sources"] = [s.model_dump() for s in event.web_sources]
+                # The arguments the TOOL recorded, replacing the ones the model sent.
+                # `ask_owner` mints its question ids server-side and keeps them on the
+                # ledger; the step is what the PWA's question block is built from, so
+                # without this the block offers positional ids the ledger never held and
+                # `clarify._pair` drops every answer posted against them. Set only by a
+                # tool that mints something — every other step keeps the model's own args.
+                if event.args:
+                    step["args"] = event.args
         elif event.type == "tool_view":
             # The rich view (e.g. a list_card) rides its tool step so the bubble's
             # tool-result views replay on reopen.

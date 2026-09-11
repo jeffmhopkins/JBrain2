@@ -40,6 +40,38 @@ describe("Omnibox", () => {
     expect(onConsumeDraft).toHaveBeenCalled();
   });
 
+  // R3f's fifth review, finding 5. The seam has two writers — a calendar handoff and the
+  // typed half of a note-thread send that reached nothing — and the second fires while the
+  // box is LIVE (the composer is never disabled during a turn, only send becomes Stop). An
+  // unconditional `setText` therefore deleted whatever the owner had typed while waiting.
+  it("seeds ABOVE what is already typed rather than over it", () => {
+    const onConsumeDraft = vi.fn();
+    const { rerender } = render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onConsumeDraft={onConsumeDraft}
+      />,
+    );
+    const box = screen.getByLabelText("Composer") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "a new thought" } });
+    rerender(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        draft="the words that never left"
+        onConsumeDraft={onConsumeDraft}
+      />,
+    );
+    expect(box.value).toBe("the words that never left\n\na new thought");
+  });
+
   it("shows the appointment pill and clears it on tap", () => {
     const onClearApptRef = vi.fn();
     render(
@@ -489,5 +521,60 @@ describe("Omnibox", () => {
     );
     expect(screen.getByText("working to plan")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /working to plan/i })).not.toBeInTheDocument();
+  });
+});
+
+// The composer's half of AGENT_INGEST_REWRITE §3b I7: the omnibox send is the ONE submit
+// in the app, inside a thread as everywhere else, and the carry strip says what rides it.
+describe("the carry strip", () => {
+  function thread(carry: { answered: number; total: number } | null) {
+    const onConversation = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+        carry={carry}
+      />,
+    );
+    return onConversation;
+  }
+
+  it("says how many answers ride the next send", () => {
+    thread({ answered: 2, total: 3 });
+    expect(screen.getByText(/rides with your next send/)).toBeInTheDocument();
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+  });
+
+  it("points at the block while nothing is answered", () => {
+    thread({ answered: 0, total: 3 });
+    expect(screen.getByText(/answer above, or just reply/)).toBeInTheDocument();
+  });
+
+  it("makes send live on an empty box — an answers-only reply is a real turn", () => {
+    const onConversation = thread({ answered: 1, total: 3 });
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).not.toBeDisabled();
+    fireEvent.click(send);
+    expect(onConversation).toHaveBeenCalledWith("", []);
+  });
+
+  it("leaves send dead with an empty box and nothing answered", () => {
+    thread({ answered: 0, total: 3 });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  // The mock hides the mode row inside a thread. Rejected: it is the app's primary
+  // navigation and the only way back to capture.
+  it("keeps the mode row inside a thread", () => {
+    thread({ answered: 1, total: 3 });
+    expect(screen.getByRole("tab", { name: /Entry/ })).toBeInTheDocument();
+  });
+
+  it("is absent outside a note thread", () => {
+    thread(null);
+    expect(screen.queryByText(/rides with your next send/)).not.toBeInTheDocument();
   });
 });

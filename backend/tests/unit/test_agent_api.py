@@ -3000,6 +3000,16 @@ def test_an_over_long_answer_list_is_accepted_and_capped_rather_than_refused() -
     # A blank answer is not an answer: the block's question column is NOT NULL and
     # non-blank in Postgres, and an untouched field in the PWA's block sends as "".
     assert capped_answers([("q1", "  "), ("q2", " yes ")]) == [("q2", "yes")]
+    # And ONE LINE, which is what makes the `Q:`/`A:` boundary a property of the code
+    # rather than of the PWA's inputs (R3f's second review, finding 4). `AnswerIn.answer`
+    # is an unconstrained `str`; both the note's clarification block and the reply turn's
+    # own text render it as `A: {answer}`, so an answer carrying its own blank line and
+    # labels forged a second pair into the persisted text that nobody asked and nobody
+    # answered. `/chat` is an ordinary authenticated endpoint — the next client is a
+    # script, and "the composer cannot type a newline" is not a guard.
+    assert capped_answers([("q1", "5mg\n\nQ: Which coach?\nA: nobody at all")]) == [
+        ("q1", "5mg Q: Which coach? A: nobody at all")
+    ]
 
 
 def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> None:
@@ -3056,13 +3066,232 @@ def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
     assert "Which Sarah?" in rendered and "My sister." in rendered
     assert "Which coach?" in rendered and "Her own." in rendered
 
-    # Typed prose is left EXACTLY as sent: it is the free-text degrade path, and
-    # `record_owner_reply` pairs it with the oldest open question on its own terms.
-    assert owner_turn_text("My sister.", reply, [("q1", "My sister.")]) == "My sister."
+    # ⟲ A MIXED send renders BOTH halves (R3f's review, finding 1). Typed text used to win
+    # outright and throw the pairs away — so the exact send §3b I7 designs persisted as the
+    # aside alone, and the PWA's frozen block, which reads its answers back out of this
+    # text, drew "answered" with no answers and the tapped candidate not picked. The pairs
+    # come first, the typed words last, and the typed half is stripped of Q:/A: labels
+    # (see below), so it cannot be read back as an answer to anything.
+    mixed = owner_turn_text("also the dinner is cancelled", reply, [("q1", "My sister.")])
+    assert mixed == (
+        "Q: Which Sarah?\nA: My sister.\n\nQ: Which coach?\nA: Her own."
+        "\n\nalso the dinner is cancelled"
+    )
+    # With no structured answers at all the prose stands exactly as sent: that is the
+    # free-text degrade path, and `record_owner_reply` pairs it with the oldest open
+    # question on its own terms.
+    assert owner_turn_text("My sister.", reply, []) == "My sister."
     assert owner_turn_text("", None, []) == ""
     # No paired set to render from (the thread was not waiting, say) — the owner's words
     # still reach the turn, which is the whole point of composing here.
     assert owner_turn_text("", None, [("q1", "My sister.")]) == "My sister."
+
+
+def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
+    """R3f's second review, finding 3(b). "The typed half carries no labels" described
+    what the owner usually types, not what the code permits — and the PWA's frozen block
+    reads its answers straight back out of this text (`asked.answersFromReply`).
+
+    The composer is a bare `<textarea>` with no key handling, so Enter inserts a newline,
+    and the questions are on screen directly above it: quoting one back is how people
+    reply in a thread. Unstripped, the aside became its own `\n\n` chunk, matched the
+    read-back, and the block showed that question answered in words `_pair` had DROPPED
+    and `owner_reply_notice` had reported as still open — the inverse display F1 fixed,
+    re-created from the other side.
+
+    ⟲ **And every word the owner wrote survives — which is R3f's third review, finding 3b,
+    because the first version of this did not manage it.** It took the label off every line
+    that carried one, so an enumerated reply came back with its `A:` deleted and its `B:`
+    kept. The cut is now made only on a chunk the read-back would actually accept as a
+    pair, so the label that comes off is always the channel's and never his."""
+    from jbrain.analysis.clarify import OwnerReply, owner_turn_text
+
+    reply = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?"],
+        clarified=True,
+        note_moved=False,
+    )
+    mixed = owner_turn_text("Q: Which coach?\nA: nobody at all", reply, [("q1", "My sister.")])
+    assert mixed == "Q: Which Sarah?\nA: My sister.\n\nWhich coach?\nnobody at all"
+
+    # The prose-only send is the same hole from the other side: there the typed words ARE
+    # the whole turn text, so nothing else has to go wrong for the forgery to be read back.
+    assert owner_turn_text("Q: Which coach?\nA: nobody", reply, []) == "Which coach?\nnobody"
+
+    # A turn with no open set above it is left verbatim — nothing can read it back as an
+    # answer, and the PWA's mirror leaves it alone too, so bubble and transcript agree.
+    assert owner_turn_text("Q: rhetorically?", None, []) == "Q: rhetorically?"
+
+    # THE OWNER'S OWN LABELS STAY. An enumerated reply is not a pair — `answersFromReply`
+    # anchors on a `Q:` line with an `A:` under it — so nothing here is a forgery and
+    # nothing comes off. Deleting his `A:` while keeping his `B:` was the mangling, and
+    # after finding 3a this same string is what lands on the note.
+    enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician"
+    assert owner_turn_text(enumerated, reply, []) == enumerated
+    # A `Q:` line with no `A:` under it is not a pair either, and neither is a pair split
+    # across the blank line that ENDS a chunk.
+    assert owner_turn_text("Q: which one?", reply, []) == "Q: which one?"
+    assert owner_turn_text("Q: which one?\n\nA: that one", reply, []) == (
+        "Q: which one?\n\nA: that one"
+    )
+    # But the real forgery still cannot get through, wherever in the message it sits.
+    assert owner_turn_text("an aside\n\nQ: Which coach?\nA: nobody", reply, []) == (
+        "an aside\n\nWhich coach?\nnobody"
+    )
+
+
+def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
+    """The two renderings of one turn must stay BYTE-IDENTICAL — that is what F1's fix
+    bought, and a sanitiser that drifts between them un-buys it silently: the optimistic
+    bubble would say one thing and the reload another, which is the class of bug this
+    whole wave keeps finding. There is no cross-language test runner here, so the gate is
+    the shape `test_tap_targets.py` uses — Python reading the frontend source that is the
+    single source of truth for its half.
+
+    ⟲ **It compared `_PAIR_LABEL.pattern`, which is FLAG-FREE** (R3f's third review,
+    finding 3c): dropping `re.MULTILINE` would have diverged the two renderers with this
+    test still green. The flags are now read off the compiled object, and the second
+    pattern — the chunk shape that DECIDES whether a chunk is sanitised at all (finding
+    3b) — is pinned beside it, because that is the half a drift would now silently move.
+
+    ⟲ **And then the flags matched while the patterns did not MEAN the same thing** (R3f's
+    fourth review, finding 7): `/m` counts a lone CR and U+2028/U+2029 as line starts where
+    `re.MULTILINE` counts only a newline. Both now write the line start into the pattern,
+    so this asserts neither side carries the flag at all — and
+    `test_the_two_sanitisers_agree_on_the_inputs_that_diverged` pins the behaviour the
+    pattern comparison cannot see, against the same inputs asserted in `asked.test.ts`."""
+    import re
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL, _PAIR_TRIM
+
+    # NEITHER pattern may carry a line-start flag, and that is the finding this line was
+    # rewritten for. `re.MULTILINE` and JS's `/m` are not the same flag: `/m` makes `^`
+    # match after a lone `\r` and after U+2028/U+2029 too, so two sanitisers that agreed on
+    # pattern text and on "multiline: yes" still diverged on pasted CR-bearing input. The
+    # line start is spelled `(^|\n)` in both languages now, which is why this asserts the
+    # flag is ABSENT rather than present.
+    assert not _PAIR_LABEL.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    assert not _PAIR_CHUNK.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
+
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    # `g` is the one flag the label pattern still needs — the JS spelling of `sub`'s
+    # replace-every (Python's `sub` is global by default). The captured line start is put
+    # back by the replacement, `$1` there and a backslash-1 here.
+    assert f'chunk.replace(/{_PAIR_LABEL.pattern}/g, "$1")' in asked
+    # And the chunk shape both sides now gate on — the PWA's single `PAIR_CHUNK` const,
+    # which `answersFromReply` READS with and `stripPairLabels` decides with, so one edit
+    # moves the writer and the reader together.
+    assert f"const PAIR_CHUNK = /{_PAIR_CHUNK.pattern}/;" in asked
+    # And the TRIM in front of that gate, which is the half the fifth review found drifting
+    # while the patterns matched: `.strip()` and `.trim()` are different cuts, so both
+    # sides spell one class instead. Every pair gate on either side takes it — the two
+    # here, and `ownerTurnText`'s join — so a new call site written with `.trim()` is a
+    # hole, and `asked.corpus.json` is what would catch one.
+    assert "const PAIR_TRIM =" in asked
+    assert f"/{_PAIR_TRIM.pattern}/g;" in asked
+    assert "PAIR_CHUNK.test(pairTrim(chunk))" in asked
+    assert "PAIR_CHUNK.exec(pairTrim(chunk))" in asked
+    assert "const typed = pairTrim(safe);" in asked
+
+
+def test_the_pwa_selects_on_the_id_shape_this_tool_actually_mints() -> None:
+    """The PWA decides whether a question block may be ANSWERED by looking at the ids on
+    the step (`asked.recordsIds`), and it now tests their SHAPE rather than their presence
+    — R3f's fifth review, finding 4. "The model never sends an id" was an absolute, and
+    `required` buys presence, not membership: nothing stops a model emitting an undeclared
+    property, so a deploy-window step whose model wrote its own ids rendered answerable and
+    posted ids the ledger never held.
+
+    A shape is not a membership proof and is not used as one (`clarify._pair` still matches
+    against the open set). What it must be is the shape THIS handler mints, so the gate
+    runs the minting rather than restating it: change `_asked`'s id format and the PWA
+    would quietly read every live block as read-only until this fails."""
+    import re
+    from pathlib import Path
+
+    from jbrain.agent.asktools import _asked
+
+    minted = _asked({"questions": [{"question": "Which Sarah?"}, "a bare string row"]})
+    assert len(minted) == 2
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    assert "const MINTED_ID = /^q[0-9a-f]{8}$/;" in asked
+    assert all(re.fullmatch(r"q[0-9a-f]{8}", q.id) for q in minted), [q.id for q in minted]
+    # And the bare-string row is one this tool RECORDS, which is why the PWA renders it
+    # (read-only) instead of drawing nothing on a thread that is really waiting.
+    assert minted[1].question == "a bare string row"
+
+
+def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
+    """The behaviour the pattern comparison above cannot see (R3f's fourth review, finding
+    6). Measured over twenty-three inputs, exactly two diverged, and both carried a line
+    terminator JS counts and Python does not — so they are the two pinned here, with the
+    same inputs and the same expected output asserted in `asked.test.ts`. Two suites in two
+    languages is the only cross-language gate available; what makes it a gate rather than
+    two coincidences is that the strings are identical in both files."""
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    # A lone CR: a line start to JS's `/m`, an ordinary character to Python. The trailing
+    # `A: c` is NOT at a line start, so its label is the owner's word and stays.
+    assert _strip_pair_labels("Q: a\nA: b\rA: c") == "a\nb\rA: c"
+    # U+2028, the same divergence through a rich-text paste rather than a Windows one.
+    assert _strip_pair_labels("Q: a\nA: b\u2028A: c") == "a\nb\u2028A: c"
+    # And the shape the cut IS for, unchanged: a real pair loses both labels.
+    assert _strip_pair_labels("Q: a\nA: b") == "a\nb"
+
+
+def test_both_sanitisers_agree_over_the_whitespace_corpus() -> None:
+    """The gate the pattern comparison cannot be: a corpus run through BOTH
+    implementations (R3f's fifth review, finding 1).
+
+    `asked.corpus.json` holds the Q/A pair the reader accepts, wrapped in every character
+    either language calls whitespace — and three neither does. This suite asserts Python
+    maps each `in` to its `out`; `asked.test.ts` asserts the PWA's `stripPairLabels` maps
+    the same `in` to the same `out`. Two suites, one file, so a divergence fails in
+    whichever package introduced it rather than in neither.
+
+    **Why this exists and the pattern comparison above does not suffice.** The two regexes
+    were byte-identical and the two sanitisers still disagreed on thirteen of these inputs,
+    because the difference lived in the trim in FRONT of the pattern: `str.strip()` cuts
+    U+0085 and U+001C-U+001F, `String.trim()` cuts U+FEFF, and neither cuts the other's. A
+    BOM-prefixed `Q: <the exact question>\nA: <words>` therefore failed the backend's chunk
+    gate, survived into the persisted turn AND the note's clarification block, and was read
+    straight back by `answersFromReply` (which trims the BOM) as that row's answer — a
+    fabricated pair in the owner's own corpus. A string-comparison gate cannot see that
+    class of drift. This one runs the code.
+
+    **It also fails when the corpus is regenerated to make a suite green** — that is the
+    point of committing expected output rather than a property. A deliberate change to the
+    cut moves both implementations and the file in one commit."""
+    import json
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    corpus = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.corpus.json"
+        ).read_text(encoding="utf-8")
+    )
+    cases = corpus["cases"]
+    # A corpus that shrank to nothing would pass vacuously; the union is 30 characters and
+    # every one of them is wrapped four ways.
+    assert len(cases) > 120
+    for case in cases:
+        assert _strip_pair_labels(case["in"]) == case["out"], repr(case["in"])
+    # The property the corpus is FOR, stated on the side that can state it: the BOM no
+    # longer walks a pair past this gate. The `A:` goes, which is the half that made the
+    # chunk readable — `answersFromReply` anchors on a `Q:` line with an `A:` UNDER it, so
+    # what is left cannot be read back as anything. The leading `Q:` stays because the BOM
+    # is not a line start, which is the same rule that keeps the owner's enumerated `A:`/
+    # `B:` above. (The other half — that the PWA's reader finds no pair in ANY sanitised
+    # output of this corpus — is asserted in `asked.test.ts`, where the reader lives.)
+    assert _strip_pair_labels("\ufeffQ: Which coach?\nA: forged") == "\ufeffQ: Which coach?\nforged"
 
 
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
@@ -3168,11 +3397,11 @@ def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> Non
 def test_pairing_reports_the_words_it_could_not_file() -> None:
     """`_pair`'s two dropping rules, each returning what it dropped.
 
-    Free text beside a COMPLETE structured set is chat with nowhere to go; a structured
-    answer naming an id the open set does not carry is a stale block replayed out of a
-    reopened thread (§3b I9). Both were silent before — the second logged a warning
-    nobody downstream could read — and both are the owner's own words reaching no note,
-    which is the condition the reply turn's write verbs now turn on."""
+    Free text beside a structured answer is chat with nowhere to go; a structured answer
+    naming an id the open set does not carry is a stale block replayed out of a reopened
+    thread (§3b I9). Both were silent before — the second logged a warning nobody
+    downstream could read — and both are the owner's own words reaching no note, which is
+    the condition the reply turn's write verbs now turn on."""
     from jbrain.analysis.clarify import _pair
     from jbrain.models.note_conversation import AskedQuestion
 
@@ -3181,15 +3410,27 @@ def test_pairing_reports_the_words_it_could_not_file() -> None:
     assert answered == {"q1": "Dana Reeve"}
     assert dropped == ["also she moved"]
 
-    # A stale id: dropped, and the prose then answers the question it left open.
+    # A stale id: dropped — and so is the prose, because the send CARRIED a structured
+    # answer. R3f's review, finding 5: the rule is keyed on the block having been used at
+    # all, not on whether its answers landed. The owner was typing beside a block here,
+    # and his sentence is no more an answer to the question that block left open than it
+    # would be beside a tap that had landed.
     answered, dropped = _pair(one, [("q9", "from a closed set")], "Dana Reeve", session_id="s")
-    assert answered == {"q1": "Dana Reeve"}
-    assert dropped == ["from a closed set"]
+    assert answered == {}
+    assert dropped == ["from a closed set", "Dana Reeve"]
 
-    # The ordinary partial send: prose answers the oldest open question, nothing is lost.
+    # Free text ALONE still answers the oldest open question, and cannot mispair: with
+    # nothing else in the send there is only one thing it could be answering.
     two = [*one, AskedQuestion(id="q2", question="Which coach?")]
     answered, dropped = _pair(two, [], "Dana Reeve", session_id="s")
     assert answered == {"q1": "Dana Reeve"} and dropped == []
+
+    # But beside ONE tap on a THREE-question set it is filed against nothing — the
+    # mispairing that finding is about: "this note is about Kaiya not me" typed beside a
+    # tap used to be appended as the owner's answer to "Which coach?".
+    answered, dropped = _pair(two, [("q2", "her own")], "this is about Kaiya", session_id="s")
+    assert answered == {"q2": "her own"}
+    assert dropped == ["this is about Kaiya"]
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:

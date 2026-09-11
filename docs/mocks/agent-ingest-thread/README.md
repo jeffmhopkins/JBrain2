@@ -7,7 +7,7 @@
 > The spec written out of it is that plan's **§3b**, and the build is its **R3f** wave
 > (backed by **R1c**, the batched ask). Companion gate:
 > `docs/mocks/agent-ingest/README.md` (where a note thread lives — variant C, D1).
-> **Last verified:** 2026-09-10.
+> **Last verified:** 2026-09-11.
 
 ## What it settles
 
@@ -32,7 +32,11 @@ the shipped transcript classes (`.fb-act-think` / `.fb-act-work` / `.fb-step-row
 the code on the question block and the carry strip; the code overrules the mock on the
 Thought/Worked panel (one body, not two), the live phase line's home, the settled row's
 chip, **the ask chip's colour** (the mock draws it rose, which in the shipped palette is the
-MEDICAL domain), and the mode row, which the mock hides and the app must not.
+MEDICAL domain), **what the ask chip IS** (the mock draws a `<span>`; the shipped chip is a
+`<button>` with a 44px minimum box, because it is a tap target inside a WRAPPING row whose
+own tap opens a different screen — `backend/tests/unit/test_tap_targets.py` gates it, and
+the box grows rather than a hit area bleeding onto the attachment links beside it), and the
+mode row, which the mock hides and the app must not.
 
 Its own rail names the two gaps it exposed: the ingest verbs missing from `status.ts`'s
 live-phase label map, and a half-filled block with nowhere to live.
