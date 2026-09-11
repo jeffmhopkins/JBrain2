@@ -113,7 +113,6 @@ from jbrain.analysis.supersession import (
 )
 from jbrain.analysis.trace import build_trace
 from jbrain.analysis.weight import ConfidenceSignals
-from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
@@ -702,34 +701,34 @@ class AnalysisPipeline:
                 )
             )
 
-    async def canonicalize_intent(self, intent: IntegrationIntent) -> None:
-        """Public entry for the durable predicate-alias collapse — the supported seam a
-        caller runs BEFORE the arbiter keys facts, so a past owner map/rename decision
-        lands on the canonical graph address."""
-        await self._canonicalize_predicates(intent)
+    async def _canonicalize_predicates(
+        self, session: AsyncSession, extraction: Extraction, note_id: uuid.UUID
+    ) -> None:
+        """Collapse each unknown predicate through the durable `predicate_aliases` map
+        (past owner map/rename decisions) before anything keys it. An unaliased predicate
+        is tier-2 long-tail: it commits raw — no embed round-trip, no card, never
+        rejected (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
 
-    async def _canonicalize_predicates(self, intent: IntegrationIntent) -> None:
-        """Collapse each unknown predicate in the intent through the durable
-        `predicate_aliases` map (past owner map/rename decisions) before the
-        arbiter keys it. An unaliased predicate is tier-2 long-tail: it commits
-        raw — no embed round-trip, no new_predicate card, never rejected
-        (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
+        It runs HERE, on the extraction every producer commits, because R4 deleted the
+        one that used to run it. `integrate_note` collapsed its `IntegrationIntent` before
+        handing it to the arbiter, and the note conversation — which normalizes through
+        the REGISTRY in `graphwritetools`, a different map — never reached that seam at
+        all. Leaving it there would have retired the owner's own past mapping decisions
+        silently, on the only producer that reads notes now."""
         registry = get_registry()
         unknown = [
             (i, f)
-            for i, f in enumerate(intent.facts)
+            for i, f in enumerate(extraction.facts)
             if not registry.declares_predicate(f.predicate)
         ]
         if not unknown:
             return
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            aliases = await alias_canonicals(session, [f.predicate for _, f in unknown])
+        aliases = await alias_canonicals(session, [f.predicate for _, f in unknown])
         kept: set[str] = set()  # one longtail log line per raw spelling per run
         for i, fact in unknown:
             canonical = aliases.get(_norm_key(fact.predicate))
             if canonical is not None:
-                intent.facts[i] = replace(fact, predicate=canonical)
-                self._rewrite_supersession(intent, fact.predicate, canonical)
+                extraction.facts[i] = replace(fact, predicate=canonical)
                 log.info("predicate.canonicalized", raw=fact.predicate, canonical=canonical)
             elif fact.predicate not in kept:
                 kept.add(fact.predicate)
@@ -737,18 +736,8 @@ class AnalysisPipeline:
                     "predicate.longtail_kept",
                     predicate=fact.predicate,
                     kind=fact.kind,
-                    note_id=intent.note_id,
+                    note_id=str(note_id),
                 )
-
-    @staticmethod
-    def _rewrite_supersession(intent: IntegrationIntent, raw: str, canonical: str) -> None:
-        """Carry a STRONG predicate rewrite into the matching supersession
-        proposals, so compute_signals keys is_supersede on the SAME (canonical)
-        predicate the rewritten fact now uses — otherwise the proposal would name
-        the raw predicate and the supersession would silently drop."""
-        for j, sp in enumerate(intent.supersession_proposals):
-            if sp.predicate == raw:
-                intent.supersession_proposals[j] = replace(sp, predicate=canonical)
 
     async def commit_facts(
         self,
@@ -807,6 +796,9 @@ class AnalysisPipeline:
         # A producer with an agent reading its results is told there; everyone else
         # files. `CONVERSATION` is precisely "the note conversation, both runs".
         file_review_cards = settle_owner != CONVERSATION
+        # Before anything keys a fact: a past owner map/rename decision lands on the
+        # canonical graph address, for EVERY producer.
+        await self._canonicalize_predicates(session, extraction, note_id)
         resolved = await self._resolve_entities(
             session,
             extraction,

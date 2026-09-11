@@ -27,20 +27,19 @@ from jbrain.agent.locationtools import build_location_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import agent_note_executor
-from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.ingest.pipeline import IngestPipeline
-from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.models.analysis import Entity, Fact
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
+from tests.integration.pg_fixtures import analyzer
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -173,38 +172,6 @@ _EXTRACT = json.dumps(
         "temporal_tokens": [],
     }
 )
-_INTENT = json.dumps(
-    {
-        "resolutions": [
-            {"mention_ref": _PLACE, "mode": "new", "new_kind": "Place", "new_name": _PLACE}
-        ],
-        "facts": [
-            {
-                "entity_ref": _PLACE,
-                "predicate": "geofence",
-                "kind": "state",
-                "assertion": "asserted",
-                "statement": f"{_PLACE} is a saved geofence.",
-                "value_json": {
-                    "center": {"latitude": _LAT, "longitude": _LON},
-                    "radiusMeters": _RADIUS,
-                },
-                "self_confidence": 0.95,
-                "chunk_id": "x",
-                "surface": _PLACE,  # present in the body → surface-attested → commit
-            }
-        ],
-    }
-)
-
-
-def _pipeline(maker: async_sessionmaker) -> AnalysisPipeline:
-    fake = FakeLlmClient(responses=[_EXTRACT, _INTENT])
-    router = LlmRouter(
-        {"xai": fake},
-        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-    )
-    return AnalysisPipeline(maker, router)
 
 
 async def _place_geofence_count(maker: async_sessionmaker) -> int:
@@ -261,10 +228,10 @@ async def test_save_place_stages_then_approval_projects_place_geofence(
 
     note_id = jobs.enqueued[0][1]["note_id"]
 
-    # 3) Drive the SHIPPED pipeline the note re-entered: ingest → extraction →
-    # integration → project_place_geofences (Place-only projection already exists).
+    # 3) Drive the SHIPPED write path the note re-entered: ingest → a producer's
+    # reading → project_place_geofences (Place-only projection already exists).
     await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
-    await _pipeline(maker).integrate_note({"note_id": note_id})
+    await analyzer(maker, [_EXTRACT]).analyze_note({"note_id": note_id})
 
     # 4) The owner-approved NOTE produced the Place entity, the geofence fact, AND the
     # mirror row — none of which the tool wrote directly (#7).

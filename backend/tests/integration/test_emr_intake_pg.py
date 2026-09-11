@@ -19,7 +19,7 @@ from jbrain.models.notes import Attachment, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import make_note, maker  # noqa: F401
 from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [

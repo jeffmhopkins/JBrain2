@@ -1,7 +1,8 @@
-"""What outlived `note.extract`: the version stamped on every fact, and the per-note
-fact budget the parse enforces.
+"""What outlived `note.extract`: the version stamped on every fact, the per-note fact
+budget the parse enforces, and the marker that says a block of a note was read by a
+machine.
 
-R4 deleted the note.extract prompt, its schema and the chain that called it. Two things
+R4 deleted the note.extract prompt, its schema and the chain that called it. Three things
 it carried are NOT the prompt's and did not die with it:
 
 **PROMPT_VERSION** is stamped on `facts.prompt_version` and `note_analysis.prompt_version`
@@ -11,9 +12,14 @@ note-conversation persona, read the same way from its own prompt file's frontmat
 it there (`agent/prompts/note_ingest.prompt`) whenever that persona's contract changes.
 
 **The fact budget** bounds a runaway reading. It was the extraction prompt's `config`
-block; with the prompt gone the numbers are constants here, and they are still exactly
-what `extraction.parse_extraction` and `analysis.intent_parse`-shaped bounds enforce. It
-is a CEILING, never a target.
+block; with the prompt gone the numbers are constants here, and they are still what
+`extraction.parse_extraction` enforces. It is a CEILING, never a target.
+
+**`prompt_block`** marks an attachment's OCR / caption / transcript text where it is
+concatenated into the note a reader is given. The deleted chain built the note out of
+paragraph CHUNKS and marked each one; the note conversation composes the same text in
+`converse.NoteConverseRunner._note_text`, which is what keeps a photographed receipt
+saying something to the graph.
 """
 
 from pathlib import Path
@@ -42,3 +48,37 @@ def fact_cap(text: str) -> int:
     [MIN_FACTS, MAX_FACTS]. A whitespace word count is a deliberately coarse
     proxy — the cap only bounds runaway extraction, it never sets a target."""
     return max(MIN_FACTS, min(MAX_FACTS, len(text.split()) // _WORDS_PER_FACT))
+
+
+# An audio transcript whose words' mean confidence sits below this reads as
+# "low-confidence" in its marker, so the reader discounts facts built on it harder
+# than a clean transcription (the analysis half of the per-word data the UI colors).
+TRANSCRIPT_LOW_CONFIDENCE = 0.6
+
+
+def prompt_block(
+    text: str, *, source_kind: str, filename: str | None, confidence: float | None = None
+) -> str:
+    """One machine-read attachment block as the reader sees it.
+
+    OCR, caption, transcript and video-analysis text announce their provenance: the
+    persona's confidence rule ("lower it for garbled, OCR-derived, audio-transcribed, or
+    uncertain content") only fires if the model can TELL the text is machine-read —
+    nothing else in the concatenated note content conveys it. Facts from these blocks
+    then inherit reduced confidence, which is what keeps a misread health number from
+    auto-superseding anything (docs/reference/ANALYSIS.md "Guards"). A transcript
+    additionally carries a "low-confidence" qualifier when its measured confidence was
+    low, so the reader discounts a noisy clip harder."""
+    name = filename or "attachment"
+    if source_kind == "ocr":
+        return f"[ocr from {name}]\n{text}"
+    if source_kind == "caption":
+        return f"[image caption of {name}]\n{text}"
+    if source_kind == "transcript":
+        low = confidence is not None and confidence < TRANSCRIPT_LOW_CONFIDENCE
+        return f"[{'low-confidence ' if low else ''}transcript from {name}]\n{text}"
+    if source_kind == "video_analysis":
+        # A machine-watched summary, not the author's words — mark it so facts mined
+        # from it inherit the same reduced confidence as OCR/transcript (Guards).
+        return f"[video analysis of {name}]\n{text}"
+    return text

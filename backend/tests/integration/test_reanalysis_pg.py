@@ -120,7 +120,7 @@ async def analyze(
     # a different extraction exercises the genuine retraction/supersession sweep.
     # `intent_json` is served to integrate.note ahead of that default (which the
     # driver still appends, unread) for a test that needs the arbiter to HOLD a fact.
-    from tests.integration.test_extraction_pg import analyzer
+    from tests.integration.pg_fixtures import analyzer
 
     responses = [extraction_json] + ([intent_json] if intent_json is not None else [])
     await analyzer(maker, responses).analyze_note({"note_id": note_id})

@@ -17,15 +17,13 @@ import pytest
 import structlog.testing
 from sqlalchemy import text
 
-from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.predicates import raw_descriptor, record_predicate_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
-from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import analyzer, ingest, make_note, maker  # noqa: F401
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -51,8 +49,9 @@ class _FakeEmbed:
         return [_vec(t) for t in texts]
 
 
-def _router(predicate: str) -> LlmRouter:
-    extract = json.dumps(
+def _extraction(predicate: str) -> str:
+    """The scripted reading of `_STMT`: one relationship edge on `predicate`."""
+    return json.dumps(
         {
             "title": "t",
             "tags": [],
@@ -60,43 +59,23 @@ def _router(predicate: str) -> LlmRouter:
                 {"name": "Pat", "kind": "Person", "surface_text": "Pat"},
                 {"name": "Dana", "kind": "Person", "surface_text": "Dana"},
             ],
-            "facts": [],
-            "temporal_tokens": [],
-        }
-    )
-    intent = json.dumps(
-        {
-            "resolutions": [
-                {"mention_ref": "m1", "mode": "new", "new_kind": "Person", "new_name": "Pat"},
-                {"mention_ref": "m2", "mode": "new", "new_kind": "Person", "new_name": "Dana"},
-            ],
             "facts": [
                 {
-                    "entity_ref": "m1",
+                    "entity_ref": "Pat",
+                    "object_entity_ref": "Dana",
                     "predicate": predicate,
+                    "qualifier": "",
                     "kind": "relationship",
                     "assertion": "asserted",
                     "statement": _STMT,
-                    "object_entity_ref": "m2",
-                    "self_confidence": 0.95,
-                    "surface": "married",
+                    "value_json": None,
+                    "temporal": None,
+                    "domain": "general",
+                    "confidence": 0.95,
                 }
             ],
+            "temporal_tokens": [],
         }
-    )
-    return LlmRouter(
-        {"xai": FakeLlmClient(responses=[extract, intent])},
-        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-    )
-
-
-def _pipeline(maker, predicate: str, *, embedder: _FakeEmbed | None = None) -> AnalysisPipeline:  # noqa: F811
-    return AnalysisPipeline(
-        maker,
-        _router(predicate),
-        embedder=embedder,
-        embed_model=_MODEL if embedder else "",
-        settings=SqlSettingsStore(maker),
     )
 
 
@@ -153,7 +132,7 @@ async def test_durable_alias_rewrites_the_committed_predicate(maker, tmp_path): 
     note_id = await make_note(maker, domain="general", body=_STMT)
     await ingest(maker, note_id, tmp_path)
 
-    await _pipeline(maker, pred).integrate_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred)]).analyze_note({"note_id": note_id})
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates  # rewritten before keying
@@ -171,7 +150,9 @@ async def test_longtail_predicate_commits_raw_with_no_card(maker, tmp_path):  # 
     embedder = _FakeEmbed()
 
     with structlog.testing.capture_logs() as logs:
-        await _pipeline(maker, pred, embedder=embedder).integrate_note({"note_id": note_id})
+        await analyzer(
+            maker, [_extraction(pred)], embedder=embedder, embed_model=_MODEL
+        ).analyze_note({"note_id": note_id})
 
     assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
     # The live embedder still serves graph-context entity candidates, but the
@@ -192,7 +173,7 @@ async def test_alias_collapse_ignores_the_repurposed_setting(maker, tmp_path):  
     note_id = await make_note(maker, domain="general", body=_STMT)
     await ingest(maker, note_id, tmp_path)
 
-    await _pipeline(maker, pred).integrate_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred)]).analyze_note({"note_id": note_id})
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates

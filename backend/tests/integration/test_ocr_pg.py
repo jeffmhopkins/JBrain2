@@ -25,10 +25,11 @@ from jbrain.ingest.ocr import DESCRIPTION_SYSTEM, MAX_OCR_BYTES, OCR_SYSTEM, Ocr
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.vision import OcrResult, OcrServiceError
-from tests.conftest import SchemaRoutedLlmClient, docker_available
+from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
 pytestmark = [
@@ -266,12 +267,18 @@ async def test_ocr_round_trip_blob_to_searchable_chunks(
     assert await ocr_jobs_for(maker, attachment_id) == 1
 
 
-async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
+async def test_the_note_the_agent_reads_carries_marked_ocr_text(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
-    """The extraction call must SEE which text is machine-read: OCR chunks
-    reach note.extract prefixed with their provenance marker (Guards)."""
-    from jbrain.analysis.pipeline import AnalysisPipeline
+    """A photographed receipt has to SAY something to the graph, and the reader has to
+    know which words a machine read.
+
+    The deleted `integrate_note` built its prompt out of the note's paragraph chunks,
+    which is where OCR and caption text live; the note conversation reads the note
+    through `converse.note_text`, which composes the same thing — body first, then each
+    attachment's extract behind its provenance marker (Guards). Without that a capture
+    the owner watched succeed produces no facts at all (CLAUDE.md #10)."""
+    from jbrain.analysis.converse import note_text
 
     note_id, attachment_id = await make_note_with_image(
         maker, blobs, body="filed the receipt", filename="receipt.png", domain="general"
@@ -283,28 +290,14 @@ async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
     ).ocr_attachment({"attachment_id": attachment_id})
     await pipeline.ingest_note({"note_id": note_id})
 
-    # The body and the attachment now extract in SEPARATE note.extract calls
-    # (per-source extraction), so the markers are asserted across every extract call.
-    # A schema-routed fake answers each note.extract with the extraction and the lone
-    # integrate.note with the empty intent, regardless of how many source groups run.
-    fake = SchemaRoutedLlmClient(
-        '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-        ' "temporal_tokens": []}',
-        '{"resolutions": [], "facts": []}',
-    )
-    analyzer = AnalysisPipeline(
-        maker,
-        LlmRouter(
-            {"xai": fake},
-            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-        ),
-    )
-    await analyzer.integrate_note({"note_id": note_id})
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(SYSTEM_CTX, note_id)
+    assert note is not None
+    text_read = await note_text(repo, SYSTEM_CTX, note)
 
-    extract_text = "\n".join(c["user_text"] for c in fake.calls)
-    assert "[ocr from receipt.png]\nTotal: $41.20" in extract_text
-    assert "[image caption of receipt.png]\nA grocery receipt." in extract_text
-    assert "filed the receipt" in extract_text  # body chunk stays unmarked
+    assert "[ocr from receipt.png]\nTotal: $41.20" in text_read
+    assert "[image caption of receipt.png]\nA grocery receipt." in text_read
+    assert text_read.startswith("filed the receipt")  # the body leads, unmarked
 
 
 async def test_ingest_skips_ocr_for_oversized_images(

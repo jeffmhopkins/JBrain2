@@ -33,7 +33,7 @@ from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.models.core import Subject
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import (  # noqa: F401
+from tests.integration.pg_fixtures import (  # noqa: F401
     ingest,
     make_note,
     maker,
@@ -574,7 +574,7 @@ async def test_the_domain_floor_fires_silently_because_there_is_nothing_to_propo
 
 def test_card_filing_is_derived_from_the_producer_and_cannot_be_forgotten() -> None:
     """Who files is not a keyword anyone can omit — it is a function of `settle_owner`,
-    which every one of the four seams already requires with no default.
+    which every one of those seams already requires with no default.
 
     A defaulted `file_review_cards` would have replayed the failure
     `tests/unit/test_settle_owner.py` pins the opposite discipline against ("a default is

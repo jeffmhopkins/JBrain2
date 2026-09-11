@@ -53,12 +53,12 @@ SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
 
 
 def fake_router(fake: FakeLlmClient) -> LlmRouter:
-    return LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")})
+    return LlmRouter({"xai": fake}, {"video.summarize": ("xai", "grok-4.3")})
 
 
 async def test_complete_routes_task_to_provider_model() -> None:
     fake = FakeLlmClient(["fine"])
-    result = await fake_router(fake).complete("note.extract", system="s", user_text="u")
+    result = await fake_router(fake).complete("video.summarize", system="s", user_text="u")
     assert result.text == "fine"
     assert fake.calls[0]["model"] == "grok-4.3"
     assert fake.calls[0]["system"] == "s"
@@ -92,8 +92,8 @@ async def test_local_admit_not_called_for_a_cloud_completion() -> None:
     fake = FakeLlmClient(["ok"])
     residency = _FakeResidency()
 
-    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, residency=residency)
-    await router.complete("note.extract", system="s", user_text="u")
+    router = LlmRouter({"xai": fake}, {"video.summarize": ("xai", "grok-4.3")}, residency=residency)
+    await router.complete("video.summarize", system="s", user_text="u")
     assert residency.admitted == []  # cloud models never touch the local residency budget
 
 
@@ -145,7 +145,7 @@ async def test_unknown_task_raises() -> None:
 async def test_json_reask_nudges_once_then_succeeds() -> None:
     fake = FakeLlmClient(["this is prose, not JSON", '{"ok": true}'])
     result = await fake_router(fake).complete(
-        "note.extract", system="s", user_text="u", json_schema=SCHEMA
+        "video.summarize", system="s", user_text="u", json_schema=SCHEMA
     )
     assert result.parsed == {"ok": True}
     assert len(fake.calls) == 2
@@ -156,7 +156,7 @@ async def test_json_reask_failure_raises_bad_response() -> None:
     fake = FakeLlmClient(["nope", "still nope"])
     with pytest.raises(LlmBadResponseError, match="after re-ask"):
         await fake_router(fake).complete(
-            "note.extract", system="s", user_text="u", json_schema=SCHEMA
+            "video.summarize", system="s", user_text="u", json_schema=SCHEMA
         )
     assert len(fake.calls) == 2
 
@@ -164,7 +164,7 @@ async def test_json_reask_failure_raises_bad_response() -> None:
 async def test_valid_json_needs_no_reask() -> None:
     fake = FakeLlmClient(['{"ok": false}'])
     result = await fake_router(fake).complete(
-        "note.extract", system="s", user_text="u", json_schema=SCHEMA
+        "video.summarize", system="s", user_text="u", json_schema=SCHEMA
     )
     assert result.parsed == {"ok": False}
     assert len(fake.calls) == 1
@@ -172,7 +172,7 @@ async def test_valid_json_needs_no_reask() -> None:
 
 async def test_no_schema_means_no_parse_and_no_reask() -> None:
     fake = FakeLlmClient(["just text"])
-    result = await fake_router(fake).complete("note.extract", system="s", user_text="u")
+    result = await fake_router(fake).complete("video.summarize", system="s", user_text="u")
     assert result.parsed is None
     assert len(fake.calls) == 1
 
@@ -191,8 +191,8 @@ async def test_model_recommended_sampling_is_applied_with_no_override() -> None:
 
 async def test_cloud_default_sampling_reaches_the_client() -> None:
     fake = FakeLlmClient(["ok"])
-    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")})
-    await router.complete("note.extract", system="s", user_text="u")
+    router = LlmRouter({"xai": fake}, {"video.summarize": ("xai", "grok-4.3")})
+    await router.complete("video.summarize", system="s", user_text="u")
     assert fake.calls[0]["sampling"] == Sampling(temperature=0.7, top_p=0.95)
 
 
@@ -247,7 +247,7 @@ async def test_build_router_wires_all_three_providers() -> None:
         anthropic_api_key="ant-key",
         xai_api_key="xai-key",
         llm_tasks={
-            "note.extract": "anthropic:claude-sonnet-4-6",
+            "video.summarize": "anthropic:claude-sonnet-4-6",
             "vision.ocr": "local:llava",
         },
     )
@@ -263,7 +263,7 @@ async def test_build_router_wires_all_three_providers() -> None:
     )
 
     assert (
-        await router.complete("note.extract", system="s", user_text="u")
+        await router.complete("video.summarize", system="s", user_text="u")
     ).text == "from-anthropic"
     assert (await router.complete("vision.ocr", system="s", user_text="u")).text == "from-llava"
     # Untouched tasks keep the xai:grok-4.3 default.
@@ -281,7 +281,7 @@ def _tiered_router(
 ) -> LlmRouter:
     return LlmRouter(
         {"xai": xai, "anthropic": anthropic},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         tiers={"high": ("anthropic", "claude-x"), "low": ("xai", "grok-cheap")},
         pinned=pinned,
     )
@@ -290,16 +290,16 @@ def _tiered_router(
 async def test_strength_resolves_through_the_tier_not_the_task_default() -> None:
     xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
     router = _tiered_router(xai, anthropic)
-    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    await router.complete("video.summarize", system="s", user_text="u", strength="high")
     # high tier -> anthropic:claude-x, overriding the task default xai:grok-4.3.
     assert anthropic.calls[0]["model"] == "claude-x" and not xai.calls
-    assert router.spec("note.extract", "high") == ("anthropic", "claude-x")
+    assert router.spec("video.summarize", "high") == ("anthropic", "claude-x")
 
 
 async def test_explicit_task_pin_outranks_the_prompt_strength() -> None:
     xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
-    router = _tiered_router(xai, anthropic, pinned=frozenset({"note.extract"}))
-    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    router = _tiered_router(xai, anthropic, pinned=frozenset({"video.summarize"}))
+    await router.complete("video.summarize", system="s", user_text="u", strength="high")
     # The operator pinned the task, so the pin wins over the prompt's tier.
     assert xai.calls[0]["model"] == "grok-4.3" and not anthropic.calls
 
@@ -307,7 +307,7 @@ async def test_explicit_task_pin_outranks_the_prompt_strength() -> None:
 async def test_unknown_strength_tier_raises() -> None:
     router = _tiered_router(FakeLlmClient(), FakeLlmClient())
     with pytest.raises(LlmError, match="unknown LLM strength tier"):
-        await router.complete("note.extract", system="s", user_text="u", strength="turbo")
+        await router.complete("video.summarize", system="s", user_text="u", strength="turbo")
 
 
 def test_resolve_tiers_defaults_overrides_and_unknown() -> None:
@@ -325,11 +325,11 @@ def test_resolve_tiers_defaults_overrides_and_unknown() -> None:
 
 def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
     router = build_router(
-        Settings(llm_tasks={"note.extract": "anthropic:claude-sonnet-4-6"}),
+        Settings(llm_tasks={"video.summarize": "anthropic:claude-sonnet-4-6"}),
         residency=_inert_residency(),
     )
     # The pinned task resolves to its pin even when a strength tier is requested.
-    assert router.spec("note.extract", "high") == ("anthropic", "claude-sonnet-4-6")
+    assert router.spec("video.summarize", "high") == ("anthropic", "claude-sonnet-4-6")
     # An unpinned task still honours the tier.
     assert router.spec("vision.ocr", "high") == ("xai", "grok-4.3")
 
@@ -373,7 +373,7 @@ def _override_router(
 
     return LlmRouter(
         clients,
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         tiers={"high": ("xai", "grok-strong"), "low": ("xai", "grok-cheap")},
         pinned=pinned,
         overrides_loader=load,
@@ -386,10 +386,10 @@ async def test_stored_spec_overrides_env_pin_and_tier() -> None:
     # win over both — the UI is the live control surface.
     router = _override_router(
         {"xai": xai, "anthropic": anthropic},
-        {"note.extract": {"spec": "anthropic:claude-x"}},
-        pinned=frozenset({"note.extract"}),
+        {"video.summarize": {"spec": "anthropic:claude-x"}},
+        pinned=frozenset({"video.summarize"}),
     )
-    await router.complete("note.extract", system="s", user_text="u", strength="high")
+    await router.complete("video.summarize", system="s", user_text="u", strength="high")
     assert anthropic.calls[0]["model"] == "claude-x" and not xai.calls
 
 
@@ -399,26 +399,26 @@ async def test_stale_local_override_ignored_when_hosting_disabled() -> None:
     xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
 
     async def load() -> dict[str, dict[str, str]]:
-        return {"note.extract": {"spec": "local:qwen3-vl-30b-a3b"}}
+        return {"video.summarize": {"spec": "local:qwen3-vl-30b-a3b"}}
 
     router = LlmRouter(
         {"xai": xai, "local": local},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         overrides_loader=load,
         local_enabled=False,
     )
-    await router.complete("note.extract", system="s", user_text="u")
+    await router.complete("video.summarize", system="s", user_text="u")
     assert xai.calls and not local.calls
 
     # With hosting enabled the same override IS honored.
     xai2, local2 = FakeLlmClient(["x"]), FakeLlmClient(["l"])
     router2 = LlmRouter(
         {"xai": xai2, "local": local2},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         overrides_loader=load,
         local_enabled=True,
     )
-    await router2.complete("note.extract", system="s", user_text="u")
+    await router2.complete("video.summarize", system="s", user_text="u")
     assert local2.calls and not xai2.calls
 
 
@@ -546,8 +546,8 @@ async def test_context_window_honors_a_per_model_override() -> None:
 
 async def test_stored_reasoning_effort_reaches_xai_client() -> None:
     xai = FakeLlmClient(["x"])
-    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
-    await router.complete("note.extract", system="s", user_text="u")
+    router = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "high"}})
+    await router.complete("video.summarize", system="s", user_text="u")
     assert xai.calls[0]["reasoning_effort"] == "high"
 
 
@@ -556,9 +556,9 @@ async def test_reasoning_effort_dropped_when_override_routes_off_xai() -> None:
     # A stored effort is meaningless once the spec routes to anthropic.
     router = _override_router(
         {"xai": xai, "anthropic": anthropic},
-        {"note.extract": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
+        {"video.summarize": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
     )
-    await router.complete("note.extract", system="s", user_text="u")
+    await router.complete("video.summarize", system="s", user_text="u")
     assert anthropic.calls[0]["reasoning_effort"] is None
 
 
@@ -567,26 +567,26 @@ async def test_effective_reasoning_effort_reports_the_live_effort() -> None:
     # reasoning-capable task (xai default), None once the task routes off a reasoning
     # model (Claude has no effort channel).
     xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
-    on = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
-    assert await on.effective_reasoning_effort("note.extract") == "high"
+    on = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "high"}})
+    assert await on.effective_reasoning_effort("video.summarize") == "high"
     off = _override_router(
         {"xai": xai, "anthropic": anthropic},
-        {"note.extract": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
+        {"video.summarize": {"spec": "anthropic:claude-x", "reasoning_effort": "high"}},
     )
-    assert await off.effective_reasoning_effort("note.extract") is None
+    assert await off.effective_reasoning_effort("video.summarize") is None
 
 
 async def test_effective_reasoning_effort_honors_a_per_turn_override() -> None:
     # The pick's reasoning level (the omnibox sheet) wins over the stored effort, under
     # the same capability gate as converse: a non-reasoning route still reports None.
     xai, anthropic = FakeLlmClient(["x"]), FakeLlmClient(["a"])
-    on = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "high"}})
-    assert await on.effective_reasoning_effort("note.extract", effort_override="low") == "low"
+    on = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "high"}})
+    assert await on.effective_reasoning_effort("video.summarize", effort_override="low") == "low"
     off = _override_router(
         {"xai": xai, "anthropic": anthropic},
-        {"note.extract": {"spec": "anthropic:claude-x"}},
+        {"video.summarize": {"spec": "anthropic:claude-x"}},
     )
-    assert await off.effective_reasoning_effort("note.extract", effort_override="low") is None
+    assert await off.effective_reasoning_effort("video.summarize", effort_override="low") is None
 
 
 async def test_effective_spec_follows_a_live_override_unlike_spec() -> None:
@@ -625,13 +625,13 @@ async def test_reasoning_effort_reaches_a_reasoning_capable_local_model() -> Non
     local = FakeLlmClient(["l"])
     router = LlmRouter(
         {"local": local},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         overrides_loader=_loader(
-            {"note.extract": {"spec": "local:gpt-oss-120b", "reasoning_effort": "high"}}
+            {"video.summarize": {"spec": "local:gpt-oss-120b", "reasoning_effort": "high"}}
         ),
         local_enabled=True,
     )
-    await router.complete("note.extract", system="s", user_text="u")
+    await router.complete("video.summarize", system="s", user_text="u")
     assert local.calls[0]["reasoning_effort"] == "high"
 
 
@@ -641,13 +641,13 @@ async def test_reasoning_effort_dropped_for_a_non_reasoning_local_model() -> Non
     local = FakeLlmClient(["l"])
     router = LlmRouter(
         {"local": local},
-        {"note.extract": ("xai", "grok-4.3")},
+        {"video.summarize": ("xai", "grok-4.3")},
         overrides_loader=_loader(
-            {"note.extract": {"spec": "local:qwen3-30b-a3b", "reasoning_effort": "high"}}
+            {"video.summarize": {"spec": "local:qwen3-30b-a3b", "reasoning_effort": "high"}}
         ),
         local_enabled=True,
     )
-    await router.complete("note.extract", system="s", user_text="u")
+    await router.complete("video.summarize", system="s", user_text="u")
     assert local.calls[0]["reasoning_effort"] is None
 
 
@@ -669,16 +669,16 @@ async def test_reasoning_effort_reaches_a_hybrid_qwen_local_model() -> None:
 
 
 async def test_bucket_default_effort_sent_without_an_override() -> None:
-    # Right-by-default: a high-bucket task (integrate.note) reaches the client at
+    # Right-by-default: a high-bucket task (fact.adjudicate) reaches the client at
     # high with no stored override; a medium-bucket task (agent.turn) sends None —
     # the model's own default — so the sub-agent spawner's "no chosen effort → the
     # child model's default" contract still holds.
     xai = FakeLlmClient(["a", "b"])
     router = LlmRouter(
         {"xai": xai},
-        {"integrate.note": ("xai", "grok-4.3"), "agent.turn": ("xai", "grok-4.3")},
+        {"fact.adjudicate": ("xai", "grok-4.3"), "agent.turn": ("xai", "grok-4.3")},
     )
-    await router.complete("integrate.note", system="s", user_text="u")
+    await router.complete("fact.adjudicate", system="s", user_text="u")
     assert xai.calls[0]["reasoning_effort"] == "high"
     await router.complete("agent.turn", system="s", user_text="u")
     assert xai.calls[1]["reasoning_effort"] is None
@@ -695,14 +695,14 @@ async def test_low_bucket_default_effort_sent_without_an_override() -> None:
 
 
 async def test_stored_effort_override_wins_over_the_bucket_default() -> None:
-    # integrate.note defaults high; a stored 'low' override must win over it.
+    # fact.adjudicate defaults high; a stored 'low' override must win over it.
     xai = FakeLlmClient(["a"])
     router = LlmRouter(
         {"xai": xai},
-        {"integrate.note": ("xai", "grok-4.3")},
-        overrides_loader=_loader({"integrate.note": {"reasoning_effort": "low"}}),
+        {"fact.adjudicate": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"fact.adjudicate": {"reasoning_effort": "low"}}),
     )
-    await router.complete("integrate.note", system="s", user_text="u")
+    await router.complete("fact.adjudicate", system="s", user_text="u")
     assert xai.calls[0]["reasoning_effort"] == "low"
 
 
@@ -710,8 +710,8 @@ async def test_converse_effort_override_wins_for_a_reasoning_model() -> None:
     # The per-call override (the sub-agent spawner's per-child effort) beats the
     # stored/default effort when the resolved model is reasoning-capable (xai Grok).
     xai = FakeLlmClient(["x"])
-    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "low"}})
-    await router.converse("note.extract", system="s", messages=[], effort_override="high")
+    router = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "low"}})
+    await router.converse("video.summarize", system="s", messages=[], effort_override="high")
     assert xai.converse_calls[0]["reasoning_effort"] == "high"
 
 
@@ -720,9 +720,9 @@ async def test_converse_effort_override_dropped_for_a_non_reasoning_model() -> N
     # dropped, exactly like a stored effort — the param never reaches the wire.
     anthropic = FakeLlmClient(["a"])
     router = _override_router(
-        {"anthropic": anthropic}, {"note.extract": {"spec": "anthropic:claude-x"}}
+        {"anthropic": anthropic}, {"video.summarize": {"spec": "anthropic:claude-x"}}
     )
-    await router.converse("note.extract", system="s", messages=[], effort_override="high")
+    await router.converse("video.summarize", system="s", messages=[], effort_override="high")
     assert anthropic.converse_calls[0]["reasoning_effort"] is None
 
 
@@ -800,30 +800,30 @@ async def test_spec_override_reflects_in_window_and_vision_probes() -> None:
 
 async def test_bad_stored_spec_falls_back_without_crashing() -> None:
     xai = FakeLlmClient(["x"])
-    router = _override_router({"xai": xai}, {"note.extract": {"spec": "garbage"}})
-    result = await router.complete("note.extract", system="s", user_text="u")
+    router = _override_router({"xai": xai}, {"video.summarize": {"spec": "garbage"}})
+    result = await router.complete("video.summarize", system="s", user_text="u")
     # Malformed spec ignored; the call still succeeds on the resolved default.
     assert result.text == "x" and xai.calls[0]["model"] == "grok-4.3"
 
 
 async def test_no_loader_keeps_legacy_behavior() -> None:
     xai = FakeLlmClient(["x"])
-    router = LlmRouter({"xai": xai}, {"note.extract": ("xai", "grok-4.3")})
-    await router.complete("note.extract", system="s", user_text="u")
+    router = LlmRouter({"xai": xai}, {"video.summarize": ("xai", "grok-4.3")})
+    await router.complete("video.summarize", system="s", user_text="u")
     assert xai.calls[0]["reasoning_effort"] is None
 
 
 async def test_converse_threads_stored_reasoning_effort() -> None:
     xai = FakeLlmClient(["x"])
-    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "low"}})
-    await router.converse("note.extract", system="s", messages=[])
+    router = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "low"}})
+    await router.converse("video.summarize", system="s", messages=[])
     assert xai.converse_calls[0]["reasoning_effort"] == "low"
 
 
 async def test_converse_stream_threads_stored_reasoning_effort() -> None:
     xai = FakeLlmClient(["x"])
-    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "medium"}})
-    async for _ in router.converse_stream("note.extract", system="s", messages=[]):
+    router = _override_router({"xai": xai}, {"video.summarize": {"reasoning_effort": "medium"}})
+    async for _ in router.converse_stream("video.summarize", system="s", messages=[]):
         pass
     assert xai.stream_calls[0]["reasoning_effort"] == "medium"
 
@@ -910,11 +910,11 @@ async def test_non_title_task_does_not_follow_the_agent_model() -> None:
     # A normal task keeps its own routing; only the title tasks follow agent.turn.
     router = LlmRouter(
         {"xai": FakeLlmClient(), "local": FakeLlmClient()},
-        {"agent.turn": ("xai", "grok-4.3"), "note.extract": ("xai", "grok-4.3")},
+        {"agent.turn": ("xai", "grok-4.3"), "video.summarize": ("xai", "grok-4.3")},
         overrides_loader=_loader({"agent.turn": {"spec": "local:gpt-oss-120b"}}),
         local_enabled=True,
     )
-    assert await router.effective_spec("note.extract") == ("xai", "grok-4.3")
+    assert await router.effective_spec("video.summarize") == ("xai", "grok-4.3")
 
 
 async def test_admit_local_load_reaches_residency_admission() -> None:
@@ -1123,10 +1123,10 @@ async def test_background_tasks_and_cloud_routes_never_touch_the_disk_layer() ->
     store = _RecordingKvStore()
     router = LlmRouter(
         {"local": fake, "xai": fake},
-        {"note.extract": ("local", "gpt-oss-120b"), "agent.turn": ("xai", "grok-4.3")},
+        {"video.summarize": ("local", "gpt-oss-120b"), "agent.turn": ("xai", "grok-4.3")},
         kv_prefix=store,  # type: ignore[arg-type]
     )
-    await router.converse("note.extract", system="s", messages=[])  # local, wrong task
+    await router.converse("video.summarize", system="s", messages=[])  # local, wrong task
     await router.converse("agent.turn", system="s", messages=[])  # right task, cloud
     assert store.restores == []
     assert store.noted == []

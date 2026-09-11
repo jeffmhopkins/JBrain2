@@ -230,8 +230,7 @@ class TestCitationGrounding:
 
 class TestGroundingThresholdCalibration:
     """Pins the `_GROUNDING_THRESHOLD=0.5` choice (Track R4). There is no
-    answer-grounding gold corpus in the repo (tests/eval/corpus targets the
-    extraction/integration chain, not chat-answer grounding), so the threshold is
+    answer-grounding gold corpus in the repo, so the threshold is
     kept at the conservative default and its behavior characterized here: 0.5 means
     "at least half a claim's content tokens must appear in the retrieved sources".
     Tuned UP it would flag more partially-grounded answers (more false positives,

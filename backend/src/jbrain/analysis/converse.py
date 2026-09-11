@@ -105,6 +105,7 @@ from jbrain.analysis.clarify import (
 )
 from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.prompt import prompt_block
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
@@ -196,6 +197,41 @@ NOTE_CONVERSE_SPEC = ActionSpec(
 # a waiting one, and this distinction is what it keys on.
 
 _TITLE_LEN = 60
+
+
+async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> str:
+    """The note as the agent must read it: the composed body, then every
+    MACHINE-READ attachment block after it.
+
+    Without this a photographed receipt, a scanned letter and a voice memo say
+    nothing to the graph. The deleted `integrate_note` read the note's paragraph
+    CHUNKS, which include each attachment's OCR / caption / transcript text, and R4
+    would have left this conversation reading the typed body alone — a capture the
+    owner watched succeed that quietly produced no facts (CLAUDE.md #10).
+
+    Each block keeps `prompt_block`'s provenance marker, which is not decoration: it
+    is the only thing in the text that says these words were read by a machine rather
+    than written by Jeff, and the persona discounts them accordingly (a garbled OCR
+    line must not supersede a confident value). A low-confidence transcript says so.
+
+    The blocks ride INSIDE the note frame, with the body — they are the most
+    attacker-controllable text on the box (anyone can put words in front of a camera),
+    so they are fenced exactly like a third party's body and never lifted out of it.
+    Ordering is the attachment order, after the body, so the body's own title and
+    first-reference order still lead the reading."""
+    blocks: list[str] = [note.body]
+    for att in note.attachments:
+        for ex in await notes.list_extracts(ctx, att.id) or []:
+            if ex.text.strip():
+                blocks.append(
+                    prompt_block(
+                        ex.text,
+                        source_kind=ex.kind,
+                        filename=att.filename,
+                        confidence=ex.confidence,
+                    )
+                )
+    return "\n\n".join(blocks)
 
 
 def capture_line(note: NoteInfo) -> str:
@@ -412,7 +448,7 @@ class NoteConverseRunner:
         # forge one either — which is the property that matters most on the one note
         # whose author is known to be somebody else.
         turn_0 = framed_note(
-            note.body,
+            await note_text(self.notes, owner_ctx, note),
             captured=capture_line(note),
             about=THIRD_PARTY_ABOUT if is_third_party(note.provenance) else OWN_NOTE_ABOUT,
         )

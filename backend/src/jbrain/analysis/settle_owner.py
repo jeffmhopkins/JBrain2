@@ -147,7 +147,7 @@ shadow's own set (`settle_note`). Its stamp exists only because the column is NO
 
 **What catches a writer that gets it wrong.** `settle_owner` is a required keyword with
 no default on `commit_facts`, `commit_intent` and `settle_note`, so a new producer that
-goes THROUGH those seams and forgets it is a pyright error (that is what caught all ten
+goes THROUGH those three seams and forgets it is a pyright error (that is what caught all ten
 call sites the day the parameter landed). Nothing about the tables
 themselves is type-checked: SQLAlchemy's declarative constructors take `**kw: Any`, so
 `Fact(...)` with no stamp type-checks fine, and raw SQL is invisible to pyright

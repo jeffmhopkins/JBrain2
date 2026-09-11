@@ -549,8 +549,9 @@ def test_the_dispatcher_carries_a_note_keyed_dedup_arm_for_it() -> None:
     """Without this the partial unique index refuses the second INSERT and the note
     conversation's only failure mode is a 500 in a worker."""
     assert NOTE_CONVERSE_KIND in _NOTE_DEDUP_KINDS
-    # The pipeline it runs beside is untouched (D13).
-    assert "integrate_note" in _NOTE_DEDUP_KINDS
+    # And it is the only NOTE producer left in that set since R4 took `integrate_note`;
+    # `ingest_note` is the other member and is not a producer.
+    assert {"ingest_note", NOTE_CONVERSE_KIND} == _NOTE_DEDUP_KINDS
 
 
 def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:

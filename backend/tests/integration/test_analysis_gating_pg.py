@@ -33,7 +33,7 @@ from jbrain.workflow import dispatcher
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import PipelineRunLog
 from jbrain.workflow.scheduler import PURGE_ACTION
-from tests.conftest import SchemaRoutedLlmClient, docker_available
+from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -56,9 +56,6 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
 @pytest.fixture
 def blobs(tmp_path: Path) -> FsBlobStore:
     return FsBlobStore(tmp_path)
-
-
-EMPTY_INTENT = '{"resolutions": [], "facts": []}'
 
 
 def _registry():  # noqa: ANN202
@@ -168,23 +165,40 @@ def handlers(
         {"xai": FakeLlmClient(ocr_responses)},
         {"vision.ocr": ("xai", "grok-4.3"), "vision.caption": ("xai", "grok-4.3")},
     )
-    # A schema-routed fake so the number of note.extract calls is free to vary: an
-    # image note now extracts its body and its attachment in separate calls
-    # (per-source extraction), all answered with the scripted extraction, while
-    # integrate.note (intent schema) gets the empty intent. These gate tests assert
-    # sequencing, not graph content.
-    extract = LlmRouter(
-        {"xai": SchemaRoutedLlmClient(extract_responses[0], EMPTY_INTENT)},
-        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-    )
+    pipeline = AnalysisPipeline(maker, LlmRouter({"xai": FakeLlmClient([])}, {}))
 
     async def embed_noop(payload: dict[str, Any]) -> None:
         return None
 
+    async def converse_stub(payload: dict[str, Any]) -> None:
+        """What a `note_converse` pass leaves behind, without the agent turn.
+
+        These are GATE tests: what they assert is sequencing — which job is queued,
+        when, and how many times — never what a reading produced. Driving a real
+        conversation here would put an agent loop, a tool registry and a transcript
+        between the assertion and the thing asserted. What has to be real is the mark
+        the pass leaves, because the reconciler and the PWA's chip key on it: the
+        `note_analysis` stamp (production's own `stamp_analysis`, which every pass that
+        read the note runs) and the `integration_state` flip."""
+        note_id = uuid.UUID(str(payload["note_id"]))
+        async with scoped_session(maker, queue.SYSTEM_CTX) as session:
+            await pipeline.stamp_analysis(
+                session,
+                note_id=note_id,
+                note_domain="general",
+                title="t",
+                tags=["a"],
+                extractor="test:converse",
+            )
+            await session.execute(
+                text("UPDATE app.notes SET integration_state = 'integrated' WHERE id = :n"),
+                {"n": str(note_id)},
+            )
+
     return {
         "ingest_note": IngestPipeline(maker, blobs).ingest_note,
         "ocr_attachment": OcrPipeline(maker, blobs, vision, SqlSettingsStore(maker)).ocr_attachment,
-        "integrate_note": AnalysisPipeline(maker, extract).integrate_note,
+        "note_converse": converse_stub,
         "embed_note": embed_noop,
     }
 
@@ -192,7 +206,7 @@ def handlers(
 async def drain(maker: async_sessionmaker[AsyncSession], h: dict[str, worker.Handler]) -> None:
     """Run the worker to quiescence, ticking the LIVE dispatcher between jobs so a
     note.ingested emitted by ingest (or the OCR handler's re-ingest) is resolved into
-    an integrate_note job — exactly what the worker loop does in production now that
+    a note_converse job — exactly what the worker loop does in production now that
     integration is engine-driven. Loop until neither a job nor a tick makes progress."""
     while True:
         ran = await worker.process_one(maker, h)
@@ -218,7 +232,7 @@ async def test_image_note_ingest_enqueues_ocr_but_not_analyze(
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
 
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == ["queued"]
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
     # Embedding stays ungated: keyword/vector search never waits on vision.
     assert await jobs_for(maker, "embed_note", "note_id", note_id) == ["queued"]
 
@@ -233,7 +247,7 @@ async def test_oversized_image_note_analyzes_immediately(
     await tick(maker)
 
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == []
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]
 
 
 async def test_imageless_note_analyzes_immediately(
@@ -242,7 +256,7 @@ async def test_imageless_note_analyzes_immediately(
     note_id = await make_note(maker)
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
     await tick(maker)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]
 
 
 async def test_note_expecting_attachment_defers_integration_until_it_lands(
@@ -261,7 +275,7 @@ async def test_note_expecting_attachment_defers_integration_until_it_lands(
     # no OCR work outstanding the emit is deferred — no premature body-only pass.
     await pipeline.ingest_note({"note_id": note_id})
     await tick(maker)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
     # Search never waits: embedding is enqueued even while integration is deferred.
     assert await jobs_for(maker, "embed_note", "note_id", note_id) == ["queued"]
 
@@ -277,7 +291,7 @@ async def test_note_expecting_attachment_defers_integration_until_it_lands(
     await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": note_id})
     await drain(maker, h)
 
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["done"]
     async with scoped_session(maker, OWNER) as s:
         analyzed = (
             await s.execute(
@@ -295,18 +309,18 @@ async def test_queued_analyze_dedups_but_running_does_not(
     pipeline = IngestPipeline(maker, blobs)
     # Two ingests, each driven through the engine. The queued twin from the first
     # dispatch dedups the second (the dispatcher's _already_active skips a queued
-    # integrate) — one job covers the re-ingest, reading the rebuilt chunks.
+    # pass) — one job covers the re-ingest, reading the rebuilt note.
     await pipeline.ingest_note({"note_id": note_id})
     await tick(maker)
     await pipeline.ingest_note({"note_id": note_id})
     await tick(maker)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]
 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
                 "UPDATE app.jobs SET status = 'running', locked_at = now()"
-                " WHERE kind = 'integrate_note' AND payload->>'note_id' = :nid"
+                " WHERE kind = 'note_converse' AND payload->>'note_id' = :nid"
             ),
             {"nid": note_id},
         )
@@ -314,7 +328,7 @@ async def test_queued_analyze_dedups_but_running_does_not(
     await tick(maker)
     # A RUNNING analyze may have read stale chunks: a fresh pass must follow (the
     # dispatcher's queued-only dedup never suppresses behind a running job).
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["running", "queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["running", "queued"]
 
 
 async def test_full_chain_runs_exactly_one_analysis(
@@ -334,7 +348,7 @@ async def test_full_chain_runs_exactly_one_analysis(
     await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": note_id})
     await drain(maker, h)
 
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["done"]
     async with scoped_session(maker, OWNER) as s:
         analyzed = (
             await s.execute(
@@ -378,7 +392,7 @@ async def test_on_demand_analyze_of_cached_attachment_does_not_deadlock(
     assert await jobs_for(maker, "ocr_attachment", "attachment_id", att_id) == ["done", "done"]
     # One analysis per pass — the first from the initial chain, the second
     # following the on-demand re-describe — and neither deadlocked.
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done", "done"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["done", "done"]
 
 
 async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
@@ -393,7 +407,7 @@ async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
     await add_image(maker, note_id, filename="two.png")
     h = handlers(maker, blobs, ocr_responses=["unused"], extract_responses=[EMPTY_EXTRACTION])
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
     async with scoped_session(maker, OWNER) as s:
         await s.execute(text("UPDATE app.jobs SET max_attempts = 1 WHERE kind = 'ocr_attachment'"))
     await drain(maker, h)
@@ -408,7 +422,7 @@ async def test_ocr_exhaustion_falls_back_to_body_only_analysis(
             )
         ).scalar_one()
     assert failed == 2  # the failed rows stay the durable record
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["done"]
 
 
 async def test_backfill_skips_notes_with_active_ocr(

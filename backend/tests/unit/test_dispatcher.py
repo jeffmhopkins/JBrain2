@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from jbrain import queue
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.workflow import dispatcher
 from jbrain.workflow import events as wf_events
 from jbrain.workflow.contracts import Pipeline, PipelineStep, TriggerFilter
@@ -29,7 +30,10 @@ PRINCIPAL = "11111111-1111-1111-1111-111111111111"
 
 
 def _registry() -> ActionRegistry:
-    return build_registry((*ACTION_SPECS, PURGE_ACTION))
+    # `note_converse` lives in the in-code registry only (no `app.actions` row), so the
+    # worker adds it to the specs it builds from and so must anything resolving a
+    # note.ingested trigger — since R4 it is the only note producer that event drives.
+    return build_registry((*ACTION_SPECS, PURGE_ACTION, NOTE_CONVERSE_SPEC))
 
 
 def _event(
@@ -198,7 +202,7 @@ def test_compute_diff_flags_a_kind_mismatch() -> None:
         payload={
             "note_id": "n-1",
             wf_events.SHADOW_ENQUEUED_KEY: wf_events.shadow_enqueued(
-                "integrate_note", {"note_id": "n-1"}
+                "note_converse", {"note_id": "n-1"}
             ),
         }
     )
@@ -231,7 +235,7 @@ def test_compute_diff_without_a_baseline_is_informational_not_a_mismatch() -> No
     assert diff.actual is None
 
 
-def _baseline_event(kind: str = "integrate_note", note_id: str = "n-1") -> Any:
+def _baseline_event(kind: str = "note_converse", note_id: str = "n-1") -> Any:
     return _event(
         type=wf_events.NOTE_INGESTED,
         payload={
@@ -275,13 +279,13 @@ def test_compute_diff_tolerates_another_kind_beside_the_baseline() -> None:
     real mismatch stops being noticed. What a wrong extra kind is caught by is the
     trigger's own review, not here."""
     ev = _baseline_event()
-    additive = dispatcher.compute_diff(ev, [_would(), _would(kind="note_converse")])
+    additive = dispatcher.compute_diff(ev, [_would(), _would(kind="ingest_note")])
     assert additive.matches
     destructive = dispatcher.compute_diff(ev, [_would(), _would(kind="purge_note_artifacts")])
     assert destructive.matches
     # Both are still RECORDED — the extra kind is in the run log's `would`, so the diff
     # tolerating it is not the same as the diff hiding it.
-    assert [w["kind"] for w in destructive.would] == ["integrate_note", "purge_note_artifacts"]
+    assert [w["kind"] for w in destructive.would] == ["note_converse", "purge_note_artifacts"]
 
 
 # --- resolve_event: full chain over a faked session -------------------------
@@ -648,7 +652,7 @@ async def test_workflow_dispatch_mode_resolves_and_fails_closed(
 
 
 def _would(
-    *, kind: str = "integrate_note", note_id: str | None = "n-1", scoped: bool = True
+    *, kind: str = "note_converse", note_id: str | None = "n-1", scoped: bool = True
 ) -> dispatcher.WouldEnqueue:
     return dispatcher.WouldEnqueue(
         kind=kind,
@@ -686,23 +690,6 @@ def captured_enqueue(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str,
 
     monkeypatch.setattr(dispatcher.queue, "enqueue", fake_enqueue)
     yield calls
-
-
-async def test_already_active_skips_an_integrate_with_a_queued_twin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[tuple[str, tuple[str, ...]]] = []
-
-    async def fake_has_active_analysis(
-        maker: Any, ctx: Any, note_id: str, *, statuses: tuple[str, ...] = ()
-    ) -> bool:
-        seen.append((note_id, statuses))
-        return True
-
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", fake_has_active_analysis)
-    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
-    # The guard mirrors the hardcoded path: note-keyed and QUEUED-only.
-    assert seen == [("n-1", ("queued",))]
 
 
 async def test_already_active_skips_an_ingest_with_a_queued_twin(
@@ -850,47 +837,6 @@ async def test_already_active_ingest_allows_a_missing_note(
     assert not await dispatcher._already_active(None, _would(kind="ingest_note"))  # type: ignore[arg-type]
 
 
-async def test_already_active_integrate_skips_an_already_integrated_note(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # No queued twin, but integration already 'integrated' — past the integration
-    # reconciler's `integration_state <> 'integrated'`, so suppressed.
-    async def no_twin(*a: Any, **k: Any) -> bool:
-        return False
-
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
-    seen = _patch_state(monkeypatch, ("indexed", "integrated"))
-    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
-    assert seen == ["n-1"]
-
-
-async def test_already_active_integrate_allows_a_not_yet_integrated_note(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # No queued twin and not yet integrated — the reconciler WOULD re-enqueue, so
-    # the dispatcher must too.
-    async def no_twin(*a: Any, **k: Any) -> bool:
-        return False
-
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_twin)
-    _patch_state(monkeypatch, ("indexed", "pending_integration"))
-    assert not await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
-
-
-async def test_already_active_queued_twin_short_circuits_before_state_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The cheap queued-twin check fires first: a queued twin suppresses without ever
-    # reading note state (one fewer query in the common back-to-back case).
-    async def has_twin(*a: Any, **k: Any) -> bool:
-        return True
-
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", has_twin)
-    seen = _patch_state(monkeypatch, ("indexed", "pending_integration"))
-    assert await dispatcher._already_active(None, _would(kind="integrate_note"))  # type: ignore[arg-type]
-    assert seen == []  # state never read — the twin check short-circuited
-
-
 def _allow_state(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub _note_state to a not-yet-finished state so the state-skip guard never
     suppresses — isolating these tests to the dedup/stamp/run-log path. The state
@@ -910,26 +856,27 @@ async def test_live_enqueue_stamps_the_event_scope_and_runlogs(
     async def no_active(*a: Any, **k: Any) -> bool:
         return False
 
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_active)
+    monkeypatch.setattr(dispatcher, "_has_live_conversation", no_active)
     _allow_state(monkeypatch)
     run_log = FakeRunLog()
     diff = dispatcher.ShadowDiff(
         event_id="ev-1",
         event_type="note.ingested",
         matches=True,
-        enqueues=[_would(kind="integrate_note")],
+        enqueues=[_would(kind="note_converse")],
     )
     await dispatcher.live_enqueue(None, diff, run_log=run_log)  # type: ignore[arg-type]
 
     # Exactly one enqueue, carrying the event's E1 stamp.
     assert len(captured_enqueue) == 1
-    assert captured_enqueue[0]["kind"] == "integrate_note"
+    assert captured_enqueue[0]["kind"] == "note_converse"
     assert captured_enqueue[0]["principal_id"] == PRINCIPAL
     assert captured_enqueue[0]["domain_code"] == "general"
     # One pipeline run row, kind-discriminated 'pipeline', referencing the job id.
     assert len(run_log.records) == 1
     rec = run_log.records[0]
-    assert rec["pipeline"] == "event_integrate_note"
+    assert rec["pipeline"] == "event_note_converse"
     assert rec["trigger_id"] == "trig-1"
     assert rec["ran_as"] == "scoped"
     assert rec["domain_code"] == "general"
@@ -943,13 +890,13 @@ async def test_live_enqueue_skips_a_deduped_target_no_enqueue_no_runlog(
     async def already(*a: Any, **k: Any) -> bool:
         return True
 
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", already)
+    monkeypatch.setattr(dispatcher.queue, "has_active", already)
     run_log = FakeRunLog()
     diff = dispatcher.ShadowDiff(
         event_id="ev-1",
         event_type="note.ingested",
         matches=True,
-        enqueues=[_would(kind="integrate_note")],
+        enqueues=[_would(kind="note_converse")],
     )
     await dispatcher.live_enqueue(None, diff, run_log=run_log)  # type: ignore[arg-type]
     # The target already has an active job: nothing enqueued, no run logged.
@@ -991,7 +938,8 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
     async def no_active(*a: Any, **k: Any) -> bool:
         return False
 
-    monkeypatch.setattr(dispatcher.queue, "has_active_analysis", no_active)
+    monkeypatch.setattr(dispatcher.queue, "has_active", no_active)
+    monkeypatch.setattr(dispatcher, "_has_live_conversation", no_active)
     _allow_state(monkeypatch)
     claim_row = Row(
         id="ev-1",
@@ -1000,7 +948,7 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
             {
                 "note_id": "n-1",
                 wf_events.SHADOW_ENQUEUED_KEY: {
-                    "kind": "integrate_note",
+                    "kind": "note_converse",
                     "payload": {"note_id": "n-1"},
                 },
             }
@@ -1011,8 +959,8 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
     s1 = FakeSession(
         [
             FakeResult([claim_row]),
-            FakeResult([_trigger_row("event_integrate_note", {"event_types": ["note.ingested"]})]),
-            FakeResult([_pipeline_row("event_integrate_note", "integrate_note")]),
+            FakeResult([_trigger_row("event_note_converse", {"event_types": ["note.ingested"]})]),
+            FakeResult([_pipeline_row("event_note_converse", "note_converse")]),
             FakeResult([]),  # UPDATE dispatched_at
         ]
     )

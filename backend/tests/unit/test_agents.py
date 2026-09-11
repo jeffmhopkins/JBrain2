@@ -910,8 +910,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v7",
-            "c95a014e49896603e005388162622a718590e808752e4b29960653d61783ab8a",
+            "agent-note-ingest-v8",
+            "1cf42e98d2e41c61a397cf31471ffd14be49a244bc5fa3e32399138321e5354d",
         ),
     }
     assert set(pins) == AGENT_NAMES

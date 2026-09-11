@@ -6,8 +6,10 @@ from jbrain.config import Settings
 from jbrain.llm import LlmError, resolve_tasks
 from jbrain.llm.router import TASK_DEFAULTS
 
+# `note.extract` and `integrate.note` were here until R4 deleted their prompts with the
+# producer that called them; a routed task nothing calls is a lever in the owner's
+# Settings screen that does nothing.
 EXPECTED_TASKS = {
-    "note.extract",
     "entity.disambiguate",
     "fact.adjudicate",
     "correction_note.extract",
@@ -17,7 +19,6 @@ EXPECTED_TASKS = {
     "agent.vision",
     "video.summarize",
     "research.title",
-    "integrate.note",
     "intake.materialize",
     "wiki.rewrite",
     "wiki.ground",
@@ -37,8 +38,8 @@ def test_every_task_defaults_to_xai_grok() -> None:
 
 
 def test_override_replaces_only_named_task() -> None:
-    tasks = resolve_tasks({"note.extract": "anthropic:claude-sonnet-4-6"})
-    assert tasks["note.extract"] == ("anthropic", "claude-sonnet-4-6")
+    tasks = resolve_tasks({"correction_note.extract": "anthropic:claude-sonnet-4-6"})
+    assert tasks["correction_note.extract"] == ("anthropic", "claude-sonnet-4-6")
     assert tasks["fact.adjudicate"] == ("xai", "grok-4.3")
 
 
@@ -54,21 +55,23 @@ def test_unknown_task_in_overrides_raises() -> None:
 
 def test_unknown_provider_raises() -> None:
     with pytest.raises(LlmError, match="unknown LLM provider"):
-        resolve_tasks({"note.extract": "openai:gpt-4o"})
+        resolve_tasks({"correction_note.extract": "openai:gpt-4o"})
 
 
 def test_malformed_spec_raises() -> None:
     with pytest.raises(LlmError, match="malformed"):
-        resolve_tasks({"note.extract": "grok-4.3"})
+        resolve_tasks({"correction_note.extract": "grok-4.3"})
     with pytest.raises(LlmError, match="malformed"):
-        resolve_tasks({"note.extract": "xai:"})
+        resolve_tasks({"correction_note.extract": "xai:"})
 
 
 def test_settings_parse_llm_tasks_env_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JBRAIN_LLM_TASKS", '{"note.extract": "anthropic:claude-sonnet-4-6"}')
+    monkeypatch.setenv(
+        "JBRAIN_LLM_TASKS", '{"correction_note.extract": "anthropic:claude-sonnet-4-6"}'
+    )
     settings = Settings()
-    assert settings.llm_tasks == {"note.extract": "anthropic:claude-sonnet-4-6"}
-    assert resolve_tasks(settings.llm_tasks)["note.extract"] == (
+    assert settings.llm_tasks == {"correction_note.extract": "anthropic:claude-sonnet-4-6"}
+    assert resolve_tasks(settings.llm_tasks)["correction_note.extract"] == (
         "anthropic",
         "claude-sonnet-4-6",
     )

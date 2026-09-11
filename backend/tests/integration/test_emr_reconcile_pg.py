@@ -26,8 +26,7 @@ from jbrain.ingest.emr.reconcile import reconcile
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_apply_intent_pg import _load_chunks
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import _load_chunks, ingest, make_note, maker  # noqa: F401
 from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [

@@ -87,11 +87,9 @@ def test_get_defaults_grok_and_low_for_empty_store(
     }
     effort = {t["id"]: t["reasoning_effort"] for t in body["tasks"]}
     assert all(t["provider"] == "grok" for t in body["tasks"])
-    assert effort["integrate.note"] == "high"
     assert effort["fact.adjudicate"] == "high"
     assert effort["wiki.ground"] == "high"
     assert effort["agent.turn"] == "medium"
-    assert effort["note.extract"] == "medium"
     assert effort["video.summarize"] == "medium"
     assert effort["entity.disambiguate"] == "low"
     assert effort["triage.classify"] == "low"
@@ -234,7 +232,7 @@ def test_put_round_trips_effective_values(
         json={
             "tasks": {
                 "agent.turn": {"provider": "grok", "reasoning_effort": "high"},
-                "note.extract": {"provider": "claude", "reasoning_effort": "high"},
+                "correction_note.extract": {"provider": "claude", "reasoning_effort": "high"},
             }
         },
     )
@@ -243,16 +241,16 @@ def test_put_round_trips_effective_values(
     # grok keeps the stored effort; claude is non-reasoning so effort is null.
     assert tasks["agent.turn"]["provider"] == "grok"
     assert tasks["agent.turn"]["reasoning_effort"] == "high"
-    assert tasks["note.extract"]["provider"] == "claude"
-    assert tasks["note.extract"]["reasoning_effort"] is None
+    assert tasks["correction_note.extract"]["provider"] == "claude"
+    assert tasks["correction_note.extract"]["reasoning_effort"] is None
     # Stored shape: claude drops reasoning_effort entirely.
     stored = cast(dict[str, object], store.values["llm_task_overrides"])
     assert stored["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "high"}
-    assert stored["note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
+    assert stored["correction_note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
     # GET reflects the same effective values.
     got = {t["id"]: t for t in c.get("/api/settings/llm").json()["tasks"]}
     assert got["agent.turn"]["reasoning_effort"] == "high"
-    assert got["note.extract"]["provider"] == "claude"
+    assert got["correction_note.extract"]["provider"] == "claude"
 
 
 def test_put_rejects_unknown_task_provider_and_effort(
@@ -411,7 +409,7 @@ def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
     # Claude with no effort persists too (the other non-grok provider).
     assert (
         c.put(
-            "/api/settings/llm", json={"tasks": {"note.extract": {"provider": "claude"}}}
+            "/api/settings/llm", json={"tasks": {"correction_note.extract": {"provider": "claude"}}}
         ).status_code
         == 200
     )
