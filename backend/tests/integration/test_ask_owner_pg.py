@@ -22,8 +22,22 @@ What each test defends:
 - **`note_body_sha` finally has a reader.** It is compared before the append and
   re-stamped only when it matched, so "the note moved under this thread" stays a true
   statement about something OTHER than this thread's own answer.
+- **one ask, several questions, one reply** (R1c of docs/plans/AGENT_INGEST_REWRITE.md).
+  The set is durable with an id per question; one reply consumes the WHOLE set and files
+  a block per answer with exactly ONE re-ingest; an answer naming a question that is not
+  open is dropped; and what the owner left open comes back as `OwnerReply.unanswered`
+  rather than being silently closed (O11 (ii)).
+- **one reply consumes the set, and CONCURRENTLY.** The latch is a conditional UPDATE on
+  `waiting_on_owner` (`claim_waiting`), not the state flip it used to be: the flip's
+  allowed-sources table lets `running` follow `running`, so two overlapping replies both
+  won it and the note gained the same answer twice. A sequential second reply cannot see
+  that, so the test that pins it runs two in flight at once.
+- **the two readers of the open set agree.** The notes tab and the reply path both take
+  the newest SUCCEEDED `ask_owner` row and whatever it parses to — showing one set and
+  consuming another files the owner's words against a question he was never shown.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -38,13 +52,18 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.asktools import ASK_OWNER_TOOL, TOOLS_DIR, build_ask_owner_handlers
+from jbrain.agent.asktools import (
+    ASK_OWNER_TOOL,
+    TOOLS_DIR,
+    build_ask_owner_handlers,
+    open_questions,
+)
 from jbrain.agent.graphwritetools import note_registry
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import close_owner_reply, record_owner_reply
+from jbrain.analysis.clarify import MAX_ANSWERS, close_owner_reply, record_owner_reply
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
@@ -68,6 +87,23 @@ pytestmark = [
 
 NOTE_BODY = "Ran the 10k with Sarah this morning. She has a new coach."
 QUESTION = "Which Sarah is this — your sister, or Sarah Chen from the running club?"
+COACH = "Which coach — the club's, or her own?"
+DOSE = "Is the second line 25 mg or 2.5 mg?"
+
+
+def _ask(*questions: str) -> dict[str, Any]:
+    """The arguments one `ask_owner` call carries. R1c made this a SET: the model sends
+    every question it is stuck on in one call, and the handler is what assigns each an
+    id."""
+    return {"questions": [{"question": q} for q in questions]}
+
+
+def _asked(row: Any) -> list[str]:
+    return [q["question"] for q in row.args["questions"]]
+
+
+def _ids(row: Any) -> list[str]:
+    return [q["id"] for q in row.args["questions"]]
 
 
 @pytest.fixture
@@ -143,6 +179,41 @@ async def _ledger(
         return await NoteConversationRepo().tool_calls(s, session_id)
 
 
+async def _queued(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, note_id: str
+) -> int:
+    """How many re-ingests this note has been queued for. The batch exists to make this
+    ONE per reply however many questions the reply answered."""
+    async with scoped_session(maker, owner) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'ingest_note'"
+                    " AND payload->>'note_id' = :n"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+
+
+async def _open_set(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, session_id: str, *asks: str
+) -> tuple[str, list[str]]:
+    """A conversation waiting on `asks`, and the ids the handler gave them — the setup
+    every pairing test below starts from."""
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(*asks), _ctx(owner, session_id))
+    (row,) = await _ledger(maker, owner, session_id)
+    return session_id, _ids(row)
+
+
+async def _blocks(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, note_id: str
+) -> list[tuple[str, str]]:
+    rows = await SqlNotesRepo(maker).list_clarifications(owner, note_id)
+    assert rows is not None
+    return [(c.question, c.answer) for c in rows]
+
+
 # --- the ask ------------------------------------------------------------------
 
 
@@ -157,7 +228,7 @@ async def test_the_question_and_the_wait_land_together(
     session_id = await _conversation(maker, owner, note_id)
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
 
-    out = await handler({"question": QUESTION}, _ctx(owner, session_id))
+    out = await handler(_ask(QUESTION), _ctx(owner, session_id))
 
     assert isinstance(out, ToolOutput)
     assert out.halt == AWAITING_OWNER
@@ -165,28 +236,30 @@ async def test_the_question_and_the_wait_land_together(
     assert state == "waiting_on_owner"
     (row,) = await _ledger(maker, owner, session_id)
     assert row.name == ASK_OWNER_TOOL
-    assert row.args["question"] == QUESTION
+    assert _asked(row) == [QUESTION]
     assert row.ok is True
     # It wrote no graph, and says so rather than defaulting to silence.
     assert row.domains == []
     assert row.entity_ids == []
 
 
-async def test_a_second_question_is_refused_while_the_first_is_open(
+async def test_a_second_ask_is_refused_while_the_first_set_is_open(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """Two open questions would leave the reply path guessing which one the owner's next
-    message answers — and that answer becomes source text on the note, so the wrong
-    pairing is a wrong sentence in the corpus."""
+    """The refusal is now at the level the latch works at: one open SET. One reply
+    consumes one set, so a second set opened behind the first would be answered by
+    nothing — and the refusal has to say how many are outstanding, because "one open
+    question at a time" stopped being true of a batched ask."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
-    await handler({"question": QUESTION}, _ctx(owner, session_id))
+    await handler(_ask(QUESTION, COACH), _ctx(owner, session_id))
 
-    second = await handler({"question": "And which coach?"}, _ctx(owner, session_id))
+    second = await handler(_ask(DOSE), _ctx(owner, session_id))
 
     assert not isinstance(second, ToolOutput)  # no halt: the turn was not ended again
     assert "already waiting" in second
+    assert "2 questions" in second
     assert QUESTION in second
     assert len(await _ledger(maker, owner, session_id)) == 1
 
@@ -198,7 +271,7 @@ async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
     session_id = await _conversation(maker, owner, note_id)
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
 
-    out = await handler({"question": "   "}, _ctx(owner, session_id))
+    out = await handler(_ask("   "), _ctx(owner, session_id))
 
     assert not isinstance(out, ToolOutput)
     assert await _ledger(maker, owner, session_id) == []
@@ -216,11 +289,9 @@ async def test_outside_a_note_conversation_it_refuses_in_words(
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
     orphan = await AgentSessionRepo(maker).create(owner, domain_scopes=[], title="chat")
 
+    assert "only inside a note's conversation" in await handler(_ask(QUESTION), _ctx(owner, None))
     assert "only inside a note's conversation" in await handler(
-        {"question": QUESTION}, _ctx(owner, None)
-    )
-    assert "only inside a note's conversation" in await handler(
-        {"question": QUESTION}, _ctx(owner, orphan.id)
+        _ask(QUESTION), _ctx(owner, orphan.id)
     )
 
 
@@ -232,9 +303,7 @@ async def test_a_waiting_conversation_cannot_be_settled(
     to" — a pass that stopped to ask a question has not."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
 
     async with scoped_session(maker, owner) as s:
         with pytest.raises(InvalidStateTransition):
@@ -259,7 +328,7 @@ async def test_the_turn_ends_on_the_ask_and_the_note_waits(
         turns=[
             LlmTurn(
                 "",
-                (ToolCall("c1", ASK_OWNER_TOOL, {"question": QUESTION}),),
+                (ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION)),),
                 "tool_use",
                 LlmUsage(10, 3),
             )
@@ -295,7 +364,7 @@ async def test_the_turn_ends_on_the_ask_and_the_note_waits(
     # post-turn recorder knows not to write it again.
     calls = await _ledger(maker, owner, row.sid)
     assert [c.name for c in calls] == [ASK_OWNER_TOOL]
-    assert calls[0].args["question"] == QUESTION
+    assert _asked(calls[0]) == [QUESTION]
     # And the run is closed out as a real, finished run rather than an error.
     async with scoped_session(maker, owner) as s:
         status, stop = (
@@ -324,7 +393,7 @@ async def test_a_failure_after_the_ask_does_not_retract_the_question(
         turns=[
             LlmTurn(
                 "",
-                (ToolCall("c1", ASK_OWNER_TOOL, {"question": QUESTION}),),
+                (ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION)),),
                 "tool_use",
                 LlmUsage(10, 3),
             )
@@ -359,7 +428,7 @@ async def test_a_failure_after_the_ask_does_not_retract_the_question(
     # And the question the owner is waiting on is still readable, which is what makes
     # the wait answerable at all.
     calls = await _ledger(maker, owner, row.sid)
-    assert [c.args["question"] for c in calls] == [QUESTION]
+    assert [_asked(c) for c in calls] == [[QUESTION]]
 
 
 # --- the owner answers --------------------------------------------------------
@@ -373,9 +442,7 @@ async def test_the_reply_becomes_a_dated_block_on_the_note_and_re_ingests_it(
     chunks of the same note and the graph re-derives from notes alone."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
 
     reply = await record_owner_reply(
         maker,
@@ -388,7 +455,8 @@ async def test_the_reply_becomes_a_dated_block_on_the_note_and_re_ingests_it(
 
     assert reply is not None
     assert reply.clarified is True
-    assert reply.question == QUESTION
+    assert reply.answered == [(QUESTION, "My sister.")]
+    assert reply.unanswered == []
     assert reply.note_moved is False
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
     assert note is not None
@@ -449,9 +517,7 @@ async def test_a_note_that_moved_under_the_thread_keeps_its_stale_sha(
     saying the true thing: this conversation has not read the note as it now stands."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
     _, sha_at_ask = await _state(maker, owner, session_id)
     # The owner edits the note in the PWA while the question sits in the thread.
     from jbrain.notes.service import NoteUpdate
@@ -481,15 +547,20 @@ async def test_a_note_that_moved_under_the_thread_keeps_its_stale_sha(
 async def test_the_answer_is_recorded_once_even_if_the_owner_says_it_twice(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The state transition is the latch, and it happens BEFORE the append: the second
-    message finds a thread that is no longer waiting, so the note cannot collect the same
-    answer twice as source text — which, with no per-block eraser in the PWA, is the one
-    of the two failure directions the owner could not undo."""
+    """The CLAIM is the latch, and it happens BEFORE the append: the second message finds
+    a thread that is no longer waiting, so the note cannot collect the same answer twice
+    as source text — which, with no per-block eraser in the PWA, is the one of the two
+    failure directions the owner could not undo.
+
+    Sequential, and that word is load-bearing. This case passed against the old
+    `set_state` latch too, which is exactly why it could not see that the latch was not
+    one: `_ALLOWED_SOURCES["running"]` admits `running`, so a CONCURRENT second reply
+    updated a second time and filed a second block.
+    `test_two_overlapping_replies_and_exactly_one_claims_the_set` is the test that
+    discriminates, and `claim_waiting`'s conditional UPDATE is what makes both pass."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
     notes = SqlNotesRepo(maker)
 
     first = await record_owner_reply(
@@ -516,11 +587,13 @@ async def test_a_server_authored_outcome_is_never_filed_as_the_owners_answer(
     it pairs machine prose with the agent's open question, appends the pair to Jeff's own
     note as SOURCE text (chunked, embedded, citable), and spends the question so his real
     answer can never be paired. Nothing moves, and the thread stays waiting — the truth,
-    since nobody has answered yet."""
+    since nobody has answered yet.
+
+    The turn's STRUCTURED answers go with it, for the same reason: on such a turn the
+    whole payload is the server's, not Jeff's."""
     note_id = await _note(maker, owner)
-    session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
     )
     notes = SqlNotesRepo(maker)
 
@@ -531,6 +604,7 @@ async def test_a_server_authored_outcome_is_never_filed_as_the_owners_answer(
         session_id=session_id,
         agent=NOTE_CONVERSE_AGENT,
         message="Enacted 1 of 1 — 1 approved, 0 held.",
+        answers=[(ids[0], "Enacted 1 of 1.")],
         owner_authored=False,
     )
 
@@ -562,7 +636,8 @@ async def test_a_server_authored_outcome_is_never_filed_as_the_owners_answer(
         message="My sister.",
     )
 
-    assert answer is not None and answer.clarified is True and answer.question == QUESTION
+    assert answer is not None and answer.clarified is True
+    assert answer.answered == [(QUESTION, "My sister.")]
     note = await notes.get_note(owner, note_id)
     assert note is not None
     assert "A: My sister." in note.body
@@ -598,9 +673,7 @@ async def test_the_reply_turn_closes_the_thread_it_reopened(
     answered note suppressed until the stale-conversation reaper called it `failed`."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
     reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
@@ -632,7 +705,7 @@ async def test_a_reply_turn_that_asked_again_is_left_waiting(
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
-    await handler({"question": QUESTION}, _ctx(owner, session_id))
+    await handler(_ask(QUESTION), _ctx(owner, session_id))
     reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
@@ -641,7 +714,7 @@ async def test_a_reply_turn_that_asked_again_is_left_waiting(
         agent=NOTE_CONVERSE_AGENT,
         message="My sister.",
     )
-    await handler({"question": "Which running club?"}, _ctx(owner, session_id))
+    await handler(_ask("Which running club?"), _ctx(owner, session_id))
 
     await close_owner_reply(
         maker,
@@ -654,9 +727,9 @@ async def test_a_reply_turn_that_asked_again_is_left_waiting(
 
     state, _ = await _state(maker, owner, session_id)
     assert state == "waiting_on_owner"
-    assert [c.args["question"] for c in await _ledger(maker, owner, session_id)] == [
-        QUESTION,
-        "Which running club?",
+    assert [_asked(c) for c in await _ledger(maker, owner, session_id)] == [
+        [QUESTION],
+        ["Which running club?"],
     ]
 
 
@@ -667,9 +740,7 @@ async def test_a_reply_turn_that_died_releases_the_note(
     slot — the close runs in the turn's `finally` for exactly this."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
-    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
-        {"question": QUESTION}, _ctx(owner, session_id)
-    )
+    await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
     reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
@@ -732,3 +803,433 @@ async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
     assert closed is None, "the chat turn ended a pass it had no part in"
     state, _ = await _state(maker, owner, session_id)
     assert state == "running"
+
+
+# --- the batch: one ask, several questions, one reply -------------------------
+
+
+async def test_one_ask_records_the_whole_set_each_question_with_its_own_id(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R1c's core: a pass stuck on three things asks once, and the ledger row carries all
+    three with an id apiece.
+
+    The ids have to be IN THE ARGS. A reopened thread replays the ask step's `args`
+    straight out of the transcript (§3b I9), so that blob is the only thing that persists
+    them — an id kept anywhere else would leave a reopened thread's answers unpairable."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+
+    out = await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](
+        {
+            "questions": [
+                {
+                    "question": QUESTION,
+                    "blocks": "who the note's “with Sarah” resolves to",
+                    "candidates": "Sarah Whitfield (sister), Sarah Chen (club)",
+                },
+                {"question": COACH},
+                {"question": DOSE},
+            ]
+        },
+        _ctx(owner, session_id),
+    )
+
+    assert isinstance(out, ToolOutput)
+    assert out.halt == AWAITING_OWNER
+    assert "3 questions" in str(out)
+    (row,) = await _ledger(maker, owner, session_id)
+    assert _asked(row) == [QUESTION, COACH, DOSE]
+    ids = _ids(row)
+    assert len(set(ids)) == 3 and all(ids)
+    # What lets Jeff answer with one tap rides with the question it belongs to.
+    assert row.args["questions"][0]["candidates"].startswith("Sarah Whitfield")
+    assert row.args["questions"][0]["blocks"].startswith("who the note")
+    state, _ = await _state(maker, owner, session_id)
+    assert state == "waiting_on_owner"
+
+
+async def test_a_full_structured_reply_files_every_block_and_re_ingests_once(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The arithmetic the batch was built for. Three answers are ONE turn, three blocks
+    and ONE re-ingest — where three separate asks cost three passes, three re-ingests and
+    three trips to the inbox (O9). `append_clarifications` is what makes the count one:
+    the `ingest_state` flip and the enqueue ride inside its single transaction, so a
+    caller looping over the one-pair wrapper would queue three of them."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(ids[0], "My sister."), (ids[1], "Her own."), (ids[2], "25 mg.")],
+    )
+
+    assert reply is not None and reply.clarified is True
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own."), (DOSE, "25 mg.")]
+    assert reply.unanswered == []
+    assert await _blocks(maker, owner, note_id) == reply.answered
+    assert await _queued(maker, owner, note_id) == 1
+
+
+async def test_an_answer_naming_a_question_that_is_not_open_files_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """A settled thread reopened months later renders its question block from the
+    transcript, so a stale block can post an id from a set that closed long ago. Filing it
+    against whatever is open NOW would put the owner's old answer under a question nobody
+    asked — a wrong sentence in their own note. It is dropped, and its question stays
+    open."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(ids[0], "My sister."), ("q0badf00d", "The canal loop.")],
+    )
+
+    assert reply is not None
+    assert reply.answered == [(QUESTION, "My sister.")]
+    assert reply.unanswered == [COACH, DOSE]
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and "canal loop" not in note.body
+
+
+async def test_free_prose_alone_answers_the_oldest_open_question(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The degrade that lets the batched ask merge ahead of the PWA block that fills the
+    structured answers (R3f). Until it ships, every reply is prose — and prose against a
+    three-question set is exactly today's semantics on a one-item set: it answers the
+    oldest, never mispairs, and says so by leaving the rest in `unanswered`."""
+    note_id = await _note(maker, owner)
+    session_id, _ = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="My sister.",
+    )
+
+    assert reply is not None and reply.clarified is True
+    assert reply.answered == [(QUESTION, "My sister.")]
+    assert reply.unanswered == [COACH, DOSE]
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
+
+
+async def test_free_prose_beside_a_partial_set_answers_the_oldest_it_left_open(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """One send carries both halves (§3b I7): the taps AND whatever was typed. The typed
+    part cannot answer a question the taps already answered, so it takes the oldest one
+    they left."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="Her own, she hired him in March.",
+        answers=[(ids[0], "My sister.")],
+    )
+
+    assert reply is not None
+    assert reply.answered == [
+        (QUESTION, "My sister."),
+        (COACH, "Her own, she hired him in March."),
+    ]
+    assert reply.unanswered == [DOSE]
+
+
+async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
+    no shape for an unprompted block — and inventing a question the agent never asked to
+    hold the owner's aside would put a sentence into their own note that nobody said. It
+    stays chat, which the agent reads either way."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="great run by the way",
+        answers=[(ids[0], "My sister."), (ids[1], "Her own.")],
+    )
+
+    assert reply is not None
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
+    assert reply.unanswered == []
+    assert await _blocks(maker, owner, note_id) == reply.answered
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and "great run" not in note.body
+
+
+async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The soundness claim the batch rests on, in its SEQUENTIAL case.
+
+    The claim stays at the level a reply arrives at: ONE reply consumes the whole set, so
+    a second reply finds the thread `running` and files nothing, and two replies can never
+    answer the same question twice. That is what makes O11 (ii) cost no per-question
+    claim — what a partial send leaves behind is not durable state, it is a sentence
+    handed to the agent.
+
+    This test awaits the first reply before sending the second, so it pins that and only
+    that. The case the property actually has to survive is two replies IN FLIGHT, and it
+    took a conditional UPDATE rather than the state flip to hold there — see
+    `test_two_overlapping_replies_and_exactly_one_claims_the_set`."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+    notes = SqlNotesRepo(maker)
+
+    first = await record_owner_reply(
+        maker,
+        notes,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(ids[0], "My sister.")],
+    )
+    second = await record_owner_reply(
+        maker,
+        notes,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="and her own coach",
+        answers=[(ids[1], "Her own.")],
+    )
+
+    assert first is not None and first.unanswered == [COACH, DOSE]
+    assert second is None
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
+    assert await _queued(maker, owner, note_id) == 1
+
+
+async def test_a_question_asked_before_the_batch_shipped_still_pairs(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The deploy-window fallback. The box is LIVE: a thread can be sitting in
+    `waiting_on_owner` with a pre-R1c ledger row — `args = {"question": "..."}`, a bare
+    string with no id — the moment this ships. Without the fallback that owner's answer
+    pairs with nothing and their question is silently lost, which is the one thing this
+    channel exists to prevent. It can go once no live thread predates the batch."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        repo = NoteConversationRepo()
+        await repo.record_tool_call(
+            s, session_id, name=ASK_OWNER_TOOL, args={"question": QUESTION}, ok=True, domains=()
+        )
+        await repo.set_state(s, session_id, "waiting_on_owner")
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="My sister.",
+    )
+
+    assert reply is not None and reply.clarified is True
+    assert reply.answered == [(QUESTION, "My sister.")]
+    assert reply.unanswered == []
+
+
+async def test_the_open_set_is_the_newest_ask_even_when_it_parses_empty(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The invariant `open_questions` states, now implemented: the newest succeeded
+    `ask_owner` IS the open set, whatever it parses to.
+
+    Falling through an empty newest row to an older one reads it backwards. The older set
+    is one the owner already ANSWERED, so a reply that fell back to it would pair this
+    turn's words with a question that closed weeks ago and append the pair to the owner's
+    own note as source text — the mispairing `_pair` exists to prevent, arriving through
+    the reader instead of the pairer. `_fit` is what keeps an empty parse out of the
+    ledger; this pins what happens if one ever gets there anyway."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q1", "question": QUESTION}]},
+            ok=True,
+            domains=(),
+        )
+        await repo.record_tool_call(
+            s, session_id, name=ASK_OWNER_TOOL, args={"questions": []}, ok=True, domains=()
+        )
+        await repo.set_state(s, session_id, "waiting_on_owner")
+
+    async with scoped_session(maker, owner) as s:
+        assert await open_questions(s, repo, session_id) == []
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="My sister.",
+    )
+
+    assert reply is not None and reply.clarified is False
+    assert await _blocks(maker, owner, note_id) == []
+
+
+async def test_the_inbox_and_the_reply_path_read_the_same_open_set(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """One thread, one open set, two readers — the notes tab (D4/D5) and the reply path.
+
+    The inbox's subselect took the newest `ask_owner` row unconditionally where
+    `open_questions` filters on `t.ok`, so a failed row could make the tab show one set
+    while the reply consumed another: the owner answers the question he was SHOWN and his
+    words are filed against a different one."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q1", "question": QUESTION}]},
+            ok=True,
+            domains=(),
+        )
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q9", "question": DOSE}]},
+            ok=False,
+            domains=(),
+        )
+        await repo.set_state(s, session_id, "waiting_on_owner")
+
+    async with scoped_session(maker, owner) as s:
+        open_set = await open_questions(s, repo, session_id)
+        (entry,) = [e for e in await repo.notes_inbox(s) if e.session_id == session_id]
+
+    assert [q.question for q in open_set] == [QUESTION]
+    assert entry.questions == [QUESTION]
+
+
+async def test_two_overlapping_replies_and_exactly_one_claims_the_set(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, monkeypatch: Any
+) -> None:
+    """The latch, tested where it actually has to hold: two replies IN FLIGHT AT ONCE.
+
+    `scoped_session` is READ COMMITTED and `/chat` takes no per-session lock, so the
+    owner double-tapping send, the PWA retrying a dropped stream, or two devices give two
+    overlapping transactions on one thread. Both read `waiting_on_owner`. The old claim
+    was `set_state(..., "running")`, whose conditional UPDATE filters on
+    `_ALLOWED_SOURCES["running"]` — which contains `running` — so the loser matched the
+    winner's committed row and BOTH proceeded: two clarification blocks for one question,
+    two re-ingests, and `note_body_sha` re-stamped off a stale read. Duplicated source
+    text in the owner's own note is the one failure this module calls unrecoverable.
+
+    The barrier is what makes the overlap real rather than likely: neither reply may
+    claim until both have opened their transaction and read the row. A sequential pair
+    cannot see this bug at all."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+    barrier = asyncio.Barrier(2)
+    claim = NoteConversationRepo.claim_waiting
+
+    async def gated(self: Any, session: AsyncSession, sid: str) -> bool:
+        await barrier.wait()
+        return await claim(self, session, sid)
+
+    monkeypatch.setattr(NoteConversationRepo, "claim_waiting", gated)
+    notes = SqlNotesRepo(maker)
+
+    async def reply(answer: tuple[str, str]) -> Any:
+        return await record_owner_reply(
+            maker,
+            notes,
+            owner,
+            session_id=session_id,
+            agent=NOTE_CONVERSE_AGENT,
+            message="",
+            answers=[answer],
+        )
+
+    results = await asyncio.gather(reply((ids[0], "My sister.")), reply((ids[1], "Her own.")))
+
+    assert sum(r is not None for r in results) == 1
+    assert len(await _blocks(maker, owner, note_id)) == 1
+    assert await _queued(maker, owner, note_id) == 1
+    assert (await _state(maker, owner, session_id))[0] == "running"
+
+
+async def test_a_structured_answer_past_the_cap_files_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`MAX_ANSWERS` truncates rather than 422s (a client bug degrades this turn, never
+    fails it) — and truncating means the tail does NOT become blocks. Sent as the 20th
+    item of a 20-item list, the real answer is dropped and its question stays open, which
+    is what `OwnerReply.unanswered` then tells the agent."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+    padding = [(f"stale{i}", "not an answer") for i in range(MAX_ANSWERS * 2 - 1)]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[*padding, (ids[0], "My sister.")],
+    )
+
+    assert reply is not None and reply.clarified is False
+    assert reply.unanswered == [QUESTION]
+    assert await _blocks(maker, owner, note_id) == []

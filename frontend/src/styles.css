@@ -6717,6 +6717,11 @@ button.small {
   color: var(--text);
   line-height: 1.5;
 }
+.nrow-ask-more {
+  margin-left: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
 .nrow-meta {
   flex-wrap: wrap;
 }

@@ -140,3 +140,85 @@ def test_the_ledgers_domain_set_is_the_shipped_one() -> None:
     which the owner-knowledge allow-lists exclude. Pinned to extraction's copy so the
     two cannot drift apart unnoticed."""
     assert KNOWLEDGE_DOMAINS == DOMAINS
+
+
+# --- what an `ask_owner` set is allowed to serialize to -----------------------------
+#
+# The other half of the same property, and the half that had it wrong. `cap_tool_args`
+# above bounds a blob in SERIALIZED characters; `asktools` builds the one blob whose
+# degradation is unsurvivable, because a degraded `ask_owner` row leaves a thread
+# `waiting_on_owner` with no readable question and takes the owner's answer down with it
+# (`record_owner_reply`'s empty-set branch files nothing and tells the agent nothing).
+# So these tests measure what the LEDGER will measure, not what the source text counts.
+
+FILLERS = {
+    # `json.dumps` defaults to ensure_ascii=True, so each of these costs a different
+    # number of serialized characters for the same one source character: 2 for an
+    # escaped quote or backslash, 6 for a `\uXXXX`, 12 for an astral surrogate pair.
+    "ascii": "a",
+    "quote": '"',
+    "backslash": "\\",
+    "cjk": "日",
+    "emoji": "😀",
+}
+
+
+@pytest.mark.parametrize("filler", list(FILLERS.values()), ids=list(FILLERS))
+@pytest.mark.parametrize("count", [1, 5])
+def test_a_recorded_ask_never_degrades_whatever_the_model_sends(filler: str, count: int) -> None:
+    """The guarantee: a `waiting_on_owner` thread always has a readable question in its
+    ledger. Every one of these sets is inside what the sidecar's schema permits."""
+    from jbrain.agent.asktools import _asked, recorded_args
+    from jbrain.models.note_conversation import questions_from_args
+
+    field = filler * 800
+    asked = _asked(
+        {"questions": [{"question": field, "blocks": field, "candidates": field}] * count}
+    )
+    recorded = cap_tool_args(recorded_args(asked))
+
+    assert encoded(recorded) <= MAX_ARGS_CHARS
+    assert "_keys" not in recorded and "_key_count" not in recorded
+    back = questions_from_args(recorded)
+    assert len(back) == count
+    assert all(q.question and q.id for q in back)
+
+
+def test_the_context_gives_way_before_the_question_does() -> None:
+    """Truncation order, and it is not arbitrary: `candidates` and `blocks` help the
+    owner answer in one tap, the question is what he has to be able to READ. A budget
+    spent on context is a question he cannot answer at all."""
+    from jbrain.agent.asktools import _asked, recorded_args
+    from jbrain.models.note_conversation import questions_from_args
+
+    field = "日" * 800
+    asked = _asked({"questions": [{"question": field, "blocks": field, "candidates": field}] * 5})
+    back = questions_from_args(cap_tool_args(recorded_args(asked)))
+
+    assert all(q.candidates == "" and q.blocks == "" for q in back)
+    assert all(len(q.question) > 100 for q in back)
+
+
+def test_one_question_too_big_to_fit_is_truncated_never_dropped() -> None:
+    """A dropped question is the same failure as a degraded blob, reached another way:
+    the thread waits on something no reader can name."""
+    from jbrain.agent.asktools import _asked, recorded_args
+    from jbrain.models.note_conversation import questions_from_args
+
+    asked = _asked({"questions": [{"question": "😀" * 5_000}]})
+    (only,) = questions_from_args(cap_tool_args(recorded_args(asked)))
+
+    assert only.question and set(only.question) == {"😀"}
+    assert encoded(cap_tool_args(recorded_args(asked))) <= MAX_ARGS_CHARS
+
+
+def test_the_fit_is_deterministic() -> None:
+    """Same input, same cut. The ids are random by design (`_asked`), so the lengths are
+    what is pinned — a bisection that wandered would make a replayed thread's question
+    differ from the one the owner was shown."""
+    from jbrain.agent.asktools import _asked
+
+    args = {"questions": [{"question": "😀" * 3_000, "blocks": "x" * 2_000}] * 4}
+    first = [(len(q.question), len(q.blocks)) for q in _asked(args)]
+    second = [(len(q.question), len(q.blocks)) for q in _asked(args)]
+    assert first == second

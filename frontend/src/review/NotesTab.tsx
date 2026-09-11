@@ -7,6 +7,10 @@
 // answering in the inbox as well as in the thread would make this a second place note
 // ingestion gets decided. The row's whole job is to carry enough (which note, what is
 // asked, how long, how much already landed) to be worth the tap that opens the thread.
+//
+// One ask now carries a SET (R1c), and the row quotes the first with a "+N more" rather
+// than growing to fit: what the owner needs here is which note and how much is waiting,
+// and the whole set is one tap away in the thread — where it can actually be answered.
 
 import type { ReactNode } from "react";
 import { domainWord } from "../agent/entityWrites";
@@ -56,7 +60,14 @@ function NotesRow({ row, onOpen }: { row: NotesInboxRow; onOpen: () => void }): 
           <span className="rrow-when">{whenLabel(row)}</span>
         </span>
         <span className="nrow-quote">{row.quote}</span>
-        {row.ask !== null && <span className="nrow-ask">{row.ask}</span>}
+        {row.asks.length > 0 && (
+          <span className="nrow-ask">
+            {row.asks[0]}
+            {row.asks.length > 1 && (
+              <span className="nrow-ask-more">+{row.asks.length - 1} more</span>
+            )}
+          </span>
+        )}
         <span className="rrow-meta nrow-meta">
           {row.live ? (
             <span className="nchip nchip-work">still reading · nothing written yet</span>

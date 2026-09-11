@@ -2,6 +2,7 @@
 domain filtering is enforced by Postgres, not by these methods."""
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select, update
@@ -204,6 +205,18 @@ class SqlNotesRepo:
         answer: str,
         session_id: str | None = None,
     ) -> NoteInfo | None:
+        return await self.append_clarifications(
+            ctx, note_id, pairs=[(question, answer)], session_id=session_id
+        )
+
+    async def append_clarifications(
+        self,
+        ctx: SessionContext,
+        note_id: str,
+        *,
+        pairs: Sequence[tuple[str, str]],
+        session_id: str | None = None,
+    ) -> NoteInfo | None:
         async with scoped_session(self._maker, ctx) as session:
             note = (
                 await session.execute(
@@ -212,18 +225,27 @@ class SqlNotesRepo:
             ).scalar_one_or_none()
             if note is None:
                 return None
-            session.add(
-                NoteClarification(
-                    note_id=note.id,
-                    question=question,
-                    answer=answer,
-                    session_id=uuid.UUID(session_id) if session_id else None,
-                    domain_code=note.domain_code,
+            if not pairs:
+                # Nothing was appended, so the note's text did not change: flipping
+                # `ingest_state` and queueing a re-ingest here would re-chunk a note
+                # nobody edited. A reply whose every answer was dropped lands here.
+                return _note_info(note)
+            for question, answer in pairs:
+                session.add(
+                    NoteClarification(
+                        note_id=note.id,
+                        question=question,
+                        answer=answer,
+                        session_id=uuid.UUID(session_id) if session_id else None,
+                        domain_code=note.domain_code,
+                    )
                 )
-            )
             # The note's TEXT changed even though its body did not, so its chunks and
             # embeddings are as stale as after an edit — and the graph derived from
-            # them with it. Same reset `update_note` does.
+            # them with it. Same reset `update_note` does. ONCE for the whole set, which
+            # is the point of taking pairs: a caller looping over the one-pair wrapper
+            # would flip the state and enqueue an `ingest_note` per answer, and N
+            # re-ingests of one note is exactly the cost the batched ask exists to remove.
             note.ingest_state = "pending"
             # `updated_at` is deliberately NOT stamped: the body is frozen (D6) and
             # nothing edited it. The append is a new row, not a revision.

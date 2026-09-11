@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R1b✅ R1c◻️ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -1001,15 +1001,31 @@ turn; the agent re-reads the note with the answers composed in and ends with its
 What exists: the whole reply path — the clarification block append, the state claim, the
 re-ingest and the reply turn's tool set — is W3, shipped (`analysis/clarify.py:401-490`).
 
-What is new is exactly what O9 costs (§8): the one-at-a-time latch **is** the atomicity
-today. `record_owner_reply` consumes the question by flipping `waiting_on_owner → running`
-before it appends, and the comment at `clarify.py:449-452` says so in as many words — *"this
-transition is what says that question has been answered, and it is the latch that stops a
-second reply appending the same answer again."* With a question SET the claim can no longer
-be the state flip: it moves to something addressed PER QUESTION, and the append composes
-several Q/A pairs where `append_clarification` takes one. `latest_question`
-(`asktools.py:80-96`) and `NotesInboxEntry.question` (singular, `note_conversation.py:312`)
-both become plural with it.
+What was new is what O9 costs (§8), and R1c has shipped it. The one-at-a-time latch **is**
+the atomicity: `record_owner_reply` consumes the ask by moving `waiting_on_owner →
+running` before it appends, and it means *"that question SET has been consumed"* — because
+O11 is decided (ii) and an unanswered question survives as a sentence to the agent rather
+than as state. The claim did NOT have to move per question: one reply consumes the whole
+set, so two replies can never answer the same question twice. What did change is the
+append (several Q/A pairs in one transaction, so one re-ingest), `latest_question` →
+`open_questions`, and `NotesInboxEntry.question` → `questions`.
+
+⟲ **"A second reply finds `running` and files nothing" was only ever true of a SEQUENTIAL
+second reply, and this paragraph asserted it as a general property.** The flip went through
+`set_state`, whose conditional UPDATE filters on `_ALLOWED_SOURCES["running"]` — which
+contains `running`, because a pass legitimately moves within it — so it was not a
+compare-and-swap on `waiting_on_owner` at all. `scoped_session` is READ COMMITTED and
+`/chat` takes no per-session lock, so two overlapping replies (a double-tapped send, a
+retried stream, two devices) both read `waiting_on_owner`, both updated one row, and BOTH
+proceeded: two clarification blocks for one question, two re-ingests, and `note_body_sha`
+re-stamped from a stale read. The DECISION is untouched — no per-question claim, no new
+table, no migration — but the premise it rested on was wrong, and the fix is what now
+makes it true: the claim is its own conditional UPDATE on `waiting_on_owner`
+(`NoteConversationRepo.claim_waiting`), so the loser's UPDATE re-evaluates against the
+committed row, matches nothing, and returns exactly as a non-waiting thread does. The
+soundness now rests on that UPDATE, not on the state machine around it, and the test that
+pins it runs two replies IN FLIGHT — the sequential pair that shipped with R1c could not
+see the bug.
 
 ### I9 — A settled thread, reopened later
 
@@ -1045,7 +1061,7 @@ that lives only in a component.
 | Where a stream tap lands, and how the note screen stays reachable | **Undecided** (I2) |
 | The question block — render, candidates, local answer state, answered/frozen state | **New**, the wave's core (I6); its persisted state is already on the wire (I9) |
 | The carry strip + the structured-answer send | **New**, and blocked on the batched ask (I7) |
-| Batched `ask_owner`, the per-question claim, the multi-pair clarification append | **New backend** — O9's build cost (I8) |
+| Batched `ask_owner` and the multi-pair clarification append | **Shipped** — R1c. No per-question claim was needed: O11 (ii) makes the unanswered question a sentence, not state (I8) |
 
 ---
 
@@ -1716,49 +1732,91 @@ not list them; the deciding fact is that they still have work to do on a LIVE bo
 analyzer is still filing both card kinds, and the sweeps are the only thing that retires
 them. They go with the producer, in R3/R4.
 
-**R1c — the batched ask (O9's build).** The prerequisite the whole frontend wave hangs off.
-`ask_owner` takes a question SET rather than one question — an array of items carrying the
-question, what it blocks, and the resolver's candidates where it has them (no `enum`, so constraint 8 is untouched; the shape is `close_reading`'s, an
-array of string-valued objects with a `maxItems` clamp). The claim moves off the state
-flip: `record_owner_reply`'s atomicity is today the `waiting_on_owner → running`
-transition (`clarify.py:449-452`), and with several open questions it has to be addressed
-per question instead, or two replies can answer the same one twice. `latest_question`
-(`asktools.py:80-96`) and `NotesInboxEntry.question` (`note_conversation.py:312`) go
-plural with it, the clarification append composes several Q/A pairs where it takes one
-today, and the reply route accepts a STRUCTURED answer list beside the free text (§3b I7 —
-a joined string cannot be paired back to its question, and a mispaired block is a wrong
-sentence in the owner's corpus). Separable from R1b: that PR changes the write path's
-relationship to the owner, this one changes the ask's arity, and bundling them makes one
-acceptance matrix out of two.
+**R1c — the batched ask (O9's build). ✅ Shipped.** The prerequisite the whole frontend wave
+hangs off. `ask_owner` takes a question SET rather than one question — an array of items
+carrying the question, what it blocks, and the resolver's candidates where it has them (no
+`enum`, so constraint 8 is untouched; the shape is `close_reading`'s, an array of
+string-valued objects with a `maxItems` clamp). Each question is given a short id at ASK
+time, stored **in the ledger row's `args`**, because that blob is the only thing that
+persists it: a reopened thread replays the ask step's args straight out of the transcript
+(§3b I9), so an id kept anywhere else leaves a reopened thread's answers unpairable.
+`latest_question` (`asktools.py`) becomes `open_questions` and `NotesInboxEntry.question`
+becomes `questions`, the clarification append composes several Q/A pairs where it took one
+— in ONE transaction, so the `ingest_state` flip and the `ingest_note` enqueue inside it
+still happen once — and the reply route accepts a STRUCTURED answer list beside the free
+text (§3b I7 — a joined string cannot be paired back to its question, and a mispaired block
+is a wrong sentence in the owner's corpus). Separable from R1b: that PR changes the write
+path's relationship to the owner, this one changes the ask's arity, and bundling them makes
+one acceptance matrix out of two.
 
-**It is NOT backend-only, and three shipped things say so** — the same obligation R1 carries
-for `close_reading`, for the same reason:
+⟲ **This paragraph said "the claim moves off the state flip" to something addressed per
+question. It did not have to, and R1c built no such thing.** O11 is decided (ii): what a
+partial send leaves behind is not durable state but a sentence handed to the agent, so the
+claim stays at the SET level — one reply consumes the whole set. No per-question claim, no
+new table, no migration. See O11 in §8 for the reasoning in full.
 
-1. `toolSummary.ts:237` declares `ask_owner: ["question"]` in `INLINE_ARGS`, and
-   `test_tool_step_polish.py:109-117` asserts every key named there exists in that tool's
-   schema. `ask_owner.tool` declares `properties: {question: string}`; the moment the field
-   becomes a set, that test fails. The `INLINE_ARGS` entry moves to the new key (or to
-   `NO_INLINE`, if the set has no single human-readable target) in this PR.
+⟲ **It also said the STATE FLIP was that claim, and that a second reply "finds `running`
+and files nothing". True of a sequential second reply only.** `set_state`'s UPDATE admits
+`running` as a source of `running`, so it never compared-and-swapped on `waiting_on_owner`,
+and two overlapping replies both won it. The claim is now a conditional UPDATE of its own
+(`claim_waiting`); the wave's decision is unchanged, the argument for it is not. See I8.
+
+⟲ **Three more defects the same review found, all shipped fixed on top of R1c.** (1) The
+per-field cap was counted in SOURCE characters against a ledger cap counted in SERIALIZED
+ones, so a question of 800 quotes, 800 CJK characters or 800 emoji — each inside the
+sidecar's own schema — degraded the whole `args` blob to its key names: a `waiting_on_owner`
+thread with no readable question, whose owner's answer then filed nothing and told the agent
+nothing. The set is now measured as exactly the blob that will be recorded and shrunk to fit
+(context first, the question text last, never by dropping a question). (2) `open_questions`
+fell through an empty newest ask to an OLDER, already-answered set — reachable from (1), and
+it pairs the owner's prose with a question that closed; it now takes the newest succeeded row
+and whatever it parses to, and `notes_inbox` gained the `t.ok` filter so the tab and the reply
+path cannot read different sets. (3) A structured answer had no durable home: on the
+answers-only send `message` is blank, so a failed append or a soft-deleted note lost the
+owner's tapped answers entirely. `clarify.owner_turn_text` now renders them into the turn's
+own text for the transcript and the model — §3b I7's own shape, the prose being the RENDERING
+of the turn — and `owner_reply_notice` tells the agent when they did not reach the note.
+
+*What a later wave can remove:* `questions_from_args` reads the PRE-BATCH ledger shape
+(`args["question"]`, a bare string) and synthesizes a positional id for it. That is a
+**deploy-window fallback**: the box is live, so a thread could be sitting in
+`waiting_on_owner` with a pre-R1c ask row at the moment R1c deployed, and without it that
+owner's answer pairs with nothing. It can go once no live thread predates the batch.
+
+**It is NOT backend-only, and three shipped things said so** — the same obligation R1
+carries for `close_reading`, for the same reason. All three moved in R1c's PR:
+
+1. `toolSummary.ts` declared `ask_owner: ["question"]` in `INLINE_ARGS`, and
+   `test_tool_step_polish.py` asserts every key named there exists in that tool's schema —
+   so the moment the field became a set, that test failed. The entry is now
+   `ask_owner: ["questions"]`, with `"question"` added to `BATCH_ELEMENT_KEYS` so each
+   element renders as its question text rather than as an opaque object.
 2. `NotesInboxEntry.question` going plural is a WIRE change with a live PWA reader:
-   `NotesInboxRow.ask: string | null` (`api/client.ts:1419`), rendered at
-   `review/NotesTab.tsx:59`. The row stays a redirect (D4) either way — what changes is
-   whether it quotes one ask or says how many are open.
-3. `ask_owner.tool`'s prose body is model-facing spec and contradicts the batch in as many
+   `NotesInboxRow.ask: string | null` became `asks: string[]`, and `review/NotesTab.tsx`
+   quotes the first with a `+N more`. The row stays a pure redirect with no verb (D4) —
+   what changed is only how much of the open set it names.
+3. `ask_owner.tool`'s prose body is model-facing spec and contradicted the batch in as many
    words: *"Record ONE question about this note for Jeff and stop"* and *"Ask once. A second
    question in the same turn is refused"*. TOOL_SURFACE's lever for calibration is
-   description text, so the description IS the behaviour change and is rewritten here, not
-   left for a later wave to notice.
+   description text, so the description IS the behaviour change; it is rewritten (v2) to ask
+   everything in one call, to say what `blocks` and `candidates` buy, and to say that Jeff
+   may leave some unanswered.
+4. And one the list did not anticipate: `ChatRequest` grows `answers` — turn-local, never
+   persisted, exactly like `appointment_id` — with the matching `ChatAnswer` on the
+   frontend's request type, so the structured send R3f builds is typed on both sides and an
+   empty list behaves exactly as before.
 
 **And name the interim, because the box is live between the two PRs.** `note_converse` is
 the note producer from the day its seed lands, so once R1c merges the agent can raise three
-questions while the PWA still offers only free prose and `record_owner_reply` still pairs an
-answer to ONE question through `latest_question` (`clarify.py:448`). Two ways out and the
-plan takes the first: **R1c degrades to today's behaviour whenever the answer arrives
-unstructured** — a free-prose reply answers the OLDEST open question and leaves the rest
-open, which is exactly today's semantics on a one-item set and never mispairs — or R1c and
-R3f land close enough together that the window does not include a real note. The degrade is
-a few lines and it is what makes R1c independently mergeable at all; without it R1c must not
-merge ahead of R3f.
+questions while the PWA still offers only free prose. Two ways out and the
+plan takes the first, and R1c built it: **R1c degrades to today's behaviour whenever the
+answer arrives unstructured** — a free-prose reply answers the OLDEST open question and
+leaves the rest open, which is exactly today's semantics on a one-item set and never
+mispairs. Beside a PARTIAL structured set it answers the oldest question that set left open;
+beside a COMPLETE one it files nothing and stands as chat, because
+`note_clarifications.question` is NOT NULL and non-blank and inventing a question the agent
+never asked would put a sentence into the owner's own note that nobody said. The degrade is
+a few lines and it is what makes R1c independently mergeable at all.
 
 **R2 — the harness re-cut.** `_tool_calls` onto `close_reading`, the scenario format onto
 the reading, the runner's `sweep_note` re-labelled from divergence to spec. **Acceptance:
@@ -1961,9 +2019,10 @@ message goes when the agent notices the duplicate while reading a LATER note: re
 earlier note's thread, raise it in the current one, or start a thread of its own. All three
 are one channel; they differ in where the owner finds it. Not decided here.
 
-**O9 — May one pass raise SEVERAL questions? DECIDED: yes, batched.** `ask_owner` enforces one open question at a
-time (`agent/asktools.py`: a second call while `waiting_on_owner` is refused and told what
-is outstanding). That cap was sound when the inbox was a card queue and asking was the
+**O9 — May one pass raise SEVERAL questions? DECIDED: yes, batched — and BUILT (R1c).**
+`ask_owner` used to enforce one open question at a time (`agent/asktools.py`: a second call
+while `waiting_on_owner` is refused and told what is outstanding — the refusal survives, at
+the level of the SET). That cap was sound when the inbox was a card queue and asking was the
 exception. Under one channel it becomes the design's main cost, and it is paid in the
 owner's attention rather than the box's CPU: a note with three ambiguities costs three
 passes, three re-ingests and three trips to the inbox, spread over however long the owner
@@ -1981,9 +2040,24 @@ three-question note) rather than argued.
 What it costs to build: the one-at-a-time latch is what makes `record_owner_reply`'s claim
 atomic — the `waiting_on_owner → running` flip IS the latch that stops a second reply
 appending the same answer twice, and `latest_question` reads exactly one open ask. A batch
-needs a question SET with per-question answers, so the claim moves from the state flip to
-something addressed per question, and the clarification block composes several Q/A pairs
-rather than one. That is the real work; the tool schema is the easy half.
+needs a question SET with per-question answers, and the clarification append composes
+several Q/A pairs rather than one, in ONE transaction (a loop over the one-pair call
+enqueues N re-ingests of the same note — the exact cost the batch exists to remove).
+
+⟲ **This paragraph also said the claim "moves from the state flip to something addressed
+per question". It does not, and R1c built neither.** O11 (below) is decided (ii), and the
+simplification falls out of that decision: an unanswered question is not durable state, it
+is a SENTENCE handed to the agent on its reply turn. So the claim stays at the SET level —
+one reply consumes the whole set, and two replies can never answer the same question twice.
+No per-question claim, no new table, no migration. What was left as the real work was the
+pairing rules and the wire; the tool schema was indeed the easy half.
+
+⟲ **And the correction needs a correction of its own: "a second finds `running` and files
+nothing" was true SEQUENTIALLY, not generally.** R1c claimed the set with an unlocked read
+plus `set_state(..., "running")`, whose allowed-sources table admits `running` as a source
+of `running` — so two overlapping replies on one thread both updated a row and both filed.
+The claim is now a conditional UPDATE on `waiting_on_owner` (`claim_waiting`), which is
+what makes the property general; the decision it was used to justify never depended on it.
 
 **Decided: batched.** Settled with the owner on the interaction mock
 (`docs/mocks/agent-ingest-thread/note-thread.html`, §3b), where the three-question note is
@@ -1993,8 +2067,8 @@ candidate context the retired card was carrying is what makes a one-tap answer p
 What the mock added is the property that makes it safe to render: **the question block is
 inert and the omnibox send is the only submit** (§3b I6/I7), so three answers are one turn
 rather than three, which is the entire point. The build cost this entry already named is
-the real work and it is now a wave: **R1c** in §7, which moves the claim off the state flip
-to something addressed per question. Two questions the batch OPENS are recorded below as
+the real work and it is now a wave: **R1c** in §7 — which, as the ⟲ above says, did NOT
+move the claim per question. Two questions the batch OPENS are recorded below as
 **O11** (partial send) and **O12** (draft state).
 
 **O10 — Nothing tells the owner a thread is waiting.** `waiting_since` is measured and
@@ -2012,25 +2086,48 @@ discards a reading the agent already wrote, and settling it unanswered, which co
 reading the agent said it could not finish. **Not decided.** Both halves are cheap to build
 and neither is obvious to choose.
 
-**O11 — Is a PARTIAL send allowed?** *Opened by O9's batch; not decided.* The mock permits
-sending 2 of 3 and discourages it in the footnote ("the rest stay open"), which is honest
-about the cost: a partial send spends a turn, a re-ingest and a full re-read to answer part
-of what is blocking, and leaves the agent still blocked on the rest. It also does not fit
-the state machine as drawn. Answering ANY question puts the thread back to `running` for
-the reply turn (`clarify.py:449-452`), so "the rest stay open" needs the unanswered
-questions to survive a state the ask latch currently treats as *"that question has been
-answered"* — which is R1c's per-question claim doing double duty, and worth deciding before
-that PR rather than after it. *Options:* **(i)** refuse it — the send is disabled until
-every question is answered, which is one rule and no ambiguity, and is wrong the moment the
-owner genuinely does not know one of the answers; **(ii)** allow it, and TELL the agent
-which questions went unanswered and that they are still open, so the reply turn can re-ask,
+**O11 — Is a PARTIAL send allowed? DECIDED: yes — option (ii), and it is BUILT (R1c).**
+The mock permits sending 2 of 3 and discourages it in the footnote ("the rest stay open"),
+which is honest about the cost: a partial send spends a turn, a re-ingest and a full re-read
+to answer part of what is blocking, and leaves the agent still blocked on the rest. The
+options were **(i)** refuse it — one rule and no ambiguity, and wrong the moment the owner
+genuinely does not know one of the answers; **(ii)** allow it, and TELL the agent which
+questions went unanswered and that they are still open, so the reply turn can re-ask,
 proceed without them, or drop them; **(iii)** allow it and say nothing, which re-runs the
 pass against a note that grew and lets the agent rediscover what is missing — cheapest to
-build and the most likely to ask the same question twice. *Recommendation:* (ii), and the
-sentence handed to the agent is the deliverable, not the toggle. What must NOT happen under
-any option is a partial send that silently closes the unanswered questions: that loses the
-owner's own words about what their note means, which is the one thing this whole channel
-exists to capture.
+build and the most likely to ask the same question twice. **(ii) is taken, and the sentence
+handed to the agent is the deliverable, not the toggle** (`clarify.owner_reply_notice`,
+composed onto the reply turn's model-facing message). What must NOT happen under any option
+is a partial send that silently closes the unanswered questions: that loses the owner's own
+words about what their note means, which is the one thing this whole channel exists to
+capture.
+
+**And the finding that falls out of the decision, because it removed the hardest piece of
+R1c.** This entry used to say a partial send "does not fit the state machine as drawn" —
+answering ANY question puts the thread back to `running`, so "the rest stay open" needs the
+unanswered questions to survive a state the ask latch treats as *"that question has been
+answered"* — and it called that R1c's per-question claim doing double duty. **Under (ii) it
+is not a state problem at all.** An unanswered question does not survive as durable state;
+it survives as a *sentence handed to the agent on its reply turn*, and the agent re-raises
+it if it is still stuck. So:
+
+- The claim stays where it was, on the `waiting_on_owner → running` transition, and stays
+  at the SET level: one reply consumes the whole set.
+- What it could NOT stay is a plain `set_state` call. That filters on the allowed-sources
+  table, which admits `running` as a source of `running`, so it never compared-and-swapped
+  on `waiting_on_owner` and two overlapping replies both won it. The transition is now
+  claimed by its own conditional UPDATE (`claim_waiting`): exactly one reply wins, the
+  loser is turned away as a non-waiting thread is, and two replies can never answer the
+  same question twice. The property this bullet always asserted is now actually held, by
+  that UPDATE rather than by the state machine around it.
+- **No per-question claim, no new table, no migration** — the comment at
+  `clarify.py`'s latch now reads "that question SET has been consumed", which is what the
+  transition actually means.
+
+The residual (ii) accepts, stated plainly: a partial send does spend a turn, a re-ingest and
+a full re-read to answer part of what is blocking. That is the owner's choice to make, and
+the alternative — refusing the send — is worse on the day they simply do not know one of
+the answers.
 
 **O12 — Where does a half-filled question block live?** *Also opened by the batch; not
 decided.* Local component state dies with the view. Answer two of three, take a call, come
@@ -2162,12 +2259,14 @@ says so explicitly instead of `ok … already recorded` (the `STILL_HELD` line).
 the dead end honest and visible instead of silent — which is why this is a recorded
 residual rather than a live loss — but no row is retired by any of it.
 
-**O11 and O12 are the same shape as O10, and should be decided together.** All three are
-about a thread that WAITS: nothing tells the owner it is waiting (O10), nothing survives
-their leaving mid-answer (O12), and nothing says what happens when they answer only part of
-it (O11). The batch makes the wait longer and the half-answered state possible, so it is
-what turns three separate omissions into one question — *what does a waiting thread owe the
-owner between the ask and the answer?* — and that is worth one round rather than three.
+**O10 and O12 are the same shape, and should be decided together. O11 no longer belongs
+with them.** All three were about a thread that WAITS: nothing tells the owner it is
+waiting (O10), nothing survives their leaving mid-answer (O12), and nothing said what
+happens when they answer only part of it (O11). O11 is now decided and built — the answer
+is a sentence to the AGENT, not a durable state, which is why it turned out to be the
+cheap one of the three. The remaining pair still asks one question — *what does a waiting
+thread owe the OWNER between the ask and the answer?* — and the batch, which makes the wait
+longer and the half-filled block possible, is still what makes it worth one round.
 
 **Carried risks, and R1 sharpened one of them.** Intake is third-party text driving an
 owner-identity session (risk 1) — the third frozenset still narrows it, and after R1

@@ -169,9 +169,10 @@ class NotesInboxRow(BaseModel):
     domain: str
     # What the row quotes — the note's opening, or the owner's own staged request.
     quote: str
-    # What is being asked. None on a conversation that has not asked yet (a first pass
-    # still reading), which is why the row is listed but not counted.
-    ask: str | None
+    # What is being asked — the whole open SET (R1c), in the order it was asked. Empty on
+    # a conversation that has not asked yet (a first pass still reading), which is why the
+    # row is listed but not counted; a staged approval carries its one server-written line.
+    asks: list[str]
     captured_at: datetime | None
     waiting_since: datetime
     # Graph writes this thread has already committed, so the row says how much of the
@@ -205,7 +206,7 @@ def merge_notes_inbox(
             note_id=w.note_id,
             domain=w.domain,
             quote=w.note_excerpt,
-            ask=w.question,
+            asks=w.questions,
             captured_at=w.captured_at,
             waiting_since=w.waiting_since,
             committed=w.committed,
@@ -220,7 +221,7 @@ def merge_notes_inbox(
             note_id=None,
             domain=a.domain,
             quote=a.title,
-            ask=STAGED_APPROVAL_ASK,
+            asks=[STAGED_APPROVAL_ASK],
             captured_at=None,
             waiting_since=a.staged_at,
             committed=0,

@@ -2834,6 +2834,127 @@ def test_only_a_turn_the_owner_typed_counts_as_owner_authored() -> None:
     assert deferred.owner_authored is False
 
 
+def test_an_over_long_answer_list_is_accepted_and_capped_rather_than_refused() -> None:
+    """The structured answers a note thread's question block sends are capped the way
+    `attachment_ids` is — truncated at `MAX_ANSWERS` on the way into `record_owner_reply`,
+    never 422'd. A stale or buggy client must degrade this turn, not fail it: the owner's
+    typed answer is in the same request.
+
+    Both halves, because the acceptance alone is not the claim: the request model takes
+    the over-long list, and `capped_answers` — the cut `record_owner_reply` applies to it
+    — is what keeps the tail out."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import MAX_ANSWERS, capped_answers
+
+    body = agent_mod.ChatRequest(
+        session_id="s",
+        message="My sister.",
+        answers=[
+            agent_mod.AnswerIn(question_id=f"q{i}", answer="a") for i in range(MAX_ANSWERS * 2)
+        ],
+    )
+    assert len(body.answers) == MAX_ANSWERS * 2  # accepted, not 422'd
+
+    capped = capped_answers([(a.question_id, a.answer) for a in body.answers])
+    assert [i for i, _ in capped] == [f"q{i}" for i in range(MAX_ANSWERS)]
+    # A blank answer is not an answer: the block's question column is NOT NULL and
+    # non-blank in Postgres, and an untouched field in the PWA's block sends as "".
+    assert capped_answers([("q1", "  "), ("q2", " yes ")]) == [("q2", "yes")]
+
+
+def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> None:
+    """O11 (ii)'s deliverable, and it is the SENTENCE, not the toggle. A partial send is
+    allowed, and what makes it safe is that the agent is told what went unanswered — an
+    unanswered question is not durable state anywhere, so this text is the only thing
+    that carries it forward. A partial send that silently closed the rest would lose the
+    owner's own words about what their note means, which is what this channel exists to
+    capture.
+
+    Composed onto the model-facing message the way the attachment blocks are, so it
+    reaches the turn on both render shapes."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply, owner_reply_notice
+
+    partial = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?", "Which dose?"],
+        clarified=True,
+        note_moved=False,
+    )
+    notice = owner_reply_notice(partial)
+    assert "Which coach?" in notice and "Which dose?" in notice
+    assert "still open" in notice
+    assert "re-ask" in notice
+    # A complete reply owes the agent nothing, and a turn that answered nothing at all
+    # (not a note thread, not waiting) has no reply to speak for.
+    assert owner_reply_notice(OwnerReply([], [], clarified=False, note_moved=False)) == ""
+    assert owner_reply_notice(None) == ""
+
+    messages = agent_mod._conversation(
+        agent_mod.ChatRequest(session_id="s", message="My sister."), [], notice
+    )
+    assert notice in getattr(messages[-1], "text", "")
+
+
+def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
+    """The durability property R1c's send shape broke, restored at its root.
+
+    §3b I7 makes the structured answers the PAYLOAD and the prose the RENDERING of the
+    same turn, so an answers-only send arrives with `message` blank. Blank is what the
+    transcript would record and what the model's user turn would carry, which left the
+    clarification block as the ONE durable trace of three tapped answers — and a failed
+    append or a soft-deleted note lost all three with nothing anywhere saying so."""
+    from jbrain.analysis.clarify import OwnerReply, owner_turn_text
+
+    reply = OwnerReply(
+        answered=[("Which Sarah?", "My sister."), ("Which coach?", "Her own.")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    rendered = owner_turn_text("", reply, [("q1", "My sister."), ("q2", "Her own.")])
+    assert "Which Sarah?" in rendered and "My sister." in rendered
+    assert "Which coach?" in rendered and "Her own." in rendered
+
+    # Typed prose is left EXACTLY as sent: it is the free-text degrade path, and
+    # `record_owner_reply` pairs it with the oldest open question on its own terms.
+    assert owner_turn_text("My sister.", reply, [("q1", "My sister.")]) == "My sister."
+    assert owner_turn_text("", None, []) == ""
+    # No paired set to render from (the thread was not waiting, say) — the owner's words
+    # still reach the turn, which is the whole point of composing here.
+    assert owner_turn_text("", None, [("q1", "My sister.")]) == "My sister."
+
+
+def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
+    """`clarified=False` with paired answers means the append raised or the note was
+    soft-deleted, so the block — the answers' durable home — does not exist. The agent
+    must be told the owner DID answer and what he said, or it reads a silent turn and
+    asks him again for what he has already told it."""
+    from jbrain.analysis.clarify import OwnerReply, owner_reply_notice
+
+    lost = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?"],
+        clarified=False,
+        note_moved=False,
+    )
+    notice = owner_reply_notice(lost)
+    assert "DID answer" in notice
+    assert "My sister." in notice and "Which Sarah?" in notice
+    assert "could NOT be appended" in notice
+    # The partial-send sentence still rides beside it.
+    assert "Which coach?" in notice and "still open" in notice
+
+    # A filed answer needs no such notice — the note itself now carries it.
+    filed = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    assert owner_reply_notice(filed) == ""
+
+
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     """A finished deferred analysis resumes the chat with a short SYSTEM notice (not owner
     input): jerv is told the analysis is ready and to continue the owner's original request,

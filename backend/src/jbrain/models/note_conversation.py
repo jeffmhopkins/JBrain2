@@ -79,6 +79,12 @@ STALE_CONVERSATION = 2 * NOTE_TURN_WALL_CLOCK
 # conversation — nothing stops a retry or a reaper REPLACING the state, which would
 # make the question vanish from the inbox and release the note with no trace. That
 # edge needs `abandon_question=True` said out loud.
+#
+# They are EDGES and never CLAIMS. `running` is a legal source of `running` — a pass moves
+# within it — so an UPDATE filtered through this table is not a compare-and-swap on any one
+# source state, and a caller that needs to win a race against another caller in the same
+# state needs its own conditional UPDATE. `claim_waiting` is that, for the one place it
+# matters (the owner's reply consuming an open question set).
 _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "running": frozenset({"running", "waiting_on_owner"}),
     "waiting_on_owner": frozenset({"running", "waiting_on_owner"}),
@@ -294,6 +300,56 @@ NOTE_EXCERPT_CHARS = 160
 
 
 @dataclass(frozen=True)
+class AskedQuestion:
+    """One question of an `ask_owner` set, as the ledger recorded it.
+
+    `id` is assigned at ASK time and stored in the ledger `args`, because that blob is
+    the only thing that persists the question: the PWA replays a settled thread's ask
+    step straight out of the transcript (§3b I9), so an id kept anywhere else would not
+    survive a reopened thread and its answers could not be paired back."""
+
+    id: str
+    question: str
+    blocks: str = ""
+    candidates: str = ""
+
+
+def questions_from_args(args: Mapping[str, Any] | None) -> list[AskedQuestion]:
+    """The question set an `ask_owner` ledger row holds, in the order it was asked.
+
+    It lives beside the ledger rather than beside the tool because its two readers reach
+    it from opposite directions — the reply path through `agent/asktools.py`, the notes
+    tab through `notes_inbox` below — and this is the side both can import.
+
+    **The bare-`args["question"]` shape is a DEPLOY-WINDOW fallback** (R1c). A thread can
+    be sitting in `waiting_on_owner` with a pre-batch row in its ledger the moment this
+    ships, and without the fallback that owner's answer pairs with nothing and their
+    question is silently lost. A positional id is enough for one: nothing structured can
+    name a row that predates ids, so the only answer it can receive is free prose, which
+    pairs by position anyway. It can go once no live thread predates the batch."""
+    raw = (args or {}).get("questions")
+    if not isinstance(raw, list):
+        legacy = _one_line((args or {}).get("question"))
+        return [AskedQuestion(id="q1", question=legacy)] if legacy else []
+    asked: list[AskedQuestion] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            continue
+        question = _one_line(item.get("question"))
+        if not question:
+            continue
+        asked.append(
+            AskedQuestion(
+                id=_one_line(item.get("id")) or f"q{i + 1}",
+                question=question,
+                blocks=_one_line(item.get("blocks")),
+                candidates=_one_line(item.get("candidates")),
+            )
+        )
+    return asked
+
+
+@dataclass(frozen=True)
 class NotesInboxEntry:
     """One note-conversation row of the review inbox's notes tab (D4/D5). Read-only and
     decision-free by construction: it carries what a redirect needs to be worth taking —
@@ -309,7 +365,9 @@ class NotesInboxEntry:
     domain: str
     note_excerpt: str
     captured_at: datetime
-    question: str | None
+    # Every question of the open set (R1c), in the order it was asked. Empty on a
+    # conversation that has not asked yet — a first pass still reading.
+    questions: list[str]
     waiting_since: datetime
     committed: int
     # A first pass still `running` is LISTED but not counted: the agent is reading, and
@@ -512,12 +570,18 @@ class NoteConversationRepo:
         listed so the owner can see the note is being read, and the route leaves it out
         of the count because nothing is waiting on them yet.
 
-        The question is the LAST `ask_owner` of the thread — a conversation resumed after
-        an answer can ask again, and the inbox must point at the open one, not the
-        answered one. `committed` counts distinct fact ids over the thread's SUCCEEDED
-        calls, so it counts what the write path reported rather than a number invented
-        from the arguments the model sent — over BOTH turn paths, since W4c/1 put the
-        owner's reply on the same ledger (`ConversationWrites`' docstring).
+        The questions are the last SUCCEEDED `ask_owner` of the thread — one call now
+        carries the whole set (R1c), and a conversation resumed after an answer can ask
+        again, so the inbox must point at the open set, not an answered one. `AND t.ok`
+        is not decoration: it is the same filter `asktools.open_questions` applies, and
+        the reply path pairs the owner's words against ITS answer — without it the row
+        the inbox shows and the row the reply consumes can be different sets, so the
+        owner answers one question and their words are filed against another.
+
+        `committed` counts distinct fact ids over the thread's SUCCEEDED calls, so it
+        counts what the write path reported rather than a number invented from the
+        arguments the model sent — over BOTH turn paths, since W4c/1 put the owner's
+        reply on the same ledger (`ConversationWrites`' docstring).
 
         A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
         conversation survives, and a redirect into a deleted note's thread is a dead end.
@@ -527,10 +591,11 @@ class NoteConversationRepo:
                 text(
                     "SELECT c.session_id, c.note_id, c.state, c.updated_at, s.agent,"
                     " n.domain_code, n.body, n.created_at AS captured_at,"
-                    " (SELECT t.args->>'question'"
+                    " (SELECT t.args"
                     "    FROM app.note_conversation_tool_calls t"
                     "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
-                    "   ORDER BY t.seq DESC LIMIT 1) AS question,"
+                    "     AND t.ok"
+                    "   ORDER BY t.seq DESC LIMIT 1) AS ask_args,"
                     " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
                     "         unnest(t2.fact_ids) AS f"
                     "   WHERE t2.session_id = c.session_id AND t2.ok) AS committed"
@@ -552,13 +617,42 @@ class NoteConversationRepo:
                 domain=r.domain_code,
                 note_excerpt=_excerpt(r.body),
                 captured_at=r.captured_at,
-                question=r.question,
+                questions=[q.question for q in questions_from_args(r.ask_args)],
                 waiting_since=r.updated_at,
                 committed=int(r.committed or 0),
                 live=r.state == "running",
             )
             for r in rows
         ]
+
+    async def claim_waiting(self, session: AsyncSession, session_id: str) -> bool:
+        """Claim a `waiting_on_owner` thread for the reply about to consume its question
+        set. True for the caller that won it, False for everyone else.
+
+        A compare-and-swap, and it has to be one: `set_state` cannot serve here because
+        `_ALLOWED_SOURCES["running"]` legitimately contains `running` (a pass moves
+        running → running), so its conditional UPDATE matches a row another reply already
+        claimed and reports success to both. `scoped_session` is READ COMMITTED and
+        `/chat` takes no per-session lock, so two overlapping replies on one thread — the
+        owner double-tapping send, the PWA retrying a dropped stream, two devices — both
+        read `waiting_on_owner` and both proceed. Two clarification blocks for the same
+        question, two `ingest_note` enqueues, and `note_body_sha` re-stamped off a stale
+        read: duplicated SOURCE text in the owner's own note, which the module docstring
+        of `analysis/clarify.py` names as the one failure the owner cannot undo.
+
+        Under READ COMMITTED the loser's UPDATE blocks on the winner's row lock and then
+        re-evaluates its WHERE against the committed row, finds `running`, and matches
+        nothing — so the claim is the latch, not the state machine around it."""
+        stmt = (
+            update(NoteConversation)
+            .where(
+                NoteConversation.session_id == uuid.UUID(session_id),
+                NoteConversation.state == "waiting_on_owner",
+            )
+            .values(state="running", updated_at=func.now())
+            .returning(NoteConversation.session_id)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
 
     async def set_state(
         self,
@@ -744,6 +838,10 @@ class NoteConversationRepo:
         return ConversationWrites(
             facts=frozenset(facts), entities=frozenset(entities), domains=frozenset(domains)
         )
+
+
+def _one_line(value: object) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _excerpt(body: str) -> str:
