@@ -67,6 +67,7 @@ from jbrain.analysis.clarify import (
     MAX_ANSWERS,
     close_owner_reply,
     owner_reply_notice,
+    owner_turn_text,
     owner_words_reached_note,
     record_owner_reply,
 )
@@ -914,6 +915,62 @@ async def test_an_answer_naming_a_question_that_is_not_open_files_nothing(
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
     assert note is not None and "canal loop" not in note.body
+
+
+async def test_the_composite_send_end_to_end(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """THE SEND R3f's acceptance walk is: two answers tapped, one sentence typed.
+
+    It is the send §3b I7 designs and the omnibox invites ("answer above, or just
+    reply"), and R3f's review proved the thread displayed the exact inverse of it. This
+    asserts the whole outcome in one place — what the TURN says, what the NOTE gets, what
+    reaches no note, and what the agent is told — because the failure was that those four
+    disagreed: the turn carried only the aside, the note carried only the answers, and the
+    frozen block (which reads its answers back out of the turn's text) therefore drew
+    "answered" with no answers and the tapped candidate not picked."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
+    )
+
+    answers = [(ids[0], "My sister."), (ids[1], "Her own.")]
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="also the dinner is cancelled",
+        answers=answers,
+    )
+    assert reply is not None
+
+    # 1. THE NOTE gets the two tapped answers, each under the question it answers, and
+    #    nothing else. The typed sentence is not filed against DOSE.
+    assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
+    assert await _blocks(maker, owner, note_id) == reply.answered
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and "dinner is cancelled" not in note.body
+
+    # 2. THE THIRD QUESTION is still open — not silently spent on a sentence that does
+    #    not answer it.
+    assert reply.unanswered == [DOSE]
+
+    # 3. THE TURN says both halves, pairs first, in the order the owner did them. This
+    #    is the string the transcript persists and the frozen block reads back, and it is
+    #    byte-identical to `asked.ownerTurnText`'s optimistic bubble.
+    assert owner_turn_text("also the dinner is cancelled", reply, answers) == (
+        f"Q: {QUESTION}\nA: My sister.\n\nQ: {COACH}\nA: Her own.\n\nalso the dinner is cancelled"
+    )
+
+    # 4. THE AGENT is told the sentence reached no note, and that DOSE is still open —
+    #    and the turn holds no `assert_fact` off the back of it.
+    assert reply.dropped == ["also the dinner is cancelled"]
+    assert owner_words_reached_note(reply) is False
+    notice = owner_reply_notice(reply)
+    assert "dinner is cancelled" in notice and "did NOT reach the note" in notice
+    assert DOSE in notice and "still open" in notice
 
 
 async def test_free_prose_alone_answers_the_oldest_open_question(

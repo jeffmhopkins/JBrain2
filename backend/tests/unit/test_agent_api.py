@@ -3056,9 +3056,21 @@ def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
     assert "Which Sarah?" in rendered and "My sister." in rendered
     assert "Which coach?" in rendered and "Her own." in rendered
 
-    # Typed prose is left EXACTLY as sent: it is the free-text degrade path, and
-    # `record_owner_reply` pairs it with the oldest open question on its own terms.
-    assert owner_turn_text("My sister.", reply, [("q1", "My sister.")]) == "My sister."
+    # ⟲ A MIXED send renders BOTH halves (R3f's review, finding 1). Typed text used to win
+    # outright and throw the pairs away — so the exact send §3b I7 designs persisted as the
+    # aside alone, and the PWA's frozen block, which reads its answers back out of this
+    # text, drew "answered" with no answers and the tapped candidate not picked. The pairs
+    # come first, the typed words last, and the typed half wears no Q:/A: labels, so it
+    # cannot be read back as an answer to anything.
+    mixed = owner_turn_text("also the dinner is cancelled", reply, [("q1", "My sister.")])
+    assert mixed == (
+        "Q: Which Sarah?\nA: My sister.\n\nQ: Which coach?\nA: Her own."
+        "\n\nalso the dinner is cancelled"
+    )
+    # With no structured answers at all the prose stands exactly as sent: that is the
+    # free-text degrade path, and `record_owner_reply` pairs it with the oldest open
+    # question on its own terms.
+    assert owner_turn_text("My sister.", reply, []) == "My sister."
     assert owner_turn_text("", None, []) == ""
     # No paired set to render from (the thread was not waiting, say) — the owner's words
     # still reach the turn, which is the whole point of composing here.
@@ -3168,11 +3180,11 @@ def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> Non
 def test_pairing_reports_the_words_it_could_not_file() -> None:
     """`_pair`'s two dropping rules, each returning what it dropped.
 
-    Free text beside a COMPLETE structured set is chat with nowhere to go; a structured
-    answer naming an id the open set does not carry is a stale block replayed out of a
-    reopened thread (§3b I9). Both were silent before — the second logged a warning
-    nobody downstream could read — and both are the owner's own words reaching no note,
-    which is the condition the reply turn's write verbs now turn on."""
+    Free text beside a structured answer is chat with nowhere to go; a structured answer
+    naming an id the open set does not carry is a stale block replayed out of a reopened
+    thread (§3b I9). Both were silent before — the second logged a warning nobody
+    downstream could read — and both are the owner's own words reaching no note, which is
+    the condition the reply turn's write verbs now turn on."""
     from jbrain.analysis.clarify import _pair
     from jbrain.models.note_conversation import AskedQuestion
 
@@ -3181,15 +3193,27 @@ def test_pairing_reports_the_words_it_could_not_file() -> None:
     assert answered == {"q1": "Dana Reeve"}
     assert dropped == ["also she moved"]
 
-    # A stale id: dropped, and the prose then answers the question it left open.
+    # A stale id: dropped — and so is the prose, because the send CARRIED a structured
+    # answer. R3f's review, finding 5: the rule is keyed on the block having been used at
+    # all, not on whether its answers landed. The owner was typing beside a block here,
+    # and his sentence is no more an answer to the question that block left open than it
+    # would be beside a tap that had landed.
     answered, dropped = _pair(one, [("q9", "from a closed set")], "Dana Reeve", session_id="s")
-    assert answered == {"q1": "Dana Reeve"}
-    assert dropped == ["from a closed set"]
+    assert answered == {}
+    assert dropped == ["from a closed set", "Dana Reeve"]
 
-    # The ordinary partial send: prose answers the oldest open question, nothing is lost.
+    # Free text ALONE still answers the oldest open question, and cannot mispair: with
+    # nothing else in the send there is only one thing it could be answering.
     two = [*one, AskedQuestion(id="q2", question="Which coach?")]
     answered, dropped = _pair(two, [], "Dana Reeve", session_id="s")
     assert answered == {"q1": "Dana Reeve"} and dropped == []
+
+    # But beside ONE tap on a THREE-question set it is filed against nothing — the
+    # mispairing that finding is about: "this note is about Kaiya not me" typed beside a
+    # tap used to be appended as the owner's answer to "Which coach?".
+    answered, dropped = _pair(two, [("q2", "her own")], "this is about Kaiya", session_id="s")
+    assert answered == {"q2": "her own"}
+    assert dropped == ["this is about Kaiya"]
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:
