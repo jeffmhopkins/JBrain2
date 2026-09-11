@@ -513,6 +513,11 @@ export function App() {
           onOpenNote={openNoteFromStream}
           onOpenNoteById={(noteId) => void openNoteById(noteId)}
           onOpenEntity={setEntityView}
+          // A stream row's ask chip → that note's conversation (§3b I1/I2). The same
+          // handoff a notes-tab row makes, minus the card to drop: the stream is already
+          // on home, so there is no back marker to leave — the conversation tab IS home,
+          // and Entry is one tap left.
+          onOpenThread={(sessionId, agent) => setOpenSession({ id: sessionId, agent })}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
           onOpenRadio={() => setCard("radio")}

@@ -15,6 +15,7 @@ import { useRegisterHomeBack } from "../homeBack";
 import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
+import { useNoteThreads } from "../notes/useNoteThreads";
 import type { NotesController, StreamItem } from "../notes/useNotes";
 import { anyHeld, useSdrSession } from "../sdrSession";
 
@@ -39,6 +40,10 @@ interface HomeScreenProps {
   onOpenNoteById?: (noteId: string) => void;
   /** Open an entity page by id (from a Full Brain response chip). */
   onOpenEntity?: (entityId: string) => void;
+  /** A stream row's ask chip → open that note's conversation (§3b I1/I2). Flips to the
+   * tab that hosts the persona and opens the thread by id, leaving a back marker — the
+   * same handoff the notes-tab redirect makes. */
+  onOpenThread?: (sessionId: string, agent: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
   /** Leave for the Radio screen (it opens on the APRS log) — the radio sheet's way
@@ -76,6 +81,7 @@ export function HomeScreen({
   onOpenVitals,
   onOpenNoteById,
   onOpenEntity,
+  onOpenThread,
   compose,
   onComposeConsumed,
   openSession,
@@ -211,6 +217,9 @@ export function HomeScreen({
 
   // Research and Full Brain are conversation surfaces; everything else is capture.
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
+  // Which stream rows have a thread waiting on an answer. Only polled while the stream is
+  // actually on screen — a conversation tab has no rows to chip.
+  const threads = useNoteThreads(!conversational && onOpenThread !== undefined);
   // The box's in-flight model load, off the same 1 Hz stream the top bar's trace already
   // rides — no second poll, and no way for the chat line and the vitals surface to report
   // different models. Read here rather than in the surface so the conversation surface
@@ -309,6 +318,13 @@ export function HomeScreen({
           items={notes.items}
           onOpenSearch={onOpenSearch}
           onOpenNote={onOpenNote}
+          // I2, decided (ii): the row's tap keeps the NOTE SCREEN — the only no-terminal
+          // route to the Analysis tab, the attachments, the edit path, the clarification
+          // eraser and the re-run button — and the chip is what opens the thread.
+          threads={threads}
+          onOpenThread={
+            onOpenThread ? (thread) => onOpenThread(thread.sessionId, thread.agent) : undefined
+          }
           onEdit={(item) => {
             if (item.id !== null)
               actions.startEdit({

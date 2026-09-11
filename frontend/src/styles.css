@@ -600,6 +600,17 @@ button.vitals:focus-visible {
   cursor: pointer;
 }
 
+/* The stream's waiting-thread chip (AGENT_INGEST_REWRITE §3b I1/I2). A button, because
+   it is the tap target that opens the note's conversation — the row's own tap still
+   opens the NOTE SCREEN, which is the only no-terminal way to the Analysis tab, the
+   attachments, the edit path and the clarification eraser. It keeps chip-pending's amber:
+   rose is the medical domain, and this row already wears its domain as a dot. */
+button.chip-ask {
+  font: inherit;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
 /* The calendar handoff's appointment pill — the agent reference, in the attach
    row, in the steel of the Full Brain mode it rides into. */
 .chip-appt {
