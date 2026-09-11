@@ -19,6 +19,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.analysis.extraction import parse_datetime
+from jbrain.analysis.intent import (
+    AttestedSpan,
+    EntityResolution,
+    IntegrationIntent,
+    IntentFact,
+    IntentTemporal,
+)
 from jbrain.analysis.settle_owner import ANALYZER, EMR
 from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
@@ -113,17 +121,15 @@ async def analyze(
     maker: async_sessionmaker[AsyncSession],
     note_id: str,
     extraction_json: str,
-    intent_json: str | None = None,
+    intent: IntegrationIntent | None = None,
 ) -> None:
-    # Drive integrate_note through the shared driver: it parses this scripted
-    # extraction and commits via a name-match default intent, so re-running with
-    # a different extraction exercises the genuine retraction/supersession sweep.
-    # `intent_json` is served to integrate.note ahead of that default (which the
-    # driver still appends, unread) for a test that needs the arbiter to HOLD a fact.
+    # Drive the shared deterministic driver: it parses this scripted extraction and
+    # commits via a name-match default intent, so re-running with a DIFFERENT extraction
+    # exercises the genuine retraction/supersession sweep. `intent` replaces that default
+    # for a test that needs the arbiter to HOLD a fact.
     from tests.integration.pg_fixtures import analyzer
 
-    responses = [extraction_json] + ([intent_json] if intent_json is not None else [])
-    await analyzer(maker, responses).analyze_note({"note_id": note_id})
+    await analyzer(maker, [extraction_json], intent=intent).analyze_note({"note_id": note_id})
 
 
 async def fact_rows(maker: async_sessionmaker[AsyncSession], *note_ids: str) -> list[dict]:
@@ -490,38 +496,54 @@ async def _seed_person(maker: async_sessionmaker[AsyncSession], name: str) -> st
         )
 
 
-def held_intent(person: str, entity_id: str, fact: dict[str, Any]) -> str:
-    """The integrate.note JSON for one CROSS-SUBJECT fact. A cross-subject link is
-    force-staged by the arbiter (N3: never silently committed), so the fact bypasses
-    decide() entirely and is written by `_insert_held_fact` as a pending_review row."""
-    return json.dumps(
-        {
-            "resolutions": [
-                {
-                    "mention_ref": person,
-                    "mode": "existing",
-                    "entity_id": entity_id,
-                    "surface": "Sarah",
-                    "cross_subject": True,
-                }
-            ],
-            "facts": [
-                {
-                    "entity_ref": person,
-                    "predicate": fact["predicate"],
-                    "qualifier": fact["qualifier"],
-                    "kind": fact["kind"],
-                    "statement": fact["statement"],
-                    "value_json": fact["value_json"],
-                    "assertion": fact["assertion"],
-                    "object_entity_ref": None,
-                    "self_confidence": fact["confidence"],
-                    "inferred": False,
-                    "surface": "Sarah",
-                    "temporal": fact["temporal"],
-                }
-            ],
-        }
+def held_intent(person: str, entity_id: str, fact: dict[str, Any]) -> IntegrationIntent:
+    """One CROSS-SUBJECT fact, as an intent. A cross-subject link is force-staged by the
+    arbiter (N3: never silently committed), so the fact bypasses decide() entirely and is
+    written by `_insert_held_fact` as a pending_review row.
+
+    Built as the object rather than as `integrate.note` JSON: R4 deleted the parser that
+    turned one into the other with the model that emitted it, and the driver takes an
+    intent directly now."""
+    temporal = fact["temporal"]
+    return IntegrationIntent(
+        note_id="",  # the driver stamps the real one
+        schema_version=1,
+        prompt_version="test",
+        integrator_version="test",
+        entity_resolutions=[
+            EntityResolution(
+                mention_ref=person,
+                mode="existing",
+                proposed_entity_id=entity_id,
+                attested_span=AttestedSpan("", "Sarah"),
+                cross_subject=True,
+            )
+        ],
+        facts=[
+            IntentFact(
+                entity_ref=person,
+                predicate=fact["predicate"],
+                qualifier=fact["qualifier"],
+                kind=fact["kind"],
+                statement=fact["statement"],
+                value_json=fact["value_json"],
+                assertion=fact["assertion"],
+                object_entity_ref=None,
+                temporal=(
+                    None
+                    if temporal is None
+                    else IntentTemporal(
+                        phrase=temporal.get("phrase"),
+                        resolved_start=parse_datetime(temporal.get("resolved_start")),
+                        resolved_end=parse_datetime(temporal.get("resolved_end")),
+                        precision=str(temporal.get("precision") or "unknown"),
+                    )
+                ),
+                attested_span=AttestedSpan("", "Sarah"),
+                self_confidence=fact["confidence"],
+                inferred=False,
+            )
+        ],
     )
 
 

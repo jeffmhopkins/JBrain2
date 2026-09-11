@@ -32,7 +32,18 @@ pytestmark = [
 ]
 
 _MODEL = "test-embed-v1"
-_STMT = "Pat is married to Dana."
+
+
+def _pair() -> tuple[str, str, str]:
+    """Fresh subject, object and note body per test.
+
+    The suite shares one database and `pg_fixtures.default_intent` resolves a name to an
+    EXISTING entity when one carries it — so two tests that both assert `spouse` on "Pat"
+    land the same identity key, the second one REFRESHES the first's row in place, and its
+    own note ends up with no fact at all. Unique names keep each test's claim its own."""
+    sfx = uuid.uuid4().hex[:8]
+    subject, obj = f"Pat{sfx}", f"Dana{sfx}"
+    return subject, obj, f"{subject} is married to {obj}."
 
 
 def _vec(t: str) -> list[float]:
@@ -49,25 +60,25 @@ class _FakeEmbed:
         return [_vec(t) for t in texts]
 
 
-def _extraction(predicate: str) -> str:
-    """The scripted reading of `_STMT`: one relationship edge on `predicate`."""
+def _extraction(predicate: str, subject: str, obj: str, body: str) -> str:
+    """The scripted reading of `body`: one relationship edge on `predicate`."""
     return json.dumps(
         {
             "title": "t",
             "tags": [],
             "mentions": [
-                {"name": "Pat", "kind": "Person", "surface_text": "Pat"},
-                {"name": "Dana", "kind": "Person", "surface_text": "Dana"},
+                {"name": subject, "kind": "Person", "surface_text": subject},
+                {"name": obj, "kind": "Person", "surface_text": obj},
             ],
             "facts": [
                 {
-                    "entity_ref": "Pat",
-                    "object_entity_ref": "Dana",
+                    "entity_ref": subject,
+                    "object_entity_ref": obj,
                     "predicate": predicate,
                     "qualifier": "",
                     "kind": "relationship",
                     "assertion": "asserted",
-                    "statement": _STMT,
+                    "statement": body,
                     "value_json": None,
                     "temporal": None,
                     "domain": "general",
@@ -128,11 +139,14 @@ async def test_durable_alias_rewrites_the_committed_predicate(maker, tmp_path): 
     # A past owner map_to_existing decision collapses the drift spelling — with
     # NO embedder configured, proving the collapse is a pure aliases lookup.
     pred = "isHitchedTo"
+    subject, obj, body = _pair()
     await _seed_alias(maker, pred, "spouse")
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
 
-    await analyzer(maker, [_extraction(pred)]).analyze_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred, subject, obj, body)]).analyze_note(
+        {"note_id": note_id}
+    )
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates  # rewritten before keying
@@ -144,14 +158,18 @@ async def test_longtail_predicate_commits_raw_with_no_card(maker, tmp_path):  # 
     # new_predicate card (embedder live, setting ON) now commits the raw
     # predicate with no card and logs predicate.longtail_kept instead.
     pred = "isBondedWith"
+    subject, obj, body = _pair()
     await _set_flag(maker, True)
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
     embedder = _FakeEmbed()
 
     with structlog.testing.capture_logs() as logs:
         await analyzer(
-            maker, [_extraction(pred)], embedder=embedder, embed_model=_MODEL
+            maker,
+            [_extraction(pred, subject, obj, body)],
+            embedder=embedder,
+            embed_model=_MODEL,
         ).analyze_note({"note_id": note_id})
 
     assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
@@ -168,12 +186,15 @@ async def test_alias_collapse_ignores_the_repurposed_setting(maker, tmp_path):  
     # predicate_canonicalization now gates only the held-fact suggestion picker;
     # the durable collapse honors past owner decisions regardless of the flag.
     pred = "isPairedWith"
+    subject, obj, body = _pair()
     await _seed_alias(maker, pred, "spouse")
     await _set_flag(maker, False)
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
 
-    await analyzer(maker, [_extraction(pred)]).analyze_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred, subject, obj, body)]).analyze_note(
+        {"note_id": note_id}
+    )
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates

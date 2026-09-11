@@ -51,7 +51,6 @@ from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.notes import Chunk
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.usage import SqlUsageRecorder
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -416,11 +415,16 @@ class _DeterministicDriver:
         *,
         embedder: Any = None,
         embed_model: str = "",
+        intent: IntegrationIntent | None = None,
     ):
         self._maker = maker
         self._responses = responses
         self._embedder = embedder
         self._embed_model = embed_model
+        # A pre-built intent REPLACES the name-match default, for a test that needs the
+        # arbiter to see something the default never emits — a cross-subject resolution,
+        # an inferred fact. Its note_id is re-stamped per call, so a caller builds it once.
+        self._intent = intent
 
     async def analyze_note(self, payload: dict[str, Any]) -> None:
         note_id = str(payload["note_id"])
@@ -443,16 +447,24 @@ class _DeterministicDriver:
             anchor=anchor if row.tz_offset_minutes is not None else None,
             max_facts=fact_cap(row.body),
         )
-        intent = await default_intent(self._maker, note_id, extraction, row.domain_code, row.body)
+        intent = (
+            _intent(note_id, self._intent.entity_resolutions, self._intent.facts)
+            if self._intent is not None
+            else await default_intent(self._maker, note_id, extraction, row.domain_code, row.body)
+        )
         chunks = await _load_chunks(self._maker, note_id)
         texts = [c.text for c in chunks] or [row.body]
         plan = plan_intent(intent, compute_signals(intent, texts))
+        # NO settings store, deliberately: `value_shape_enforce` and the held-fact
+        # predicate picker are both `self._settings is not None` gated, and the driver
+        # this replaced had none either. Handing one in would silently turn shape
+        # enforcement on under every caller of this fixture — which drops a `ref`-shaped
+        # predicate's literal value and takes the fact with it.
         pipeline = AnalysisPipeline(
             self._maker,
             LlmRouter({"xai": FakeLlmClient([])}, {}, recorder=SqlUsageRecorder(self._maker)),
             embedder=self._embedder,
             embed_model=self._embed_model,
-            settings=SqlSettingsStore(self._maker),
         )
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             applied = await pipeline.commit_intent(
@@ -496,5 +508,8 @@ def analyzer(
     *,
     embedder: Any = None,
     embed_model: str = "",
+    intent: IntegrationIntent | None = None,
 ) -> _DeterministicDriver:
-    return _DeterministicDriver(maker, responses, embedder=embedder, embed_model=embed_model)
+    return _DeterministicDriver(
+        maker, responses, embedder=embedder, embed_model=embed_model, intent=intent
+    )

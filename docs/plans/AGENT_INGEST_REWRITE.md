@@ -1595,6 +1595,15 @@ the corpus rebuild, or in R5's wipe. That scoping is also what stops an EMR sett
 deleting one: `test_settle_review_cards_pg.py` pins exactly that, and is now pinning a live
 condition rather than a hypothetical co-writer.
 
+**(7b) One guard went with the arm, and the plan already said it would.** The dispatcher's
+`integrate_note` arm skipped a re-delivered `note.ingested` for a note already
+`integrated`; `note_converse`'s arm deliberately never gained that skip (R3's paragraph:
+"a behaviour change no one asked for"). So a re-delivered event for an integrated note now
+enqueues a pass. What still holds it down is the arm's own two checks — a queued twin and a
+LIVE conversation — plus the fact that an event is marked dispatched once. The test that
+pinned the deleted skip (`test_live_tick_state_skips_an_already_integrated_note_no_enqueue`)
+went with it; `ingest_note`'s state skip, the other half of that pair, is untouched.
+
 **(8) Two capability losses R4 would have caused silently, both closed in the wave.**
 
 *Machine-read attachment text stopped reaching any reader.* `integrate_note` built its
