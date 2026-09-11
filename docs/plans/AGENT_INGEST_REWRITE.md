@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -1818,10 +1818,36 @@ beside a COMPLETE one it files nothing and stands as chat, because
 never asked would put a sentence into the owner's own note that nobody said. The degrade is
 a few lines and it is what makes R1c independently mergeable at all.
 
-**R2 — the harness re-cut.** `_tool_calls` onto `close_reading`, the scenario format onto
-the reading, the runner's `sweep_note` re-labelled from divergence to spec. **Acceptance:
-every currently-green scenario stays green** (52 of 75 at this doc's `Last verified`). This is the wave that proves the reading
-carries everything the old surface carried, and it runs before anything is removed.
+**R2 — the harness re-cut.** Built. `runner._tool_calls` now emits the note's whole
+READING — `resolve_entity` for the surfaces, then `close_reading` carrying the title, the
+tags and up to eight facts a call — where it emitted batched `assert_fact` calls, and the
+scenario format moved with it: an authored step is `{"entities": […], "reading": {…}}`. The
+one scenario that scripts its own arguments (`rel_conjoined_past_employers`, a deliberately
+fumbled `quote`) moved rather than staying on the old shape, because an authored block
+exists to fumble one argument the default gets right and a fumble aimed at a tool the agent
+no longer calls tests nothing. **Acceptance met exactly: 52 of 75 green before, 52 of 75
+after, and the two per-scenario lists diff to nothing** — no scenario changed state in
+either direction, so nothing was absorbed silently and no strict xfail xpassed.
+
+*The finding the wave was run for.* The runner's `sweep_note` carried a long comment calling
+itself a DELIBERATE divergence from production. It is now the shape R3 specifies, and the
+re-label is carried by a line of code rather than by an argument: `touched` comes off
+`Reading.fact_ids` instead of the in-process write ledger the runner used to union. The S3
+reasoning is kept intact, because it is precisely why `close_reading` had to exist — a
+ledger records what a producer WROTE, so a pass that read the note and wrote nothing is
+indistinguishable from one that never looked, and the only claims its release could remove
+are another session's. A RE-DERIVATION licenses a release, and the reading is one. Measured
+rather than asserted: with the old accumulation restored beside the new input,
+`led.touched == {UUID(f) for f in writer.reading.fact_ids}` held on every step of every
+green scenario, which is the wave's thesis — the reading carries what the two-call surface
+carried — in the one form that can fail. **It is "spec, except X", and X is two things, both
+named in `_run_step`:** `settle_conversation` still runs the tail ALONE until R3 moves these
+two calls into it, and the harness passes `mentions=led.mention_ids` where R3's settle must
+pass `None`, because a reading carries fact ids and the 0191 ledger records no mention ids
+at all. Recorded and not fixed: `close_reading` reads a repeating schedule out of each
+fact's ATTESTED QUOTE, and the harness quotes its subject's own `surface_text` — a name, not
+a schedule — so the faithful default reaches `parse_recurrence` on no scenario in the suite.
+A scenario wanting an RRULE off the quote has to author one.
 
 **R3 — the settle moves, and RETIRES the two card halves.** `settle_conversation` runs the
 whole settle for a pass with a reading: `sweep_note`, `settle_tail`, `stamp_analysis` — and
