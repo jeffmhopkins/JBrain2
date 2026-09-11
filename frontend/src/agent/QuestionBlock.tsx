@@ -213,8 +213,10 @@ export function QuestionBlock({
   // What was ACTUALLY answered, never the size of the set. A send that answers one of
   // three is one of three on the header too — the count is the first thing the owner
   // reads, and "3 questions · answered" over a partial send is the same false report the
-  // rows used to make, made once more in the loudest place on the block.
-  const answered = sent === null ? 0 : questions.filter((q) => sent[q.id]?.kind !== "open").length;
+  // rows used to make, made once more in the loudest place on the block. A row `sent`
+  // somehow has no entry for counts as OPEN, which is the honest side to fail to.
+  const answered =
+    sent === null ? 0 : questions.filter((q) => (sent[q.id]?.kind ?? "open") !== "open").length;
   return (
     <section
       className={`fb-qblock${sent !== null ? " fb-qblock-done" : ""}`}
