@@ -530,7 +530,10 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 #   without retracting anything. Unattended it would be a second fact verb beside the
 #   reading the sweep is derived from, which is the overlap R3 removed (see the unattended
 #   set above). A reply turn that HAS re-read the whole note ends with `close_reading` too,
-#   and that is what sweeps.
+#   and that is what sweeps. It is in this set CONDITIONALLY, and the condition is the
+#   thread's state rather than anything about the note: `narrow_for_unprompted_reply` takes
+#   it back off a reply whose thread is not `waiting_on_owner`, because only an ANSWER
+#   becomes text on the note and a fact with no source text is one the next pass retracts.
 # - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
 #   is the note, and a note that talks its way into overriding the graph past the arbiter's
 #   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
@@ -626,6 +629,13 @@ NOTE_INGEST_THIRD_PARTY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS - f
 NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
     {"resolve_entity", "assert_fact", "close_reading", "correct_fact", "merge_entities"}
 )
+
+# The write verbs a reply turn holds only while its thread is WAITING ON THE OWNER — the
+# turn whose text D6 appends to the note. `narrow_for_unprompted_reply` subtracts exactly
+# these, and its docstring is the argument; the short version is that `assert_fact` on a
+# thread that is not waiting writes a row with no source text on any note, which the next
+# unattended pass then retracts.
+NOTE_ANSWER_ONLY_WRITE_TOOLS: frozenset[str] = frozenset({"assert_fact"})
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
@@ -1067,6 +1077,55 @@ def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
     if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
         return profile
     return replace(profile, tools=profile.tools - NOTE_GRAPH_WRITE_TOOLS)
+
+
+def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
+    """Subtract `assert_fact` from a reply turn whose thread is NOT `waiting_on_owner`
+    (R3's review, finding 2). The other narrowing of the on-reply widening, applied on the
+    same seam and for a reason of the same kind: a write the system cannot keep.
+
+    **The premise is the founding one — notes are the sole sources of truth.** A reply
+    into a WAITING thread is an ANSWER: `clarify.record_owner_reply` appends it to the
+    note as a timestamped clarification block (D6), the note re-ingests, and the owner's
+    words are the note's own text from then on. So a fact asserted on that turn is
+    re-stated by the next reading of the note and survives every sweep. Nothing here
+    touches that turn.
+
+    A reply into a SETTLED (or failed, or mid-pass) thread is not an answer, and D6 has
+    no shape for one: `note_clarifications.question` is `NOT NULL` and non-blank in
+    Postgres, so there is no unprompted block, and `record_owner_reply` returns without
+    appending anything. The owner's words reach the note NOWHERE. What `assert_fact`
+    would then commit is a row that:
+
+    - the sweep retracts on the note's next unattended pass — `note_ingest` and
+      `note_ingest_reply` are ONE producer sharing one claim (`analysis/settle_owner.py`),
+      so the pass's release strips the only claim the reply turn's write ever had, and
+      the pass's reading is of a note that has never contained the words. That is silent,
+      unrecoverable loss on an ordinary path, and it is what happens today;
+    - could not be saved by pinning it, which is the obvious alternative and is worse: a
+      row with no source text is UNFALSIFIABLE — no re-reading can correct it, because
+      the reading is of a note that does not say it, and no correction note can reach it.
+      Pinning would make it survive AND be permanent.
+
+    So the honest behaviour is to refuse the WRITE and say so, which is what removing the
+    verb does. The agent keeps every read, `ask_owner`, `correct_fact` (which addresses a
+    row already on file and does not invent one) and `merge_entities`; what it must do
+    with the fact it just learned is tell Jeff it cannot record it here and that a note —
+    or an answer to an open question — is how it lands. This removes power rather than
+    adding it and invents no data shape; the principled fix, giving unprompted owner text
+    a home on the note, needs a shape `note_clarifications` does not have and is O16 in
+    `docs/plans/AGENT_INGEST_REWRITE.md`.
+
+    The caller reads the thread's state BEFORE `record_owner_reply` claims it
+    (`analysis/clarify.reply_profile_for_session`), which is the only place the answer is
+    still legible: `claim_waiting` moves a waiting thread to `running`, so by the time a
+    tool dispatches, an answered thread and a mid-pass one are the same string.
+
+    Non-note personas are returned unchanged, so a caller may apply it unconditionally.
+    Composes with both narrowings above: all three only ever remove names."""
+    if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
+        return profile
+    return replace(profile, tools=profile.tools - NOTE_ANSWER_ONLY_WRITE_TOOLS)
 
 
 class PersonaResolutionError(ValueError):

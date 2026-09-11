@@ -442,18 +442,27 @@ async def test_the_reply_turn_over_a_live_emr_note_loses_the_writes_and_a_plain_
     every ordinary note and widening the EMR one, the exact inversion this narrowing
     exists to prevent) left every test that names it passing.
 
-    Both directions in one test, because either alone is satisfied by a constant."""
+    Both directions in one test, because either alone is satisfied by a constant.
+
+    The threads are opened `waiting_on_owner` so this test measures the EMR predicate
+    alone: the other narrowing on this seam turns on the thread's state, and a `running`
+    thread would take `assert_fact` off the "kept" side for a reason that has nothing to
+    do with EMR (see the test below)."""
     emr_note = await _emr_note(maker, owner)
     plain_note = await _note(maker, owner, "I paid the water bill.")
     notes = SqlNotesRepo(maker)
 
-    async def _profile(note_id: str):  # noqa: ANN202
+    async def _profile(note_id: str, state: str = "waiting_on_owner"):  # noqa: ANN202
         session_id = await _session(maker, owner, note_id)
         note = await notes.get_note(owner, note_id)
         assert note is not None
         async with scoped_session(maker, owner) as s:
             await NoteConversationRepo().start(
-                s, session_id=session_id, note_id=note_id, body_sha=note_body_sha(note.body)
+                s,
+                session_id=session_id,
+                note_id=note_id,
+                body_sha=note_body_sha(note.body),
+                state=state,
             )
         return await reply_profile_for_session(
             maker,
@@ -473,6 +482,71 @@ async def test_the_reply_turn_over_a_live_emr_note_loses_the_writes_and_a_plain_
     # The owner's own note is untouched — the reply turn there is D8's full width.
     kept = await _profile(plain_note)
     assert kept.tools == NOTE_INGEST_ON_REPLY_TOOLS
+
+
+async def test_assert_fact_rides_the_answer_and_is_off_a_finished_thread(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's review, finding 2: `assert_fact` is a verb of the ANSWERING turn only.
+
+    A reply into a `waiting_on_owner` thread becomes text on the note —
+    `record_owner_reply` appends it as a D6 clarification block — so a fact asserted
+    there is re-stated by the note's next reading and survives the sweep. A reply into a
+    thread that is not waiting reaches no note at all: `note_clarifications.question` is
+    NOT NULL, so there is no unprompted block, and the row `assert_fact` would commit has
+    no source text anywhere. The note's next unattended pass then closes a complete
+    reading of a note that has never contained the owner's words and retracts it — one
+    producer, one claim (`analysis/settle_owner.py`).
+
+    Both halves in one test: absence alone is satisfied by a narrowing that fires
+    always, and presence alone by one that never fires. Everything else on the surface is
+    asserted unchanged, because this is a one-verb subtraction and not a retreat — the
+    thread is still a place to correct a fact, fold two entities, ask, and read."""
+    notes = SqlNotesRepo(maker)
+
+    async def _profile(state: str):  # noqa: ANN202
+        # A note apiece: `start` refuses a second LIVE conversation on one note (the
+        # partial unique index), and `settled` is not a state it opens in — a finished
+        # thread is one that ran and stopped, so it is made the way one is.
+        note_id = await _note(maker, owner, "Kaiya has a dentist.")
+        session_id = await _session(maker, owner, note_id)
+        note = await notes.get_note(owner, note_id)
+        assert note is not None
+        repo = NoteConversationRepo()
+        async with scoped_session(maker, owner) as s:
+            await repo.start(
+                s,
+                session_id=session_id,
+                note_id=note_id,
+                body_sha=note_body_sha(note.body),
+                state="running" if state == "settled" else state,
+            )
+            if state == "settled":
+                await repo.set_state(s, session_id, "settled")
+        return await reply_profile_for_session(
+            maker,
+            notes,
+            owner,
+            session_id=session_id,
+            agent=NOTE_CONVERSE_AGENT,
+            profile=agent_for_owner_reply(NOTE_CONVERSE_AGENT),
+        )
+
+    answering = await _profile("waiting_on_owner")
+    assert answering.tools == NOTE_INGEST_ON_REPLY_TOOLS
+
+    # A thread the pass already settled, and one still mid-pass: neither is answering a
+    # question, and the state is read HERE — before `record_owner_reply` claims a waiting
+    # thread into `running` — which is why the two are still distinguishable at all.
+    for state in ("settled", "running"):
+        finished = await _profile(state)
+        assert finished.tools == NOTE_INGEST_ON_REPLY_TOOLS - {"assert_fact"}
+        assert "assert_fact" not in (finished.tools or frozenset())
+        # Not a retreat from the on-reply surface: the owner can still correct what IS on
+        # file, stage a fold, be asked, and read.
+        assert {"correct_fact", "merge_entities", "ask_owner", "close_reading"} <= (
+            finished.tools or frozenset()
+        )
 
 
 async def test_a_second_run_neither_opens_a_second_conversation_nor_raises(

@@ -22,6 +22,17 @@ address commits `insert_pinned=True` — so a new fact the owner states in passi
 her title is CTO") lands PINNED against every later note. The verb that records a new
 fact has to be reachable in the turn that learns one.
 
+**And it is reachable on an ANSWERING turn only** (R3's review, finding 2). The turn
+whose thread is `waiting_on_owner` is the one whose text `clarify.record_owner_reply`
+appends to the note, so what it asserts is re-stated by the note's next reading and
+survives the sweep. On any other thread the owner's words reach no note —
+`note_clarifications.question` is NOT NULL, so D6 has no unprompted block — and the row
+would be swept by the note's next unattended pass, which shares this producer's single
+claim (`analysis/settle_owner.py`). `agents.narrow_for_unprompted_reply` takes the verb
+off that turn, applied from `clarify.reply_profile_for_session` where the thread's state
+is still legible; the handler below is unchanged, because the allowlist is what is
+enforced and a state re-read at dispatch time would be reading a claimed `running`.
+
 **`correct_fact` addresses by identity key `(entity, predicate, qualifier)`, never by
 fact id.** `readtools._edge_line` prints an entity's facts as `predicate: statement` and
 prints no fact id at all, so id-addressing would force a `read_entity` v5 and a second

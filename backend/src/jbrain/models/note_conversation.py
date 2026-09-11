@@ -112,6 +112,15 @@ CLEAN_STOP = "end_turn"
 # spelling that a rename cannot quietly fork.
 SETTLED = "settled"
 
+# The state in which the thread holds an OPEN QUESTION — and, since R3's review, the one
+# state in which a reply turn may `assert_fact`. Named beside `SETTLED` because it is a
+# gate for the same kind of reason: a reply into a waiting thread is appended to the note
+# as source text (D6) and a reply into any other thread reaches no note at all, so
+# `agents.narrow_for_unprompted_reply` turns on this exact string. Read BEFORE
+# `claim_waiting` moves it, which is the whole of `clarify.reply_profile_for_session`'s
+# placement.
+WAITING_ON_OWNER = "waiting_on_owner"
+
 
 def state_for_stop(stop_reason: str) -> str:
     """The state a pass that ended for `stop_reason` lands in.

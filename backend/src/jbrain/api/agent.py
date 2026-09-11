@@ -882,8 +882,16 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 profile.prompt, await _standing_instructions(request, owner_ctx)
             ),
         )
-        # W4's two narrowings of the reply turn, in that order. Both are subtractions from
-        # `agent_for_owner_reply`'s widening, they are independent, and a note can be BOTH
+        # The row-driven narrowings of the reply turn, in that order — W4's two, plus the
+        # one R3's review added: a thread that is NOT `waiting_on_owner` loses
+        # `assert_fact`, because the owner's words on such a turn reach no note and the
+        # row it would write has no source text anywhere (`agents
+        # .narrow_for_unprompted_reply`). That one has to be decided HERE, ahead of
+        # `record_owner_reply` below, which claims a waiting thread into `running` and
+        # makes the two cases indistinguishable.
+        #
+        # All are subtractions from `agent_for_owner_reply`'s widening, they are
+        # independent, and a note can be BOTH
         # (an approved intake submission enacting into a health `Records` note with an
         # EMR-shaped attachment) — in which case the turn must end up with the
         # INTERSECTION, which is what `narrow_for_third_party_note` intersecting rather

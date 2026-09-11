@@ -90,7 +90,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.agents import AgentProfile, narrow_for_emr
+from jbrain.agent.agents import AgentProfile, narrow_for_emr, narrow_for_unprompted_reply
 from jbrain.agent.asktools import ASK_OWNER_TOOL, open_questions
 from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
@@ -99,6 +99,7 @@ from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
     MAX_ARG_CHARS,
     SETTLED,
+    WAITING_ON_OWNER,
     AskedQuestion,
     NoteConversationRepo,
     note_body_sha,
@@ -404,15 +405,24 @@ async def reply_profile_for_session(
     agent: str,
     profile: AgentProfile,
 ) -> AgentProfile:
-    """Narrow a note conversation's ON-REPLY profile when the EMR importer owns its note
-    (W4/D9, `ingest/emr/ownership.py`).
+    """Narrow a note conversation's ON-REPLY profile: the EMR subtraction (W4/D9,
+    `ingest/emr/ownership.py`) and the unprompted-reply one (R3 review, finding 2).
 
-    `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; this is the
-    one subtraction W4 makes to it. It lives here rather than in the route because it
-    needs the conversation row and the note behind it, which this module already reads —
-    and because the route must be able to call it unconditionally: a non-note persona,
-    an unknown session, or a note the importer does not own all return the profile
-    unchanged.
+    `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; these are the
+    subtractions from it that need the conversation ROW. It lives here rather than in the
+    route because it needs that row and the note behind it, which this module already
+    reads — and because the route must be able to call it unconditionally: a non-note
+    persona, an unknown session, or a note that satisfies neither predicate all return
+    the profile unchanged.
+
+    **The state read has to happen HERE, and the ordering is load-bearing.** `/chat`
+    resolves the profile BEFORE `record_owner_reply`, and `record_owner_reply` claims a
+    `waiting_on_owner` thread into `running` (`NoteConversationRepo.claim_waiting`) — so
+    this is the last moment at which "the owner is answering a question" and "the owner
+    is typing into a finished thread" are distinguishable at all. A gate any later reads
+    `running` for both. See `agents.narrow_for_unprompted_reply` for why the distinction
+    is worth a row read: on the first the owner's words become the note's text, on the
+    second they reach no note anywhere.
 
     FAILS CLOSED, at every step: no conversation row, no note, a soft-deleted note, or a
     raised exception all narrow. This half shipped failing OPEN, on the reading that the
@@ -443,6 +453,11 @@ async def reply_profile_for_session(
     if note is None:
         log.warning("note_reply.note_gone_for_emr", session_id=session_id)
         return narrow_for_emr(profile)
+    # Both narrowings, in either order: each only ever removes names, and `narrow_for_emr`
+    # subtracts a superset of this one, so a note that is both ends up where EMR alone
+    # would have put it.
+    if conversation.state != WAITING_ON_OWNER:
+        profile = narrow_for_unprompted_reply(profile)
     if not emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments]):
         return profile
     return narrow_for_emr(profile)
