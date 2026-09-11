@@ -6,7 +6,13 @@
 > `relatedTo` deferral rationale corrected in place for Ingest V2 Lever A (the
 > `INFERRED_CEILING` no longer gates review). Kept in `docs/` as the canonical
 > description of the two-tier model, which `README` cites; the wave log below is
-> now history.
+> now history — and since 2026-09-11 that history names files that no longer exist:
+> `AGENT_INGEST_REWRITE.md` R4 deleted `analysis/prompts/note_extract.prompt`,
+> `integrate_note.prompt`, both eval corpora and the `grok-eval` / `prompt-eval` CLIs the
+> wave log gates on. **The two-tier model itself is untouched and still lives here** — the
+> registry is tier-1, a long-tail predicate commits raw with no card — and the durable
+> alias collapse moved from `canonicalize_intent` into `commit_facts`, so it now applies to
+> every producer rather than to the deleted one.
 >
 > Owner-ratified direction, grounded by six scoped codebase researchers (two-tier
 > split, prompting, traversal, relatedTo, review-inbox impact, eval fallout).
