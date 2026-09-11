@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type ReasoningEffort, api } from "../api/client";
 import { freshCoords } from "../location";
 import { isForeground } from "../visibility";
+import { type AskedQuestion, answerList, openQuestions, ownerTurnText } from "./asked";
 import { endTurnRate, recordStreamedText } from "./tokenMeter";
 import {
   type TranscriptMessage,
@@ -41,6 +42,9 @@ export interface ModelPick {
 // A shared empty transcript so the active chat's `messages` keeps a stable reference
 // when its buffer is absent (no needless re-renders of the conversation).
 const EMPTY_MESSAGES: TranscriptMessage[] = [];
+// Likewise for a thread with no draft: a stable empty map keeps the question block's
+// props steady between renders.
+const EMPTY_ANSWERS: Record<string, string> = {};
 
 /** What a live turn is doing, for the session picker's activity glyph: an image tool
  * mid-flight reads as a render; everything else (reasoning, other tools, answering)
@@ -327,6 +331,16 @@ export interface FullBrain {
       deferredOutcome?: boolean;
     },
   ) => Promise<boolean>;
+  /** A note thread's OPEN question set — the questions its last turn ended on (§3b I6),
+   * empty everywhere else. Drives the live question block and the composer's carry strip;
+   * derived from the transcript, so it is right on a reopened thread too. */
+  openQuestions: AskedQuestion[];
+  /** The half-answered block: question id -> the answer picked or typed, not yet sent.
+   * Local state by design — nothing here has posted anything. */
+  answers: Record<string, string>;
+  /** Record one answer of the open set. It changes THIS map and nothing else: no request,
+   * no enqueue, no conversation-state flip (§3b I6). */
+  setAnswer: (questionId: string, answer: string) => void;
   /** The active conversation's per-conversation agent-model pick (the omnibox
    * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
    * kept per session in memory, rides every send of that chat, and clears on reload. */
@@ -442,6 +456,11 @@ export function useFullBrain(
   // applies it only when the turn's resolved model is reasoning-capable. In-memory only,
   // same "this conversation, this app session" scope as the model pick.
   const [effortOverrides, setEffortOverrides] = useState<Record<string, ReasoningEffort>>({});
+  // A note thread's half-answered question block, per session: question id -> the answer
+  // the owner has picked or typed but not yet sent (§3b I6). Turn-local like the two
+  // picks above — the block is INERT, so this draft is the only thing a tap changes, and
+  // the send that carries it is the one event in the whole interaction.
+  const [answerDrafts, setAnswerDrafts] = useState<Record<string, Record<string, string>>>({});
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // The visible transcript: the active chat's buffer (empty until loaded). A stable
@@ -686,6 +705,14 @@ export function useFullBrain(
     };
   }, [enabled, activeId, active?.plan_status, busy]);
 
+  function clearAnswers(sessionId: string): void {
+    setAnswerDrafts((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _spent, ...rest } = prev;
+      return rest;
+    });
+  }
+
   async function send(
     textRaw: string,
     opts?: {
@@ -697,10 +724,17 @@ export function useFullBrain(
   ): Promise<boolean> {
     const text = textRaw.trim();
     const files = opts?.files ?? [];
+    // The question block's answers ride THIS send (§3b I7): one send is one turn carrying
+    // every answer plus whatever free text is in the box. Narrowed to the set that is
+    // actually open, so a draft left over from a set the thread has moved past cannot
+    // post an id `_pair` would only drop.
+    const asked = openQuestions(messages);
+    const draft = active ? (answerDrafts[active.id] ?? {}) : {};
+    const answers = answerList(asked, draft);
     // Returns whether the turn actually STARTED — a caller (the inline-approval card)
     // relies on this to know its outcome message was really delivered, not dropped by
     // the single-in-flight-turn guard.
-    if ((!text && files.length === 0) || busy) return false;
+    if ((!text && files.length === 0 && answers.length === 0) || busy) return false;
     // No scope yet — surface the picker rather than chatting against nothing.
     if (!active) {
       setPanel("sessions");
@@ -737,10 +771,15 @@ export function useFullBrain(
     // input — so it appends NO user bubble (the answer stands on its own after the analysis
     // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
     // likewise persists this turn answer-only. Every other send shows the owner's message.
+    // What the owner's bubble SAYS. An answers-only send arrives with `message` blank, and
+    // the server renders the Q/A pairs into the turn's own text so the words survive a
+    // failed clarification append (`clarify.owner_turn_text`); mirroring that here is what
+    // keeps the optimistic bubble identical to the one a reload replays.
+    const shownText = answers.length > 0 ? ownerTurnText(text, asked, draft) : text;
     setSessionMessages(turnSessionId, (ms) =>
       opts?.deferredOutcome
         ? [...ms, streamingAssistant()]
-        : [...ms, userMessage(text, attachments), streamingAssistant()],
+        : [...ms, userMessage(shownText, attachments), streamingAssistant()],
     );
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
@@ -757,6 +796,10 @@ export function useFullBrain(
       ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+      // Structured, never joined prose: a question id pairs each answer with the question
+      // the ledger says is open, and a mispaired answer is a wrong sentence in the owner's
+      // own note. An empty list is omitted and the turn behaves exactly as it always has.
+      ...(answers.length ? { answers } : {}),
       // The owner's per-conversation picks ride every turn of this chat: the model and
       // the reasoning level independently, so either can be set without the other (the
       // backend drops a reasoning level a non-reasoning resolved model can't use).
@@ -774,6 +817,10 @@ export function useFullBrain(
     // for the whole turn (and, on a dropped connection, the multi-minute recovery). The
     // stream and any reconnect recovery run in the background; `busy` stays true until
     // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
+    // The block is spent the moment its answers are on a turn: it freezes behind the new
+    // user bubble (it is no longer the last message), and the draft it held is gone so a
+    // second send cannot re-post the same answers against a set that is now closed.
+    if (answers.length > 0) clearAnswers(turnSessionId);
     void runTurn(body, controller, turnSessionId, baseline);
     return true;
   }
@@ -1149,6 +1196,17 @@ export function useFullBrain(
     });
   }, []);
 
+  // The thread's open question set, derived from the transcript rather than stored: the
+  // questions ARE the `ask_owner` step's recorded args, so a reopened thread needs no
+  // extra wire and no answer state that lives only in a component (§3b I9).
+  const openAsk: AskedQuestion[] = openQuestions(messages);
+  const answers = activeId !== null ? (answerDrafts[activeId] ?? EMPTY_ANSWERS) : EMPTY_ANSWERS;
+  const setAnswer = useCallback((questionId: string, answer: string) => {
+    const id = activeRef.current?.id;
+    if (!id) return; // no open thread to scope the draft to
+    setAnswerDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), [questionId]: answer } }));
+  }, []);
+
   return {
     active,
     sessions: visibleSessions,
@@ -1179,6 +1237,9 @@ export function useFullBrain(
           return true; // the stream runs in the background now; any failure settles there
         },
       ),
+    openQuestions: openAsk,
+    answers,
+    setAnswer,
     modelOverride,
     setModelOverride,
     effortOverride,

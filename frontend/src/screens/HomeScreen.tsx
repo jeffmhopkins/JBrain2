@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import { PlanSheet } from "../agent/PlanSheet";
+import { answeredCount } from "../agent/asked";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, modeForAgent, useFullBrain } from "../agent/useFullBrain";
 import { useReadAloud } from "../agent/useReadAloud";
@@ -402,6 +403,17 @@ export function HomeScreen({
         // opens the plan popover. A draft shows inline in the chat, so the pill is null then.
         planStatus={pillStatus}
         onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
+        // A note thread's open question block, counted for the carry strip. The strip is
+        // the composer's half of §3b I7: the block fills state, the omnibox send is the
+        // one submit, and one send is one turn carrying every answer plus any typed text.
+        carry={
+          conversational && fb.openQuestions.length > 0
+            ? {
+                answered: answeredCount(fb.openQuestions, fb.answers),
+                total: fb.openQuestions.length,
+              }
+            : null
+        }
       />
       {sdrSheet && (
         // Open on the radio the icon was reflecting; the sheet re-anchors itself if

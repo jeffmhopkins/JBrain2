@@ -116,6 +116,11 @@ interface OmniboxProps {
   /** Tap the plan pill → open the plan popover (status + Continue now / Stop). Absent =
    * the pill is a non-interactive status chip. */
   onPlanPillTap?: (() => void) | undefined;
+  /** A note thread with an open question block: how many of its questions are answered
+   * in the transcript above, waiting to ride the next send (§3b I7). Shown as the carry
+   * strip over the input, and it makes SEND live on an empty box — an answers-only reply
+   * is a real turn. Absent/null outside a note thread, which is everywhere else. */
+  carry?: { answered: number; total: number } | null | undefined;
 }
 
 export function Omnibox({
@@ -138,6 +143,7 @@ export function Omnibox({
   modelLabel,
   planStatus,
   onPlanPillTap,
+  carry,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -191,7 +197,8 @@ export function Omnibox({
       // the model (perhaps still loading) spins up. Staged files clear only once the
       // send confirms, since an upload can still fail; on any failure the text comes
       // back (unless a new one's been typed) so the owner can retry without re-typing.
-      if (body === "" && files.length === 0) return;
+      // An answers-only send is a real turn: the block above holds the message (§3b I7).
+      if (body === "" && files.length === 0 && !carrying) return;
       const staged = files;
       setText("");
       const result = onConversation(body, staged);
@@ -299,6 +306,8 @@ export function Omnibox({
     [],
   );
 
+  // A send is worth making when there are answers to carry, even with nothing typed.
+  const carrying = (carry?.answered ?? 0) > 0;
   const boxStyle = { "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties;
   const ModeIcon = MODE_ICON[seg.mode];
 
@@ -381,6 +390,22 @@ export function Omnibox({
                 + New
               </button>
             </div>
+          )}
+
+          {/* The carry strip: what rides the next send. Modelled on the calendar handoff's
+              appointment pill — a piece of state that sits in the composer and goes with
+              the turn — and it is also what says "you are replying in a thread", which is
+              why the MODE ROW still renders above it (the mock hides it; the mock is
+              wrong: it is the app's primary navigation and the only way back to capture). */}
+          {carry && carry.total > 0 && (
+            <output className="omni-carry">
+              <span className="omni-carry-n">
+                {carry.answered} of {carry.total}
+              </span>
+              {carry.answered === 0
+                ? "answered — answer above, or just reply"
+                : "answered — rides with your next send"}
+            </output>
           )}
 
           <textarea
@@ -491,7 +516,9 @@ export function Omnibox({
                   aria-label="Send"
                   onClick={send}
                   disabled={
-                    busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))
+                    busy ||
+                    (text.trim() === "" &&
+                      !(meta.domain === null && (files.length > 0 || carrying)))
                   }
                 >
                   <SendIcon size={24} />

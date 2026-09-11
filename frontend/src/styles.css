@@ -27312,3 +27312,158 @@ button.wf-sigpill {
 [data-theme="light"] .trim-drop {
   background: rgba(0, 0, 0, 0.42);
 }
+
+/* --- The note's own thread (AGENT_INGEST_REWRITE §3b, binding mock
+   docs/mocks/agent-ingest-thread/note-thread.html) ---------------------------------- */
+
+/* Turn 0: the note, frozen. Not a bubble — it is not something the owner just said, it
+   is the thing the conversation is about — so it is ruled rather than filled, in the
+   NOTE'S OWN domain colour (the mock fixes it rose, which in this palette is the medical
+   domain and would say something false on a financial note). Steel when the session
+   stored no scopes to read a domain off. */
+.fb-shell .fb-turn0 {
+  --note-rule: var(--steel);
+  align-self: stretch;
+  padding: 10px 13px;
+  border-left: 3px solid var(--note-rule);
+  border-radius: 0 var(--r-card) var(--r-card) 0;
+  background: var(--surface);
+}
+.fb-shell .fb-turn0-label {
+  margin: 0 0 5px;
+  color: var(--note-rule);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-turn0-body {
+  font-size: var(--fs-secondary);
+  /* The note's own line breaks are part of it; the frame's are gone with the frame. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The question block. AMBER, not the mock's rose, for the reason the stream chip is
+   amber: rose is the MEDICAL domain here, so a rose block says the same thing twice on a
+   medical note. Amber is the open-ask register, and the words carry it regardless. */
+.fb-shell .fb-qblock {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.fb-shell .fb-qblock-done {
+  /* Answered and spent: still legible on a reopened thread (§3b I9), no longer inviting. */
+  border-color: var(--border);
+  opacity: 0.72;
+}
+.fb-shell .fb-qblock-head {
+  margin: 0 0 8px;
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-qblock-done .fb-qblock-head {
+  color: var(--text-3);
+}
+.fb-shell .fb-q {
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.fb-shell .fb-q:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.fb-shell .fb-q-why {
+  margin: 0 0 3px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-text {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.fb-shell .fb-q-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.fb-shell .fb-q-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .fb-q-opt:disabled {
+  cursor: default;
+}
+.fb-shell .fb-q-picked {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.fb-shell .fb-q-opt-detail {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-picked .fb-q-opt-detail {
+  color: var(--amber);
+}
+.fb-shell .fb-q-input {
+  width: 100%;
+  margin-top: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.fb-shell .fb-q-answered {
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+/* States what the block cannot do, where the owner would otherwise assume it does. */
+.fb-shell .fb-q-foot {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The composer's carry strip — what rides the next send (§3b I7). Sits where the
+   appointment pill sits, and reads as a statement rather than a control, because it is
+   not one: the send below is the submit. */
+.omnibox .omni-carry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  font-size: var(--fs-micro);
+}
+.omnibox .omni-carry-n {
+  font-weight: 650;
+}
