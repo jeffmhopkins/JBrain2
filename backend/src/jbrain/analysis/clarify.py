@@ -866,7 +866,9 @@ async def settle_conversation(
     - `state != SETTLED`: `state_for_stop` gives `SETTLED` to a clean stop alone, so a
       truncated turn lands `failed`, a turn that ended on `ask_owner` lands
       `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too
-      (both callers degrade the stop reason to `record_failed`). Nothing runs at all.
+      (both callers degrade the stop reason to `record_failed`). Neither destructive half
+      runs — but the STAMP does, and that is the one thing this gate must not swallow;
+      see below.
     - `reading is None`: the pass never closed one. Tail only.
     - `reading.clamped`: a PREFIX of the note, and a sweep against a prefix retracts the
       tail. `_batch`'s clamp report is why this is a safety gate rather than a result
@@ -875,29 +877,62 @@ async def settle_conversation(
       this clause an `untrusted_origin` note would license a retraction of the owner's
       graph.
 
-    **The stamp runs on any reading**, clamped and third-party included: a clipped
-    reading still read the note from the top and still named it, and NOT stamping leaves
-    no `note_analysis` row at all — which is `Note.analyzed` false forever, a permanent
-    amber "analyzing…" chip on the note, and a re-run button polling an `analyzed_at`
-    that never moves (CLAUDE.md #10). `stamp_analysis` COALESCEs, so a reading with no
-    title cannot blank one an earlier pass wrote.
+    **The stamp runs on any reading, and OUTSIDE the gate above** — clamped, third-party
+    and `waiting_on_owner` included. §2 of the plan states the rule and it is load-bearing
+    rather than cosmetic: NOT stamping leaves no `note_analysis` row at all, which is
+    `Note.analyzed` false (`models/notes.py`), a permanent amber "analyzing…" chip on the
+    note in the home stream, "nothing here yet" on an Analysis tab over a note whose graph
+    IS written, and a re-run button polling an `analyzed_at` that never moves — the PWA's
+    only no-terminal re-analysis lever, spinning (CLAUDE.md #10).
+
+    The ending that made this a defect rather than a nicety is `waiting_on_owner`, and it
+    is the ordinary one: the persona is told to record everything it can settle and ask
+    LAST, so a pass that asks has READ the note and named it, and the note it read then
+    sat un-analysed in the PWA until the owner got round to answering — for as long as
+    that took, and forever if he never did. A pass that closed no reading still stamps
+    nothing, because there is nothing to stamp; that is the same line §2's rule 1 draws
+    ("every pass ending that READ the note"), and rule 2's `COALESCE` is what makes the
+    degraded case safe rather than a blank title.
+
+    So the shape here mirrors `converse._mark_integrated` deliberately: a claim about
+    what the pass DID is not conditional on the gate that licenses a retraction.
 
     It does NOT flip `integration_state`. That is the terminal block's, on EVERY pass
     ending including the ones that never reach here (`converse._run_turn`).
+
+    **The return value is the SWEEP's, not the stamp's.** True means the destructive half
+    ran; a `waiting_on_owner` pass that stamped still answers False, because every caller
+    and every test asks this function one question — did this pass settle — and a stamp
+    is not a settle.
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
     projection refresh is a stale view, recoverable by the next settle of the note.
     Raising instead would retry the worker job, which re-enters `note_converse` for a note
     whose conversation is no longer live and opens a SECOND thread for it.
     """
-    if state != SETTLED:
-        return False
     swept: set[uuid.UUID] = set()
+    entities: set[uuid.UUID] = set()
+    settled = state == SETTLED
     try:
         async with scoped_session(maker, ctx) as s:
             repo = NoteConversationRepo()
             conversation = await repo.get(s, session_id)
             if conversation is None:
+                return False
+            if reading is not None:
+                # FIRST, and before the gate: a pass that read the note says so whatever
+                # its ending was. Nothing here is destructive — the upsert COALESCEs
+                # `title`/`tags`, so a degraded pass moves `analyzed_at` and blanks
+                # nothing.
+                await pipeline.stamp_analysis(
+                    s,
+                    note_id=conversation.note_id,
+                    note_domain=reading.note_domain,
+                    title=reading.title,
+                    tags=list(reading.tags),
+                    extractor=reading.extractor,
+                )
+            if not settled:
                 return False
             entities = set((await repo.writes(s, session_id)).entities)
             if reading is not None and not reading.clamped and not reading.third_party:
@@ -914,15 +949,6 @@ async def settle_conversation(
             # `swept` is the entities whose facts just went: a projection row has to be
             # REMOVED when its last supporting fact does.
             await pipeline.settle_tail(s, referenced=entities, projected=entities | swept)
-            if reading is not None:
-                await pipeline.stamp_analysis(
-                    s,
-                    note_id=conversation.note_id,
-                    note_domain=reading.note_domain,
-                    title=reading.title,
-                    tags=list(reading.tags),
-                    extractor=reading.extractor,
-                )
     except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
         log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
         return False
@@ -933,7 +959,7 @@ async def settle_conversation(
         read=reading is not None,
         retracted_entities=len(swept),
     )
-    return True
+    return settled
 
 
 __all__ = [

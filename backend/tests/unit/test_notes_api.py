@@ -69,8 +69,8 @@ def no_live_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
     branch it names; the refusal itself is asserted by overriding this."""
     import jbrain.api.notes as notes_api
 
-    async def _none(*_a: object, **_k: object) -> bool:
-        return False
+    async def _none(*_a: object, **_k: object) -> str | None:
+        return None
 
     monkeypatch.setattr(notes_api, "_live_conversation", _none)
 
@@ -837,13 +837,42 @@ def test_analyze_note_409_when_the_notes_thread_is_already_live(
     note_id = _indexed_note(c, repo)
     jobs.enqueued.clear()
 
-    async def _live(*_a: object, **_k: object) -> bool:
-        return True
+    async def _live(*_a: object, **_k: object) -> str | None:
+        return "running"
 
     monkeypatch.setattr(notes_api, "_live_conversation", _live)
     resp = c.post(f"/api/notes/{note_id}/analyze")
     assert resp.status_code == 409
     assert "already queued" in resp.json()["detail"]
+    assert jobs.enqueued == []
+
+
+def test_analyze_note_409_on_a_waiting_thread_says_it_is_waiting_on_him(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same refusal, and a different sentence, because the generic one is FALSE here.
+
+    A thread parked on `ask_owner` has nothing queued and nothing running: it is waiting
+    on HIM, in the note's own conversation, and that is the one live state he can do
+    something about. Telling him "analysis already queued or running" sends him back to a
+    button that will keep refusing — the silent-dead-end failure CLAUDE.md #10 exists to
+    stop, wearing a 409."""
+    import jbrain.api.notes as notes_api
+
+    c, repo, jobs = client
+    note_id = _indexed_note(c, repo)
+    jobs.enqueued.clear()
+
+    async def _waiting(*_a: object, **_k: object) -> str | None:
+        return "waiting_on_owner"
+
+    monkeypatch.setattr(notes_api, "_live_conversation", _waiting)
+    resp = c.post(f"/api/notes/{note_id}/analyze")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "waiting on your answer" in detail
+    assert "queued" not in detail
     assert jobs.enqueued == []
 
 

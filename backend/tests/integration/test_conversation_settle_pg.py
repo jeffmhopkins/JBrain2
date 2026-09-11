@@ -337,6 +337,68 @@ async def test_the_settle_stamps_the_reading_and_never_blanks_a_title(
     assert after.tags == ["dentist"]
 
 
+async def test_a_pass_that_asked_a_question_still_stamps_the_note(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """§2 rule 1: the ROW is written on every pass ending that READ the note,
+    `waiting_on_owner` included — and the destructive half still is not.
+
+    This is the ordinary shape of a question-asking pass, not an edge: the persona is
+    told to record everything it can settle and ask LAST, so the pass that parks on a
+    question has read the note and named it. Withholding the stamp from it left
+    `Note.analyzed` false, a permanent amber "analyzing…" chip in the home stream, an
+    Analysis tab reading "nothing here yet" over a note whose graph IS written, and a
+    re-run button polling an `analyzed_at` that never moves — until the owner got round
+    to answering, and forever if he never did (CLAUDE.md #10).
+
+    Both halves, because the stamp moving out from behind the state gate must not take
+    the sweep with it: the pass has NOT finished reading, so nothing may be retracted on
+    it. The second reading here says the note is empty, which on a `settled` ending would
+    retract the appointment outright."""
+    note_id, _entity_id, writer, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs, names=["resolve_entity", "close_reading"])
+    await _settle(maker, owner, first, reading=_reading(writer, note_id))
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text("DELETE FROM app.note_analysis WHERE note_id = CAST(:n AS uuid)"),
+            {"n": note_id},
+        )
+
+    asked = await _conversation(maker, owner, note_id)
+    reader = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    await reader.close_reading({"title": "Whose dentist?", "tags": ["dentist"], "facts": []}, ctx)
+    # False: the settle did not run. The stamp is not a settle, and the return value
+    # answers the question every caller asks.
+    assert not await _settle(
+        maker, owner, asked, state="waiting_on_owner", reading=_reading(reader, note_id)
+    )
+
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT title, tags, extractor, domain_code, analyzed_at"
+                    " FROM app.note_analysis WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one_or_none()
+    assert row is not None, "a note whose pass asked a question has no analysis row"
+    assert row.title == "Whose dentist?"
+    assert row.analyzed_at is not None
+
+    # And nothing was retracted on a pass that has not finished reading.
+    assert (await _fact_row(maker, fact_id)).status == "active"
+
+
 async def test_the_conversations_settle_does_not_flip_the_note_to_integrated(
     maker,  # noqa: F811
     owner: SessionContext,

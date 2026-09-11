@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.note_conversation import NoteConversationRepo
+from jbrain.models.note_conversation import WAITING_ON_OWNER, NoteConversationRepo
 from jbrain.notes.service import (
     ClarificationsAltered,
     NoteInfo,
@@ -448,16 +448,23 @@ async def attachment_extracts(
 
 async def _live_conversation(
     maker: "async_sessionmaker[AsyncSession]", ctx: SessionContext, note_id: str
-) -> bool:
-    """Whether this note already has a live thread — a pass running, or one parked on a
-    question. Named rather than inlined so the re-run route's two refusals can be
-    exercised apart: a queued twin is the job queue's answer, this is the conversation
-    table's, and only one of them needs a database.
+) -> str | None:
+    """The STATE of this note's live thread — `running` for a pass in flight,
+    `waiting_on_owner` for one parked on a question — or None when there is none. Named
+    rather than inlined so the re-run route's refusals can be exercised apart: a queued
+    twin is the job queue's answer, this is the conversation table's, and only one of
+    them needs a database.
+
+    The state and not a bool, because the two live states are two different sentences to
+    the owner: one of them is the machine working and the other is the machine waiting on
+    HIM, and telling him "already queued or running" about the second is untrue in the
+    one direction that leaves him tapping a button (CLAUDE.md #10).
 
     `live_for_note` RECLAIMS a stale `running` row on its way past, so a thread stranded
     by a killed worker does not make the re-run button refuse forever."""
     async with scoped_session(maker, ctx) as session:
-        return await NoteConversationRepo().live_for_note(session, note_id) is not None
+        live = await NoteConversationRepo().live_for_note(session, note_id)
+    return None if live is None else live.state
 
 
 @router.post("/notes/{note_id}/analyze", status_code=202)
@@ -479,11 +486,13 @@ async def analyze_note(
     button 202-ing a producer the plan retires next wave (CLAUDE.md #10 — this button is
     the owner's only no-terminal re-analysis lever).
 
-    The 409s are what keep it honest, and the second one is new with the kind. A queued
-    twin would double-process; a LIVE conversation would make the handler decline the job
-    outright (`already_live`), so without the check the owner taps re-run, gets a 202 and
-    a job id, and nothing whatever happens — including on a thread parked on a question
-    he has not answered, where re-reading is not what he wants anyway."""
+    The 409s are what keep it honest, and the live-conversation one is new with the kind.
+    A queued twin would double-process; a LIVE conversation would make the handler decline
+    the job outright (`already_live`), so without the check the owner taps re-run, gets a
+    202 and a job id, and nothing whatever happens. That one splits in two by the thread's
+    state: a pass in flight is "already running", and a thread parked on a question is
+    waiting on HIM — the same refusal, but the only one of the two he can do anything
+    about, so it says so."""
     ctx = ctx_for(principal)
     note = await repo.get_note(ctx, note_id)
     if note is None:
@@ -492,9 +501,18 @@ async def analyze_note(
     # double-processing. `has_active` rather than `has_active_analysis`: that helper's
     # three other callers are each about the `integrate_note` twin THEY enqueue, and it
     # keeps that subject until R4 takes the kind.
-    if await jobs.has_active(
-        ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id
-    ) or await _live_conversation(maker, ctx, note_id):
+    if await jobs.has_active(ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id):
+        raise HTTPException(status_code=409, detail="analysis already queued or running")
+    live = await _live_conversation(maker, ctx, note_id)
+    if live == WAITING_ON_OWNER:
+        # Its own sentence, because the generic one is FALSE here: nothing is running and
+        # nothing is queued — the pass read the note and is waiting on an answer in the
+        # note's own thread, which is where the owner has to go.
+        raise HTTPException(
+            status_code=409,
+            detail="this note's analysis is waiting on your answer in its conversation",
+        )
+    if live is not None:
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
         ctx, note_id
