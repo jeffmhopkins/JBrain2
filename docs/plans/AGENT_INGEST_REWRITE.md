@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -147,10 +147,12 @@ run anyway, since the wipe deletes its input. §6 names what replaces it.
    - **state transition** (already "NOT best-effort", `converse.py:465-467`);
    - **`settle_conversation`** — and it now runs the WHOLE settle for a pass that
      produced a reading: `sweep_note` (release the `conversation` claim on what the
-     reading no longer asserts, retract what that leaves unclaimed), the two review-card
-     halves, `settle_tail` (reprojection, corroboration promotion, appointment / EMR /
-     geofence / device projections), `stamp_analysis` (title, tags, extractor,
-     prompt_version);
+     reading no longer asserts, retract what that leaves unclaimed), `settle_tail`
+     (reprojection, corroboration promotion, appointment / EMR / geofence / device
+     projections), `stamp_analysis` (title, tags, extractor, prompt_version). THREE
+     steps: the two review-card halves stay in `settle_note` with the producers that
+     file those cards — see R3's paragraph in §7, which corrects this plan's claim that
+     they become unreachable;
    - **the `integration_state = 'integrated'` flip**, on EVERY ending.
 
 ### What licenses the retraction, stated as the gate
@@ -240,11 +242,16 @@ rather than about preserving the old extractor.
   (`queue.py:605-670`) and gains the live-conversation clause the dispatcher already
   applies (`dispatcher.py:404-416`). This is the dropped-event safety net the conversation
   producer has never had.
-- `has_active_analysis` (`queue.py:344`) and `POST /notes/{id}/analyze`
-  (`api/notes.py:466`) repoint with it, or the PWA's re-run button 202s a job kind with
-  no handler.
-- `_integration_drained`'s in-flight list (`rebuild.py:288-292`) becomes
-  `('note_converse', 'emr_parse')`.
+- `POST /notes/{id}/analyze` repoints with it, or the PWA's re-run button 202s a job kind
+  with no handler. ⟲ **`has_active_analysis` does NOT repoint, and R3 explains why**: its
+  three other callers each ask about the `integrate_note` twin THEY enqueue, so the route
+  asks `has_active('note_converse', …)` directly and the helper keeps its subject until
+  R4 takes the kind. The route also gained a second 409, on a LIVE conversation: the
+  handler declines such a job outright, so without it the re-run button 202s and nothing
+  happens.
+- `_integration_drained`'s in-flight list (`rebuild.py`) becomes `('integrate_note',
+  'note_converse', 'emr_parse')` — a superset, not the swap first written here, because
+  `integrate_note` is still writing this graph until R4.
 - `dispatcher._already_active`'s `integrate_note` arm (`dispatcher.py:396-403`) is deleted
   with the kind.
 
@@ -385,12 +392,18 @@ waiting on the owner. Beside it, a much shorter findings list: firewall catches 
 D5 stands unchanged — questions live in their note's conversation, no push, no badge.
 
 **And a consequence for the settle.** With no `ambiguous_mention` cards and no truncation
-card, the settle's two review-card halves have nothing to retire:
-`_sweep_stale_ambiguous` (`pipeline.py:1458-1495`) and `_sync_truncation_review`
-(`:1496-1564`) both go, and the settle collapses back to `sweep_note` + `settle_tail` +
-`stamp_analysis`. `review_items.settle_owner` (migration 0197, S1b) loses every reader —
-the surviving card producers are never retired by a settle — so the column is dead and can
-be dropped in the same migration as the wipe, or left; it is one line either way.
+card, *the CONVERSATION's* settle has nothing to retire: it is `sweep_note` +
+`settle_tail` + `stamp_analysis`, three steps, which is what R3 built.
+
+⟲ **This paragraph also said the two halves themselves go —
+`_sweep_stale_ambiguous` and `_sync_truncation_review` — and that
+`review_items.settle_owner` loses every reader. Both are wrong, and R3 found out why.**
+They are called from `settle_note`, whose callers are `integrate_note` AND `emr_parse`;
+the second outlives this plan, `_file_ambiguous_review` sits on the `commit_intent` path
+both of them run, and `_sync_truncation_review` is the truncation card's FILER as well as
+its retirer. So the halves stay with `settle_note`, the column keeps its readers, and
+whether the EMR producer should go on filing those cards is a question for R4 rather than
+an assumption here.
 
 #### The clamped pass: a message, not a card
 
@@ -1863,21 +1876,89 @@ fact's ATTESTED QUOTE, and the harness quotes its subject's own `surface_text` �
 a schedule — so the faithful default reaches `parse_recurrence` on no scenario in the suite.
 A scenario wanting an RRULE off the quote has to author one.
 
-**R3 — the settle moves, and RETIRES the two card halves.** `settle_conversation` runs the
-whole settle for a pass with a reading: `sweep_note`, `settle_tail`, `stamp_analysis` — and
-NOT the two review-card halves, so the settle is three steps rather than five. **They are
-still standing when this wave starts.** R1b did not delete them, deliberately (see its
-paragraph): the analyzer is still filing `ambiguous_mention` and `extraction_truncated` on
-a live box, and `_sweep_stale_ambiguous` / `_sync_truncation_review` are the only things
-that retire them — a producer's cards go when the producer does. So this wave carries their
-removal rather than inheriting it, and it is R4's `integrate_note` deletion that makes them
-unreachable. Until then a card with `settle_owner = 'conversation'` (one the conversation
-won the filing race for, before R1b) is retired by no sweep at all; the corpus rebuild and
-note deletion are its escape hatches, exactly as for the rows. The gate of §2,
-third-party clause included. The `integration_state` flip moves to the terminal block and the reconciler,
-`has_active_analysis`, `POST /notes/{id}/analyze` and `_integration_drained` repoint with
-it, in this PR — they are one change, and splitting them leaves a box that re-enqueues a
-dead job kind every five minutes.
+**R3 — the settle moves. ✅ Shipped.** `settle_conversation` runs the whole settle for a
+pass that closed a reading: `sweep_note` with `touched` off `Reading.fact_ids`,
+`settle_tail`, `stamp_analysis` — three steps, and not the two review-card halves. The
+gate of §2, third-party clause included, and `mentions=None` (the reading carries fact ids
+and the 0191 ledger records no mention ids at all, so the mention reconcile is SKIPPED
+rather than run against an empty set, which would release the conversation's claim on the
+spans its own live facts are anchored to). The settle's input is a `clarify.PassReading`,
+flattened off the writer by `converse.pass_reading` — `clarify` may not import
+`graphwritetools`, which drags the LLM stack into the API process.
+
+**The two-verb hole R2's review found is closed by (a), narrowing.** `assert_fact` is off
+`NOTE_INGEST_UNATTENDED_TOOLS` and onto the reply set, in BOTH locks — the allowlist and
+the handlers `NoteToolset` binds. The argument for (a) over (b) (union the pass's own
+`assert_fact` writes into `touched`) is that (b) makes the sweep SAFE where (a) makes the
+failure unrepresentable: with one fact verb on the pass, the only thing that can write a
+fact is the thing the sweep is derived from, and no future reader has to re-derive why a
+bounded write-ledger union is sound here while S3 rejected the general one. It is also the
+set §3 already specifies and what R4 would do anyway, so the tool surface and the settle
+move together rather than the settle shipping against a surface it is unsound for. What it
+cost: the third-party set is derived from the unattended one, so a stranger's note also
+writes through `close_reading` alone — D10's "unrestricted in *what* it may write" is
+untouched, since the reading states everything the note says. Pinned in
+`test_note_converse.py::test_the_registry_converse_builds_resolves_the_whole_allowlist`,
+which fails against (b).
+
+**`stamp_analysis` now COALESCEs `title`/`tags`** (§2's rule 2, which the wave could not
+skip): `close_reading` carries a title per CALL, so a continuation call or a clipped pass
+lands an empty one, and the unconditional upsert would have wiped a complete pass's
+heading. A re-extraction that genuinely drops every tag no longer clears them — the trade
+§2 names, and `analyzed_at` is deliberately NOT coalesced (it is the watermark the re-run
+button polls).
+
+**The `integration_state` flip and its readers, in this PR.** The flip is
+`NoteConverseRunner._mark_integrated`, on every pass ending, best-effort. The readers were
+FOUR, and the count is right only if `has_active_analysis` is counted as one reader rather
+than as the one function: it has four callers, and three of them (`ocr.py`'s fallback, the
+ingest emit gate, `dispatcher._already_active`'s `integrate_note` arm) are each about the
+`integrate_note` twin THEY enqueue and keep that subject until R4 takes the kind. So the
+repoint went to the CALL, not the helper: `POST /notes/{id}/analyze` asks
+`jobs.has_active('note_converse', …)` and enqueues `note_converse`.
+`backfill_pending_integration` enqueues `note_converse`, gains the live-conversation skip
+the dispatcher already applies, and RECLAIMS stale conversations first — `reclaim_stale`
+is otherwise reached only through `live_for_note`, and after this wave nothing else asks,
+so a pass killed by an `Ops -> Update` quiesce would be honoured as "live" forever
+(CLAUDE.md #10). `_integration_drained` gains `note_converse` and KEEPS `integrate_note`,
+which is a superset rather than the swap this paragraph asked for: that producer is still
+live beside the conversation (D13) and still writing the same graph, so a drain that
+stopped watching it would chain the wiki repair over its writes. R4 takes it off with the
+kind. A fifth reader, `dispatcher._already_active`, was deliberately left alone: its
+`integrate_note` arm's congruence-with-the-reconciler comment is corrected, and its
+`note_converse` arm did NOT gain the integrated-state skip, which is a behaviour change no
+one asked for.
+
+⟲ **This paragraph said the wave RETIRES the two review-card halves. It does not, and the
+reason is that the plan's own claim about what makes them unreachable is wrong.**
+`_sweep_stale_ambiguous` and `_sync_truncation_review` are called from `settle_note`, and
+`settle_note` has TWO callers: `integrate_note`, which R4 deletes, and `emr_parse`
+(`ingest/emr/integrate.py`), which outlives this whole plan. `_file_ambiguous_review` sits
+in `_resolve_entities`, on the `commit_intent` path both of them run, and
+`_sync_truncation_review` is not only the retirer of `extraction_truncated` but its FILER.
+So deleting them now would leave the EMR importer filing cards no settle can ever retire,
+and would take away the clear branch a non-truncating EMR re-run needs — a sweep with work
+still to do. They stay, `settle_note` says why in place, and whether the EMR producer
+should keep filing those cards at all is R4's question rather than this wave's.
+
+*Named residuals, none of them regressions:*
+
+1. **The reply path settles tail-only.** `api/agent.py` passes `reading=None`: a reply
+   turn's `close_reading` is real, but its writer lives in the chat registry's own
+   per-conversation cache (`replytools`), built once at startup and reachable from no seam
+   at the turn seam — so the pass's reading, the CLAMP latch included, cannot be read back
+   there. A reading whose clamp state is unknown must not license a retraction, so that
+   path keeps exactly the settle it had. §2's "that reading sweeps" is therefore still
+   owed, and closing it means exposing that cache.
+2. **A `failed` pass flips `integrated`**, which is what "every pass ending" means, so the
+   reconciler will not retry it. The retry lever is the PWA's re-run button (which now
+   enqueues `note_converse` and 409s only on a job twin or a LIVE thread — a failed thread
+   is neither) and any re-ingest, which flips `integrated -> stale` first.
+3. **`graph_rebuild` now costs one agent turn per note.** The reconciler used to enqueue
+   `integrate_note` directly, so a corpus-wide rebuild was free of the conversation; it
+   drives the conversation now, because the conversation is what writes the state it
+   re-enqueues from. That is what a rebuild of an agent-written graph is, and
+   `analysis/converse.py`'s module docstring says so where it used to say the opposite.
 
 **R3f — the note's thread (the PWA wave).** §3b, built. **One wave, not a fold into R1/R1b/R3
 — and that is a decision, not a default.** Its acceptance is an owner walking a
