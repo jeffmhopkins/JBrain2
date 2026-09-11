@@ -919,14 +919,27 @@ def test_the_stale_horizon_cannot_reclaim_a_turn_that_is_still_allowed_to_run() 
     slot and nothing on a terminal-less box can release it. It must never fire on a pass
     that is merely slow: a turn cannot outlive its own wall clock, so the horizon has to
     sit strictly above it — and be DERIVED from it, or the next person to raise the cap
-    silently teaches the reaper to kill live turns."""
+    silently teaches the reaper to kill live turns.
+
+    TWO caps, not one (R3's third review). `claim_waiting` moves the owner's REPLY turn
+    into `running` as well, and that turn is an ordinary `/chat` turn bounded by
+    `api/agent.py`'s cap — which is more than twice what the note turn's cap alone
+    produced, so the horizon has to clear the LONGER of them. Pinned as an inequality
+    against both rather than as an equality against one: this is the assertion that has
+    to keep holding when a third kind of turn learns to sit in `running`."""
     from jbrain.analysis import converse
+    from jbrain.api import agent as agent_api
+    from jbrain.models.agent import TURN_WALL_CLOCK
     from jbrain.models.note_conversation import NOTE_TURN_WALL_CLOCK, STALE_CONVERSATION
 
     assert STALE_CONVERSATION > NOTE_TURN_WALL_CLOCK
-    assert STALE_CONVERSATION == 2 * NOTE_TURN_WALL_CLOCK
+    assert STALE_CONVERSATION > TURN_WALL_CLOCK
+    assert 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK) == STALE_CONVERSATION
     # And the runner bounds its turn by that same constant, not one of its own.
     assert converse.NOTE_TURN_WALL_CLOCK is NOTE_TURN_WALL_CLOCK
+    # One spelling for /chat's cap: the module that ENFORCES it derives it from the
+    # module that states it, so raising one cannot leave the reaper reading the other.
+    assert TURN_WALL_CLOCK.total_seconds() == agent_api._MAX_TURN_WALL_CLOCK_S
 
 
 def test_only_running_is_reclaimable_a_pending_question_waits_for_the_owner() -> None:
