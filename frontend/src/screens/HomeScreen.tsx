@@ -120,7 +120,6 @@ export function HomeScreen({
       onComposeConsumed?.();
     }
   }, [compose, onComposeConsumed]);
-  const clearDraft = useCallback(() => setPendingDraft(""), []);
   const clearAppt = useCallback(() => setPendingAppt(null), []);
   // Research and Full Brain are both conversation surfaces, integral to the home
   // page: the transcript and its lateral panels render in the body while the
@@ -129,6 +128,14 @@ export function HomeScreen({
   // a fresh one) on entry.
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
+  // The composer seam has two writers — a calendar handoff, and the typed half of a
+  // note-thread send that reached the server not at all — and one consume. Stable, because
+  // the omnibox seeds off this identity and would re-seed on every render otherwise.
+  const consumeRestored = fb.consumeRestoredText;
+  const consumeDraft = useCallback(() => {
+    setPendingDraft("");
+    consumeRestored();
+  }, [consumeRestored]);
 
   // Let the app-level back gesture climb the conversation surface's own layers before it
   // reaches the bare chat: an open Proposal (ProposalTree) sits atop the Proposals panel,
@@ -389,15 +396,12 @@ export function HomeScreen({
               }
             : undefined
         }
-        // Two writers, one seam: a calendar handoff, and the typed half of a note-thread
-        // send that reached the server not at all (`useFullBrain.restoredText` — the block
-        // takes its own half back at the same moment). Both hand the composer words the
-        // owner still has to send himself.
+        // The typed half of a send that reached nothing comes back here, beside the
+        // calendar handoff — the block takes its own half back at the same moment
+        // (`useFullBrain.restoredText`). Both hand the composer words the owner still has
+        // to send himself.
         draft={pendingDraft || (conversational ? fb.restoredText : "")}
-        onConsumeDraft={() => {
-          clearDraft();
-          fb.consumeRestoredText();
-        }}
+        onConsumeDraft={consumeDraft}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation

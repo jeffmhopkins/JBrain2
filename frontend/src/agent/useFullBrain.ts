@@ -500,6 +500,8 @@ export function useFullBrain(
   // a turn that gave up while the owner was reading another chat cannot seed that chat's
   // box with words meant for this one.
   const [handedBack, setHandedBack] = useState<{ session: string; text: string } | null>(null);
+  // Stable: the omnibox's seeding effect keys on this identity (`HomeScreen`).
+  const consumeRestoredText = useCallback(() => setHandedBack(null), []);
   // Guards a single auto-create per mode entry against a fast double-fire.
   const creatingFor = useRef<ConvMode | null>(null);
 
@@ -1324,7 +1326,7 @@ export function useFullBrain(
     answers,
     setAnswer,
     restoredText: handedBack !== null && handedBack.session === activeId ? handedBack.text : "",
-    consumeRestoredText: () => setHandedBack(null),
+    consumeRestoredText,
     modelOverride,
     setModelOverride,
     effortOverride,
