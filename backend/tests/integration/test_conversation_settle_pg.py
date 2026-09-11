@@ -511,6 +511,91 @@ async def test_a_second_reading_retracts_what_the_note_no_longer_says(
     assert (await _fact_row(maker, uuid.UUID(second_outs[1].facts[0].fact_id))).status == "active"
 
 
+async def test_a_second_reading_that_restates_everything_retracts_nothing(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """THE INVARIANT THE WHOLE SWEEP RESTS ON, and until R3's third review nothing
+    asserted it directly: a restated identity key comes back carrying the SAME `fact_id`,
+    so the row lands in `touched` and the sweep spares it.
+
+    Every other test in this file exercises the DIVERGENT reading — the note changed, or
+    the model said less — which is the sweep doing its job. This is the ordinary case: an
+    unchanged note read a second time (a re-run, a re-ingest, `analysis/rebuild.py`, the
+    reconciler's backfill). If a re-assert ever minted a NEW row instead of refreshing the
+    old one, `Reading.fact_ids` would name the new id, the old row would be in no reading,
+    and the sweep would retract the note's entire graph on every clean second pass — the
+    loudest possible failure, reachable from the quietest possible change.
+
+    Asserted on the ID, not only on the status: two live rows at one key would leave the
+    status assertion true while the invariant was already gone."""
+    note_id, entity_id, writer, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs, names=["resolve_entity", "close_reading"])
+    await _settle(maker, owner, first, reading=_reading(writer, note_id))
+    assert (await _fact_row(maker, fact_id)).status == "active"
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+        surface = (
+            await s.execute(
+                text("SELECT canonical_name FROM app.entities WHERE id = CAST(:e AS uuid)"),
+                {"e": str(entity_id)},
+            )
+        ).scalar_one()
+
+    # A SECOND pass over the same, unchanged note: its own conversation, its own writer
+    # (the worker is a new process, so nothing carries over but the graph), saying exactly
+    # what the first one said.
+    second = await _conversation(maker, owner, note_id)
+    restater = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    resolved = await restater.resolve_entity(
+        {"entities": [{"surface": surface, "kind": "appointment"}]}, ctx
+    )
+    read = await restater.close_reading(
+        {
+            "title": "Dentist appointment",
+            "tags": ["dentist"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "scheduledTime",
+                    "object": "2027-03-04T13:00:00",
+                    "statement": f"{surface} is scheduled for 2027-03-04 at 13:00.",
+                    "when": "2027-03-04T13:00:00",
+                    "quote": "Dentist appointment on 2027-03-04 at 13:00",
+                }
+            ],
+        },
+        ctx,
+    )
+    assert isinstance(resolved, ToolOutput) and isinstance(read, ToolOutput)
+    assert len(read.facts) == 1, str(read)
+    # The invariant itself: the same row, not a second one at the same key.
+    assert uuid.UUID(read.facts[0].fact_id) == fact_id, str(read)
+
+    await _ledger(maker, owner, second, [resolved, read], names=["resolve_entity", "close_reading"])
+    assert await _settle(maker, owner, second, reading=_reading(restater, note_id))
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "a reading that restated everything retracted it anyway"
+    assert CONVERSATION in row.settle_owners
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        live = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.facts WHERE note_id = CAST(:n AS uuid)"
+                    " AND predicate = 'scheduledTime' AND status = 'active'"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert live == 1, "the restatement minted a second row at the same key"
+
+
 async def test_an_empty_reading_is_a_claim_and_sweeps(
     maker,  # noqa: F811
     owner: SessionContext,
