@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2◻️ R3◻️ R3f◻️ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -1002,14 +1002,30 @@ What exists: the whole reply path — the clarification block append, the state 
 re-ingest and the reply turn's tool set — is W3, shipped (`analysis/clarify.py:401-490`).
 
 What was new is what O9 costs (§8), and R1c has shipped it. The one-at-a-time latch **is**
-the atomicity: `record_owner_reply` consumes the ask by flipping `waiting_on_owner →
-running` before it appends. That flip **stays**, and its comment now says what it actually
-means — *"that question SET has been consumed"* — because O11 is decided (ii) and an
-unanswered question survives as a sentence to the agent rather than as state. The claim did
-NOT have to move per question: one reply consumes the whole set, a second finds `running`
-and files nothing, so two replies can never answer the same question twice. What did change
-is the append (several Q/A pairs in one transaction, so one re-ingest), `latest_question` →
+the atomicity: `record_owner_reply` consumes the ask by moving `waiting_on_owner →
+running` before it appends, and it means *"that question SET has been consumed"* — because
+O11 is decided (ii) and an unanswered question survives as a sentence to the agent rather
+than as state. The claim did NOT have to move per question: one reply consumes the whole
+set, so two replies can never answer the same question twice. What did change is the
+append (several Q/A pairs in one transaction, so one re-ingest), `latest_question` →
 `open_questions`, and `NotesInboxEntry.question` → `questions`.
+
+⟲ **"A second reply finds `running` and files nothing" was only ever true of a SEQUENTIAL
+second reply, and this paragraph asserted it as a general property.** The flip went through
+`set_state`, whose conditional UPDATE filters on `_ALLOWED_SOURCES["running"]` — which
+contains `running`, because a pass legitimately moves within it — so it was not a
+compare-and-swap on `waiting_on_owner` at all. `scoped_session` is READ COMMITTED and
+`/chat` takes no per-session lock, so two overlapping replies (a double-tapped send, a
+retried stream, two devices) both read `waiting_on_owner`, both updated one row, and BOTH
+proceeded: two clarification blocks for one question, two re-ingests, and `note_body_sha`
+re-stamped from a stale read. The DECISION is untouched — no per-question claim, no new
+table, no migration — but the premise it rested on was wrong, and the fix is what now
+makes it true: the claim is its own conditional UPDATE on `waiting_on_owner`
+(`NoteConversationRepo.claim_waiting`), so the loser's UPDATE re-evaluates against the
+committed row, matches nothing, and returns exactly as a non-waiting thread does. The
+soundness now rests on that UPDATE, not on the state machine around it, and the test that
+pins it runs two replies IN FLIGHT — the sequential pair that shipped with R1c could not
+see the bug.
 
 ### I9 — A settled thread, reopened later
 
@@ -1736,9 +1752,14 @@ one acceptance matrix out of two.
 ⟲ **This paragraph said "the claim moves off the state flip" to something addressed per
 question. It did not have to, and R1c built no such thing.** O11 is decided (ii): what a
 partial send leaves behind is not durable state but a sentence handed to the agent, so the
-`waiting_on_owner → running` flip stays the latch — sound because it serializes at the SET
-level (one reply consumes the whole set; a second finds `running` and files nothing). No
-per-question claim, no new table, no migration. See O11 in §8 for the reasoning in full.
+claim stays at the SET level — one reply consumes the whole set. No per-question claim, no
+new table, no migration. See O11 in §8 for the reasoning in full.
+
+⟲ **It also said the STATE FLIP was that claim, and that a second reply "finds `running`
+and files nothing". True of a sequential second reply only.** `set_state`'s UPDATE admits
+`running` as a source of `running`, so it never compared-and-swapped on `waiting_on_owner`,
+and two overlapping replies both won it. The claim is now a conditional UPDATE of its own
+(`claim_waiting`); the wave's decision is unchanged, the argument for it is not. See I8.
 
 *What a later wave can remove:* `questions_from_args` reads the PRE-BATCH ledger shape
 (`args["question"]`, a bare string) and synthesizes a positional id for it. That is a
@@ -2010,12 +2031,17 @@ enqueues N re-ingests of the same note — the exact cost the batch exists to re
 ⟲ **This paragraph also said the claim "moves from the state flip to something addressed
 per question". It does not, and R1c built neither.** O11 (below) is decided (ii), and the
 simplification falls out of that decision: an unanswered question is not durable state, it
-is a SENTENCE handed to the agent on its reply turn. So the state flip stays the latch
-unchanged, and it is still sound because it serializes at the level a reply arrives at —
-one reply consumes the whole set, a second finds `running` and files nothing, and two
-replies can never answer the same question twice. No per-question claim, no new table, no
-migration. What was left as the real work was the pairing rules and the wire; the tool
-schema was indeed the easy half.
+is a SENTENCE handed to the agent on its reply turn. So the claim stays at the SET level —
+one reply consumes the whole set, and two replies can never answer the same question twice.
+No per-question claim, no new table, no migration. What was left as the real work was the
+pairing rules and the wire; the tool schema was indeed the easy half.
+
+⟲ **And the correction needs a correction of its own: "a second finds `running` and files
+nothing" was true SEQUENTIALLY, not generally.** R1c claimed the set with an unlocked read
+plus `set_state(..., "running")`, whose allowed-sources table admits `running` as a source
+of `running` — so two overlapping replies on one thread both updated a row and both filed.
+The claim is now a conditional UPDATE on `waiting_on_owner` (`claim_waiting`), which is
+what makes the property general; the decision it was used to justify never depended on it.
 
 **Decided: batched.** Settled with the owner on the interaction mock
 (`docs/mocks/agent-ingest-thread/note-thread.html`, §3b), where the three-question note is
@@ -2025,8 +2051,8 @@ candidate context the retired card was carrying is what makes a one-tap answer p
 What the mock added is the property that makes it safe to render: **the question block is
 inert and the omnibox send is the only submit** (§3b I6/I7), so three answers are one turn
 rather than three, which is the entire point. The build cost this entry already named is
-the real work and it is now a wave: **R1c** in §7, which moves the claim off the state flip
-to something addressed per question. Two questions the batch OPENS are recorded below as
+the real work and it is now a wave: **R1c** in §7 — which, as the ⟲ above says, did NOT
+move the claim per question. Two questions the batch OPENS are recorded below as
 **O11** (partial send) and **O12** (draft state).
 
 **O10 — Nothing tells the owner a thread is waiting.** `waiting_since` is measured and
@@ -2069,10 +2095,15 @@ is not a state problem at all.** An unanswered question does not survive as dura
 it survives as a *sentence handed to the agent on its reply turn*, and the agent re-raises
 it if it is still stuck. So:
 
-- The `waiting_on_owner → running` flip **stays exactly as it is** and is still the latch.
-- It is still sound because it serializes replies at the SET level: one reply consumes the
-  whole set; a second reply finds `running` and files nothing. Two replies can never answer
-  the same question twice.
+- The claim stays where it was, on the `waiting_on_owner → running` transition, and stays
+  at the SET level: one reply consumes the whole set.
+- What it could NOT stay is a plain `set_state` call. That filters on the allowed-sources
+  table, which admits `running` as a source of `running`, so it never compared-and-swapped
+  on `waiting_on_owner` and two overlapping replies both won it. The transition is now
+  claimed by its own conditional UPDATE (`claim_waiting`): exactly one reply wins, the
+  loser is turned away as a non-waiting thread is, and two replies can never answer the
+  same question twice. The property this bullet always asserted is now actually held, by
+  that UPDATE rather than by the state machine around it.
 - **No per-question claim, no new table, no migration** — the comment at
   `clarify.py`'s latch now reads "that question SET has been consumed", which is what the
   transition actually means.

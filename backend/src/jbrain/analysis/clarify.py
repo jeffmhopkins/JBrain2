@@ -20,7 +20,7 @@ The chain, end to end:
    and the graph re-derives from notes alone — a fact drawn from the answer has a real
    chunk of a real note to cite;
 4. the conversation returns to `running`, the turn proceeds, and anything the owner left
-   open is handed to the agent as a sentence (`unanswered_notice`).
+   open is handed to the agent as a sentence (`owner_reply_notice`).
 
 It also holds the note conversation's TOOL-CALL LEDGER — the fold, the recorder, and the
 bind — because both turn paths need them and only one of the two can afford to import
@@ -30,11 +30,18 @@ Two things worth stating because they are not obvious:
 
 **Why the state moves BEFORE the append.** They are separate transactions (the repo owns
 the append's), so one of the two can land alone. Moving the state first means the failure
-mode is a lost block — recoverable, because the answer is still in the thread and the
-agent can ask again. The other order's failure mode is a `waiting_on_owner` thread whose
-question was already answered and appended: the owner answers again, and the note gains
-the same answer TWICE, as source text, in a corpus with no per-block eraser in the PWA.
-Duplicated source text is the one of the two that cannot be undone from the owner's side.
+mode is a lost BLOCK: the note does not gain the owner's answer. That used to be called
+recoverable "because the answer is still in the thread" — and R1c is what stopped it
+being true, because an answers-only send carries the owner's words as `answers`, which is
+turn-local. So the loss is made good deliberately rather than assumed away:
+`api/agent.py` renders those answers into the turn's own text before it is persisted or
+sent to the model (§3b I7 — the prose is the RENDERING of the turn, not its payload), and
+`owner_reply_notice` tells the agent in words that the owner DID answer and that the
+answers did not reach the note. The other order's failure mode is a `waiting_on_owner`
+thread whose question was already answered and appended: the owner answers again, and the
+note gains the same answer TWICE, as source text, in a corpus with no per-block eraser in
+the PWA. Duplicated source text is the one of the two that cannot be undone from the
+owner's side.
 
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
@@ -97,6 +104,15 @@ log = structlog.get_logger()
 # an over-cap list is truncated, never 422'd — and sized above the ask's own `maxItems`
 # so a legitimate send of every answer can never be the thing that gets clipped.
 MAX_ANSWERS = 10
+
+
+def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The structured half of one reply, capped and cleaned.
+
+    Named rather than inlined so the cap is a thing a test can exercise: a truncation
+    that only Pydantic's acceptance is pinned against is a truncation nothing pins."""
+    return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+
 
 NOTE_CONVERSE_AGENT = "note_ingest"
 """The persona whose sessions are note conversations. Spelled here rather than imported
@@ -451,9 +467,7 @@ async def record_owner_reply(
     if not owner_authored:
         return None
     prose = message.strip()
-    # Capped the way `attachment_ids` is: an over-long list is truncated, never 422'd, so
-    # a client bug degrades this turn rather than failing it.
-    structured = [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+    structured = capped_answers(answers)
     if not prose and not structured:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
         # stays `waiting_on_owner` — the questions are still open, which is the truth.
@@ -477,15 +491,22 @@ async def record_owner_reply(
             # what says "that set has been consumed", and it is the latch that stops a
             # second reply appending the same answers again.
             #
-            # It survives the batch unchanged, and that is O11 (ii) paying for itself.
-            # The claim only has to serialize at the level a reply arrives at, and one
-            # reply consumes one whole set: a second reply finds `running` and files
-            # nothing, so two replies can never answer the same question twice. What a
-            # PARTIAL send leaves behind needs no claim of its own because it is not
-            # durable state — an unanswered question survives as a SENTENCE handed to the
-            # agent on its reply turn (`unanswered_notice`), and the agent re-raises it if
-            # it is still stuck. Hence no per-question claim, no new table, no migration.
-            await repo.set_state(s, session_id, "running")
+            # `claim_waiting`, not `set_state`, and the difference is the whole property.
+            # The read above is unlocked and `/chat` takes no per-session lock, so two
+            # overlapping replies both see `waiting_on_owner`; `set_state`'s UPDATE
+            # filters on `_ALLOWED_SOURCES["running"]`, which contains `running`, so the
+            # loser's UPDATE matches the winner's committed row and BOTH proceed. A
+            # conditional UPDATE on `waiting_on_owner` is what actually serializes them —
+            # exactly one claims, the loser returns None just as a non-waiting thread
+            # does, and two replies can never answer the same question twice.
+            #
+            # What a PARTIAL send leaves behind still needs no claim of its own, and that
+            # is O11 (ii) paying for itself: an unanswered question is not durable state,
+            # it is a SENTENCE handed to the agent on its reply turn
+            # (`owner_reply_notice`), and the agent re-raises it if it is still stuck.
+            # Hence no per-question claim, no new table, no migration.
+            if not await repo.claim_waiting(s, session_id):
+                return None
     except Exception as exc:  # noqa: BLE001 — a reply the engine cannot file is still a reply
         log.warning("note_reply.claim_failed", session_id=session_id, error=repr(exc))
         return None
@@ -578,36 +599,79 @@ def _pair(
     return answered
 
 
-def unanswered_notice(reply: OwnerReply | None) -> str:
-    """The one sentence a PARTIAL send owes the agent, or "" when it owes none.
+def owner_reply_notice(reply: OwnerReply | None) -> str:
+    """What this reply turn owes the agent about the owner's answers, or "" when nothing.
 
-    O11 is decided (ii): a partial send is allowed, and what makes it safe is THIS — the
-    agent is told which questions went unanswered and that they are still open. It is the
-    deliverable, not the toggle. What must not happen under any option is a partial send
-    that silently closes the rest: that loses the owner's own words about what their note
-    means, which is the one thing this whole channel exists to capture.
+    Two things it must never let the agent conclude, and each has cost a design round:
 
-    It is also the only place an unanswered question survives. Nothing durable holds one
-    — no per-question claim, no row — so if this sentence is not composed onto the reply
-    turn, the question is gone.
+    **"Jeff said nothing about the rest."** O11 is decided (ii): a partial send is
+    allowed, and what makes it safe is that the agent is TOLD which questions went
+    unanswered and that they are still open. It is the deliverable, not the toggle, and
+    it is the only place an unanswered question survives — nothing durable holds one, no
+    per-question claim, no row, so a question this sentence does not carry is gone.
+
+    **"Jeff said nothing at all."** When the append failed or the note was soft-deleted,
+    `clarified` is False and the clarification block — the answers' only durable home —
+    does not exist. The agent must hear that the owner DID answer and what he said, or it
+    reads a silent turn and re-asks a question he has already answered. The rendering in
+    `api/agent.py` puts his words on the turn itself; this says what became of them.
 
     Framed as DATA about the turn, in the voice `api/agent.py`'s other server-composed
     preambles use: it reports what the owner did, and leaves what to do about it to the
     agent."""
-    if reply is None or not reply.unanswered:
+    if reply is None:
         return ""
-    listed = "; ".join(f"{q!r}" for q in reply.unanswered)
-    # A reply can answer NONE of them — every structured answer named a question that is
-    # not open, say — and telling the agent Jeff "answered part" would then be false.
-    head = (
-        "Jeff answered part of what you asked"
-        if reply.answered
-        else "Jeff's reply answered none of your questions"
-    )
-    return (
-        f"({head}. These questions are still open and still unanswered: {listed}. You may"
-        " re-ask them, proceed without them, or drop them.)"
-    )
+    parts: list[str] = []
+    if reply.answered and not reply.clarified:
+        given = "; ".join(f"{q!r} — he answered {a!r}" for q, a in reply.answered)
+        parts.append(
+            "(Jeff DID answer you, and his answers could NOT be appended to the note:"
+            f" {given}. Treat them as his words — they are in this turn only, so nothing"
+            " downstream will re-read them out of the note, and do not ask him again for"
+            " what he has already told you here.)"
+        )
+    if reply.unanswered:
+        listed = "; ".join(f"{q!r}" for q in reply.unanswered)
+        # A reply can answer NONE of them — every structured answer named a question that
+        # is not open, say — and telling the agent Jeff "answered part" would then be
+        # false.
+        head = (
+            "Jeff answered part of what you asked"
+            if reply.answered
+            else "Jeff's reply answered none of your questions"
+        )
+        parts.append(
+            f"({head}. These questions are still open and still unanswered: {listed}. You"
+            " may re-ask them, proceed without them, or drop them.)"
+        )
+    return "\n\n".join(parts)
+
+
+def owner_turn_text(
+    message: str, reply: OwnerReply | None, answers: Sequence[tuple[str, str]]
+) -> str:
+    """The text this reply turn SAYS — what the transcript records and the model reads.
+
+    §3b I7 makes the structured `answers` the PAYLOAD of an answers-only send and the
+    prose the RENDERING of the same turn, so such a send arrives with `message` blank.
+    Blank is what the transcript would then record and what the model's user turn would
+    carry, which left the clarification block as the one durable trace of what the owner
+    said — and a failed append or a soft-deleted note lost three tapped answers with no
+    trace anywhere. Rendering them here restores the property the pre-R1c send shape had
+    for free: the owner's words are in the thread, whatever happens to the note.
+
+    Composed from the PAIRED answers where there are any, because the question is what
+    makes an answer legible a week later in a replayed transcript.
+
+    **Never fed back into `record_owner_reply`.** A non-blank `message` is that
+    function's free-text degrade path, pairing with the oldest unanswered question — hand
+    it this rendering and it files a second block saying what the first one said."""
+    if message.strip() or not answers:
+        return message
+    pairs = reply.answered if reply is not None else []
+    if pairs:
+        return "\n\n".join(f"{q}\n{a}" for q, a in pairs)
+    return "\n\n".join(a for _, a in capped_answers(answers))
 
 
 async def close_owner_reply(
@@ -750,11 +814,13 @@ __all__ = [
     "LedgerRow",
     "OwnerReply",
     "bind_turn_writes",
+    "capped_answers",
     "close_owner_reply",
     "ledger_rows",
+    "owner_reply_notice",
+    "owner_turn_text",
     "record_owner_reply",
     "record_reply_writes",
     "record_turn_writes",
     "settle_conversation",
-    "unanswered_notice",
 ]

@@ -46,10 +46,12 @@ turn; everything the pass is stuck on belongs in it.
 
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import Mapping
-from dataclasses import asdict
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -59,6 +61,7 @@ from jbrain.agent.toolregistry import ToolHandler
 from jbrain.db.session import scoped_session
 from jbrain.models.note_conversation import (
     AWAITING_OWNER,
+    MAX_ARG_CHARS,
     MAX_ARGS_CHARS,
     AskedQuestion,
     InvalidStateTransition,
@@ -80,22 +83,87 @@ ASK_OWNER_TOOL = "ask_owner"
 # too because a schema bound is a request, not an enforcement.
 MAX_QUESTIONS = 5
 
-# The model-facing cap on one FIELD of one question. Long enough for a real
-# disambiguation ("Which Sarah — your sister, or Sarah Chen from work?") with its
-# candidates, short enough that a hostile note body cannot drive a 200 KB "question" into
-# the ledger and, through the reply path, into the note's own text (plan risk 1).
-#
-# Derived from the ledger's TOTAL blob cap rather than set to `MAX_ARG_CHARS` (2000) as
-# the one-question version was, and that is the batch's doing: `cap_tool_args` degrades a
-# blob over `MAX_ARGS_CHARS` to its key NAMES, so five questions of three 2000-char
-# fields would not be truncated — they would be erased, leaving a waiting thread whose
-# ledger holds no question at all. Three fields, five questions, and room to spare for
-# the JSON around them.
-MAX_QUESTION_CHARS = MAX_ARGS_CHARS // (MAX_QUESTIONS * 4)
+# A COARSE first cut on one FIELD of one question, matching the ledger's own per-string
+# cap. Long enough for a real disambiguation ("Which Sarah — your sister, or Sarah Chen
+# from work?") with its candidates, short enough that a hostile note body cannot drive a
+# 200 KB "question" into the measurement below (plan risk 1). It is not the guarantee.
+MAX_QUESTION_CHARS = MAX_ARG_CHARS
+
+# What the recorded blob may SERIALIZE to, with margin under the total `cap_tool_args`
+# enforces. Counted, never estimated, and that is the whole point: the cap is
+# `len(json.dumps(blob))` and `json.dumps` defaults to `ensure_ascii=True`, so one source
+# character is up to six serialized ones (`\uXXXX`, twelve for an astral pair) and a
+# budget counted in SOURCE characters clears a Japanese question set by a factor of two.
+# Over the cap the blob degrades to `{"_keys": [...]}`, which is the worst outcome this
+# subsystem has: `questions_from_args` reads [] off it, so the thread waits on a question
+# nothing can show, and the owner's answer then takes `record_owner_reply`'s empty-set
+# branch — question and answer both gone, with no trace and nothing told. The margin
+# covers the `_truncated` key `cap_tool_args` may add beside the measured content.
+ASK_ARGS_BUDGET = MAX_ARGS_CHARS - 512
 
 
 def _clean(value: object) -> str:
     return " ".join(str(value or "").split())
+
+
+def recorded_args(asked: Sequence[AskedQuestion]) -> dict[str, Any]:
+    """Exactly the `args` blob `record_tool_call` is handed, so what `_fit` measures and
+    what the ledger stores cannot drift apart."""
+    return {"questions": [asdict(q) for q in asked]}
+
+
+def _serialized(asked: Sequence[AskedQuestion]) -> int:
+    return len(json.dumps(recorded_args(asked)))
+
+
+def _clip_candidates(q: AskedQuestion, n: int) -> AskedQuestion:
+    return replace(q, candidates=q.candidates[:n])
+
+
+def _clip_blocks(q: AskedQuestion, n: int) -> AskedQuestion:
+    return replace(q, blocks=q.blocks[:n])
+
+
+def _clip_question(q: AskedQuestion, n: int) -> AskedQuestion:
+    return replace(q, question=q.question[:n])
+
+
+def _shrink(
+    asked: list[AskedQuestion],
+    clip: Callable[[AskedQuestion, int], AskedQuestion],
+    floor: int,
+) -> list[AskedQuestion]:
+    """The longest UNIFORM per-item limit on one field that still fits, by bisection.
+
+    Serialized size is monotonic in the limit, which is what makes bisecting sound;
+    `MAX_QUESTION_CHARS` is the ceiling every field was already cut to, which is what
+    bounds the loop. `floor` is the shortest the field may become — 0 for context, 1 for
+    the question, since `questions_from_args` drops a BLANK question and dropping is the
+    one thing this must not do."""
+    best = [clip(q, floor) for q in asked]
+    lo, hi = floor, MAX_QUESTION_CHARS
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        trial = [clip(q, mid) for q in asked]
+        if _serialized(trial) <= ASK_ARGS_BUDGET:
+            best, lo = trial, mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def _fit(asked: list[AskedQuestion]) -> list[AskedQuestion]:
+    """Shrink the set until the blob it will be RECORDED as fits `ASK_ARGS_BUDGET`.
+
+    Context first and the question last: `candidates` and `blocks` help the owner answer
+    in one tap, the question is what he has to be able to read at all. And no question is
+    ever dropped — a dropped one is a question the thread waits on that nothing records,
+    which is the failure the budget exists to prevent, arrived at by another road."""
+    for clip, floor in ((_clip_candidates, 0), (_clip_blocks, 0), (_clip_question, 1)):
+        if _serialized(asked) <= ASK_ARGS_BUDGET:
+            break
+        asked = _shrink(asked, clip, floor)
+    return asked
 
 
 async def open_questions(
@@ -106,14 +174,18 @@ async def open_questions(
     Newest rather than "the rows with no answer" because the ledger has no answered flag
     and needs none: a conversation admits one open SET at a time (a second ask is refused
     below, and one reply consumes the whole set), so the newest `ask_owner` on a
-    `waiting_on_owner` thread IS the open one."""
+    `waiting_on_owner` thread IS the open one.
+
+    Whatever that row parses to is the answer, **empty included**. Falling through an
+    empty newest row to an older one reads the invariant backwards: the older set is one
+    the owner already answered, and returning it pairs this reply's words to a question
+    that closed — the mispairing `clarify._pair` exists to prevent, arriving through the
+    reader instead of the pairer. `_fit` is what makes an empty parse unreachable rather
+    than merely wrong; were it to happen anyway, the reply files nothing and says so,
+    which is a branch this path already has."""
     calls = await repo.tool_calls(session, session_id)
-    for call in reversed(calls):
-        if call.name == ASK_OWNER_TOOL and call.ok:
-            asked = questions_from_args(call.args)
-            if asked:
-                return asked
-    return []
+    newest = next((c for c in reversed(calls) if c.name == ASK_OWNER_TOOL and c.ok), None)
+    return questions_from_args(newest.args) if newest is not None else []
 
 
 def _asked(arguments: Mapping[str, object]) -> list[AskedQuestion]:
@@ -122,7 +194,10 @@ def _asked(arguments: Mapping[str, object]) -> list[AskedQuestion]:
     A blank `question` is dropped rather than refused: `required` buys PRESENCE, not
     membership (the measured rule that outlived the wave that found it), so an item with
     an empty string in it is a shape this handler has to survive. An item sent as a bare
-    string rather than an object is read as its question for the same reason."""
+    string rather than an object is read as its question for the same reason.
+
+    `_fit` has the last word: the per-field cut below is coarse, and what the ledger will
+    accept is measured on the way out."""
     raw = arguments.get("questions")
     asked: list[AskedQuestion] = []
     for item in (raw if isinstance(raw, list) else [])[:MAX_QUESTIONS]:
@@ -142,7 +217,7 @@ def _asked(arguments: Mapping[str, object]) -> list[AskedQuestion]:
                 candidates=_clean(fields.get("candidates"))[:MAX_QUESTION_CHARS],
             )
         )
-    return asked
+    return _fit(asked)
 
 
 def build_ask_owner_handlers(
@@ -189,7 +264,7 @@ def build_ask_owner_handlers(
                 s,
                 session_id,
                 name=ASK_OWNER_TOOL,
-                args={"questions": [asdict(q) for q in asked]},
+                args=recorded_args(asked),
                 ok=True,
                 # It wrote no graph. `domains` has no default precisely so a call that
                 # touched no domain has to say so (0191).

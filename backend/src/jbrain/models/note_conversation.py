@@ -79,6 +79,12 @@ STALE_CONVERSATION = 2 * NOTE_TURN_WALL_CLOCK
 # conversation — nothing stops a retry or a reaper REPLACING the state, which would
 # make the question vanish from the inbox and release the note with no trace. That
 # edge needs `abandon_question=True` said out loud.
+#
+# They are EDGES and never CLAIMS. `running` is a legal source of `running` — a pass moves
+# within it — so an UPDATE filtered through this table is not a compare-and-swap on any one
+# source state, and a caller that needs to win a race against another caller in the same
+# state needs its own conditional UPDATE. `claim_waiting` is that, for the one place it
+# matters (the owner's reply consuming an open question set).
 _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "running": frozenset({"running", "waiting_on_owner"}),
     "waiting_on_owner": frozenset({"running", "waiting_on_owner"}),
@@ -564,11 +570,17 @@ class NoteConversationRepo:
         listed so the owner can see the note is being read, and the route leaves it out
         of the count because nothing is waiting on them yet.
 
-        The questions are the LAST `ask_owner` of the thread — one call now carries the
-        whole set (R1c), and a conversation resumed after an answer can ask again, so the
-        inbox must point at the open set, not an answered one. `committed` counts distinct
-        fact ids over the thread's SUCCEEDED calls, so it counts what the write path
-        reported rather than a number invented from the arguments the model sent — over
+        The questions are the last SUCCEEDED `ask_owner` of the thread — one call now
+        carries the whole set (R1c), and a conversation resumed after an answer can ask
+        again, so the inbox must point at the open set, not an answered one. `AND t.ok`
+        is not decoration: it is the same filter `asktools.open_questions` applies, and
+        the reply path pairs the owner's words against ITS answer — without it the row
+        the inbox shows and the row the reply consumes can be different sets, so the
+        owner answers one question and their words are filed against another.
+
+        `committed` counts distinct fact ids over the thread's SUCCEEDED calls, so it
+        counts what the write path reported rather than a number invented from the
+        arguments the model sent — over
         BOTH turn paths, since W4c/1 put the owner's reply on the same ledger
         (`ConversationWrites`' docstring).
 
@@ -583,6 +595,7 @@ class NoteConversationRepo:
                     " (SELECT t.args"
                     "    FROM app.note_conversation_tool_calls t"
                     "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
+                    "     AND t.ok"
                     "   ORDER BY t.seq DESC LIMIT 1) AS ask_args,"
                     " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
                     "         unnest(t2.fact_ids) AS f"
@@ -612,6 +625,35 @@ class NoteConversationRepo:
             )
             for r in rows
         ]
+
+    async def claim_waiting(self, session: AsyncSession, session_id: str) -> bool:
+        """Claim a `waiting_on_owner` thread for the reply about to consume its question
+        set. True for the caller that won it, False for everyone else.
+
+        A compare-and-swap, and it has to be one: `set_state` cannot serve here because
+        `_ALLOWED_SOURCES["running"]` legitimately contains `running` (a pass moves
+        running → running), so its conditional UPDATE matches a row another reply already
+        claimed and reports success to both. `scoped_session` is READ COMMITTED and
+        `/chat` takes no per-session lock, so two overlapping replies on one thread — the
+        owner double-tapping send, the PWA retrying a dropped stream, two devices — both
+        read `waiting_on_owner` and both proceed. Two clarification blocks for the same
+        question, two `ingest_note` enqueues, and `note_body_sha` re-stamped off a stale
+        read: duplicated SOURCE text in the owner's own note, which the module docstring
+        of `analysis/clarify.py` names as the one failure the owner cannot undo.
+
+        Under READ COMMITTED the loser's UPDATE blocks on the winner's row lock and then
+        re-evaluates its WHERE against the committed row, finds `running`, and matches
+        nothing — so the claim is the latch, not the state machine around it."""
+        stmt = (
+            update(NoteConversation)
+            .where(
+                NoteConversation.session_id == uuid.UUID(session_id),
+                NoteConversation.state == "waiting_on_owner",
+            )
+            .values(state="running", updated_at=func.now())
+            .returning(NoteConversation.session_id)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
 
     async def set_state(
         self,

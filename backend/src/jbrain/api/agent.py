@@ -70,11 +70,12 @@ from jbrain.analysis.clarify import (
     NOTE_CONVERSE_AGENT,
     OwnerReply,
     close_owner_reply,
+    owner_reply_notice,
+    owner_turn_text,
     record_owner_reply,
     record_reply_writes,
     reply_profile_for_session,
     settle_conversation,
-    unanswered_notice,
 )
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -197,10 +198,13 @@ class ChatRequest(BaseModel):
     # router gates it on the resolved model so a non-reasoning route never receives it.
     reasoning_effort: str | None = None
     # The owner's answers to a note thread's open question set, sent alongside whatever
-    # free text is in the composer (one send, one turn — §3b I7). Turn-local, exactly
-    # like `appointment_id`: it never reaches the persisted transcript, which records
-    # `message` verbatim. `record_owner_reply` caps the list (MAX_ANSWERS) rather than
-    # 422ing an over-long one, the way `attachment_ids` is capped.
+    # free text is in the composer (one send, one turn — §3b I7). The LIST is turn-local
+    # like `appointment_id`, but its content is not: on an answers-only send `message` is
+    # blank, and `clarify.owner_turn_text` renders the answers into the turn's text so the
+    # transcript and the model's user turn say what the owner said. Without that the
+    # clarification block is their only durable home, and a failed append loses them
+    # entirely. `record_owner_reply` caps the list (`clarify.capped_answers`, MAX_ANSWERS)
+    # rather than 422ing an over-long one, the way `attachment_ids` is capped.
     answers: list[AnswerIn] = Field(default_factory=list)
     # The turn carries a Proposal ENACT OUTCOME the owner just produced inline, not owner
     # prose (INLINE_APPROVALS_PLAN §3.1). When set, `message` is the server-authored
@@ -929,7 +933,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # answer would sometimes not, and the answer would exist only as chat
     # (AGENT_INGEST_CONVERSATION_PLAN, TOOL_SURFACE.md "Verbs deliberately NOT tools").
     # Before the turn, so this turn already sees the note it just changed; never raises,
-    # so an answer that cannot be filed is still an answer the agent reads. The persona
+    # so a reply the engine cannot FILE is still a turn that runs. It is no longer true
+    # that the answer reaches the agent by itself: an answers-only send (§3b I7) carries
+    # the owner's words in `answers`, which is turn-local, so when the append fails the
+    # block that would have held them does not exist. The two lines below the call are
+    # what close that — `owner_turn_text` renders the answers into the turn's own text,
+    # and `owner_reply_notice` tells the agent they did not reach the note. The persona
     # check is HERE as well as inside, so a chat turn of any other persona touches
     # neither the notes repo nor a second session maker on its way to the model.
     #
@@ -951,6 +960,16 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             answers=[(a.question_id, a.answer) for a in body.answers],
             owner_authored=body.owner_authored,
         )
+        # AFTER the call and never fed into it: `record_owner_reply` reads a non-blank
+        # `message` as free text and pairs it with the oldest unanswered question, so
+        # handing it this rendering would file a second block saying what the first said.
+        # Rebound onto `body` so the ONE derived text reaches every reader of the turn —
+        # the transcript, the episodic trace, the vitals stamp and the model's user turn.
+        turn_text = owner_turn_text(
+            body.message, owner_reply, [(a.question_id, a.answer) for a in body.answers]
+        )
+        if turn_text != body.message:
+            body = body.model_copy(update={"message": turn_text})
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
@@ -1051,13 +1070,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         can_see_images=can_see_images,
     )
     attach_text = content.extra_text
-    # What the owner left open on a PARTIAL send rides the same channel the attachment
-    # blocks do: one DATA-framed sentence on this turn's message (O11 (ii)). It is the
-    # only thing that carries an unanswered question forward — nothing durable holds one
-    # — so the agent can re-ask it, work around it, or drop it.
-    still_open = unanswered_notice(owner_reply)
-    if still_open:
-        attach_text = f"{attach_text}\n\n{still_open}" if attach_text else still_open
+    # What the owner left open on a PARTIAL send — and what he ANSWERED when the block
+    # could not be appended — rides the same channel the attachment blocks do: DATA-framed
+    # text on this turn's message (O11 (ii)). It is the only thing that carries an
+    # unanswered question forward (nothing durable holds one), and the only thing that
+    # stops a failed append reading to the agent as a silent owner.
+    reply_notice = owner_reply_notice(owner_reply)
+    if reply_notice:
+        attach_text = f"{attach_text}\n\n{reply_notice}" if attach_text else reply_notice
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn
     # model can't see. The attachment's id still rides in attach_text, so the model

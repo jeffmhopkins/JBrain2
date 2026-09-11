@@ -27,8 +27,17 @@ What each test defends:
   a block per answer with exactly ONE re-ingest; an answer naming a question that is not
   open is dropped; and what the owner left open comes back as `OwnerReply.unanswered`
   rather than being silently closed (O11 (ii)).
+- **one reply consumes the set, and CONCURRENTLY.** The latch is a conditional UPDATE on
+  `waiting_on_owner` (`claim_waiting`), not the state flip it used to be: the flip's
+  allowed-sources table lets `running` follow `running`, so two overlapping replies both
+  won it and the note gained the same answer twice. A sequential second reply cannot see
+  that, so the test that pins it runs two in flight at once.
+- **the two readers of the open set agree.** The notes tab and the reply path both take
+  the newest SUCCEEDED `ask_owner` row and whatever it parses to — showing one set and
+  consuming another files the owner's words against a question he was never shown.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -43,13 +52,18 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.asktools import ASK_OWNER_TOOL, TOOLS_DIR, build_ask_owner_handlers
+from jbrain.agent.asktools import (
+    ASK_OWNER_TOOL,
+    TOOLS_DIR,
+    build_ask_owner_handlers,
+    open_questions,
+)
 from jbrain.agent.graphwritetools import note_registry
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import close_owner_reply, record_owner_reply
+from jbrain.analysis.clarify import MAX_ANSWERS, close_owner_reply, record_owner_reply
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
@@ -1046,3 +1060,165 @@ async def test_a_question_asked_before_the_batch_shipped_still_pairs(
     assert reply is not None and reply.clarified is True
     assert reply.answered == [(QUESTION, "My sister.")]
     assert reply.unanswered == []
+
+
+async def test_the_open_set_is_the_newest_ask_even_when_it_parses_empty(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The invariant `open_questions` states, now implemented: the newest succeeded
+    `ask_owner` IS the open set, whatever it parses to.
+
+    Falling through an empty newest row to an older one reads it backwards. The older set
+    is one the owner already ANSWERED, so a reply that fell back to it would pair this
+    turn's words with a question that closed weeks ago and append the pair to the owner's
+    own note as source text — the mispairing `_pair` exists to prevent, arriving through
+    the reader instead of the pairer. `_fit` is what keeps an empty parse out of the
+    ledger; this pins what happens if one ever gets there anyway."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q1", "question": QUESTION}]},
+            ok=True,
+            domains=(),
+        )
+        await repo.record_tool_call(
+            s, session_id, name=ASK_OWNER_TOOL, args={"questions": []}, ok=True, domains=()
+        )
+        await repo.set_state(s, session_id, "waiting_on_owner")
+
+    async with scoped_session(maker, owner) as s:
+        assert await open_questions(s, repo, session_id) == []
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="My sister.",
+    )
+
+    assert reply is not None and reply.clarified is False
+    assert await _blocks(maker, owner, note_id) == []
+
+
+async def test_the_inbox_and_the_reply_path_read_the_same_open_set(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """One thread, one open set, two readers — the notes tab (D4/D5) and the reply path.
+
+    The inbox's subselect took the newest `ask_owner` row unconditionally where
+    `open_questions` filters on `t.ok`, so a failed row could make the tab show one set
+    while the reply consumed another: the owner answers the question he was SHOWN and his
+    words are filed against a different one."""
+    note_id = await _note(maker, owner)
+    session_id = await _conversation(maker, owner, note_id)
+    repo = NoteConversationRepo()
+    async with scoped_session(maker, owner) as s:
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q1", "question": QUESTION}]},
+            ok=True,
+            domains=(),
+        )
+        await repo.record_tool_call(
+            s,
+            session_id,
+            name=ASK_OWNER_TOOL,
+            args={"questions": [{"id": "q9", "question": DOSE}]},
+            ok=False,
+            domains=(),
+        )
+        await repo.set_state(s, session_id, "waiting_on_owner")
+
+    async with scoped_session(maker, owner) as s:
+        open_set = await open_questions(s, repo, session_id)
+        (entry,) = [e for e in await repo.notes_inbox(s) if e.session_id == session_id]
+
+    assert [q.question for q in open_set] == [QUESTION]
+    assert entry.questions == [QUESTION]
+
+
+async def test_two_overlapping_replies_and_exactly_one_claims_the_set(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, monkeypatch: Any
+) -> None:
+    """The latch, tested where it actually has to hold: two replies IN FLIGHT AT ONCE.
+
+    `scoped_session` is READ COMMITTED and `/chat` takes no per-session lock, so the
+    owner double-tapping send, the PWA retrying a dropped stream, or two devices give two
+    overlapping transactions on one thread. Both read `waiting_on_owner`. The old claim
+    was `set_state(..., "running")`, whose conditional UPDATE filters on
+    `_ALLOWED_SOURCES["running"]` — which contains `running` — so the loser matched the
+    winner's committed row and BOTH proceeded: two clarification blocks for one question,
+    two re-ingests, and `note_body_sha` re-stamped off a stale read. Duplicated source
+    text in the owner's own note is the one failure this module calls unrecoverable.
+
+    The barrier is what makes the overlap real rather than likely: neither reply may
+    claim until both have opened their transaction and read the row. A sequential pair
+    cannot see this bug at all."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+    barrier = asyncio.Barrier(2)
+    claim = NoteConversationRepo.claim_waiting
+
+    async def gated(self: Any, session: AsyncSession, sid: str) -> bool:
+        await barrier.wait()
+        return await claim(self, session, sid)
+
+    monkeypatch.setattr(NoteConversationRepo, "claim_waiting", gated)
+    notes = SqlNotesRepo(maker)
+
+    async def reply(answer: tuple[str, str]) -> Any:
+        return await record_owner_reply(
+            maker,
+            notes,
+            owner,
+            session_id=session_id,
+            agent=NOTE_CONVERSE_AGENT,
+            message="",
+            answers=[answer],
+        )
+
+    results = await asyncio.gather(reply((ids[0], "My sister.")), reply((ids[1], "Her own.")))
+
+    assert sum(r is not None for r in results) == 1
+    assert len(await _blocks(maker, owner, note_id)) == 1
+    assert await _queued(maker, owner, note_id) == 1
+    assert (await _state(maker, owner, session_id))[0] == "running"
+
+
+async def test_a_structured_answer_past_the_cap_files_nothing(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`MAX_ANSWERS` truncates rather than 422s (a client bug degrades this turn, never
+    fails it) — and truncating means the tail does NOT become blocks. Sent as the 20th
+    item of a 20-item list, the real answer is dropped and its question stays open, which
+    is what `OwnerReply.unanswered` then tells the agent."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+    padding = [(f"stale{i}", "not an answer") for i in range(MAX_ANSWERS * 2 - 1)]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[*padding, (ids[0], "My sister.")],
+    )
+
+    assert reply is not None and reply.clarified is False
+    assert reply.unanswered == [QUESTION]
+    assert await _blocks(maker, owner, note_id) == []
