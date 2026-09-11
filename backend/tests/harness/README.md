@@ -132,7 +132,7 @@ Notes on authoring:
   predicate's dotted path by `_predicate` (`name.nickname` + `friends` →
   `name.nickname.friends`); every other qualifier is dropped. **`confidence`
   reached the graph in v3 and stopped again in v4** (`AGENT_INGEST_REWRITE.md`
-  R1b): the field is deleted from `assert_fact`, so the engine's span check is
+  R1b): the field is deleted from the write verbs, so the engine's span check is
   the whole weight and a scenario cannot script a self-report. The temporal's
   `resolved_end` still reaches. The dropped fields are still required by the
   extraction schema and still shape the front-half parse, which is why they stay
@@ -230,46 +230,31 @@ PR removes a producer before its replacement is merged and green*. That half is 
 met**, and no scenario here can show it, because the harness drives the write tools
 directly and then settles it itself.
 
-Production is now CLOSER than it was, and still not there. Since S2
-(`docs/plans/SETTLE_OWNERSHIP.md`) the conversation does run the settle's tail at the end
-of a clean pass — `analysis/clarify.settle_conversation`. It does NOT release its
-`conversation` claim: a sweep for it was built and dropped, because no evidence this
-producer has can license a retraction (SETTLE_OWNERSHIP.md S3).
+Production has caught up with this runner. Since R3 the conversation runs the WHOLE
+settle at the end of a clean pass — `analysis/clarify.settle_conversation`:
+`sweep_note` off the pass's closing reading, `settle_tail`, `stamp_analysis`. What
+licenses the release is a producer that RE-DERIVED the note and dropped X, and
+`close_reading` is exactly that producer (R1), so `touched` is `Reading.fact_ids` on both
+sides. Note what does NOT license it: the harness's own in-process ledger being more
+complete would license a sweep for a single production session too, which is the exact
+inference S3 was removed to block.
 
-This runner still calls `sweep_note` beside the tail, and since R2 that is the SHAPE R3
-specifies rather than a divergence the harness gets away with. It was a divergence, and
-the re-label rests on one change and not on the harness's own bookkeeping: an in-process
-ledger being more complete would license a sweep for a single production session too,
-which is the exact inference S3 was removed to block. What licenses a release is a
-producer that RE-DERIVED the note and dropped X — and `close_reading` is exactly that
-producer (R1), so the runner now takes `sweep_note(touched=…)` off `Reading.fact_ids`,
-the same claim R3 will gate `settle_conversation` on. Each harness STEP is one whole-note
-re-derivation, which is why `rerun_retracts_removed_fact.json` works — step 2 re-reads
-the note, its reading names no `homeLocation` fact, and the sweep retracts what step 1
-asserted, a re-derivation dropping a fact rather than a ledger accumulating one. One
-thing here is still the harness's alone: `mentions`. A reading carries fact ids and no
-mention ids, so R3's settle will pass `mentions=None` and skip the mention reconcile.
-What the runner does not call is `settle_note` whole, which would run the two
-producer-blind review-card halves R3 retires.
+Each harness STEP is one whole-note re-derivation, which is why
+`rerun_retracts_removed_fact.json` works — step 2 re-reads the note, its reading names no
+`homeLocation` fact, and the sweep retracts what step 1 asserted, a re-derivation dropping
+a fact rather than a ledger accumulating one.
 
-What the conversation still does NOT produce,
-and `integrate_note` therefore still owns alone: the `note_analysis` stamp (R1 gave the
-conversation the title and tags verb it lacked, but `settle_conversation` does not stamp
-them yet and the stamp is unconditional — precondition 3), the
-`notes.integration_state = 'integrated'` flip that `queue.backfill_pending_integration`
-and the workflow reconciler key on (precondition 4), and the settle's two producer-blind
-review-card halves, which deliberately stay in the `settle_note` composition so a second
-sweeper cannot delete the analyzer's cards.
+Two things here are still the harness's alone, and `_run_step`'s comment block is the
+authority on both: `mentions` (a reading carries fact ids and no mention ids, so
+production passes `mentions=None` and skips the mention reconcile, while this runner has
+those ids in process and reconciles with them), and the fact that the sweep here is
+UNGATED where production fires it only on a clean, unclamped, non-third-party pass. The
+runner also does not call `settle_note` whole, which would run the two review-card halves
+that belong to the producers still FILING those cards, and does not stamp `note_analysis`
+— production does, off the reading's title and tags, but no scenario reads the row.
 
-Its ledger precondition IS landed (W4c/1): `ConversationWrites.facts` is the
-whole-conversation union across both turn paths — the owner's reply turn records through
-`analysis/clarify.record_reply_writes` at the same seam the unattended pass records at —
-but no sweep reads it (W4c/2 is closed as unbuildable). The ledger records no mention
-ids at all, which is one more reason the reconstruction was unavailable; the harness has
-`mention_ids` only because it unions its outcomes in process.
-
-`tests/integration/test_note_converse_pg.py::test_a_finished_pass_settles_the_conversation_and_not_the_note`
-pins what remains absent, so this is a red test rather than a rediscovery.
+What D13 still owes is the producer, not the mechanism: `integrate_note` is still writing
+this graph beside the conversation, and R4 is what removes it.
 
 ## Known gaps (current xfail guards)
 

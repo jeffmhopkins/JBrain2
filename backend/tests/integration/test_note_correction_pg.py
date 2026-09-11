@@ -232,12 +232,17 @@ async def _run_conversation(
     """The PRODUCTION `note_converse` handler over this note: `executor_for_note` builds
     the per-note registry and the writer, so the wiring under test is the one the worker
     runs, not a writer this test assembled."""
+    # `close_reading`, because since R3 it is the unattended pass's only fact verb
+    # (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) — a scripted `assert_fact` here would now
+    # die in dispatch, which is the enforcement working rather than the test drifting.
     router = _router(
         _call(1, "resolve_entity", {"entities": [{"surface": name, "kind": "person"}]}),
         _call(
             2,
-            "assert_fact",
+            "close_reading",
             {
+                "title": "A correction",
+                "tags": [],
                 "facts": [
                     {
                         "subject": name,
@@ -247,9 +252,8 @@ async def _run_conversation(
                         "when": "",
                         "when_end": "",
                         "quote": quote,
-                        "confidence": 1,
                     }
-                ]
+                ],
             },
         ),
         LlmTurn("Recorded your correction.", (), "end_turn", LlmUsage(10, 3)),

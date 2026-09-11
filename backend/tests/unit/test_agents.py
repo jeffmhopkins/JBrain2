@@ -466,11 +466,15 @@ def test_the_profile_carries_the_unattended_set_so_a_forgotten_caller_narrows() 
     assert NOTE_INGEST_ON_REPLY_TOOLS != NOTE_INGEST_UNATTENDED_TOOLS
 
 
-def test_the_on_reply_set_adds_exactly_the_six_names_and_keeps_the_unattended_six() -> None:
+def test_the_on_reply_set_adds_exactly_the_seven_names_and_keeps_the_unattended_six() -> None:
     """TOOL_SURFACE's on-reply rows, enumerated. A SUPERSET: the reply turn is the same
-    agent finishing the same note, so it keeps the graph writes it was recording with."""
+    agent finishing the same note, so it keeps the write path it was recording with — and
+    since R3 it is where `assert_fact` lives, because "record one more thing the owner
+    just told me" is INCREMENTAL and incremental must never license a sweep. Unattended
+    it would be a second fact verb beside the reading the settle sweeps off."""
     assert NOTE_INGEST_ON_REPLY_TOOLS > NOTE_INGEST_UNATTENDED_TOOLS
     assert {
+        "assert_fact",
         "correct_fact",
         "merge_entities",
         "prefs_write",
@@ -551,15 +555,18 @@ def test_the_reply_turn_admits_the_on_reply_verbs_and_still_nothing_else() -> No
 def test_the_third_party_set_is_the_unattended_write_core_minus_the_owner_channel() -> None:
     """D10, enumerated. A stranger's words may cause a FACT and nothing else.
 
-    Both graph writes survive, unnarrowed — D10 says intake commits "unrestricted in
-    *what* it may write", and taking `assert_fact` away would be a different decision
-    from the one ratified. What goes is the one verb that is a CHANNEL: `ask_owner`
-    writes a model-authored question, out of stranger-controlled text, into the owner's
-    notes tab in his own agent's voice, and the answer he types is appended to the note
-    as source text and re-ingested."""
+    The whole write path survives, unnarrowed — D10 says intake commits "unrestricted in
+    *what* it may write", and narrowing what a stranger's note may SAY would be a
+    different decision from the one ratified. Two verbs and not three since R3, and that
+    is not a narrowing of this set: it is derived from the unattended one, which now holds
+    a single fact verb so that no pass can write a fact its own closing reading omits.
+    What goes HERE is the one verb that is a CHANNEL: `ask_owner` writes a model-authored
+    question, out of stranger-controlled text, into the owner's notes tab in his own
+    agent's voice, and the answer he types is appended to the note as source text and
+    re-ingested. (A third-party reading also never SWEEPS — that gate is the settle's,
+    `clarify.PassReading.third_party`, not this set's.)"""
     assert {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "find_entity",
         "read_entity",
@@ -699,13 +706,12 @@ def test_note_ingest_holds_an_explicit_closed_allowlist_not_the_wildcard() -> No
     assert note.tools is not None
     assert isinstance(note.tools, frozenset)
     assert note.tools == NOTE_INGEST_UNATTENDED_TOOLS
-    # The whole unattended set, and nothing else: three graph writes, `ask_owner`, two
+    # The whole unattended set, and nothing else: two graph writes, `ask_owner`, two
     # entity reads, the clock. Enumerated rather than derived, so a tool arrives here by
     # being named and never by inheriting anything — which is how `close_reading` (R1 of
-    # `AGENT_INGEST_REWRITE.md`) had to arrive.
+    # `AGENT_INGEST_REWRITE.md`) had to arrive, and how `assert_fact` had to LEAVE in R3.
     assert note.tools == {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "ask_owner",
         "find_entity",
@@ -904,8 +910,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
         "note_ingest": (
-            "agent-note-ingest-v4",
-            "a06c29aea82c98d23409567c6a911e62937da1a610731e2cfacf774a6b75f1ec",
+            "agent-note-ingest-v7",
+            "c95a014e49896603e005388162622a718590e808752e4b29960653d61783ab8a",
         ),
     }
     assert set(pins) == AGENT_NAMES

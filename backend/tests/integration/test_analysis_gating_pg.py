@@ -415,7 +415,11 @@ async def test_backfill_skips_notes_with_active_ocr(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
     """A worker restart mid-OCR must not enqueue a premature analyze: the
-    note has no note_analysis row yet, but its vision text is still coming."""
+    note has no note_analysis row yet, but its vision text is still coming.
+
+    The three tests below assert on `note_converse` since R3 — the reconciler enqueues
+    the note's graph producer, and that is the conversation now — while the WAIT they
+    pin is unchanged, because it is a property of the note and not of the producer."""
     await quiesce(maker)
     note_id = await make_note(maker, "indexed but ocr in flight")
     att_id = await add_image(maker, note_id, blobs=blobs)
@@ -427,7 +431,7 @@ async def test_backfill_skips_notes_with_active_ocr(
     await queue.enqueue(maker, OWNER, "ocr_attachment", {"attachment_id": att_id})
 
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
@@ -438,7 +442,7 @@ async def test_backfill_skips_notes_with_active_ocr(
             {"aid": att_id},
         )
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]
 
 
 async def test_backfill_waits_for_promised_attachment_then_settles(
@@ -460,7 +464,7 @@ async def test_backfill_waits_for_promised_attachment_then_settles(
     # No attachment has landed yet and the note is fresh: within the settle window,
     # the reconciler leaves it alone.
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
 
     # Backdate RECEIPT past the settle window — the promise never arrived, so the
     # note becomes eligible and integrates body-only rather than stranding.
@@ -473,7 +477,7 @@ async def test_backfill_waits_for_promised_attachment_then_settles(
             {"secs": queue.INTEGRATION_ATTACHMENT_SETTLE_SECONDS + 60, "nid": note_id},
         )
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]
 
 
 async def test_offline_flushed_note_still_gets_its_attachment_window(
@@ -501,9 +505,9 @@ async def test_offline_flushed_note_still_gets_its_attachment_window(
         )
 
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == []
 
     # The promised attachment lands inside the window: it integrates WITH the image.
     await add_image(maker, note_id, blobs=blobs)
     await queue.backfill_pending_integration(maker, OWNER)
-    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+    assert await jobs_for(maker, "note_converse", "note_id", note_id) == ["queued"]

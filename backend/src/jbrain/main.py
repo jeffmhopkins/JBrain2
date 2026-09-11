@@ -1154,8 +1154,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if boot_reaped:
                 structlog.get_logger().info("agent.runlog.boot_reaped", reaped=boot_reaped)
         # Bound accumulation while the process stays up (a child stranded by a rare
-        # double-cancel): an age-based sweep above the hard turn wall-clock, so it never
-        # races a genuinely-live detached turn.
+        # double-cancel): an age-based sweep on `runlog.STRANDED_AFTER_SECONDS`, which was
+        # sized above the hard turn wall-clock and no longer is — that constant says what
+        # a sweep under the cap costs.
         stranded_reaper_task = asyncio.create_task(
             reap_stranded_loop(app.state.agent_runlog, SYSTEM_CTX)
         )

@@ -487,10 +487,21 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # above is what makes this necessary rather than optional: an allowlisted name with no handler
 # behind it is a tool call that dies in dispatch, and for a whole wave that is what these two
 # were on the reply turn.
+#
+# R3 NARROWED IT TO ONE FACT VERB, and that is a correctness change rather than tidying.
+# The unattended pass's settle now derives its sweep from the pass's closing READING
+# (`analysis/clarify.settle_conversation`), releasing this producer's claim on every row
+# the reading no longer names. Hold `assert_fact` here as well and a pass could write F —
+# a verb it still had, with a live result telling it to — and then close with a reading
+# that omits F, so the sweep would retract a fact THAT SAME PASS wrote. A COMPLETE reading
+# re-absorbs it (re-asserting an identity key returns `ALREADY` with the same `fact_id`),
+# so the hole is the INCOMPLETE reading, which is precisely the case a sweep is
+# destructive in. One verb on the pass makes that unrepresentable instead of guarded: the
+# only thing that writes a fact is the thing the sweep reads. `assert_fact` keeps its
+# reply-turn job below, where it never licenses a sweep.
 NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
     {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "ask_owner",
         "find_entity",
@@ -505,14 +516,25 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 # is the only enforcement there is (constraint 9, TOOL_SURFACE R2).
 #
 # A superset of the unattended set, not a swap. The reply turn is the same agent finishing
-# the same reading of the same note, so taking `assert_fact` away at the moment the owner
-# explains what the note actually meant would leave it able to discuss a correction and
-# unable to record one — and worse than unable. `correct_fact` at an EMPTY address commits
-# active + pinned (`supersession.decide`), so a reply turn holding only that verb records
-# every new thing the owner mentions as a pinned fact no later note can supersede. Being a
-# superset is what keeps the ordinary "here is one more fact" on the ordinary write path.
+# the same reading of the same note, so a reply turn that could not record "one more thing"
+# would be able to discuss a correction and unable to write it — and worse than unable.
+# `correct_fact` at an EMPTY address commits active + pinned (`supersession.decide`), so a
+# reply turn holding only that verb records every new thing the owner mentions as a pinned
+# fact no later note can supersede. Being a superset is what keeps the ordinary "here is
+# one more fact" on the ordinary write path.
 #
 # Why each added verb is on-reply rather than unattended, one line each:
+# - `assert_fact` is INCREMENTAL — "record one more thing the owner just told me" — and
+#   incremental is exactly what must never license a sweep. Here it cannot: the sweep reads
+#   the closing reading, and a reply turn that only added a fact closed none, so it settles
+#   without retracting anything. Unattended it would be a second fact verb beside the
+#   reading the sweep is derived from, which is the overlap R3 removed (see the unattended
+#   set above). A reply turn that HAS re-read the whole note ends with `close_reading` too,
+#   and that is what sweeps. It is in this set CONDITIONALLY, and the condition is the
+#   turn's OUTCOME rather than anything about the note: `narrow_for_unprompted_reply` takes
+#   it back off a reply whose words did not land on the note as source text
+#   (`clarify.owner_words_reached_note`), because a fact with no source text is one the
+#   next pass retracts.
 # - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
 #   is the note, and a note that talks its way into overriding the graph past the arbiter's
 #   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
@@ -532,7 +554,15 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 # sanitize the note body, which is still sitting in this turn's context — untrusted content
 # + private data + egress is the complete trifecta, and it is just as complete here.
 NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | frozenset(
-    {"correct_fact", "merge_entities", "prefs_write", "search", "read_note", "relate"}
+    {
+        "assert_fact",
+        "correct_fact",
+        "merge_entities",
+        "prefs_write",
+        "search",
+        "read_note",
+        "relate",
+    }
 )
 
 # The THIRD-PARTY surface (D10, and plan risk 1 answered by which handlers are bound).
@@ -544,10 +574,15 @@ NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | froz
 # the only enforcement there is, so the difference has to be a difference of names.
 #
 # The rule it encodes, stated once: **a stranger's words may cause a FACT, and nothing
-# else.** They may resolve and mint entities and assert facts about them, because that
-# is what the owner approved the submission FOR — D10's "unrestricted in *what* it may
-# write" is honoured exactly, both graph-write verbs present, unnarrowed, at the same
-# budgets, through the same `commit_facts`, with the same floor and the same span check.
+# else.** They may resolve and mint entities and state everything the note says, because
+# that is what the owner approved the submission FOR — D10's "unrestricted in *what* it
+# may write" is honoured exactly, the pass's whole write surface present, unnarrowed, at
+# the same budgets, through the same `commit_facts`, with the same floor and the same span
+# check. Since R3 that surface is `resolve_entity` + `close_reading`, because it is
+# derived from the unattended set and that set now holds one fact verb. What a third-party
+# reading may NOT do is RETRACT: it commits and the settle refuses to sweep on it
+# (`clarify.PassReading.third_party`), because a reading is a write and not a licence when
+# the reader is not the owner.
 # They may not open a channel to the owner, escalate past the arbiter, edit a standing
 # instruction, or aim the corpus.
 #
@@ -595,6 +630,22 @@ NOTE_INGEST_THIRD_PARTY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS - f
 NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
     {"resolve_entity", "assert_fact", "close_reading", "correct_fact", "merge_entities"}
 )
+
+# The write verbs a reply turn holds only while the owner's words on that turn BECAME THE
+# NOTE'S TEXT (`clarify.owner_words_reached_note`). `narrow_for_unprompted_reply`
+# subtracts exactly these, and its docstring is the argument; the short version is that
+# `assert_fact` on a turn whose words the note never received writes a row with no source
+# text anywhere, which the next unattended pass then retracts.
+#
+# `correct_fact` is deliberately NOT here, and it is the one verb whose treatment is not a
+# subtraction. At an EMPTY address it commits active + pinned (`supersession.decide`), so
+# a turn holding only that verb records every new thing the owner mentions as a pinned
+# fact no later note can supersede — worse than the loss, because it is permanent as well
+# as unfalsifiable. But at a FULL address it is how a wrong fact gets fixed, which is a
+# path a settled thread must keep. A set cannot express "this arm of this verb", so the
+# refusal lives in the handler: `replytools.correct_fact_tool` refuses the empty-address
+# arm on the same condition this set is subtracted on, and says what to do instead.
+NOTE_ANSWER_ONLY_WRITE_TOOLS: frozenset[str] = frozenset({"assert_fact"})
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
 # for those principals goes through `agent_for_intake`, which fails closed against this
@@ -1036,6 +1087,79 @@ def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
     if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
         return profile
     return replace(profile, tools=profile.tools - NOTE_GRAPH_WRITE_TOOLS)
+
+
+def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
+    """Subtract `assert_fact` from a reply turn whose words did not become the note's own
+    text (`clarify.owner_words_reached_note`). The other narrowing of the on-reply
+    widening, applied on the same seam and for a reason of the same kind: a write the
+    system cannot keep.
+
+    ⟲ This line used to say "whose thread is NOT `waiting_on_owner`", which the ⟲ twelve
+    lines down refutes — and a ⟲ correcting the summary a reader skims and a signature
+    hover shows is a ⟲ nobody reads in time (R3's third review).
+
+    **The premise is the founding one — notes are the sole sources of truth.** A reply
+    into a WAITING thread is an ANSWER: `clarify.record_owner_reply` appends it to the
+    note as a timestamped clarification block (D6), the note re-ingests, and the owner's
+    words are the note's own text from then on. So a fact asserted on that turn is
+    re-stated by the next reading of the note and survives every sweep. Nothing here
+    touches that turn.
+
+    ⟲ **And "a reply into a waiting thread" is not the test — "his words landed" is**
+    (R3's second review). The first round keyed the caller on the thread's STATE, and the
+    two sets differ: with a complete structured set the designed send's free text is
+    DROPPED by `_pair` (`note_clarifications.question` is NOT NULL, so an unprompted
+    block has no shape — the O16 gap), an append can fail, and an `owner_authored=False`
+    turn returns before `claim_waiting` with the state still reading `waiting_on_owner`.
+    On each of those the thread was waiting and the note still received nothing. The
+    caller now keys on `clarify.owner_words_reached_note`, i.e. on what
+    `record_owner_reply` DID, which is the invariant rather than a proxy for it.
+
+    On any turn where they did not land, D6 has no shape for them:
+    `note_clarifications.question` is `NOT NULL` and non-blank in Postgres, so there is
+    no unprompted block. The owner's words reach the note NOWHERE. What `assert_fact`
+    would then commit is a row that:
+
+    - the sweep retracts on the note's next unattended pass — `note_ingest` and
+      `note_ingest_reply` are ONE producer sharing one claim (`analysis/settle_owner.py`),
+      so the pass's release strips the only claim the reply turn's write ever had, and
+      the pass's reading is of a note that has never contained the words. That is silent,
+      unrecoverable loss on an ordinary path, and it is what happens today;
+    - could not be saved by pinning it, which is the obvious alternative and is worse: a
+      row with no source text is UNFALSIFIABLE — no re-reading can correct it, because
+      the reading is of a note that does not say it, and no correction note can reach it.
+      Pinning would make it survive AND be permanent.
+
+    So the honest behaviour is to refuse the WRITE and say so, which is what removing the
+    verb does. The agent keeps every read, `ask_owner`, `merge_entities` (which stages a
+    fold of two rows already on file and mints no fact) and `correct_fact` — but only for
+    what it is FOR. ⟲ The first round left that last verb whole, and the comment on
+    `NOTE_ANSWER_ONLY_WRITE_TOOLS` said why that was wrong: `correct_fact` at an EMPTY
+    address commits active + pinned, so the turn was told it could not record a fact
+    while still holding a verb that records one AND pins it, which is unfalsifiable as
+    well as unrecoverable. The subtraction is not the fix there, because correcting a
+    fact that EXISTS is the owner's legitimate path on a settled thread and pinning is the
+    designed mechanism for it. `replytools.correct_fact_tool` refuses the empty-address
+    ARM instead, on this same condition — see its comment at the `heads` check.
+
+    What the agent must do with the fact it just learned is tell Jeff it cannot record it
+    here and that a note — or an answer to an open question — is how it lands; it is told
+    so on the turn as well (`clarify.owner_reply_notice`). This removes power rather than
+    adding it and invents no data shape; the principled fix, giving unprompted owner text
+    a home on the note, needs a shape `note_clarifications` does not have and is O16 in
+    `docs/plans/AGENT_INGEST_REWRITE.md`.
+
+    The caller applies it AFTER `record_owner_reply` (`api/agent.py`), which is the
+    earliest point the outcome exists: `/chat` resolves the profile before that call, and
+    `claim_waiting` has already flipped a waiting thread to `running` by the time a tool
+    dispatches, so neither end of the turn can read the answer off the state.
+
+    Non-note personas are returned unchanged, so a caller may apply it unconditionally.
+    Composes with both narrowings above: all three only ever remove names."""
+    if profile.name != NOTE_INGEST_AGENT or profile.tools is None:
+        return profile
+    return replace(profile, tools=profile.tools - NOTE_ANSWER_ONLY_WRITE_TOOLS)
 
 
 class PersonaResolutionError(ValueError):

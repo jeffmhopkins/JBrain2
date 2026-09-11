@@ -2397,7 +2397,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
 
 
 def _note_write_registry() -> ToolRegistry:
-    """The three note-write sidecars, bound to inert handlers — enough to see which of
+    """The four note-write sidecars, bound to inert handlers — enough to see which of
     them `/chat` actually offers a note conversation's reply turn."""
     import jbrain.agent.readtools as readtools
     from jbrain.agent.toolfile import load_tool
@@ -2408,7 +2408,7 @@ def _note_write_registry() -> ToolRegistry:
     return ToolRegistry(
         [
             RegisteredTool(load_tool(readtools.TOOLS_DIR / f"{n}.tool"), _inert)
-            for n in ("assert_fact", "ask_owner", "correct_fact")
+            for n in ("assert_fact", "close_reading", "ask_owner", "correct_fact")
         ]
     )
 
@@ -2427,7 +2427,12 @@ def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_n
     D8 widens this turn because the owner is the only voice in the room. On a note a
     STRANGER wrote he is not — the submitted body is turn 0 of this thread and is still
     in context — so `correct_fact` (a force-supersede that PINS) and `ask_owner` are not
-    offered, while `assert_fact` still is: D10 keeps the write path unrestricted.
+    offered, while `close_reading` still is: D10 keeps the write path unrestricted.
+
+    `close_reading` and not `assert_fact`, since R3: the third-party set is derived from
+    the UNATTENDED one, and that set now holds a single fact verb so a pass cannot write a
+    fact its own closing reading omits. What a stranger's reading may not do is retract —
+    the settle refuses to sweep on one (`clarify.PassReading.third_party`).
 
     Parametrized against its own negative, because the failure this guards is the
     narrowing applying to EVERY note conversation — which would look identical from the
@@ -2439,6 +2444,9 @@ def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_n
         return third_party
 
     monkeypatch.setattr(agent_mod, "conversation_is_third_party", _origin)
+    # The turn is an ANSWER whose words landed on the note, so the unprompted-reply
+    # narrowing is out of the way and what is left is D10's.
+    _answering(monkeypatch)
     # The OTHER W4 predicate on this same turn, held to "not an EMR note". It reads the
     # conversation row and the note through app state this hand-wired app does not have,
     # and it fails CLOSED, so leaving it live would narrow every case here for a reason
@@ -2455,11 +2463,11 @@ def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_n
     resp = client.post("/api/chat", json={"session_id": "sess-tp", "message": "my cousin"})
     assert resp.status_code == 200
     offered = {t.name for t in fake.stream_calls[0]["tools"]}
-    assert "assert_fact" in offered
+    assert "close_reading" in offered
     if third_party:
-        assert offered == {"assert_fact"}
+        assert offered == {"close_reading"}
     else:
-        assert offered == {"assert_fact", "ask_owner", "correct_fact"}
+        assert offered == {"close_reading", "assert_fact", "ask_owner", "correct_fact"}
 
 
 def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2470,6 +2478,28 @@ def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:
         return profile
 
     monkeypatch.setattr(agent_mod, "reply_profile_for_session", _identity)
+
+
+def _answering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold the THIRD narrowing at "the owner's words landed on the note".
+
+    `record_owner_reply` reaches a database this hand-wired app does not have, so it
+    returns None for every turn here — and None is the unprompted case, which takes
+    `assert_fact` off. Left live it would narrow every test below for a reason that has
+    nothing to do with what they assert. The predicate itself is pinned in its own tests
+    further down."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply
+
+    async def _landed(*_a: object, **_k: object) -> OwnerReply:
+        return OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+        )
+
+    monkeypatch.setattr(agent_mod, "record_owner_reply", _landed)
 
 
 def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_nothing(
@@ -2502,6 +2532,7 @@ def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_no
 
     monkeypatch.setattr(agent_mod, "conversation_is_third_party", _third_party)
     monkeypatch.setattr(agent_mod, "reply_profile_for_session", _emr)
+    _answering(monkeypatch)
     login(client, repo)
     sessions_store.add(
         AgentSessionInfo("sess-both", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
@@ -2513,6 +2544,115 @@ def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_no
     resp = client.post("/api/chat", json={"session_id": "sess-both", "message": "my cousin"})
     assert resp.status_code == 200
     assert {t.name for t in fake.stream_calls[0]["tools"]} == set()
+
+
+@pytest.mark.parametrize(
+    ("reply", "offered", "why"),
+    [
+        (
+            "landed",
+            True,
+            "the block appended and nothing he said was dropped",
+        ),
+        (
+            "dropped_prose",
+            False,
+            "§3b I7's designed send: the tapped answers landed and the free text beside"
+            " them had no open question, so `_pair` dropped it and the note never says it",
+        ),
+        (
+            "append_failed",
+            False,
+            "the thread WAS waiting and the block did not land — `clarified` False",
+        ),
+        (
+            "none",
+            False,
+            "not an answer at all: a settled thread, or an `owner_authored=False` turn,"
+            " which returns before `claim_waiting` with the state still reading waiting",
+        ),
+    ],
+)
+def test_assert_fact_rides_the_owner_s_words_landing_on_the_note(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+    reply: str,
+    offered: bool,
+    why: str,
+) -> None:
+    """R3's second review, finding 2, at the gate `/chat` consults.
+
+    `assert_fact` on a reply turn records "one more thing the owner just told me", and
+    the only thing that makes that write survivable is that his words BECAME THE NOTE'S
+    TEXT: the D6 block is appended, the note re-ingests, and the next reading restates
+    what the agent wrote. The first round keyed the narrowing on the thread's STATE,
+    which is a different set — three of the four rows below are `waiting_on_owner` turns
+    on which the note receives nothing, and the middle one is the DESIGNED send rather
+    than a failure. So the verb is bound to `record_owner_reply`'s outcome.
+
+    Asserted at the route because the ordering is the finding: the profile is resolved
+    before that call and `claim_waiting` has flipped the state by the time a tool
+    dispatches, so this narrowing can only be applied on the one line between them.
+
+    `correct_fact` stays offered in every row — the empty-address arm is refused in the
+    handler (`replytools`), not by taking the verb away from a turn that may still need
+    to fix a fact that IS on file."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply
+
+    outcomes: dict[str, OwnerReply | None] = {
+        "landed": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+        ),
+        "dropped_prose": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+            dropped=["also Dana moved to 412 Oak St"],
+        ),
+        "append_failed": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=False,
+            note_moved=False,
+            dropped=["Dana Reeve"],
+        ),
+        "none": None,
+    }
+
+    async def _outcome(*_a: object, **_k: object) -> OwnerReply | None:
+        return outcomes[reply]
+
+    async def _not_third_party(*_a: object, **_k: object) -> bool:
+        return False
+
+    monkeypatch.setattr(agent_mod, "record_owner_reply", _outcome)
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _not_third_party)
+    _not_emr(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo(
+            f"sess-{reply}", "", "active", ("general",), (), NOW, NOW, agent="note_ingest"
+        )
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": f"sess-{reply}", "message": "Dana Reeve"})
+    assert resp.status_code == 200
+    names = {t.name for t in fake.stream_calls[0]["tools"]}
+    assert ("assert_fact" in names) is offered, why
+    # Not a retreat from the on-reply surface: the reads, the ask, the reading and the
+    # correction of a fact that IS on file all stay.
+    assert {"close_reading", "ask_owner", "correct_fact"} <= names
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -2953,6 +3093,103 @@ def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
         note_moved=False,
     )
     assert owner_reply_notice(filed) == ""
+
+
+def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> None:
+    """R3's second review, finding 2 — the path that made the state-keyed narrowing
+    unsound, asserted on the two functions that decide it.
+
+    §3b I7's one send carries the structured answers AND whatever free text is in the
+    box. When the structured set answers everything, `_pair`'s third rule DROPS the prose:
+    `note_clarifications.question` is NOT NULL, so there is no shape for an unprompted
+    block (O16), and inventing a question the agent never asked would put a sentence into
+    the owner's own note that nobody said. That rule is right and stays.
+
+    What it costs is that a `waiting_on_owner` turn can carry a sentence the note never
+    receives — the agent reads it on the turn (`owner_turn_text`) and can be asked to
+    record it. So the drop is now REPORTED, twice over: `owner_words_reached_note` is
+    False, which takes `assert_fact` off the turn, and the agent is told in words that
+    those words reached no note."""
+    from jbrain.analysis.clarify import (
+        OwnerReply,
+        owner_reply_notice,
+        owner_words_reached_note,
+    )
+
+    designed = OwnerReply(
+        answered=[("Which Dana?", "Dana Reeve")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+        dropped=["also Dana moved to 412 Oak St"],
+    )
+    assert owner_words_reached_note(designed) is False
+    notice = owner_reply_notice(designed)
+    assert "412 Oak St" in notice
+    assert "did NOT reach the note" in notice
+    assert "cannot record a fact" in notice
+
+    # The clean send of the same shape: everything he said landed, the verb stays, and
+    # the agent is told nothing it does not need.
+    landed = OwnerReply(
+        answered=[("Which Dana?", "Dana Reeve")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    assert owner_words_reached_note(landed) is True
+    assert owner_reply_notice(landed) == ""
+
+    # And the two cases the state could never see: a turn with no reply at all (a settled
+    # thread, an `owner_authored=False` turn), and one whose block did not land.
+    assert owner_words_reached_note(None) is False
+    assert (
+        owner_words_reached_note(
+            OwnerReply(
+                answered=[("Which Dana?", "Dana Reeve")],
+                unanswered=[],
+                clarified=False,
+                note_moved=False,
+            )
+        )
+        is False
+    )
+    # Nothing landed at all: the agent hears it plainly rather than inferring it.
+    nothing = OwnerReply(
+        answered=[],
+        unanswered=[],
+        clarified=False,
+        note_moved=False,
+        dropped=["Dana moved to 412 Oak St"],
+    )
+    assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(nothing)
+
+
+def test_pairing_reports_the_words_it_could_not_file() -> None:
+    """`_pair`'s two dropping rules, each returning what it dropped.
+
+    Free text beside a COMPLETE structured set is chat with nowhere to go; a structured
+    answer naming an id the open set does not carry is a stale block replayed out of a
+    reopened thread (§3b I9). Both were silent before — the second logged a warning
+    nobody downstream could read — and both are the owner's own words reaching no note,
+    which is the condition the reply turn's write verbs now turn on."""
+    from jbrain.analysis.clarify import _pair
+    from jbrain.models.note_conversation import AskedQuestion
+
+    one = [AskedQuestion(id="q1", question="Which Dana?")]
+    answered, dropped = _pair(one, [("q1", "Dana Reeve")], "also she moved", session_id="s")
+    assert answered == {"q1": "Dana Reeve"}
+    assert dropped == ["also she moved"]
+
+    # A stale id: dropped, and the prose then answers the question it left open.
+    answered, dropped = _pair(one, [("q9", "from a closed set")], "Dana Reeve", session_id="s")
+    assert answered == {"q1": "Dana Reeve"}
+    assert dropped == ["from a closed set"]
+
+    # The ordinary partial send: prose answers the oldest open question, nothing is lost.
+    two = [*one, AskedQuestion(id="q2", question="Which coach?")]
+    answered, dropped = _pair(two, [], "Dana Reeve", session_id="s")
+    assert answered == {"q1": "Dana Reeve"} and dropped == []
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:

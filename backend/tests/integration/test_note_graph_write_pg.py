@@ -1354,6 +1354,41 @@ async def test_a_call_whose_every_element_is_unreadable_latches_too(maker, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_a_raise_escaping_the_handler_latches_the_reading(maker, tmp_path) -> None:  # noqa: F811
+    """The fourth latch, at the tool seam: a call that RAISES latches too, and the raise
+    still propagates.
+
+    The other three are the engine declining a fact the model stated; this one is the
+    call ending before it can decline anything — the pool refusing a connection, a
+    `set_config` blip, a failed COMMIT at block exit, a cancellation mid-batch. All of
+    them land between the session open and `Reading.union`, which is why the latch has to
+    wrap the whole body rather than the element loop. Driven off `_load_note`, the first
+    await inside the write session.
+
+    `loop.py:_dispatch` turns the propagated raise into a recoverable observation, which
+    is why latching is not optional: the model is told to try something else and may
+    simply end the turn, and a pass whose earlier call landed then presents a complete,
+    unclamped reading of a note it only read a prefix of."""
+    _, writer = await _own_person(maker, tmp_path, "Dana Raises")
+    ok = await writer.close_reading(
+        {"title": "Coffee", "tags": [], "facts": [_one_fact("Dana Raises")]}, _ctx()
+    )
+    assert ok.truncated is False and writer.reading.clamped is False
+
+    async def _boom(_session: object) -> list[object]:
+        raise RuntimeError("the pool said no")
+
+    writer._load_note = _boom  # type: ignore[method-assign]  # noqa: SLF001
+    with pytest.raises(RuntimeError):
+        await writer.close_reading(
+            {"title": "More", "tags": [], "facts": [_one_fact("Dana Raises")]}, _ctx()
+        )
+    assert writer.reading.clamped is True
+    # The call never landed, so it claims no reading — only that this one is a prefix.
+    assert writer.reading.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_a_reading_refused_for_budget_is_incomplete_too(maker, tmp_path) -> None:  # noqa: F811
     """The other way a reading ends up a prefix, and the one that looked clean.
 

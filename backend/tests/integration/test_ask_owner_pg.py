@@ -63,7 +63,13 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import MAX_ANSWERS, close_owner_reply, record_owner_reply
+from jbrain.analysis.clarify import (
+    MAX_ANSWERS,
+    close_owner_reply,
+    owner_reply_notice,
+    owner_words_reached_note,
+    record_owner_reply,
+)
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
@@ -994,6 +1000,12 @@ async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
     assert await _blocks(maker, owner, note_id) == reply.answered
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
     assert note is not None and "great run" not in note.body
+    # ⟲ And the drop is REPORTED, which is R3's second review, finding 2. This is the
+    # DESIGNED send on a `waiting_on_owner` thread, so the state said "the owner is
+    # answering" while a sentence of his reached no note at all — and the reply turn's
+    # `assert_fact` was bound on that state. It is bound on this instead.
+    assert reply.dropped == ["great run by the way"]
+    assert owner_words_reached_note(reply) is False
 
 
 async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(
@@ -1207,13 +1219,58 @@ async def test_two_overlapping_replies_and_exactly_one_claims_the_set(
     assert (await _state(maker, owner, session_id))[0] == "running"
 
 
+async def test_two_answers_for_one_question_keep_the_last_and_report_the_first(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's third review, finding 4 — the same class as the round-two blocking finding,
+    in miniature.
+
+    `_pair` accumulates into a dict, so a second answer carrying an id already filled
+    OVERWRITES the first and the first goes nowhere. Last-writer-wins is the right rule
+    (a re-send is a correction) and the silence was not: `dropped` came back empty, so
+    `owner_words_reached_note` said every word Jeff typed had become note text and the
+    turn kept `assert_fact` — while one of his own answers had reached no note."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(ids[0], "Dana W"), (ids[0], "Dana Whitfield"), (ids[1], "the cafe")],
+    )
+
+    assert reply is not None and reply.clarified is True
+    # The note has the LAST answer, which is the rule; what changed is that the one it
+    # replaced is now accounted for.
+    assert await _blocks(maker, owner, note_id) == [
+        (QUESTION, "Dana Whitfield"),
+        (COACH, "the cafe"),
+    ]
+    assert reply.dropped == ["Dana W"]
+    assert owner_words_reached_note(reply) is False
+
+
 async def test_a_structured_answer_past_the_cap_files_nothing(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
     """`MAX_ANSWERS` truncates rather than 422s (a client bug degrades this turn, never
     fails it) — and truncating means the tail does NOT become blocks. Sent as the 20th
     item of a 20-item list, the real answer is dropped and its question stays open, which
-    is what `OwnerReply.unanswered` then tells the agent."""
+    is what `OwnerReply.unanswered` then tells the agent.
+
+    AND IT IS IN `dropped` (R3's third review, finding 4). The cut happens before `_pair`
+    ever sees the list, so a truncated answer could never appear in the accounting that
+    function keeps — `owner_words_reached_note` read an empty `dropped`, said everything
+    landed, and left the turn holding `assert_fact` while one of Jeff's own sentences had
+    reached no note at all. Unreachable today only because `ask_owner.tool` caps
+    `questions` at 5 while `MAX_ANSWERS` is 10, which is two constants in two modules
+    agreeing by luck, not a guard."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION
@@ -1233,3 +1290,47 @@ async def test_a_structured_answer_past_the_cap_files_nothing(
     assert reply is not None and reply.clarified is False
     assert reply.unanswered == [QUESTION]
     assert await _blocks(maker, owner, note_id) == []
+    assert "My sister." in reply.dropped, "the truncated answer was lost without a trace"
+    assert owner_words_reached_note(reply) is False
+
+
+async def test_a_cut_answer_is_a_reply_even_when_nothing_inside_the_cap_survived(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's fourth review, finding 4 — the ONE return the cut did not ride.
+
+    `capped_answers` drops blanks as well as truncating, so ten blank answers ahead of a
+    real one leave `structured` empty; with an empty `message` beside them the turn fell
+    out of `record_owner_reply` as `None` before any of the accounting ran. The owner's
+    answer was discarded, the thread stayed `waiting_on_owner`, and `owner_reply_notice`
+    was handed nothing to say — the exact silence `dropped` exists to end. The write side
+    was never at risk (`owner_words_reached_note(None)` is already False); the NOTICE was,
+    and on a turn that lost the owner's words the notice is the whole deliverable.
+
+    Reachable only by `MAX_ANSWERS` blank answers ahead of a real one — which is to say
+    only by the same coincidence between two constants in two modules that
+    `answers_over_cap`'s own docstring refuses to rely on."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+    blanks = [(f"blank{i}", "   ") for i in range(MAX_ANSWERS)]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[*blanks, (ids[0], "My sister.")],
+    )
+
+    assert reply is not None, "the owner answered and the turn reported nothing at all"
+    assert reply.dropped == ["My sister."]
+    assert reply.clarified is False
+    assert await _blocks(maker, owner, note_id) == []
+    assert owner_words_reached_note(reply) is False
+    # And the agent is TOLD, which is the half that was missing.
+    assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(reply)
+    assert reply.unanswered == [QUESTION]

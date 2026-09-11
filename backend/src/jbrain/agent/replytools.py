@@ -1,19 +1,22 @@
 """The note-graph tools an owner's REPLY turn dispatches.
 
 `correct_fact` and `merge_entities` — the two write verbs that need Jeff in the room —
-plus the reply turn's copies of `resolve_entity` and `assert_fact`, which D8's on-reply
-allowlist has always named and which nothing had ever bound.
+plus the reply turn's copies of `resolve_entity`, `assert_fact` and `close_reading`,
+which D8's on-reply allowlist has always named and which nothing had ever bound.
+`close_reading` is R3's, and it is the one that is not an increment: the other four
+add, correct or fold ONE thing, while this one states what the WHOLE NOTE says now —
+the claim the settle is derived from (`AGENT_INGEST_REWRITE.md` §1).
 
 W3 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, built to
 docs/research/agent-ingest/TOOL_SURFACE.md's on-reply rows. D8 splits the note persona's
 surface in two and `agents.agent_for_owner_reply` is the seam; these are the handlers
 behind the half that only a turn the owner sent can reach.
 
-**All four are bound on the CHAT registry, not on the worker's per-note one.** The
+**All five are bound on the CHAT registry, not on the worker's per-note one.** The
 owner's reply into a note thread is an ordinary `/chat` turn, so that is the only
 registry the reply turn consults — the same reason `ask_owner` is wired there. None
 takes a note id: they find their conversation through `ToolContext.agent_session_id`,
-and outside a note conversation all four refuse. A write primitive a hostile body could
+and outside a note conversation all five refuse. A write primitive a hostile body could
 point at another note is not a tool, it is a hole.
 
 **`assert_fact` on the reply turn is a safety property, not a convenience.** Without it
@@ -21,6 +24,29 @@ the only write verb a reply turn holds is `correct_fact`, and a correction at an
 address commits `insert_pinned=True` — so a new fact the owner states in passing ("and
 her title is CTO") lands PINNED against every later note. The verb that records a new
 fact has to be reachable in the turn that learns one.
+
+**And it is reachable only on a turn whose words LANDED ON THE NOTE** (R3's review,
+finding 2, re-keyed by its second round). What `clarify.record_owner_reply` appends as a
+D6 clarification block becomes the note's own text, so a fact asserted beside it is
+re-stated by the note's next reading and survives the sweep. Where the append did not
+happen — a thread that is not waiting, an append that failed, a send whose free text
+`_pair` had no open question for — the owner's words reach no note at all
+(`note_clarifications.question` is NOT NULL, so D6 has no unprompted block), and the row
+would be swept by the note's next unattended pass, which shares this producer's single
+claim (`analysis/settle_owner.py`). `agents.narrow_for_unprompted_reply` takes the verb
+off that turn, applied from `api/agent.py` on `clarify.owner_words_reached_note` — the
+outcome of the append, which is the invariant, rather than the thread state, which is a
+proxy that admits all three cases above.
+
+**`correct_fact` is bound on that turn and its EMPTY-ADDRESS arm is not.** The verb is
+two writes wearing one name: against a live head it supersedes and pins, which is the
+owner fixing something wrong and must stay reachable whenever he is in the room; against
+an address holding nothing it MINTS a pinned fact no later note can supersede. On a turn
+whose words the note never received the second is strictly worse than the loss it would
+prevent — permanent and unfalsifiable, since no reading of a note that does not say it
+can correct it — so the handler refuses that arm when `assert_fact` is not in this turn's
+allowlist, and says what to do instead. The allowlist is the enforcement; the prompt is
+not.
 
 **`correct_fact` addresses by identity key `(entity, predicate, qualifier)`, never by
 fact id.** `readtools._edge_line` prints an entity's facts as `predicate: statement` and
@@ -32,7 +58,8 @@ handler lists what is there and REFUSES: a correction of one of them is not an o
 this graph has, because a set-valued edge's identity is its object. See the comment at
 the check for why the `replaces` retry the tool used to offer could not work.
 
-**The four handlers share one writer per conversation.** `NoteGraphWriter` owns the call
+**The four writer-backed handlers share one writer per conversation** (every one but
+`merge_entities`, which stages a Proposal and writes no graph). `NoteGraphWriter` owns the call
 budgets and the handle table, so building one per call makes both inert — which is what
 `CORRECT_CALL_BUDGET` did until it was found reporting "5 calls left" on the seventh
 consecutive correction.
@@ -226,12 +253,18 @@ def build_reply_write_handlers(
     notes: NotesRepo,
     router: LlmRouter | None = None,
 ) -> dict[str, ToolHandler]:
-    """The four note-graph tools a REPLY turn dispatches, wired for the chat registry.
+    """The FIVE note-graph tools a REPLY turn dispatches, wired for the chat registry.
 
     `correct_fact` + `merge_entities` (the on-reply writes) and `resolve_entity` +
-    `assert_fact` (the unattended pair, which D8 keeps on the reply turn because it is
-    the same agent finishing the same note). All four find their conversation through
-    `ToolContext.agent_session_id`, never through an argument.
+    `assert_fact` + `close_reading` (the unattended set, which D8 keeps on the reply turn
+    because it is the same agent finishing the same note). All five find their
+    conversation through `ToolContext.agent_session_id`, never through an argument.
+
+    ⟲ **`close_reading` was missing from this list** (R3's fourth review). R3 bound it and
+    R3's fourth round re-wired it below, and it is the one worth naming: the other four
+    state ONE thing each, and this one states a WHOLE-NOTE READING — which is what
+    `clarify.settle_conversation` retracts against, and so the only verb here whose
+    omission changes what the note stops asserting.
 
     `router` is what an `AnalysisPipeline` needs to exist; none of these use the model
     calls on it (`commit_facts` is deterministic), but the pipeline is the object that
@@ -316,14 +349,28 @@ def build_reply_write_handlers(
             writer.reading = existing[1].reading
         writers[session_id] = (scopes, writer)
         while len(writers) > _MAX_LIVE_WRITERS:
+            # ⚠ EVICTION DOES WHAT THE COMMENT ABOVE SAYS MUST NOT HAPPEN, and nothing
+            # here fixes it (R3's third review, F5, filed as a residual under R3 in
+            # `AGENT_INGEST_REWRITE.md` §7). A rebuild carries the `Reading` by hand; an
+            # eviction loses the writer outright, so the thread's next call starts a fresh
+            # `Reading()` with `clamped=False` — a clamped prefix presenting as a complete
+            # reading. It costs nothing while the reply path settles with `reading=None`
+            # (`api/agent.py`): no reading is read back here, so no laundered one can
+            # license a retraction. It becomes real the moment R3f or R4 closes that
+            # residual, and the fix is a reading that outlives the cache slot rather than
+            # a third hand-carry.
             writers.popitem(last=False)
         return writer
 
     async def _bound(ctx: ToolContext, tool: str) -> tuple[NoteGraphWriter | None, str | None, str]:
         """The writer for this turn's conversation, or the refusal text to return.
 
-        The whole gate the four share: a note conversation this principal can see, a note
-        that still exists, and a write path on this box."""
+        The whole gate the four WRITER-BACKED verbs share — `correct_fact`,
+        `resolve_entity`, `assert_fact` and `close_reading`, named rather than counted
+        (R3's fourth review found this reading as "the four" of the docstring above, which
+        is a different set): a note conversation this principal can see, a note that still
+        exists, and a write path on this box. `merge_entities` is the fifth tool here and
+        does not come through it — it stages a Proposal and needs no writer."""
         found = await _note_for_session(maker, ctx)
         if found is None:
             return (
@@ -456,6 +503,39 @@ def build_reply_write_handlers(
         # be able to tell the owner what IS on file) and the affordance that could not
         # work is gone.
         heads = _current_groups(named.view, predicate, qualifier)
+        # THE EMPTY-ADDRESS ARM, refused on a turn whose words the note never received
+        # (R3's second review, finding 3). `decide()`'s correction branch commits active
+        # + PINNED, so at an address holding nothing this verb does not correct anything —
+        # it MINTS a new fact that no later note can supersede. On a turn where the
+        # owner's words became the note's text that is the designed behaviour and stays.
+        # On a turn where they did not, it is the worst write in the system: the row cites
+        # text that exists nowhere, so no re-reading of the note can ever falsify it, and
+        # no correction note can reach it either. `narrow_for_unprompted_reply` takes
+        # `assert_fact` off exactly that turn, and leaving this arm bound made the refusal
+        # a lie — the agent told it cannot record a new fact, holding a verb that records
+        # one permanently.
+        #
+        # The condition is read off `ctx.agent_tools`, this turn's effective allowlist,
+        # and that is not a proxy here: `assert_fact` is absent from it for exactly two
+        # reasons, and the other one (the unattended pass, where it left the set in R3)
+        # binds no `correct_fact` handler at all — this code is on the CHAT registry, so
+        # reaching this line at all means a reply turn. The EMR and third-party narrowings
+        # take both verbs together, so they cannot land here either. What is left is the
+        # narrowing above, which is the invariant: the owner's words did not land on the
+        # note as source text.
+        #
+        # Correcting an EXISTING head is untouched — that is what the verb is for, and
+        # pinning is the designed mechanism for it.
+        if not heads and ASSERT_FACT not in ctx.agent_tools:
+            return (
+                f"{named.name}.{predicate} holds nothing on file, so this would not"
+                " correct a fact — it would record a NEW one, pinned, that no later note"
+                " could ever change. Jeff's words on this turn did not reach the note, so"
+                " there is no text behind it: nothing was recorded. Tell him it is not"
+                " recorded, and that a note of his own — or an answer to a question you"
+                " ask him now — is how it lands. You can still correct anything that IS"
+                " on file."
+            )
         if len(heads) > 1:
             listing = "\n".join(
                 _head_line(f"f{i + 1}", row) for i, row in enumerate(heads[:_MAX_HANDLES])
@@ -640,7 +720,27 @@ def build_reply_write_handlers(
         writer, _note_id, refusal = await _bound(ctx, CLOSE_READING)
         if writer is None:
             return refusal
-        return await writer.close_reading(arguments, ctx)
+        # THE CORRECTION-NOTE ELEVATION IS OFF on a turn whose words the note never
+        # received (R3's third review, finding 1), on the same signal and for the same
+        # reason as `correct_fact`'s empty-address arm above. `_assert_one` elevates an
+        # ATTESTED element of an `owner_correction` note to `correction=True`, which
+        # force-supersedes and PINS — and `_attests` only checks that the quote string is
+        # in the note, never that it supports the object, so a reply turn could pair a
+        # real line of the note with a value the owner had only typed in chat and mint a
+        # row at confidence 1.0 that no sweep, no later note and no correction note can
+        # ever reach. Reaching THIS line means the chat registry, so it is a reply turn,
+        # and `assert_fact` is absent from its allowlist for one reason:
+        # `narrow_for_unprompted_reply` took it off. The EMR and third-party narrowings
+        # cannot present here — the first takes `close_reading` too (so dispatch never
+        # arrives), and the second only applies to a note a STRANGER wrote, which is never
+        # an `owner_correction` one, so the elevation is unreachable on it either way.
+        #
+        # The unpinned row such an element still commits is O16's open loss shape, left
+        # open deliberately: it is falsifiable by the next reading and swept when one
+        # comes. What is closed here is the PERMANENT shape.
+        return await writer.close_reading(
+            arguments, ctx, words_reached_note=ASSERT_FACT in ctx.agent_tools
+        )
 
     return {
         CORRECT_FACT: _texted(CORRECT_FACT, correct_fact_tool),

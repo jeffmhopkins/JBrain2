@@ -8,6 +8,8 @@ is a REAL `TranscriptAccumulator` fed a real tool-call/tool-result event stream:
 exact shape `LoopTurnExecutor` hands the runner, produced by the code that produces it.
 """
 
+import inspect
+import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -364,7 +366,7 @@ async def test_a_third_party_note_s_registry_does_not_bind_ask_owner() -> None:
         runner = note_converse_handler(maker, LlmRouter({}, {})).__self__  # type: ignore[attr-defined]
         assert runner.executor_for_note is not None
         stranger = _third_party_note()
-        registry = runner.executor_for_note(stranger, ("general",)).registry
+        registry = runner.executor_for_note(stranger, ("general",)).executor.registry
         # The same handler builder, same note, owner-authored: `ask_owner` comes back.
         owned = runner.executor_for_note(_third_party_note(provenance="human"), ("general",))
     finally:
@@ -372,17 +374,18 @@ async def test_a_third_party_note_s_registry_does_not_bind_ask_owner() -> None:
 
     assert registry.names() == {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "find_entity",
         "read_entity",
         "current_time",
     }
     assert "ask_owner" not in registry.names()
-    assert "ask_owner" in owned.registry.names()
-    # Every graph write survives: D10 is "unrestricted in WHAT it may write", and this
-    # narrowing takes a channel away, never the write path.
-    assert {"resolve_entity", "assert_fact", "close_reading"} <= registry.names()
+    assert "ask_owner" in owned.executor.registry.names()
+    # The whole write path survives: D10 is "unrestricted in WHAT it may write", and this
+    # narrowing takes a CHANNEL away, never a write. Two verbs and not three since R3 —
+    # the third-party set is derived from the unattended one, which now holds a single
+    # fact verb so a pass cannot write a fact its own closing reading omits.
+    assert {"resolve_entity", "close_reading"} <= registry.names()
 
     # The two locks agree at the gate the loop consults, under the turn's own scopes.
     profile = narrow(agent_for(NOTE_CONVERSE_AGENT))
@@ -562,11 +565,11 @@ def test_the_persona_is_the_closed_one_and_names_every_tool_it_holds() -> None:
     assert profile.tools == NOTE_INGEST_UNATTENDED_TOOLS
     assert profile.tools is not None and profile.tools != frozenset()
     assert profile.extra_tools == frozenset()
-    # The unattended surface, exactly: three graph writes, `ask_owner`, two entity reads,
-    # the clock.
+    # The unattended surface, exactly: two graph writes, `ask_owner`, two entity reads,
+    # the clock. `assert_fact` left it in R3 for the reply set — see
+    # `test_the_registry_converse_builds_resolves_the_whole_allowlist`.
     assert profile.tools == {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "ask_owner",
         "find_entity",
@@ -616,13 +619,12 @@ async def test_the_registry_converse_builds_resolves_the_whole_allowlist() -> No
             body="Kaiya started a new medication.",
             created_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
         )
-        registry = runner.executor_for_note(note, ("health", "general")).registry
+        registry = runner.executor_for_note(note, ("health", "general")).executor.registry
     finally:
         await engine.dispose()
 
     unattended = {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "ask_owner",
         "find_entity",
@@ -630,6 +632,15 @@ async def test_the_registry_converse_builds_resolves_the_whole_allowlist() -> No
         "current_time",
     }
     assert registry.names() == unattended
+    # R3, and it is the wave's correctness pin rather than a roster detail: the pass's
+    # settle derives its sweep from the closing reading, so a SECOND fact verb here would
+    # let a pass write F and then close a reading that omits F — and the sweep would
+    # release F's claim and retract a fact that same pass wrote. The alternative fix was
+    # to union the pass's `assert_fact` writes into `touched`, which keeps the verb and
+    # re-admits the write ledger S3 rejected; this asserts the one that was taken, from
+    # both sides of the lock, and fails against the other.
+    assert "assert_fact" not in registry.names()
+    assert "assert_fact" not in NOTE_INGEST_UNATTENDED_TOOLS
     assert unattended == NOTE_INGEST_UNATTENDED_TOOLS
     # Neither prefs tool reaches the persona, from either side of the lock.
     assert not ({"prefs_read", "prefs_write"} & registry.names())
@@ -673,14 +684,18 @@ async def test_the_unattended_pass_never_gets_the_on_reply_surface() -> None:
             created_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
         )
         assert runner.executor_for_note is not None
-        executor = runner.executor_for_note(note, ("general",))
+        executor = runner.executor_for_note(note, ("general",)).executor
     finally:
         await engine.dispose()
 
     on_reply_only = NOTE_INGEST_ON_REPLY_TOOLS - NOTE_INGEST_UNATTENDED_TOOLS
     assert on_reply_only  # the assertion below is vacuous if the sets ever collapse
-    # No handler: `correct_fact`/`merge_entities` are not built into this registry, so
-    # there is nothing here for an allowlist edit to make callable.
+    # `assert_fact` is one of them since R3, and it is the one this registry would most
+    # plausibly still bind: the writer HAS the method, and only `NoteToolset.handlers`
+    # declining to name it keeps the pass to one fact verb.
+    assert "assert_fact" in on_reply_only
+    # No handler: `assert_fact`/`correct_fact`/`merge_entities` are not built into this
+    # registry, so there is nothing here for an allowlist edit to make callable.
     assert not (on_reply_only & executor.registry.names())
     # And no allowlist entry either: the profile the runner resolves is the unattended
     # one, so both locks say no independently.
@@ -726,8 +741,10 @@ async def test_an_emr_note_gets_no_graph_write_handler_and_no_write_allowlist() 
             ],
         )
         plain_note = replace(emr_note, destination=None, attachments=[])
-        emr_registry = runner.executor_for_note(emr_note, ("health", "general")).registry
-        plain_registry = runner.executor_for_note(plain_note, ("health", "general")).registry
+        emr_registry = runner.executor_for_note(emr_note, ("health", "general")).executor.registry
+        plain_registry = runner.executor_for_note(
+            plain_note, ("health", "general")
+        ).executor.registry
     finally:
         await engine.dispose()
 
@@ -749,7 +766,7 @@ async def test_an_emr_note_gets_no_graph_write_handler_and_no_write_allowlist() 
 
     # A plain health note is byte-for-byte unchanged — the narrowing is not a health-wide
     # retreat, it is scoped to the notes one deterministic parser owns.
-    assert {"resolve_entity", "assert_fact"} <= plain_registry.names()
+    assert {"resolve_entity", "close_reading"} <= plain_registry.names()
 
 
 async def test_a_note_that_is_both_a_strangers_and_the_importers_binds_only_reads() -> None:
@@ -763,7 +780,7 @@ async def test_a_note_that_is_both_a_strangers_and_the_importers_binds_only_read
     writes, leaving the two entity reads and the clock — and the allowlist has to agree at
     the gate the loop consults, which is what `narrow_for_third_party_note` intersecting
     rather than assigning buys. Getting this wrong is invisible from outside: the thread
-    renders identically whether or not `assert_fact` was bound."""
+    renders identically whether or not `close_reading` was bound."""
     from jbrain.agent.agents import NOTE_GRAPH_WRITE_TOOLS, agent_for, narrow_for_emr
     from jbrain.agent.agents import narrow_for_third_party_note as narrow_third
     from jbrain.analysis.converse import note_converse_handler, note_owned_by_emr
@@ -786,7 +803,7 @@ async def test_a_note_that_is_both_a_strangers_and_the_importers_binds_only_read
         maker = async_sessionmaker(engine, expire_on_commit=False)
         runner = note_converse_handler(maker, LlmRouter({}, {})).__self__  # type: ignore[attr-defined]
         assert runner.executor_for_note is not None
-        registry = runner.executor_for_note(both_note, ("health", "general")).registry
+        registry = runner.executor_for_note(both_note, ("health", "general")).executor.registry
     finally:
         await engine.dispose()
 
@@ -808,6 +825,93 @@ async def test_a_note_that_is_both_a_strangers_and_the_importers_binds_only_read
         assert admitted == registry.names()
 
 
+def _reading_writer(provenance: str = "human") -> Any:
+    """A `NoteGraphWriter` off a dead engine — nothing here touches the database; the
+    reading is folded in by hand, exactly as `close_reading` folds it."""
+    from jbrain.agent.graphwritetools import NoteGraphWriter, NoteTarget
+    from jbrain.analysis.pipeline import AnalysisPipeline
+
+    engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/none")
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    return NoteGraphWriter(
+        maker,
+        AnalysisPipeline(maker, LlmRouter({}, {})),
+        target=NoteTarget(
+            note_id=uuid.UUID("0f7a1c4e-2b3d-4a5f-8c9d-0e1f2a3b4c5d"),
+            domain="health",
+            captured_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
+            provenance=provenance,
+        ),
+        write_ctx=SessionContext(principal_id="worker", principal_kind="owner"),
+    )
+
+
+def _health_note() -> NoteInfo:
+    return NoteInfo(
+        id="0f7a1c4e-2b3d-4a5f-8c9d-0e1f2a3b4c5d",
+        client_id="c1",
+        domain="health",
+        destination=None,
+        body="Kaiya started a new medication.",
+        created_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
+    )
+
+
+async def test_a_pass_that_closed_no_reading_hands_the_settle_nothing() -> None:
+    """R3's gate, from the side that decides it: `settle_conversation` sweeps and stamps
+    on a `PassReading` and does neither without one, so what `pass_reading` returns IS
+    the gate.
+
+    None on `calls == 0` and not on an empty `fact_ids`, because the two are different
+    claims. A pass that never called `close_reading` — it truncated, it ended on
+    `ask_owner`, it holds no write verb at all (an EMR note) — made no claim about the
+    note and may not license a retraction. A pass that closed a reading naming no fact
+    said the note says nothing, which is exactly when its rows should go."""
+    from jbrain.analysis.converse import pass_reading
+
+    writer = _reading_writer()
+    assert pass_reading(writer, _health_note()) is None
+    assert pass_reading(None, _health_note()) is None
+
+    writer.reading.union(title="", tags=[], fact_ids=[], clamped=False)
+    empty = pass_reading(writer, _health_note())
+    assert empty is not None
+    assert empty.facts == frozenset()
+    assert empty.note_domain == "health"
+    assert empty.extractor == "note_ingest"
+
+
+async def test_the_reading_carries_its_clamp_and_its_provenance_to_the_settle() -> None:
+    """The two clauses of the gate that are not about the pass ENDING cleanly, and both
+    are read off the writer rather than off the turn.
+
+    A clamped reading is a PREFIX of the note, and a sweep against a prefix retracts the
+    tail. A third-party reading is a stranger's words, which may cause a fact and may
+    never cause a retraction — `NoteTarget.provenance` comes off the note ROW, so
+    nothing the body says can reach it."""
+    from jbrain.analysis.converse import pass_reading
+
+    fact_id = "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9"
+    clean = _reading_writer()
+    clean.reading.union(title="Meds", tags=["health"], fact_ids=[fact_id], clamped=False)
+    reading = pass_reading(clean, _health_note())
+    assert reading is not None
+    assert reading.facts == frozenset({uuid.UUID(fact_id)})
+    assert reading.title == "Meds"
+    assert reading.tags == ("health",)
+    assert not reading.clamped and not reading.third_party
+
+    clamped = _reading_writer()
+    clamped.reading.union(title="Meds", tags=[], fact_ids=[fact_id], clamped=True)
+    clamped_reading = pass_reading(clamped, _health_note())
+    assert clamped_reading is not None and clamped_reading.clamped
+
+    stranger = _reading_writer(provenance="untrusted_origin")
+    stranger.reading.union(title="Meds", tags=[], fact_ids=[fact_id], clamped=False)
+    stranger_reading = pass_reading(stranger, _health_note())
+    assert stranger_reading is not None and stranger_reading.third_party
+
+
 # --- the lifecycle bounds -----------------------------------------------------
 
 
@@ -816,14 +920,34 @@ def test_the_stale_horizon_cannot_reclaim_a_turn_that_is_still_allowed_to_run() 
     slot and nothing on a terminal-less box can release it. It must never fire on a pass
     that is merely slow: a turn cannot outlive its own wall clock, so the horizon has to
     sit strictly above it — and be DERIVED from it, or the next person to raise the cap
-    silently teaches the reaper to kill live turns."""
+    silently teaches the reaper to kill live turns.
+
+    TWO caps, not one (R3's third review). `claim_waiting` moves the owner's REPLY turn
+    into `running` as well, and that turn is an ordinary `/chat` turn bounded by
+    `api/agent.py`'s cap — which is more than twice what the note turn's cap alone
+    produced, so the horizon has to clear the LONGER of them. Pinned as an inequality
+    against both rather than as an equality against one: this is the assertion that has
+    to keep holding when a third kind of turn learns to sit in `running`."""
     from jbrain.analysis import converse
+    from jbrain.api import agent as agent_api
+    from jbrain.models.agent import TURN_WALL_CLOCK
     from jbrain.models.note_conversation import NOTE_TURN_WALL_CLOCK, STALE_CONVERSATION
 
     assert STALE_CONVERSATION > NOTE_TURN_WALL_CLOCK
-    assert STALE_CONVERSATION == 2 * NOTE_TURN_WALL_CLOCK
+    assert STALE_CONVERSATION > TURN_WALL_CLOCK
+    assert 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK) == STALE_CONVERSATION
     # And the runner bounds its turn by that same constant, not one of its own.
     assert converse.NOTE_TURN_WALL_CLOCK is NOTE_TURN_WALL_CLOCK
+    # One spelling for /chat's cap: the module that ENFORCES it DERIVES it from the
+    # module that states it, so raising one cannot leave the reaper reading the other.
+    #
+    # ⟲ **The DERIVATION is what is pinned, not the value** (R3's fourth review). This was
+    # an equality, which `_MAX_TURN_WALL_CLOCK_S = 7500.0` keeps green — restoring exactly
+    # the drift the assertion is named for while it still passes.
+    assert "_MAX_TURN_WALL_CLOCK_S = TURN_WALL_CLOCK.total_seconds()" in inspect.getsource(
+        agent_api
+    )
+    assert TURN_WALL_CLOCK.total_seconds() == agent_api._MAX_TURN_WALL_CLOCK_S
 
 
 def test_only_running_is_reclaimable_a_pending_question_waits_for_the_owner() -> None:

@@ -34,6 +34,7 @@ from jbrain.agent.agents import (
     AgentProfile,
     agent_for_owner_reply,
     narrow_for_third_party_note,
+    narrow_for_unprompted_reply,
 )
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
@@ -72,6 +73,7 @@ from jbrain.analysis.clarify import (
     close_owner_reply,
     owner_reply_notice,
     owner_turn_text,
+    owner_words_reached_note,
     record_owner_reply,
     record_reply_writes,
     reply_profile_for_session,
@@ -92,6 +94,7 @@ from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.models.agent import TURN_WALL_CLOCK
 from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.models.plan import PlanRepo
 from jbrain.notes.service import NotesRepo
@@ -116,7 +119,12 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 # synthesis headroom. Raised 5400→7500 alongside jerv's 4→6 budget bump so a saturating
 # breadth-5 two-wave deep_research run (which was landing ~30s under the old deadline) has
 # real room; the _TURN_IDLE_S progress watchdog still catches a genuine stall far sooner.
-_MAX_TURN_WALL_CLOCK_S = 7500.0
+#
+# The NUMBER lives in `models/agent.TURN_WALL_CLOCK`, not here, because this module is not
+# its only reader: a note conversation's stale-pass reclaim has to outlast a reply turn
+# running under this cap, and it was deriving its horizon from the note turn's cap alone.
+# Enforced here, spelled once there.
+_MAX_TURN_WALL_CLOCK_S = TURN_WALL_CLOCK.total_seconds()
 
 # A PROGRESS watchdog on the turn: force-end it after this long with NO streamed frame
 # (no token, tool step, or sub-agent return). Reset on every frame, so a steadily
@@ -882,8 +890,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 profile.prompt, await _standing_instructions(request, owner_ctx)
             ),
         )
-        # W4's two narrowings of the reply turn, in that order. Both are subtractions from
-        # `agent_for_owner_reply`'s widening, they are independent, and a note can be BOTH
+        # The row-driven narrowings of the reply turn: W4's two, both of which depend on
+        # the NOTE and on nothing this turn does. The third — the unprompted-reply one —
+        # depends on what `record_owner_reply` below actually did with the owner's words,
+        # so it is applied after that call rather than here.
+        #
+        # All are subtractions from `agent_for_owner_reply`'s widening, they are
+        # independent, and a note can be BOTH
         # (an approved intake submission enacting into a health `Records` note with an
         # EMR-shaped attachment) — in which case the turn must end up with the
         # INTERSECTION, which is what `narrow_for_third_party_note` intersecting rather
@@ -970,6 +983,27 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         )
         if turn_text != body.message:
             body = body.model_copy(update={"message": turn_text})
+        # THE THIRD NARROWING, and it belongs here rather than beside W4's two (R3's
+        # second review, finding 2). `assert_fact` on a reply turn records "one more
+        # thing the owner just told me", and the only reason that write is safe is that
+        # the owner's words BECAME THE NOTE'S TEXT: `record_owner_reply` appended them as
+        # a D6 clarification block, the note re-ingests, and the next reading restates
+        # what the agent wrote. A fact asserted on a turn where that did not happen cites
+        # text that exists nowhere, and the note's next unattended pass — one producer,
+        # one claim (`analysis/settle_owner.py`) — closes a complete reading of a note
+        # that has never said it and retracts it, silently.
+        #
+        # The first round keyed this on the thread's STATE, read before `claim_waiting`
+        # could flip it. That is a proxy, and it is a different set: the designed send of
+        # §3b I7 carries the tapped answers AND free text, and `_pair` drops the prose
+        # when the structured set is complete (`note_clarifications.question` is NOT
+        # NULL — the O16 gap); an append can fail; an `owner_authored=False` turn returns
+        # before the claim with the state still reading `waiting_on_owner`. Each of those
+        # is a `waiting_on_owner` turn on which the agent could record something the note
+        # never receives. So the verb is bound to the OUTCOME, which is why this call
+        # cannot happen any earlier than this line.
+        if not owner_words_reached_note(owner_reply):
+            profile = narrow_for_unprompted_reply(profile)
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
@@ -1643,17 +1677,35 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     # The reply turn's writes are the conversation's too, so the pass
                     # settles from HERE as well as from the worker's unattended pass —
                     # otherwise a conversation that ended by asking a question would
-                    # never project what the answer wrote, and (S3) would never release
-                    # its `conversation` claim at all. `close_owner_reply` returns the
-                    # state it actually wrote, which is the gate: a truncated turn, a
+                    # never project what the answer wrote. `close_owner_reply` returns
+                    # the state it actually wrote, which is the gate: a truncated turn, a
                     # turn still `waiting_on_owner`, and the `record_failed` degrade
                     # above all return something other than `settled` and settle nothing.
+                    #
+                    # `reading=None`, and it is a KNOWN GAP rather than a claim that this
+                    # turn read nothing. A reply turn's `close_reading` is real and its
+                    # `Reading` is accumulated — but on this path the writer lives inside
+                    # the chat registry's own per-conversation cache (`replytools`), built
+                    # once at startup and reachable from no seam here, so the pass's
+                    # reading (the CLAMP latch included) cannot be read back at the turn
+                    # seam. A reading whose clamp state is unknown must not license a
+                    # retraction, so this path keeps the tail-only settle it has always
+                    # had: it commits, it projects, it retracts nothing. Closing it means
+                    # exposing that cache, which is R3f/R4's to carry with the reply
+                    # turn's own surface (AGENT_INGEST_REWRITE.md §7, R3) — AND FIXING
+                    # WHAT THAT CACHE DOES UNDER PRESSURE FIRST. Its LRU evicts the writer
+                    # outright past `_MAX_LIVE_WRITERS`, so the thread's next call starts a
+                    # fresh `Reading()` with `clamped=False`: an exposed cache would hand
+                    # back a clamped PREFIX wearing a complete reading's clothes, which is
+                    # the one input this gate exists to refuse. That is the ⚠ at
+                    # `replytools`' `popitem`, and this line is the only reason it is inert.
                     await settle_conversation(
                         request.app.state.session_maker,
                         owner_ctx,
                         _settle_pipeline(request),
                         session_id=str(session.id),
                         state=closed or "",
+                        reading=None,
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

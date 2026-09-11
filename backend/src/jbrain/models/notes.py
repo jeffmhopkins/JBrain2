@@ -89,10 +89,15 @@ class Note(Base):
     wiki_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.wiki_revisions.id", ondelete="SET NULL"), nullable=True
     )
-    # Whether note.extract has produced this note's note_analysis row — the
-    # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
-    # (the has_extracts pattern) so list/get serialization needs no second
-    # query; the row only appears when the integrate_note job commits.
+    # Whether a producer has stamped this note's note_analysis row — the API's
+    # "analysis done" signal for the lifecycle chip. A correlated EXISTS (the
+    # has_extracts pattern) so list/get serialization needs no second query.
+    # Since R3 the row's usual author is the note CONVERSATION: `close_reading`
+    # carries the title and tags and `clarify.settle_conversation` stamps them on
+    # every pass ending that read the note, `waiting_on_owner` included — because
+    # NO row is what makes this false forever, which is a permanently amber chip
+    # and a re-run button polling an analyzed_at that never moves (CLAUDE.md #10).
+    # `integrate_note` and `emr_parse` still stamp it through `settle_note`.
     analyzed: Mapped[bool] = column_property(
         select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
     )

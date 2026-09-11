@@ -29,6 +29,93 @@ A `settle_owners` stamp survives both: the analyzer keeps claiming `analyzer` ac
 model change, and `NoteGraphWriter` claims `conversation` whichever extractor string the
 run carries — the grouping is structural rather than a naming convention.
 
+⟲ **Re-derive the second bullet before you lean on it, because R3 inverted what it
+protects.** Under the LEDGER sweep it removed the whole problem: one claim across both
+runs meant the unattended pass could not release what the reply turn wrote. Under the
+READING sweep it is the opposite — the unattended pass releases the shared claim against
+a reading of the NOTE's text, so a reply-turn write whose words are nowhere in that text
+is stripped of the only claim it ever had. The bullet is still right about the KEY (a
+string split here would be strictly worse: the unattended pass's settle would eat the
+reply turn's writes outright, and no reading would re-absorb them). What it no longer
+covers is a reply-turn write that never becomes note text, and that is narrowed at the
+source rather than here: `assert_fact` is off a reply turn whose words did not land on
+the note as source text (`agents.narrow_for_unprompted_reply`, keyed on
+`clarify.owner_words_reached_note`), `correct_fact`'s empty-address arm — the one
+that MINTS a pinned row — refuses on the same condition, and `close_reading`'s
+correction-note elevation is withheld on it (both `replytools`).
+
+⟲ **This used to close with "so every fact this producer commits has words on the note
+behind it, and the next reading re-states it." That is false, on two paths at once**,
+which makes it a comment stating a property the code does not have (CLAUDE.md #4):
+
+- `_assert_one` commits a fact whose `quote` is NOT in the note. It caps the weight and
+  says so in the result line — held for review rather than overwriting a confident value
+  — but it commits, on the unattended pass as much as on a reply turn, because D2 has
+  inferred facts commit. Such a row is kept alive from pass to pass only by being
+  restated; one the model invents once and never restates is retracted by the next clean
+  pass, which is the sweep working rather than failing;
+- and on the reply turn the narrowing bounds the ordinary path, not every path: an
+  unattested element inside a reply-turn `close_reading` reaches the same commit. That
+  row is unpinned, low-weight and falsifiable, and the reply path licenses no sweep of
+  its own (`api/agent.py` settles with `reading=None`), so what it costs is the O16 loss
+  and never a permanent wrong row.
+
+⟲ **This used to close with an ABSOLUTE — "no reply turn may mint a PINNED row out of
+words the note never received" — and three consecutive reviews found it false at one more
+site each.** The third round found the third site (`_assert_one`'s CORRECTION-NOTE
+ELEVATION: `_attests` is a string check, so on an `owner_correction` note a reply-turn
+`close_reading` element pairing a real line of the note with a value the owner had only
+typed in the thread committed `correction=True` → active, pinned, confidence 1.0; it is
+gated now on the same condition the other two are). The fourth round found the fourth, and
+the fourth is NOT a gap to close: `correct_fact` at an address the graph DOES hold
+something for supersedes that head and commits the owner's new value active and PINNED —
+on an unprompted reply turn as much as on an answering one, and the value may be one he
+typed only into the thread. So the absolute is retired rather than patched a fourth time.
+What the three gates enforce is narrow, and it is this:
+
+**No reply turn whose words did not reach the note may mint a pinned row at an address the
+graph holds nothing for.**
+
+All three read the same condition — `ASSERT_FACT not in ctx.agent_tools`, taken at the
+reply registry where it is exact. `assert_fact` is off such a turn entirely
+(`agents.narrow_for_unprompted_reply`); `correct_fact`'s EMPTY-ADDRESS arm refuses
+(`replytools`); `close_reading`'s correction-note elevation is withheld
+(`graphwritetools`, `words_reached_note`, which since R3's fourth review governs a
+`correction=True` passed as a parameter too). Those are every route into the only branch
+that pins: `decide()` sets `insert_pinned` on `candidate.correction` and nothing else
+(`analysis/supersession.py`). "The address" is the address AS THE TURN CAN SEE IT —
+`entity_view` under the turn's read scopes — so a head in a domain the conversation is not
+scoped to reads as empty and the arm refuses: wrong in the direction of refusing, which is
+the direction to be wrong in.
+
+The residue is the reason the sentence is worth having:
+
+- **a pinned row at an OCCUPIED address is still mintable on that turn, and that is
+  deliberate.** By the elevation's own standard — `sweep_note` spares a pinned fact, no
+  later note supersedes one, no correction note addresses one — such a row is exactly as
+  permanent as the one the third round closed, and the note may never say it. It stays
+  because plan §3's ⟲ argues it: correcting a fact that IS on file is the owner's repair
+  path on a settled thread, and pinning is the designed mechanism there. What the gate
+  buys is that the turn can only REPAIR an address, never open one;
+- **an UNPINNED row the note does not say is still mintable on that turn**, and that is
+  deliberate too: it is O16's loss shape, falsifiable by the next reading and released by
+  the first clean pass that reads the note without it. Closing it needs the `ToolContext`
+  flag threaded through three `AgentLoop` sites and is not R3's;
+- **"swept eventually" is not "swept" — on two of its three cases.** ⟲ This bullet used to
+  say an unprompted reply changes nothing about the note, so `integration_state` stays
+  `integrated` and nothing re-enqueues it. That is true of a reply into a SETTLED thread
+  and of one whose append failed, and false of the commonest case there is: the designed
+  §3b I7 send, where the structured answers land and the prose beside them is dropped.
+  There `append_clarifications` sets `ingest_state='pending'` and enqueues `ingest_note` in
+  the same transaction (`notes/repo.py`), and the re-ingest flips `integrated → stale`
+  (`ingest/pipeline.py`), so the note IS re-enqueued and the row IS swept promptly. On the
+  other two the row stands until the note is next edited or `analysis/rebuild.py` runs;
+- **and on a THIRD-PARTY note nothing is ever swept at all.** `PassReading.third_party`
+  refuses the sweep permanently (`clarify.settle_conversation`) — a stranger's words may
+  cause a fact and never a retraction — so such a row persists by D10's design rather than
+  by any of this. (The elevation itself cannot fire there: `is_correction` and
+  `is_third_party` read the same field in opposite directions.)
+
 **Why a SET and not one owner.** Because co-assertion is the ordinary case, not an edge
 case. Both producers read the same note off the same event, and a salient claim ("she is
 allergic to shellfish") is exactly what both write down; `decide()` then refreshes one
@@ -72,14 +159,17 @@ computed table name, a stamp it cannot follow into a variable, a wrong producer 
 The DB column does carry `DEFAULT ARRAY['analyzer']`, a divergence from
 SETTLE_OWNERSHIP.md S1 argued in migration 0196's docstring.
 
-**The conversation NEVER releases its claim, permanently and by decision.** A claim is
-released by a settle, and the conversation's settle (`analysis/clarify.settle_conversation`)
-runs the tail and no sweep. So every row carrying a `conversation` claim — the ones only
-it wrote AND the ones both producers assert — is retractable by no sweep at all. Edit a
-note to drop a claim both producers wrote and the graph keeps asserting it.
+**The conversation RELEASES its claim, and has since R3.** ⟲ This section said the
+opposite — "never releases, permanently and by decision" — and it was true of the settle
+that existed when it was written. `analysis/clarify.settle_conversation` now runs
+`sweep_note` as well as the tail, so a `conversation` claim is released from every row of
+the note the pass's closing reading no longer names, and a row whose claim set empties is
+retracted. Edit a note to drop a claim both producers wrote and the graph stops asserting
+it on the next pass, which is what the column was always supposed to buy.
 
-That is a decision, not an omission. A sweep for this producer was built (S3), reviewed
-and removed, on a proof rather than a bug count:
+**What licenses it is the READING, and the distinction is the whole wave.** A sweep for
+this producer was built once (S3), reviewed and removed, on a proof rather than a bug
+count — and that proof is not repealed, because it is about a different instrument:
 
 - a release is justified only when a producer RE-DERIVED the note and dropped X;
 - within one session this producer never drops anything — it asserts once and revises by
@@ -88,45 +178,61 @@ and removed, on a proof rather than a bug count:
   superseding, which is O15 in `AGENT_INGEST_REWRITE.md` and does not change this); and a
   re-assert refreshes the SAME row in place, returning `ALREADY` when that row is live and
   `HELD` when it was already held. No path retracts and every one yields a row id, so its
-  ledger never SHRINKS;
-- therefore the only claims a release could remove are OTHER sessions';
+  LEDGER never shrinks;
+- therefore the only claims a ledger-derived release could remove are OTHER sessions';
 - and judging those needs a complete current READING of the note, which
   `NoteConversationRepo.writes()` — a record of what a pass WROTE — structurally is not.
   Its silence is the designed output: the agent holds `find_entity`/`read_entity`, is
   told to read before it writes, and is rewarded by its own tool surface for not
   restating what the graph already holds.
 
-**A sound conversation sweep is empty; a non-empty one is unsound.** The built version
-failed four ways, ending on the feature's happy path: the owner answers a question, the
-clarification block is appended so the note's text only GROWS, `record_owner_reply`
-re-stamps the `note_body_sha` the sweep was keyed on, and an earlier conversation's facts
-are retracted. SETTLE_OWNERSHIP.md's S3 section is the argument in full; read it before
-re-deriving a sweep from "nothing ever releases a `conversation` claim", which is true and
-is not a reason.
+R3 did not answer that argument; it built the thing the last bullet names. `close_reading`
+is a verb whose whole job is to restate what the note says NOW, every restated identity key
+comes back `ALREADY` carrying the SAME `fact_id`, and `Reading.fact_ids` is therefore the
+complete current reading — so the sweep is keyed on a claim about the NOTE and never on a
+record of writes. ⟲ The sentence that used to close this section — *a sound conversation
+sweep is empty; a non-empty one is unsound* — was a statement about a LEDGER sweep and is
+false of this one: a reading sweep is soundest exactly when it is non-empty, because that
+is the note having stopped saying something.
 
-State the cost in trade terms, because it IS a trade and it was made with the numbers in
-front of us. Before S1 those rows were retracted by a producer that had not written them
-and could not tell them from its own — which is how the owner's answers were disappearing.
-The exchange is "a co-writer silently deletes what the owner said" for "the graph keeps
-asserting something the note no longer says". The second is visible, correctable and
-recoverable; the first is none of those. That does not make it free.
+S3's failure 4 is the one to check against and it cannot recur here: the owner answers,
+the clarification block is appended so the note's text only GROWS, and nothing is keyed on
+a generation at all — the reading states what the note says now, a fact the answer did not
+remove is re-stated, and its id lands in `touched`. `note_body_sha` keeps its one honest
+question (*did the note move under me?*) and gains no second job. SETTLE_OWNERSHIP.md's S3
+section is still the argument in full; read it before re-deriving a LEDGER sweep, which
+remains unsound.
 
-**What removes such a row.** None of these is producer-scoped, which is why they are the
-escape hatches: `analysis/purge.purge_note_artifacts` (note deletion, and the corpus
-rebuild sweep), `ON DELETE CASCADE` from the note, review-item resolution/retraction,
-ordinary supersession (any later fact on the same identity key retires the head), and the
-owner's own `correct_fact` — which supersedes rather than sweeps, so a wrong value the
-owner notices stops being the current one even while the stale row survives as history.
-The unbounded residue is a fact whose identity key is never re-asserted, on a note never
-purged or rebuilt.
+**What the sweep will not do, and what removes those rows.** Four endings refuse it
+(`settle_conversation`): a pass that did not end cleanly, a CLAMPED reading (a prefix of
+the note — and a refused element clamps it too, `graphwritetools.close_reading`), a
+THIRD-PARTY reading, and a pass that closed no reading at all. Each lands on the pre-R3
+behaviour — commit, project, retract nothing — so the residue this section used to
+describe as permanent is now the residue of a DEGRADED pass, cleared by the note's next
+clean one. What removes a row with no sweep at all, none of it producer-scoped:
+`analysis/purge.purge_note_artifacts` (note deletion, and the corpus rebuild sweep),
+`ON DELETE CASCADE` from the note, review-item resolution/retraction, ordinary
+supersession (any later fact on the same identity key retires the head), and the owner's
+own `correct_fact` — which supersedes rather than sweeps, so a wrong value the owner
+notices stops being the current one even while the stale row survives as history.
+
+State the cost in trade terms, because the S1 trade is what got us here. Before S1 those
+rows were retracted by a producer that had not written them and could not tell them from
+its own — which is how the owner's answers were disappearing. S1 bought "the graph keeps
+asserting something the note no longer says" with it, and R3 is what pays that back: the
+producer that wrote the rows is the one that releases them, on evidence about the note
+rather than on a note-keyed guess.
 
 **The mention half is bounded on its own, which is why the fact half was the loud one.**
 The two tables sit behind different foreign keys (migration 0006):
 `entity_mentions.chunk_id` is `ON DELETE CASCADE`, while `facts.chunk_id` is
 `ON DELETE SET NULL`. Re-ingesting a note replaces its chunks (`ingest/pipeline.py`,
-`notes/repo.py` both delete the old ones), so an unreleasable `conversation` mention claim
-survives at most until that note's next re-chunk, while a fact carrying one keeps its row
-and merely loses its chunk pointer.
+`notes/repo.py` both delete the old ones), so a `conversation` mention claim the settle
+cannot release survives at most until that note's next re-chunk, while a fact carrying one
+keeps its row and merely loses its chunk pointer. It still matters after R3: the reading
+sweep passes `mentions=None` and so reconciles no mentions at all
+(`settle_conversation` says why), which leaves the mention half exactly where this
+paragraph found it.
 
 **A future remedy, recorded and NOT scheduled.** That same asymmetry names an
 evidence-based retraction needing no producer: `ingest.carryover` keeps a rebuilt chunk's
@@ -134,9 +240,12 @@ row when it comes back byte-identical, so a fact whose note has been re-ingested
 `chunk_id` is now NULL is a fact WHOSE CITED TEXT IS GONE. That is real evidence about the
 note, it is producer-agnostic, and it applies to the analyzer's rows exactly as to the
 conversation's — so it satisfies the invariant S3 could not, without reconstructing
-anybody's reading from a write ledger. It is a different mechanism from the settle and it
-needs its own care (a fact can lose its chunk for reasons other than its text
-disappearing). Nothing depends on it. Do not read this paragraph as planned work.
+anybody's reading from a write ledger. R3's reading sweep is a different answer to the
+same invariant and is the one that shipped, which leaves this a remedy for the FACT the
+reading never names because no pass read the note cleanly again. It is a different
+mechanism from the settle and it needs its own care (a fact can lose its chunk for reasons
+other than its text disappearing). Nothing depends on it. Do not read this paragraph as
+planned work.
 
 **The review cards carry the key too, and singular.** The settle's card halves
 (`_sweep_stale_ambiguous`, `_sync_truncation_review`, both in `analysis/pipeline.py`)
@@ -175,17 +284,21 @@ for the rest — *no settling producer claims this card* — and a swept-kind fi
 forgets to stamp gets a card no sweep can retire rather than one silently joining
 someone else's claim. Migration 0197 argues both choices in full.
 
-**The conversation's cards inherit the row leak, and for the same reason.** An
-`ambiguous_mention` card is filed by whichever producer reaches `_file_ambiguous_review`
-first, and on an ordinary note both fan out of one `note.ingested`, so that is a race the
-conversation sometimes wins. A card it filed is stamped `conversation`, the analyzer's
-sweep is now scoped away from it, and the conversation has no sweep at all (S3, dropped) —
-so it stands until the owner dismisses it or `purge.purge_note_artifacts` runs. That is
-the same permanent leak the rows carry, in the same safe direction: before the scoping,
-the analyzer would have retired it, and a co-writer retiring a card on evidence it does
-not have is what this key exists to stop. Read "a piggybacking producer re-files on its
-own next run" above with that caveat — it is true of the analyzer and the importer, and
-not of the conversation, which never re-files because it never releases.
+**The conversation's cards leak where its ROWS no longer do, and the reason is now a
+different one.** An `ambiguous_mention` card is filed by whichever producer reaches
+`_file_ambiguous_review` first — it sits in `_resolve_entities`, which `commit_facts`
+runs, so the conversation files them too — and on an ordinary note both producers fan out
+of one `note.ingested`, so that is a race the conversation sometimes wins. A card it filed
+is stamped `conversation` and the analyzer's sweep is scoped away from it. ⟲ This used to
+say "and the conversation has no sweep at all (S3, dropped)", which is no longer why: the
+conversation's settle sweeps FACTS off its closing reading, and simply runs no card half —
+`settle_conversation` is three steps, not five, because the two card halves want the
+`Extraction` this producer does not have (`analysis/pipeline.py`). So the card stands
+until the owner dismisses it or `purge.purge_note_artifacts` runs, in the same safe
+direction as before: a co-writer retiring a card on evidence it does not have is what this
+key exists to stop. Read "a piggybacking producer re-files on its own next run" above with
+that caveat — it is true of the analyzer and the importer, and not of the conversation,
+whose settle never reaches a card at all.
 """
 
 from __future__ import annotations

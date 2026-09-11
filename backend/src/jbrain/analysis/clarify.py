@@ -46,12 +46,12 @@ owner's side.
 What neither order survives is the PROCESS dying between the two transactions — an
 Ops → Update quiesce is a `stop -t 30`, so it is reachable. The claim has committed, the
 append has not, and the thread sits `running` with no block, no re-ingest and no notice
-until `reclaim_stale` flips it to `failed` an hour later, at which point the question
-leaves the inbox and the owner's answer is gone. Unchanged by R1c and not made worse by
-it (the window is the same two transactions it always was), but it is the one hole in
-this paragraph's reasoning and it is a crash, not an exception — no `except` here can
-close it. Closing it means the claim and the append sharing a transaction, which means
-the repo giving up owning the append's, and that is a bigger change than this wave.
+until `reclaim_stale` flips it to `failed` a `STALE_CONVERSATION` later, at which point
+the question leaves the inbox and the owner's answer is gone. Unchanged by R1c and not
+made worse by it (the window is the same two transactions it always was), but it is the
+one hole in this paragraph's reasoning and it is a crash, not an exception — no `except`
+here can close it. Closing it means the claim and the append sharing a transaction, which
+means the repo giving up owning the append's, and that is a bigger change than this wave.
 
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
@@ -83,7 +83,7 @@ from __future__ import annotations
 import contextlib
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -92,6 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import ASK_OWNER_TOOL, open_questions
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
@@ -128,6 +129,19 @@ def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     Named rather than inlined so the cap is a thing a test can exercise: a truncation
     that only Pydantic's acceptance is pinned against is a truncation nothing pins."""
     return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+
+
+def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
+    """What `capped_answers` CUT — the owner's words that never reach `_pair` at all.
+
+    R3's third review, finding 4. The cut happens before the pairing, so a truncated
+    answer can never appear in `_pair`'s `dropped` however carefully that function
+    accounts for itself — and `owner_words_reached_note` reads `dropped` to decide
+    whether the turn keeps a fact verb. Unreachable TODAY, because `ask_owner.tool` caps
+    `questions` at 5 and `MAX_ANSWERS` is 10, but that is an arithmetic coincidence
+    between two constants in two modules, not a guard: either moving closes the gap
+    silently. So the cut is reported rather than argued away."""
+    return [a.strip() for _, a in answers[MAX_ANSWERS:] if a.strip()]
 
 
 # --- the tool-call ledger, shared by BOTH turn paths -------------------------
@@ -168,7 +182,9 @@ class LedgerRow:
     entity_ids: tuple[str, ...]
     domains: tuple[str, ...]
     # The fact rows the call WROTE (empty for every read tool, and for a write that
-    # landed nothing). Constraint 6's `touched` set is the union of these.
+    # landed nothing). The settle TAIL's projection set is the union of these; the
+    # sweep's `touched` is NOT (R3) — it comes off the pass's closing reading, because
+    # what a producer wrote never licenses a release of what it no longer says.
     fact_ids: tuple[str, ...] = ()
 
 
@@ -180,11 +196,12 @@ def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
     `entity_ids`/`domains` come from the step's resolved-entity chips
     (`ToolOutcome.entities`) and `fact_ids` from its WRITE chips (`ToolOutput.facts` /
     `contracts.FactWriteRef`) — both reported by the write path itself, never inferred
-    from what the model ASKED for: `resolve_entity`/`assert_fact` surface the rows they
-    actually wrote, and a call that wrote nothing surfaces nothing. Constraint 6's
-    settle sweep reads this back as `touched`, so the direction matters in both
-    directions: an id here that did not land SPARES a fact the sweep should retract, and
-    a landed id missing here RETRACTS a fact the note still says.
+    from what the model ASKED for: `resolve_entity`/`close_reading` surface the rows they
+    actually wrote, and a call that wrote nothing surfaces nothing. What reads it back is
+    the settle's TAIL — what this conversation touched is what wants reprojecting — and
+    NOT the sweep: `touched` is the closing reading's own fact ids (R3,
+    `settle_conversation`), because a record of writes cannot say what the note stopped
+    saying.
 
     A write's domain is unioned from both chips — a fact's domain is the floored and
     ratcheted one the write path chose, which can be strictly above its entity's.
@@ -390,6 +407,24 @@ class OwnerReply:
     note_moved: bool
     """Whether the note had changed under the conversation since it was read."""
 
+    dropped: list[str] = field(default_factory=list)
+    """The owner's words on this turn that reached NO note.
+
+    FOUR ways it fills, and none is an error path: free text beside a COMPLETE structured
+    set (§3b I7's one send carries the tapped answers AND whatever is in the box, and
+    `_pair`'s third rule drops the prose because `note_clarifications.question` is NOT
+    NULL and an unprompted block has no shape — the O16 gap); a structured answer naming
+    a question the open set does not carry (a reopened thread replaying a stale block,
+    `_pair`'s first rule); the earlier answer of a REPEATED question id, which
+    last-writer-wins overwrites (`_pair`'s third bullet); and an answer past `MAX_ANSWERS`,
+    cut by `answers_over_cap` before `_pair` ever sees the list. The append paths add a
+    fifth on failure: a pairing that succeeded onto a note that would not take it.
+
+    It is the half of "did the owner's words become note text" that `clarified` cannot
+    see: `clarified` says SOMETHING landed, this says something did not, and
+    `owner_words_reached_note` is the conjunction. A write verb bound on a turn with a
+    non-empty `dropped` would let the agent record what only the transcript holds."""
+
 
 async def reply_profile_for_session(
     maker: async_sessionmaker[AsyncSession],
@@ -400,15 +435,25 @@ async def reply_profile_for_session(
     agent: str,
     profile: AgentProfile,
 ) -> AgentProfile:
-    """Narrow a note conversation's ON-REPLY profile when the EMR importer owns its note
-    (W4/D9, `ingest/emr/ownership.py`).
+    """Narrow a note conversation's ON-REPLY profile for the note ROW: the EMR
+    subtraction (W4/D9, `ingest/emr/ownership.py`).
 
     `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; this is the
-    one subtraction W4 makes to it. It lives here rather than in the route because it
-    needs the conversation row and the note behind it, which this module already reads —
-    and because the route must be able to call it unconditionally: a non-note persona,
-    an unknown session, or a note the importer does not own all return the profile
-    unchanged.
+    subtraction from it that needs the conversation row and the note behind it. It lives
+    here rather than in the route because it needs those, which this module already
+    reads — and because the route must be able to call it unconditionally: a non-note
+    persona, an unknown session, or a note the importer does not own all return the
+    profile unchanged.
+
+    ⟲ **The unprompted-reply narrowing used to be here too, keyed on the thread's STATE,
+    and it has moved to the route** (R3's second review, finding 2). It was applied here
+    because this is the last moment `waiting_on_owner` is still legible — `claim_waiting`
+    flips it to `running` — but the state is a PROXY, and a wrong one: the invariant the
+    narrowing defends is "the owner's words became note text", and a waiting thread can
+    fail it three ways (the designed send's dropped prose, a failed append, an
+    `owner_authored=False` turn). It is now keyed on `record_owner_reply`'s own outcome,
+    which is the invariant itself — see `owner_words_reached_note`. This half stays where
+    it is because it depends on the note row and on nothing the reply does.
 
     FAILS CLOSED, at every step: no conversation row, no note, a soft-deleted note, or a
     raised exception all narrow. This half shipped failing OPEN, on the reading that the
@@ -416,7 +461,9 @@ async def reply_profile_for_session(
     the reason is the OTHER predicate. `thirdparty.conversation_is_third_party` asks the
     SAME two questions of the SAME two rows on this same turn and fails closed, so a note
     read that blips already narrows the turn — to the third-party set, which still holds
-    `resolve_entity` and `assert_fact`. Failing open here meant a blip left the graph
+    `resolve_entity` and (since R3 took `assert_fact` off the unattended set this one is
+    derived from) `close_reading`, the verb that WRITES the graph and licenses a
+    retraction. Failing open here meant a blip left the graph
     writes bound on precisely the notes where a write is unsupersedable: `correct_fact`
     at an empty address commits active + PINNED, and a pinned lab head makes every later
     import of that reading `held`. The cost of the closed direction is that one reply
@@ -482,7 +529,30 @@ async def record_owner_reply(
         return None
     prose = message.strip()
     structured = capped_answers(answers)
-    if not prose and not structured:
+    # What the cap CUT rides along to every `OwnerReply` below: those answers reach no
+    # note, and `owner_words_reached_note` is the reader that has to know (finding 4).
+    # The `None` returns below carry it nowhere and need not — each is "this message
+    # answered nothing at all" (the thread is not waiting, the claim was lost, the row
+    # would not read), and `owner_words_reached_note(None)` is False, so such a turn
+    # holds no write verb either way.
+    over_cap = answers_over_cap(answers)
+    # ⟲ **`over_cap` is in this condition, and that is R3's fourth review, finding 4.**
+    # The condition used to read `not prose and not structured`, and this is the one
+    # return the cut did not ride — it returns `None` while the owner HAS answered. A
+    # send whose every in-cap answer is blank leaves `structured` empty, so a real answer
+    # sitting past `MAX_ANSWERS` fell out here as "the owner said nothing": his answer
+    # discarded, the thread still `waiting_on_owner`, and the agent told NOTHING — the
+    # exact silence `dropped` exists to end. The write side was already safe
+    # (`owner_words_reached_note(None)` is False), so what it cost was the NOTICE, which
+    # is the whole deliverable of a turn that lost the owner's words.
+    #
+    # A turn carrying a cut answer is a REPLY, so it takes the ordinary reply path: the
+    # claim, a pairing that places nothing, and an `OwnerReply` whose `dropped` says his
+    # words reached no note. It must NOT short-circuit to an `OwnerReply` from here
+    # instead — `close_owner_reply`'s `reopened` is exactly "this call returned one", and
+    # a reply object minted before `claim_waiting` would have a reply turn settling the
+    # worker's own live unattended pass.
+    if not prose and not structured and not over_cap:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
         # stays `waiting_on_owner` — the questions are still open, which is the truth.
         return None
@@ -534,9 +604,18 @@ async def record_owner_reply(
         # question — the same wrong sentence in his own note as a fabricated one, with a
         # real question on it.
         log.warning("note_reply.no_recorded_question", session_id=session_id, note_id=note_id)
-        return OwnerReply(answered=[], unanswered=[], clarified=False, note_moved=False)
+        # Nothing was PAIRED, so everything the owner sent is a word that reached no
+        # note: `dropped` carries it, and the turn keeps no write verb off the back of it.
+        return OwnerReply(
+            answered=[],
+            unanswered=[],
+            clarified=False,
+            note_moved=False,
+            dropped=over_cap + [a for _, a in structured] + ([prose] if prose else []),
+        )
 
-    answered = _pair(open_set, structured, prose, session_id=session_id)
+    answered, paired_out = _pair(open_set, structured, prose, session_id=session_id)
+    dropped = over_cap + paired_out
     pairs = [(q.question, answered[q.id]) for q in open_set if q.id in answered]
     unanswered = [q.question for q in open_set if q.id not in answered]
 
@@ -549,12 +628,26 @@ async def record_owner_reply(
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("note_reply.append_failed", session_id=session_id, error=repr(exc))
-        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
+        # The pairing succeeded and the APPEND did not, so the paired answers reached no
+        # note either — they join whatever `_pair` had already dropped.
+        return OwnerReply(
+            answered=pairs,
+            unanswered=unanswered,
+            clarified=False,
+            note_moved=moved,
+            dropped=[a for _, a in pairs] + dropped,
+        )
     if clarified is None:
         # The note is gone (soft-deleted). The questions cannot be answered onto it, and
         # the state is already back to `running`, so nothing holds the note's live slot.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
-        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
+        return OwnerReply(
+            answered=pairs,
+            unanswered=unanswered,
+            clarified=False,
+            note_moved=moved,
+            dropped=[a for _, a in pairs] + dropped,
+        )
 
     if not moved and pairs:
         with contextlib.suppress(Exception):
@@ -567,9 +660,14 @@ async def record_owner_reply(
         note_moved=moved,
         answered=len(pairs),
         unanswered=len(unanswered),
+        dropped=len(dropped),
     )
     return OwnerReply(
-        answered=pairs, unanswered=unanswered, clarified=bool(pairs), note_moved=moved
+        answered=pairs,
+        unanswered=unanswered,
+        clarified=bool(pairs),
+        note_moved=moved,
+        dropped=dropped,
     )
 
 
@@ -579,11 +677,20 @@ def _pair(
     prose: str,
     *,
     session_id: str,
-) -> dict[str, str]:
-    """Which open question each part of one reply answers, keyed by question id.
+) -> tuple[dict[str, str], list[str]]:
+    """Which open question each part of one reply answers, keyed by question id — and
+    what of the owner's words it could NOT place.
 
-    Three rules, and each is there because the alternative writes a sentence into the
-    owner's own note that nobody said:
+    The second element is the load-bearing addition (R3's second review, finding 2).
+    Three of the four rules below DROP something the owner said, and a dropped sentence
+    reaches no note: the reply turn's `assert_fact` is bound on "his words became note
+    text", so the function that decides which words did has to report which did not.
+    Returning it beats re-deriving it at the call site, which would be the same rules
+    written twice. It does NOT cover what never arrived here — the structured list is
+    capped before this call, and `answers_over_cap` is that half.
+
+    Four rules, and each is there because the alternative writes a sentence into the
+    owner's own note that nobody said — or loses one without saying so:
 
     - **A structured answer naming an id the open set does not carry is DROPPED.** A
       reopened old thread replays its ask step's `args` straight out of the transcript
@@ -594,6 +701,9 @@ def _pair(
       the rest open. This is today's semantics on a one-item set, it never mispairs, and
       it is what lets the batched ask ship ahead of the PWA block that fills `answers`.
       Beside a PARTIAL structured set it answers the oldest question that set left open.
+    - **A REPEATED question id keeps the last answer and drops the earlier one**, which
+      is the rule an over-eager block or a double-filled form produces. Last-writer-wins
+      is right (a re-send is a correction); reporting the loser is what makes it honest.
     - **Free text beside a COMPLETE structured set files nothing.** It is chat:
       `note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
       no shape for an unprompted block, and inventing a question the agent never asked
@@ -601,6 +711,7 @@ def _pair(
     """
     by_id = {q.id: q for q in open_set}
     answered: dict[str, str] = {}
+    dropped: list[str] = []
     for question_id, answer in structured:
         if question_id not in by_id:
             log.warning(
@@ -608,13 +719,65 @@ def _pair(
                 session_id=session_id,
                 question_id=question_id,
             )
+            dropped.append(answer)
             continue
+        # A REPEATED id overwrites, and the overwritten answer is a word that reached no
+        # note (R3's third review, finding 4). The dict made that silent: two answers for
+        # `q1` left `dropped` empty, so `owner_words_reached_note` said everything landed
+        # and the turn kept `assert_fact` while one of the owner's own sentences had gone
+        # nowhere. Last-writer-wins is kept — it is what a corrected re-send should do —
+        # and the loser is now reported as what it is.
+        if question_id in answered:
+            log.warning(
+                "note_reply.duplicate_answer_for_question",
+                session_id=session_id,
+                question_id=question_id,
+            )
+            dropped.append(answered[question_id])
         answered[question_id] = answer
     if prose:
         oldest_open = next((q for q in open_set if q.id not in answered), None)
         if oldest_open is not None:
             answered[oldest_open.id] = prose
-    return answered
+        else:
+            # The designed send of §3b I7, not a malformed one: the structured set
+            # answered everything, and the free text in the box beside it is a sentence
+            # about the note that no question is open for. It stands as chat and lands
+            # nowhere durable, which is exactly what the turn's write verbs must be told.
+            dropped.append(prose)
+    return answered, dropped
+
+
+def owner_words_reached_note(reply: OwnerReply | None) -> bool:
+    """Did everything the owner said on THIS turn become text on the note?
+
+    The predicate `assert_fact` is bound on (R3's second review, finding 2), and it is
+    the invariant itself rather than a proxy for it. The first round keyed the narrowing
+    on the thread's STATE — `waiting_on_owner` — and state is a different set from "the
+    owner's words became note text", in three ways that all commit a fact citing text
+    that exists nowhere:
+
+    - the DESIGNED send (§3b I7). One send carries the structured answers plus whatever
+      free text is in the box. With a complete structured set `_pair`'s third rule drops
+      the prose, because `note_clarifications.question` is NOT NULL and an unprompted
+      block has no shape (the O16 gap). The thread was `waiting_on_owner`, the owner
+      typed "also Dana moved to 412 Oak St", the agent reads it on the turn
+      (`owner_turn_text`) — and the note never says it;
+    - `append_failed` and the soft-deleted note. The thread was waiting, the block did
+      not land, `clarified` is False;
+    - an `owner_authored=False` turn (a deferred-tool outcome, a proposal enact).
+      `record_owner_reply` returns before `claim_waiting`, so the state still reads
+      `waiting_on_owner` while nothing at all was appended.
+
+    So the verb is bound to the OUTCOME: a reply that landed at least one block and
+    dropped none of the owner's words. Everything else — no reply object at all (not a
+    note conversation, not waiting, not owner-authored, an empty message), a reply whose
+    blocks did not land, a reply that dropped a sentence — narrows.
+
+    Both halves matter and the conjunction is why: `clarified` alone says SOMETHING
+    landed while a sentence went nowhere, and an empty `dropped` alone is true of a turn
+    that filed nothing."""
+    return reply is not None and reply.clarified and not reply.dropped
 
 
 def owner_reply_notice(reply: OwnerReply | None) -> str:
@@ -634,12 +797,47 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     reads a silent turn and re-asks a question he has already answered. The rendering in
     `api/agent.py` puts his words on the turn itself; this says what became of them.
 
+    **"I can record that."** ⟲ Added by R3's second review, finding 2, and the reason is
+    that the turn's write verbs now turn on exactly this: `assert_fact` is bound only
+    when every word the owner said became note text (`owner_words_reached_note`). Words
+    that did not land are the `dropped` list, and the agent is told about them SPECIFICALLY
+    — because the commonest way they arise is the designed send of §3b I7, where the
+    structured answers land and the prose beside them does not. The sentence names the
+    three ways rather than only that one: R3's third review found the other two (a
+    repeated question id, whose earlier answer is overwritten, and an answer past
+    `MAX_ANSWERS`), and a notice that gave the wrong reason for a real loss would have
+    the agent telling Jeff something untrue about his own words. The agent reads that
+    prose on its turn (`owner_turn_text`) and must not believe it can record a fact out
+    of it: the note has no such text, so the next unattended pass's reading does not
+    restate it and the sweep retracts it.
+
     Framed as DATA about the turn, in the voice `api/agent.py`'s other server-composed
     preambles use: it reports what the owner did, and leaves what to do about it to the
     agent."""
     if reply is None:
         return ""
     parts: list[str] = []
+    if reply.dropped and reply.clarified:
+        # The split case: some of it landed, some of it did not. Said apart from the
+        # branch below, which is "none of it landed" and reads very differently.
+        lost = "; ".join(f"{w!r}" for w in reply.dropped)
+        parts.append(
+            "(Some of what Jeff said on this turn did NOT reach the note — it answered"
+            " no question you had asked, or a later answer replaced it, or it was past"
+            f" the cap on one send: {lost}. It exists in this thread and"
+            " nowhere else, so you cannot record a fact from it — the note has no such"
+            " text, and the next pass over the note would retract anything you wrote out"
+            " of it. Tell him it is not recorded and that a note of his own (or an answer"
+            " to a question you ask now) is how it lands.)"
+        )
+    elif reply.dropped:
+        parts.append(
+            "(Nothing Jeff said on this turn reached the note, so you cannot record a"
+            " fact from it — the note has no such text, and the next pass over the note"
+            " would retract anything you wrote out of it. Tell him it is not recorded and"
+            " that a note of his own, or an answer to a question you ask now, is how it"
+            " lands.)"
+        )
     if reply.answered and not reply.clarified:
         given = "; ".join(f"{q!r} — he answered {a!r}" for q, a in reply.answered)
         parts.append(
@@ -755,6 +953,42 @@ async def close_owner_reply(
     return state
 
 
+@dataclass(frozen=True)
+class PassReading:
+    """A pass's CLOSING READING, in the shape the settle acts on — what the model said
+    the note says, not what the pass wrote.
+
+    Flattened from `graphwritetools.Reading` by the caller that holds the writer, rather
+    than imported: `agent/graphwritetools.py` pulls in `analysis/pipeline.py` and through
+    it the LLM stack, which is the one thing this module refuses to drag into the API
+    process (see `NOTE_CONVERSE_AGENT`).
+
+    A pass that closed no reading has none of this and passes `None`. That is the gate in
+    one word: no reading, no sweep and no stamp, which is exactly the behaviour this
+    producer had before R3."""
+
+    facts: frozenset[uuid.UUID]
+    """`Reading.fact_ids` — every fact the pass RESTATED, which is `sweep_note`'s
+    `touched`. EMPTY is a claim and not an absence: the model read the note and said it
+    says nothing, which is precisely when the note's rows should go."""
+    note_domain: str
+    """The note's own domain, for the `note_analysis` row's `domain_code`. It rides here
+    because `note_conversations` carries no domain and the caller has just read the
+    note."""
+    extractor: str
+    """Who is stamping — the writer's own `extractor` (`note_ingest` on the unattended
+    pass), never a provider:model string. The settle owner does not move with it
+    (`analysis/settle_owner.py`)."""
+    title: str = ""
+    tags: tuple[str, ...] = ()
+    clamped: bool = False
+    """The reading is a PREFIX of the note — a call the handler clamped, or one the
+    budget refused. A sweep against a prefix retracts the tail, so this refuses it."""
+    third_party: bool = False
+    """This note's body is somebody else's words (D10). Such a reading COMMITS and never
+    SWEEPS: a reading is a write, not a licence, when the reader is not the owner."""
+
+
 async def settle_conversation(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
@@ -762,80 +996,159 @@ async def settle_conversation(
     *,
     session_id: str,
     state: str,
+    reading: PassReading | None,
 ) -> bool:
-    """Run the note conversation's end-of-pass settle, and say whether it ran. It is the
-    settle's TAIL and nothing else — this producer never retracts, by design.
+    """Run the note conversation's end-of-pass settle, and say whether it ran — the
+    WHOLE settle for a pass that closed a reading: `sweep_note`, `settle_tail`,
+    `stamp_analysis` (R3 of docs/plans/AGENT_INGEST_REWRITE.md).
 
-    **What it does.** Everything the graph DERIVES from a note's rows —
+    Three steps, not five. The settle's two review-card halves stay in `settle_note`
+    with the producers that still file those cards; under one channel the conversation
+    files neither, so it has nothing to retire.
+
+    **The tail.** Everything the graph DERIVES from a note's rows —
     `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
     geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
     and nowhere else in a write path. The conversation's write path is `commit_facts`
     and nothing else (`agent/graphwritetools.py`), which deliberately does nothing
     whole-note. So before this existed a conversation-written appointment landed in NO
     projection and a conversation-written `name.*` fact never refreshed
-    `canonical_name`: the graph held the fact, the appointments view did not. That gap
-    was masked while the analyzer's settle retracted the conversation's facts and then
-    projected the dead rows away, which is why S2 is the payment for S1's debt rather
-    than an improvement on it (docs/plans/SETTLE_OWNERSHIP.md).
+    `canonical_name`: the graph held the fact, the appointments view did not (S2).
 
-    **What it deliberately does NOT do, and why nobody should add it back.** It runs no
-    `sweep_note`, so it never releases the `conversation` claim and never retracts
-    anything. That was built (S3), reviewed, and REMOVED, and the reason is a closed
-    argument rather than a bug count:
+    **The sweep, and what licenses it.** S3 removed a sweep from here and its argument
+    still stands: a release is justified only when a producer RE-DERIVED the note and
+    dropped X, and a record of what a pass WROTE cannot say that — a pass that read the
+    note and chose to write nothing is indistinguishable from one that never looked. So
+    `touched` is NOT the ledger. It is `close_reading`'s own fact ids: the model restates
+    the whole note, every restated identity key comes back `ALREADY` carrying the SAME
+    `fact_id`, and the reading is therefore the complete current reading S3 named as its
+    own door. What the sweep then does is narrow: it releases THIS producer's claim on
+    the rows the reading no longer asserts and retracts only those no producer claims any
+    more (`analysis/settle_owner.py`).
 
-    - a release is justified only when a producer has RE-DERIVED the note and dropped X;
-    - within one session this producer never drops anything — it asserts once and revises
-      by supersession, `correct_fact` supersedes and pins rather than retracting, and a
-      re-assert returns `ALREADY` with the same `fact_id`, so its ledger never shrinks;
-    - so the only claims a release could ever remove are OTHER sessions';
-    - and judging another session's claims needs a complete current READING of the note,
-      which a ledger of what a pass WROTE structurally is not — the agent holds
-      `find_entity`/`read_entity`, is told to read before it writes and is rewarded for
-      not restating what is already there, so a silent second pass is the DESIGNED
-      output, not a statement that the note stopped saying something.
+    S3's failure 4 — the owner answers, the note's text only GROWS, and an earlier fact
+    is retracted — cannot recur, because nothing here is keyed on a generation: the
+    reading states what the note says NOW, a fact the answer did not remove is re-stated,
+    and its id lands in `touched`.
 
-    Therefore a sound conversation sweep is empty and a non-empty one is unsound. The
-    four ways the built version failed — and the one that fired on the feature's own
-    happy path, where the owner ANSWERS a question, the note's text only GROWS, and an
-    earlier fact is retracted — are in SETTLE_OWNERSHIP.md's S3 section. Read it before
-    re-deriving the sweep from "nothing ever releases a `conversation` claim", which is
-    true and is not a reason.
+    **`mentions=None`, deliberately.** The reading carries fact ids and the ledger
+    (migration 0191) records no mention ids at all, so the mention reconcile is SKIPPED
+    rather than run against an empty set — run empty it would release this producer's
+    claim on every mention of the note, the spans its own live facts are anchored to
+    included, and delete the ones left unclaimed. What that leaks is bounded and
+    `sweep_note` says why: `entity_mentions.chunk_id` is ON DELETE CASCADE, so a
+    re-ingest of the note wipes that chunk generation outright.
 
-    It also does NOT stamp `note_analysis` or flip `integration_state` (preconditions 3
-    and 4). The reason for the first is no longer "no title or tags verb" — R1 gave the
-    conversation exactly that verb, and `close_reading` carries both — it is simply that
-    the stamp is unconditional and moving it is R3's step, not this one's.
+    **The gate: fail toward not sweeping.** Every degraded ending lands on the behaviour
+    this producer had before R3 — facts commit, projections run, nothing is retracted:
 
-    **`state` gates it to a clean pass end.** `state_for_stop` gives `SETTLED` to a CLEAN
-    stop alone, so a truncated turn lands `failed`, a turn that ended on `ask_owner` lands
-    `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too, because
-    both callers degrade the stop reason to `record_failed` when their recorder fails
-    (`converse._run_turn`, `record_reply_writes` + `close_owner_reply` in `api/agent.py`).
-    The gate guards nothing DESTRUCTIVE now that the sweep is gone — projecting never
-    retracts — but it is not free: a pass that committed facts and then truncated lands
-    `failed`, so its writes go unprojected until some later settle of the note happens to
-    touch the same entities. It is kept because it is the shape the plan specifies for a
-    pass end, and because a caller who did add a sweep would otherwise inherit no gate.
+    - `state != SETTLED`: `state_for_stop` gives `SETTLED` to a clean stop alone, so a
+      truncated turn lands `failed`, a turn that ended on `ask_owner` lands
+      `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too
+      (both callers degrade the stop reason to `record_failed`). Neither destructive half
+      runs — but the STAMP does, and that is the one thing this gate must not swallow;
+      see below.
+    - `reading is None`: the pass never closed one. Tail only.
+    - `reading.clamped`: a PREFIX of the note, and a sweep against a prefix retracts the
+      tail. `_batch`'s clamp report is why this is a safety gate rather than a result
+      line — `maxItems` is not reliably compiled into llama.cpp's tool grammar.
+    - `reading.third_party`: a stranger's body may cause a FACT and nothing else. Without
+      this clause an `untrusted_origin` note would license a retraction of the owner's
+      graph.
+
+    **The stamp runs on any reading, and OUTSIDE the gate above** — clamped, third-party
+    and `waiting_on_owner` included. §2 of the plan states the rule and it is load-bearing
+    rather than cosmetic: NOT stamping leaves no `note_analysis` row at all, which is
+    `Note.analyzed` false (`models/notes.py`), a permanent amber "analyzing…" chip on the
+    note in the home stream, "nothing here yet" on an Analysis tab over a note whose graph
+    IS written, and a re-run button polling an `analyzed_at` that never moves — the PWA's
+    only no-terminal re-analysis lever, spinning (CLAUDE.md #10).
+
+    The ending that made this a defect rather than a nicety is `waiting_on_owner`, and it
+    is the ordinary one: the persona is told to record everything it can settle and ask
+    LAST, so a pass that asks has READ the note and named it, and the note it read then
+    sat un-analysed in the PWA until the owner got round to answering — for as long as
+    that took, and forever if he never did. A pass that closed no reading still stamps
+    nothing, because there is nothing to stamp; that is the same line §2's rule 1 draws
+    ("every pass ending that READ the note"), and rule 2's `COALESCE` is what makes the
+    degraded case safe rather than a blank title.
+
+    So the stamp is not conditional on the gate that licenses a retraction: a claim about
+    what the pass DID is owed whether or not a release is.
+
+    ⟲ **It does not "mirror `converse._mark_integrated`", and saying so overstated what it
+    buys** (CLAUDE.md #4). `_mark_integrated` is genuinely independent — its own session,
+    its own `try`, in the terminal block — so the settle falling over cannot unmake it.
+    The stamp shares ONE `scoped_session` with the sweep and the tail, which is deliberate
+    and correct: a sweep that raises must not leave a `note_analysis` row claiming a pass
+    read the note cleanly while the release it licensed was rolled back. What that buys is
+    ATOMICITY with the destructive half, not independence from it. The two properties look
+    alike from the gate and come apart on a raise, and only the first one is this
+    function's.
+
+    It does NOT flip `integration_state`. That is the terminal block's, on EVERY pass
+    ending including the ones that never reach here (`converse._run_turn`).
+
+    **The return value is the SWEEP's, not the stamp's.** True means the destructive half
+    ran; a `waiting_on_owner` pass that stamped still answers False, because every caller
+    and every test asks this function one question — did this pass settle — and a stamp
+    is not a settle.
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
     projection refresh is a stale view, recoverable by the next settle of the note.
     Raising instead would retry the worker job, which re-enters `note_converse` for a note
     whose conversation is no longer live and opens a SECOND thread for it.
     """
-    if state != SETTLED:
-        return False
+    swept: set[uuid.UUID] = set()
+    entities: set[uuid.UUID] = set()
+    settled = state == SETTLED
     try:
         async with scoped_session(maker, ctx) as s:
             repo = NoteConversationRepo()
-            if await repo.get(s, session_id) is None:
+            conversation = await repo.get(s, session_id)
+            if conversation is None:
+                return False
+            if reading is not None:
+                # FIRST, and before the gate: a pass that read the note says so whatever
+                # its ending was. Nothing here is destructive — the upsert COALESCEs
+                # `title`/`tags`, so a degraded pass moves `analyzed_at` and blanks
+                # nothing.
+                await pipeline.stamp_analysis(
+                    s,
+                    note_id=conversation.note_id,
+                    note_domain=reading.note_domain,
+                    title=reading.title,
+                    tags=list(reading.tags),
+                    extractor=reading.extractor,
+                )
+            if not settled:
                 return False
             entities = set((await repo.writes(s, session_id)).entities)
-            await pipeline.settle_tail(s, referenced=entities, projected=entities)
+            if reading is not None and not reading.clamped and not reading.third_party:
+                # The note the CONVERSATION row says this thread owns — the same note
+                # `NoteTarget` fixed every one of these writes to, read from the row
+                # rather than from the caller because this is the destructive half.
+                swept = await pipeline.sweep_note(
+                    s,
+                    note_id=conversation.note_id,
+                    settle_owner=CONVERSATION,
+                    touched=set(reading.facts),
+                    mentions=None,
+                )
+            # `swept` is the entities whose facts just went: a projection row has to be
+            # REMOVED when its last supporting fact does.
+            await pipeline.settle_tail(s, referenced=entities, projected=entities | swept)
     except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
         log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
         return False
-    log.info("note_settle.done", session_id=session_id, entities=len(entities))
-    return True
+    log.info(
+        "note_settle.done",
+        session_id=session_id,
+        entities=len(entities),
+        read=reading is not None,
+        retracted_entities=len(swept),
+    )
+    return settled
 
 
 __all__ = [
@@ -843,12 +1156,15 @@ __all__ = [
     "SELF_RECORDED_TOOLS",
     "LedgerRow",
     "OwnerReply",
+    "PassReading",
+    "answers_over_cap",
     "bind_turn_writes",
     "capped_answers",
     "close_owner_reply",
     "ledger_rows",
     "owner_reply_notice",
     "owner_turn_text",
+    "owner_words_reached_note",
     "record_owner_reply",
     "record_reply_writes",
     "record_turn_writes",

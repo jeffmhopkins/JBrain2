@@ -22,7 +22,18 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, any_, bindparam, delete, func, literal, select, text, update
+from sqlalchemy import (
+    and_,
+    any_,
+    bindparam,
+    case,
+    delete,
+    func,
+    literal,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -1218,12 +1229,12 @@ class AnalysisPipeline:
         composition and stays the ONLY thing `integrate_note` and `emr_parse` call, so
         the split changed nothing for either of them.
 
-        The split exists because the third caller cannot take all three. The note
-        conversation has no title/tags verb (`agent/agents.py`'s four write verbs), so
-        an `Extraction` it handed a settle would carry `title=""`/`tags=[]` and the
-        unconditional `on_conflict_do_update` in `stamp_analysis` would blank the
-        analyzer's real title. It therefore calls `sweep_note` + `settle_tail` and never
-        `stamp_analysis` (`analysis/clarify.settle_conversation`).
+        The split exists because the third caller cannot take all five. The note
+        conversation holds no `Extraction` at all — it has a READING (`close_reading`),
+        which carries a title, tags and the fact ids a sweep needs but nothing
+        extraction-shaped — so since R3 it calls the three public seams directly and
+        skips the two below (`analysis/clarify.settle_conversation`). Its title no longer
+        blanks the analyzer's, because `stamp_analysis` COALESCEs.
 
         `touched`, `projected` and `mention_ids` are inputs rather than locals precisely
         because this step is whole-note: a caller that commits over several passes unions
@@ -1239,6 +1250,16 @@ class AnalysisPipeline:
         reach a co-writer's the way S1's residuals did. The scoping is on the card's own
         `settle_owner` column rather than on where the call sits, so moving them would
         cost correctness nothing; they stay for the `extraction`.
+
+        **And they still have work, which is why R3 left them standing** (its paragraph
+        in AGENT_INGEST_REWRITE.md expected to delete them). Both are producer-scoped, and
+        `_sync_truncation_review` is not only the RETIRER of `extraction_truncated` but
+        its FILER; `_file_ambiguous_review` in `_resolve_entities` still files
+        `ambiguous_mention` for every caller of `commit_intent`. Both of this method's
+        callers are live — and `emr_parse` outlives the whole rewrite, so R4's
+        `integrate_note` deletion does not make either half unreachable. Deleting them
+        now would leave the EMR importer filing cards no settle can ever retire, and take
+        away the clear branch a non-truncating EMR re-run needs.
         """
         retracted_entities = await self.sweep_note(
             session,
@@ -1293,10 +1314,11 @@ class AnalysisPipeline:
         projection set — a reschedule lands on the same appointment entity, and a dropped
         mention leaves one with no active scheduledTime, so its row has to be removed.
 
-        Takes no `Extraction`: what a sweep needs is the id sets a pass wrote, and that
-        is the whole reason this is separable from `settle_note`. The note conversation
-        has ledger ids and nothing extraction-shaped, and it can call this directly
-        (S3, `analysis/clarify.settle_conversation`).
+        Takes no `Extraction`: what a sweep needs is a complete current READING of the
+        note, stated as ids, and that is the whole reason this is separable from
+        `settle_note`. The analyzer's reading is its `Extraction`; the conversation's is
+        `close_reading`'s `Reading`, which is nothing extraction-shaped and calls this
+        directly (R3, `analysis/clarify.settle_conversation`).
 
         `settle_owner` is WHOSE sweep this is (`analysis/settle_owner.py`), and it bounds
         both destructive halves. Whole-note is not whole-graph: up to three producers
@@ -1313,9 +1335,10 @@ class AnalysisPipeline:
         SKIPPED rather than run against nothing. Run with an empty set it would release
         this producer's claim on every mention of the note — including the spans the
         facts it still asserts are anchored to — and delete the ones left unclaimed. That
-        is the conversation's case: `NoteConversationRepo.writes()` records fact and
-        entity ids and no mention ids, so its claims on mention rows go unreleased. The
-        leak that costs is bounded, unlike the fact one S3 exists to close:
+        is the conversation's case, and the one divergence from the analyzer's settle
+        that R3 kept: a `Reading` carries fact ids, and the ledger behind it (migration
+        0191) records no mention ids at all, so its claims on mention rows go unreleased.
+        The leak that costs is bounded, unlike the fact one S3 exists to close:
         `entity_mentions.chunk_id` is ON DELETE CASCADE, so a re-ingest of the note wipes
         that chunk generation outright (`analysis/settle_owner.py`).
         """
@@ -1469,22 +1492,33 @@ class AnalysisPipeline:
         tags: list[str],
         extractor: str,
     ) -> None:
-        """Stamp the note's `note_analysis` row — the settle's third half, and the one
-        with a SINGLE rightful producer.
+        """Stamp the note's `note_analysis` row — the settle's third half, and since R3
+        the one three producers call: `integrate_note` and `emr_parse` through
+        `settle_note`, and the note conversation through
+        `analysis/clarify.settle_conversation`, which hands it the closing reading's own
+        title and tags.
 
-        The upsert is unconditional: no `WHERE`, no `COALESCE`, no "only if absent". So
-        whoever calls it last wins, and a caller with no title and no tags blanks a real
-        one. That is why this is its own seam rather than a step inside `settle_note`:
-        the note conversation has no title/tags verb at all, and wiring it to a settle
-        that stamped would have written `title = NULL, tags = {}` over the analyzer's
-        extracted title on every note — losing it from `GET /notes/{id}/analysis` (the
-        Analysis tab's heading) and from `agent/externaltools.py`'s dedup line, and
-        emptying what `analysis/tagconsolidate.py` normalizes.
+        **`title` and `tags` are COALESCEd; everything else is overwritten.** The upsert
+        used to set all six unconditionally, so whoever called it last won and a caller
+        with no title blanked a real one — which is why the conversation was wired to a
+        settle that did not stamp at all. `close_reading` carries both fields now, but it
+        carries them per CALL: a continuation call, or a pass clipped before it named the
+        note, lands a reading whose title is empty, and an unconditional upsert would
+        wipe the heading off `GET /notes/{id}/analysis` (the Analysis tab), off
+        `agent/externaltools.py`'s dedup line, and empty what
+        `analysis/tagconsolidate.py` normalizes. The seam is `W5_PRECONDITIONS.md` §1's,
+        kept for a different reason than it was proposed for: not to protect the
+        analyzer's title from the conversation, but to protect a COMPLETE pass's title
+        from a DEGRADED one.
 
-        Where a title comes from the day `integrate_note` is retired is precondition 3 of
-        docs/plans/SETTLE_OWNERSHIP.md and is deliberately still open. Until it is
-        answered, exactly two producers call this — `integrate_note` and `emr_parse`, both
-        through `settle_note` — and S4 decides which of them wins on an `emr_owned` note.
+        What it costs, stated because it is a real change of meaning: a re-extraction that
+        genuinely drops every tag no longer clears them. That is the direction the plan
+        chose — a stale tag is visible and correctable, a blanked heading reads as a note
+        nothing has analysed.
+
+        `analyzed_at` is NOT coalesced and must never be: it is the watermark the PWA's
+        re-run button polls, and a stamp that left it standing is a re-run that spins
+        forever (CLAUDE.md #10).
         """
         stmt = pg_insert(NoteAnalysis).values(
             note_id=note_id,
@@ -1499,8 +1533,14 @@ class AnalysisPipeline:
             stmt.on_conflict_do_update(
                 index_elements=[NoteAnalysis.note_id],
                 set_={
-                    "title": stmt.excluded.title,
-                    "tags": stmt.excluded.tags,
+                    "title": func.coalesce(stmt.excluded.title, NoteAnalysis.title),
+                    # `cardinality`, not `array_length`: it answers 0 on an empty array
+                    # where `array_length` answers NULL, and the column is NOT NULL with
+                    # a `{}` default, so this is total.
+                    "tags": case(
+                        (func.cardinality(stmt.excluded.tags) == 0, NoteAnalysis.tags),
+                        else_=stmt.excluded.tags,
+                    ),
                     "extractor": stmt.excluded.extractor,
                     "prompt_version": stmt.excluded.prompt_version,
                     "analyzed_at": stmt.excluded.analyzed_at,
@@ -2900,11 +2940,14 @@ class AnalysisPipeline:
                 # channel it is the failure the channel exists to prevent — the line
                 # reads "ok … already recorded" and `contracts.write_status` maps it to
                 # `written`, so the D3 chip shows the owner a live fact. And it is
-                # reachable inside a single pass without any re-ingest: `assert_fact`
-                # collides and holds both sides, then `close_reading` restates the note
-                # whole (its sidecar requires that: "all of it, not only what is new"),
-                # the refresh loop admits `pending_review`, and `ok` becomes the agent's
-                # LAST word on a fact the graph does not serve.
+                # reachable inside a single pass without any re-ingest: one identity key
+                # stated twice — two elements of one reading, or, on an owner reply turn,
+                # `assert_fact` beside it — holds both sides, and a later `close_reading`
+                # restates the note whole (its sidecar requires that: "all of it, not only
+                # what is new"), the refresh loop admits `pending_review`, and `ok` becomes
+                # the agent's LAST word on a fact the graph does not serve. R3 left the
+                # unattended pass one fact verb, which narrows the shapes that reach here
+                # and removes none of them.
                 #
                 # The standing reason is not stored on the row — it only ever lived in
                 # the card payload — so the CONTEST is reconstructed from what is on the

@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import update
 
+from jbrain.models.agent import TURN_WALL_CLOCK
 from jbrain.models.core import Base
 
 log = structlog.get_logger()
@@ -65,11 +66,50 @@ NOTE_TURN_WALL_CLOCK = timedelta(minutes=30)
 # (`Ops -> Update` quiesces with `docker compose stop -t 30 worker`) would silently take
 # the note out of the pipeline forever, on a box with no terminal (CLAUDE.md #10).
 #
-# DERIVED from the turn cap, never a second free-standing number: a turn cannot outlive
-# the cap, so twice the cap cannot reclaim a live pass, and the two cannot drift apart.
+# DERIVED from the turn caps, never a free-standing number: a turn cannot outlive its cap,
+# so twice the LONGEST cap cannot reclaim a live pass, and none of them can drift apart.
+#
+# ⟲ **It used to derive from `NOTE_TURN_WALL_CLOCK` alone, and that derivation was wrong
+# about which turns set `running`.** TWO do. The worker's pass is one, and it is capped
+# above. The owner's REPLY turn is the other — `claim_waiting` moves the thread
+# `waiting_on_owner -> running`, stamping `updated_at` once and never again — and it is an
+# ordinary `/chat` turn, capped by `models/agent.TURN_WALL_CLOCK` (125 minutes), which is
+# more than twice the horizon the old derivation produced. A reply running long on a cold
+# on-box model was therefore reclaimed AS STALE while it was still writing: `reclaim_stale`
+# flips it to `failed`, which drops it out of the live-conversation skip in
+# `queue.backfill_pending_integration`, so the same transaction enqueues a fresh
+# `note_converse` — and that pass closes a complete, unclamped reading of the note and
+# SWEEPS. Everything the still-live reply turn commits after that reading closed is absent
+# from `touched`, so its claim is released and the row is retracted: the owner's own answer,
+# gone, silently. Both halves of that arrived in R3 (the sweep, and the unscoped reclaim on
+# the reconciler's five-minute schedule); the horizon is what has to cover both turns.
+#
+# ⟲ **The other candidate fix — skip a conversation with a live `agent_runs` row — stays
+# rejected, and the argument here used to be the WRONG ONE** (R3's fourth review). It said a
+# SIGKILL strands that row `running` too, so the reclaim would honour a dead pass forever.
+# It does not: `analysis/converse.py` opens the run with `kind` at its `"agent"` default,
+# which is inside the reaper's `kind IN ('agent','subagent')` filter, so the periodic sweep
+# closes it at `runlog.STRANDED_AFTER_SECONDS`; and `main.py`'s BOOT reaper closes every
+# `running` row unconditionally (`older_than_seconds=None`), which an `Ops -> Update` — the
+# very scenario two paragraphs up — performs by restarting the API. So the row clears in at
+# most that horizon and usually in seconds.
+#
+# The reason it is rejected is the opposite one, and it is the failure this constant exists
+# to prevent rather than a different one: `STRANDED_AFTER_SECONDS` (3900s) is BELOW
+# `/chat`'s `TURN_WALL_CLOCK` (7500s), so a long reply turn's run row is reaped as stranded
+# while the turn is still writing. A liveness test keyed on that row would then read a LIVE
+# pass as dead and reclaim the conversation out from under it — exactly the sweep-against-a-
+# live-reply loss the horizon above was widened to close.
+#
+# It is worth knowing what would change that. If `STRANDED_AFTER_SECONDS` were derived from
+# the real cap the way this constant is (filed as task #24; deliberately out of scope here,
+# because it is the agent run log's number and not the note lifecycle's), the rejected
+# option would become sound AND better on latency: it releases the note's slot when the run
+# row closes instead of waiting out a horizon sized for the worst turn imaginable.
+#
 # `waiting_on_owner` is deliberately NOT reaped — it holds the owner's question and waits
 # as long as the owner does; `_ALLOWED_SOURCES` makes dropping one say `abandon_question`.
-STALE_CONVERSATION = 2 * NOTE_TURN_WALL_CLOCK
+STALE_CONVERSATION = 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK)
 
 # Which state may follow which. Postgres' CHECK owns the closed SET of states (an
 # unknown target falls through this table and is refused there, one authority); this
@@ -111,6 +151,15 @@ CLEAN_STOP = "end_turn"
 # unless the pass landed here, so "which string means the ledger is complete" has one
 # spelling that a rename cannot quietly fork.
 SETTLED = "settled"
+
+# The state in which the thread holds an OPEN QUESTION — and, since R3's review, the one
+# state in which a reply turn may `assert_fact`. Named beside `SETTLED` because it is a
+# gate for the same kind of reason: a reply into a waiting thread is appended to the note
+# as source text (D6) and a reply into any other thread reaches no note at all, so
+# `agents.narrow_for_unprompted_reply` turns on this exact string. Read BEFORE
+# `claim_waiting` moves it, which is the whole of `clarify.reply_profile_for_session`'s
+# placement.
+WAITING_ON_OWNER = "waiting_on_owner"
 
 
 def state_for_stop(stop_reason: str) -> str:
@@ -377,10 +426,10 @@ class NotesInboxEntry:
 
 @dataclass(frozen=True)
 class ConversationWrites:
-    """The whole-conversation union of what its successful calls wrote — constraint 6's
-    `touched`/`projected` sets, durable across turns. `settle_note` retracts every
-    non-pinned fact of the note NOT in `facts`, so a per-turn share would retract the
-    previous turn's commits; this is why the ledger exists.
+    """The whole-conversation union of what its successful calls wrote — the settle
+    TAIL's `referenced`/`projected` sets, durable across turns. `settle_note` retracts
+    every non-pinned fact of the note NOT in its `touched`, so a per-turn share handed to
+    THAT would retract the previous turn's commits; this is why the ledger is a union.
 
     `frozenset`, not `set`: `frozen=True` only stops the FIELDS being rebound, and a
     caller that dropped an id from a mutable `facts` would silently widen the sweep.
@@ -416,22 +465,30 @@ class ConversationWrites:
     closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
     outright.
 
-    **There is no conversation sweep, and `facts` is not a retraction input.** One was
-    built over this field (S3) and removed. An empty `facts` means "this session's
-    successful calls wrote no fact", and never "nothing was recorded" — but it also never
-    means "the note no longer says that", which is the reading a sweep needs. The
-    the conversation asserts once and revises by supersession; `correct_fact`
-    supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
-    holds beside rather than superseding — O15); and a re-assert refreshes the SAME row in
-    place, returning `ALREADY` when that row is live and `HELD` when it was already held.
-    No path retracts, and every one of them yields a row id: this ledger never SHRINKS.
-    So a session can only ever release another session's claims, and judging
-    those needs a complete current reading of the note, which a record of writes
-    structurally is not — the agent is told to read before it writes and rewarded for not
-    restating what is already there, so a silent pass is the designed output. A sound
-    conversation sweep is therefore empty and a non-empty one is unsound
-    (docs/plans/SETTLE_OWNERSHIP.md S3). This set is the settle TAIL's input: what this
-    pass touched is what wants reprojecting."""
+    **The conversation sweeps again since R3, and `facts` is still not its input.** One
+    was built over this field (S3) and removed, and what came back is a sweep over the
+    pass's closing READING (`close_reading`, `clarify.settle_conversation`) — a different
+    claim by a different verb. An empty `facts` means "this session's successful calls
+    wrote no fact", and never "nothing was recorded" — but it also never means "the note
+    no longer says that", which is the claim a retraction needs, and that gap is why this
+    field is not the sweep's input and must not become it:
+
+    - the conversation asserts once and revises by supersession; `correct_fact`
+      supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
+      holds beside rather than superseding — O15); and a re-assert refreshes the SAME row
+      in place, returning `ALREADY` when that row is live and `HELD` when it was already
+      held. No path retracts, and every one of them yields a row id: this ledger never
+      SHRINKS;
+    - so a session could only ever release ANOTHER session's claims off this field, and
+      judging those needs a complete current reading of the note, which a record of writes
+      structurally is not — the agent is told to read before it writes and rewarded for
+      not restating what is already there, so a silent pass is the designed output.
+
+    That is why a LEDGER sweep is sound only when it is empty (docs/plans/
+    SETTLE_OWNERSHIP.md S3), and it is not a statement about the sweep that shipped: a
+    READING sweep is soundest exactly when it retracts something, because that is the note
+    having stopped saying it. This set is the settle TAIL's input: what this pass touched
+    is what wants reprojecting."""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
     """The fact ids the conversation's successful calls wrote, across every turn of it —
@@ -502,6 +559,15 @@ class NoteConversationRepo:
         read when the owner updates the box lands here. Without a reclaim that note is
         suppressed by `_already_active` forever, silently, and the owner has no terminal
         to clear it with.
+
+        TWO kinds of turn sit in `running`, which is the whole of why `horizon` defaults
+        to what it does: the worker's unattended pass, and the owner's REPLY turn, which
+        `claim_waiting` moves out of `waiting_on_owner` and which runs in the API process
+        under `/chat`'s own, much longer cap. `STALE_CONVERSATION` covers the longer of
+        the two — reclaiming a live reply turn is not a tidy-up, it is the reconciler
+        enqueuing a rival pass whose sweep retracts what the owner is still saying (the
+        derivation above says it in full). A caller passing its own `horizon` is saying
+        it knows which turn it is reaping; nothing in `src/` does.
 
         `running` only: `waiting_on_owner` is a question the owner has not answered yet,
         and reaping it would drop that question out of the notes tab (D4/D5) — the very
@@ -801,25 +867,22 @@ class NoteConversationRepo:
         return list((await session.execute(stmt)).scalars())
 
     async def writes(self, session: AsyncSession, session_id: str) -> ConversationWrites:
-        """The accumulated `touched`/`projected` sets for `settle_note`, for THIS session
+        """The accumulated reprojection sets for the settle's TAIL, for THIS session
         only. FAILED calls are excluded: a call that errored asserted nothing, and
-        counting its ids would spare a fact the whole-note sweep is supposed to
-        retract.
+        counting its ids would reproject an entity this session never touched.
 
-        **The returned `facts` covers every turn of the conversation** — the unattended
-        pass and the owner's replies — since W4c/1 gave `/chat` the same recorder
-        (`clarify.record_reply_writes`). That is what `settle_note(touched=...)` needs:
-        it releases this producer's claim on every non-pinned fact of the note NOT in
-        `touched`, and retracts the ones left unclaimed (`analysis/pipeline.py`), so a
-        per-pass share would drop the claim the owner's own answer added — the claim set
-        groups both runs deliberately, so it would not save them.
+        **The returned sets cover every turn of the conversation** — the unattended pass
+        and the owner's replies — since W4c/1 gave `/chat` the same recorder
+        (`clarify.record_reply_writes`), so a reply turn's writes are reprojected as the
+        pass's own are.
 
-        Per SESSION, and read by the settle's TAIL alone (what this pass touched is what
-        wants reprojecting). It is NOT a `touched` set for a whole-note sweep and there is
-        no longer a caller that treats it as one: a sweep is note-scoped, so a
-        per-session ledger handed in as `touched` retracts what earlier sessions of the
-        same note claimed. That was built and removed — `ConversationWrites` above says
-        why no reconstruction of it can work."""
+        Per SESSION, and read by the settle's TAIL alone (what this conversation touched
+        is what wants reprojecting). It is NOT the `touched` set of a whole-note sweep,
+        and no caller treats it as one: a sweep is note-scoped, so a per-session ledger
+        handed in as `touched` retracts what earlier sessions of the same note claimed —
+        and, more fundamentally, a record of WRITES cannot say what the note stopped
+        saying. `ConversationWrites` above has the argument; the reading is what answers
+        it (R3)."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
             NoteConversationToolCall.entity_ids,

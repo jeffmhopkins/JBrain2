@@ -519,8 +519,9 @@ async def run_loop(
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
                 embeds = await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
-                # Drain the un-integrated backlog (bounded, oldest-first) so notes
-                # ingested before integrate_note shipped self-heal at boot.
+                # Drain the un-integrated backlog (bounded, oldest-first) so a note
+                # whose graph producer never ran — a dropped event, a box restarted
+                # mid-pass — self-heals at boot rather than at the next edit.
                 analyses = await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
                 # Notes deleted before the purge cascade shipped left orphaned
                 # derived artifacts (incl. resolved review history quoting

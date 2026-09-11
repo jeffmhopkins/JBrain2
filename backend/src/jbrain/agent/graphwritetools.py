@@ -69,9 +69,23 @@ accumulates into `Reading` so a later wave can ask "what does the note say NOW",
 reads a repeating schedule out of each fact's own attested span (`analysis/recurrence.py`,
 because R0 measured that no `repeats` FIELD can be filled on this box).
 
-Nothing here sweeps yet. The reading commits and the pass ends exactly as it does today;
-what R1 adds is the producer of the complete current reading a retraction needs
-(§1 of the plan), and `Reading.clamped` is the signal the sweep's gate will read.
+Nothing here sweeps — but since R3 something downstream does, and that is what makes
+`Reading` load-bearing rather than an accumulator. `clarify.settle_conversation` retracts
+every unpinned row of the note the reading does not name, so a fact missing from
+`Reading.fact_ids` is a fact the note is about to stop asserting. `Reading.clamped` is the
+gate that refuses that, and it LATCHES from four places in `close_reading`: a clamped
+list, an exhausted call budget, an element the commit refused — and, wrapping all three,
+any exception that ESCAPES the handler. ⟲ This paragraph used to name the first three and
+claim they covered "anything that can drop a stated fact on the floor"; they covered only
+what the engine DECLINED, never the call that died before it could decline. A pool that
+will not give a connection, a `set_config` blip, a failed COMMIT at block exit or a
+cancellation mid-batch all raise between the session open and `Reading.union` — and
+`loop.py:_dispatch` turns a raise into a RECOVERABLE observation, so the model may end the
+turn on it. An earlier call in the same pass has already left `calls >= 1` and `clamped`
+False, which passes every one of the settle's four gate refusals, so the sweep would fire
+against the prefix that one call had. The outer latch is what closes that; anything added
+here that can drop a stated fact on the floor still owes this reading the same latch, and
+anything that can end the call outright is covered by the wrapper.
 
 **An OWNER CORRECTION NOTE elevates its attested facts here** (W5's stated precondition
 for retiring the correction-note machinery). `file_correction`, `POST
@@ -84,6 +98,16 @@ correction note's own text ATTESTS is written with `correction=True` at full wei
 an inferred one is not. Nothing about it is model-facing (constraint 5) — provenance is
 read off the note row, the capture API has no field for it, and every producer is behind
 an owner principal, which is why it is safe on a pass the owner is not present for.
+
+⟲ **And it is withheld on a reply turn whose words never reached the note** (R3's third
+review). Attestation is a span check over the note's chunks and never a check that the
+quoted line supports the VALUE, so on a correction note the owner reopens later, an
+element quoting a real line while carrying a value he typed only into the thread would
+take this branch and commit a pinned row nothing can ever correct. `close_reading` takes
+the condition from the reply registry (`words_reached_note`, which since R3's fourth
+review DEFAULTS to withholding, so a caller who says nothing cannot pin); the elevation
+on the pass itself, which is what this paragraph is about, is unchanged — the unattended
+registry asks for it by name (`NoteToolset.handlers`).
 """
 
 from __future__ import annotations
@@ -141,9 +165,14 @@ RESOLVE_ENTITY = "resolve_entity"
 ASSERT_FACT = "assert_fact"
 CLOSE_READING = "close_reading"
 
-# The graph-write tools, named once. `agents.NOTE_INGEST_TOOLS` allowlists them and
-# `toolregistry.NEVER_DEFAULT` excludes them from the curator's `allow=None` wildcard —
-# both are asserted in tests, because either alone is not enough (plan constraint 9).
+# The graph-write tools this module implements, named once. `toolregistry.NEVER_DEFAULT`
+# excludes every one of them from the curator's `allow=None` wildcard, and a note
+# persona's allowlist admits them — both are asserted in tests, because either alone is
+# not enough (plan constraint 9).
+#
+# Not the set any ONE registry binds. Since R3 the unattended pass binds two of them
+# (`NoteToolset.handlers`) and `assert_fact` is reached only through the chat registry's
+# session-addressed copy, on the owner's reply turn (`agent/replytools.py`).
 GRAPH_WRITE_TOOLS = frozenset({RESOLVE_ENTITY, ASSERT_FACT, CLOSE_READING})
 
 # Batch ceilings, from the measured shapes. `maxItems` may not survive llama.cpp's own
@@ -562,9 +591,11 @@ class Reading:
 
     def mark_incomplete(self) -> None:
         """The pass tried to say more and the engine refused it — a budget exhausted, a
-        clamp on a call that never ran. Not a `union`: no call landed, so `calls` must not
-        move; what moved is the only thing that matters to the gate, which is that this
-        reading is no longer the whole note."""
+        clamp on a call that never ran, an element the commit would not take. Not a
+        `union`: this records a REFUSAL rather than a call, so `calls` must not move (and
+        on the element path the call that contained it unions separately); what moved is
+        the only thing that matters to the gate, which is that this reading is no longer
+        the whole note."""
         self.clamped = True
 
     def union(
@@ -667,6 +698,21 @@ class NoteGraphWriter:
         self.correct_budget = ToolCallBudget(CORRECT_CALL_BUDGET)
         self.reading_budget = ToolCallBudget(READING_CALL_BUDGET)
         self.reading = Reading()
+
+    @property
+    def target(self) -> NoteTarget:
+        """The note every write of this conversation lands on, and the provenance the
+        settle's third-party clause reads (R3). Exposed read-only: it is fixed at
+        construction from the note ROW, and a settable one would be the note id from the
+        model this class exists not to take."""
+        return self._target
+
+    @property
+    def extractor(self) -> str:
+        """Which RUN of this producer is writing — `note_ingest` unattended,
+        `note_ingest_reply` on the owner's reply. It names the run on `note_analysis`
+        and never the settle owner, which groups both (`analysis/settle_owner.py`)."""
+        return self._extractor
 
     # --- handles ---------------------------------------------------------------
 
@@ -1059,7 +1105,15 @@ class NoteGraphWriter:
             for idx, item in enumerate(items):
                 try:
                     async with session.begin_nested():
-                        line, write, touched = await self._assert_one(session, idx, item, chunks)
+                        # `words_reached_note=True` is stated rather than defaulted, and
+                        # for this verb the BINDING is the condition: `assert_fact` is
+                        # absent from a reply turn whose words never became note text
+                        # (`agents.narrow_for_unprompted_reply`) and absent from the
+                        # unattended pass altogether, so every turn that reaches this line
+                        # is one whose words are — or are about to be — the note's own.
+                        line, write, touched = await self._assert_one(
+                            session, idx, item, chunks, words_reached_note=True
+                        )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.assert_failed", index=idx, error=repr(exc))
                     lines.append(f"err  facts[{idx}]: not recorded (internal).")
@@ -1083,7 +1137,9 @@ class NoteGraphWriter:
 
     # --- close_reading ---------------------------------------------------------
 
-    async def close_reading(self, arguments: dict, ctx: ToolContext) -> ToolOutput:
+    async def close_reading(
+        self, arguments: dict, ctx: ToolContext, *, words_reached_note: bool = False
+    ) -> ToolOutput:
         """The whole-note reading: title, tags, and everything the note says.
 
         Commits through `_assert_one`, element by element, exactly as `assert_fact` does
@@ -1097,14 +1153,76 @@ class NoteGraphWriter:
           `_batch`'s clamp has always been a result line; here it is also `Reading
           .clamped`, because a clamped reading is a PREFIX of the note and a sweep
           against a prefix retracts the tail.
+
+        **A REFUSED ELEMENT is the same prefix, and latches the same way.** `_assert_one`
+        yields no write on six ordinary paths — an unresolved subject handle, no
+        predicate, no object, an id-shaped object that resolved to nothing, a raise
+        caught per element, and a `commit_facts` that linked nothing — and each of them
+        drops a fact the model just RESTATED out of `fact_ids`. Without a latch the
+        reading then says "complete, and the note no longer says that", which is the
+        exact sentence the sweep acts on: the element the model named is retracted
+        because the engine refused to record it. The model is told in the result line
+        and can re-send the element; until it does, this reading is not the whole note.
+
+        **AND A RAISE IS THE SAME PREFIX, which is why the body is wrapped.** The three
+        latches above are the engine DECLINING a fact; none of them fires when the call
+        dies before it can decline one — the pool refusing a connection, a `set_config`
+        blip, a COMMIT that fails at block exit, a cancellation mid-batch. `loop.py`
+        reports a raise to the model as a recoverable internal error, so the turn can end
+        on it, and a pass whose EARLIER call succeeded then presents `calls >= 1,
+        clamped=False`: a complete reading of the note, missing everything this call was
+        carrying. So the latch wraps the whole body rather than the loop.
+
+        `words_reached_note=False` is the OWNER'S REPLY TURN whose words never became the
+        note's text, and the only thing it changes is the correction-note elevation in
+        `_assert_one` — see the comment there.
+
+        ⟲ **Defaulted FALSE, and it used to default True** (R3's fourth review, finding 5).
+        The safe direction is the one a caller who never heard of the split gets, which is
+        the convention `agents.narrow_for_third_party_note` spells out for exactly this
+        class of flag: a default that ELEVATES hands an unsupersedable pinned row to the
+        next caller who forgets the argument, and R3f/R4 will add one into this very path.
+        Both callers that know the answer now say it out loud — the reply registry passes
+        the turn's own condition (`agent/replytools.py`), and the unattended pass, which is
+        a read of the note's own text and where the question does not arise, binds the
+        handler with an explicit True (`NoteToolset.handlers`).
         """
         del ctx  # the write session is the note's, never the turn's read scope
+        try:
+            return await self._close_reading(arguments, words_reached_note=words_reached_note)
+        except BaseException:
+            # THE OUTER LATCH, and the only one that covers the whole body. The three
+            # inside `_close_reading` each catch a way the ENGINE declined a stated fact; this
+            # catches the call ending before it could decline anything — a pool that would
+            # not give a connection, a `set_config` blip on the scoped session, a COMMIT
+            # that failed at block exit, a cancellation while the batch was mid-flight.
+            # `loop.py:_dispatch` turns the raise into a recoverable observation ("hit an
+            # internal error, try a different approach"), so the model may simply end the
+            # turn — and an EARLIER call in the same pass has already left `calls >= 1`
+            # and `clamped False`, which is every one of the settle's four gate refusals
+            # passed. The sweep would then run against a PREFIX of the note and retract
+            # the facts this call was carrying. Latch on the way out and the gate refuses,
+            # which is the honest answer: this reading is not the whole note.
+            self.reading.mark_incomplete()
+            raise
+
+    async def _close_reading(
+        self, arguments: dict, *, words_reached_note: bool = False
+    ) -> ToolOutput:
+        """`close_reading`'s body. Split out so the latch above wraps ALL of it —
+        including the lines that are not inside any `try` here (the session open, the
+        note load, the union, the commit at block exit)."""
         items, clamped = _batch(arguments, ("facts", "items"), MAX_FACTS)
         # LATCH FIRST, before any return can skip it. Every other path reaches `union`,
         # but a call whose list is entirely unreadable (`{"facts": [null]}`) with no title
         # and no tags falls out of the usage branch below — and `_batch` has already seen
         # a dropped element. Unconditional here is the only shape with no fourth hole:
         # a clamp latches, whatever else this call turns out to do.
+        #
+        # It is one of FOUR latches, not the only one. A budget refused below, a refused
+        # ELEMENT in the commit loop, and the handler raising at all (the wrapper above)
+        # each leave the same prefix of the note, and each latches at its own site — a
+        # reading is complete only when every fact the model stated actually landed.
         if clamped:
             self.reading.mark_incomplete()
         title = _text(arguments, "title", "headline", "summary")
@@ -1137,14 +1255,28 @@ class NoteGraphWriter:
                 try:
                     async with session.begin_nested():
                         line, write, touched = await self._assert_one(
-                            session, idx, item, chunks, read_recurrence=True
+                            session,
+                            idx,
+                            item,
+                            chunks,
+                            read_recurrence=True,
+                            words_reached_note=words_reached_note,
                         )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.reading_failed", index=idx, error=repr(exc))
                     lines.append(f"err  facts[{idx}]: not recorded (internal).")
+                    self.reading.mark_incomplete()
                     continue
                 lines.append(line)
-                if write is not None:
+                if write is None:
+                    # The two latch sites for a refused element, and they are the whole of
+                    # the third latch: everything `_assert_one` declines returns here with
+                    # `write is None`, and everything it raises on lands above. A fact the
+                    # model stated and the engine did not record is missing from
+                    # `fact_ids`, and an unlatched reading would hand that gap to
+                    # `sweep_note` as "the note stopped saying this".
+                    self.reading.mark_incomplete()
+                else:
                     writes.append(write)
                 refs.extend(touched)
         self.reading.union(
@@ -1230,8 +1362,14 @@ class NoteGraphWriter:
             chunks = await self._load_note(session)
             try:
                 async with session.begin_nested():
+                    # `words_reached_note=True` because this verb's gate is NOT this
+                    # flag: `replytools`' empty-address arm is what refuses a correction
+                    # on a turn whose words the note never received, and correcting a
+                    # head that IS on file stays the owner's repair path on a settled
+                    # thread (plan §3). Passing False here would disarm that instead —
+                    # the parameter now controls the pin (see `_assert_one`).
                     line, write, touched = await self._assert_one(
-                        session, 0, item, chunks, correction=True
+                        session, 0, item, chunks, correction=True, words_reached_note=True
                     )
             except Exception as exc:  # noqa: BLE001 — a failed correction is text, not a crash
                 log.warning("graphwrite.correct_failed", error=repr(exc))
@@ -1256,6 +1394,7 @@ class NoteGraphWriter:
         *,
         correction: bool = False,
         read_recurrence: bool = False,
+        words_reached_note: bool = False,
     ) -> tuple[str, FactWriteRef | None, list[EntityRef]]:
         subject_token = _text(item, "subject", "entity", "about")
         subject = self.lookup(subject_token)
@@ -1338,6 +1477,17 @@ class NoteGraphWriter:
         # D12's evidence. A correction rests on the owner's own message, which is never
         # an attachment, so it stays False without a quote to check.
         from_attachment = False
+        # ONE GATE FOR BOTH WAYS INTO `decide()`'s pinning branch (R3's fourth review,
+        # finding 10). `correction` arrives either as a PARAMETER (`correct_fact`) or by
+        # the elevation below, and the flag used to govern only the second — so a caller
+        # passing `correction=True` alongside `words_reached_note=False` was told "NOT as
+        # a pinned correction" by the elevation's own else-arm while pinning anyway.
+        # Unreachable today (the one parameter-caller passes True and is gated in
+        # `replytools` instead), which is exactly why it is closed here rather than left
+        # for the caller R3f/R4 adds: a downgrade to the ordinary capped path is the
+        # answer a caller who says nothing should get.
+        if correction and not words_reached_note:
+            correction = False
         if correction:
             attested, signals = True, _ATTESTED
         else:
@@ -1370,11 +1520,49 @@ class NoteGraphWriter:
             # with it: THAT one takes attestation to be "who spoke" (the owner's message
             # is not in the note's chunks when the tool runs). Here the owner's words ARE
             # the note, so the span check is live evidence and is kept.
-            if attested and self._target.is_correction:
+            #
+            # AND NOT ON A REPLY TURN WHOSE WORDS NEVER REACHED THE NOTE (R3's third
+            # review, finding 1). `_attests` checks that the quote STRING is in the note's
+            # chunks — never that it supports the OBJECT — so on an `owner_correction`
+            # note an element pairing a real line of the note with a value the owner said
+            # only in chat took this branch and committed active + PINNED at confidence
+            # 1.0. Nothing can then reach that row: `sweep_note` spares a pinned fact, no
+            # later note supersedes one, and no correction note addresses it — the
+            # "permanent and wrong beats temporary and wrong" shape O16 calls worse than
+            # the loss it is standing in for. Unpinned, the same element is the O16 loss
+            # shape and is DELIBERATELY still open: falsifiable by the next reading, and
+            # swept when one comes.
+            #
+            # The condition is `replytools`' — `ASSERT_FACT not in ctx.agent_tools`, read
+            # where the registry makes it exact and passed in, because this writer serves
+            # the unattended pass too and there that name is absent BY DESIGN (R3 took it
+            # off the unattended set), which would have disabled the elevation on the
+            # ordinary correction-note pass. It is the same gate `correct_fact`'s
+            # empty-address arm turns on, for the same reason: both are a new pinned row
+            # minted out of words no note ever received.
+            #
+            # AND IT IS A PROXY, exact only by a property of two sidecars. `agent_tools`
+            # is `ToolRegistry.allowed_names`, whose last act is `_visible(spec.domains,
+            # scopes)` — so a name can be absent for a second reason: a `domains:` line on
+            # `assert_fact.tool`, or a `hidden` entry, would drop it from a note
+            # conversation's allowlist and SILENTLY disable the elevation on a genuine
+            # correction note. Neither sidecar declares `domains:` and neither is ever
+            # hidden, which is what makes the read exact today. The leak is
+            # one-directional and fail-safe — `_admits` checks `allow` before `extra`, so
+            # an `extra_tools` grant cannot re-admit a name the allowlist dropped, and the
+            # only thing the proxy can do wrong is refuse to pin.
+            if attested and self._target.is_correction and words_reached_note:
                 correction = True
                 notes.append(
                     "this note is your correction, so it out-argues what was on file and"
                     " is pinned against later notes"
+                )
+            elif attested and self._target.is_correction:
+                notes.append(
+                    "recorded as an ordinary fact, NOT as a pinned correction: what you"
+                    " said on this turn did not reach the note, so a later note can still"
+                    " change it. Tell Jeff that, and that a note of his own is how it"
+                    " lands for good"
                 )
         # RECURRENCE, read out of the span the model attested rather than asked for as a
         # field (§3.2 of the rewrite plan, decided by R0's 0-in-228 measurement). Gated on
@@ -1822,13 +2010,20 @@ def _batch(
 
 @dataclass
 class NoteToolset:
-    """The tools one note conversation runs with: the three graph writes bound to its
-    note — `resolve_entity`, `assert_fact` and `close_reading`, until R4 narrows the
-    second to the reply set — plus whatever handlers the caller passes alongside them. Today that is
-    find_entity / read_entity / current_time — inherited unchanged, and reached only
-    because the persona now reads the knowledge base — and `ask_owner`, which is a write
-    but not a note-BOUND one: it finds its conversation through the turn's session id,
-    so one handler serves every note and the chat registry too."""
+    """The tools one note conversation's UNATTENDED pass runs with: the two graph writes
+    bound to its note — `resolve_entity` and `close_reading` — plus whatever handlers the
+    caller passes alongside them. Today that is find_entity / read_entity / current_time —
+    inherited unchanged, and reached only because the persona now reads the knowledge base
+    — and `ask_owner`, which is a write but not a note-BOUND one: it finds its
+    conversation through the turn's session id, so one handler serves every note and the
+    chat registry too.
+
+    **`assert_fact` is not bound here, and that is the second lock on R3's narrowing**
+    (constraint 9: a name with no handler behind it cannot dispatch however the profile is
+    resolved). The pass's settle derives its sweep from the closing reading, so a second
+    fact verb on the same pass could write a fact the sweep then retracted. It stays bound
+    on the chat registry, where the owner's reply turn reaches it (`agent/replytools.py`)
+    and where nothing sweeps."""
 
     writer: NoteGraphWriter
     inherited: Mapping[str, ToolHandler] = field(default_factory=dict)
@@ -1842,11 +2037,19 @@ class NoteToolset:
     writes_graph: bool = True
 
     def handlers(self) -> dict[str, ToolHandler]:
+        async def close_reading(arguments: dict, ctx: ToolContext) -> ToolOutput:
+            # The one caller of `close_reading` that elevates, and it says so now rather
+            # than inheriting it (R3's fourth review, finding 5). This pass reads the
+            # note's own text and nothing else — there is no
+            # owner turn behind it and so no words that could have failed to reach the
+            # note — which is what makes the correction-note elevation sound here and is
+            # exactly the sentence a bare binding on a True default was not making.
+            return await self.writer.close_reading(arguments, ctx, words_reached_note=True)
+
         writes: dict[str, ToolHandler] = (
             {
                 RESOLVE_ENTITY: self.writer.resolve_entity,
-                ASSERT_FACT: self.writer.assert_fact,
-                CLOSE_READING: self.writer.close_reading,
+                CLOSE_READING: close_reading,
             }
             if self.writes_graph
             else {}
