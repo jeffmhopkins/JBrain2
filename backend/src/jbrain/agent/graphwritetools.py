@@ -69,9 +69,13 @@ accumulates into `Reading` so a later wave can ask "what does the note say NOW",
 reads a repeating schedule out of each fact's own attested span (`analysis/recurrence.py`,
 because R0 measured that no `repeats` FIELD can be filled on this box).
 
-Nothing here sweeps yet. The reading commits and the pass ends exactly as it does today;
-what R1 adds is the producer of the complete current reading a retraction needs
-(§1 of the plan), and `Reading.clamped` is the signal the sweep's gate will read.
+Nothing here sweeps — but since R3 something downstream does, and that is what makes
+`Reading` load-bearing rather than an accumulator. `clarify.settle_conversation` retracts
+every unpinned row of the note the reading does not name, so a fact missing from
+`Reading.fact_ids` is a fact the note is about to stop asserting. `Reading.clamped` is the
+gate that refuses that, and it LATCHES from three places in `close_reading`: a clamped
+list, an exhausted call budget, and an element the commit refused. Anything added here
+that can drop a stated fact on the floor owes this reading the same latch.
 
 **An OWNER CORRECTION NOTE elevates its attested facts here** (W5's stated precondition
 for retiring the correction-note machinery). `file_correction`, `POST
@@ -567,9 +571,11 @@ class Reading:
 
     def mark_incomplete(self) -> None:
         """The pass tried to say more and the engine refused it — a budget exhausted, a
-        clamp on a call that never ran. Not a `union`: no call landed, so `calls` must not
-        move; what moved is the only thing that matters to the gate, which is that this
-        reading is no longer the whole note."""
+        clamp on a call that never ran, an element the commit would not take. Not a
+        `union`: this records a REFUSAL rather than a call, so `calls` must not move (and
+        on the element path the call that contained it unions separately); what moved is
+        the only thing that matters to the gate, which is that this reading is no longer
+        the whole note."""
         self.clamped = True
 
     def union(
@@ -1117,6 +1123,16 @@ class NoteGraphWriter:
           `_batch`'s clamp has always been a result line; here it is also `Reading
           .clamped`, because a clamped reading is a PREFIX of the note and a sweep
           against a prefix retracts the tail.
+
+        **A REFUSED ELEMENT is the same prefix, and latches the same way.** `_assert_one`
+        yields no write on six ordinary paths — an unresolved subject handle, no
+        predicate, no object, an id-shaped object that resolved to nothing, a raise
+        caught per element, and a `commit_facts` that linked nothing — and each of them
+        drops a fact the model just RESTATED out of `fact_ids`. Without a latch the
+        reading then says "complete, and the note no longer says that", which is the
+        exact sentence the sweep acts on: the element the model named is retracted
+        because the engine refused to record it. The model is told in the result line
+        and can re-send the element; until it does, this reading is not the whole note.
         """
         del ctx  # the write session is the note's, never the turn's read scope
         items, clamped = _batch(arguments, ("facts", "items"), MAX_FACTS)
@@ -1125,6 +1141,11 @@ class NoteGraphWriter:
         # and no tags falls out of the usage branch below — and `_batch` has already seen
         # a dropped element. Unconditional here is the only shape with no fourth hole:
         # a clamp latches, whatever else this call turns out to do.
+        #
+        # It is one of THREE latches, not the only one. A budget refused below and a
+        # refused ELEMENT in the commit loop each leave the same prefix of the note, and
+        # each latches at its own site — a reading is complete only when every fact the
+        # model stated actually landed.
         if clamped:
             self.reading.mark_incomplete()
         title = _text(arguments, "title", "headline", "summary")
@@ -1162,9 +1183,18 @@ class NoteGraphWriter:
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.reading_failed", index=idx, error=repr(exc))
                     lines.append(f"err  facts[{idx}]: not recorded (internal).")
+                    self.reading.mark_incomplete()
                     continue
                 lines.append(line)
-                if write is not None:
+                if write is None:
+                    # The two latch sites for a refused element, and they are the whole of
+                    # the third latch: everything `_assert_one` declines returns here with
+                    # `write is None`, and everything it raises on lands above. A fact the
+                    # model stated and the engine did not record is missing from
+                    # `fact_ids`, and an unlatched reading would hand that gap to
+                    # `sweep_note` as "the note stopped saying this".
+                    self.reading.mark_incomplete()
+                else:
                     writes.append(write)
                 refs.extend(touched)
         self.reading.union(

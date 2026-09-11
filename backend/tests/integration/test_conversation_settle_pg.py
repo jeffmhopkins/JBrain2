@@ -48,7 +48,7 @@ import pytest
 from sqlalchemy import text
 
 from jbrain.agent.contracts import DoneEvent, ToolCallEvent, ToolResultEvent
-from jbrain.agent.graphwritetools import NoteGraphWriter
+from jbrain.agent.graphwritetools import MAX_FACTS, NoteGraphWriter
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
@@ -527,7 +527,11 @@ async def test_a_clamped_reading_does_not_sweep(
     grammar, which is why this is measured by the handler rather than trusted from the
     schema — so the model cannot be relied on to have sent the whole note in one call.
 
-    Latched here through `mark_incomplete`, the real latch, on the real reading."""
+    Driven by a REAL over-long list rather than by calling `mark_incomplete` by hand.
+    Latch wiring is load-bearing — the refused-element test below exists because one of
+    these paths had none — so a test that sets the flag itself pins the gate and nothing
+    that feeds it. `MAX_FACTS + 1` well-formed facts is the whole setup: `_batch` takes
+    the first `MAX_FACTS`, each of them lands, and the reading is still a prefix."""
     note_id, _entity_id, writer, outs = await _books_an_appointment(maker, tmp_path)
     fact_id = uuid.UUID(outs[1].facts[0].fact_id)
     first = await _conversation(maker, owner, note_id)
@@ -539,15 +543,99 @@ async def test_a_clamped_reading_does_not_sweep(
     second = await _conversation(maker, owner, note_id)
     clipped = await _writer(maker, note_id)
     ctx = ToolContext(session=OWNER, scopes=("general",))
-    read = await clipped.close_reading({"title": "Only the top", "tags": [], "facts": []}, ctx)
+    surface = f"bramwell ashcote {uuid.uuid4().hex[:8]}"
+    resolved = await clipped.resolve_entity(
+        {"entities": [{"surface": surface, "kind": "person"}]}, ctx
+    )
+    assert isinstance(resolved, ToolOutput) and resolved.entities, str(resolved)
+    read = await clipped.close_reading(
+        {
+            "title": "Only the top",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": f"trait{i}",
+                    "object": f"value {i}",
+                    "statement": f"{surface} has trait {i}.",
+                    "quote": "Booked it this morning",
+                }
+                for i in range(MAX_FACTS + 1)
+            ],
+        },
+        ctx,
+    )
     assert isinstance(read, ToolOutput)
-    clipped.reading.mark_incomplete()
+    assert len(read.facts) == MAX_FACTS, str(read)
     reading = _reading(clipped, note_id)
-    assert reading is not None and reading.clamped
+    assert reading is not None and reading.clamped, "a real clamp did not latch"
     assert await _settle(maker, owner, second, reading=reading)
 
     row = await _fact_row(maker, fact_id)
     assert row.status == "active", "a prefix of the note retracted its tail"
+    assert row.settle_owners == [CONVERSATION]
+
+
+async def test_a_refused_element_leaves_the_reading_incomplete(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The model RESTATES a fact, the engine refuses the element, and the settle must not
+    read that as "the note stopped saying it".
+
+    `_assert_one` yields no write on six ordinary paths — no resolved subject handle (the
+    one driven here, and the commonest: a fresh pass starts with an empty handle table
+    and the model addresses `e1` from memory), no predicate, no object, an id-shaped
+    object that resolved to nothing, a per-element raise, and a `commit_facts` that
+    linked nothing. Each drops the fact out of `Reading.fact_ids` while the reading still
+    claims to be the whole note.
+
+    Before the latch this shape passed all four of the settle's refusals — `SETTLED`, a
+    reading present, `clamped=False`, not third-party — and the sweep retracted a row the
+    model had just restated, on a note nobody had edited. The result line said the
+    element was refused; nothing carried that to the gate."""
+    note_id, _entity_id, writer, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs, names=["resolve_entity", "close_reading"])
+    await _settle(maker, owner, first, reading=_reading(writer, note_id))
+    assert (await _fact_row(maker, fact_id)).status == "active"
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    second = await _conversation(maker, owner, note_id)
+    # A second pass, and a handle table it never filled: `resolve_entity` was not called,
+    # so `e1` stands for nothing on this writer.
+    forgetful = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    read = await forgetful.close_reading(
+        {
+            "title": "Dentist appointment",
+            "tags": ["dentist"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "scheduledTime",
+                    "object": "2027-03-04T13:00:00",
+                    "statement": "The dentist appointment is on 2027-03-04 at 13:00.",
+                    "when": "2027-03-04T13:00:00",
+                    "quote": "Dentist appointment on 2027-03-04 at 13:00",
+                }
+            ],
+        },
+        ctx,
+    )
+    assert isinstance(read, ToolOutput)
+    assert not read.facts, str(read)
+    assert "no such handle" in read, str(read)
+    reading = _reading(forgetful, note_id)
+    assert reading is not None, "the call unioned no reading at all"
+    assert reading.clamped, "a refused element left the reading claiming to be complete"
+    assert await _settle(maker, owner, second, reading=reading)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "the model restated the fact and the settle retracted it"
     assert row.settle_owners == [CONVERSATION]
 
 
