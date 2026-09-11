@@ -104,8 +104,10 @@ review). Attestation is a span check over the note's chunks and never a check th
 quoted line supports the VALUE, so on a correction note the owner reopens later, an
 element quoting a real line while carrying a value he typed only into the thread would
 take this branch and commit a pinned row nothing can ever correct. `close_reading` takes
-the condition from the reply registry (`words_reached_note`); the elevation on the pass
-itself, which is what this paragraph is about, is unchanged.
+the condition from the reply registry (`words_reached_note`, which since R3's fourth
+review DEFAULTS to withholding, so a caller who says nothing cannot pin); the elevation
+on the pass itself, which is what this paragraph is about, is unchanged — the unattended
+registry asks for it by name (`NoteToolset.handlers`).
 """
 
 from __future__ import annotations
@@ -2036,8 +2038,9 @@ class NoteToolset:
 
     def handlers(self) -> dict[str, ToolHandler]:
         async def close_reading(arguments: dict, ctx: ToolContext) -> ToolOutput:
-            # The ONE caller that elevates, and it says so (R3's fourth review, finding
-            # 5). This pass reads the note's own text and nothing else — there is no
+            # The one caller of `close_reading` that elevates, and it says so now rather
+            # than inheriting it (R3's fourth review, finding 5). This pass reads the
+            # note's own text and nothing else — there is no
             # owner turn behind it and so no words that could have failed to reach the
             # note — which is what makes the correction-note elevation sound here and is
             # exactly the sentence a bare binding on a True default was not making.
