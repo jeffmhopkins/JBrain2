@@ -1,19 +1,22 @@
 """The note-graph tools an owner's REPLY turn dispatches.
 
 `correct_fact` and `merge_entities` — the two write verbs that need Jeff in the room —
-plus the reply turn's copies of `resolve_entity` and `assert_fact`, which D8's on-reply
-allowlist has always named and which nothing had ever bound.
+plus the reply turn's copies of `resolve_entity`, `assert_fact` and `close_reading`,
+which D8's on-reply allowlist has always named and which nothing had ever bound.
+`close_reading` is R3's, and it is the one that is not an increment: the other four
+add, correct or fold ONE thing, while this one states what the WHOLE NOTE says now —
+the claim the settle is derived from (`AGENT_INGEST_REWRITE.md` §1).
 
 W3 of docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md, built to
 docs/research/agent-ingest/TOOL_SURFACE.md's on-reply rows. D8 splits the note persona's
 surface in two and `agents.agent_for_owner_reply` is the seam; these are the handlers
 behind the half that only a turn the owner sent can reach.
 
-**All four are bound on the CHAT registry, not on the worker's per-note one.** The
+**All five are bound on the CHAT registry, not on the worker's per-note one.** The
 owner's reply into a note thread is an ordinary `/chat` turn, so that is the only
 registry the reply turn consults — the same reason `ask_owner` is wired there. None
 takes a note id: they find their conversation through `ToolContext.agent_session_id`,
-and outside a note conversation all four refuse. A write primitive a hostile body could
+and outside a note conversation all five refuse. A write primitive a hostile body could
 point at another note is not a tool, it is a hole.
 
 **`assert_fact` on the reply turn is a safety property, not a convenience.** Without it
@@ -55,7 +58,8 @@ handler lists what is there and REFUSES: a correction of one of them is not an o
 this graph has, because a set-valued edge's identity is its object. See the comment at
 the check for why the `replaces` retry the tool used to offer could not work.
 
-**The four handlers share one writer per conversation.** `NoteGraphWriter` owns the call
+**The four writer-backed handlers share one writer per conversation** (every one but
+`merge_entities`, which stages a Proposal and writes no graph). `NoteGraphWriter` owns the call
 budgets and the handle table, so building one per call makes both inert — which is what
 `CORRECT_CALL_BUDGET` did until it was found reporting "5 calls left" on the seventh
 consecutive correction.
@@ -249,12 +253,18 @@ def build_reply_write_handlers(
     notes: NotesRepo,
     router: LlmRouter | None = None,
 ) -> dict[str, ToolHandler]:
-    """The four note-graph tools a REPLY turn dispatches, wired for the chat registry.
+    """The FIVE note-graph tools a REPLY turn dispatches, wired for the chat registry.
 
     `correct_fact` + `merge_entities` (the on-reply writes) and `resolve_entity` +
-    `assert_fact` (the unattended pair, which D8 keeps on the reply turn because it is
-    the same agent finishing the same note). All four find their conversation through
-    `ToolContext.agent_session_id`, never through an argument.
+    `assert_fact` + `close_reading` (the unattended set, which D8 keeps on the reply turn
+    because it is the same agent finishing the same note). All five find their
+    conversation through `ToolContext.agent_session_id`, never through an argument.
+
+    ⟲ **`close_reading` was missing from this list** (R3's fourth review). R3 bound it and
+    R3's fourth round re-wired it below, and it is the one worth naming: the other four
+    state ONE thing each, and this one states a WHOLE-NOTE READING — which is what
+    `clarify.settle_conversation` retracts against, and so the only verb here whose
+    omission changes what the note stops asserting.
 
     `router` is what an `AnalysisPipeline` needs to exist; none of these use the model
     calls on it (`commit_facts` is deterministic), but the pipeline is the object that
@@ -355,8 +365,12 @@ def build_reply_write_handlers(
     async def _bound(ctx: ToolContext, tool: str) -> tuple[NoteGraphWriter | None, str | None, str]:
         """The writer for this turn's conversation, or the refusal text to return.
 
-        The whole gate the four share: a note conversation this principal can see, a note
-        that still exists, and a write path on this box."""
+        The whole gate the four WRITER-BACKED verbs share — `correct_fact`,
+        `resolve_entity`, `assert_fact` and `close_reading`, named rather than counted
+        (R3's fourth review found this reading as "the four" of the docstring above, which
+        is a different set): a note conversation this principal can see, a note that still
+        exists, and a write path on this box. `merge_entities` is the fifth tool here and
+        does not come through it — it stages a Proposal and needs no writer."""
         found = await _note_for_session(maker, ctx)
         if found is None:
             return (

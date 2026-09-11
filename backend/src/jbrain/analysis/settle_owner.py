@@ -60,24 +60,56 @@ which makes it a comment stating a property the code does not have (CLAUDE.md #4
   its own (`api/agent.py` settles with `reading=None`), so what it costs is the O16 loss
   and never a permanent wrong row.
 
-⟲ **And this used to close with "no reply turn may mint a PINNED row out of words the
-note never received", which was false at one more site than the two named above** (R3's
-third review). `_assert_one`'s CORRECTION-NOTE ELEVATION is a third way into `decide()`'s
-pinning branch, and `_attests` is a string check: on an `owner_correction` note, a
-reply-turn `close_reading` element pairing a real line of the note with a value the owner
-had only typed in the thread committed `correction=True` → active, pinned, confidence 1.0.
-It is gated now on the same condition the other two are (`graphwritetools`, keyed off
-`ASSERT_FACT not in ctx.agent_tools` at the reply registry), so the sentence is true as
-written — but only with its residue stated, because the residue is the reason the sentence
-is worth having:
+⟲ **This used to close with an ABSOLUTE — "no reply turn may mint a PINNED row out of
+words the note never received" — and three consecutive reviews found it false at one more
+site each.** The third round found the third site (`_assert_one`'s CORRECTION-NOTE
+ELEVATION: `_attests` is a string check, so on an `owner_correction` note a reply-turn
+`close_reading` element pairing a real line of the note with a value the owner had only
+typed in the thread committed `correction=True` → active, pinned, confidence 1.0; it is
+gated now on the same condition the other two are). The fourth round found the fourth, and
+the fourth is NOT a gap to close: `correct_fact` at an address the graph DOES hold
+something for supersedes that head and commits the owner's new value active and PINNED —
+on an unprompted reply turn as much as on an answering one, and the value may be one he
+typed only into the thread. So the absolute is retired rather than patched a fourth time.
+What the three gates enforce is narrow, and it is this:
 
+**No reply turn whose words did not reach the note may mint a pinned row at an address the
+graph holds nothing for.**
+
+All three read the same condition — `ASSERT_FACT not in ctx.agent_tools`, taken at the
+reply registry where it is exact. `assert_fact` is off such a turn entirely
+(`agents.narrow_for_unprompted_reply`); `correct_fact`'s EMPTY-ADDRESS arm refuses
+(`replytools`); `close_reading`'s correction-note elevation is withheld
+(`graphwritetools`, `words_reached_note`, which since R3's fourth review governs a
+`correction=True` passed as a parameter too). Those are every route into the only branch
+that pins: `decide()` sets `insert_pinned` on `candidate.correction` and nothing else
+(`analysis/supersession.py`). "The address" is the address AS THE TURN CAN SEE IT —
+`entity_view` under the turn's read scopes — so a head in a domain the conversation is not
+scoped to reads as empty and the arm refuses: wrong in the direction of refusing, which is
+the direction to be wrong in.
+
+The residue is the reason the sentence is worth having:
+
+- **a pinned row at an OCCUPIED address is still mintable on that turn, and that is
+  deliberate.** By the elevation's own standard — `sweep_note` spares a pinned fact, no
+  later note supersedes one, no correction note addresses one — such a row is exactly as
+  permanent as the one the third round closed, and the note may never say it. It stays
+  because plan §3's ⟲ argues it: correcting a fact that IS on file is the owner's repair
+  path on a settled thread, and pinning is the designed mechanism there. What the gate
+  buys is that the turn can only REPAIR an address, never open one;
 - **an UNPINNED row the note does not say is still mintable on that turn**, and that is
-  deliberate: it is O16's loss shape, falsifiable by the next reading and released by the
-  first clean pass that reads the note without it. Closing it needs the `ToolContext` flag
-  threaded through three `AgentLoop` sites and is not R3's;
-- **"swept eventually" is not "swept".** An unprompted reply changes nothing about the
-  note, so `integration_state` stays `integrated` and nothing re-enqueues the note: the row
-  stands until the note is next edited or `analysis/rebuild.py` runs;
+  deliberate too: it is O16's loss shape, falsifiable by the next reading and released by
+  the first clean pass that reads the note without it. Closing it needs the `ToolContext`
+  flag threaded through three `AgentLoop` sites and is not R3's;
+- **"swept eventually" is not "swept" — on two of its three cases.** ⟲ This bullet used to
+  say an unprompted reply changes nothing about the note, so `integration_state` stays
+  `integrated` and nothing re-enqueues it. That is true of a reply into a SETTLED thread
+  and of one whose append failed, and false of the commonest case there is: the designed
+  §3b I7 send, where the structured answers land and the prose beside them is dropped.
+  There `append_clarifications` sets `ingest_state='pending'` and enqueues `ingest_note` in
+  the same transaction (`notes/repo.py`), and the re-ingest flips `integrated → stale`
+  (`ingest/pipeline.py`), so the note IS re-enqueued and the row IS swept promptly. On the
+  other two the row stands until the note is next edited or `analysis/rebuild.py` runs;
 - **and on a THIRD-PARTY note nothing is ever swept at all.** `PassReading.third_party`
   refuses the sweep permanently (`clarify.settle_conversation`) — a stranger's words may
   cause a fact and never a retraction — so such a row persists by D10's design rather than

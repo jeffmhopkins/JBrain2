@@ -772,6 +772,19 @@ active + pinned at confidence 1.0. Same fix, same condition, same place it is re
 (`replytools.close_reading_tool` passes it into the writer); the UNPINNED row the element
 still commits is O16's loss shape, deliberately left open.
 
+⟲ **What the three narrowings enforce is narrow, and it is not an absolute** (R3's fourth
+round, which found the fourth site the absolute was false at). Three rounds of this section
+closed with "no reply turn may mint a pinned row out of words the note never received" and
+three rounds it was false at one more site. The fourth site is not a gap: `correct_fact` at
+an address that IS occupied supersedes the head and pins the owner's new value, on an
+unprompted turn as much as on an answering one, and that value may be one he typed only
+into the thread — a row as permanent as the elevation's, kept because it is the repair path
+the paragraph above argues for. The enforceable sentence is **"no reply turn whose words
+did not reach the note may mint a pinned row at an ADDRESS THE GRAPH HOLDS NOTHING FOR"**:
+the turn can repair an address, never open one. `analysis/settle_owner.py` carries it with
+its residue, and `decide()`'s `insert_pinned` — set on `candidate.correction` and nothing
+else — is why those three gates are all of them.
+
 Refusing the write and telling the owner is the conservative direction; giving unprompted
 text a home on the note is **O16**, open.
 
@@ -1930,9 +1943,9 @@ spans its own live facts are anchored to). The settle's input is a `clarify.Pass
 flattened off the writer by `converse.pass_reading` — `clarify` may not import
 `graphwritetools`, which drags the LLM stack into the API process.
 
-⟲ **Six silent-loss paths found after the wave shipped, all closed, and each was proved
-by running it rather than argued.** (4), (5) and (6) are the third review's; the first
-three are the second's. (1) `close_reading` latched an incomplete reading from
+⟲ **Eight silent-loss paths found after the wave shipped, all closed, and each was proved
+by running it rather than argued.** (7) and (8) are the fourth review's, (4), (5) and (6)
+the third's; the first three are the second's. (1) `close_reading` latched an incomplete reading from
 three places and all three were inside or before the element loop, so an exception ESCAPING
 the handler — a pool refusal, a `set_config` blip, a failed COMMIT at block exit — left the
 pass presenting a PREFIX as a complete unclamped reading (`loop.py` reports the raise to
@@ -1962,6 +1975,22 @@ lose the owner's words: a repeated `question_id` overwrote its predecessor silen
 answer past `MAX_ANSWERS` was cut before `_pair` could account for it (unreachable only by
 an arithmetic coincidence between `ask_owner.tool`'s cap of 5 and `MAX_ANSWERS` of 10).
 Both now report, and `owner_reply_notice` names all three ways instead of the one.
+(7) And the cut did not ride the one return that precedes all the accounting: with every
+in-cap answer blank, `capped_answers` yields nothing, so a send whose only real answer sat
+past the cap fell out of `record_owner_reply` as `None` — the answer discarded, the thread
+still `waiting_on_owner`, and `owner_reply_notice` handed nothing to say. The write side was
+already safe (`owner_words_reached_note(None)` is False); the NOTICE was the loss. Such a
+turn now takes the ordinary reply path, which claims the thread, pairs nothing, and reports
+`dropped`. It must not short-circuit to an `OwnerReply` from before the claim:
+`close_owner_reply`'s `reopened` is exactly "this call returned one", and one minted there
+would have a reply turn settling the worker's own live pass.
+(8) `words_reached_note` — the flag that gates the elevation in (5) — defaulted to the
+UNSAFE direction, so a caller who never heard of the split got the pin, and the unattended
+registry was relying on that default (`agents.narrow_for_third_party_note` spells out the
+opposite convention for exactly this class). It defaults False now, both legitimate callers
+say True out loud, and it also governs a `correction=True` that arrives as a PARAMETER —
+which it did not, so that path was told "NOT as a pinned correction" by the elevation's own
+else-arm while pinning anyway (unreachable today; the next caller into it is R3f/R4's).
 
 **The two-verb hole R2's review found is closed by (a), narrowing.** `assert_fact` is off
 `NOTE_INGEST_UNATTENDED_TOOLS` and onto the reply set, in BOTH locks — the allowlist and
@@ -2567,14 +2596,22 @@ words reached no note), which makes O16's cost more visible rather than larger: 
 **What the refusal actually leaves behind, stated precisely** (R3's third review; a
 description of the residue, not a change to the decision). The refusal covers the two
 verbs that MINT — `assert_fact` and `correct_fact`'s empty-address arm — and, since that
-review, `close_reading`'s correction-note elevation as well. What it does not cover is an
+review, `close_reading`'s correction-note elevation as well. It does not cover
+`correct_fact` at an OCCUPIED address, which is the repair path §3's fourth ⟲ argues for
+and keeps. What it does not cover either is an
 element inside a reply-turn `close_reading`: that commits, and three things are true of it.
 It is **unpinned and falsifiable**, so the next clean reading of the note releases it —
 that is the loss this item is about, and closing it needs the `ToolContext` flag threaded
 through three `AgentLoop` sites, which no wave has taken on. It is **"sweepable
-eventually", not swept**: an unprompted reply changes nothing about the note, so
-`integration_state` stays `integrated` and nothing re-enqueues it — the row stands until
-the note is next edited or `analysis/rebuild.py` runs. And on a **third-party** note
+eventually", not swept — on two of the three ways a reply reaches here**. ⟲ This used to
+say an unprompted reply changes nothing about the note, so `integration_state` stays
+`integrated` and nothing re-enqueues it (R3's fourth review, finding 6). That holds for a
+reply into a SETTLED thread and for one whose append failed; it is false for the commonest
+case of the three, the designed I7 send this item's own ⟲ above calls the ordinary
+interaction. There the structured answers DO land: `append_clarifications` sets
+`ingest_state='pending'` and enqueues `ingest_note` in the same transaction, the re-ingest
+flips `integrated → stale`, and the row is swept promptly. On the other two the row stands
+until the note is next edited or `analysis/rebuild.py` runs. And on a **third-party** note
 nothing is ever swept at all (`clarify.PassReading.third_party` refuses the sweep
 permanently), so such a row persists by D10's design rather than by this gap.
 

@@ -8,6 +8,7 @@ is a REAL `TranscriptAccumulator` fed a real tool-call/tool-result event stream:
 exact shape `LoopTurnExecutor` hands the runner, produced by the code that produces it.
 """
 
+import inspect
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -937,8 +938,15 @@ def test_the_stale_horizon_cannot_reclaim_a_turn_that_is_still_allowed_to_run() 
     assert 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK) == STALE_CONVERSATION
     # And the runner bounds its turn by that same constant, not one of its own.
     assert converse.NOTE_TURN_WALL_CLOCK is NOTE_TURN_WALL_CLOCK
-    # One spelling for /chat's cap: the module that ENFORCES it derives it from the
+    # One spelling for /chat's cap: the module that ENFORCES it DERIVES it from the
     # module that states it, so raising one cannot leave the reaper reading the other.
+    #
+    # ⟲ **The DERIVATION is what is pinned, not the value** (R3's fourth review). This was
+    # an equality, which `_MAX_TURN_WALL_CLOCK_S = 7500.0` keeps green — restoring exactly
+    # the drift the assertion is named for while it still passes.
+    assert "_MAX_TURN_WALL_CLOCK_S = TURN_WALL_CLOCK.total_seconds()" in inspect.getsource(
+        agent_api
+    )
     assert TURN_WALL_CLOCK.total_seconds() == agent_api._MAX_TURN_WALL_CLOCK_S
 
 

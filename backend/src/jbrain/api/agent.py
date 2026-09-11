@@ -1692,7 +1692,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     # retraction, so this path keeps the tail-only settle it has always
                     # had: it commits, it projects, it retracts nothing. Closing it means
                     # exposing that cache, which is R3f/R4's to carry with the reply
-                    # turn's own surface (AGENT_INGEST_REWRITE.md §7, R3).
+                    # turn's own surface (AGENT_INGEST_REWRITE.md §7, R3) — AND FIXING
+                    # WHAT THAT CACHE DOES UNDER PRESSURE FIRST. Its LRU evicts the writer
+                    # outright past `_MAX_LIVE_WRITERS`, so the thread's next call starts a
+                    # fresh `Reading()` with `clamped=False`: an exposed cache would hand
+                    # back a clamped PREFIX wearing a complete reading's clothes, which is
+                    # the one input this gate exists to refuse. That is the ⚠ at
+                    # `replytools`' `popitem`, and this line is the only reason it is inert.
                     await settle_conversation(
                         request.app.state.session_maker,
                         owner_ctx,

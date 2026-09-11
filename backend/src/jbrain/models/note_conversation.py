@@ -84,10 +84,28 @@ NOTE_TURN_WALL_CLOCK = timedelta(minutes=30)
 # gone, silently. Both halves of that arrived in R3 (the sweep, and the unscoped reclaim on
 # the reconciler's five-minute schedule); the horizon is what has to cover both turns.
 #
-# The other candidate fix — skip a conversation with a live `agent_runs` row — was rejected:
-# a SIGKILL strands that row `running` too (`agent/runlog.py` reaps one on its OWN horizon,
-# which is shorter than this cap), so the reclaim would honour a dead pass forever, which is
-# the failure this constant exists to prevent.
+# ⟲ **The other candidate fix — skip a conversation with a live `agent_runs` row — stays
+# rejected, and the argument here used to be the WRONG ONE** (R3's fourth review). It said a
+# SIGKILL strands that row `running` too, so the reclaim would honour a dead pass forever.
+# It does not: `analysis/converse.py` opens the run with `kind` at its `"agent"` default,
+# which is inside the reaper's `kind IN ('agent','subagent')` filter, so the periodic sweep
+# closes it at `runlog.STRANDED_AFTER_SECONDS`; and `main.py`'s BOOT reaper closes every
+# `running` row unconditionally (`older_than_seconds=None`), which an `Ops -> Update` — the
+# very scenario two paragraphs up — performs by restarting the API. So the row clears in at
+# most that horizon and usually in seconds.
+#
+# The reason it is rejected is the opposite one, and it is the failure this constant exists
+# to prevent rather than a different one: `STRANDED_AFTER_SECONDS` (3900s) is BELOW
+# `/chat`'s `TURN_WALL_CLOCK` (7500s), so a long reply turn's run row is reaped as stranded
+# while the turn is still writing. A liveness test keyed on that row would then read a LIVE
+# pass as dead and reclaim the conversation out from under it — exactly the sweep-against-a-
+# live-reply loss the horizon above was widened to close.
+#
+# It is worth knowing what would change that. If `STRANDED_AFTER_SECONDS` were derived from
+# the real cap the way this constant is (filed as task #24; deliberately out of scope here,
+# because it is the agent run log's number and not the note lifecycle's), the rejected
+# option would become sound AND better on latency: it releases the note's slot when the run
+# row closes instead of waiting out a horizon sized for the worst turn imaginable.
 #
 # `waiting_on_owner` is deliberately NOT reaped — it holds the owner's question and waits
 # as long as the owner does; `_ALLOWED_SOURCES` makes dropping one say `abandon_question`.
