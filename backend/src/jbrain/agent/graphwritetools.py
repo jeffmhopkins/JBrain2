@@ -1103,7 +1103,15 @@ class NoteGraphWriter:
             for idx, item in enumerate(items):
                 try:
                     async with session.begin_nested():
-                        line, write, touched = await self._assert_one(session, idx, item, chunks)
+                        # `words_reached_note=True` is stated rather than defaulted, and
+                        # for this verb the BINDING is the condition: `assert_fact` is
+                        # absent from a reply turn whose words never became note text
+                        # (`agents.narrow_for_unprompted_reply`) and absent from the
+                        # unattended pass altogether, so every turn that reaches this line
+                        # is one whose words are — or are about to be — the note's own.
+                        line, write, touched = await self._assert_one(
+                            session, idx, item, chunks, words_reached_note=True
+                        )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.assert_failed", index=idx, error=repr(exc))
                     lines.append(f"err  facts[{idx}]: not recorded (internal).")
@@ -1128,7 +1136,7 @@ class NoteGraphWriter:
     # --- close_reading ---------------------------------------------------------
 
     async def close_reading(
-        self, arguments: dict, ctx: ToolContext, *, words_reached_note: bool = True
+        self, arguments: dict, ctx: ToolContext, *, words_reached_note: bool = False
     ) -> ToolOutput:
         """The whole-note reading: title, tags, and everything the note says.
 
@@ -1165,9 +1173,17 @@ class NoteGraphWriter:
 
         `words_reached_note=False` is the OWNER'S REPLY TURN whose words never became the
         note's text, and the only thing it changes is the correction-note elevation in
-        `_assert_one` — see the comment there. Defaulted True because every other caller
-        is a pass over the note's own text, where the question does not arise; the reply
-        registry is the one that knows the answer and passes it (`agent/replytools.py`).
+        `_assert_one` — see the comment there.
+
+        ⟲ **Defaulted FALSE, and it used to default True** (R3's fourth review, finding 5).
+        The safe direction is the one a caller who never heard of the split gets, which is
+        the convention `agents.narrow_for_third_party_note` spells out for exactly this
+        class of flag: a default that ELEVATES hands an unsupersedable pinned row to the
+        next caller who forgets the argument, and R3f/R4 will add one into this very path.
+        Both callers that know the answer now say it out loud — the reply registry passes
+        the turn's own condition (`agent/replytools.py`), and the unattended pass, which is
+        a read of the note's own text and where the question does not arise, binds the
+        handler with an explicit True (`NoteToolset.handlers`).
         """
         del ctx  # the write session is the note's, never the turn's read scope
         try:
@@ -1189,7 +1205,7 @@ class NoteGraphWriter:
             raise
 
     async def _close_reading(
-        self, arguments: dict, *, words_reached_note: bool = True
+        self, arguments: dict, *, words_reached_note: bool = False
     ) -> ToolOutput:
         """`close_reading`'s body. Split out so the latch above wraps ALL of it —
         including the lines that are not inside any `try` here (the session open, the
@@ -1344,8 +1360,14 @@ class NoteGraphWriter:
             chunks = await self._load_note(session)
             try:
                 async with session.begin_nested():
+                    # `words_reached_note=True` because this verb's gate is NOT this
+                    # flag: `replytools`' empty-address arm is what refuses a correction
+                    # on a turn whose words the note never received, and correcting a
+                    # head that IS on file stays the owner's repair path on a settled
+                    # thread (plan §3). Passing False here would disarm that instead —
+                    # the parameter now controls the pin (see `_assert_one`).
                     line, write, touched = await self._assert_one(
-                        session, 0, item, chunks, correction=True
+                        session, 0, item, chunks, correction=True, words_reached_note=True
                     )
             except Exception as exc:  # noqa: BLE001 — a failed correction is text, not a crash
                 log.warning("graphwrite.correct_failed", error=repr(exc))
@@ -1370,7 +1392,7 @@ class NoteGraphWriter:
         *,
         correction: bool = False,
         read_recurrence: bool = False,
-        words_reached_note: bool = True,
+        words_reached_note: bool = False,
     ) -> tuple[str, FactWriteRef | None, list[EntityRef]]:
         subject_token = _text(item, "subject", "entity", "about")
         subject = self.lookup(subject_token)
@@ -1453,6 +1475,17 @@ class NoteGraphWriter:
         # D12's evidence. A correction rests on the owner's own message, which is never
         # an attachment, so it stays False without a quote to check.
         from_attachment = False
+        # ONE GATE FOR BOTH WAYS INTO `decide()`'s pinning branch (R3's fourth review,
+        # finding 10). `correction` arrives either as a PARAMETER (`correct_fact`) or by
+        # the elevation below, and the flag used to govern only the second — so a caller
+        # passing `correction=True` alongside `words_reached_note=False` was told "NOT as
+        # a pinned correction" by the elevation's own else-arm while pinning anyway.
+        # Unreachable today (the one parameter-caller passes True and is gated in
+        # `replytools` instead), which is exactly why it is closed here rather than left
+        # for the caller R3f/R4 adds: a downgrade to the ordinary capped path is the
+        # answer a caller who says nothing should get.
+        if correction and not words_reached_note:
+            correction = False
         if correction:
             attested, signals = True, _ATTESTED
         else:
@@ -1505,6 +1538,17 @@ class NoteGraphWriter:
             # ordinary correction-note pass. It is the same gate `correct_fact`'s
             # empty-address arm turns on, for the same reason: both are a new pinned row
             # minted out of words no note ever received.
+            #
+            # AND IT IS A PROXY, exact only by a property of two sidecars. `agent_tools`
+            # is `ToolRegistry.allowed_names`, whose last act is `_visible(spec.domains,
+            # scopes)` — so a name can be absent for a second reason: a `domains:` line on
+            # `assert_fact.tool`, or a `hidden` entry, would drop it from a note
+            # conversation's allowlist and SILENTLY disable the elevation on a genuine
+            # correction note. Neither sidecar declares `domains:` and neither is ever
+            # hidden, which is what makes the read exact today. The leak is
+            # one-directional and fail-safe — `_admits` checks `allow` before `extra`, so
+            # an `extra_tools` grant cannot re-admit a name the allowlist dropped, and the
+            # only thing the proxy can do wrong is refuse to pin.
             if attested and self._target.is_correction and words_reached_note:
                 correction = True
                 notes.append(
@@ -1991,10 +2035,18 @@ class NoteToolset:
     writes_graph: bool = True
 
     def handlers(self) -> dict[str, ToolHandler]:
+        async def close_reading(arguments: dict, ctx: ToolContext) -> ToolOutput:
+            # The ONE caller that elevates, and it says so (R3's fourth review, finding
+            # 5). This pass reads the note's own text and nothing else — there is no
+            # owner turn behind it and so no words that could have failed to reach the
+            # note — which is what makes the correction-note elevation sound here and is
+            # exactly the sentence a bare binding on a True default was not making.
+            return await self.writer.close_reading(arguments, ctx, words_reached_note=True)
+
         writes: dict[str, ToolHandler] = (
             {
                 RESOLVE_ENTITY: self.writer.resolve_entity,
-                CLOSE_READING: self.writer.close_reading,
+                CLOSE_READING: close_reading,
             }
             if self.writes_graph
             else {}

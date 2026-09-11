@@ -16,8 +16,11 @@ enforces around it:
   dropped fact.
 """
 
+import asyncio
+import inspect
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -917,3 +920,67 @@ def test_a_candidate_outside_the_conversations_scopes_is_counted_never_named() -
         _GENERAL,
     )
     assert both_hidden == " It could be: 2 in a domain this note cannot see."
+
+
+# --- the elevation's safety gate ---------------------------------------------
+
+
+def test_the_elevation_gate_defaults_to_the_safe_direction() -> None:
+    """R3's fourth review, finding 5. `words_reached_note` turns the correction-note
+    ELEVATION on, and the elevation commits a row active + PINNED at confidence 1.0 —
+    which `sweep_note` spares, no later note supersedes and no correction note reaches.
+
+    It defaulted True, so the unsafe answer was the one a caller who never heard of the
+    split got, and the unattended registry was relying on that default. The repo's
+    convention for exactly this class is the opposite (`agents.narrow_for_third_party_note`:
+    the SAFE answer is the default, precisely so forgetting cannot elevate). Pinned as a
+    property of the SIGNATURES rather than of one call, because what makes the failure
+    unrepresentable is that a new caller who says nothing cannot pin."""
+    for fn in (gw.NoteGraphWriter.close_reading, gw.NoteGraphWriter._close_reading):
+        param = inspect.signature(fn).parameters["words_reached_note"]
+        assert param.default is False, f"{fn.__name__} elevates by default"
+    # And the writer beneath them, which is where the flag actually reaches `decide()`.
+    inner = inspect.signature(gw.NoteGraphWriter._assert_one).parameters["words_reached_note"]
+    assert inner.default is False
+
+
+def test_the_unattended_pass_says_its_words_are_the_note() -> None:
+    """The one caller that legitimately elevates, and it now says so out loud rather than
+    inheriting it. An unattended pass reads the note's own text — there is no owner turn
+    behind it, so there are no words that could have failed to reach the note — which is
+    what keeps the correction-note elevation sound on an `owner_correction` note."""
+    seen: dict[str, Any] = {}
+
+    class _Spy:
+        async def close_reading(self, arguments: dict, ctx: object, **kw: object) -> str:
+            seen.update(kw)
+            return "ok"
+
+        async def resolve_entity(self, arguments: dict, ctx: object) -> str:
+            return "ok"
+
+    handlers = gw.NoteToolset(writer=cast(gw.NoteGraphWriter, _Spy())).handlers()
+
+    async def call() -> None:
+        await handlers[gw.CLOSE_READING]({}, None)
+
+    asyncio.run(call())
+    assert seen == {"words_reached_note": True}
+
+
+def test_a_parameter_correction_cannot_pin_past_the_same_gate() -> None:
+    """R3's fourth review, finding 10. `correction` reaches `decide()`'s pinning branch
+    two ways — as a PARAMETER (`correct_fact`) and by the elevation — and the flag used to
+    govern only the second. A caller passing `correction=True` with `words_reached_note`
+    left at its default was told "NOT as a pinned correction" by the elevation's own
+    else-arm and pinned regardless.
+
+    Unreachable today: the one parameter-caller passes True and is gated in `replytools`
+    by the empty-address arm instead. Pinned because the next caller into this path is
+    R3f/R4's, and a downgrade to the ordinary capped path is what a caller who says
+    nothing should get."""
+    src = inspect.getsource(gw.NoteGraphWriter._assert_one)
+    assert "if correction and not words_reached_note:" in src
+    assert src.index("if correction and not words_reached_note:") < src.index(
+        "attested, signals = True, _ATTESTED"
+    ), "the downgrade must come before the branch that trusts the flag"
