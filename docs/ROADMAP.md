@@ -153,14 +153,14 @@ their eval/promotion harness were **removed** (only Loop 1 / reflexion remains).
 
 **Carried forward from Phases 3–4** (deferred deliberately, picked up here):
 
-- **`extraction_truncated` review card** — the per-note fact cap still fires
-  under `integrate_note`, but `plan_to_extraction` rebuilds the `Extraction`
-  with `dropped_facts=0`, so no card is surfaced. Restore the user-facing card.
-  (`docs/archive/CUTOVER_V1_REMOVAL.md`, `docs/archive/INTEGRATOR_PLAN.md`.)
-- **`integration_run` + `resolution_pin` tables** — the Integrator turn-loop
-  logs to structlog only and re-run convergence rides the arbiter's
-  deterministic signals; persist the run + memoize identity/predicate decisions
-  for auditability and convergence (becomes a workflow `run`). (N9/N10.)
+- **`extraction_truncated` review card** — CLOSED by deletion, not by building it.
+  `integrate_note` is gone (`AGENT_INGEST_REWRITE.md` R4), and the producer that
+  reads notes now reports a clamped reading to the agent in the tool's own result and
+  to the owner in the note's thread — one channel, no card. The card itself survives
+  for the EMR importer, which has no agent to report to.
+- **`integration_run` + `resolution_pin` tables** — CLOSED by deletion. Both shipped
+  and both went with the Integrator in R4 (migration 0200 drops `resolution_pin`);
+  the agent conversation's own run is already in `app.runs` under `kind='agent'`.
 - **N14 owner-ahead ordering** — `backfill_pending_integration` is oldest-first
   by `created_at`; the `provenance` column exists but isn't wired into the sort,
   so untrusted-origin notes aren't yet processed behind owner notes.

@@ -116,7 +116,7 @@ actually calls — no speculative projection methods sitting unconsumed.
 
 Of the other consumers this doc envisions, **value-shape validation** has since
 shipped (tier-1 predicates, `value_shape_enforce`, default ON). A **prompt
-digest** injected into `note.extract` and a **UI render config** remain
+digest** injected into the reading persona's prompt and a **UI render config** remain
 *deferred design*, NOT built. The data they would read (`value_shape`,
 `enum_values`, `alias_seeding_predicates`, `schema_org_ref`, …) is already in
 the YAML and loader-validated, so building them later is a small change. Until
@@ -301,12 +301,13 @@ Identity stays **mention-anchored and resolver-owned** **[decided: ANALYSIS]**.
 This doc adds **no** `identity_keys` / uniqueness-constraint concept — that would
 be a second, weaker source of truth that disagrees with the resolver (two people
 legally named "James Smith" must route to a `merge_proposal`, not silently
-collide). (Under the shipped `integrate_note` path the Integrator *agent* now
-proposes each mention's coreference as `IntegrationIntent.entity_resolutions`,
-which the arbiter validates — existing must be in scope, new mints a provisional,
-ambiguous routes to review — with the deterministic resolver as the fallback for
-any ref the agent left unresolved. The structural machinery below — alias
-seeding, merge proposals, no second key system — is unchanged.)
+collide). (The note conversation resolves each mention through `resolve_entity`,
+which is the ONLY minting path and runs the layered deterministic resolver itself —
+exact alias → relationship hop → embedding → one batched `entity.disambiguate` — and
+names the candidates back when it cannot decide. The `IntegrationIntent` shape that
+carried an LLM Integrator's coreference proposals survives only for the deterministic
+EMR importer. The structural machinery below — alias seeding, merge proposals, no
+second key system — is unchanged.)
 
 The registry contributes exactly one resolution input: **`alias_seeding_predicates`**
 — the predicates whose *asserted* values register as exact aliases on their

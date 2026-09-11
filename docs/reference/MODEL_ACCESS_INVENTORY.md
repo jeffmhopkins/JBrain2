@@ -1,6 +1,11 @@
 # Model-access inventory
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-23 (rows re-verified) · **Known stale since
+> 2026-09-11:** every row quoting `note.extract` or `integrate.note` names a task that no longer
+> exists. R4 of `../plans/AGENT_INGEST_REWRITE.md` deleted both prompts with the producer that
+> called them and removed the two routes from `llm/router.py` and the owner's Settings screen.
+> Those rows are wrong, not merely shifted — do not cite them; the rest of the inventory was not
+> re-walked for this wave, and its line numbers move with any deletion this size.
 
 > **What this is.** A factual inventory of every place in this tree that loads, unloads, admits,
 > warms, evicts, measures, or *demands* a model — across all five things that consume this box's

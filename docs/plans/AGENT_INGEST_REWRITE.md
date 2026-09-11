@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -2705,10 +2705,31 @@ the reply path settles with.
 R5**, the wipe — the first note the new system reads is the first one the owner watches
 being read.
 
-**R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
-and a half-deleted one does not typecheck. `review_items` loses
-`low_confidence_inference` and `new_predicate` (subject to O1). The docs of §9 are
-reconciled in the same PR.
+**R4 — the deletion. ✅** The old-chain half of §4, in one PR, because the chain is a
+chain and a half-deleted one does not typecheck. The docs of §9 are reconciled in the same
+PR.
+
+⟲ **`review_items` loses NEITHER kind, and the sentence above was wrong twice.**
+`low_confidence_inference` stays because O1 is decided (iii) and Tier 2 stays with it;
+`new_predicate` had already stopped being filed before R4 (the two-tier cutover, whose
+open backlog `worker.retire_open_new_predicate_cards` retires at startup) and its
+resolution arms stay for the rows still on the box. **R4 removed no card kind at all** —
+see §4's ⟲ (7) for what that means for the analyzer's open cards, and (4) for why the card
+machinery was already closed by gating rather than deletion.
+
+*What R4 actually deleted, and the two things it had to ADD to avoid deleting more than it
+meant to,* are §4's corrections: the measured `src/` figure is 4,384 lines (12,133 with
+tests), the eval corpora the table omitted are most of the gap, and two capability losses
+the wave would have caused silently — machine-read attachment text reaching no reader at
+all, and the durable predicate-alias collapse losing its last caller — are closed in the
+wave rather than recorded as debt (§4 ⟲ (8)).
+
+**One asset R4 deleted and R5 owes back:** `tests/integration/test_persona_e2e_box.py`, the
+stateful box calibration that fed a year of persona notes through the real chain
+chronologically. It cannot be repointed — the equivalent is an agent loop against the box,
+not a pipeline call — and it belongs beside the `close_reading` eval corpus R5 already owes.
+The note.extract case corpus R4 deleted (`jbrain/evals/cases/*.json`, 12 files) is the
+input that corpus should be cut from; it is recoverable at R4's parent commit.
 
 ⟲ **Two things this paragraph used to hand R4 are already settled and must not be
 re-attempted.** *`assert_fact` narrows to the reply set* — R3 did it
@@ -2760,6 +2781,23 @@ about notes); **(ii)** re-point it in R4 and delete the arbiter entirely; **(iii
 it in a follow-on wave once the note path is proven.
 *Recommendation:* (iii). It keeps this rewrite's blast radius on notes, and (ii)'s payoff
 is line count rather than capability.
+
+**DECIDED (iii), in R4.** Tier 2 is not in this rewrite. `analysis/intent.py`, the rest of
+`analysis/arbiter.py` and `pipeline.commit_intent` / `_resolve_from_intent` /
+`_file_inference_reviews` survive, and the EMR importer is now their only caller — each of
+those modules says so in place. Two consequences R4 had to honour rather than discover
+later: `analysis/trace.py` survives with them (§4 ⟲ (1)), and so does every review-card
+filer and resolution arm, because EMR is a producer with no agent in the room (§4 ⟲ (4)).
+
+*The follow-on wave, named:* **re-point `ingest/emr/importer.py` off `IntegrationIntent`
+onto `commit_facts` + `settle_note` like every other producer, and delete Tier 2 with it
+(~1,200 lines).** It belongs to `EMR_IMPORT_PLAN.md`, not here, and it is blocked on
+nothing: `plan_intent` is close to a pass-through for EMR's input (the ambiguity flags and
+the I5 net never fire), and the one thing the tool surface cannot carry —
+`IntentFact.fhir_status`, which `supersession._lab_status_transition` reads — reaches
+`commit_facts` through `ExtractedFact` already. What it is NOT is a tidy-up: it must keep
+the lab lifecycle transition and the whole-note single settle, both of which have their own
+regression tests.
 
 **O2 — Is `repeats` an RRULE or a phrase? DECIDED by R0: NEITHER, and it is not a model
 field.** 0 parseable RRULEs in 113 values and 0 in 115 on the sharpened retry; the phrase
@@ -3244,12 +3282,14 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 - **`docs/reference/ANALYSIS.md`** — the largest. **Its review-gate half is reconciled by
   R1b**: the Lever B disposition paragraph now says where a `decide()` flag GOES depends on
   the producer, "Review inbox integration" says what the queue is NOT, and the resolution
-  layers end in NO LINK reported to whoever asked rather than in the inbox. What is left
-  for later waves is the extraction half — "Reprocessing" is the Living doc that
-  asserts the retraction behaviour; it stays TRUE under this design (unlike under the
-  teardown, which would have made it false), but its mechanism changes from an extraction
-  by `integrate_note` to a reading by the conversation. Also the review gates, the arbiter
-  holds, the I5 net, `_apply`'s decomposition.
+  layers end in NO LINK reported to whoever asked rather than in the inbox. **Its
+  extraction half is reconciled by R4**, which is the wave that made it false: the
+  two-stage `note.extract` → Integrator chain it described is deleted, "Per-source
+  extraction" is now the note conversation composing body + marked attachment blocks
+  (`converse.note_text`), and "Reprocessing" keeps its behaviour with a new mechanism — a
+  reading by the conversation rather than an extraction by `integrate_note`. The arbiter
+  holds and the I5 net stay documented as the EMR importer's path, which is what they now
+  are (O1, decided (iii)).
 - **`docs/reference/ASSISTANT.md`** — #10 (untrusted-origin content and background jobs),
   the memory model, `owner_prefs`.
 - **`docs/reference/DESIGN.md`** — the largest change after ANALYSIS.md. The inbox's two
@@ -3278,14 +3318,21 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 - **`docs/plans/EMR_IMPORT_PLAN.md`** — O1.
 - **`backend/tests/harness/README.md`** — §5 rewrites its gap table, its "what W5 may not
   delete" section (void) and its "gate this corpus does NOT close" section (closed).
-- **`backend/evals/README.md`** — the `integrate` corpus goes, a `close_reading` corpus
-  arrives. R0's three suites are already documented there.
+- **`backend/evals/README.md`** — **reconciled by R4**, which deleted the `note.extract`
+  corpus and CLI with the prompt they scored, as well as the `integrate` one. What is left
+  there is `shape_probe.py` (R0's three behavioural suites) and the box calibration track;
+  the `close_reading` corpus that replaces both is R5's, and so is the stateful box E2E R4
+  deleted with `test_persona_e2e_box.py`.
 - **`docs/plans/README.md`** — this doc's row, and the three superseded rows.
-- **Migrations to un-seed or amend, not docs:** `0040` (the `note.ingested` →
-  `integrate_note` trigger seed, and the `resolution.changed` trigger whose consolidate
-  pipeline drove retroactive predicate consolidation), `0041`
-  (`reconcile_pending_integration`'s schedule, repointed in R3), `0194` (the
-  `note_converse` seed, which becomes the only note producer).
+- **Migrations to un-seed or amend, not docs:** `0040`'s `note.ingested` →
+  `integrate_note` trigger, its pipeline row and the `app.actions` row from `0035`, **all
+  un-seeded by migration `0200` in R4, which also drops `app.resolution_pin`**. That
+  migration is not bookkeeping and its docstring says so: `resolve_event` fails a WHOLE
+  event when one trigger names an action the in-code registry lacks, and `note.ingested`
+  drives the conversation off the same event — so an unmigrated database on the new image
+  would drop the conversation's enqueue too. Still open: `0040`'s `resolution.changed`
+  trigger, whose consolidate pipeline drove retroactive predicate consolidation, and `0041`
+  (`reconcile_pending_integration`'s schedule, repointed in R3).
 
 ## Related
 

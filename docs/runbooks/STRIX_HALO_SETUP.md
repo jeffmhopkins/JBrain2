@@ -529,9 +529,11 @@ actually changed.
 **Recommended on gpt-oss: a dedicated interactive slot (Settings → LLM → On-box models).** This
 used to read "optional", on the reasoning that small background completions don't evict a large
 prefix. MEASURED 2026-08-21, and they do: on a single-slot gpt-oss the primed slot was found
-holding **2,164 tokens** against a ~36k jerv prefix, because `note.extract`,
+holding **2,164 tokens** against a ~36k jerv prefix, because the note-ingest turn,
 `entity.disambiguate` and `fact.adjudicate` all route to that model and take the one slot in
-turn. It mattered less while `--cache-ram` was on, which restored the evicted conversation from
+turn. (The measurement named `note.extract` as the first of the three; R4 deleted that task, and
+the note conversation's own `agent.turn` takes the slot in its place — same contention, more of
+it, since a conversation is several calls where an extraction was one.) It mattered less while `--cache-ram` was on, which restored the evicted conversation from
 host RAM; with the prompt cache off (above) an evicted prefix is a re-prefill. The 16 GB the
 cache used to take across a co-resident pair is roughly what a second gpt-oss slot costs, so
 this is the same budget spent on the thing that actually helps. Each on-box model has an **interactive

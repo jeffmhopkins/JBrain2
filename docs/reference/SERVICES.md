@@ -209,14 +209,16 @@ lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 ### Knowledge pipeline (`backend/src/jbrain/analysis/`)
 
 `note saved → extraction (+ attachments) → chunking → embeddings + tsvector →
-pending_integration → integrate_note`. `integrate_note` runs
-**extract → Integrator** (graph-aware LLM judgment against existing
-entities/facts) **→ arbiter** (deterministic: commit vs. hold, enforcing the
-domain/subject firewalls) **→ apply** (layered entity resolution: exact alias →
-relationship hop → embedding → one batched `entity.disambiguate`; fact upsert;
-two-tier predicate canonicalization). **Supersession** retires prior functional
-facts (newest-wins); held / ambiguous / low-confidence / truncated items land in
-the **review inbox**. **Hybrid search** (pgvector dense + FTS, RRF-fused,
+pending_integration → note_converse`. `note_converse` opens an agent conversation
+with the note as turn 0 (body + each attachment's machine-read text, marked) and the
+agent RECORDS what the note means through two write tools — `resolve_entity` and
+`close_reading`. Both commit through the deterministic core: layered entity
+resolution (exact alias → relationship hop → embedding → one batched
+`entity.disambiguate`), fact upsert, the durable predicate-alias collapse, the domain
+floor/ratchet. **Supersession** retires prior functional facts (newest-wins) and what
+it did unasked is reported back to the agent; the deterministic EMR importer, which
+has no agent in the room, files held / ambiguous / low-confidence / truncated items
+into the **review inbox** instead. **Hybrid search** (pgvector dense + FTS, RRF-fused,
 always domain-scoped) backs the `search` tool. See `ANALYSIS.md`, `entity.md`.
 
 ### Workflow engine (`backend/src/jbrain/workflow/`)
@@ -225,8 +227,10 @@ The Phase-5 `event → trigger → pipeline → action → run` spine on Postgre
 `events.py` emits, `dispatcher.py` fans to enabled triggers (fail-closed domain
 auth, registry-only actions), `scheduler.py` is the time-driven twin, `runlog.py`
 is the run log, `automations.py` projects it into the Ops "Workflow" screen with
-enable/disable. Seeded actions: `ingest_note`, `embed_note`, `integrate_note`,
-`ocr_attachment`, `consolidate_predicates`, `sync_predicates`. In-code scheduled
+enable/disable. Seeded actions: `ingest_note`, `embed_note`, `ocr_attachment`,
+`consolidate_predicates`, `sync_predicates` (migration 0200 un-seeded
+`integrate_note` with its producer); `note_converse` and the post-Phase-4 actions
+live in the in-code registry only. In-code scheduled
 **sweeps** (schedules seeded, mostly disabled, Ops-fireable): the reconciler
 backfills, `purge_deleted_artifacts`, `geofence_sweep`, the hygiene trio
 (`entity_hygiene` / `reembed_stale` / `tag_consolidate`), `triage_inbox`, and the

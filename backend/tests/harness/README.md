@@ -18,7 +18,7 @@ title, its tags and every fact it says — and `NoteGraphWriter`
 citation anchoring, then ONE `sweep_note` + `settle_tail` over the whole reading.
 What is **not** run is the model itself, the `AgentLoop`,
 `max_steps`, the budgets, the tool sidecars' schemas, and — since W3 — the
-**arbiter**, which the old `integrate_note` path ran and this one does not.
+**arbiter**, which the deleted `integrate_note` path ran and this one does not.
 
 It tests the **deterministic engine given good model output**. It does *not*
 test the prompt, the loop, or the tool schemas — only a live model exercises
@@ -72,7 +72,7 @@ A scenario is one JSON file in `scenarios/`:
       "domain": "general",              // capture domain
       "created_at": "2026-06-10T17:11:00-06:00",  // ISO+offset: reported_at + anchor
       "body": "the note text",
-      "extraction": { /* the full note.extract JSON you'd emit as the model */ },
+      "extraction": { /* the reading, in the note.extract JSON shape — see below */ },
       "tool_calls": { /* OPTIONAL: {entities, reading} tool arguments — see below */ }
     },
     {
@@ -118,11 +118,17 @@ Notes on authoring:
   in that haystack**, so an assertion aimed at a stored VALUE must not be a
   substring of the sentence the scenario itself supplies — it would then pass
   iff the scenario's own words were stored, which distinguishes nothing.
-- `extraction` must satisfy the real schema (`jbrain.analysis.prompt.
-  EXTRACTION_SCHEMA`): every fact needs `predicate, qualifier, kind,
-  statement, value_json, assertion, entity_ref, object_entity_ref, temporal,
-  domain, confidence`; every mention needs `name, kind, surface_text`. A
+- `extraction` keeps the `note.extract` payload shape: every fact needs `predicate,
+  qualifier, kind, statement, value_json, assertion, entity_ref, object_entity_ref,
+  temporal, domain, confidence`; every mention needs `name, kind, surface_text`. A
   `surface_text` should appear in the note `body` so the citation can anchor.
+  **The schema that validated it is gone** — R4 deleted `note.extract`, its prompt and
+  its JSON schema — and what still reads the shape is
+  `extraction.parse_extraction`, which the runner calls directly to lower a step into an
+  `Extraction` (dedup, the fact cap, drop-invalid) before `_tool_calls` synthesises the
+  reading from it. **Re-cutting this format onto the reading's own shape is owed**
+  (`AGENT_INGEST_REWRITE.md` §5 item 2, and §4's ⟲ (3)): it is what finally retires the
+  parse, and it is the reason the five dropped fields below still have to be authored.
 - **Five of those authored fields no longer reach the graph.** The tool surface
   has no field for `assertion`, `kind`, a LONG-TAIL `qualifier`, a structured
   `value_json`, or `confidence`, so `_tool_calls` drops them: `assertion` is
@@ -135,8 +141,8 @@ Notes on authoring:
   R1b): the field is deleted from the write verbs, so the engine's span check is
   the whole weight and a scenario cannot script a self-report. The temporal's
   `resolved_end` still reaches. The dropped fields are still required by the
-  extraction schema and still shape the front-half parse, which is why they stay
-  — but an `expect` block must not assume they survive. See the gap table below.
+  parse and still shape it, which is why they stay — but an `expect` block must not
+  assume they survive. See the gap table below.
 - `tool_calls` overrides the synthesiser for one step, `{"entities": [...],
   "reading": {"title": …, "tags": […], "facts": [...]}}` — the two tools' own
   argument shapes, addressed per tool, with `title`/`tags` defaulting to the
@@ -219,16 +225,18 @@ survivor in its scenarios' `xfail` strings; collected here:
   that importer and the eval runner write through — calls `plan_to_extraction` and
   `compute_signals` itself. `ArbiterPlan` / `PlannedFact` / `plan_intent` /
   `plan_to_extraction` / `compute_signals` therefore have a live non-model producer.
-  What W5a may take is the three helpers only `integrate_note` calls
-  (`recover_dropped_fields`, `derive_kinship_gender`, `dedup_intent_facts`) — and only
-  once `integrate_note` itself can go, which is its own gate below.
+  What R4 took is the three helpers only `integrate_note` called
+  (`recover_dropped_fields`, `derive_kinship_gender`, `dedup_intent_facts`), with
+  `integrate_note` itself. The rest stayed, for the reason above.
 
-### The gate this corpus does NOT close
+### The gate this corpus does NOT close — CLOSED in R4
 
-The six-gap decision is half of W5a's gate; the other half is D13's per-PR rule, *no
-PR removes a producer before its replacement is merged and green*. That half is **not
-met**, and no scenario here can show it, because the harness drives the write tools
-directly and then settles it itself.
+The six-gap decision was half of the deletion's gate; the other half is D13's per-PR
+rule, *no PR removes a producer before its replacement is merged and green*. That half
+is now met — R2 measured the reading carrying the whole corpus and R3 moved the settle
+onto it — and R4 deleted `integrate_note`. No scenario here shows it, because the
+harness drives the write tools directly and then settles it itself; what showed it was
+R2's measurement and the live path R3 built.
 
 Production has caught up with this runner. Since R3 the conversation runs the WHOLE
 settle at the end of a clean pass — `analysis/clarify.settle_conversation`:
@@ -253,8 +261,7 @@ runner also does not call `settle_note` whole, which would run the two review-ca
 that belong to the producers still FILING those cards, and does not stamp `note_analysis`
 — production does, off the reading's title and tags, but no scenario reads the row.
 
-What D13 still owes is the producer, not the mechanism: `integrate_note` is still writing
-this graph beside the conversation, and R4 is what removes it.
+D13 is discharged: `integrate_note` no longer writes this graph. R4 removed it.
 
 ## Known gaps (current xfail guards)
 
@@ -319,11 +326,11 @@ Recorded on the same terms as the table above.
 
 Neither is done; both are open, and neither is covered by anything above.
 
-- **The eval corpora are untouched.** `backend/evals/integrate_runner.py` and
-  `evals/integrate_cases/00_core.json` still score the `integrate.note` prompt
-  and the `IntegrationIntent` this wave replaces, and
-  `tests/unit/test_integrate_eval.py` still runs them in CI. They pass, and they
-  measure a path the note conversation no longer takes.
+- **The eval corpora.** DONE by deletion in R4, not by re-cutting: the `integrate.note`
+  and `note.extract` corpora, their runners and their CI tests scored prompts that no
+  longer exist. A `close_reading` corpus to replace them is R5's, and the deleted
+  `note.extract` cases are the input it should be cut from (recoverable at R4's parent
+  commit).
 - **No scenario runs a real model against a hostile body.**
   `adv_prompt_injection_body_inert` is a tautology by its own description — the
   harness IS the model, so a scripted extraction that declines to comply proves
