@@ -5,7 +5,10 @@
 > exists. R4 of `../plans/AGENT_INGEST_REWRITE.md` deleted both prompts with the producer that
 > called them and removed the two routes from `llm/router.py` and the owner's Settings screen.
 > Those rows are wrong, not merely shifted — do not cite them; the rest of the inventory was not
-> re-walked for this wave, and its line numbers move with any deletion this size.
+> re-walked for this wave, and its line numbers move with any deletion this size. The same wave
+> deleted `scripts/prompt-eval.sh`, `scripts/grok-eval.sh`, `backend/evals/run.py`,
+> `backend/evals/audit.py`, `backend/tests/eval/` and `backend/src/jbrain/evals/runner.py` with
+> their corpora, so §5.4's real-Grok eval rows describe files that no longer exist either.
 
 > **What this is.** A factual inventory of every place in this tree that loads, unloads, admits,
 > warms, evicts, measures, or *demands* a model — across all five things that consume this box's
