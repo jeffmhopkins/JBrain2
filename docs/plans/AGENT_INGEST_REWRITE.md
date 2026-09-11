@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f◻️ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4◻️ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -830,6 +830,17 @@ route (`notes_inbox`, `models/note_conversation.py:504`). Either the notes list 
 carry it or the stream fetches the waiting set once and joins client-side; the wave decides
 on cost, but nothing here is free.
 
+**R3f took the CLIENT-SIDE JOIN** (`notes/useNoteThreads.ts`), and the reason is that
+`/api/review/notes` is already exactly this set — every live conversation with its note id,
+its session id, its persona and its whole open question set, under the same D4 wire rule
+that it carries no verb. Widening `NoteOut` would put a second, differently-shaped copy of
+that state on the route every note in the corpus pages through, for a set that is normally
+empty. What the join costs is one request beside the stream's own poll (20 s, foreground
+only, and only while the stream is on screen); what it buys is that the chip and the notes
+tab cannot disagree about what is waiting. The chip is also a `<button>`, because I2 (ii)
+makes it the way in — and the lifecycle chip yields to it, since a pass that has asked has
+stopped and "analyzing…" is no longer what is happening.
+
 **Where the mock overrules the code, and where it does not:**
 
 - The mock draws a green `analyzed` chip on the settled row. **Rejected — keep the shipped
@@ -868,22 +879,31 @@ tap is the same kind of refinement, and the new mock does not resurrect variant 
 view does not BECOME the thread, the thread is still the agent transcript. **An undecided
 question is not a correction** (§9), and this entry and §9 should be read at the same force.
 
-What the mock genuinely does not draw, and the wave must answer rather than inherit:
-**if the row's tap is spent on the thread, what reaches the note screen?** The note screen is
-not decoration — it is the Analysis tab (the durable view of every held row, which §2 makes
-load-bearing precisely because no card carries it any more), the attachments, the edit path,
-the clarification eraser (`components/Clarifications.tsx:1-20`, the only no-terminal way to
-redact an answer — CLAUDE.md #10), and the re-run button. *Options:* **(i)** the row's tap
-opens the thread and the thread's header opens the note; **(ii)** the row's tap keeps the
-note screen and the CHIP is the tap target that opens the thread. **A third shape — the note
-screen gains a Thread tab — is NOT on this list, and naming it is the point:** it is variant
-A in all but name, and it is the exact thing the scrapped follow-on round was scrapped for
+What the mock genuinely does not draw: **if the row's tap is spent on the thread, what
+reaches the note screen?** The note screen is not decoration — it is the Analysis tab (the
+durable view of every held row, which §2 makes load-bearing precisely because no card
+carries it any more), the attachments, the edit path, the clarification eraser
+(`components/Clarifications.tsx:1-20`, the only no-terminal way to redact an answer —
+CLAUDE.md #10), and the re-run button. *The options were:* **(i)** the row's tap opens the
+thread and the thread's header opens the note; **(ii)** the row's tap keeps the note screen
+and the CHIP is the tap target that opens the thread. **A third shape — the note screen
+gains a Thread tab — was NOT on this list, and naming it was the point:** it is variant A
+in all but name, and it is the exact thing the scrapped follow-on round was scrapped for
 (*"the note screen does not change… no Record tab"*,
-`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Proposing it means re-opening a closed
-decision deliberately, with the reasoning that closed it addressed — not slipping it in as a
-third option. **Not decided here** — it is the first thing the frontend wave owes, and it is
-a GUI question, so it is answered against the mock and the settled gate together, not in
-prose.
+`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`).
+
+**Decided (ii), in R3f** (`components/Stream.tsx`, `AskChip`). Three reasons, in order.
+The owner's own framing is that *"all interactions from a note should be within a
+conversation after opening the top level note"* — **the note stays the front door**, and
+(i) spends the front door on the thread and then has to build a way back. The note screen
+is the only no-terminal route to five things the wave does not replace (the list above),
+so under (i) every one of them would sit behind a header affordance in a surface the owner
+reaches by a different tap than the one he has used since Phase 1. And the chip already
+EXISTS as the row's spare affordance: (ii) needed one `<span>` to become a `<button>`,
+where (i) needed a new header control on the conversation surface four personas share.
+The cost of (ii) is that the thread is reachable only while the chip is up — a settled
+thread is reopened from the Chats panel, where every `note_ingest` session is already
+listed (`useFullBrain.MODE_AGENTS`), which is exactly where D1 put it.
 
 ### I3 — Turn 0: the note, frozen
 
@@ -910,6 +930,14 @@ work happens. **Fix it in the RENDERER, never by unfencing the message** — the
 frame is a security property (D10, and risk 1's only structural mitigation on a third-party
 note) and the model must keep seeing every word of it. The frame is machine-generated and
 its delimiters are matched, so stripping it for display is mechanical.
+
+**Built in R3f** as `agent/noteFrame.ts` + the `.fb-turn0` branch of `Bubble`. The strip
+requires the OPENING header, the same nonce on the close, and the close at the very end of
+the message — so a body that writes its own marker is left visible as note text, which is
+what it is, and the nonce (drawn so it does not occur in the body) is what makes that a
+property rather than a hope. The block is ruled in the note's own domain colour, read off
+the session's `domain_scopes`, which a note conversation sets from its note and no
+owner-facing route can widen (`converse.note_read_scopes`, `AgentSessionRepo.set_scopes`).
 
 ### I4 — The live phase
 
@@ -950,7 +978,13 @@ hole — *"falls back to a generic for an unmapped tool"*, asserting
 `{label: "Using", emphasis: "frobnicate"}`. That test is right about the fallback and should
 stay; it is simply not a coverage claim. So the three verbs are not "already failing" — they
 are covered in one map, exercised-but-unenumerated in the other, and the gate that exists
-never looked at the one the mock caught. Two consequences for the wave:
+never looked at the one the mock caught. **Both consequences are now discharged: R1 landed
+the three labels with `close_reading`'s verb, and R3f landed the gate as (i)** —
+`backend/tests/unit/test_live_phase_labels.py` asserts every verb of §3's three frozensets
+carries a `TOOL_LABELS` entry, which took five more labels (`current_time`, `assert_fact`,
+`correct_fact`, `merge_entities`, `prefs_write`) and is green. `status.test.ts:130-132`'s
+blessing of the generic fallback stays: it is right about the fallback and was never a
+coverage claim. Two consequences for the wave:
 
 1. `close_reading.tool` landing in R1 **will fail `test_tool_step_polish.py`** until
    `toolSummary.ts` gains its `STEP_LABELS` entry and an inline-arg policy (`facts`, or
@@ -1032,6 +1066,26 @@ as a collapsed Worked step** — "Asked you a question" with the question as its
 The owner has to expand a disclosure to read what they are being asked. That is the single
 biggest gap between the shipped thread and the mock, and it is the wave's core deliverable.
 
+**Built in R3f** as `agent/QuestionBlock.tsx` over `agent/asked.ts`, and the inertness is
+pinned rather than asserted: `QuestionBlock.test.tsx` taps two candidates, types in a field,
+and asserts `fetch` was never called; a second test asserts the block contains no `<form>`
+and no control that is not `type="button"`. The component takes `onAnswer` and imports no
+client, so there is nothing for it to post THROUGH. A second tap on the chosen candidate
+unpicks it, because "a stray tap cannot burn a pass" has to be undoable to be true.
+
+⟲ **One correction to the paragraph above, found in the build.** The candidates do NOT
+reach the PWA as `_disambiguate`'s `{id, name, kind, summary}`. `ask_owner.tool` (v2)
+declares `candidates` as a **string** — "the candidates as a short comma-separated list" —
+and the ledger stores what the model wrote (`questions_from_args` `_one_line`s it). So §2
+hands the structured set to the AGENT and the agent retypes it as prose for the owner.
+`asked.parseCandidates` therefore splits on TOP-LEVEL commas only (the detail carries its
+own: *"Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)"* is two
+candidates, not four) and answers with the name, falling back to the whole candidate string
+when two share one — because a name that does not say which candidate was tapped is the
+mispairing this channel exists to refuse. The one-tap answer still works and the context is
+still there; what is lost is the entity ID, which the owner's answer never carried anyway
+(it becomes note text, D6, and the next reading re-resolves it).
+
 ### I7 — The composer: two modes, and the carry strip
 
 **Decided.** The omnibox send is the ONE submit in the app, inside a thread as everywhere
@@ -1060,6 +1114,17 @@ send (`Omnibox.tsx:395-409`).
   sentence in the owner's own corpus (`asktools.py:35-37`). The send carries a **structured
   answer list** — question id → answer — alongside the free text, and the prose the mock
   shows is the RENDERING of the user turn, not its payload.
+
+**Built in R3f.** The draft lives per session on `useFullBrain` (beside the model and
+effort picks, and turn-local like them); `send` narrows it to the OPEN set before filling
+`ChatRequest.answers`, so a draft left over from a set the thread has moved past cannot
+post an id `_pair` would only drop, and it clears the draft the moment the turn starts so
+a second send cannot re-post it. An answers-only send arrives with `message` blank, which
+the shipped guard would have refused — that guard now also admits a non-empty answer list,
+and the optimistic user bubble mirrors `clarify.owner_turn_text` exactly (`asked.ownerTurnText`)
+so the bubble the owner sees is byte-identical to the one a reload replays. The carry strip
+is `.omni-carry`, above the input, where the appointment pill sits. The mode row stays, as
+ruled.
 
 ### I8 — The reply turn
 
@@ -1118,6 +1183,19 @@ note's clarification blocks, which have a built route the app already calls
 renders from the transcript plus a read that exists — no new endpoint, and no answer state
 that lives only in a component.
 
+⟲ **R3f took the answers off the TRANSCRIPT rather than off the clarification route, and
+the paragraph above is why that is the same claim rather than a weaker one.**
+`listClarifications` is keyed by NOTE id, and nothing on the session wire carries one —
+`AgentSession` has no `note_id`, and `notes_inbox` only maps LIVE conversations, which a
+settled thread is not. Reading it would have meant widening the session wire for a
+note-only concern. The reply turn's own text is the same rendering
+`clarify.owner_turn_text` persists, so `asked.sentAnswers` pairs by the exact question
+string the ask recorded — never by position — and a reply the owner TYPED (which carries
+no pairs) leaves the row saying "answered in your reply" rather than putting words in his
+mouth. Both halves of the claim hold: no new endpoint, and nothing living only in a
+component. The clarification list keeps its own job, which is the note screen's durable,
+ERASABLE view — one tap away under I2 (ii).
+
 ### What is genuinely new build
 
 | Piece | Status |
@@ -1125,12 +1203,12 @@ that lives only in a component.
 | The thread itself — transcript, Thought/Worked, steps, entity writes, session open-by-id, the inbox redirect | **Shipped** — the agent surface, plus `AGENT_INGEST_CONVERSATION_PLAN.md` W1–W4 and W3's two-tab inbox |
 | The composer, its dest-row hiding, and a "rides with your next send" pill | **Shipped** (`Omnibox.tsx:361-409`), needs a second instance for answers |
 | Live phase line, timers, `awaiting_owner` wording | **Shipped** (`FullBrainSurface.tsx:454`, `status.ts:101`) |
-| Live-phase labels for the ingest verbs | **New**, ~10 lines + a gate (I4) |
-| Turn-0 renderer that strips the fence | **New**, small (I3) |
-| Stream chip's waiting state + the conversation state reaching the notes list | **New**, and it is a wire change (I1) |
-| Where a stream tap lands, and how the note screen stays reachable | **Undecided** (I2) |
-| The question block — render, candidates, local answer state, answered/frozen state | **New**, the wave's core (I6); its persisted state is already on the wire (I9) |
-| The carry strip + the structured-answer send | **New**, and blocked on the batched ask (I7) |
+| Live-phase labels for the ingest verbs | **Shipped** — the three verbs rode R1; R3f added its gate over §3's tool sets and the five labels that gate demanded (I4) |
+| Turn-0 renderer that strips the fence | **Shipped** — R3f, `agent/noteFrame.ts` (I3) |
+| Stream chip's waiting state + the conversation state reaching the notes list | **Shipped** — R3f, joined client-side off `/api/review/notes` rather than widening `NoteOut` (I1) |
+| Where a stream tap lands, and how the note screen stays reachable | **Decided (ii)** and shipped — the row keeps the note screen, the chip opens the thread (I2) |
+| The question block — render, candidates, local answer state, answered/frozen state | **Shipped** — R3f, `agent/QuestionBlock.tsx` + `agent/asked.ts`; its inertness is pinned by a test that taps and asserts no request (I6/I9) |
+| The carry strip + the structured-answer send | **Shipped** — R3f fills R1c's `ChatRequest.answers` (I7) |
 | Batched `ask_owner` and the multi-pair clarification append | **Shipped** — R1c. No per-question claim was needed: O11 (ii) makes the unanswered question a sentence, not state (I8) |
 
 ---
@@ -2104,30 +2182,62 @@ held row a retirement path it did not have; the decision stays the owner's.
    re-enqueues from. That is what a rebuild of an agent-written graph is, and
    `analysis/converse.py`'s module docstring says so where it used to say the opposite.
 
-**R3f — the note's thread (the PWA wave).** §3b, built. **One wave, not a fold into R1/R1b/R3
-— and that is a decision, not a default.** Its acceptance is an owner walking a
-three-question note end to end in the app, which no backend PR can demonstrate and which
-splitting across three of them would leave unprovable until the last. It is also the only
-wave in this plan whose reviewer is the owner rather than CI.
+**R3f — the note's thread (the PWA wave). DONE.** §3b, built — one wave, not a fold into
+R1/R1b/R3, because its acceptance is an owner walking a three-question note end to end in
+the app, which no backend PR can demonstrate. It is the only wave here whose reviewer is
+the owner rather than CI, and the first one he sees at all.
 
-*Sequenced against the rest:* the question block (I6) and the carry strip (I7) **cannot
-ship before R1c**, because there is no question set to render and no structured answer to
-carry. Everything else in the wave is independent of R2–R4 and could ship the day R1c
-lands: the turn-0 renderer (I3), the live-phase labels (I4 — though those ride R1 with
-their verb, above), the stream chip's waiting state (I1), and the entry-point decision
-(I2). It must land **before R5**, the wipe: the first note the new system sees is the first
-one the owner watches being read, and shipping the wipe onto a thread that still renders
-the prompt fence and hides the question inside a disclosure wastes exactly that.
+*What landed, against §3b's closing table.* **I2 is decided (ii)** and recorded as such
+in its own entry: the row's tap keeps the NOTE SCREEN and the chip is the tap target that
+opens the thread. **I3** — `agent/noteFrame.ts` strips the matched nonce pair for display
+only and `FullBrainSurface` renders turn 0 as a ruled, labelled, frozen block in the
+NOTE'S domain colour (read off the thread session's own read scopes), never by unfencing
+the message. **I6** — `agent/QuestionBlock.tsx` plus `agent/asked.ts`, which parses the
+ask step's recorded `args` into questions, what each blocks, and its candidates; the block
+holds no state of its own and reaches no client, and `QuestionBlock.test.tsx` taps a
+candidate and asserts no request was made. **I7** — the draft lives per session on
+`useFullBrain`, the composer shows `N of 3 answered — rides with your next send`, and one
+send posts one turn filling R1c's `ChatRequest.answers` with `{question_id, answer}` pairs
+beside whatever free text is in the box. **I8/I9** — the block freezes because it is no
+longer the last message, and a reopened thread reads its answers back out of the reply
+turn's own Q/A rendering. **I1** — the waiting set is joined client-side off
+`/api/review/notes` (`notes/useNoteThreads.ts`), which IS that set already, so no note
+route grew a second copy of the conversation's state.
 
-*What it does NOT build, because it is already shipped:* the thread (a note conversation is
-an ordinary agent session), the Thought/Worked foot and its step rows, the live status line,
-the two-tab inbox and its read-only redirect rows (W3), and the composer's dest-row hiding
-and its rides-with-your-next-send pill. §3b's closing table is the split.
+*Two things it did differently from the brief, and why.* **I9's frozen answers come from
+the TRANSCRIPT, not from `listClarifications`.** That route needs a note id and nothing on
+the session wire carries one, so reading it would have meant widening `AgentSession` for a
+note-only concern; the reply turn's own text is the same rendering
+`clarify.owner_turn_text` persists, so the pairing is by the exact question string and a
+free-prose reply says "answered in your reply" rather than inventing words. The
+clarification list stays what it is — the note screen's durable, erasable view, which I2
+(ii) keeps one tap away. **I6's candidates arrive as the model's comma-separated STRING**
+(`ask_owner.tool`'s `candidates` param), not as the `{id, name, kind, summary}` the
+resolver assembles: `asked.parseCandidates` splits it on top-level commas only (the detail
+carries its own) and answers with the name, falling back to the whole candidate when two
+share one.
 
-*Its own gate:* I2 is undecided and it is a GUI question, so it is answered the way this
-repo answers those — against the mock, in a round, before the wave rather than inside it
-(`PROCESS.md` "GUI gate"). Nothing in the wave needs a terminal (CLAUDE.md #10): it is the
-PWA.
+*I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
+`ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:
+`backend/tests/unit/test_live_phase_labels.py` asserts every verb of §3's three frozensets
+has a live-phase label, which is option (i) of I4 and which took five more labels
+(`current_time`, `assert_fact`, `correct_fact`, `merge_entities`, `prefs_write`).
+
+*Where the mock and the shipped code disagreed, the code won,* as §3b says: the
+Thought/Worked foot stays one segmented body, the live phase stays `AgentStatusLine` above
+the composer rather than moving into the scroll, a settled row keeps no chip, and the MODE
+ROW still renders inside a thread. The one place §3b's own ruling was extended rather than
+followed: the question block is **amber**, not the mock's rose, for I1's reason — rose is
+the MEDICAL domain in this palette, so a rose block says the same thing twice on a medical
+note and something false on a financial one.
+
+*It reads no reading off the reply-writer cache,* so risk 1's ⚠ LRU laundering hazard
+stays inert: nothing in this wave touches `replytools`' writer cache or the `reading=None`
+the reply path settles with.
+
+*Nothing in it needs a terminal* (CLAUDE.md #10): it is the PWA. It must land **before
+R5**, the wipe — the first note the new system reads is the first one the owner watches
+being read.
 
 **R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
 and a half-deleted one does not typecheck. `review_items` loses
@@ -2671,16 +2781,18 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
   tabs collapse to one channel with two lists (§2); the notes list stops being a card table
   and becomes a query over `note_conversations.state`; the held-fact treatment on the
   Analysis tab becomes load-bearing, since it is now the durable view of anything the write
-  path could not settle. The write chip and D3's rendering are unchanged. **And §3b's
-  interaction spec lands here in R3f** — the note thread, the question block's inertness,
+  path could not settle. The write chip and D3's rendering are unchanged. **§3b's
+  interaction spec landed here in R3f** — the note thread, the question block's inertness,
   the omnibox as the one submit and the carry strip — with
   `docs/mocks/agent-ingest-thread/note-thread.html` cited as its binding mock, the way every
-  other settled surface in that doc cites one.
+  other settled surface in that doc cites one. The inbox/notes-list half is still R4's.
 - **`docs/mocks/agent-ingest/README.md`** — its settled gate says the thread is reached
   from the conversations surface and the note screen does not change. §3b I2 moves the
   ENTRY POINT to the note itself, which that gate did not decide and its scrapped follow-on
-  round did not either. Reconciled by whichever round answers I2, not before — an
-  undecided question is not a correction.
+  round did not either. **Reconciled by R3f**, which decided I2 (ii): the gate's own ruling
+  is untouched — the thread still LIVES on the conversations surface and the note screen
+  still does not change — and what R3f added is one more door into it, the stream row's
+  chip, beside the notes-tab redirect that gate already allowed.
 - **`docs/reference/ARCHITECTURE.md`**, **`docs/ROADMAP.md`** — Phase 2/3 no longer
   describe a two-stage extract→integrate pipeline.
 - **`docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`** — bucket (d) of §5 is its tier-1

@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-09
+> **Status:** Living · **Last verified:** 2026-09-11
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1467,6 +1467,44 @@ the step that made it. Not a surface of its own and not a note-screen change: th
 - It renders from the **persisted turn** — the writes ride the tool result and are stored
   on the turn — so a conversation reopened days later says exactly what it said live,
   with no second fetch and no second source of truth.
+
+### The note's own thread (build plan `docs/plans/AGENT_INGEST_REWRITE.md` §3b — binding mock: `docs/mocks/agent-ingest-thread/note-thread.html`)
+
+Every interaction about a note happens inside that note's conversation, and that
+conversation is **the ordinary agent transcript** — the violet Thought chip, the steel
+Worked chip, the step rows and their write rungs, the live status line above the composer.
+There is no bespoke ingest view and no second idiom for the same information.
+
+- **The stream row is a redirect.** A note whose thread is parked on an answer carries one
+  chip — `3 questions` — and nothing else: no answer control, no candidate, no verb. It is
+  **amber**, the open-ask register, never rose: rose is the MEDICAL domain and the row
+  already wears its domain as a dot. A settled note wears no chip at all; "analyzed" is the
+  quiet end state, and only the waiting state earns one.
+- **The chip is the door; the row is not.** Tapping the row opens the NOTE SCREEN, which is
+  the only no-terminal route to the Analysis tab, the attachments, the edit path, the answer
+  eraser and the re-run button. Tapping the chip opens the thread. The note screen itself
+  does not change and gains no tab.
+- **Turn 0 is the note, frozen** — ruled in the note's own domain colour, labelled as THE
+  NOTE rather than as something the owner said, and with its injection fence stripped **for
+  display only**. The frame is a security property the model must keep seeing whole; the
+  renderer strips a matched nonce pair and leaves anything unmatched visible.
+- **The question block is INERT.** When a pass ends on a question set, the answer bubble is
+  followed by one row per question carrying what it blocks, the question in plain words, and
+  its answer affordance — tappable candidates where the resolver had them, a field where it
+  did not. **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
+  flips a conversation state, and a chosen candidate unpicks on a second tap. This is a
+  deliberate exception to the inline-component rule below, where `InlineProposal` posts its
+  own outcome: there the enact IS the event, here three answers that each posted would cost
+  three turns and three re-reads of the note.
+- **The omnibox send is the one submit**, inside a thread as everywhere else. A carry strip
+  above the input reads `N of 3 answered — rides with your next send` — the same shape as
+  the calendar handoff's appointment pill — and one send is **one user turn** carrying every
+  answer, structured and paired to its question, beside whatever free text is in the box.
+  The destination row gives way inside a conversation mode; **the mode row does not**, since
+  it is the app's primary navigation and the only way back to capture.
+- **Sent is spent.** The block dims and its controls go inert the moment the send goes; a
+  settled thread reopened later replays the same transcript with the block frozen in its
+  answered state, no live line and no carry strip.
 
 ## Agent tool views (registered components, never bespoke markup)
 
