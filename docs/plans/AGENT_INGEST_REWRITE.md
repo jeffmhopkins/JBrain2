@@ -1657,7 +1657,8 @@ flapping this wave exists to close. It orders by `created_at` then `id` now (att
 posted in one request share a server timestamp). The blind spot: the integration test that
 composed `note_text` wired no RapidOCR, so it only ever built one row
 (`test_ocr_pg.test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_anchor`
-closes it, alongside the per-anchor and page-order arms in `test_note_converse.py`).
+closes it, alongside the per-anchor arms in `test_note_converse.py` — page ORDER is
+stable but not numeric, and is task #28).
 
 *The durable predicate-alias collapse lost its last caller.* `canonicalize_intent` ran in
 `integrate_note` before the arbiter keyed facts, applying the owner's own past

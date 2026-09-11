@@ -570,6 +570,56 @@ async def test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_an
     assert "VLM: Total 41.20" not in text_read
 
 
+async def test_the_extract_cache_comes_back_in_the_same_order_every_read(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """`created_at` is a TIE across one OCR job, not an order. Every row of a scan is
+    written by a single `add_all` in one transaction, and `now()` is the TRANSACTION
+    timestamp in Postgres, so all of them carry the same value — leaving the planner free
+    to hand a document's pages back differently on different reads.
+
+    That is not cosmetic. One shared budget is spent down this list in `converse.note_text`,
+    so an unstable order means a DIFFERENT SUBSET of pages survives the cap on different
+    passes, and this producer's settle retracts what a reading did not restate — the
+    flapping the whole wave exists to close. The anchor+id tiebreak makes the order total.
+
+    Stable is not numeric: "page-10" still sorts before "page-2" (task #28). What this pins
+    is the property the settle needs — the same note reads the same way twice."""
+    _, attachment_id = await make_note_with_image(maker, blobs, domain="general")
+    # ONE transaction, the way `OcrPipeline` writes a scan — which is what makes every row
+    # share `created_at` and puts the tiebreak in charge. Separate transactions would each
+    # get their own timestamp and never reach it, so this test would pass without the fix.
+    # Inserted out of anchor order, so insertion order and sorted order disagree.
+    async with scoped_session(maker, OWNER) as s:
+        for anchor in ("page-3", "page-1", "page-2"):
+            await s.execute(
+                text(
+                    "INSERT INTO app.attachment_extracts"
+                    " (id, attachment_id, kind, tool, text, confidence, source_anchor,"
+                    " domain_code)"
+                    " VALUES (:id, :aid, 'ocr', 'fake:model', :txt, 0.7, :anchor, 'general')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "aid": attachment_id,
+                    "txt": f"text of {anchor}",
+                    "anchor": anchor,
+                },
+            )
+
+    repo = SqlNotesRepo(maker)
+    reads = [
+        [
+            (r.source_anchor, r.text)
+            for r in (await repo.list_extracts(SYSTEM_CTX, attachment_id) or [])
+        ]
+        for _ in range(3)
+    ]
+    assert reads[0] == reads[1] == reads[2]
+    # Total, not insertion: the tiebreak sorts the anchors it was handed.
+    assert [a for a, _ in reads[0]] == ["page-1", "page-2", "page-3"]
+
+
 async def test_ocr_cross_validation_degrades_when_sidecar_down(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:

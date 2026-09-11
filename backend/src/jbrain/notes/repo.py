@@ -434,7 +434,21 @@ class SqlNotesRepo:
                         select(AttachmentExtract)
                         .where(AttachmentExtract.attachment_id == attachment_id)
                         # ocr first, then caption — the expansion's reading order.
-                        .order_by(AttachmentExtract.kind.desc(), AttachmentExtract.created_at)
+                        # `created_at` alone is a TIE, not an order: one OCR job writes
+                        # every page in a single transaction and `now()` is the
+                        # transaction timestamp, so all its rows share it. The anchor
+                        # and id break that tie so the same rows come back in the same
+                        # order every read — which is what lets `converse.note_text`
+                        # promise a byte-identical reading. It is stability, not page
+                        # order: "page 10" still sorts before "page 2" (task #28). The
+                        # tiebreak cannot change WHICH row chunks, because `_prefer_ocr`
+                        # is order-independent.
+                        .order_by(
+                            AttachmentExtract.kind.desc(),
+                            AttachmentExtract.created_at,
+                            AttachmentExtract.source_anchor,
+                            AttachmentExtract.id,
+                        )
                     )
                 )
                 .scalars()

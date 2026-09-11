@@ -381,12 +381,17 @@ async def test_a_dual_engine_ocr_attachment_is_read_once_by_the_engine_that_chun
     assert text == "body\n\n[ocr from receipt.png]\nTotal: 41.20 RAPIDOCR"
 
 
-async def test_a_multi_page_dual_engine_scan_keeps_every_page_exactly_once_in_order() -> None:
+async def test_a_multi_page_dual_engine_scan_keeps_every_page_exactly_once() -> None:
     """The dedup is per SOURCE ANCHOR, never per attachment. A scanned PDF is OCR'd page
     by page and both engines write a row per page, so keeping "one ocr row" would drop
     every page of a medical record but one — the same silent loss the twin read causes,
-    inverted. Each page survives once, in page order, so the cap (when it bites) truncates
-    the tail of the document rather than the middle of it."""
+    inverted. Each page survives exactly once.
+
+    What this does NOT pin is page order. The rows here are hand-ordered and both engines
+    cover every page; neither `list_extracts`' lexical anchor sort nor `image_segments`'
+    winner-order emission on a mixed-coverage scan is exercised. Both are task #28. The
+    property under test is per-anchor survival — that the cap, when it bites, truncates a
+    document's tail rather than swallowing all but one page of it."""
     from jbrain.analysis.converse import note_text
 
     # The order `ocr_pdf_rows` writes them in: every VLM page, then every RapidOCR page.

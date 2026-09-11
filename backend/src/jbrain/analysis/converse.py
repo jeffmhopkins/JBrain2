@@ -233,13 +233,20 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     lab report, a statement, a lease or a `.md` file has no extract row at all: its
     words exist only as chunks. `list_text_layer` is that half. It is consulted per
     attachment and ONLY when the vision cache gave that attachment nothing, so an
-    attachment can never be read into the prompt twice — and since both halves are
-    walked in `note.attachments` order, which the relationship now ORDERS
-    (`models/notes.py`, `created_at` then `id` — several attachments posted in one
-    request share a timestamp), the reading stays byte-identical run to run. That
-    ordering is load-bearing, not tidiness: one shared budget is spent down this list,
-    so an unordered list would truncate a different document on a different pass, and
-    this producer's settle retracts what a reading did not restate.
+    attachment can never be read into the prompt twice — and both halves are walked in
+    an order the DATABASE guarantees, so the reading stays byte-identical run to run:
+    BETWEEN attachments by the relationship (`models/notes.py`, `created_at` then `id` —
+    several attachments posted in one request share a timestamp), and WITHIN one by
+    `list_extracts`' total-order tiebreak and by chunk `seq`. That ordering is
+    load-bearing, not tidiness: one shared budget is spent down this list, so an
+    unordered list would truncate a different document on a different pass, and this
+    producer's settle retracts what a reading did not restate.
+
+    Byte-identical is not the same as correct. A scan's pages arrive in a STABLE order,
+    not necessarily page order: the tiebreak sorts anchors lexically ("page 10" before
+    "page 2"), and `image_segments` emits a mixed-coverage scan in winner order rather
+    than page order. Task #28 carries both — what matters here is that the same note
+    reads the same way twice, which is what stops the settle from flapping.
 
     The vision half is deduped by `image_segments` — the SAME function the chunk builder
     reads it with, deliberately not a second copy of the rule. Dual-engine OCR persists
