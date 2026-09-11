@@ -269,8 +269,10 @@ def _settle_pipeline(request: Request) -> AnalysisPipeline:
     """The pipeline the note conversation's end-of-pass settle runs on, built once per
     process and cached on `app.state`.
 
-    One per process rather than one per turn because `AnalysisPipeline.__init__` builds
-    an `Integrator` and a run log, and the reply turn is on the owner's critical path.
+    One per process rather than one per turn as a matter of shape, not cost: R4 emptied
+    the constructor out (it is five attribute assignments now that the `Integrator` and
+    the run log are gone), so a per-turn build would be cheap — but a pipeline holds no
+    per-turn state, and one that outlives the turn is one fewer thing to get wrong.
     Built here rather than at startup because this is the only route that wants one, and
     an API that never carries a note reply should not pay for it at all.
 
