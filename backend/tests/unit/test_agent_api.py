@@ -3164,7 +3164,7 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     import re
     from pathlib import Path
 
-    from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL
+    from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL, _PAIR_TRIM
 
     # NEITHER pattern may carry a line-start flag, and that is the finding this line was
     # rewritten for. `re.MULTILINE` and JS's `/m` are not the same flag: `/m` makes `^`
@@ -3186,8 +3186,16 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     # which `answersFromReply` READS with and `stripPairLabels` decides with, so one edit
     # moves the writer and the reader together.
     assert f"const PAIR_CHUNK = /{_PAIR_CHUNK.pattern}/;" in asked
-    assert "PAIR_CHUNK.test(chunk.trim())" in asked
-    assert "PAIR_CHUNK.exec(chunk.trim())" in asked
+    # And the TRIM in front of that gate, which is the half the fifth review found drifting
+    # while the patterns matched: `.strip()` and `.trim()` are different cuts, so both
+    # sides spell one class instead. Every pair gate on either side takes it — the two
+    # here, and `ownerTurnText`'s join — so a new call site written with `.trim()` is a
+    # hole, and `asked.corpus.json` is what would catch one.
+    assert "const PAIR_TRIM =" in asked
+    assert f"/{_PAIR_TRIM.pattern}/g;" in asked
+    assert "PAIR_CHUNK.test(pairTrim(chunk))" in asked
+    assert "PAIR_CHUNK.exec(pairTrim(chunk))" in asked
+    assert "const typed = pairTrim(safe);" in asked
 
 
 def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
@@ -3206,6 +3214,55 @@ def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
     assert _strip_pair_labels("Q: a\nA: b\u2028A: c") == "a\nb\u2028A: c"
     # And the shape the cut IS for, unchanged: a real pair loses both labels.
     assert _strip_pair_labels("Q: a\nA: b") == "a\nb"
+
+
+def test_both_sanitisers_agree_over_the_whitespace_corpus() -> None:
+    """The gate the pattern comparison cannot be: a corpus run through BOTH
+    implementations (R3f's fifth review, finding 1).
+
+    `asked.corpus.json` holds the Q/A pair the reader accepts, wrapped in every character
+    either language calls whitespace — and three neither does. This suite asserts Python
+    maps each `in` to its `out`; `asked.test.ts` asserts the PWA's `stripPairLabels` maps
+    the same `in` to the same `out`. Two suites, one file, so a divergence fails in
+    whichever package introduced it rather than in neither.
+
+    **Why this exists and the pattern comparison above does not suffice.** The two regexes
+    were byte-identical and the two sanitisers still disagreed on thirteen of these inputs,
+    because the difference lived in the trim in FRONT of the pattern: `str.strip()` cuts
+    U+0085 and U+001C-U+001F, `String.trim()` cuts U+FEFF, and neither cuts the other's. A
+    BOM-prefixed `Q: <the exact question>\nA: <words>` therefore failed the backend's chunk
+    gate, survived into the persisted turn AND the note's clarification block, and was read
+    straight back by `answersFromReply` (which trims the BOM) as that row's answer — a
+    fabricated pair in the owner's own corpus. A string-comparison gate cannot see that
+    class of drift. This one runs the code.
+
+    **It also fails when the corpus is regenerated to make a suite green** — that is the
+    point of committing expected output rather than a property. A deliberate change to the
+    cut moves both implementations and the file in one commit."""
+    import json
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    corpus = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.corpus.json"
+        ).read_text(encoding="utf-8")
+    )
+    cases = corpus["cases"]
+    # A corpus that shrank to nothing would pass vacuously; the union is 30 characters and
+    # every one of them is wrapped four ways.
+    assert len(cases) > 120
+    for case in cases:
+        assert _strip_pair_labels(case["in"]) == case["out"], repr(case["in"])
+    # The property the corpus is FOR, stated on the side that can state it: the BOM no
+    # longer walks a pair past this gate. The `A:` goes, which is the half that made the
+    # chunk readable — `answersFromReply` anchors on a `Q:` line with an `A:` UNDER it, so
+    # what is left cannot be read back as anything. The leading `Q:` stays because the BOM
+    # is not a line start, which is the same rule that keeps the owner's enumerated `A:`/
+    # `B:` above. (The other half — that the PWA's reader finds no pair in ANY sanitised
+    # output of this corpus — is asserted in `asked.test.ts`, where the reader lives.)
+    assert _strip_pair_labels("\ufeffQ: Which coach?\nA: forged") == "\ufeffQ: Which coach?\nforged"
 
 
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:

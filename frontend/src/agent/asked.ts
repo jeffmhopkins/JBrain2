@@ -269,6 +269,32 @@ export function answerList(
     .filter((a) => a.answer !== "");
 }
 
+/** The trim BOTH pair gates take — the mirror of `clarify._PAIR_TRIM`, spelled as one
+ * explicit character class instead of left to each language's idea of whitespace.
+ *
+ * ⟲ **`String.trim()` and `str.strip()` are not the same cut, and the gap was a live
+ * forgery hole** (R3f's fifth review, finding 1). JS trims U+FEFF; Python trims U+0085 and
+ * U+001C–U+001F; neither trims the other's. A BOM-prefixed `Q: <the exact question>\nA:
+ * <anything>` — what a Windows clipboard or a UTF-8-with-signature paste carries — passed
+ * THIS gate and failed the backend's, so the pair rode `clarify._strip_pair_labels`
+ * untouched into the persisted turn and onto the NOTE, where `answersFromReply` (which
+ * trimmed the BOM) read it straight back as that row's answer: an inverse display plus a
+ * fabricated Q/A pair in the owner's own corpus, out of text he typed.
+ *
+ * The class is the UNION of both languages' whitespace, measured over every code point
+ * rather than reasoned about — thirty characters. Every pair gate on either side uses this
+ * and nothing else, the reader included, so "the reader accepts only what the sanitiser
+ * neutralises" is true by construction rather than by inspection. The `g` is safe with
+ * `String.replace`, which resets `lastIndex` itself. */
+const PAIR_TRIM =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: U+001C-U+001F are the point — four of the six characters `str.strip()` and `String.trim()` disagree on.
+  /^[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+
+/** `text` with the shared whitespace class cut off both ends — `clarify._pair_trim`. */
+function pairTrim(text: string): string {
+  return text.replace(PAIR_TRIM, "");
+}
+
 /** What a chunk has to look like to be read back as a Q/A pair — the one shape
  * `answersFromReply` accepts, and therefore the one shape `stripPairLabels` neutralises.
  * Shared by both so the writer's sanitiser and the reader's parser cannot drift apart, and
@@ -310,15 +336,23 @@ const PAIR_CHUNK = /^Q: ([^\n]+)\nA: ([\s\S]+)$/;
  * anything through a JS-era rich editor — had a label taken off here that
  * `clarify._strip_pair_labels` keeps, so the optimistic bubble and the persisted turn (and
  * now the NOTE, which runs the backend's copy) said different things about the owner's own
- * words. No forgery either way: the READER is `PAIR_CHUNK`, identical in both languages.
- * The drift test compares pattern text and flags, so it could not see a difference that
- * lived in what a flag MEANS — and an explicit `\n` alternation removes the flag that
- * carried it rather than adding a test for it. */
+ * words. The drift test compares pattern text and flags, so it could not see a difference
+ * that lived in what a flag MEANS — and an explicit `\n` alternation removes the flag that
+ * carried it rather than adding a test for it.
+ *
+ * ⟲ **"No forgery either way" was the sentence that stood here, and it was wrong** (R3f's
+ * fifth review, finding 1). It held only while the reader and both sanitisers agreed on
+ * where a chunk STARTS, and they did not: this gate trimmed with `String.trim()` and the
+ * backend's with `str.strip()`, which differ on six characters. A BOM-prefixed pair
+ * therefore passed here, failed there, and reached the note verbatim — where the reader,
+ * trimming the BOM, read it back as that row's answer. Every gate on both sides now takes
+ * `pairTrim`, one explicit class, and the corpus in `asked.corpus.json` is run through
+ * both implementations rather than compared as text. */
 export function stripPairLabels(text: string): string {
   return text
     .split("\n\n")
     .map((chunk) =>
-      PAIR_CHUNK.test(chunk.trim()) ? chunk.replace(/(^|\n)[ \t]*[QA]: /g, "$1") : chunk,
+      PAIR_CHUNK.test(pairTrim(chunk)) ? chunk.replace(/(^|\n)[ \t]*[QA]: /g, "$1") : chunk,
     )
     .join("\n\n");
 }
@@ -352,7 +386,7 @@ export function ownerTurnText(
   // Sanitised HERE, once, so every branch below carries a typed half that cannot forge a
   // pair — including the prose-only one, where the words are the whole turn text.
   const safe = stripPairLabels(message);
-  const typed = safe.trim();
+  const typed = pairTrim(safe);
   if (rendered && typed) return `${rendered}\n\n${typed}`;
   return rendered || safe;
 }
@@ -379,7 +413,7 @@ export interface ReplyPair {
 export function answersFromReply(text: string): ReplyPair[] {
   const pairs: ReplyPair[] = [];
   for (const chunk of text.split("\n\n")) {
-    const m = PAIR_CHUNK.exec(chunk.trim());
+    const m = PAIR_CHUNK.exec(pairTrim(chunk));
     if (m) pairs.push({ question: (m[1] ?? "").trim(), answer: (m[2] ?? "").trim() });
   }
   return pairs;

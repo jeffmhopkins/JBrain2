@@ -12,6 +12,7 @@ import {
   sentOutcomes,
   stripPairLabels,
 } from "./asked";
+import corpus from "./asked.corpus.json";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 
 function assistant(over: Partial<TranscriptMessage> = {}): TranscriptMessage {
@@ -280,6 +281,37 @@ describe("stripPairLabels", () => {
     expect(stripPairLabels("Two options:\nA: the cardiologist\nB: the paediatrician")).toBe(
       "Two options:\nA: the cardiologist\nB: the paediatrician",
     );
+  });
+
+  // R3f's fifth review, finding 1 — the gate the two above could not be. The regexes were
+  // byte-identical and the sanitisers still disagreed, because the difference lived in the
+  // TRIM in front of the pattern: `String.trim()` cuts U+FEFF, `str.strip()` cuts U+0085
+  // and U+001C-U+001F, neither cuts the other's. So a BOM-prefixed pair passed this gate,
+  // failed the backend's, and reached the persisted turn and the NOTE verbatim — where
+  // `answersFromReply`, trimming the BOM, read it straight back as that row's answer.
+  //
+  // `asked.corpus.json` is one file both suites run: this asserts the PWA maps every `in`
+  // to its `out`, `test_both_sanitisers_agree_over_the_whitespace_corpus` asserts Python
+  // maps the same `in` to the same `out`. Running both is the whole point — a gate that
+  // compares pattern text cannot see a difference that lives around the pattern.
+  describe("the shared whitespace corpus", () => {
+    it("maps every case exactly as the backend does", () => {
+      // Vacuous if the corpus were emptied: the union is 30 characters, wrapped four ways.
+      expect(corpus.cases.length).toBeGreaterThan(120);
+      for (const c of corpus.cases) {
+        expect({ in: c.in, out: stripPairLabels(c.in) }).toEqual({ in: c.in, out: c.out });
+      }
+    });
+
+    // The property the corpus is FOR, on the side that owns the reader: whatever either
+    // sanitiser leaves behind, nothing in it reads back as a pair. That is what makes the
+    // sanitiser's definition ("neutralise what the reader accepts") true by measurement
+    // rather than by inspection of two regexes.
+    it("leaves nothing the reader will take as an answer", () => {
+      for (const c of corpus.cases) {
+        expect({ in: c.in, pairs: answersFromReply(c.out) }).toEqual({ in: c.in, pairs: [] });
+      }
+    });
   });
 });
 

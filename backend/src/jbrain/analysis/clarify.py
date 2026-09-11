@@ -546,7 +546,9 @@ async def record_owner_reply(
     # disagreed on every prose-only reply. The note is the sole source of truth (D6): a
     # `Q:`/`A:` pair the owner typed becomes note text that the next reading takes as the
     # channel's own labelling of someone else's words. One call closes both.
-    prose = _strip_pair_labels(message).strip()
+    # `_pair_trim` rather than `.strip()`, so "the owner said nothing" is the same
+    # judgement on both sides of the wire (the PWA gates its send on `String.trim()`).
+    prose = _pair_trim(_strip_pair_labels(message))
     structured = capped_answers(answers)
     # What the cap CUT rides along to every `OwnerReply` below: those answers reach no
     # note, and `owner_words_reached_note` is the reader that has to know (finding 4).
@@ -914,11 +916,46 @@ _PAIR_LABEL = re.compile(r"(^|\n)[ \t]*[QA]: ")
 # `test_both_renderers_strip_the_labels_with_the_same_pattern`).
 _PAIR_CHUNK = re.compile(r"^Q: ([^\n]+)\nA: ([\s\S]+)$")
 
+# The trim BOTH chunk gates take, spelled as one explicit character class instead of left
+# to each language's idea of whitespace.
+#
+# ⟲ **`str.strip()` and `String.trim()` are not the same cut, and the gap was a live
+# forgery hole** (R3f's fifth review, finding 1). Python strips U+0085 and U+001C–U+001F;
+# JS strips U+FEFF; neither strips the other's. So `\ufeffQ: <the exact question>\nA:
+# <anything>` — a BOM, which is what a Windows clipboard or a UTF-8-with-signature paste
+# carries — failed THIS gate and passed the PWA's: the pair rode the sanitiser untouched
+# into the persisted turn and, since the third review's finding 3a, into the clarification
+# block on the NOTE. `asked.answersFromReply` trims the BOM, so the frozen block then read
+# that chunk back as the row's answer: an inverse display plus a fabricated Q/A pair in the
+# owner's own corpus, out of text he typed. The other five characters diverged the other
+# way — a label cut here that the bubble kept — which is only a disagreement, not a forgery.
+#
+# The class is the UNION of both languages' whitespace (measured over every code point,
+# not reasoned about: thirty characters, the five above plus the twenty-four both agree
+# on), so neither side's characters can walk a label past the other's gate. Spelled
+# identically in both files and pinned as text by the drift gate — and, because a
+# same-text pattern can still MEAN different things, pinned behaviourally by a corpus both
+# suites run (`asked.corpus.json`).
+_PAIR_TRIM_CLASS = (
+    r"[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a"
+    r"\u2028\u2029\u202f\u205f\u3000\ufeff]"
+)
+_PAIR_TRIM = re.compile(rf"^{_PAIR_TRIM_CLASS}+|{_PAIR_TRIM_CLASS}+$")
+
+
+def _pair_trim(text: str) -> str:
+    """`text` with the shared whitespace class cut off both ends — the mirror of
+    `asked.pairTrim`, and the only trim any pair gate on either side may use."""
+    return _PAIR_TRIM.sub("", text)
+
 
 def _strip_pair_labels(text: str) -> str:
     """The typed half with the channel's own `Q:`/`A:` labels taken off the chunks that
-    would otherwise read back as a pair. Mirrored byte for byte by `asked.stripPairLabels`
-    in the PWA, so the optimistic bubble and the persisted turn stay identical.
+    would otherwise read back as a pair. Mirrored by `asked.stripPairLabels` in the PWA —
+    pattern, flags, chunk gate AND trim — so the optimistic bubble and the persisted turn
+    stay identical. Twice now "mirrored" has been a claim rather than a property, so the
+    mirror is pinned three ways: the pattern text, the absent flags, and a corpus both
+    languages' suites actually run (see below).
 
     R3f's second review, finding 3(b). "The typed half carries no labels" was an
     assumption about what the owner types, not a property of anything: the composer is a
@@ -957,6 +994,15 @@ def _strip_pair_labels(text: str) -> str:
     note. Both now spell the line start `(^|\\n)`, which is the same text in both languages
     and needs no flag.
 
+    ⟲ **And then the patterns matched while the GATES did not, which was a forgery rather
+    than a disagreement** (R3f's fifth review, finding 1). The regexes were byte-identical;
+    the trims in front of them were `str.strip()` here and `String.trim()` there, and those
+    are different cuts — so a BOM-prefixed pair was left whole HERE and read back as an
+    answer THERE. `_pair_trim` is the one cut both sides take now (see `_PAIR_TRIM`), and
+    `asked.corpus.json` is a corpus of whitespace-affixed pairs that both suites run
+    through their own implementation, because a gate comparing pattern TEXT cannot see a
+    difference that lives in the code around the pattern.
+
     **The coupling this accepts, stated so it cannot be broken quietly:** the sanitiser is
     now defined by what the reader accepts rather than by being maximally destructive. The
     reader is `asked.answersFromReply`, it is display-only (no backend path parses pairs
@@ -964,7 +1010,7 @@ def _strip_pair_labels(text: str) -> str:
     one drift test. Loosening that reader without loosening this is what would re-open the
     hole."""
     return "\n\n".join(
-        _PAIR_LABEL.sub(r"\1", chunk) if _PAIR_CHUNK.match(chunk.strip()) else chunk
+        _PAIR_LABEL.sub(r"\1", chunk) if _PAIR_CHUNK.match(_pair_trim(chunk)) else chunk
         for chunk in text.split("\n\n")
     )
 
@@ -1043,7 +1089,9 @@ def owner_turn_text(
         if pairs
         else "\n\n".join(a for _, a in capped_answers(answers))
     )
-    typed = safe.strip()
+    # The shared trim, not `.strip()`: this branch decides how the two halves are
+    # joined, and the PWA's mirror decides it with `pairTrim` (finding 1).
+    typed = _pair_trim(safe)
     if rendered and typed:
         return f"{rendered}\n\n{typed}"
     return rendered or safe
