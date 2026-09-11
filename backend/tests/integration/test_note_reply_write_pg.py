@@ -42,6 +42,11 @@ from typing import Any
 import pytest
 from sqlalchemy import select, text
 
+from jbrain.agent.agents import (
+    NOTE_INGEST_ON_REPLY_TOOLS,
+    agent_for_owner_reply,
+    narrow_for_unprompted_reply,
+)
 from jbrain.agent.contracts import DoneEvent, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.proposals import ProposalRepo
@@ -124,16 +129,39 @@ async def _conversation(maker, owner: SessionContext, note_id: str) -> str:  # n
     return session.id
 
 
-def _ctx(owner: SessionContext, session_id: str, scopes: tuple[str, ...] = ("general",)):
+def _ctx(
+    owner: SessionContext,
+    session_id: str,
+    scopes: tuple[str, ...] = ("general",),
+    *,
+    answering: bool = True,
+):
     """The turn as `/chat` builds it for a note thread: the owner NARROWED to the
-    conversation's own scopes (constraint 2's `(note_domain, 'general')`)."""
+    conversation's own scopes (constraint 2's `(note_domain, 'general')`), carrying this
+    turn's effective allowlist.
+
+    `agent_tools` is not decoration here. `AgentLoop` fills it with the names this turn
+    may actually dispatch, and `correct_fact`'s empty-address arm reads it: `answering
+    =False` is the turn `narrow_for_unprompted_reply` took `assert_fact` off, i.e. one
+    whose words never reached the note."""
     narrowed = SessionContext(
         principal_id=owner.principal_id,
         principal_kind="owner",
         owner_scoped=True,
         domain_scopes=scopes,
     )
-    return ToolContext(session=narrowed, scopes=scopes, agent_session_id=session_id)
+    allowed = NOTE_INGEST_ON_REPLY_TOOLS
+    if not answering:
+        allowed = (
+            narrow_for_unprompted_reply(agent_for_owner_reply(NOTE_CONVERSE_AGENT)).tools
+            or frozenset()
+        )
+    return ToolContext(
+        session=narrowed,
+        scopes=scopes,
+        agent_session_id=session_id,
+        agent_tools=frozenset(allowed),
+    )
 
 
 async def _entity(maker, name: str, *, domain: str = "general", kind: str = "Person") -> str:  # noqa: F811
@@ -382,6 +410,10 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
     """Jeff saying "no, it's X" when nothing is on file is still Jeff saying X. Recording
     it unpinned would leave the next note free to overwrite the thing he just told us.
 
+    ON AN ANSWERING TURN, which is what `_ctx` builds: his words became the note's text,
+    so the pinned row he just caused has source text behind it. The same arm on a turn
+    where they did not is refused — the test below — and that is the whole difference.
+
     This is also the reason `assert_fact` has to be REACHABLE on a reply turn: pinning is
     right for something Jeff disputed and wrong for everything else, and a reply turn
     holding only this verb pins every fact it learns (see the on-reply tests below).
@@ -414,6 +446,101 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
     live = [f for f in await _rows(maker, jeff, "homeLocation") if f.status == "active"]
     assert len(live) == 1
     assert live[0].pinned is True
+
+
+@pytest.mark.asyncio
+async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_correction(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """R3's second review, finding 3 — and it is a surgical refusal, not a subtraction.
+
+    `narrow_for_unprompted_reply` takes `assert_fact` off a turn whose words never
+    reached the note, and left `correct_fact` whole. That was worse than the loss it
+    prevented: at an EMPTY address `decide()`'s correction branch commits active +
+    PINNED, so the agent was told it could not record a new fact while holding a verb
+    that records one permanently — a row citing text that exists nowhere, which no
+    re-reading of the note can falsify and no correction note can reach.
+
+    But simply dropping the verb would take away the owner's own repair path: correcting
+    a fact that IS on file is exactly what a settled thread is for, and pinning is the
+    designed mechanism there. So the ARM is refused and the verb is not, and both halves
+    are asserted on one turn:
+
+    - the empty address writes NOTHING and says what to do instead;
+    - the live head is still corrected, superseded and pinned, on the same turn.
+
+    The condition is the turn's own allowlist (`ToolContext.agent_tools`), which is where
+    the narrowing already lands — not a re-read of the thread state, which is `running`
+    by the time a tool dispatches."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    dana = await _entity(maker, "Dana of the unprompted reply")
+    on_file = await _fact(
+        maker,
+        dana,
+        note_id,
+        predicate="homeLocation",
+        statement="Dana lives at 118 Pine Ave.",
+        value="118 Pine Ave",
+    )
+    unprompted = _ctx(owner_ctx, session_id, answering=False)
+    handlers = _handlers(maker)
+
+    # (a) the empty address: a NEW pinned fact out of words the note never received.
+    refused = str(
+        await handlers[CORRECT_FACT](
+            {
+                "entity": "Dana of the unprompted reply",
+                "predicate": "jobTitle",
+                "qualifier": "",
+                "object": "CTO",
+                "statement": "Dana is the CTO.",
+                "when": "",
+            },
+            unprompted,
+        )
+    )
+    assert "holds nothing on file" in refused
+    assert "not recorded" in refused
+    assert not await _rows(maker, dana, "jobTitle"), "the refused arm wrote a row anyway"
+
+    # (b) the same turn, correcting what IS on file: untouched, and still pinned.
+    ok = await handlers[CORRECT_FACT](
+        {
+            "entity": "Dana of the unprompted reply",
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "object": "412 Oak St",
+            "statement": "Dana lives at 412 Oak St.",
+            "when": "",
+        },
+        unprompted,
+    )
+    assert "412 Oak St" in str(ok), str(ok)
+    live = [f for f in await _rows(maker, dana, "homeLocation") if f.status == "active"]
+    assert len(live) == 1
+    assert live[0].pinned is True
+    assert str(live[0].id) != on_file, "the head on file was refreshed rather than superseded"
+
+    # (c) and on an ANSWERING turn the empty address still records, because there his
+    # words are the note's text. Same handler, same address, one flag apart.
+    answered = await handlers[CORRECT_FACT](
+        {
+            "entity": "Dana of the unprompted reply",
+            "predicate": "jobTitle",
+            "qualifier": "",
+            "object": "CTO",
+            "statement": "Dana is the CTO.",
+            "when": "",
+        },
+        _ctx(owner_ctx, session_id),
+    )
+    assert "holds nothing on file" not in str(answered)
+    minted = [f for f in await _rows(maker, dana, "jobTitle") if f.status == "active"]
+    assert len(minted) == 1 and minted[0].pinned is True
 
 
 @pytest.mark.asyncio
