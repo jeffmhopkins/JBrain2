@@ -1214,10 +1214,12 @@ function Bubble({
   // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
   // down and the persisted `subagent_synthesis` roster card (rendered with the answer's
   // views) takes its place — so a finished fan looks the same live as it does on reopen.
-  // The block sits under the turn's own foot, inside its bubble: it belongs to THIS
-  // answer, and it is the thing the owner acts on. Only this render path carries it —
-  // the image-split and analysis-card paths belong to tools a note conversation's tool
-  // set does not hold, so a question can never land in one.
+  // The block sits directly under the turn it belongs to, but OUTSIDE the bubble and
+  // across the full column — the same placement the sub-agent fan takes, and for the same
+  // reason: a bubble is capped at 80% of a phone's width, which is not enough room for
+  // three questions and their candidates. Only this render path carries it; the
+  // image-split and analysis-card paths belong to tools a note conversation's tool set
+  // does not hold, so a question can never land in one.
   const questionBlock = ask ? (
     <QuestionBlock
       questions={ask.questions}
@@ -1234,8 +1236,8 @@ function Bubble({
         {interruptedSpawn && <InterruptedSubagentsNote />}
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
-        {questionBlock}
       </div>
+      {questionBlock}
       {standaloneFanBlocks}
     </>
   );

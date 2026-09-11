@@ -1491,7 +1491,8 @@ There is no bespoke ingest view and no second idiom for the same information.
 - **The question block is INERT.** When a pass ends on a question set, the answer bubble is
   followed by one row per question carrying what it blocks, the question in plain words, and
   its answer affordance — tappable candidates where the resolver had them, a field where it
-  did not. **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
+  did not. It renders under the turn and across the FULL column, not inside the 80%-wide
+  bubble — the same placement the sub-agent fan takes, for the same reason. **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
   flips a conversation state, and a chosen candidate unpicks on a second tap. This is a
   deliberate exception to the inline-component rule below, where `InlineProposal` posts its
   own outcome: there the enact IS the event, here three answers that each posted would cost

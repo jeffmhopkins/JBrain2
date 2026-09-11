@@ -27360,7 +27360,10 @@ button.wf-sigpill {
 .fb-shell .fb-qblock {
   display: flex;
   flex-direction: column;
-  margin-top: 10px;
+  /* Full column, not the bubble's 80%: three questions and their candidates do not fit
+     in a phone-width bubble. It sits under the turn it belongs to, like the fan. */
+  align-self: stretch;
+  margin-top: -2px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
   border-radius: var(--r-card);
