@@ -50,6 +50,11 @@ class ExtractInfo:
     created_at: datetime
     # Per-word transcript breakdown (transcript rows only; None otherwise).
     words: list[dict[str, Any]] | None = None
+    # Where in the media this reading came from ("page 3", or the filename for a
+    # whole-file read). Dual-engine OCR writes TWO `ocr` rows per anchor — the VLM's
+    # reading and RapidOCR's — so a reader that must show each anchor once needs this
+    # to tell a second engine's twin from the next page (`ingest.extract.image_segments`).
+    source_anchor: str | None = None
 
 
 @dataclass(frozen=True)

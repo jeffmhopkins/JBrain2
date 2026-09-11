@@ -516,6 +516,60 @@ async def test_ocr_cross_validation_stores_both_rows(
     assert rapid_row["text"] == "RAPID: Total 41.20"
 
 
+async def test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_anchor(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """Dual-engine OCR persists two `kind="ocr"` rows per anchor, and RapidOCR is stock
+    stack — up on the owner's box on every deploy. Turn 0 must still carry ONE reading of
+    the receipt: two would spend the machine-read-text budget twice on a scanned PDF (the
+    input the cap exists for, truncating it at half the pages), and would put the VLM's
+    wording in the prompt while the chunk table holds RapidOCR's, so a fact quoting it
+    could never have its span attested.
+
+    The unit tests pin the rule; this pins that the rule meets the real cache, which is
+    where it went wrong — `test_the_note_the_agent_reads_carries_marked_ocr_text` wires no
+    RapidOCR, so it only ever builds one row."""
+    from jbrain.analysis.converse import note_text
+
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="filed the receipt", filename="receipt.png", domain="general"
+    )
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+    await OcrPipeline(
+        maker,
+        blobs,
+        vision_router(FakeLlmClient(["VLM: Total 41.20", "A grocery receipt."])),
+        SqlSettingsStore(maker),
+        _StoreRapid(OcrResult(text="RAPID: Total 41.20", mean_score=0.95)),  # type: ignore[arg-type]
+    ).ocr_attachment({"attachment_id": attachment_id})
+    await pipeline.ingest_note({"note_id": note_id})
+
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(SYSTEM_CTX, note_id)
+    assert note is not None
+    text_read = await note_text(repo, SYSTEM_CTX, note)
+
+    assert len([r for r in await extract_rows(maker, attachment_id) if r["kind"] == "ocr"]) == 2
+    assert text_read.count("[ocr from receipt.png]") == 1
+    # The block is the engine the chunk builder chunked: turn 0 and the chunk table agree,
+    # so every word the reader can quote is a word a span check can find.
+    async with scoped_session(maker, OWNER) as s:
+        chunked = (
+            await s.execute(
+                text(
+                    "SELECT text FROM app.chunks WHERE attachment_id = :aid"
+                    " AND source_kind = 'ocr' ORDER BY seq"
+                ),
+                {"aid": attachment_id},
+            )
+        ).scalars()
+        ocr_chunks = list(chunked)
+    assert ocr_chunks == ["RAPID: Total 41.20"]
+    assert "[ocr from receipt.png]\nRAPID: Total 41.20" in text_read
+    assert "VLM: Total 41.20" not in text_read
+
+
 async def test_ocr_cross_validation_degrades_when_sidecar_down(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:

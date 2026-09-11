@@ -873,13 +873,18 @@ blocks ride INSIDE the untrusted note fence with the body: text read off a photo
 the most attacker-controllable input on the box.
 
 That text comes from two stores, and both are read. `attachment_extracts` holds what a
-MODEL read (OCR, caption, transcript). A PDF carrying its own text layer is never OCR'd
-and a `text/*` file was never an OCR candidate, so a lab report, a statement, a lease or
-a `.md` file has no extract row at all and its words exist only as chunks —
-`notes.list_text_layer` is that half (`text-layer` chunks, in `seq` order, so a PDF reads
-page by page). It is consulted per attachment and only where the vision cache gave that
-attachment nothing, which is what keeps an attachment from being read into the prompt
-twice; both halves spend the one shared budget below, in attachment order.
+MODEL read (OCR, caption, transcript), deduped by the SAME `ingest.extract.image_segments`
+the chunk builder reads it with — dual-engine OCR persists two `ocr` rows per source
+anchor, and one engine's transcription per anchor reaches the prompt, so a scanned PDF
+still contributes every page and turn 0 never quotes words that exist in no chunk. A PDF
+carrying its own text layer is never OCR'd and a `text/*` file was never an OCR candidate,
+so a lab report, a statement, a lease or a `.md` file has no extract row at all and its
+words exist only as chunks — `notes.list_text_layer` is that half (`text-layer` chunks, in
+`seq` order, so a PDF reads page by page). It is consulted per attachment and only where
+the vision cache gave that attachment nothing, which is what keeps an attachment from
+being read into the prompt twice; both halves spend the one shared budget below, in
+attachment order — an order the `Note.attachments` relationship pins (`created_at`, then
+`id`), because which document the cap truncates must not vary run to run.
 
 **Capped, and the cut says so** (`MAX_ATTACHMENT_TEXT_CHARS`). The deleted path bounded
 this by FANNING OUT; a conversation has one turn 0 and cannot, so the bound is a cap. Its

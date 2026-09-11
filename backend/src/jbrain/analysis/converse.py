@@ -110,7 +110,7 @@ from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
-from jbrain.ingest.extract import KIND_TEXT_LAYER
+from jbrain.ingest.extract import KIND_TEXT_LAYER, CachedExtract, Segment, image_segments
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
@@ -234,8 +234,21 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     words exist only as chunks. `list_text_layer` is that half. It is consulted per
     attachment and ONLY when the vision cache gave that attachment nothing, so an
     attachment can never be read into the prompt twice — and since both halves are
-    walked in `note.attachments` order, inside the same loop, the reading stays
-    byte-identical run to run.
+    walked in `note.attachments` order, which the relationship now ORDERS
+    (`models/notes.py`, `created_at` then `id` — several attachments posted in one
+    request share a timestamp), the reading stays byte-identical run to run. That
+    ordering is load-bearing, not tidiness: one shared budget is spent down this list,
+    so an unordered list would truncate a different document on a different pass, and
+    this producer's settle retracts what a reading did not restate.
+
+    The vision half is deduped by `image_segments` — the SAME function the chunk builder
+    reads it with, deliberately not a second copy of the rule. Dual-engine OCR persists
+    two `kind="ocr"` rows per anchor (the VLM's reading and RapidOCR's), and `_prefer_ocr`
+    keeps one per SOURCE ANCHOR, so a scanned PDF still contributes every page while a
+    page contributes one engine's transcription. Per anchor matters twice over: keeping
+    one row per attachment would drop every page but one, and picking a different engine
+    here than the chunk builder picked would put words in turn 0 that exist in no chunk —
+    a fact quoting them could then never be attested.
 
     Both halves spend the SAME budget, in that order, and both count the same cuts, so
     the notice below stays true whichever half overflows it.
@@ -256,23 +269,36 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     model never saw is a reading that omits facts, and this producer's sweep acts on
     omission. The notice sits inside the fence with the blocks it describes, which means
     a hostile attachment can forge one — it says only "there was more", which buys an
-    attacker nothing the fence does not already deny."""
+    attacker nothing the fence does not already deny. It says "cut short or omitted
+    entirely" because once the budget is spent the NEXT attachment contributes no block
+    at all: the reader would otherwise take the fence for a complete list of what the
+    note carries, short a few words each."""
     blocks: list[str] = [note.body]
     budget = MAX_ATTACHMENT_TEXT_CHARS
     cut = 0
     text_layer: dict[str, str] | None = None
     for att in note.attachments:
-        reads = [
-            (ex.kind, stripped, ex.confidence)
+        reads = image_segments(
+            CachedExtract(
+                kind=ex.kind,
+                text=ex.text,
+                anchor=ex.source_anchor,
+                # `image_segments` reads the cache with a required confidence; the only
+                # thing downstream reads it for is `prompt_block`'s low-confidence
+                # transcript qualifier, and that treats a missing confidence and a full
+                # one alike, so widening None to 1.0 is not observable in the text.
+                confidence=1.0 if ex.confidence is None else ex.confidence,
+                tool=ex.tool,
+            )
             for ex in await notes.list_extracts(ctx, att.id) or []
-            if (stripped := ex.text.strip())
-        ]
+        )
         if not reads:
             if text_layer is None:
                 text_layer = await notes.list_text_layer(ctx, note.id)
             layer = text_layer.get(att.id, "").strip()
-            reads = [(KIND_TEXT_LAYER, layer, None)] if layer else []
-        for kind, body, confidence in reads:
+            reads = [Segment(kind=KIND_TEXT_LAYER, text=layer)] if layer else []
+        for read in reads:
+            body = read.text
             if len(body) > budget:
                 body, cut = body[:budget], cut + 1
             budget -= len(body)
@@ -281,16 +307,17 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
             blocks.append(
                 prompt_block(
                     body,
-                    source_kind=kind,
+                    source_kind=read.kind,
                     filename=att.filename,
-                    confidence=confidence,
+                    confidence=read.confidence,
                 )
             )
     if cut:
         blocks.append(
-            f"[{cut} attachment text(s) above were cut short: a note carries at most"
-            f" {MAX_ATTACHMENT_TEXT_CHARS} characters of machine-read text. What is not"
-            " shown here was not read — do not record anything about it.]"
+            f"[{cut} attachment text(s) were cut short or omitted entirely: a note"
+            f" carries at most {MAX_ATTACHMENT_TEXT_CHARS} characters of machine-read"
+            " text. What is not shown here was not read — do not record anything about"
+            " it.]"
         )
     return "\n\n".join(blocks)
 

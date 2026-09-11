@@ -1639,6 +1639,26 @@ reading-side tests covered OCR and transcript and nothing covered a text layer
 (`test_ingest_pg.test_the_note_the_agent_reads_carries_a_text_layer_attachment`, plus the
 double-count and budget arms in `test_note_converse.py`).
 
+*And a dual-engine OCR attachment reached the reader TWICE.* Dual-engine OCR persists two
+`kind="ocr"` rows per source anchor — the VLM's reading and RapidOCR's, RapidOCR being
+stock stack and up on the box on every deploy. The chunk builder keeps one per anchor
+(`ingest.extract.image_segments` / `_prefer_ocr`); the compose took every non-blank row,
+so a receipt landed in turn 0 twice and a scanned PDF spent the cap at roughly half its
+pages — silent loss on exactly the input the cap exists for — while the VLM's wording sat
+in the prompt but in NO chunk, so a fact quoting it could never have its span attested.
+**Closed here** by reading the cache THROUGH `image_segments`, not by a second copy of the
+preference rule beside it: one implementation, so the block the reader sees is the row the
+chunk table holds by construction. Per source anchor, never per attachment — one row per
+attachment would drop every page of a scan but one. `ExtractInfo` gained `source_anchor` to
+carry it. The same fix pinned the order the budget is spent in: `Note.attachments` had no
+`order_by` at all, so WHICH document the cap truncated was whatever the planner returned,
+and two passes that cut differently would retract and re-assert across passes — the
+flapping this wave exists to close. It orders by `created_at` then `id` now (attachments
+posted in one request share a server timestamp). The blind spot: the integration test that
+composed `note_text` wired no RapidOCR, so it only ever built one row
+(`test_ocr_pg.test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_anchor`
+closes it, alongside the per-anchor and page-order arms in `test_note_converse.py`).
+
 *The durable predicate-alias collapse lost its last caller.* `canonicalize_intent` ran in
 `integrate_note` before the arbiter keyed facts, applying the owner's own past
 map-to-existing decisions (`app.predicate_aliases`). The conversation normalizes through

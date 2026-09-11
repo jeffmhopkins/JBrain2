@@ -448,6 +448,7 @@ class SqlNotesRepo:
                     confidence=r.confidence,
                     created_at=r.created_at,
                     words=r.words,
+                    source_anchor=r.source_anchor,
                 )
                 for r in rows
             ]
@@ -471,6 +472,10 @@ class SqlNotesRepo:
         by_attachment: dict[str, list[str]] = {}
         for attachment_id, chunk_text in rows:
             by_attachment.setdefault(str(attachment_id), []).append(chunk_text)
-        # Blank-line joined: chunking split these on paragraph boundaries, and the
-        # reader gets paragraphs back rather than one run-on wall.
+        # Blank-line joined, which is the document's own paragraph breaks for most
+        # splits but NOT all of them: `paragraph_chunks` also cuts any span longer than
+        # `PARAGRAPH_MAX` (at a sentence break where there is one), so a dense page —
+        # most lab-report and statement pages — reads back with a blank line it never
+        # had. Cosmetic rather than lossy: the seam lands between sentences and no words
+        # move, and the alternative, rejoining on nothing, welds real paragraphs together.
         return {att: "\n\n".join(texts) for att, texts in by_attachment.items()}

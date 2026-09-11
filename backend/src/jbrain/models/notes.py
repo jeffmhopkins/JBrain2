@@ -102,7 +102,16 @@ class Note(Base):
         select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
     )
 
-    attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
+    # Ordered like `clarifications` below, and for the same reason: every reader of the
+    # note walks this list in order. `analysis.converse.note_text` spends ONE shared
+    # machine-read-text budget down it, so without an ORDER BY which document gets
+    # truncated is whatever the planner returns — and a producer whose settle retracts
+    # what a reading did not restate would then retract and re-assert across passes.
+    # `created_at` alone does not settle it: several attachments posted in one request
+    # share a server timestamp, so `id` breaks the tie into a total order.
+    attachments: Mapped[list["Attachment"]] = relationship(
+        lazy="selectin", order_by="(Attachment.created_at, Attachment.id)"
+    )
     # Owner answers appended to this note (D6, migration 0193). Eager like
     # attachments because EVERY reader of the note's text needs them: the body a
     # reader sees is `compose_body(note.body, note.clarifications)`, never the raw
