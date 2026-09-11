@@ -547,10 +547,17 @@ async def test_a_note_that_moved_under_the_thread_keeps_its_stale_sha(
 async def test_the_answer_is_recorded_once_even_if_the_owner_says_it_twice(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The state transition is the latch, and it happens BEFORE the append: the second
-    message finds a thread that is no longer waiting, so the note cannot collect the same
-    answer twice as source text — which, with no per-block eraser in the PWA, is the one
-    of the two failure directions the owner could not undo."""
+    """The CLAIM is the latch, and it happens BEFORE the append: the second message finds
+    a thread that is no longer waiting, so the note cannot collect the same answer twice
+    as source text — which, with no per-block eraser in the PWA, is the one of the two
+    failure directions the owner could not undo.
+
+    Sequential, and that word is load-bearing. This case passed against the old
+    `set_state` latch too, which is exactly why it could not see that the latch was not
+    one: `_ALLOWED_SOURCES["running"]` admits `running`, so a CONCURRENT second reply
+    updated a second time and filed a second block.
+    `test_two_overlapping_replies_and_exactly_one_claims_the_set` is the test that
+    discriminates, and `claim_waiting`'s conditional UPDATE is what makes both pass."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
     await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))

@@ -2096,7 +2096,7 @@ questions went unanswered and that they are still open, so the reply turn can re
 proceed without them, or drop them; **(iii)** allow it and say nothing, which re-runs the
 pass against a note that grew and lets the agent rediscover what is missing — cheapest to
 build and the most likely to ask the same question twice. **(ii) is taken, and the sentence
-handed to the agent is the deliverable, not the toggle** (`clarify.unanswered_notice`,
+handed to the agent is the deliverable, not the toggle** (`clarify.owner_reply_notice`,
 composed onto the reply turn's model-facing message). What must NOT happen under any option
 is a partial send that silently closes the unanswered questions: that loses the owner's own
 words about what their note means, which is the one thing this whole channel exists to

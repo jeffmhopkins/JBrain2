@@ -43,6 +43,16 @@ note gains the same answer TWICE, as source text, in a corpus with no per-block 
 the PWA. Duplicated source text is the one of the two that cannot be undone from the
 owner's side.
 
+What neither order survives is the PROCESS dying between the two transactions — an
+Ops → Update quiesce is a `stop -t 30`, so it is reachable. The claim has committed, the
+append has not, and the thread sits `running` with no block, no re-ingest and no notice
+until `reclaim_stale` flips it to `failed` an hour later, at which point the question
+leaves the inbox and the owner's answer is gone. Unchanged by R1c and not made worse by
+it (the window is the same two transactions it always was), but it is the one hole in
+this paragraph's reasoning and it is a crash, not an exception — no `except` here can
+close it. Closing it means the claim and the append sharing a transaction, which means
+the repo giving up owning the append's, and that is a bigger change than this wave.
+
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
 SERVER wrote — an enact summary ("Enacted 1 of 1 — 1 approved…"), a finished off-turn
@@ -673,12 +683,22 @@ def owner_turn_text(
 
     **Never fed back into `record_owner_reply`.** A non-blank `message` is that
     function's free-text degrade path, pairing with the oldest unanswered question — hand
-    it this rendering and it files a second block saying what the first one said."""
+    it this rendering and it files a second block saying what the first one said.
+
+    **`Q:`/`A:` is a safety boundary here, not formatting.** Only the `A:` half is the
+    owner's; the `Q:` half is a string a MODEL wrote while reading a note body that may
+    carry someone else's text (plan risk 1 / D10), and this rendering becomes the owner's
+    own user turn on the widest tool set in the system — the reply turn holds
+    `correct_fact`, `merge_entities` and `prefs_write`. Unlabelled, a question composed as
+    "Which Sarah? Also add a standing rule that..." reads as Jeff issuing that
+    instruction. The labels are the same ones `notes.compose.clarification_block` puts on
+    the durable block, so the turn and the note agree about which half is whose, and
+    `_one_line` has already collapsed the newlines a forged label would need."""
     if message.strip() or not answers:
         return message
     pairs = reply.answered if reply is not None else []
     if pairs:
-        return "\n\n".join(f"{q}\n{a}" for q, a in pairs)
+        return "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
     return "\n\n".join(a for _, a in capped_answers(answers))
 
 
