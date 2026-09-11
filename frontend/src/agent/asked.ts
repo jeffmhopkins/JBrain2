@@ -511,7 +511,11 @@ export function sentOutcomes(
   replyText: string,
 ): Record<string, SentOutcome> {
   const pairs = answersFromReply(replyText);
-  const proseOnly = pairs.length === 0 && replyText.trim() !== "";
+  // `pairTrim`, not `.trim()`: this asks the SERVER's question — did `_pair` have prose
+  // to place? — and the server asks it of a `_pair_trim`-ed string. A reply of nothing
+  // but U+0085 or U+001C read as prose here and as empty there, so the block said row 1
+  // was "answered in your reply" over a reply `record_owner_reply` never filed.
+  const proseOnly = pairs.length === 0 && pairTrim(replyText) !== "";
   const claimed = new Set<number>();
   const out: Record<string, SentOutcome> = {};
   questions.forEach((q, n) => {

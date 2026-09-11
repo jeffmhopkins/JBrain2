@@ -353,6 +353,31 @@ describe("stripPairLabels", () => {
   });
 });
 
+describe("sentOutcomes", () => {
+  const qs = [{ id: "q1", question: "Which coach?", blocks: "", candidates: [] }];
+
+  // The same trim divergence as finding 1, one gate over: "did the reply carry prose the
+  // backend could place?" is `_pair`'s question, and the backend asks it of a `_pair_trim`-ed
+  // string. `String.trim()` leaves U+0085 and U+001C-U+001F standing, so a reply of nothing
+  // but one of those read as prose here and as empty there — the block reporting row 1
+  // "answered in your reply" over a reply `record_owner_reply` returned `None` for and
+  // filed nowhere, on a thread still waiting for that very answer.
+  it("counts no row as answered by a reply that is whitespace in EITHER language", () => {
+    for (const cp of [0x09, 0x20, 0x0a, 0x85, 0x1c, 0x1f, 0xa0, 0x2028, 0xfeff]) {
+      expect({ cp, out: sentOutcomes(qs, String.fromCharCode(cp)) }).toEqual({
+        cp,
+        out: { q1: { kind: "open" } },
+      });
+    }
+  });
+
+  // And a reply that really is prose still answers the oldest open question, which is
+  // `_pair`'s degrade rule.
+  it("still reads real prose as answering the oldest open question", () => {
+    expect(sentOutcomes(qs, "the cardiologist")).toEqual({ q1: { kind: "in-reply" } });
+  });
+});
+
 describe("the draft and what rides the send", () => {
   const qs = askedQuestions(ARGS);
 

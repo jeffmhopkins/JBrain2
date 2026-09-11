@@ -1192,6 +1192,11 @@ reply").**
    that BOTH suites run through their own implementation — the pre-fix PWA gate fails 16 of
    them. A test that compares pattern text cannot see drift that lives around the pattern;
    this one runs the code.
+   The same round's sweep for other trims found one more (I9): `sentOutcomes` asked "was
+   this reply prose alone?" with `String.trim()`, while `_pair` asks it of a trimmed string
+   the backend cut its own way — so a reply of nothing but U+0085 read as prose here and as
+   empty there, and the block reported the oldest row "answered in your reply" over a reply
+   `record_owner_reply` filed nowhere. It takes `pairTrim` too.
 2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
    `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
    set left open — was written when the composer was the only affordance, so typed words
