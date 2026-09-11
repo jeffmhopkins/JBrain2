@@ -731,6 +731,17 @@ duplicated tokens. A reply turn that has re-read the whole note ends with `close
 too, and that is what sweeps; a reply turn that only added a fact does not sweep, which is
 correct.
 
+⟲ **And only on a reply turn that is ANSWERING** (R3's review). The set above is the
+turn's ceiling; `agents.narrow_for_unprompted_reply` takes `assert_fact` back off when the
+thread is not `waiting_on_owner`, applied from `clarify.reply_profile_for_session` beside
+W4's two narrowings — and before `record_owner_reply` claims the thread, which is the last
+moment the two cases are distinguishable. The reason is the founding premise: only an
+ANSWER becomes text on the note (D6 pairs a question with an answer, and
+`note_clarifications.question` is NOT NULL), so a fact asserted on any other reply turn
+cites text that exists nowhere, and the note's next unattended pass — one producer, one
+claim — retracts it. Refusing the write and telling the owner is the conservative
+direction; giving unprompted text a home on the note is **O16**, open.
+
 `NOTE_GRAPH_WRITE_TOOLS` (`agents.py:586`, the set W4's two narrowings subtract) becomes
 `{resolve_entity, close_reading, assert_fact, correct_fact, merge_entities}`. Both new
 names join `toolregistry.NEVER_DEFAULT` in the same edit, or the curator's `allow=None`
@@ -1908,6 +1919,18 @@ heading. A re-extraction that genuinely drops every tag no longer clears them �
 §2 names, and `analyzed_at` is deliberately NOT coalesced (it is the watermark the re-run
 button polls).
 
+**And §2's rule 1 is obeyed as written**, which the wave first shipped without: the stamp
+runs OUTSIDE the `state != SETTLED` gate, on every pass ending that read the note,
+`waiting_on_owner` included. Withheld from that ending it was withheld from the ORDINARY
+question-asking pass — the persona is told to record what it can settle and ask LAST — so
+the note it read sat `analyzed=false` until the owner got round to answering, and forever
+if he never did: amber chip, "nothing here yet" Analysis tab, re-run button polling an
+`analyzed_at` that never moves (CLAUDE.md #10). Post-R4 that is the first-run experience of
+every note that asks a question. The destructive halves stay behind the gate and
+`settle_conversation`'s return value stays the SWEEP's answer, so no caller's question
+changes. Beside it, the new 409 on that route no longer tells the owner "analysis already
+queued or running" about a thread that is waiting on HIM.
+
 **The `integration_state` flip and its readers, in this PR.** The flip is
 `NoteConverseRunner._mark_integrated`, on every pass ending, best-effort. The readers were
 FOUR, and the count is right only if `has_active_analysis` is counted as one reader rather
@@ -1997,10 +2020,18 @@ repo answers those — against the mock, in a round, before the wave rather than
 PWA.
 
 **R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
-and a half-deleted one does not typecheck. `assert_fact` narrows to the reply set.
-`review_items` loses `low_confidence_inference` and `new_predicate` (subject to O1), and
-`review_items.settle_owner` loses its last reader. The docs of §9 are reconciled in the
-same PR.
+and a half-deleted one does not typecheck. `review_items` loses
+`low_confidence_inference` and `new_predicate` (subject to O1). The docs of §9 are
+reconciled in the same PR.
+
+⟲ **Two things this paragraph used to hand R4 are already settled and must not be
+re-attempted.** *`assert_fact` narrows to the reply set* — R3 did it
+(`agents.NOTE_INGEST_UNATTENDED_TOOLS`), and R3's review narrowed it once more: it is off
+a reply turn whose thread is not `waiting_on_owner`, because only an ANSWER becomes text
+on the note and a fact with no source text is one the next pass retracts (O16 below).
+*`review_items.settle_owner` loses its last reader* — refuted by the ⟲ in R3's paragraph
+forty lines above: `settle_note`'s two card halves stay, `emr_parse` outlives this plan
+and still calls them, so the column keeps a live reader after the deletion.
 
 **R5 — the wipe, and the two things W3 owed.** The migration of §6. Beside it, the two
 items W3 was briefed to build and did not, now unblocked because their targets exist: a
@@ -2321,7 +2352,12 @@ discharge in its `accept_a`/`accept_b` arm (`analysis/repo.py`): pin the winner 
 **RETRACT the loser**. R1b removed that card for conversation writes and put nothing in its
 place, and nothing else reaches these rows:
 
-- the conversation has no sweep (S3, dropped on a proof);
+- ⟲ *the conversation has no sweep (S3, dropped on a proof)* — no longer true, and it
+  changes nothing here. R3 gave this producer a sweep over the pass's closing READING, and
+  `sweep_note` has always released `pending_review` rows as well as `active` ones — but
+  O15's case is two facts that DISAGREE while the note still says both, so a reading that
+  re-states both leaves both in `touched` and releases neither. The held row's lack of a
+  retirement path is unchanged;
 - the analyzer's sweep cannot touch them — a release is `array_remove(settle_owners,
   'analyzer')` and a row claimed `['conversation']` never empties, so it is never
   retracted;
@@ -2391,6 +2427,55 @@ says so explicitly instead of `ok … already recorded` (the `STILL_HELD` line).
 the dead end honest and visible instead of silent — which is why this is a recorded
 residual rather than a live loss — but no row is retired by any of it.
 
+**O16 — unprompted owner text has no home on the note, so a fact learned from it cannot
+be recorded at all.** *Opened by R3's review, which closed the loss and left the shape
+open. Not decided and deliberately not built: it needs a data shape `note_clarifications`
+does not have, and inventing one is the owner's call.*
+
+**The state.** D6 pairs a QUESTION with an ANSWER: `note_clarifications.question` is
+`NOT NULL` and non-blank in Postgres, and `record_owner_reply` appends a block only on a
+thread that is `waiting_on_owner`. So a reply into a thread that is settled — the owner
+reopening a finished note thread to say "actually Kaiya's dentist is Dr. Ashcote" — reaches
+no note anywhere. Until R3's review the agent could still `assert_fact` on that turn, and
+the row it committed was `active`, unpinned, claimed `['conversation']`, and cited no text
+the note has ever contained: the note's next unattended pass closed a complete reading of a
+note that does not say it and the sweep retracted it, silently. The review's fix removes
+the verb on that turn (`agents.narrow_for_unprompted_reply`) and has the agent say it
+cannot record it there. **That is a refusal, not a feature** — the owner's sentence is
+still lost, he is just told so.
+
+**Why the two obvious shortcuts are worse, not cheaper.**
+
+- *Pin the row instead.* It survives the sweep and becomes UNFALSIFIABLE: no re-reading can
+  correct it, because the reading is of a note that does not say it, and no correction note
+  can reach it either. Permanent and wrong beats temporary and wrong.
+- *Synthesize a question so a block can be filed.* That writes a sentence into the owner's
+  own note that nobody asked — the exact failure `_pair`'s third rule and
+  `owner_authored=False` both exist to prevent, and the one this corpus cannot undo from
+  the owner's side.
+
+**The options, each a real shape.**
+
+1. **A second block kind: an unprompted note addendum.** `question` becomes nullable with a
+   `kind` discriminator, `compose_body` renders an addendum without a Q/A pair, and the
+   reply path appends one whenever the owner's turn carries prose the thread did not ask
+   for. The write then has source text, the re-ingest chunks it, and everything downstream
+   — the sweep, the citations, the corpus rebuild — works unchanged. Cost: a migration, a
+   second rendering, and the judgement of WHICH unprompted turns become note text, which is
+   the question "is this chat or is this a fact about the note" asked on every turn.
+2. **Turn it into a capture.** The reply mints a NEW note (the `file_correction` shape,
+   which already does exactly this for the wiki) linked to the original by `source_ref`.
+   No migration and no new rendering; the owner's words become a first-class source. Cost:
+   a note he did not ask to create, appearing in his own stream, for a sentence he typed
+   into a thread.
+3. **Leave it refused, and say so well.** What ships today. Cost: the owner has to know
+   that a finished thread is not a place to record things, which is exactly the kind of
+   invisible rule this system is supposed to not have.
+
+Nothing here is urgent — the loss it replaces is already closed — and none of it is a
+small edit. `docs/plans/AGENT_INGEST_REWRITE.md` R3's review is where the refusal is
+argued; `analysis/settle_owner.py` is where the claim-sharing that makes it necessary is.
+
 **O10 and O12 are the same shape, and should be decided together. O11 no longer belongs
 with them.** All three were about a thread that WAITS: nothing tells the owner it is
 waiting (O10), nothing survives their leaving mid-answer (O12), and nothing said what
@@ -2401,10 +2486,10 @@ thread owe the OWNER between the ask and the answer?* — and the batch, which m
 longer and the half-filled block possible, is still what makes it worth one round.
 
 **Carried risks, and R1 sharpened one of them.** Intake is third-party text driving an
-owner-identity session (risk 1) — the third frozenset still narrows it, and after R1
-`close_reading` sits BESIDE `assert_fact` in that set rather than replacing it (the swap
-this line described is R4's; the set is `UNATTENDED - {ask_owner}` and holds both until
-then). "A stranger's words may cause a fact and nothing else" survives, but only because
+owner-identity session (risk 1) — the third frozenset still narrows it, and ⟲ R3 has
+since made `close_reading` the ONLY fact verb in it: the set is `UNATTENDED - {ask_owner}`
+and the unattended set now holds one, so a stranger's body reaches `resolve_entity` and
+`close_reading` and nothing else. "A stranger's words may cause a fact and nothing else" survives, but only because
 R1 put two clauses in to keep it true, and neither was in this plan before review:
 
 - **no recurrence token on a third-party note.** A recurrence is what
