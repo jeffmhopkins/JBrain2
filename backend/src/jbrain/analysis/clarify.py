@@ -106,18 +106,18 @@ log = structlog.get_logger()
 MAX_ANSWERS = 10
 
 
+NOTE_CONVERSE_AGENT = "note_ingest"
+"""The persona whose sessions are note conversations. Spelled here rather than imported
+from `analysis/converse.py`, which drags the whole turn runner (and through it the LLM
+stack) into the API process for the sake of one string."""
+
+
 def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     """The structured half of one reply, capped and cleaned.
 
     Named rather than inlined so the cap is a thing a test can exercise: a truncation
     that only Pydantic's acceptance is pinned against is a truncation nothing pins."""
     return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
-
-
-NOTE_CONVERSE_AGENT = "note_ingest"
-"""The persona whose sessions are note conversations. Spelled here rather than imported
-from `analysis/converse.py`, which drags the whole turn runner (and through it the LLM
-stack) into the API process for the sake of one string."""
 
 
 # --- the tool-call ledger, shared by BOTH turn paths -------------------------
@@ -371,7 +371,11 @@ class OwnerReply:
 
     clarified: bool
     """Whether the answers actually landed on the note as blocks. False means the note is
-    unchanged and no re-ingest was queued: the answer is in the thread and nowhere else."""
+    unchanged and no re-ingest was queued — and R1c is why that now needs a consumer: on
+    an answers-only send the owner's words are `ChatRequest.answers`, which is turn-local,
+    so the block was their only durable home. `owner_reply_notice` reads this field and
+    tells the agent plainly that Jeff DID answer and that his answers did not reach the
+    note; `owner_turn_text` puts the words themselves on the turn."""
 
     note_moved: bool
     """Whether the note had changed under the conversation since it was read."""
@@ -512,9 +516,13 @@ async def record_owner_reply(
         return None
 
     if not open_set:
-        # `ask_owner` writes the ledger row and the state in one transaction, so this is
-        # unreachable short of a hand-edited row — but a block with a fabricated question
-        # would be a sentence the owner never said, appended to their own note.
+        # `ask_owner` writes the ledger row and the state in one transaction, and `_fit`
+        # is what keeps that row readable however the model filled it, so this is
+        # unreachable short of a hand-edited row. `open_questions` does NOT reach past an
+        # empty newest ask to avoid landing here: the older set is one the owner already
+        # answered, so pairing this reply against it would file his words under a closed
+        # question — the same wrong sentence in his own note as a fabricated one, with a
+        # real question on it.
         log.warning("note_reply.no_recorded_question", session_id=session_id, note_id=note_id)
         return OwnerReply(answered=[], unanswered=[], clarified=False, note_moved=False)
 

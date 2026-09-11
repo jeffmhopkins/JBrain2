@@ -580,9 +580,8 @@ class NoteConversationRepo:
 
         `committed` counts distinct fact ids over the thread's SUCCEEDED calls, so it
         counts what the write path reported rather than a number invented from the
-        arguments the model sent — over
-        BOTH turn paths, since W4c/1 put the owner's reply on the same ledger
-        (`ConversationWrites`' docstring).
+        arguments the model sent — over BOTH turn paths, since W4c/1 put the owner's
+        reply on the same ledger (`ConversationWrites`' docstring).
 
         A soft-deleted note is excluded: `notes/repo.py`'s delete is soft, so its
         conversation survives, and a redirect into a deleted note's thread is a dead end.

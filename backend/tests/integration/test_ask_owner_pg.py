@@ -992,14 +992,18 @@ async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
 async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The soundness claim the batch rests on, pinned.
+    """The soundness claim the batch rests on, in its SEQUENTIAL case.
 
-    The `waiting_on_owner -> running` flip stays the latch, unchanged, because it
-    serializes at the level a reply arrives at: ONE reply consumes the whole set. A
-    second reply — the owner sending again while the first turn runs — finds `running`
-    and files nothing, so two replies can never answer the same question twice. That is
-    what makes O11 (ii) cost no per-question claim: what a partial send leaves behind is
-    not durable state, it is a sentence handed to the agent."""
+    The claim stays at the level a reply arrives at: ONE reply consumes the whole set, so
+    a second reply finds the thread `running` and files nothing, and two replies can never
+    answer the same question twice. That is what makes O11 (ii) cost no per-question
+    claim — what a partial send leaves behind is not durable state, it is a sentence
+    handed to the agent.
+
+    This test awaits the first reply before sending the second, so it pins that and only
+    that. The case the property actually has to survive is two replies IN FLIGHT, and it
+    took a conditional UPDATE rather than the state flip to hold there — see
+    `test_two_overlapping_replies_and_exactly_one_claims_the_set`."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
