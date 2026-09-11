@@ -23,10 +23,10 @@ changed, not the model — the faithful agent lives in `_tool_calls` and nowhere
 else, one function rather than seventy-five files.
 
 **What the tool surface cannot say**, and so what a scenario can no longer
-script. Each was a real gap in `assert_fact` and `close_reading` inherits every one
-of them — the reading adds `title` and `tags` and takes the same seven flat scalars
-per fact, so nothing below is loosened by the re-cut; three are closed and three are
-accepted, and every one of the six was decided by putting the candidate schema
+script. Each was a real gap in `assert_fact`, and `close_reading` inherits every
+one of them: the reading adds `title` and `tags` and takes the same seven flat
+scalars per fact, so the re-cut loosens nothing below. Three are closed and three
+are accepted, and every one of the six was decided by putting the candidate schema
 in front of the live model (`backend/evals/shape_probe.py`, the `fields` suite)
 rather than by argument. The finding that decided them, and the one worth
 carrying: **`required` buys presence, not membership.** gpt-oss fills every
@@ -43,9 +43,9 @@ two fields that ship are one of each shape or a plain ISO date.
     182 lb in March", "vehicle no longer owned"), and an over-applied qualifier
     splits an identity key so nothing supersedes again — strictly worse than the
     collision it was meant to fix. What EXISTS is the dotted path
-    `registry.decompose_predicate` already reads and the reading's own `predicate`
-    description teaches:
-    `name.nickname.friends` stores as name.nickname + friends, bounded to the
+    `registry.decompose_predicate` already reads and the reading's own
+    `predicate` description teaches: `name.nickname.friends` stores as
+    name.nickname + friends, bounded to the
     five registry predicates declaring a `qualifier_vocab`. `_predicate` below
     folds there and nowhere else. A long-tail qualifier is still dropped, so two
     scalar facts under one undeclared predicate still collide. And the channel is
@@ -220,8 +220,9 @@ def _pipeline(maker: async_sessionmaker[AsyncSession]) -> _LedgerPipeline:
 def _object_literal(fact: ExtractedFact) -> str:
     """The `object` string for a fact with no object entity.
 
-    `assert_fact` takes a plain string and rebuilds `{value}` / `{value, unit}`
-    from it, so a structured `value_json` has to be rendered down. A `value`/
+    `object` is a plain string on both write tools and the handler rebuilds
+    `{value}` / `{value, unit}` from it, so a structured `value_json` has to be
+    rendered down before it can be read back. A `value`/
     `unit` pair round-trips through the tool's quantity parser; a single-key dict
     gives its value; anything else is its non-boolean values in order, which is
     roughly what a model reading the same sentence would have written.
@@ -261,8 +262,8 @@ def _when(fact: ExtractedFact) -> str:
 
 
 def _when_end(fact: ExtractedFact) -> str:
-    """The `when_end` string — the ISO END the note gave, or empty. `assert_fact`
-    v3 carries an interval end as a seventh flat scalar (TOOL_SURFACE gap 4), so
+    """The `when_end` string — the ISO END the note gave, or empty. The reading
+    carries an interval end as a seventh flat scalar (v3's field, TOOL_SURFACE gap 4), so
     a note that states a CLOSED interval in one sentence no longer needs a later
     note to close it. Empty is the overwhelmingly common answer, and the tool's
     handler refuses an end that has no start, does not parse, or does not follow
@@ -278,12 +279,12 @@ def _predicate(fact: ExtractedFact) -> str:
     """The `predicate` string, with a qualifier folded into the dotted path where
     the registry says the predicate takes one.
 
-    `assert_fact` has no `qualifier` field and is not getting one (TOOL_SURFACE
+    No write tool has a `qualifier` field and none is getting one (TOOL_SURFACE
     gap 3): the live model fills a qualifier field with a date, a phrase or the
     object's own name on most of the facts in a note, and an over-applied
     qualifier splits an identity key so nothing ever supersedes again. What it
-    HAS is the channel `registry.decompose_predicate` already reads and v3's
-    `predicate` description now teaches — `name.nickname.friends` is stored as
+    HAS is the channel `registry.decompose_predicate` already reads and the
+    reading's own `predicate` description teaches — `name.nickname.friends` is stored as
     name.nickname + friends. That channel is only open for the five registry
     predicates declaring a `qualifier_vocab`, so this folds there and nowhere
     else: a long-tail qualifier is still dropped, and the scenarios that then
@@ -525,7 +526,7 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     # One settle per note, over the whole reading — never per call (plan constraint 6).
     # An EMPTY reading is passed through deliberately: here it means the conversation
     # read the note and found it says nothing, which is exactly when the note's mentions
-    # and facts should be swept. It is a per-CALL settle that constraint 7 forbids, and
+    # and facts should be swept. What constraint 7 forbids is a per-CALL settle, and
     # this is not one.
     #
     # NOT `settle_note` whole: that also runs the two review-card halves R3 retires, and
