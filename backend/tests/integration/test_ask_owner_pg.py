@@ -63,7 +63,12 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import MAX_ANSWERS, close_owner_reply, record_owner_reply
+from jbrain.analysis.clarify import (
+    MAX_ANSWERS,
+    close_owner_reply,
+    owner_words_reached_note,
+    record_owner_reply,
+)
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter, LlmTurn, LlmUsage, ToolCall
@@ -994,6 +999,12 @@ async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
     assert await _blocks(maker, owner, note_id) == reply.answered
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
     assert note is not None and "great run" not in note.body
+    # ⟲ And the drop is REPORTED, which is R3's second review, finding 2. This is the
+    # DESIGNED send on a `waiting_on_owner` thread, so the state said "the owner is
+    # answering" while a sentence of his reached no note at all — and the reply turn's
+    # `assert_fact` was bound on that state. It is bound on this instead.
+    assert reply.dropped == ["great run by the way"]
+    assert owner_words_reached_note(reply) is False
 
 
 async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(

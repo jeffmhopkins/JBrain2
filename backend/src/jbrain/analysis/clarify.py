@@ -83,14 +83,14 @@ from __future__ import annotations
 import contextlib
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.agents import AgentProfile, narrow_for_emr, narrow_for_unprompted_reply
+from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import ASK_OWNER_TOOL, open_questions
 from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
@@ -99,7 +99,6 @@ from jbrain.models.agent import AgentTurn
 from jbrain.models.note_conversation import (
     MAX_ARG_CHARS,
     SETTLED,
-    WAITING_ON_OWNER,
     AskedQuestion,
     NoteConversationRepo,
     note_body_sha,
@@ -395,6 +394,22 @@ class OwnerReply:
     note_moved: bool
     """Whether the note had changed under the conversation since it was read."""
 
+    dropped: list[str] = field(default_factory=list)
+    """The owner's words on this turn that reached NO note — the answers `_pair` could
+    not file against an open question.
+
+    Two ways it fills, and neither is an error path: free text beside a COMPLETE
+    structured set (§3b I7's one send carries the tapped answers AND whatever is in the
+    box, and `_pair`'s third rule drops the prose because `note_clarifications.question`
+    is NOT NULL and an unprompted block has no shape — the O16 gap), and a structured
+    answer naming a question the open set does not carry (a reopened thread replaying a
+    stale block, `_pair`'s first rule).
+
+    It is the half of "did the owner's words become note text" that `clarified` cannot
+    see: `clarified` says SOMETHING landed, this says something did not, and
+    `owner_words_reached_note` is the conjunction. A write verb bound on a turn with a
+    non-empty `dropped` would let the agent record what only the transcript holds."""
+
 
 async def reply_profile_for_session(
     maker: async_sessionmaker[AsyncSession],
@@ -405,24 +420,25 @@ async def reply_profile_for_session(
     agent: str,
     profile: AgentProfile,
 ) -> AgentProfile:
-    """Narrow a note conversation's ON-REPLY profile: the EMR subtraction (W4/D9,
-    `ingest/emr/ownership.py`) and the unprompted-reply one (R3 review, finding 2).
+    """Narrow a note conversation's ON-REPLY profile for the note ROW: the EMR
+    subtraction (W4/D9, `ingest/emr/ownership.py`).
 
-    `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; these are the
-    subtractions from it that need the conversation ROW. It lives here rather than in the
-    route because it needs that row and the note behind it, which this module already
+    `/chat` resolves the wide on-reply set through `agent_for_owner_reply`; this is the
+    subtraction from it that needs the conversation row and the note behind it. It lives
+    here rather than in the route because it needs those, which this module already
     reads — and because the route must be able to call it unconditionally: a non-note
-    persona, an unknown session, or a note that satisfies neither predicate all return
-    the profile unchanged.
+    persona, an unknown session, or a note the importer does not own all return the
+    profile unchanged.
 
-    **The state read has to happen HERE, and the ordering is load-bearing.** `/chat`
-    resolves the profile BEFORE `record_owner_reply`, and `record_owner_reply` claims a
-    `waiting_on_owner` thread into `running` (`NoteConversationRepo.claim_waiting`) — so
-    this is the last moment at which "the owner is answering a question" and "the owner
-    is typing into a finished thread" are distinguishable at all. A gate any later reads
-    `running` for both. See `agents.narrow_for_unprompted_reply` for why the distinction
-    is worth a row read: on the first the owner's words become the note's text, on the
-    second they reach no note anywhere.
+    ⟲ **The unprompted-reply narrowing used to be here too, keyed on the thread's STATE,
+    and it has moved to the route** (R3's second review, finding 2). It was applied here
+    because this is the last moment `waiting_on_owner` is still legible — `claim_waiting`
+    flips it to `running` — but the state is a PROXY, and a wrong one: the invariant the
+    narrowing defends is "the owner's words became note text", and a waiting thread can
+    fail it three ways (the designed send's dropped prose, a failed append, an
+    `owner_authored=False` turn). It is now keyed on `record_owner_reply`'s own outcome,
+    which is the invariant itself — see `owner_words_reached_note`. This half stays where
+    it is because it depends on the note row and on nothing the reply does.
 
     FAILS CLOSED, at every step: no conversation row, no note, a soft-deleted note, or a
     raised exception all narrow. This half shipped failing OPEN, on the reading that the
@@ -455,11 +471,6 @@ async def reply_profile_for_session(
     if note is None:
         log.warning("note_reply.note_gone_for_emr", session_id=session_id)
         return narrow_for_emr(profile)
-    # Both narrowings, in either order: each only ever removes names, and `narrow_for_emr`
-    # subtracts a superset of this one, so a note that is both ends up where EMR alone
-    # would have put it.
-    if conversation.state != WAITING_ON_OWNER:
-        profile = narrow_for_unprompted_reply(profile)
     if not emr_owned(note.domain, note.destination, [a.media_type for a in note.attachments]):
         return profile
     return narrow_for_emr(profile)
@@ -555,9 +566,17 @@ async def record_owner_reply(
         # question — the same wrong sentence in his own note as a fabricated one, with a
         # real question on it.
         log.warning("note_reply.no_recorded_question", session_id=session_id, note_id=note_id)
-        return OwnerReply(answered=[], unanswered=[], clarified=False, note_moved=False)
+        # Nothing was PAIRED, so everything the owner sent is a word that reached no
+        # note: `dropped` carries it, and the turn keeps no write verb off the back of it.
+        return OwnerReply(
+            answered=[],
+            unanswered=[],
+            clarified=False,
+            note_moved=False,
+            dropped=[a for _, a in structured] + ([prose] if prose else []),
+        )
 
-    answered = _pair(open_set, structured, prose, session_id=session_id)
+    answered, dropped = _pair(open_set, structured, prose, session_id=session_id)
     pairs = [(q.question, answered[q.id]) for q in open_set if q.id in answered]
     unanswered = [q.question for q in open_set if q.id not in answered]
 
@@ -570,12 +589,26 @@ async def record_owner_reply(
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("note_reply.append_failed", session_id=session_id, error=repr(exc))
-        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
+        # The pairing succeeded and the APPEND did not, so the paired answers reached no
+        # note either — they join whatever `_pair` had already dropped.
+        return OwnerReply(
+            answered=pairs,
+            unanswered=unanswered,
+            clarified=False,
+            note_moved=moved,
+            dropped=[a for _, a in pairs] + dropped,
+        )
     if clarified is None:
         # The note is gone (soft-deleted). The questions cannot be answered onto it, and
         # the state is already back to `running`, so nothing holds the note's live slot.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
-        return OwnerReply(answered=pairs, unanswered=unanswered, clarified=False, note_moved=moved)
+        return OwnerReply(
+            answered=pairs,
+            unanswered=unanswered,
+            clarified=False,
+            note_moved=moved,
+            dropped=[a for _, a in pairs] + dropped,
+        )
 
     if not moved and pairs:
         with contextlib.suppress(Exception):
@@ -588,9 +621,14 @@ async def record_owner_reply(
         note_moved=moved,
         answered=len(pairs),
         unanswered=len(unanswered),
+        dropped=len(dropped),
     )
     return OwnerReply(
-        answered=pairs, unanswered=unanswered, clarified=bool(pairs), note_moved=moved
+        answered=pairs,
+        unanswered=unanswered,
+        clarified=bool(pairs),
+        note_moved=moved,
+        dropped=dropped,
     )
 
 
@@ -600,8 +638,16 @@ def _pair(
     prose: str,
     *,
     session_id: str,
-) -> dict[str, str]:
-    """Which open question each part of one reply answers, keyed by question id.
+) -> tuple[dict[str, str], list[str]]:
+    """Which open question each part of one reply answers, keyed by question id — and
+    what of the owner's words it could NOT place.
+
+    The second element is the load-bearing addition (R3's second review, finding 2). Two
+    of the three rules below DROP something the owner said, and a dropped sentence
+    reaches no note: the reply turn's `assert_fact` is bound on "his words became note
+    text", so the function that decides which words did has to report which did not.
+    Returning it beats re-deriving it at the call site, which would be the same three
+    rules written twice.
 
     Three rules, and each is there because the alternative writes a sentence into the
     owner's own note that nobody said:
@@ -622,6 +668,7 @@ def _pair(
     """
     by_id = {q.id: q for q in open_set}
     answered: dict[str, str] = {}
+    dropped: list[str] = []
     for question_id, answer in structured:
         if question_id not in by_id:
             log.warning(
@@ -629,13 +676,52 @@ def _pair(
                 session_id=session_id,
                 question_id=question_id,
             )
+            dropped.append(answer)
             continue
         answered[question_id] = answer
     if prose:
         oldest_open = next((q for q in open_set if q.id not in answered), None)
         if oldest_open is not None:
             answered[oldest_open.id] = prose
-    return answered
+        else:
+            # The designed send of §3b I7, not a malformed one: the structured set
+            # answered everything, and the free text in the box beside it is a sentence
+            # about the note that no question is open for. It stands as chat and lands
+            # nowhere durable, which is exactly what the turn's write verbs must be told.
+            dropped.append(prose)
+    return answered, dropped
+
+
+def owner_words_reached_note(reply: OwnerReply | None) -> bool:
+    """Did everything the owner said on THIS turn become text on the note?
+
+    The predicate `assert_fact` is bound on (R3's second review, finding 2), and it is
+    the invariant itself rather than a proxy for it. The first round keyed the narrowing
+    on the thread's STATE — `waiting_on_owner` — and state is a different set from "the
+    owner's words became note text", in three ways that all commit a fact citing text
+    that exists nowhere:
+
+    - the DESIGNED send (§3b I7). One send carries the structured answers plus whatever
+      free text is in the box. With a complete structured set `_pair`'s third rule drops
+      the prose, because `note_clarifications.question` is NOT NULL and an unprompted
+      block has no shape (the O16 gap). The thread was `waiting_on_owner`, the owner
+      typed "also Dana moved to 412 Oak St", the agent reads it on the turn
+      (`owner_turn_text`) — and the note never says it;
+    - `append_failed` and the soft-deleted note. The thread was waiting, the block did
+      not land, `clarified` is False;
+    - an `owner_authored=False` turn (a deferred-tool outcome, a proposal enact).
+      `record_owner_reply` returns before `claim_waiting`, so the state still reads
+      `waiting_on_owner` while nothing at all was appended.
+
+    So the verb is bound to the OUTCOME: a reply that landed at least one block and
+    dropped none of the owner's words. Everything else — no reply object at all (not a
+    note conversation, not waiting, not owner-authored, an empty message), a reply whose
+    blocks did not land, a reply that dropped a sentence — narrows.
+
+    Both halves matter and the conjunction is why: `clarified` alone says SOMETHING
+    landed while a sentence went nowhere, and an empty `dropped` alone is true of a turn
+    that filed nothing."""
+    return reply is not None and reply.clarified and not reply.dropped
 
 
 def owner_reply_notice(reply: OwnerReply | None) -> str:
@@ -655,12 +741,42 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     reads a silent turn and re-asks a question he has already answered. The rendering in
     `api/agent.py` puts his words on the turn itself; this says what became of them.
 
+    **"I can record that."** ⟲ Added by R3's second review, finding 2, and the reason is
+    that the turn's write verbs now turn on exactly this: `assert_fact` is bound only
+    when every word the owner said became note text (`owner_words_reached_note`). Words
+    that did not land are the `dropped` list, and the agent is told about them SPECIFICALLY
+    — because the commonest way they arise is the designed send of §3b I7, where the
+    structured answers land and the prose beside them does not. The agent reads that
+    prose on its turn (`owner_turn_text`) and must not believe it can record a fact out
+    of it: the note has no such text, so the next unattended pass's reading does not
+    restate it and the sweep retracts it.
+
     Framed as DATA about the turn, in the voice `api/agent.py`'s other server-composed
     preambles use: it reports what the owner did, and leaves what to do about it to the
     agent."""
     if reply is None:
         return ""
     parts: list[str] = []
+    if reply.dropped and reply.clarified:
+        # The split case: some of it landed, some of it did not. Said apart from the
+        # branch below, which is "none of it landed" and reads very differently.
+        lost = "; ".join(f"{w!r}" for w in reply.dropped)
+        parts.append(
+            "(Some of what Jeff said on this turn did NOT reach the note, because it"
+            f" answered no question you had asked: {lost}. It exists in this thread and"
+            " nowhere else, so you cannot record a fact from it — the note has no such"
+            " text, and the next pass over the note would retract anything you wrote out"
+            " of it. Tell him it is not recorded and that a note of his own (or an answer"
+            " to a question you ask now) is how it lands.)"
+        )
+    elif reply.dropped:
+        parts.append(
+            "(Nothing Jeff said on this turn reached the note, so you cannot record a"
+            " fact from it — the note has no such text, and the next pass over the note"
+            " would retract anything you wrote out of it. Tell him it is not recorded and"
+            " that a note of his own, or an answer to a question you ask now, is how it"
+            " lands.)"
+        )
     if reply.answered and not reply.clarified:
         given = "; ".join(f"{q!r} — he answered {a!r}" for q, a in reply.answered)
         parts.append(
@@ -896,8 +1012,18 @@ async def settle_conversation(
     ("every pass ending that READ the note"), and rule 2's `COALESCE` is what makes the
     degraded case safe rather than a blank title.
 
-    So the shape here mirrors `converse._mark_integrated` deliberately: a claim about
-    what the pass DID is not conditional on the gate that licenses a retraction.
+    So the stamp is not conditional on the gate that licenses a retraction: a claim about
+    what the pass DID is owed whether or not a release is.
+
+    ⟲ **It does not "mirror `converse._mark_integrated`", and saying so overstated what it
+    buys** (CLAUDE.md #4). `_mark_integrated` is genuinely independent — its own session,
+    its own `try`, in the terminal block — so the settle falling over cannot unmake it.
+    The stamp shares ONE `scoped_session` with the sweep and the tail, which is deliberate
+    and correct: a sweep that raises must not leave a `note_analysis` row claiming a pass
+    read the note cleanly while the release it licensed was rolled back. What that buys is
+    ATOMICITY with the destructive half, not independence from it. The two properties look
+    alike from the gate and come apart on a raise, and only the first one is this
+    function's.
 
     It does NOT flip `integration_state`. That is the terminal block's, on EVERY pass
     ending including the ones that never reach here (`converse._run_turn`).
@@ -976,6 +1102,7 @@ __all__ = [
     "ledger_rows",
     "owner_reply_notice",
     "owner_turn_text",
+    "owner_words_reached_note",
     "record_owner_reply",
     "record_reply_writes",
     "record_turn_writes",

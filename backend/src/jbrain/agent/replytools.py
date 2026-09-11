@@ -22,16 +22,28 @@ address commits `insert_pinned=True` — so a new fact the owner states in passi
 her title is CTO") lands PINNED against every later note. The verb that records a new
 fact has to be reachable in the turn that learns one.
 
-**And it is reachable on an ANSWERING turn only** (R3's review, finding 2). The turn
-whose thread is `waiting_on_owner` is the one whose text `clarify.record_owner_reply`
-appends to the note, so what it asserts is re-stated by the note's next reading and
-survives the sweep. On any other thread the owner's words reach no note —
-`note_clarifications.question` is NOT NULL, so D6 has no unprompted block — and the row
+**And it is reachable only on a turn whose words LANDED ON THE NOTE** (R3's review,
+finding 2, re-keyed by its second round). What `clarify.record_owner_reply` appends as a
+D6 clarification block becomes the note's own text, so a fact asserted beside it is
+re-stated by the note's next reading and survives the sweep. Where the append did not
+happen — a thread that is not waiting, an append that failed, a send whose free text
+`_pair` had no open question for — the owner's words reach no note at all
+(`note_clarifications.question` is NOT NULL, so D6 has no unprompted block), and the row
 would be swept by the note's next unattended pass, which shares this producer's single
 claim (`analysis/settle_owner.py`). `agents.narrow_for_unprompted_reply` takes the verb
-off that turn, applied from `clarify.reply_profile_for_session` where the thread's state
-is still legible; the handler below is unchanged, because the allowlist is what is
-enforced and a state re-read at dispatch time would be reading a claimed `running`.
+off that turn, applied from `api/agent.py` on `clarify.owner_words_reached_note` — the
+outcome of the append, which is the invariant, rather than the thread state, which is a
+proxy that admits all three cases above.
+
+**`correct_fact` is bound on that turn and its EMPTY-ADDRESS arm is not.** The verb is
+two writes wearing one name: against a live head it supersedes and pins, which is the
+owner fixing something wrong and must stay reachable whenever he is in the room; against
+an address holding nothing it MINTS a pinned fact no later note can supersede. On a turn
+whose words the note never received the second is strictly worse than the loss it would
+prevent — permanent and unfalsifiable, since no reading of a note that does not say it
+can correct it — so the handler refuses that arm when `assert_fact` is not in this turn's
+allowlist, and says what to do instead. The allowlist is the enforcement; the prompt is
+not.
 
 **`correct_fact` addresses by identity key `(entity, predicate, qualifier)`, never by
 fact id.** `readtools._edge_line` prints an entity's facts as `predicate: statement` and
@@ -467,6 +479,39 @@ def build_reply_write_handlers(
         # be able to tell the owner what IS on file) and the affordance that could not
         # work is gone.
         heads = _current_groups(named.view, predicate, qualifier)
+        # THE EMPTY-ADDRESS ARM, refused on a turn whose words the note never received
+        # (R3's second review, finding 3). `decide()`'s correction branch commits active
+        # + PINNED, so at an address holding nothing this verb does not correct anything —
+        # it MINTS a new fact that no later note can supersede. On a turn where the
+        # owner's words became the note's text that is the designed behaviour and stays.
+        # On a turn where they did not, it is the worst write in the system: the row cites
+        # text that exists nowhere, so no re-reading of the note can ever falsify it, and
+        # no correction note can reach it either. `narrow_for_unprompted_reply` takes
+        # `assert_fact` off exactly that turn, and leaving this arm bound made the refusal
+        # a lie — the agent told it cannot record a new fact, holding a verb that records
+        # one permanently.
+        #
+        # The condition is read off `ctx.agent_tools`, this turn's effective allowlist,
+        # and that is not a proxy here: `assert_fact` is absent from it for exactly two
+        # reasons, and the other one (the unattended pass, where it left the set in R3)
+        # binds no `correct_fact` handler at all — this code is on the CHAT registry, so
+        # reaching this line at all means a reply turn. The EMR and third-party narrowings
+        # take both verbs together, so they cannot land here either. What is left is the
+        # narrowing above, which is the invariant: the owner's words did not land on the
+        # note as source text.
+        #
+        # Correcting an EXISTING head is untouched — that is what the verb is for, and
+        # pinning is the designed mechanism for it.
+        if not heads and ASSERT_FACT not in ctx.agent_tools:
+            return (
+                f"{named.name}.{predicate} holds nothing on file, so this would not"
+                " correct a fact — it would record a NEW one, pinned, that no later note"
+                " could ever change. Jeff's words on this turn did not reach the note, so"
+                " there is no text behind it: nothing was recorded. Tell him it is not"
+                " recorded, and that a note of his own — or an answer to a question you"
+                " ask him now — is how it lands. You can still correct anything that IS"
+                " on file."
+            )
         if len(heads) > 1:
             listing = "\n".join(
                 _head_line(f"f{i + 1}", row) for i, row in enumerate(heads[:_MAX_HANDLES])

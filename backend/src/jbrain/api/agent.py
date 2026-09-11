@@ -34,6 +34,7 @@ from jbrain.agent.agents import (
     AgentProfile,
     agent_for_owner_reply,
     narrow_for_third_party_note,
+    narrow_for_unprompted_reply,
 )
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
@@ -72,6 +73,7 @@ from jbrain.analysis.clarify import (
     close_owner_reply,
     owner_reply_notice,
     owner_turn_text,
+    owner_words_reached_note,
     record_owner_reply,
     record_reply_writes,
     reply_profile_for_session,
@@ -882,13 +884,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 profile.prompt, await _standing_instructions(request, owner_ctx)
             ),
         )
-        # The row-driven narrowings of the reply turn, in that order — W4's two, plus the
-        # one R3's review added: a thread that is NOT `waiting_on_owner` loses
-        # `assert_fact`, because the owner's words on such a turn reach no note and the
-        # row it would write has no source text anywhere (`agents
-        # .narrow_for_unprompted_reply`). That one has to be decided HERE, ahead of
-        # `record_owner_reply` below, which claims a waiting thread into `running` and
-        # makes the two cases indistinguishable.
+        # The row-driven narrowings of the reply turn: W4's two, both of which depend on
+        # the NOTE and on nothing this turn does. The third — the unprompted-reply one —
+        # depends on what `record_owner_reply` below actually did with the owner's words,
+        # so it is applied after that call rather than here.
         #
         # All are subtractions from `agent_for_owner_reply`'s widening, they are
         # independent, and a note can be BOTH
@@ -978,6 +977,27 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         )
         if turn_text != body.message:
             body = body.model_copy(update={"message": turn_text})
+        # THE THIRD NARROWING, and it belongs here rather than beside W4's two (R3's
+        # second review, finding 2). `assert_fact` on a reply turn records "one more
+        # thing the owner just told me", and the only reason that write is safe is that
+        # the owner's words BECAME THE NOTE'S TEXT: `record_owner_reply` appended them as
+        # a D6 clarification block, the note re-ingests, and the next reading restates
+        # what the agent wrote. A fact asserted on a turn where that did not happen cites
+        # text that exists nowhere, and the note's next unattended pass — one producer,
+        # one claim (`analysis/settle_owner.py`) — closes a complete reading of a note
+        # that has never said it and retracts it, silently.
+        #
+        # The first round keyed this on the thread's STATE, read before `claim_waiting`
+        # could flip it. That is a proxy, and it is a different set: the designed send of
+        # §3b I7 carries the tapped answers AND free text, and `_pair` drops the prose
+        # when the structured set is complete (`note_clarifications.question` is NOT
+        # NULL — the O16 gap); an append can fail; an `owner_authored=False` turn returns
+        # before the claim with the state still reading `waiting_on_owner`. Each of those
+        # is a `waiting_on_owner` turn on which the agent could record something the note
+        # never receives. So the verb is bound to the OUTCOME, which is why this call
+        # cannot happen any earlier than this line.
+        if not owner_words_reached_note(owner_reply):
+            profile = narrow_for_unprompted_reply(profile)
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)

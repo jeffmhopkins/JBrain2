@@ -484,24 +484,31 @@ async def test_the_reply_turn_over_a_live_emr_note_loses_the_writes_and_a_plain_
     assert kept.tools == NOTE_INGEST_ON_REPLY_TOOLS
 
 
-async def test_assert_fact_rides_the_answer_and_is_off_a_finished_thread(
+async def test_the_reply_profile_narrows_for_the_note_and_never_for_the_thread_state(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """R3's review, finding 2: `assert_fact` is a verb of the ANSWERING turn only.
+    """⟲ R3's second review, finding 2: the thread's STATE is not a narrowing predicate
+    here any more, and this test is what stops it coming back.
 
-    A reply into a `waiting_on_owner` thread becomes text on the note —
-    `record_owner_reply` appends it as a D6 clarification block — so a fact asserted
-    there is re-stated by the note's next reading and survives the sweep. A reply into a
-    thread that is not waiting reaches no note at all: `note_clarifications.question` is
-    NOT NULL, so there is no unprompted block, and the row `assert_fact` would commit has
-    no source text anywhere. The note's next unattended pass then closes a complete
-    reading of a note that has never contained the owner's words and retracts it — one
-    producer, one claim (`analysis/settle_owner.py`).
+    The first round took `assert_fact` off a reply whose thread was not
+    `waiting_on_owner`, applied from this function because it is the last moment the
+    state is legible (`claim_waiting` flips it to `running`). The invariant it defends is
+    "the owner's words became the note's text", and the state is a different set from
+    that: the designed send of §3b I7 carries free text beside a complete structured
+    answer set and `_pair` DROPS the prose (`note_clarifications.question` is NOT NULL —
+    the O16 gap); an append can fail; an `owner_authored=False` turn returns before the
+    claim with the state still reading `waiting_on_owner`. Each is a waiting thread on
+    which a fact would cite text that exists nowhere.
 
-    Both halves in one test: absence alone is satisfied by a narrowing that fires
-    always, and presence alone by one that never fires. Everything else on the surface is
-    asserted unchanged, because this is a one-verb subtraction and not a retreat — the
-    thread is still a place to correct a fact, fold two entities, ask, and read."""
+    So the verb is now bound to `record_owner_reply`'s OUTCOME
+    (`clarify.owner_words_reached_note`, applied in `api/agent.py` on the one line
+    between that call and the model call), and what stays here is the narrowing that
+    depends on the NOTE and on nothing the reply does. Both states come out of this
+    function with D8's full width, which is the claim.
+
+    Its own halves are pinned where they now live: the route wiring in
+    `tests/unit/test_agent_api.py`, the predicate and the pairing beside it, and the
+    designed send against real Postgres in `test_ask_owner_pg.py`."""
     notes = SqlNotesRepo(maker)
 
     async def _profile(state: str):  # noqa: ANN202
@@ -532,21 +539,9 @@ async def test_assert_fact_rides_the_answer_and_is_off_a_finished_thread(
             profile=agent_for_owner_reply(NOTE_CONVERSE_AGENT),
         )
 
-    answering = await _profile("waiting_on_owner")
-    assert answering.tools == NOTE_INGEST_ON_REPLY_TOOLS
-
-    # A thread the pass already settled, and one still mid-pass: neither is answering a
-    # question, and the state is read HERE — before `record_owner_reply` claims a waiting
-    # thread into `running` — which is why the two are still distinguishable at all.
-    for state in ("settled", "running"):
-        finished = await _profile(state)
-        assert finished.tools == NOTE_INGEST_ON_REPLY_TOOLS - {"assert_fact"}
-        assert "assert_fact" not in (finished.tools or frozenset())
-        # Not a retreat from the on-reply surface: the owner can still correct what IS on
-        # file, stage a fold, be asked, and read.
-        assert {"correct_fact", "merge_entities", "ask_owner", "close_reading"} <= (
-            finished.tools or frozenset()
-        )
+    for state in ("waiting_on_owner", "settled", "running"):
+        unchanged = await _profile(state)
+        assert unchanged.tools == NOTE_INGEST_ON_REPLY_TOOLS, state
 
 
 async def test_a_second_run_neither_opens_a_second_conversation_nor_raises(

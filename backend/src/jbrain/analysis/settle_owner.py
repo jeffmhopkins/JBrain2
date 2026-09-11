@@ -37,10 +37,31 @@ a reading of the NOTE's text, so a reply-turn write whose words are nowhere in t
 is stripped of the only claim it ever had. The bullet is still right about the KEY (a
 string split here would be strictly worse: the unattended pass's settle would eat the
 reply turn's writes outright, and no reading would re-absorb them). What it no longer
-covers is a reply-turn write that never becomes note text, and that is closed at the
-source rather than here: `assert_fact` is off a reply turn whose thread is not
-`waiting_on_owner` (`agents.narrow_for_unprompted_reply`), so every fact this producer
-commits has words on the note behind it, and the next reading re-states it.
+covers is a reply-turn write that never becomes note text, and that is narrowed at the
+source rather than here: `assert_fact` is off a reply turn whose words did not land on
+the note as source text (`agents.narrow_for_unprompted_reply`, keyed on
+`clarify.owner_words_reached_note`), and `correct_fact`'s empty-address arm — the one
+that MINTS a pinned row — refuses on the same condition (`replytools`).
+
+⟲ **This used to close with "so every fact this producer commits has words on the note
+behind it, and the next reading re-states it." That is false, on two paths at once**,
+which makes it a comment stating a property the code does not have (CLAUDE.md #4):
+
+- `_assert_one` commits a fact whose `quote` is NOT in the note. It caps the weight and
+  says so in the result line — held for review rather than overwriting a confident value
+  — but it commits, on the unattended pass as much as on a reply turn, because D2 has
+  inferred facts commit. Such a row is kept alive from pass to pass only by being
+  restated; one the model invents once and never restates is retracted by the next clean
+  pass, which is the sweep working rather than failing;
+- and on the reply turn the narrowing bounds the ordinary path, not every path: an
+  unattested element inside a reply-turn `close_reading` reaches the same commit. That
+  row is unpinned, low-weight and falsifiable, and the reply path licenses no sweep of
+  its own (`api/agent.py` settles with `reading=None`), so what it costs is the O16 loss
+  and never a permanent wrong row.
+
+The line the narrowing actually holds is the one worth stating: **no reply turn may mint
+a PINNED row out of words the note never received**, and an unpinned one the note does
+not say is retracted by the next clean reading rather than surviving it.
 
 **Why a SET and not one owner.** Because co-assertion is the ordinary case, not an edge
 case. Both producers read the same note off the same event, and a salient claim ("she is
