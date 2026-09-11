@@ -1119,7 +1119,9 @@ class NoteGraphWriter:
 
     # --- close_reading ---------------------------------------------------------
 
-    async def close_reading(self, arguments: dict, ctx: ToolContext) -> ToolOutput:
+    async def close_reading(
+        self, arguments: dict, ctx: ToolContext, *, words_reached_note: bool = True
+    ) -> ToolOutput:
         """The whole-note reading: title, tags, and everything the note says.
 
         Commits through `_assert_one`, element by element, exactly as `assert_fact` does
@@ -1152,10 +1154,16 @@ class NoteGraphWriter:
         on it, and a pass whose EARLIER call succeeded then presents `calls >= 1,
         clamped=False`: a complete reading of the note, missing everything this call was
         carrying. So the latch wraps the whole body rather than the loop.
+
+        `words_reached_note=False` is the OWNER'S REPLY TURN whose words never became the
+        note's text, and the only thing it changes is the correction-note elevation in
+        `_assert_one` — see the comment there. Defaulted True because every other caller
+        is a pass over the note's own text, where the question does not arise; the reply
+        registry is the one that knows the answer and passes it (`agent/replytools.py`).
         """
         del ctx  # the write session is the note's, never the turn's read scope
         try:
-            return await self._close_reading(arguments)
+            return await self._close_reading(arguments, words_reached_note=words_reached_note)
         except BaseException:
             # THE OUTER LATCH, and the only one that covers the whole body. The three
             # inside `_close_reading` each catch a way the ENGINE declined a stated fact; this
@@ -1172,7 +1180,9 @@ class NoteGraphWriter:
             self.reading.mark_incomplete()
             raise
 
-    async def _close_reading(self, arguments: dict) -> ToolOutput:
+    async def _close_reading(
+        self, arguments: dict, *, words_reached_note: bool = True
+    ) -> ToolOutput:
         """`close_reading`'s body. Split out so the latch above wraps ALL of it —
         including the lines that are not inside any `try` here (the session open, the
         note load, the union, the commit at block exit)."""
@@ -1219,7 +1229,12 @@ class NoteGraphWriter:
                 try:
                     async with session.begin_nested():
                         line, write, touched = await self._assert_one(
-                            session, idx, item, chunks, read_recurrence=True
+                            session,
+                            idx,
+                            item,
+                            chunks,
+                            read_recurrence=True,
+                            words_reached_note=words_reached_note,
                         )
                 except Exception as exc:  # noqa: BLE001 — one element, not the batch
                     log.warning("graphwrite.reading_failed", index=idx, error=repr(exc))
@@ -1347,6 +1362,7 @@ class NoteGraphWriter:
         *,
         correction: bool = False,
         read_recurrence: bool = False,
+        words_reached_note: bool = True,
     ) -> tuple[str, FactWriteRef | None, list[EntityRef]]:
         subject_token = _text(item, "subject", "entity", "about")
         subject = self.lookup(subject_token)
@@ -1461,11 +1477,38 @@ class NoteGraphWriter:
             # with it: THAT one takes attestation to be "who spoke" (the owner's message
             # is not in the note's chunks when the tool runs). Here the owner's words ARE
             # the note, so the span check is live evidence and is kept.
-            if attested and self._target.is_correction:
+            #
+            # AND NOT ON A REPLY TURN WHOSE WORDS NEVER REACHED THE NOTE (R3's third
+            # review, finding 1). `_attests` checks that the quote STRING is in the note's
+            # chunks — never that it supports the OBJECT — so on an `owner_correction`
+            # note an element pairing a real line of the note with a value the owner said
+            # only in chat took this branch and committed active + PINNED at confidence
+            # 1.0. Nothing can then reach that row: `sweep_note` spares a pinned fact, no
+            # later note supersedes one, and no correction note addresses it — the
+            # "permanent and wrong beats temporary and wrong" shape O16 calls worse than
+            # the loss it is standing in for. Unpinned, the same element is the O16 loss
+            # shape and is DELIBERATELY still open: falsifiable by the next reading, and
+            # swept when one comes.
+            #
+            # The condition is `replytools`' — `ASSERT_FACT not in ctx.agent_tools`, read
+            # where the registry makes it exact and passed in, because this writer serves
+            # the unattended pass too and there that name is absent BY DESIGN (R3 took it
+            # off the unattended set), which would have disabled the elevation on the
+            # ordinary correction-note pass. It is the same gate `correct_fact`'s
+            # empty-address arm turns on, for the same reason: both are a new pinned row
+            # minted out of words no note ever received.
+            if attested and self._target.is_correction and words_reached_note:
                 correction = True
                 notes.append(
                     "this note is your correction, so it out-argues what was on file and"
                     " is pinned against later notes"
+                )
+            elif attested and self._target.is_correction:
+                notes.append(
+                    "recorded as an ordinary fact, NOT as a pinned correction: what you"
+                    " said on this turn did not reach the note, so a later note can still"
+                    " change it. Tell Jeff that, and that a note of his own is how it"
+                    " lands for good"
                 )
         # RECURRENCE, read out of the span the model attested rather than asked for as a
         # field (§3.2 of the rewrite plan, decided by R0's 0-in-228 measurement). Gated on

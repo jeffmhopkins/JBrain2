@@ -696,7 +696,27 @@ def build_reply_write_handlers(
         writer, _note_id, refusal = await _bound(ctx, CLOSE_READING)
         if writer is None:
             return refusal
-        return await writer.close_reading(arguments, ctx)
+        # THE CORRECTION-NOTE ELEVATION IS OFF on a turn whose words the note never
+        # received (R3's third review, finding 1), on the same signal and for the same
+        # reason as `correct_fact`'s empty-address arm above. `_assert_one` elevates an
+        # ATTESTED element of an `owner_correction` note to `correction=True`, which
+        # force-supersedes and PINS — and `_attests` only checks that the quote string is
+        # in the note, never that it supports the object, so a reply turn could pair a
+        # real line of the note with a value the owner had only typed in chat and mint a
+        # row at confidence 1.0 that no sweep, no later note and no correction note can
+        # ever reach. Reaching THIS line means the chat registry, so it is a reply turn,
+        # and `assert_fact` is absent from its allowlist for one reason:
+        # `narrow_for_unprompted_reply` took it off. The EMR and third-party narrowings
+        # cannot present here — the first takes `close_reading` too (so dispatch never
+        # arrives), and the second only applies to a note a STRANGER wrote, which is never
+        # an `owner_correction` one, so the elevation is unreachable on it either way.
+        #
+        # The unpinned row such an element still commits is O16's open loss shape, left
+        # open deliberately: it is falsifiable by the next reading and swept when one
+        # comes. What is closed here is the PERMANENT shape.
+        return await writer.close_reading(
+            arguments, ctx, words_reached_note=ASSERT_FACT in ctx.agent_tools
+        )
 
     return {
         CORRECT_FACT: _texted(CORRECT_FACT, correct_fact_tool),

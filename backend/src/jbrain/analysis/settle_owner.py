@@ -40,8 +40,9 @@ reply turn's writes outright, and no reading would re-absorb them). What it no l
 covers is a reply-turn write that never becomes note text, and that is narrowed at the
 source rather than here: `assert_fact` is off a reply turn whose words did not land on
 the note as source text (`agents.narrow_for_unprompted_reply`, keyed on
-`clarify.owner_words_reached_note`), and `correct_fact`'s empty-address arm — the one
-that MINTS a pinned row — refuses on the same condition (`replytools`).
+`clarify.owner_words_reached_note`), `correct_fact`'s empty-address arm — the one
+that MINTS a pinned row — refuses on the same condition, and `close_reading`'s
+correction-note elevation is withheld on it (both `replytools`).
 
 ⟲ **This used to close with "so every fact this producer commits has words on the note
 behind it, and the next reading re-states it." That is false, on two paths at once**,
@@ -59,9 +60,29 @@ which makes it a comment stating a property the code does not have (CLAUDE.md #4
   its own (`api/agent.py` settles with `reading=None`), so what it costs is the O16 loss
   and never a permanent wrong row.
 
-The line the narrowing actually holds is the one worth stating: **no reply turn may mint
-a PINNED row out of words the note never received**, and an unpinned one the note does
-not say is retracted by the next clean reading rather than surviving it.
+⟲ **And this used to close with "no reply turn may mint a PINNED row out of words the
+note never received", which was false at one more site than the two named above** (R3's
+third review). `_assert_one`'s CORRECTION-NOTE ELEVATION is a third way into `decide()`'s
+pinning branch, and `_attests` is a string check: on an `owner_correction` note, a
+reply-turn `close_reading` element pairing a real line of the note with a value the owner
+had only typed in the thread committed `correction=True` → active, pinned, confidence 1.0.
+It is gated now on the same condition the other two are (`graphwritetools`, keyed off
+`ASSERT_FACT not in ctx.agent_tools` at the reply registry), so the sentence is true as
+written — but only with its residue stated, because the residue is the reason the sentence
+is worth having:
+
+- **an UNPINNED row the note does not say is still mintable on that turn**, and that is
+  deliberate: it is O16's loss shape, falsifiable by the next reading and released by the
+  first clean pass that reads the note without it. Closing it needs the `ToolContext` flag
+  threaded through three `AgentLoop` sites and is not R3's;
+- **"swept eventually" is not "swept".** An unprompted reply changes nothing about the
+  note, so `integration_state` stays `integrated` and nothing re-enqueues the note: the row
+  stands until the note is next edited or `analysis/rebuild.py` runs;
+- **and on a THIRD-PARTY note nothing is ever swept at all.** `PassReading.third_party`
+  refuses the sweep permanently (`clarify.settle_conversation`) — a stranger's words may
+  cause a fact and never a retraction — so such a row persists by D10's design rather than
+  by any of this. (The elevation itself cannot fire there: `is_correction` and
+  `is_third_party` read the same field in opposite directions.)
 
 **Why a SET and not one owner.** Because co-assertion is the ordinary case, not an edge
 case. Both producers read the same note off the same event, and a salient claim ("she is

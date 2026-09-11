@@ -227,6 +227,13 @@ async def _fact(
     return str(fid)
 
 
+async def _fact_row(maker, fact_id: uuid.UUID) -> Any:  # noqa: F811
+    """One row by id — asserted on the ROW, never on the result text, because the result
+    text is the model's window and the row is the fact."""
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        return (await s.execute(select(Fact).where(Fact.id == fact_id))).scalar_one()
+
+
 async def _rows(maker, entity_id: str, predicate: str) -> list[Any]:  # noqa: F811
     async with scoped_session(maker, SYSTEM_CTX) as s:
         return list(
@@ -952,6 +959,109 @@ async def test_the_reply_turn_can_resolve_and_assert_and_what_it_asserts_is_not_
     assert row.status == "active"
     # NOT pinned — the whole point. A later note may still supersede this.
     assert row.pinned is False
+
+
+@pytest.mark.asyncio
+async def test_an_unprompted_reply_may_not_pin_a_correction_out_of_a_real_quote(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """R3's third review, finding 1 — the PERMANENT shape of the O16 deferral, closed.
+
+    The elevation in `_assert_one` turns an ATTESTED element of an `owner_correction`
+    note into `correction=True`, which force-supersedes and PINS at confidence 1.0. And
+    `_attests` checks only that the quote STRING is somewhere in the note's chunks —
+    never that it supports the object. So on a correction note the owner reopens days
+    later, a `close_reading` element quoting a line the note really contains, carrying a
+    value he typed only into the thread, landed active + pinned: `sweep_note` spares a
+    pinned row, no later note supersedes one, and no correction note can address it.
+    Nothing in the system could ever take it back, which is what O16 calls worse than the
+    loss it stands in for.
+
+    The gate is the turn's own allowlist, where `narrow_for_unprompted_reply` already
+    landed (`_ctx(answering=False)`), and both halves are on one note:
+
+    - the unprompted turn's element commits UNPINNED — still the O16 loss shape,
+      deliberately still open, because it is falsifiable by the next reading and swept
+      when one comes;
+    - the answering turn's element, same note and same quote, still pins, because there
+      the owner's words ARE the note's text and the elevation is what it is for."""
+    body = (
+        "Correction: Kaiya's dentist is not Dr. Patel. Kaiya is seen by Dr. Marsh for orthodontics."
+    )
+    note_id = await make_note(maker, domain="general", body=body)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        # What `file_correction` / `POST /api/wiki/{id}/corrections` stamp. The capture
+        # API has no field for it, so the row is the only place it can come from.
+        await s.execute(
+            text(
+                "UPDATE app.notes SET provenance = 'owner_correction' WHERE id = CAST(:n AS uuid)"
+            ),
+            {"n": note_id},
+        )
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    handlers = _handlers(maker)
+    quote = "Kaiya is seen by Dr. Marsh for orthodontics."
+
+    unprompted = _ctx(owner_ctx, session_id, answering=False)
+    await handlers["resolve_entity"](
+        {"entities": [{"surface": "Kaiya of the reopened correction", "kind": "person"}]},
+        unprompted,
+    )
+    said_in_chat = await handlers["close_reading"](
+        {
+            "title": "A correction",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "dentist",
+                    # The value the owner typed in the thread and the note never received.
+                    # The QUOTE is real, which is the whole trap: attestation is a string
+                    # check, not a check that the line supports this object.
+                    "object": "Dr. Ashcote",
+                    "statement": "Kaiya's dentist is Dr. Ashcote.",
+                    "when": "",
+                    "quote": quote,
+                }
+            ],
+        },
+        unprompted,
+    )
+    assert isinstance(said_in_chat, ToolOutput) and len(said_in_chat.facts) == 1
+    row = await _fact_row(maker, uuid.UUID(said_in_chat.facts[0].fact_id))
+    assert row.pinned is False, "an unprompted reply minted a fact nothing can ever correct"
+    # And the model is told, because a row it believes is pinned is one it reports as
+    # settled to the owner.
+    assert "NOT as a pinned correction" in str(said_in_chat)
+
+    # The control, one flag apart: on the turn whose answer became the note's text the
+    # elevation still fires. Without this the fix would read as "corrections stopped
+    # pinning", which is a different and worse bug.
+    answering = _ctx(owner_ctx, session_id)
+    answered = await handlers["close_reading"](
+        {
+            "title": "A correction",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "orthodontist",
+                    "object": "Dr. Marsh",
+                    "statement": "Kaiya is seen by Dr. Marsh.",
+                    "when": "",
+                    "quote": quote,
+                }
+            ],
+        },
+        answering,
+    )
+    assert isinstance(answered, ToolOutput) and len(answered.facts) == 1
+    elevated = await _fact_row(maker, uuid.UUID(answered.facts[0].fact_id))
+    assert elevated.pinned is True
+    assert elevated.status == "active"
 
 
 @pytest.mark.asyncio
