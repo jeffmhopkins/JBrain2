@@ -701,6 +701,109 @@ async def test_a_refused_element_leaves_the_reading_incomplete(
     assert row.settle_owners == [CONVERSATION]
 
 
+async def test_a_raise_between_calls_leaves_the_reading_incomplete(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fourth latch: a `close_reading` call that RAISES has read a prefix too.
+
+    The other three latches are the engine DECLINING a fact the model stated — a clamped
+    list, a spent budget, a refused element — and every one of them is inside or before
+    the per-element loop. Nothing latched a call that died before it could decline
+    anything: the pool refusing a connection, a `set_config` blip on the scoped session,
+    a COMMIT that failed at block exit, a cancellation mid-batch. `loop.py:_dispatch`
+    reports a raise to the model as a RECOVERABLE internal error ("try a different
+    approach"), so the turn may simply end on it — `end_turn` -> `state_for_stop` ->
+    `SETTLED`.
+
+    Multi-call readings are the designed norm (the persona is told "a long note takes
+    more than one call of 8 facts; send the next 8 rather than dropping the tail", and
+    `READING_CALL_BUDGET` is 6), so the earlier call has already left `calls >= 1` and
+    `clamped=False` — every one of the settle's four refusals passed. The sweep then
+    fires against the prefix that call happened to carry and retracts everything the
+    raising call was going to restate.
+
+    Driven by a real raise out of `_load_note` on the SECOND call, which is where the
+    review found it. Without the wrapper this test retracts the appointment."""
+    note_id, _entity_id, writer, outs = await _books_an_appointment(maker, tmp_path)
+    fact_id = uuid.UUID(outs[1].facts[0].fact_id)
+    first = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, first, outs, names=["resolve_entity", "close_reading"])
+    await _settle(maker, owner, first, reading=_reading(writer, note_id))
+    assert (await _fact_row(maker, fact_id)).status == "active"
+
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, first, SETTLED)
+    second = await _conversation(maker, owner, note_id)
+    partial = await _writer(maker, note_id)
+    ctx = ToolContext(session=OWNER, scopes=("general",))
+    surface = f"bramwell ashcote {uuid.uuid4().hex[:8]}"
+    resolved = await partial.resolve_entity(
+        {"entities": [{"surface": surface, "kind": "person"}]}, ctx
+    )
+    assert isinstance(resolved, ToolOutput) and resolved.entities, str(resolved)
+    # Call 1 of a multi-call reading: it lands, and on its own it is a clean, unclamped
+    # reading of one fact.
+    head = await partial.close_reading(
+        {
+            "title": "Dentist appointment",
+            "tags": ["dentist"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "occupation",
+                    "object": "dentist",
+                    "statement": f"{surface} is a dentist.",
+                    "when": "",
+                    "quote": "Booked it this morning",
+                }
+            ],
+        },
+        ctx,
+    )
+    assert isinstance(head, ToolOutput) and len(head.facts) == 1, str(head)
+    assert partial.reading.calls == 1 and partial.reading.clamped is False
+
+    # Call 2 — the one carrying the appointment — dies before it can record or refuse
+    # anything. `_load_note` is the first await inside the write session, so this is the
+    # shape of every infrastructure failure between the session open and `Reading.union`.
+    async def _boom(_session: object) -> list[object]:
+        raise RuntimeError("the pool said no")
+
+    monkeypatch.setattr(partial, "_load_note", _boom)
+    with pytest.raises(RuntimeError):
+        await partial.close_reading(
+            {
+                "title": "Dentist appointment",
+                "tags": [],
+                "facts": [
+                    {
+                        "subject": "e1",
+                        "predicate": "scheduledTime",
+                        "object": "2027-03-04T13:00:00",
+                        "statement": "The dentist appointment is on 2027-03-04 at 13:00.",
+                        "when": "2027-03-04T13:00:00",
+                        "quote": "Dentist appointment on 2027-03-04 at 13:00",
+                    }
+                ],
+            },
+            ctx,
+        )
+    assert partial.reading.clamped is True, "a raise left the reading claiming to be complete"
+
+    reading = _reading(partial, note_id)
+    assert reading is not None and reading.clamped
+    assert await _settle(maker, owner, second, reading=reading)
+
+    row = await _fact_row(maker, fact_id)
+    assert row.status == "active", "the pass never got to restate it and the settle retracted it"
+    assert row.settle_owners == [CONVERSATION]
+    # Call 1's own write survives untouched, which is what says the settle RAN.
+    assert (await _fact_row(maker, uuid.UUID(head.facts[0].fact_id))).status == "active"
+
+
 async def test_a_third_party_reading_commits_but_never_sweeps(
     maker,  # noqa: F811
     owner: SessionContext,

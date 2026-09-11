@@ -73,9 +73,19 @@ Nothing here sweeps — but since R3 something downstream does, and that is what
 `Reading` load-bearing rather than an accumulator. `clarify.settle_conversation` retracts
 every unpinned row of the note the reading does not name, so a fact missing from
 `Reading.fact_ids` is a fact the note is about to stop asserting. `Reading.clamped` is the
-gate that refuses that, and it LATCHES from three places in `close_reading`: a clamped
-list, an exhausted call budget, and an element the commit refused. Anything added here
-that can drop a stated fact on the floor owes this reading the same latch.
+gate that refuses that, and it LATCHES from four places in `close_reading`: a clamped
+list, an exhausted call budget, an element the commit refused — and, wrapping all three,
+any exception that ESCAPES the handler. ⟲ This paragraph used to name the first three and
+claim they covered "anything that can drop a stated fact on the floor"; they covered only
+what the engine DECLINED, never the call that died before it could decline. A pool that
+will not give a connection, a `set_config` blip, a failed COMMIT at block exit or a
+cancellation mid-batch all raise between the session open and `Reading.union` — and
+`loop.py:_dispatch` turns a raise into a RECOVERABLE observation, so the model may end the
+turn on it. An earlier call in the same pass has already left `calls >= 1` and `clamped`
+False, which passes every one of the settle's four gate refusals, so the sweep would fire
+against the prefix that one call had. The outer latch is what closes that; anything added
+here that can drop a stated fact on the floor still owes this reading the same latch, and
+anything that can end the call outright is covered by the wrapper.
 
 **An OWNER CORRECTION NOTE elevates its attested facts here** (W5's stated precondition
 for retiring the correction-note machinery). `file_correction`, `POST
@@ -1133,8 +1143,39 @@ class NoteGraphWriter:
         exact sentence the sweep acts on: the element the model named is retracted
         because the engine refused to record it. The model is told in the result line
         and can re-send the element; until it does, this reading is not the whole note.
+
+        **AND A RAISE IS THE SAME PREFIX, which is why the body is wrapped.** The three
+        latches above are the engine DECLINING a fact; none of them fires when the call
+        dies before it can decline one — the pool refusing a connection, a `set_config`
+        blip, a COMMIT that fails at block exit, a cancellation mid-batch. `loop.py`
+        reports a raise to the model as a recoverable internal error, so the turn can end
+        on it, and a pass whose EARLIER call succeeded then presents `calls >= 1,
+        clamped=False`: a complete reading of the note, missing everything this call was
+        carrying. So the latch wraps the whole body rather than the loop.
         """
         del ctx  # the write session is the note's, never the turn's read scope
+        try:
+            return await self._read_note(arguments)
+        except BaseException:
+            # THE OUTER LATCH, and the only one that covers the whole body. The three
+            # inside `_read_note` each catch a way the ENGINE declined a stated fact; this
+            # catches the call ending before it could decline anything — a pool that would
+            # not give a connection, a `set_config` blip on the scoped session, a COMMIT
+            # that failed at block exit, a cancellation while the batch was mid-flight.
+            # `loop.py:_dispatch` turns the raise into a recoverable observation ("hit an
+            # internal error, try a different approach"), so the model may simply end the
+            # turn — and an EARLIER call in the same pass has already left `calls >= 1`
+            # and `clamped False`, which is every one of the settle's four gate refusals
+            # passed. The sweep would then run against a PREFIX of the note and retract
+            # the facts this call was carrying. Latch on the way out and the gate refuses,
+            # which is the honest answer: this reading is not the whole note.
+            self.reading.mark_incomplete()
+            raise
+
+    async def _read_note(self, arguments: dict) -> ToolOutput:
+        """`close_reading`'s body. Split out so the latch above wraps ALL of it —
+        including the lines that are not inside any `try` here (the session open, the
+        note load, the union, the commit at block exit)."""
         items, clamped = _batch(arguments, ("facts", "items"), MAX_FACTS)
         # LATCH FIRST, before any return can skip it. Every other path reaches `union`,
         # but a call whose list is entirely unreadable (`{"facts": [null]}`) with no title
@@ -1142,10 +1183,10 @@ class NoteGraphWriter:
         # a dropped element. Unconditional here is the only shape with no fourth hole:
         # a clamp latches, whatever else this call turns out to do.
         #
-        # It is one of THREE latches, not the only one. A budget refused below and a
-        # refused ELEMENT in the commit loop each leave the same prefix of the note, and
-        # each latches at its own site — a reading is complete only when every fact the
-        # model stated actually landed.
+        # It is one of FOUR latches, not the only one. A budget refused below, a refused
+        # ELEMENT in the commit loop, and the handler raising at all (the wrapper above)
+        # each leave the same prefix of the note, and each latches at its own site — a
+        # reading is complete only when every fact the model stated actually landed.
         if clamped:
             self.reading.mark_incomplete()
         title = _text(arguments, "title", "headline", "summary")
