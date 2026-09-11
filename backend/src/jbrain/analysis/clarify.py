@@ -801,8 +801,10 @@ async def settle_conversation(
     re-deriving the sweep from "nothing ever releases a `conversation` claim", which is
     true and is not a reason.
 
-    It also does NOT stamp `note_analysis` (no title or tags verb, and the stamp is
-    unconditional — precondition 3) or flip `integration_state` (precondition 4).
+    It also does NOT stamp `note_analysis` or flip `integration_state` (preconditions 3
+    and 4). The reason for the first is no longer "no title or tags verb" — R1 gave the
+    conversation exactly that verb, and `close_reading` carries both — it is simply that
+    the stamp is unconditional and moving it is R3's step, not this one's.
 
     **`state` gates it to a clean pass end.** `state_for_stop` gives `SETTLED` to a CLEAN
     stop alone, so a truncated turn lands `failed`, a turn that ended on `ask_owner` lands

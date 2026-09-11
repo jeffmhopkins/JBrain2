@@ -1,4 +1,4 @@
-> **Status:** Living · **Last verified:** 2026-09-09
+> **Status:** Living · **Last verified:** 2026-09-11
 
 # LLM-in-the-middle test harness
 
@@ -8,12 +8,15 @@ it through the **real graph-write path** against real Postgres, then asserts the
 resulting graph.
 
 Since W3 that path is the **note conversation's tool loop, compiled down to its
-two write tools**. `runner._tool_calls` turns each step's scripted extraction
-into the `resolve_entity` / `assert_fact` arguments a faithful agent would send,
-and `NoteGraphWriter` (`jbrain.agent.graphwritetools`) executes them: real
-resolution, real `commit_facts`, real `supersession.decide()`, real domain floor
-and ratchet, real citation anchoring, then ONE `settle_note` over the union of
-every call's writes. What is **not** run is the model itself, the `AgentLoop`,
+write verbs** — and since R2 those are `resolve_entity` and `close_reading`, the
+whole-note READING that replaced the incremental `assert_fact` batch.
+`runner._tool_calls` turns each step's scripted extraction into the arguments a
+faithful agent would send — the surfaces to resolve, then the note restated: its
+title, its tags and every fact it says — and `NoteGraphWriter`
+(`jbrain.agent.graphwritetools`) executes them: real resolution, real
+`commit_facts`, real `supersession.decide()`, real domain floor and ratchet, real
+citation anchoring, then ONE `sweep_note` + `settle_tail` over the whole reading.
+What is **not** run is the model itself, the `AgentLoop`,
 `max_steps`, the budgets, the tool sidecars' schemas, and — since W3 — the
 **arbiter**, which the old `integrate_note` path ran and this one does not.
 
@@ -70,7 +73,7 @@ A scenario is one JSON file in `scenarios/`:
       "created_at": "2026-06-10T17:11:00-06:00",  // ISO+offset: reported_at + anchor
       "body": "the note text",
       "extraction": { /* the full note.extract JSON you'd emit as the model */ },
-      "tool_calls": { /* OPTIONAL: the exact tool arguments — see below */ }
+      "tool_calls": { /* OPTIONAL: {entities, reading} tool arguments — see below */ }
     },
     {
       "reanalyze_step": 0,              // OPTIONAL: re-run the pipeline on step 0's note
@@ -135,7 +138,9 @@ Notes on authoring:
   extraction schema and still shape the front-half parse, which is why they stay
   — but an `expect` block must not assume they survive. See the gap table below.
 - `tool_calls` overrides the synthesiser for one step, `{"entities": [...],
-  "facts": [...]}` in the tools' own argument shapes. Author it only when the
+  "reading": {"title": …, "tags": […], "facts": [...]}}` — the two tools' own
+  argument shapes, addressed per tool, with `title`/`tags` defaulting to the
+  step's scripted extraction. Author it only when the
   faithful default cannot express the case under test — a deliberately fumbled
   `quote`, an object the model chose to leave as a literal. It is **not** a way
   to make a scenario pass: shaping the stand-in to suit the engine is the one
@@ -231,21 +236,26 @@ of a clean pass — `analysis/clarify.settle_conversation`. It does NOT release 
 `conversation` claim: a sweep for it was built and dropped, because no evidence this
 producer has can license a retraction (SETTLE_OWNERSHIP.md S3).
 
-This runner still calls `sweep_note` beside the tail, and that is a deliberate divergence
-rather than drift — but NOT because an in-process ledger is somehow more complete. That
-reading would license a sweep for a single production session too, which is the exact
-inference S3 was removed to block. The real reason is that each harness STEP is a
-whole-note re-derivation: the harness IS the model, emitting a complete extraction per
-step, so it satisfies the sweep's invariant the way the analyzer's `Extraction` does and
-a write ledger never can. That is also why `rerun_retracts_removed_fact.json` works —
-step 2 re-derives the note and its sweep retracts what step 1 asserted and step 2 does
-not, which is a re-derivation dropping a fact, not a ledger accumulating one. What the runner no longer does is call
-`settle_note` whole, which made the harness the one place a conversation stamped
-`note_analysis` with the empty title its tool surface has no verb for.
+This runner still calls `sweep_note` beside the tail, and since R2 that is the SHAPE R3
+specifies rather than a divergence the harness gets away with. It was a divergence, and
+the re-label rests on one change and not on the harness's own bookkeeping: an in-process
+ledger being more complete would license a sweep for a single production session too,
+which is the exact inference S3 was removed to block. What licenses a release is a
+producer that RE-DERIVED the note and dropped X — and `close_reading` is exactly that
+producer (R1), so the runner now takes `sweep_note(touched=…)` off `Reading.fact_ids`,
+the same claim R3 will gate `settle_conversation` on. Each harness STEP is one whole-note
+re-derivation, which is why `rerun_retracts_removed_fact.json` works — step 2 re-reads
+the note, its reading names no `homeLocation` fact, and the sweep retracts what step 1
+asserted, a re-derivation dropping a fact rather than a ledger accumulating one. One
+thing here is still the harness's alone: `mentions`. A reading carries fact ids and no
+mention ids, so R3's settle will pass `mentions=None` and skip the mention reconcile.
+What the runner does not call is `settle_note` whole, which would run the two
+producer-blind review-card halves R3 retires.
 
 What the conversation still does NOT produce,
-and `integrate_note` therefore still owns alone: the `note_analysis` stamp (it has no
-title or tags verb, and the stamp is unconditional — precondition 3), the
+and `integrate_note` therefore still owns alone: the `note_analysis` stamp (R1 gave the
+conversation the title and tags verb it lacked, but `settle_conversation` does not stamp
+them yet and the stamp is unconditional — precondition 3), the
 `notes.integration_state = 'integrated'` flip that `queue.backfill_pending_integration`
 and the workflow reconciler key on (precondition 4), and the settle's two producer-blind
 review-card halves, which deliberately stay in the `settle_note` composition so a second

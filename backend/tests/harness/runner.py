@@ -3,16 +3,17 @@ write path, then snapshot the graph for the checker.
 
 We are the model: each step scripts the `note.extract` response, and the runner
 turns it into the TOOL CALLS a faithful agent would make — one batched
-`resolve_entity` per twelve surfaces, one batched `assert_fact` per eight facts
+`resolve_entity` per twelve surfaces, then the note's whole READING: `close_reading`
+carrying the title, the tags and up to eight facts a call
 (`jbrain.agent.graphwritetools`). Everything downstream is the real engine:
 `commit_facts` resolves the surfaces, anchors the mention spine, and runs every
 fact through `supersession.decide()`, the domain floor and the ratchet;
-`sweep_note` + `settle_tail` then close the note out ONCE, over the union of every
-call's writes — plan constraint 6, the sweep is whole-conversation, never per call.
-Not `settle_note`: the third half, the `note_analysis` stamp, belongs to a producer
-with a title, which this one is not. The SWEEP half is a deliberate divergence from
-production, which runs the tail alone; `_run_note` says why the harness can do what
-production cannot.
+`sweep_note` + `settle_tail` then close the note out ONCE, over the whole reading —
+plan constraint 6, the sweep is whole-conversation, never per call. Not
+`settle_note`: it also runs the two review-card halves R3 retires, and its
+`note_analysis` stamp is R3's to hand the reading. The SWEEP half is no longer a
+divergence from production but the shape R3 specifies, and what licenses it is the
+reading; `_run_step` says what that rests on and what stays the harness's alone.
 
 **What the harness tests is unchanged: the deterministic engine given good model
 output.** What changed is the SHAPE of that output. The old runner compiled an
@@ -22,8 +23,10 @@ changed, not the model — the faithful agent lives in `_tool_calls` and nowhere
 else, one function rather than seventy-five files.
 
 **What the tool surface cannot say**, and so what a scenario can no longer
-script. Each was a real gap in `assert_fact`; three are closed and three are
-accepted, and every one of the six was decided by putting the candidate schema
+script. Each was a real gap in `assert_fact`, and `close_reading` inherits every
+one of them: the reading adds `title` and `tags` and takes the same seven flat
+scalars per fact, so the re-cut loosens nothing below. Three are closed and three
+are accepted, and every one of the six was decided by putting the candidate schema
 in front of the live model (`backend/evals/shape_probe.py`, the `fields` suite)
 rather than by argument. The finding that decided them, and the one worth
 carrying: **`required` buys presence, not membership.** gpt-oss fills every
@@ -40,8 +43,9 @@ two fields that ship are one of each shape or a plain ISO date.
     182 lb in March", "vehicle no longer owned"), and an over-applied qualifier
     splits an identity key so nothing supersedes again — strictly worse than the
     collision it was meant to fix. What EXISTS is the dotted path
-    `registry.decompose_predicate` already reads and `assert_fact` v3 teaches:
-    `name.nickname.friends` stores as name.nickname + friends, bounded to the
+    `registry.decompose_predicate` already reads and the reading's own
+    `predicate` description teaches: `name.nickname.friends` stores as
+    name.nickname + friends, bounded to the
     five registry predicates declaring a `qualifier_vocab`. `_predicate` below
     folds there and nowhere else. A long-tail qualifier is still dropped, so two
     scalar facts under one undeclared predicate still collide. And the channel is
@@ -61,8 +65,8 @@ two fields that ship are one of each shape or a plain ISO date.
     before it ever reaches the tool, and an edge with an object entity stores no
     `value_json` at all. The deliberate narrowing TOOL_SURFACE gap 5 states: the
     model is never asked to nest.
-  - **An interval END is sayable (closed).** `when_end` is v3's seventh flat
-    scalar, and `_when_end` below scripts it. The model fills it and closes the
+  - **An interval END is sayable (closed).** `when_end` is the reading's seventh
+    flat scalar, and `_when_end` below scripts it. The model fills it and closes the
     one genuinely-closed interval in a note — and stamps an end on nearly every
     other fact too, so `graphwritetools._close_interval` refuses an end that is
     not a date, has no start, or does not pass the start's own period.
@@ -87,6 +91,25 @@ two fields that ship are one of each shape or a plain ISO date.
     simply absent (`rel_enumerated_children_fan_out`: 8 facts where main wrote
     12).
 
+**What the READING adds.** Two things `assert_fact` has no verb for, and the harness
+sends both. The note's `title` and `tags` ride the first call, which is what lets a
+settle stamp `note_analysis` from a conversation at all (R3's third step). And a
+repeating schedule is read out of each fact's ATTESTED QUOTE rather than off a field
+(`_assert_one(read_recurrence=True)`, on R0's 0-in-228 measurement that no `repeats`
+field is fillable). The harness quotes its subject's own `surface_text`, which is a
+name and not a schedule, so the faithful default reaches `parse_recurrence` on no
+scenario in the suite — a scenario wanting an RRULE off the quote has to author one.
+
+    That gap is DELIBERATE here and covered elsewhere, which review confirmed:
+    `test_note_graph_write_pg.py` drives the recurrence read directly. Closing it in
+    this suite means aiming a quote at the schedule — `plan_recurring_gym` is one
+    string away, its body carrying "gym every Monday at 6am" verbatim — and that is
+    NEW COVERAGE, which this wave's acceptance ("every green scenario stays green,
+    nothing changes state") exists to keep out. It is the synthesiser being unfaithful
+    on exactly one behaviour, though, and `close_reading.tool` tells the model the
+    opposite ("include the words that say WHEN or HOW OFTEN"), so it is worth a wave
+    of its own rather than a footnote forever.
+
 Usable two ways:
   - pytest (tests/integration/test_harness_scenarios.py) drives run_scenario
     against the shared testcontainers database fixture.
@@ -102,6 +125,7 @@ import asyncio
 import json
 import sys
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -151,17 +175,18 @@ EXTRACTOR = "note_ingest"
 
 @dataclass
 class _Ledger:
-    """The union of every `commit_facts` pass one note's conversation made.
+    """The union of every `commit_facts` pass one note's conversation made — the parts
+    of it the READING does not carry.
 
-    The accumulation seam plan constraint 6 names: `settle_note` is whole-note,
-    so settling on a single tool call's share would retract what the earlier
-    calls committed. Production will read this union back from the 0191 ledger
-    (`NoteConversationRepo.writes()`); in-process the outcomes are right here, so
-    the harness unions them directly rather than pretending to a durable store it
-    does not have."""
+    The accumulation seam plan constraint 6 names: `settle_note` is whole-note, so
+    settling on a single tool call's share would retract what the earlier calls
+    committed. `touched` is no longer among these fields: the facts a sweep must spare
+    are `Reading.fact_ids`, which is the reading's own claim rather than an accumulator
+    only this process has, and `_run_step` sweeps from there. What is left is what
+    production reads back from the 0191 ledger (`NoteConversationRepo.writes()` —
+    entities) plus the mention ids nobody durably records."""
 
     resolved: dict[str, ResolvedEntity | None] = field(default_factory=dict)
-    touched: set[uuid.UUID] = field(default_factory=set)
     projected: set[uuid.UUID] = field(default_factory=set)
     mention_ids: set[uuid.UUID] = field(default_factory=set)
 
@@ -183,7 +208,6 @@ class _LedgerPipeline(AnalysisPipeline):
         outcome = await super().commit_facts(session, **kwargs)
         led = self.ledger
         led.resolved.update(outcome.resolved)
-        led.touched |= outcome.touched
         led.projected |= outcome.projected
         led.mention_ids |= outcome.mention_ids
         return outcome
@@ -197,13 +221,18 @@ def _pipeline(maker: async_sessionmaker[AsyncSession]) -> _LedgerPipeline:
 
 
 # --- the faithful agent: one extraction becomes one turn of tool calls -------
+#
+# The turn is `resolve_entity` then `close_reading`, which is how a pass RECORDS a note
+# now (R1): the reading is the model restating the whole note — title, tags and every
+# fact — rather than a run of incremental writes that says nothing about what was read.
 
 
 def _object_literal(fact: ExtractedFact) -> str:
     """The `object` string for a fact with no object entity.
 
-    `assert_fact` takes a plain string and rebuilds `{value}` / `{value, unit}`
-    from it, so a structured `value_json` has to be rendered down. A `value`/
+    `object` is a plain string on both write tools and the handler rebuilds
+    `{value}` / `{value, unit}` from it, so a structured `value_json` has to be
+    rendered down before it can be read back. A `value`/
     `unit` pair round-trips through the tool's quantity parser; a single-key dict
     gives its value; anything else is its non-boolean values in order, which is
     roughly what a model reading the same sentence would have written.
@@ -243,8 +272,8 @@ def _when(fact: ExtractedFact) -> str:
 
 
 def _when_end(fact: ExtractedFact) -> str:
-    """The `when_end` string — the ISO END the note gave, or empty. `assert_fact`
-    v3 carries an interval end as a seventh flat scalar (TOOL_SURFACE gap 4), so
+    """The `when_end` string — the ISO END the note gave, or empty. The reading
+    carries an interval end as a seventh flat scalar (v3's field, TOOL_SURFACE gap 4), so
     a note that states a CLOSED interval in one sentence no longer needs a later
     note to close it. Empty is the overwhelmingly common answer, and the tool's
     handler refuses an end that has no start, does not parse, or does not follow
@@ -260,12 +289,12 @@ def _predicate(fact: ExtractedFact) -> str:
     """The `predicate` string, with a qualifier folded into the dotted path where
     the registry says the predicate takes one.
 
-    `assert_fact` has no `qualifier` field and is not getting one (TOOL_SURFACE
+    No write tool has a `qualifier` field and none is getting one (TOOL_SURFACE
     gap 3): the live model fills a qualifier field with a date, a phrase or the
     object's own name on most of the facts in a note, and an over-applied
     qualifier splits an identity key so nothing ever supersedes again. What it
-    HAS is the channel `registry.decompose_predicate` already reads and v3's
-    `predicate` description now teaches — `name.nickname.friends` is stored as
+    HAS is the channel `registry.decompose_predicate` already reads and the
+    reading's own `predicate` description teaches — `name.nickname.friends` is stored as
     name.nickname + friends. That channel is only open for the five registry
     predicates declaring a `qualifier_vocab`, so this folds there and nowhere
     else: a long-tail qualifier is still dropped, and the scenarios that then
@@ -283,8 +312,8 @@ def _predicate(fact: ExtractedFact) -> str:
 
 
 def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[dict]]:
-    """The `resolve_entity` and `assert_fact` batches a faithful agent would send
-    for this step — the ONE place the harness plays the model.
+    """The `resolve_entity` batches and the `close_reading` calls a faithful agent would
+    send for this step — the ONE place the harness plays the model.
 
     Surfaces are the extraction's mention NAMES, in first-reference order, plus
     any name a fact refers to without a mention of its own. The name and not the
@@ -297,7 +326,13 @@ def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[di
 
     Facts follow in extraction order, each quoting its subject's own
     `surface_text` — the span the old intent attested with, so "attested" means
-    here exactly what it meant before."""
+    here exactly what it meant before.
+
+    The reading's `title` and `tags` are the extraction's own, unaltered: the scripted
+    `note.extract` response is what a perfect model read out of this note, and the
+    reading is that same model saying it back. Nothing in the harness reads them (no
+    `stamp_analysis` on this path), and they are sent anyway because a reading without
+    them is not a call the live agent makes."""
     surface_by_name = {m.name: m.surface_text for m in extraction.mentions}
     kind_by_name = {m.name: m.kind for m in extraction.mentions}
     body_quote = next(iter(surface_by_name.values()), step.body[:24])
@@ -327,27 +362,60 @@ def _tool_calls(extraction: Extraction, step: Step) -> tuple[list[dict], list[di
         }
         for fact in extraction.facts
     ]
-    return _batched(entities, facts)
+    return _calls(entities, facts, title=extraction.title, tags=extraction.tags)
 
 
-def _batched(entities: list[dict], facts: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Split both lists at the tools' own ceilings. The batch is the measured
-    shape (20/20 well-formed at ~9 entities and ~8 facts a turn), so a note that
-    needs more sends a second call rather than a flat one-per-call turn."""
+def _calls(
+    entities: list[dict], facts: list[dict], *, title: str, tags: Sequence[str]
+) -> tuple[list[dict], list[dict]]:
+    """Split the surfaces and the reading at the two tools' own ceilings. The batch is
+    the measured shape (20/20 well-formed at ~9 entities and ~8 facts a turn), so a note
+    that needs more sends a second call rather than a flat one-per-call turn.
+
+    Title and tags ride the FIRST reading call and no other. That is the call that read
+    the note from the top — `Reading.union` keeps the first non-empty title for exactly
+    that reason — and the tool's own text tells a continuation call to "send the next 8"
+    rather than restate the heading.
+
+    A note that asserts NOTHING still closes its reading. A step with no facts is not a
+    step that skipped the tool: it is the model saying the note says nothing, which is
+    the one claim a sweep acts on destructively (`rerun_retracts_removed_fact`), and
+    emitting no call at all would leave the harness scripting a pass that never read."""
+    readings: list[dict[str, Any]] = [
+        {"facts": facts[i : i + MAX_FACTS]} for i in range(0, len(facts), MAX_FACTS)
+    ] or [{"facts": []}]
+    readings[0] = {"title": title, "tags": list(tags), **readings[0]}
     return (
         [
             {"entities": entities[i : i + MAX_ENTITIES]}
             for i in range(0, len(entities), MAX_ENTITIES)
         ],
-        [{"facts": facts[i : i + MAX_FACTS]} for i in range(0, len(facts), MAX_FACTS)],
+        readings,
     )
 
 
-def _authored_calls(calls: dict[str, Any]) -> tuple[list[dict], list[dict]]:
-    """A scenario that scripts its own tool arguments. Only needed when the
-    faithful default cannot express the case under test — a deliberately fumbled
-    `quote`, an object the model chose to leave as a literal."""
-    return _batched(list(calls.get("entities", [])), list(calls.get("facts", [])))
+def _authored_calls(step: Step) -> tuple[list[dict], list[dict]]:
+    """A scenario that scripts its own tool arguments — `{"entities": [...], "reading":
+    {...}}`. Only needed when the faithful default cannot express the case under test: a
+    deliberately fumbled `quote`, an object the model chose to leave as a literal.
+
+    Authored against the READING like every other step, rather than kept on the old
+    two-call shape. An authored block exists to fumble ONE argument the default gets
+    right, and leaving it addressed to a tool the agent no longer calls would have meant
+    the fumble was no longer tested on any path the agent takes.
+
+    `title`/`tags` fall back to the step's scripted extraction: the block scripts the
+    CALL, not what the note is about, and an untitled reading is not a shape the live
+    model produces."""
+    calls = step.tool_calls or {}
+    reading: Mapping[str, Any] = calls.get("reading", {})
+    extraction = step.extraction
+    return _calls(
+        list(calls.get("entities", [])),
+        list(reading.get("facts", [])),
+        title=str(reading.get("title", extraction.get("title", ""))),
+        tags=[str(t) for t in reading.get("tags", extraction.get("tags", []))],
+    )
 
 
 async def _parse_extraction(step: Step, domain: str) -> Extraction:
@@ -428,8 +496,8 @@ async def _seed_note(maker: async_sessionmaker[AsyncSession], step: Step) -> _No
 
 
 async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _Note) -> None:
-    """One note's whole conversation: the tool calls, then one settle over their
-    union.
+    """One note's whole conversation: the surfaces resolved, the reading closed, then
+    one settle over that reading.
 
     The writer is built per note, exactly as `converse.executor_for_note` builds
     it — full-owner write scope (layer 1 of resolution carries no domain
@@ -457,38 +525,79 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     ctx = ToolContext(session=SYSTEM_CTX, scopes=read_scopes)
 
     if step.tool_calls is not None:
-        resolves, asserts = _authored_calls(step.tool_calls)
+        resolves, readings = _authored_calls(step)
     else:
-        resolves, asserts = _tool_calls(await _parse_extraction(step, note.domain), step)
+        resolves, readings = _tool_calls(await _parse_extraction(step, note.domain), step)
     for arguments in resolves:
         await writer.resolve_entity(arguments, ctx)
-    for arguments in asserts:
-        await writer.assert_fact(arguments, ctx)
+    for arguments in readings:
+        await writer.close_reading(arguments, ctx)
 
-    # One settle per note, over the union — never per call (plan constraint 6).
-    # An EMPTY union is passed through deliberately: here it means the whole
-    # conversation asserted nothing, which is exactly when the note's mentions
-    # and facts should be swept. It is a per-CALL settle that constraint 7
-    # forbids, and this is not one.
+    # One settle per note, over the whole reading — never per call (plan constraint 6).
+    # An EMPTY reading is passed through deliberately: here it means the conversation
+    # read the note and found it says nothing, which is exactly when the note's mentions
+    # and facts should be swept. What constraint 7 forbids is a per-CALL settle, and
+    # this is not one.
     #
-    # NOT `settle_note` whole: that made the harness the one place a conversation stamped
-    # `note_analysis`, with the empty title and tags its tool surface has no verb for.
+    # NOT `settle_note` whole: that also runs the two review-card halves R3 retires, and
+    # its `note_analysis` stamp is R3's to hand the reading — the reading now HAS a title
+    # and tags, which is why the stamp becomes sayable at all, but stamping it is that
+    # wave's and no scenario reads the row.
     #
-    # The `sweep_note` below is a DELIBERATE divergence from production, which runs the
-    # tail alone (`analysis/clarify.settle_conversation`; a conversation sweep was built
-    # and dropped — SETTLE_OWNERSHIP.md S3).
+    # The `sweep_note` below is the SPEC, and it was a divergence until the reading
+    # existed. Production's `settle_conversation` still runs the tail alone
+    # (`analysis/clarify.settle_conversation`; a conversation sweep was built and dropped
+    # — SETTLE_OWNERSHIP.md S3), and the reason it was dropped is the reason no LEDGER can
+    # license a release: a ledger records what a producer WROTE, so a pass that read the
+    # note and wrote nothing is indistinguishable from one that never looked, and the only
+    # claims a release could then remove are another session's. That argument is closed
+    # and still stands.
     #
-    # The difference is NOT that an in-process accumulator makes `led.touched` more
-    # complete. Read that way it would license a sweep for a single production session
-    # too, which is the inference S3 was removed to block — and it is false here anyway:
-    # `run_scenario` reuses a note across steps and `_run_step` builds a fresh pipeline
-    # per step, so `led.touched` covers THIS step only.
+    # What it demands is a producer that RE-DERIVED the note and dropped X, and that is
+    # what `close_reading` is (plan §1): the model restates the whole note, so
+    # `Reading.fact_ids` is the complete current reading a retraction needs. Hence
+    # `touched` below comes off the reading rather than off the write ledger this runner
+    # used to union — the sweep is licensed by the same claim R3 will gate
+    # `settle_conversation` on, running here ahead of it.
     #
-    # What licenses it is that each step is a whole-note RE-DERIVATION. The harness is the
-    # model, emitting a complete extraction per step, so it satisfies the sweep's
-    # invariant the way the analyzer's `Extraction` does and a write ledger never can.
-    # That is exactly why `rerun_retracts_removed_fact.json` works: step 2 re-derives the
-    # note, and the sweep retracts what step 1 asserted and step 2 no longer does.
+    # Note what still does NOT license it: the harness's own in-process accumulator. Read
+    # that way it would license a sweep for a single production session too, which is the
+    # inference S3 was removed to block — and it is false here anyway, since `run_scenario`
+    # reuses a note across steps while `_run_step` builds a fresh writer and pipeline per
+    # step, so both the reading and `led` cover THIS step only. That is not a weakness:
+    # one step IS one whole-note re-derivation, which is the invariant the sweep wants.
+    # It is why `rerun_retracts_removed_fact.json` works — step 2 re-reads the note, its
+    # reading names no `homeLocation` fact, and the sweep retracts what step 1 asserted.
+    #
+    # THREE things here are still not production, and R3 has to close two of them. Naming
+    # them precisely matters because R4 deletes the old pipeline citing this harness:
+    #
+    # 1. `mentions`. A reading carries fact ids and no mention ids, so R3's settle passes
+    #    `mentions=None` and SKIPS the mention reconcile (`sweep_note` says what that
+    #    leaks and why it is bounded). The harness's alone, and it stays that way.
+    #
+    # 2. **One fact verb here, TWO in production.** `assert_fact` is still bound on the
+    #    unattended pass (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) until R4 narrows it to
+    #    the reply set, and `_calls` emits only `close_reading` — so the MIXED pass is
+    #    untested and, by the default synthesiser, unrepresentable. That pass is exactly
+    #    where a reading-derived sweep is destructive: assert F, then close with a reading
+    #    that omits F, and the sweep releases F's claim and retracts a fact the SAME pass
+    #    wrote. A complete reading re-absorbs it (re-asserting an identity key returns
+    #    `ALREADY` with the same `fact_id`, so it lands in `fact_ids` anyway) — the hole is
+    #    the INCOMPLETE reading, which is the case the sweep is dangerous in.
+    #    **R3 must close this, not inherit it**: either narrow `assert_fact` off the
+    #    unattended path when the settle moves, or union the pass's `assert_fact` writes
+    #    into `touched`. The first is cleaner and is what R4 was going to do anyway; the
+    #    second keeps the verb but re-admits the ledger the S3 argument above rejects,
+    #    for the bounded case of facts THIS pass wrote.
+    #
+    # 3. The sweep here is UNGATED. The spec fires it only on a clean, unclamped pass that
+    #    produced a reading; nothing below consults `writer.reading.clamped`. Inert at the
+    #    suite's sizes — the largest step is 6 facts — but the ceiling moved with the verb:
+    #    `READING_CALL_BUDGET` 6 x 8 = 48 facts per step, where the retired
+    #    `ASSERT_CALL_BUDGET` 10 x 8 gave 80. A 49-fact step would write 48, latch
+    #    `clamped`, and be swept anyway, retracting the previous step's tail where
+    #    production would refuse.
     led = pipeline.ledger
     async with scoped_session(maker, SYSTEM_CTX) as session:
         # The harness sweeps as the CONVERSATION — `EXTRACTOR` is `note_ingest` here,
@@ -497,7 +606,7 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
             session,
             note_id=note.note_id,
             settle_owner=CONVERSATION,
-            touched=led.touched,
+            touched={uuid.UUID(fact_id) for fact_id in writer.reading.fact_ids},
             # In-process, so the harness HAS the mention ids production's ledger does
             # not record — it reconciles where `settle_conversation` must skip.
             mentions=led.mention_ids,
