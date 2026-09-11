@@ -3915,9 +3915,14 @@ the already-resident branch return before it. So the predicted-vs-measured serie
 catalog is meant to be corrected from is **missing exactly the loads that took a shortcut** —
 which matters to any wave proposing "measure instead of predict".
 
-## G7 — `dbless_coordinator` is a sanctioned half-wired gate
+## G7 — `dbless_coordinator` is a sanctioned half-wired gate — ⟲ **GONE 2026-09-11**
 
 `ResidencyWiring`'s whole premise is that a half-wired coordinator should be a type error. The
-DB-less path builds one with no window sizing, no operator floor, no code-mode hold and no
-cross-process lock. Its docstring is honest about it, but it is an exemption from the invariant
-the type exists to enforce, and it is the kind of thing cited as precedent for the next one.
+DB-less path built one with no window sizing, no operator floor, no code-mode hold and no
+cross-process lock. Its docstring was honest about it, but it was an exemption from the
+invariant the type exists to enforce, and the kind of thing cited as precedent for the next one.
+
+It had exactly two callers, `scripts/prompt-eval.sh` and `scripts/grok-eval.sh`, and R4 of
+`../plans/AGENT_INGEST_REWRITE.md` deleted both with the prompt they scored. The function went
+with them, so the exemption is closed by subtraction: every coordinator on the box is now
+fully wired, and a future DB-less process has to argue for the gap on its own merits.
