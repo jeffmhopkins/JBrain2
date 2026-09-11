@@ -2397,7 +2397,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
 
 
 def _note_write_registry() -> ToolRegistry:
-    """The three note-write sidecars, bound to inert handlers — enough to see which of
+    """The four note-write sidecars, bound to inert handlers — enough to see which of
     them `/chat` actually offers a note conversation's reply turn."""
     import jbrain.agent.readtools as readtools
     from jbrain.agent.toolfile import load_tool
@@ -2408,7 +2408,7 @@ def _note_write_registry() -> ToolRegistry:
     return ToolRegistry(
         [
             RegisteredTool(load_tool(readtools.TOOLS_DIR / f"{n}.tool"), _inert)
-            for n in ("assert_fact", "ask_owner", "correct_fact")
+            for n in ("assert_fact", "close_reading", "ask_owner", "correct_fact")
         ]
     )
 
@@ -2427,7 +2427,12 @@ def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_n
     D8 widens this turn because the owner is the only voice in the room. On a note a
     STRANGER wrote he is not — the submitted body is turn 0 of this thread and is still
     in context — so `correct_fact` (a force-supersede that PINS) and `ask_owner` are not
-    offered, while `assert_fact` still is: D10 keeps the write path unrestricted.
+    offered, while `close_reading` still is: D10 keeps the write path unrestricted.
+
+    `close_reading` and not `assert_fact`, since R3: the third-party set is derived from
+    the UNATTENDED one, and that set now holds a single fact verb so a pass cannot write a
+    fact its own closing reading omits. What a stranger's reading may not do is retract —
+    the settle refuses to sweep on one (`clarify.PassReading.third_party`).
 
     Parametrized against its own negative, because the failure this guards is the
     narrowing applying to EVERY note conversation — which would look identical from the
@@ -2455,11 +2460,11 @@ def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_n
     resp = client.post("/api/chat", json={"session_id": "sess-tp", "message": "my cousin"})
     assert resp.status_code == 200
     offered = {t.name for t in fake.stream_calls[0]["tools"]}
-    assert "assert_fact" in offered
+    assert "close_reading" in offered
     if third_party:
-        assert offered == {"assert_fact"}
+        assert offered == {"close_reading"}
     else:
-        assert offered == {"assert_fact", "ask_owner", "correct_fact"}
+        assert offered == {"close_reading", "assert_fact", "ask_owner", "correct_fact"}
 
 
 def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:

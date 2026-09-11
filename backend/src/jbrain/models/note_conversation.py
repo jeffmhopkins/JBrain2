@@ -377,10 +377,10 @@ class NotesInboxEntry:
 
 @dataclass(frozen=True)
 class ConversationWrites:
-    """The whole-conversation union of what its successful calls wrote — constraint 6's
-    `touched`/`projected` sets, durable across turns. `settle_note` retracts every
-    non-pinned fact of the note NOT in `facts`, so a per-turn share would retract the
-    previous turn's commits; this is why the ledger exists.
+    """The whole-conversation union of what its successful calls wrote — the settle
+    TAIL's `referenced`/`projected` sets, durable across turns. `settle_note` retracts
+    every non-pinned fact of the note NOT in its `touched`, so a per-turn share handed to
+    THAT would retract the previous turn's commits; this is why the ledger is a union.
 
     `frozenset`, not `set`: `frozen=True` only stops the FIELDS being rebound, and a
     caller that dropped an id from a mutable `facts` would silently widen the sweep.
@@ -416,10 +416,12 @@ class ConversationWrites:
     closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
     outright.
 
-    **There is no conversation sweep, and `facts` is not a retraction input.** One was
-    built over this field (S3) and removed. An empty `facts` means "this session's
-    successful calls wrote no fact", and never "nothing was recorded" — but it also never
-    means "the note no longer says that", which is the reading a sweep needs. The
+    **The conversation sweeps again since R3, and `facts` is still not its input.** One
+    was built over this field (S3) and removed, and what came back is a sweep over the
+    pass's closing READING (`close_reading`, `clarify.settle_conversation`) — a different
+    claim by a different verb. An empty `facts` means "this session's successful calls
+    wrote no fact", and never "nothing was recorded" — but it also never means "the note
+    no longer says that", which is the reading a sweep needs. The
     the conversation asserts once and revises by supersession; `correct_fact`
     supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
     holds beside rather than superseding — O15); and a re-assert refreshes the SAME row in
@@ -801,25 +803,22 @@ class NoteConversationRepo:
         return list((await session.execute(stmt)).scalars())
 
     async def writes(self, session: AsyncSession, session_id: str) -> ConversationWrites:
-        """The accumulated `touched`/`projected` sets for `settle_note`, for THIS session
+        """The accumulated reprojection sets for the settle's TAIL, for THIS session
         only. FAILED calls are excluded: a call that errored asserted nothing, and
-        counting its ids would spare a fact the whole-note sweep is supposed to
-        retract.
+        counting its ids would reproject an entity this session never touched.
 
-        **The returned `facts` covers every turn of the conversation** — the unattended
-        pass and the owner's replies — since W4c/1 gave `/chat` the same recorder
-        (`clarify.record_reply_writes`). That is what `settle_note(touched=...)` needs:
-        it releases this producer's claim on every non-pinned fact of the note NOT in
-        `touched`, and retracts the ones left unclaimed (`analysis/pipeline.py`), so a
-        per-pass share would drop the claim the owner's own answer added — the claim set
-        groups both runs deliberately, so it would not save them.
+        **The returned sets cover every turn of the conversation** — the unattended pass
+        and the owner's replies — since W4c/1 gave `/chat` the same recorder
+        (`clarify.record_reply_writes`), so a reply turn's writes are reprojected as the
+        pass's own are.
 
-        Per SESSION, and read by the settle's TAIL alone (what this pass touched is what
-        wants reprojecting). It is NOT a `touched` set for a whole-note sweep and there is
-        no longer a caller that treats it as one: a sweep is note-scoped, so a
-        per-session ledger handed in as `touched` retracts what earlier sessions of the
-        same note claimed. That was built and removed — `ConversationWrites` above says
-        why no reconstruction of it can work."""
+        Per SESSION, and read by the settle's TAIL alone (what this conversation touched
+        is what wants reprojecting). It is NOT the `touched` set of a whole-note sweep,
+        and no caller treats it as one: a sweep is note-scoped, so a per-session ledger
+        handed in as `touched` retracts what earlier sessions of the same note claimed —
+        and, more fundamentally, a record of WRITES cannot say what the note stopped
+        saying. `ConversationWrites` above has the argument; the reading is what answers
+        it (R3)."""
         stmt = select(
             NoteConversationToolCall.fact_ids,
             NoteConversationToolCall.entity_ids,

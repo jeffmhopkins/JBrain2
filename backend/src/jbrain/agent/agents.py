@@ -487,10 +487,21 @@ INTAKE_TOOLS: frozenset[str] = frozenset()
 # above is what makes this necessary rather than optional: an allowlisted name with no handler
 # behind it is a tool call that dies in dispatch, and for a whole wave that is what these two
 # were on the reply turn.
+#
+# R3 NARROWED IT TO ONE FACT VERB, and that is a correctness change rather than tidying.
+# The unattended pass's settle now derives its sweep from the pass's closing READING
+# (`analysis/clarify.settle_conversation`), releasing this producer's claim on every row
+# the reading no longer names. Hold `assert_fact` here as well and a pass could write F —
+# a verb it still had, with a live result telling it to — and then close with a reading
+# that omits F, so the sweep would retract a fact THAT SAME PASS wrote. A COMPLETE reading
+# re-absorbs it (re-asserting an identity key returns `ALREADY` with the same `fact_id`),
+# so the hole is the INCOMPLETE reading, which is precisely the case a sweep is
+# destructive in. One verb on the pass makes that unrepresentable instead of guarded: the
+# only thing that writes a fact is the thing the sweep reads. `assert_fact` keeps its
+# reply-turn job below, where it never licenses a sweep.
 NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
     {
         "resolve_entity",
-        "assert_fact",
         "close_reading",
         "ask_owner",
         "find_entity",
@@ -505,14 +516,21 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 # is the only enforcement there is (constraint 9, TOOL_SURFACE R2).
 #
 # A superset of the unattended set, not a swap. The reply turn is the same agent finishing
-# the same reading of the same note, so taking `assert_fact` away at the moment the owner
-# explains what the note actually meant would leave it able to discuss a correction and
-# unable to record one — and worse than unable. `correct_fact` at an EMPTY address commits
-# active + pinned (`supersession.decide`), so a reply turn holding only that verb records
-# every new thing the owner mentions as a pinned fact no later note can supersede. Being a
-# superset is what keeps the ordinary "here is one more fact" on the ordinary write path.
+# the same reading of the same note, so a reply turn that could not record "one more thing"
+# would be able to discuss a correction and unable to write it — and worse than unable.
+# `correct_fact` at an EMPTY address commits active + pinned (`supersession.decide`), so a
+# reply turn holding only that verb records every new thing the owner mentions as a pinned
+# fact no later note can supersede. Being a superset is what keeps the ordinary "here is
+# one more fact" on the ordinary write path.
 #
 # Why each added verb is on-reply rather than unattended, one line each:
+# - `assert_fact` is INCREMENTAL — "record one more thing the owner just told me" — and
+#   incremental is exactly what must never license a sweep. Here it cannot: the sweep reads
+#   the closing reading, and a reply turn that only added a fact closed none, so it settles
+#   without retracting anything. Unattended it would be a second fact verb beside the
+#   reading the sweep is derived from, which is the overlap R3 removed (see the unattended
+#   set above). A reply turn that HAS re-read the whole note ends with `close_reading` too,
+#   and that is what sweeps.
 # - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
 #   is the note, and a note that talks its way into overriding the graph past the arbiter's
 #   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
@@ -532,7 +550,15 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 # sanitize the note body, which is still sitting in this turn's context — untrusted content
 # + private data + egress is the complete trifecta, and it is just as complete here.
 NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | frozenset(
-    {"correct_fact", "merge_entities", "prefs_write", "search", "read_note", "relate"}
+    {
+        "assert_fact",
+        "correct_fact",
+        "merge_entities",
+        "prefs_write",
+        "search",
+        "read_note",
+        "relate",
+    }
 )
 
 # The THIRD-PARTY surface (D10, and plan risk 1 answered by which handlers are bound).
@@ -544,10 +570,15 @@ NOTE_INGEST_ON_REPLY_TOOLS: frozenset[str] = NOTE_INGEST_UNATTENDED_TOOLS | froz
 # the only enforcement there is, so the difference has to be a difference of names.
 #
 # The rule it encodes, stated once: **a stranger's words may cause a FACT, and nothing
-# else.** They may resolve and mint entities and assert facts about them, because that
-# is what the owner approved the submission FOR — D10's "unrestricted in *what* it may
-# write" is honoured exactly, both graph-write verbs present, unnarrowed, at the same
-# budgets, through the same `commit_facts`, with the same floor and the same span check.
+# else.** They may resolve and mint entities and state everything the note says, because
+# that is what the owner approved the submission FOR — D10's "unrestricted in *what* it
+# may write" is honoured exactly, the pass's whole write surface present, unnarrowed, at
+# the same budgets, through the same `commit_facts`, with the same floor and the same span
+# check. Since R3 that surface is `resolve_entity` + `close_reading`, because it is
+# derived from the unattended set and that set now holds one fact verb. What a third-party
+# reading may NOT do is RETRACT: it commits and the settle refuses to sweep on it
+# (`clarify.PassReading.third_party`), because a reading is a write and not a licence when
+# the reader is not the owner.
 # They may not open a channel to the owner, escalate past the arbiter, edit a standing
 # instruction, or aim the corpus.
 #

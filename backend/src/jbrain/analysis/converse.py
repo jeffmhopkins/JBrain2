@@ -24,11 +24,15 @@ thread. Three re-ingests are shipped and ordinary:
   transaction, so each answered question re-ingests and pays for another turn;
 - a re-ingest for any other reason (an edited body).
 
-`graph_rebuild` does NOT amplify it: `backfill_pending_integration` enqueues
-`integrate_note` jobs directly against `app.jobs` and emits no event, so a corpus-wide
-rebuild costs nothing here — which is the one thing that would otherwise multiply this
-by the size of the corpus. W2 has no path that closes, merges or supersedes the threads
-a re-ingested note accumulates; the notes tab that would show them is W3 (D4).
+`graph_rebuild` DOES amplify it since R3, and that is a deliberate change of price
+rather than an oversight. `backfill_pending_integration` used to enqueue `integrate_note`
+directly against `app.jobs`, so a corpus-wide rebuild cost nothing here; it now enqueues
+`note_converse`, because the conversation is the producer that writes
+`integration_state` (`_mark_integrated`) and re-enqueuing a producer that no longer
+writes that state would re-run the analyzer forever. So a rebuild is now one agent turn
+per note, serially, on one GPU — which is what a rebuild of an agent-written graph IS,
+and is why `_integration_drained` polls rather than waits. The notes tab that shows the
+threads a re-ingested note accumulates is W3 (D4).
 
 Three things make it an ordinary agent conversation rather than a second hidden ingest
 path (D1):

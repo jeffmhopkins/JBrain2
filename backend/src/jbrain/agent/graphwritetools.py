@@ -1837,13 +1837,20 @@ def _batch(
 
 @dataclass
 class NoteToolset:
-    """The tools one note conversation runs with: the three graph writes bound to its
-    note — `resolve_entity`, `assert_fact` and `close_reading`, until R4 narrows the
-    second to the reply set — plus whatever handlers the caller passes alongside them. Today that is
-    find_entity / read_entity / current_time — inherited unchanged, and reached only
-    because the persona now reads the knowledge base — and `ask_owner`, which is a write
-    but not a note-BOUND one: it finds its conversation through the turn's session id,
-    so one handler serves every note and the chat registry too."""
+    """The tools one note conversation's UNATTENDED pass runs with: the two graph writes
+    bound to its note — `resolve_entity` and `close_reading` — plus whatever handlers the
+    caller passes alongside them. Today that is find_entity / read_entity / current_time —
+    inherited unchanged, and reached only because the persona now reads the knowledge base
+    — and `ask_owner`, which is a write but not a note-BOUND one: it finds its
+    conversation through the turn's session id, so one handler serves every note and the
+    chat registry too.
+
+    **`assert_fact` is not bound here, and that is the second lock on R3's narrowing**
+    (constraint 9: a name with no handler behind it cannot dispatch however the profile is
+    resolved). The pass's settle derives its sweep from the closing reading, so a second
+    fact verb on the same pass could write a fact the sweep then retracted. It stays bound
+    on the chat registry, where the owner's reply turn reaches it (`agent/replytools.py`)
+    and where nothing sweeps."""
 
     writer: NoteGraphWriter
     inherited: Mapping[str, ToolHandler] = field(default_factory=dict)
@@ -1860,7 +1867,6 @@ class NoteToolset:
         writes: dict[str, ToolHandler] = (
             {
                 RESOLVE_ENTITY: self.writer.resolve_entity,
-                ASSERT_FACT: self.writer.assert_fact,
                 CLOSE_READING: self.writer.close_reading,
             }
             if self.writes_graph

@@ -274,8 +274,14 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
 
     `emr_parse` counts as in-flight work too: it writes facts and moves the EMR
     projections, and it flips no `integration_state` of its own, so a job leg that
-    watched only `integrate_note` would chain the wiki repair over a graph the parser
-    was still writing."""
+    watched only the note's graph producer would chain the wiki repair over a graph the
+    parser was still writing.
+
+    `note_converse` joined the list with the flip (R3) — it is what re-integration
+    enqueues now (`queue.backfill_pending_integration`) — and `integrate_note` STAYS on
+    it, which is a superset rather than the plan's swap: that producer is still live
+    beside the conversation (D13) and still writing this same graph, so a drain that
+    stopped watching it would chain over its writes. R4 takes it off with the kind."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pending = (
             await session.execute(
@@ -291,7 +297,7 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
             await session.execute(
                 text(
                     "SELECT count(*) FROM app.jobs"
-                    " WHERE kind IN ('integrate_note', 'emr_parse')"
+                    " WHERE kind IN ('integrate_note', 'note_converse', 'emr_parse')"
                     " AND status IN ('queued', 'running')"
                 )
             )

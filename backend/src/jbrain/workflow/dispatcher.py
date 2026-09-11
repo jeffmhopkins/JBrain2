@@ -370,9 +370,14 @@ async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnque
       `ingest_state = 'pending'`) would not re-enqueue it, so neither does a live
       dispatch of a stale/re-delivered `note.created` event.
     - `integrate_note`: skip on a queued integrate twin (the note-keyed
-      active-analysis check), AND skip when `integration_state == 'integrated'` — the
-      integration reconciler keys on `integration_state <> 'integrated'`, so a note
-      already integrated is past it and a re-delivered `note.ingested` is suppressed.
+      active-analysis check), AND skip when `integration_state == 'integrated'`. The
+      state check is no longer congruence with the reconciler — since R3 that sweep
+      re-enqueues `note_converse`, because the conversation is what writes this state now
+      — but it is still the right skip for this kind: `integrated` means a producer has
+      run to completion on the note, and a re-delivered `note.ingested` for an unchanged
+      note must not re-run the analyzer. A genuine re-ingest flips `integrated -> stale`
+      first (`ingest/pipeline.py`), so it stays eligible. The whole arm goes with the kind
+      in R4.
 
     The job check stays queued-only on purpose (mirroring the hardcoded callers and
     the reconcilers): a RUNNING job may have read stale chunks, so it must never

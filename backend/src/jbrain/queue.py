@@ -20,6 +20,7 @@ from sqlalchemy import CursorResult, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 
 SYSTEM_CTX = SessionContext(principal_id="worker", principal_kind="owner")
 
@@ -608,23 +609,45 @@ async def backfill_pending_integration(
     *,
     limit: int = INTEGRATION_BACKFILL_LIMIT,
 ) -> int:
-    """Enqueue integrate_note for indexed notes not yet integrated — the v3
-    cutover backfill (W3.3). BOUNDED per call: migration 0029 defaulted EVERY
-    existing note to 'pending_integration', so an unbounded sweep would push the
-    whole corpus through the costlier Integrator at once. Oldest-first
-    (created_at); each integrated note drops out of `integration_state <>
-    'integrated'`, so repeated boots drain the backlog within budget. Skips a note
-    with an active integrate_note job or outstanding OCR. Ordered by
-    INTEGRATION_BACKFILL_ORDER_BY — the owner-ahead (N14) seam, inert today (see
-    that constant)."""
+    """Enqueue `note_converse` for indexed notes not yet integrated — the dropped-event
+    safety net for the note's graph producer. BOUNDED per call: migration 0029 defaulted
+    EVERY existing note to 'pending_integration', so an unbounded sweep would push the
+    whole corpus through at once. Oldest-first (created_at); each integrated note drops
+    out of `integration_state <> 'integrated'`, so repeated fires drain the backlog within
+    budget. Ordered by INTEGRATION_BACKFILL_ORDER_BY — the owner-ahead (N14) seam, inert
+    today (see that constant).
+
+    **It enqueues the CONVERSATION since R3**, because the conversation is what flips
+    `integration_state` now (`analysis/converse.NoteConverseRunner._mark_integrated`), on
+    every pass ending. Re-enqueuing `integrate_note` off a state that producer no longer
+    writes would have re-run the analyzer every five minutes for the life of each note,
+    and would have left the conversation — the producer this state is now ABOUT — with no
+    safety net at all, which it has never had.
+
+    Three skips, and the middle one is new with the kind:
+
+    - an active `note_converse` job for the note (the twin check);
+    - a LIVE conversation on it, which is the clause `dispatcher._already_active` already
+      applies: the handler would decline such an event anyway (`already_live`), so
+      enqueuing is a job that exists to do nothing — and on a thread parked
+      `waiting_on_owner` it would be one every five minutes until the owner answers;
+    - outstanding OCR, and the attachment-intent window below.
+
+    The stale-conversation RECLAIM leads, and it is load-bearing rather than tidy: a pass
+    killed mid-turn (an `Ops -> Update` quiesce is a `stop -t 30`) leaves a `running` row
+    that the live-conversation skip would honour forever. `reclaim_stale` is otherwise
+    reached only through `live_for_note`, i.e. only when something already asks about that
+    note — and after R3 this sweep is the only thing that would (CLAUDE.md #10: no
+    terminal, so a stranded note must un-strand itself)."""
     async with scoped_session(maker, ctx) as session:
+        await NoteConversationRepo().reclaim_stale(session)
         result = await session.execute(
             text(
                 # INTEGRATION_BACKFILL_ORDER_BY is a module constant, never
                 # caller input — interpolation is safe.
                 f"""
                 INSERT INTO app.jobs (id, kind, payload)
-                SELECT gen_random_uuid(), 'integrate_note',
+                SELECT gen_random_uuid(), 'note_converse',
                        jsonb_build_object('note_id', n.id)
                 FROM app.notes n
                 WHERE n.ingest_state = 'indexed'
@@ -632,9 +655,14 @@ async def backfill_pending_integration(
                   AND n.integration_state <> 'integrated'
                   AND NOT EXISTS (
                       SELECT 1 FROM app.jobs j
-                      WHERE j.kind = 'integrate_note'
+                      WHERE j.kind = 'note_converse'
                         AND j.status IN ('queued', 'running')
                         AND j.payload ->> 'note_id' = n.id::text
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.note_conversations c
+                      WHERE c.note_id = n.id
+                        AND c.state IN ('running', 'waiting_on_owner')
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM app.jobs j

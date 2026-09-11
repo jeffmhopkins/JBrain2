@@ -535,9 +535,9 @@ def reconcile_pending_integration_handler(
     """Wrap the pending-integration backfill as a queue handler (bounded,
     oldest-first), fireable on a recurring schedule + on demand from Ops. Same
     SYSTEM_CTX + idempotency contract as the pending-notes reconciler: the
-    INSERT…SELECT skips notes with an active `integrate_note` job, so re-firing
-    never double-enqueues (E4). Returns the number of jobs enqueued so the worker can
-    reap an idle (0-work) fire's run."""
+    INSERT…SELECT skips notes with an active `note_converse` job or a live conversation,
+    so re-firing never double-enqueues (E4). Returns the number of jobs enqueued so the
+    worker can reap an idle (0-work) fire's run."""
 
     async def handler(_payload: dict[str, Any]) -> int:
         return await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)

@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.auth.service import PrincipalInfo
-from jbrain.db.session import SessionContext
+from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 from jbrain.notes.service import (
     ClarificationsAltered,
     NoteInfo,
@@ -21,6 +22,12 @@ from jbrain.storage import BlobStore
 from jbrain.workflow import events as wf_events
 
 router = APIRouter()
+
+NOTE_CONVERSE_KIND = "note_converse"
+"""The job kind the note's graph producer runs as. Spelled here rather than imported
+from `analysis/converse.py`, which drags the whole turn runner (and through it the LLM
+stack) into the API process for the sake of one string — the same trade
+`clarify.NOTE_CONVERSE_AGENT` makes one module over."""
 
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 
@@ -87,8 +94,9 @@ class NoteOut(BaseModel):
     ingest_state: str
     # Hidden from the home stream (still searchable); see POST /notes/{id}/hide.
     hidden: bool
-    # True once the integrate_note job has written the note_analysis row —
-    # the client's lifecycle chip disappears on it.
+    # True once a settle has written the note_analysis row — the analyzer's, the EMR
+    # importer's, or (R3) the note conversation's, off its closing reading. The client's
+    # lifecycle chip disappears on it.
     analyzed: bool
     # 'human' or 'agent' — the stream tags agent-authored (Proposal-enacted)
     # notes without polluting the body with attribution prose (ASSISTANT.md #7).
@@ -444,18 +452,37 @@ async def analyze_note(
     principal: PrincipalDep,
     repo: NotesRepoDep,
     jobs: JobQueueDep,
+    maker: SessionMakerDep,
 ) -> dict[str, str]:
-    """On-demand re-analysis of one note: the integrate_note pipeline, the same
-    incremental upsert + retraction sweep an edit triggers — no special re-run
-    job kind. Refused while the pipeline would run it anyway (ingest pending
-    or OCR outstanding): the ingest gate owns that sequencing."""
+    """On-demand re-analysis of one note: the note CONVERSATION, the same producer an
+    edit's re-ingest opens and the same whole-note reading + sweep it performs — no
+    special re-run job kind. Refused while that pass would run anyway (ingest pending or
+    OCR outstanding): the ingest gate owns that sequencing.
+
+    It enqueues `note_converse` since R3, with `integration_state`: the flip is the
+    conversation's now, so a re-run that enqueued `integrate_note` would move the graph
+    without moving the state the PWA's chip and the reconciler read, and would leave the
+    button 202-ing a producer the plan retires next wave (CLAUDE.md #10 — this button is
+    the owner's only no-terminal re-analysis lever).
+
+    The 409s are what keep it honest, and the second one is new with the kind. A queued
+    twin would double-process; a LIVE conversation would make the handler decline the job
+    outright (`already_live`), so without the check the owner taps re-run, gets a 202 and
+    a job id, and nothing whatever happens — including on a thread parked on a question
+    he has not answered, where re-reading is not what he wants anyway."""
     ctx = ctx_for(principal)
     note = await repo.get_note(ctx, note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
-    # A 409 if integration is already in flight, so the note can't be raced
-    # into double-processing.
-    if await jobs.has_active_analysis(ctx, note_id):
+    # A 409 if a pass is already in flight, so the note can't be raced into
+    # double-processing. `has_active` rather than `has_active_analysis`: that helper's
+    # three other callers are each about the `integrate_note` twin THEY enqueue, and it
+    # keeps that subject until R4 takes the kind.
+    live = await jobs.has_active(ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id)
+    if not live:
+        async with scoped_session(maker, ctx) as session:
+            live = await NoteConversationRepo().live_for_note(session, note_id) is not None
+    if live:
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
         ctx, note_id
@@ -464,7 +491,7 @@ async def analyze_note(
             status_code=409,
             detail="note is still being processed; analysis will run automatically",
         )
-    job_id = await jobs.enqueue(ctx, "integrate_note", {"note_id": note_id})
+    job_id = await jobs.enqueue(ctx, NOTE_CONVERSE_KIND, {"note_id": note_id})
     return {"job_id": job_id}
 
 
