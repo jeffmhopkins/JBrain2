@@ -68,9 +68,20 @@ def test_the_streams_ask_chip_is_a_44px_box_that_cannot_overlap_its_neighbours()
     # `position: absolute` pseudo is exactly what reached the neighbouring chip, so its
     # absence is the property, not a style preference.
     assert not re.search(r"position:\s*(absolute|fixed|relative)", chip)
+    # And no out-of-flow hit area is hung off the chip ANYWHERE in the sheet, however the
+    # rule is spelled. ⟲ This was two literal substring checks for `button.chip-ask::before`
+    # / `::after` (R3f's third review, finding 4), which a rule written `.chip-ask::before`,
+    # `button.chip-ask:before` (one colon) or `.note-chips .chip-ask::after` walks straight
+    # past — the property is about the chip, not about one way of naming it.
     src = _STYLES.read_text(encoding="utf-8")
-    assert "button.chip-ask::before" not in src
-    assert "button.chip-ask::after" not in src
+    for at in (m.end() for m in re.finditer(r"\bchip-ask", src)):
+        brace = src.find("{", at)
+        # Only this selector of a comma list, so a pseudo on a SIBLING selector is not
+        # read as one on the chip.
+        tail = src[at : brace if brace != -1 else len(src)].split(",")[0]
+        assert not re.search(r"::?(before|after)", tail), (
+            f"a pseudo-element hit area is hung off the ask chip: {src[at - 8 : brace]!r}"
+        )
 
 
 def test_a_question_candidate_is_a_44px_box() -> None:

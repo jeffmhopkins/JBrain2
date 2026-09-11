@@ -37,7 +37,8 @@
             "from_attachment": false
           }
         ],
-        "truncated": false
+        "truncated": false,
+        "args": null
       },
       "expect": {
         "tool": "assert_fact",
@@ -70,7 +71,8 @@
             "from_attachment": true
           }
         ],
-        "truncated": false
+        "truncated": false,
+        "args": null
       },
       "expect": {
         "tool": "assert_fact",
@@ -103,7 +105,8 @@
             "from_attachment": false
           }
         ],
-        "truncated": true
+        "truncated": true,
+        "args": null
       },
       "expect": {
         "tool": "assert_fact",
@@ -208,7 +211,8 @@
             "from_attachment": false
           }
         ],
-        "truncated": false
+        "truncated": false,
+        "args": null
       },
       "expect": {
         "tool": "assert_fact",
@@ -228,7 +232,8 @@
         "proposal": null,
         "entities": [],
         "facts": [],
-        "truncated": false
+        "truncated": false,
+        "args": null
       },
       "expect": {
         "tool": "assert_fact",

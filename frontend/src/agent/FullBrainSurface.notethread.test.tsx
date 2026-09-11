@@ -405,6 +405,12 @@ describe("the reply turn", () => {
       q1: "amlodipine",
       q2: "Dr. Ray Chen",
     });
+    // The window ends; the MISREPORT does not. The optimistic user bubble is still the
+    // message after the ask, so the block stays frozen and still reads two rows answered
+    // until a transcript reload replaces it (`turnSessionRef` is cleared, so leaving the
+    // thread and returning does that, with the answers back in the draft). Pinned as the
+    // residue it is — closing it is open work, and DESIGN.md now says so.
+    expect(screen.getByText("3 questions · 2 answered, 1 still open")).toBeInTheDocument();
   });
 
   it("does not send an untouched block — an empty answer list behaves as before", async () => {

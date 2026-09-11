@@ -27414,7 +27414,15 @@ button.wf-sigpill {
   letter-spacing: 0.04em;
 }
 .fb-shell .fb-qblock-done .fb-qblock-head {
-  color: var(--text-3);
+  /* --text, not the --text-3 this used to take. The block's own `opacity: 0.72` multiplies
+     whatever colour lands here and an ancestor's opacity cannot be undone by a descendant,
+     so the colour is the only lever: --text-3 under it computes ~2.0:1 against the block,
+     in both themes, where DESIGN.md's accessibility floor is a binding 4.5:1. This line is
+     the count of what the send actually LANDED — the first thing the owner reads on a
+     frozen block (`QuestionBlock.tsx`), and the one place R3f's second review found lying
+     outright — so it is the last line here allowed to be hard to read. --text under 0.72 is ~7.9:1 dark and
+     ~6.9:1 light. (R3f's third review, finding 4.) */
+  color: var(--text);
 }
 .fb-shell .fb-q {
   padding: 9px 0;
