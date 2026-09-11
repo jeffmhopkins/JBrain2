@@ -767,15 +767,15 @@ export function useFullBrain(
     // back, and its own (pre-turn) transcript reload doesn't clobber the live render.
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
-    // A deferred-outcome turn is driven by a server-authored system notice, not owner
-    // input — so it appends NO user bubble (the answer stands on its own after the analysis
-    // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
-    // likewise persists this turn answer-only. Every other send shows the owner's message.
     // What the owner's bubble SAYS. An answers-only send arrives with `message` blank, and
     // the server renders the Q/A pairs into the turn's own text so the words survive a
     // failed clarification append (`clarify.owner_turn_text`); mirroring that here is what
     // keeps the optimistic bubble identical to the one a reload replays.
     const shownText = answers.length > 0 ? ownerTurnText(text, asked, draft) : text;
+    // A deferred-outcome turn is driven by a server-authored system notice, not owner
+    // input — so it appends NO user bubble (the answer stands on its own after the analysis
+    // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
+    // likewise persists this turn answer-only. Every other send shows the owner's message.
     setSessionMessages(turnSessionId, (ms) =>
       opts?.deferredOutcome
         ? [...ms, streamingAssistant()]
@@ -817,6 +817,7 @@ export function useFullBrain(
     // for the whole turn (and, on a dropped connection, the multi-minute recovery). The
     // stream and any reconnect recovery run in the background; `busy` stays true until
     // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
+    //
     // The block is spent the moment its answers are on a turn: it freezes behind the new
     // user bubble (it is no longer the last message), and the draft it held is gone so a
     // second send cannot re-post the same answers against a set that is now closed.

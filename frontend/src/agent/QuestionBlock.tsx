@@ -86,9 +86,12 @@ export function QuestionBlock({
             <p className="fb-q-text">{q.question}</p>
             {q.candidates.length > 0 ? (
               <div className="fb-q-opts">
-                {q.candidates.map((c) => (
+                {q.candidates.map((c, i) => (
                   <Candidate
-                    key={c.value}
+                    // The list is parsed from one string and never reorders; two
+                    // identical candidates would otherwise collide on a value key.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: fixed, ordered list
+                    key={i}
                     candidate={c}
                     picked={answer === c.value}
                     frozen={frozen}
