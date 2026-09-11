@@ -1152,6 +1152,61 @@ async def test_the_reconciler_skips_a_live_thread_and_reclaims_a_stranded_one(
     assert [r.state for r in await _conversation(maker, owner, note_id)] == ["failed"]
 
 
+async def test_a_long_reply_turn_is_not_reclaimed_into_a_rival_pass(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's third review, finding 2 — the reclaim horizon covers the OWNER's turn too.
+
+    `claim_waiting` moves a thread `waiting_on_owner -> running` and stamps `updated_at`
+    once; the reply turn then runs under `/chat`'s cap, which is more than twice what the
+    horizon used to be (it derived from the NOTE turn's cap alone). So a reply running
+    long on a cold on-box model was reclaimed as stale while it was still writing — and
+    the reclaim is not a tidy-up here: `failed` drops the thread out of this same call's
+    live-conversation skip, so the very same transaction enqueues a rival `note_converse`,
+    whose pass closes a complete unclamped reading and SWEEPS. Everything the live reply
+    committed after that reading closed is missing from `touched` and is retracted: the
+    owner's own answer, silently.
+
+    Aged past the OLD horizon and well inside the real one, which is the window the bug
+    lived in."""
+    note_id = await _note(maker, owner, "which dentist did Kaiya see?")
+    session_id = await _open_live(maker, owner, note_id, state="waiting_on_owner")
+    async with scoped_session(maker, owner) as s:
+        # The owner's reply claiming the question set — the real transition, not a state
+        # written by hand, because it is what stamps the `updated_at` the reclaim reads.
+        assert await NoteConversationRepo().claim_waiting(s, session_id)
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "UPDATE app.notes SET ingest_state = 'indexed',"
+                " integration_state = 'pending_integration' WHERE id = CAST(:n AS uuid)"
+            ),
+            {"n": note_id},
+        )
+    # Past twice the NOTE turn's cap — the whole of the old horizon — and far short of a
+    # reply turn's own.
+    await _backdate(
+        maker, owner, session_id, minutes=int(2 * NOTE_TURN_WALL_CLOCK.total_seconds() // 60) + 30
+    )
+
+    await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+
+    assert [(r.sid, r.state) for r in await _conversation(maker, owner, note_id)] == [
+        (session_id, "running")
+    ], "a live reply turn was reclaimed as a dead pass"
+    async with scoped_session(maker, owner) as s:
+        queued = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
+                    " AND payload->>'note_id' = :n"
+                ),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert queued == 0, "a rival pass was enqueued over a live reply turn"
+
+
 # --- W4c/1: the ledger records BOTH turn paths --------------------------------
 
 

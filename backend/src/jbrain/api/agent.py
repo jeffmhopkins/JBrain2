@@ -94,6 +94,7 @@ from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.llm.providers import REASONING_EFFORTS
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
+from jbrain.models.agent import TURN_WALL_CLOCK
 from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.models.plan import PlanRepo
 from jbrain.notes.service import NotesRepo
@@ -118,7 +119,12 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 # synthesis headroom. Raised 5400→7500 alongside jerv's 4→6 budget bump so a saturating
 # breadth-5 two-wave deep_research run (which was landing ~30s under the old deadline) has
 # real room; the _TURN_IDLE_S progress watchdog still catches a genuine stall far sooner.
-_MAX_TURN_WALL_CLOCK_S = 7500.0
+#
+# The NUMBER lives in `models/agent.TURN_WALL_CLOCK`, not here, because this module is not
+# its only reader: a note conversation's stale-pass reclaim has to outlast a reply turn
+# running under this cap, and it was deriving its horizon from the note turn's cap alone.
+# Enforced here, spelled once there.
+_MAX_TURN_WALL_CLOCK_S = TURN_WALL_CLOCK.total_seconds()
 
 # A PROGRESS watchdog on the turn: force-end it after this long with NO streamed frame
 # (no token, tool step, or sub-agent return). Reset on every frame, so a steadily

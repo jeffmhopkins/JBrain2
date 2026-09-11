@@ -2,7 +2,7 @@
 subjects a session may read (docs/reference/ASSISTANT.md "Session capabilities")."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -21,6 +21,18 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
+
+# THE HARD CEILING ON ONE `/chat` TURN's wall time — the number `api/agent.py` enforces
+# with `asyncio.timeout`, defined here so it has ONE spelling. It is not only that
+# module's business: a turn runs in a session, and anything that reasons about "how long
+# may a session legitimately be mid-turn" has to read the same number or invent a second
+# one that drifts. `models/note_conversation.STALE_CONVERSATION` is the reader that
+# proved it — it derived its reclaim horizon from the NOTE turn's cap alone, while the
+# owner's reply turn runs under this one, and reclaimed live reply turns for twice as
+# long as it thought it was safe from.
+#
+# The sizing argument lives with the enforcement (`api/agent.py:_MAX_TURN_WALL_CLOCK_S`).
+TURN_WALL_CLOCK = timedelta(seconds=7500)
 
 
 class AgentSession(Base):

@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import update
 
+from jbrain.models.agent import TURN_WALL_CLOCK
 from jbrain.models.core import Base
 
 log = structlog.get_logger()
@@ -65,11 +66,32 @@ NOTE_TURN_WALL_CLOCK = timedelta(minutes=30)
 # (`Ops -> Update` quiesces with `docker compose stop -t 30 worker`) would silently take
 # the note out of the pipeline forever, on a box with no terminal (CLAUDE.md #10).
 #
-# DERIVED from the turn cap, never a second free-standing number: a turn cannot outlive
-# the cap, so twice the cap cannot reclaim a live pass, and the two cannot drift apart.
+# DERIVED from the turn caps, never a free-standing number: a turn cannot outlive its cap,
+# so twice the LONGEST cap cannot reclaim a live pass, and none of them can drift apart.
+#
+# ⟲ **It used to derive from `NOTE_TURN_WALL_CLOCK` alone, and that derivation was wrong
+# about which turns set `running`.** TWO do. The worker's pass is one, and it is capped
+# above. The owner's REPLY turn is the other — `claim_waiting` moves the thread
+# `waiting_on_owner -> running`, stamping `updated_at` once and never again — and it is an
+# ordinary `/chat` turn, capped by `models/agent.TURN_WALL_CLOCK` (125 minutes), which is
+# more than twice the horizon the old derivation produced. A reply running long on a cold
+# on-box model was therefore reclaimed AS STALE while it was still writing: `reclaim_stale`
+# flips it to `failed`, which drops it out of the live-conversation skip in
+# `queue.backfill_pending_integration`, so the same transaction enqueues a fresh
+# `note_converse` — and that pass closes a complete, unclamped reading of the note and
+# SWEEPS. Everything the still-live reply turn commits after that reading closed is absent
+# from `touched`, so its claim is released and the row is retracted: the owner's own answer,
+# gone, silently. Both halves of that arrived in R3 (the sweep, and the unscoped reclaim on
+# the reconciler's five-minute schedule); the horizon is what has to cover both turns.
+#
+# The other candidate fix — skip a conversation with a live `agent_runs` row — was rejected:
+# a SIGKILL strands that row `running` too (`agent/runlog.py` reaps one on its OWN horizon,
+# which is shorter than this cap), so the reclaim would honour a dead pass forever, which is
+# the failure this constant exists to prevent.
+#
 # `waiting_on_owner` is deliberately NOT reaped — it holds the owner's question and waits
 # as long as the owner does; `_ALLOWED_SOURCES` makes dropping one say `abandon_question`.
-STALE_CONVERSATION = 2 * NOTE_TURN_WALL_CLOCK
+STALE_CONVERSATION = 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK)
 
 # Which state may follow which. Postgres' CHECK owns the closed SET of states (an
 # unknown target falls through this table and is refused there, one authority); this
@@ -519,6 +541,15 @@ class NoteConversationRepo:
         read when the owner updates the box lands here. Without a reclaim that note is
         suppressed by `_already_active` forever, silently, and the owner has no terminal
         to clear it with.
+
+        TWO kinds of turn sit in `running`, which is the whole of why `horizon` defaults
+        to what it does: the worker's unattended pass, and the owner's REPLY turn, which
+        `claim_waiting` moves out of `waiting_on_owner` and which runs in the API process
+        under `/chat`'s own, much longer cap. `STALE_CONVERSATION` covers the longer of
+        the two — reclaiming a live reply turn is not a tidy-up, it is the reconciler
+        enqueuing a rival pass whose sweep retracts what the owner is still saying (the
+        derivation above says it in full). A caller passing its own `horizon` is saying
+        it knows which turn it is reaping; nothing in `src/` does.
 
         `running` only: `waiting_on_owner` is a question the owner has not answered yet,
         and reaping it would drop that question out of the notes tab (D4/D5) — the very

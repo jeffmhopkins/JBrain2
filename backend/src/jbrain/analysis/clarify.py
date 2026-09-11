@@ -46,12 +46,12 @@ owner's side.
 What neither order survives is the PROCESS dying between the two transactions — an
 Ops → Update quiesce is a `stop -t 30`, so it is reachable. The claim has committed, the
 append has not, and the thread sits `running` with no block, no re-ingest and no notice
-until `reclaim_stale` flips it to `failed` an hour later, at which point the question
-leaves the inbox and the owner's answer is gone. Unchanged by R1c and not made worse by
-it (the window is the same two transactions it always was), but it is the one hole in
-this paragraph's reasoning and it is a crash, not an exception — no `except` here can
-close it. Closing it means the claim and the append sharing a transaction, which means
-the repo giving up owning the append's, and that is a bigger change than this wave.
+until `reclaim_stale` flips it to `failed` a `STALE_CONVERSATION` later, at which point
+the question leaves the inbox and the owner's answer is gone. Unchanged by R1c and not
+made worse by it (the window is the same two transactions it always was), but it is the
+one hole in this paragraph's reasoning and it is a crash, not an exception — no `except`
+here can close it. Closing it means the claim and the append sharing a transaction, which
+means the repo giving up owning the append's, and that is a bigger change than this wave.
 
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
