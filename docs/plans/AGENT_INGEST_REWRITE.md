@@ -1038,7 +1038,14 @@ that stays: a pass that wrote a reading and asked nothing shows Worked alone.
 bubble is followed by a **question block**: one row per question, each carrying *why it
 blocks* (the predicate or the resolve call it is stuck on), the question in plain words, and
 its answer affordance — tappable candidates where the resolver has them, a text field where
-it does not.
+it does not, and **on a candidate row both**: a "Something else" chip reveals the same
+field. (That last is R3f's review, finding 4. The row rendered candidates OR a field and
+never both, so when the model's own prose lost a candidate — one unclosed paren is enough,
+measured against real output — there was no way at all to name that person. Hardening the
+parser cannot be the fix: every repair available to it invents candidates the model never
+wrote, and a candidate the owner taps becomes a sentence in his own note. The escape also
+answers the ordinary case the mock never drew, which is that none of the candidates is
+right.)
 
 **The block cannot start a turn.** Selecting a candidate or typing in a field is LOCAL
 STATE. Nothing posts, nothing enqueues, nothing flips a conversation state. A half-answered
@@ -1078,10 +1085,12 @@ reach the PWA as `_disambiguate`'s `{id, name, kind, summary}`. `ask_owner.tool`
 declares `candidates` as a **string** — "the candidates as a short comma-separated list" —
 and the ledger stores what the model wrote (`questions_from_args` `_one_line`s it). So §2
 hands the structured set to the AGENT and the agent retypes it as prose for the owner.
-`asked.parseCandidates` therefore splits on TOP-LEVEL commas only (the detail carries its
-own: *"Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)"* is two
-candidates, not four) and answers with the name, falling back to the whole candidate string
-when two share one — because a name that does not say which candidate was tapped is the
+`asked.parseCandidates` therefore splits on TOP-LEVEL commas and semicolons only (the
+detail carries its own: *"Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics,
+2 notes)"* is two candidates, not four; the semicolon is R3f's review, finding 4 again — a
+semicolon-joined list parsed as ONE candidate naming both people, which a tap would have
+written into the note as the owner's answer) and answers with the name, falling back to the
+whole candidate string when two share one — because a name that does not say which candidate was tapped is the
 mispairing this channel exists to refuse. The one-tap answer still works and the context is
 still there; what is lost is the entity ID, which the owner's answer never carried anyway
 (it becomes note text, D6, and the next reading re-resolves it).
@@ -1109,11 +1118,39 @@ send (`Omnibox.tsx:395-409`).
   strip is what says *you are replying in a thread*.
 - The mock's send composes the answers into one prose string (`"A · B · C"`). **That cannot
   be the wire.** `record_owner_reply` pairs an answer with the question the ledger says is
-  open (`analysis/clarify.py:436-452`); a joined string gives it no way to say WHICH answer
+  open (`analysis/clarify.py`); a joined string gives it no way to say WHICH answer
   answers which question, and a block that pairs an answer with the wrong question is a wrong
   sentence in the owner's own corpus (`asktools.py:35-37`). The send carries a **structured
   answer list** — question id → answer — alongside the free text, and the prose the mock
   shows is the RENDERING of the user turn, not its payload.
+
+⟲ **Two corrections from R3f's review, and they are the two halves of one bug — the MIXED
+send, which is the send this entry designs and the omnibox invites ("answer above, or just
+reply").**
+
+1. **The turn's text carries BOTH halves.** `asked.ownerTurnText` and
+   `clarify.owner_turn_text` let typed text win outright and threw the `Q:`/`A:` pairs
+   away. The turn text is not only prose for the model: it is the transcript's own record
+   of what the owner did, and it is what the frozen block reads its answers back out of
+   (I9). So tapping two candidates and typing a sentence beside them displayed the exact
+   inverse of what happened — the block said "2 questions · answered" with neither answer
+   shown and the tapped candidate drawn as not-picked, live and on every reopen, while the
+   note held the opposite (the two answers landed as blocks, the typed sentence reached no
+   note). Both renderers now write the pairs, then the typed words, which is the order the
+   owner did them in; the typed half wears no labels, so it is not read back as an answer.
+2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
+   `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
+   set left open — was written when the composer was the only affordance, so typed words
+   could only ever be an answer. With both on screen it is actively wrong: three questions,
+   the owner taps q2 and q3 and types "this note is about Kaiya not me", and that sentence
+   is appended to his own note as the answer to *"What's the medication called?"* —
+   permanently, searchably, with the clarification eraser as the only undo. It now rides
+   the turn as his words and goes into `dropped`, so `owner_reply_notice` tells the agent
+   he said something that reached no note. **Free text ALONE still answers the oldest open
+   question**: that is the genuine degrade path for a client that cannot render the block,
+   and it cannot mispair because there is only one thing it could be answering. Refusing to
+   guess is the same choice §3 makes four times over, and the cost — a typed aside beside
+   one tap lands nowhere durable — is the O16 gap, reported rather than papered over.
 
 **Built in R3f.** The draft lives per session on `useFullBrain` (beside the model and
 effort picks, and turn-local like them); `send` narrows it to the OPEN set before filling
@@ -1123,8 +1160,13 @@ a second send cannot re-post it. An answers-only send arrives with `message` bla
 the shipped guard would have refused — that guard now also admits a non-empty answer list,
 and the optimistic user bubble mirrors `clarify.owner_turn_text` exactly (`asked.ownerTurnText`)
 so the bubble the owner sees is byte-identical to the one a reload replays. The carry strip
-is `.omni-carry`, above the input, where the appointment pill sits. The mode row stays, as
-ruled.
+is `.omni-carry`, above the input, where the appointment pill sits — `2 of 3 answered —
+rides with your next send`, and at zero `0 of 3 answered — answer above, or just reply`,
+which names both affordances at the one moment neither has been used. The mode row stays,
+as ruled. ⟲ R3f's review, finding 7: the draft is cleared as the turn starts, and a turn
+that reaches the server NOT AT ALL now hands it back — the server holds no user turn for a
+POST that never landed, so reopening the thread re-arms the block and finds the answers
+still in it, rather than a frozen block claiming he has already answered.
 
 ### I8 — The reply turn
 
@@ -1190,9 +1232,14 @@ the paragraph above is why that is the same claim rather than a weaker one.**
 settled thread is not. Reading it would have meant widening the session wire for a
 note-only concern. The reply turn's own text is the same rendering
 `clarify.owner_turn_text` persists, so `asked.sentAnswers` pairs by the exact question
-string the ask recorded — never by position — and a reply the owner TYPED (which carries
-no pairs) leaves the row saying "answered in your reply" rather than putting words in his
-mouth. Both halves of the claim hold: no new endpoint, and nothing living only in a
+string the ask recorded, CONSUMING each rendered pair as it claims it (⟲ R3f's review,
+finding 6: a map keyed by the question string made two identically worded rows — which
+`ask_owner` does not dedupe — both replay the second answer; both sides walk the open set
+in its asked order, so the n-th same-worded row now gets the n-th answer). Never by
+position alone — and a reply the owner TYPED (which carries no pairs) leaves the row
+saying "answered in your reply" rather than putting words in his mouth. The typed half of
+a MIXED send is the same kind of thing: it is appended after the pairs without labels, so
+it is his words on the turn and not an answer to any row. Both halves of the claim hold: no new endpoint, and nothing living only in a
 component. The clarification list keeps its own job, which is the note screen's durable,
 ERASABLE view — one tap away under I2 (ii).
 
@@ -2196,11 +2243,11 @@ the message. **I6** — `agent/QuestionBlock.tsx` plus `agent/asked.ts`, which p
 ask step's recorded `args` into questions, what each blocks, and its candidates; the block
 holds no state of its own and reaches no client, and `QuestionBlock.test.tsx` taps a
 candidate and asserts no request was made. **I7** — the draft lives per session on
-`useFullBrain`, the composer shows `N of 3 answered — rides with your next send`, and one
-send posts one turn filling R1c's `ChatRequest.answers` with `{question_id, answer}` pairs
-beside whatever free text is in the box. **I8/I9** — the block freezes because it is no
-longer the last message, and a reopened thread reads its answers back out of the reply
-turn's own Q/A rendering. **I1** — the waiting set is joined client-side off
+`useFullBrain`, the composer shows `2 of 3 answered — rides with your next send` (and
+`answer above, or just reply` at zero), and one send posts one turn filling R1c's
+`ChatRequest.answers` with `{question_id, answer}` pairs beside whatever free text is in
+the box. **I8/I9** — the block freezes because it is no longer the last message, and a
+reopened thread reads its answers back out of the reply turn's own Q/A rendering. **I1** — the waiting set is joined client-side off
 `/api/review/notes` (`notes/useNoteThreads.ts`), which IS that set already, so no note
 route grew a second copy of the conversation's state.
 
@@ -2222,6 +2269,30 @@ share one.
 `backend/tests/unit/test_live_phase_labels.py` asserts every verb of §3's three frozensets
 has a live-phase label, which is option (i) of I4 and which took five more labels
 (`current_time`, `assert_fact`, `correct_fact`, `merge_entities`, `prefs_write`).
+
+*What the independent review changed, and it is worth reading as one finding rather than
+six.* Every one of them is a place the SURFACE and the NOTE could disagree about what the
+owner said. **The mixed send** — tap two candidates, type a sentence — rendered the exact
+inverse of what happened, and the same rule that dropped the pairs from the turn text was
+what let the typed sentence be filed against a question it did not answer; both halves are
+fixed in I7, and free text alone still answers the oldest open question because that one
+cannot mispair. **The candidate row** now carries a typed escape ("Something else"),
+because the candidates are a model's prose and a parser that repairs prose invents
+candidates nobody wrote (I6). **The tap targets** — the stream's ask chip, the candidates
+and the field — were 17–29px against DESIGN.md's binding 44px, which matters most on the
+chip, since it sits inside a row whose own tap opens a different screen; the chip grows
+only its hit area (DESIGN.md's own vitals precedent) while the candidates grow their box,
+because they wrap and a bleeding hit area would put a tap on the wrong candidate.
+`backend/tests/unit/test_tap_targets.py` gates the three, the way `test_live_phase_labels.py`
+gates `status.ts`. And three smaller ones: two identically worded questions keep their own
+answers (I9), a failed send hands the draft back (I7), and `useNoteThreads` keeps its last
+good value through a flaky poll rather than taking every chip off the stream — the chip
+being the only stream route to the thread. *One claim the review retired:* the question
+block does not sit outside the bubble for ROOM. `.fb-shell .bubble.ai` is already
+`max-width: 100%` and the 80% cap is on the owner's own bubble; the placement is right and
+the reason is that the block is its own object, not part of the answer's prose. The commit
+that carried the false reason in its subject (`13a652619`) cannot be amended; the three
+fixable sites, DESIGN.md included, now give the real one.
 
 *Where the mock and the shipped code disagreed, the code won,* as §3b says: the
 Thought/Worked foot stays one segmented body, the live phase stays `AgentStatusLine` above
@@ -2668,12 +2739,21 @@ still lost, he is just told so.
 
 ⟲ **And the gap is WIDER than "a settled thread", which is what the second review found.**
 The same dead end is reached on a thread that IS waiting, by the send §3b I7 designs: one
-send carries the structured answers and whatever free text is in the box, and when the
-structured set is complete `_pair` drops the prose — so "tap the answer AND type one more
-thing" is an ordinary, correct interaction that loses the typed half. The refusal now
-covers it (the narrowing keys on the append's outcome, and `owner_reply_notice` says the
-words reached no note), which makes O16's cost more visible rather than larger: option 1's
-"an unprompted note addendum" is exactly the shape that send already produces.
+send carries the structured answers and whatever free text is in the box, and `_pair` drops
+the prose — so "tap the answer AND type one more thing" is an ordinary, correct interaction
+that loses the typed half. The refusal now covers it (the narrowing keys on the append's
+outcome, and `owner_reply_notice` says the words reached no note), which makes O16's cost
+more visible rather than larger: option 1's "an unprompted note addendum" is exactly the
+shape that send already produces.
+
+⟲⟲ **R3f's review widened it once more, and this is a description of the residue rather
+than a move on the decision.** The drop used to need a COMPLETE structured set; beside a
+PARTIAL one the prose was filed as the answer to the oldest question the taps left open.
+That rule mispaired — it put the owner's sentence into his own note under a question it
+does not answer — so it is gone (§3b I7), and the prose beside ANY tap now lands in
+`dropped` with the rest. The words the refusal loses are therefore a slightly larger set
+than before, and every one of them is a word that would otherwise have been filed WRONG.
+It changes none of the three options below; it raises how often option 3's cost is paid.
 
 **Why the two obvious shortcuts are worse, not cheaper.**
 

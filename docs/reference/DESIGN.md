@@ -1503,14 +1503,31 @@ There is no bespoke ingest view and no second idiom for the same information.
   own outcome: there the enact IS the event, here three answers that each posted would cost
   three turns and three re-reads of the note.
 - **The omnibox send is the one submit**, inside a thread as everywhere else. A carry strip
-  above the input reads `N of 3 answered — rides with your next send` — the same shape as
-  the calendar handoff's appointment pill — and one send is **one user turn** carrying every
-  answer, structured and paired to its question, beside whatever free text is in the box.
-  The destination row gives way inside a conversation mode; **the mode row does not**, since
-  it is the app's primary navigation and the only way back to capture.
+  above the input reads `2 of 3 answered — rides with your next send`, and at zero
+  `0 of 3 answered — answer above, or just reply` (the 0-state names both affordances,
+  because at that point neither has been used) — the same shape as the calendar handoff's
+  appointment pill. One send is **one user turn** carrying every answer, structured and
+  paired to its question, beside whatever free text is in the box; the turn's own text
+  carries **both halves**, the `Q:`/`A:` pairs and then the typed words, so the transcript
+  is a complete record of what the owner did. The destination row gives way inside a
+  conversation mode; **the mode row does not**, since it is the app's primary navigation and
+  the only way back to capture.
+- **Typed words beside a tap are NOT filed as an answer.** Free text sent alone answers the
+  oldest open question — with nothing else in the send there is only one thing it could be
+  answering. Beside any tapped answer it is an aside: it rides the turn for the agent to
+  read and reaches no note, and the agent is told so. Pairing it with whichever question the
+  taps left open would put a sentence into the owner's own note under a question it does not
+  answer, and a mispaired answer is a wrong sentence in his corpus, not a cosmetic slip.
 - **Sent is spent.** The block dims and its controls go inert the moment the send goes; a
   settled thread reopened later replays the same transcript with the block frozen in its
-  answered state, no live line and no carry strip.
+  answered state, no live line and no carry strip. A send that reaches the server not at all
+  hands the answers back to the block rather than losing them.
+- **The chip is not permanent, and the thread does not expire.** The stream shows the last
+  two days, so a note parked longer than that scrolls off it and loses its chip — the ask
+  itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review
+  inbox's notes tab and the Chats panel still list the waiting thread. The stream is the
+  recent view, not the backlog; a door that never closes belongs to the two surfaces that
+  are a list of open things.
 
 ## Agent tool views (registered components, never bespoke markup)
 

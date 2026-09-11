@@ -53,7 +53,8 @@ export function useNoteThreads(enabled: boolean): NoteThreads {
   const generation = useRef(0);
 
   const load = useCallback(async () => {
-    const mine = (generation.current += 1);
+    generation.current += 1;
+    const mine = generation.current;
     try {
       const { items } = await api.notesInbox();
       const next = new Map<string, NoteThread>();
