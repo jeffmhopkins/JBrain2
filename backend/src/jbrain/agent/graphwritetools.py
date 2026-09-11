@@ -98,6 +98,14 @@ correction note's own text ATTESTS is written with `correction=True` at full wei
 an inferred one is not. Nothing about it is model-facing (constraint 5) — provenance is
 read off the note row, the capture API has no field for it, and every producer is behind
 an owner principal, which is why it is safe on a pass the owner is not present for.
+
+⟲ **And it is withheld on a reply turn whose words never reached the note** (R3's third
+review). Attestation is a span check over the note's chunks and never a check that the
+quoted line supports the VALUE, so on a correction note the owner reopens later, an
+element quoting a real line while carrying a value he typed only into the thread would
+take this branch and commit a pinned row nothing can ever correct. `close_reading` takes
+the condition from the reply registry (`words_reached_note`); the elevation on the pass
+itself, which is what this paragraph is about, is unchanged.
 """
 
 from __future__ import annotations
