@@ -471,8 +471,13 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   owner's repair path and pinning is the designed mechanism for it — but its
   EMPTY-ADDRESS arm, the one that mints a new PINNED fact, refuses on the same condition
   in `replytools.correct_fact_tool`, because a pinned row with no source text is
-  unfalsifiable as well as unrecoverable. Giving unprompted owner text a home on the note
-  is O16, open. Nothing outward-facing is in either: the owner replying does
+  unfalsifiable as well as unrecoverable. A THIRD write reaches the same pinning branch
+  and is withheld on the same condition: on an `owner_correction` note `_assert_one`
+  elevates an ATTESTED `close_reading` element to a force-superseding pinned fact, and
+  attestation is only a span check on the note's chunks — so the reply registry passes
+  that condition into `close_reading` (R3's third review). Giving unprompted owner text a
+  home on the note is O16, open, and the unpinned row such an element still commits is
+  its loss shape. Nothing outward-facing is in either: the owner replying does
   not sanitize the note body still in context. The choice is a second RESOLUTION
   (`agents.agent_for_owner_reply`, called only by `/chat`, which by definition is a turn
   the owner sent), not a flag — and `AgentProfile.tools` carries the NARROW set, so a

@@ -339,6 +339,16 @@ def build_reply_write_handlers(
             writer.reading = existing[1].reading
         writers[session_id] = (scopes, writer)
         while len(writers) > _MAX_LIVE_WRITERS:
+            # ⚠ EVICTION DOES WHAT THE COMMENT ABOVE SAYS MUST NOT HAPPEN, and nothing
+            # here fixes it (R3's third review, F5, filed as a residual under R3 in
+            # `AGENT_INGEST_REWRITE.md` §7). A rebuild carries the `Reading` by hand; an
+            # eviction loses the writer outright, so the thread's next call starts a fresh
+            # `Reading()` with `clamped=False` — a clamped prefix presenting as a complete
+            # reading. It costs nothing while the reply path settles with `reading=None`
+            # (`api/agent.py`): no reading is read back here, so no laundered one can
+            # license a retraction. It becomes real the moment R3f or R4 closes that
+            # residual, and the fix is a reading that outlives the cache slot rather than
+            # a third hand-carry.
             writers.popitem(last=False)
         return writer
 

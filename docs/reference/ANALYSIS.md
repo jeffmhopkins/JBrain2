@@ -650,7 +650,15 @@ config must never break an LLM call. Exposed via `GET`/`PUT /api/settings/llm`.
   `_assert_one` sets `ExtractedFact.correction` on a fact the correction note's
   own text ATTESTS — full weight, force-supersede + pin through
   `supersession.decide()`. An INFERRED fact in a correction note is **not**
-  elevated. This is the rule `arbiter.plan_intent(correction=True)` implemented,
+  elevated, and **nor is one read on a reply turn whose words never reached the
+  note** (`AGENT_INGEST_REWRITE.md` R3's third review): attestation is a span
+  check on the note's chunks, never a check that the quoted line supports the
+  value, so a reply pairing a real line of the note with a value the owner typed
+  only into the thread would otherwise mint a row at confidence 1.0 that no
+  sweep, no later note and no correction note could ever reach. That element
+  still commits — unpinned, falsifiable, and swept by the next clean reading,
+  which is O16's open loss shape rather than a permanent wrong row.
+  This is the rule `arbiter.plan_intent(correction=True)` implemented,
   ported unchanged off `integrate_note` ahead of its deletion
   (`AGENT_INGEST_CONVERSATION_PLAN.md` W5). Nothing about it is model-facing:
   `assert_fact` has no `correction` field and the capture API has no

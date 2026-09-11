@@ -1,6 +1,6 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5❌superseded
+> **Status:** In progress · **Last verified:** 2026-09-11 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5❌superseded
 >
 > **W5 IS SUPERSEDED by `AGENT_INGEST_REWRITE.md`.** The owner redirected the work to a
 > complete rewrite of ingestion with a wipe of the notes, the graph and the predicate
@@ -329,10 +329,17 @@ wave's own retreat point was the first of them:
   stale `running` pass to `failed` before it reads, `queue.claim`'s stale-lock shape —
   fused into the read it would otherwise block, so both gates get it. `waiting_on_owner`
   is never reaped: it holds the owner's question. The horizon is `STALE_CONVERSATION`,
-  **derived** as twice `NOTE_TURN_WALL_CLOCK` — which is the second half: the runner had
+  **derived** from the turn caps — which is the second half: the runner had
   no wall clock at all (`_MAX_TURN_WALL_CLOCK_S` is `api/agent.py`'s, around the /chat
   stream), and this is the first handler driving a full ReAct turn from the worker. 30
   minutes, far below /chat's 7500s because this turn has no sub-agent fan.
+  ⟲ **"Twice `NOTE_TURN_WALL_CLOCK`" was the derivation, and it was wrong about which
+  turns sit in `running`** (`AGENT_INGEST_REWRITE.md` R3's third review). The owner's
+  REPLY turn sits there too — `claim_waiting` puts it there — and it runs under /chat's
+  cap, more than twice that horizon, so a long reply was reclaimed while still writing and
+  R3's reconciler then enqueued a rival pass whose sweep retracted what it had committed.
+  The horizon is twice the LONGER of the two caps now, and the /chat number has one
+  spelling (`models/agent.TURN_WALL_CLOCK`) for both readers.
 - **A failure inside `_record` settled the conversation anyway.** `status="done"` and
   `state="settled"` were latched before the persist, and the `except` swallowed its
   raise — leaving `settled` with an empty transcript and an empty ledger. That is not a

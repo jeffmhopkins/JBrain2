@@ -763,6 +763,15 @@ a fact that IS on file is the owner's repair path on a settled thread and pinnin
 designed mechanism there. `replytools.correct_fact_tool` refuses the empty-address ARM on
 the same condition instead, keyed on the turn's own allowlist, and says what to do instead.
 
+⟲ **And it was incomplete once more: `close_reading` reaches the SAME pinning branch on a
+correction note** (R3's third round). `_assert_one` elevates an ATTESTED element of an
+`owner_correction` note to `correction=True`, and attestation is a span check over the
+note's chunks that never asks whether the quoted line supports the value — so a reply turn
+could quote a real line, carry a value the owner had only typed in the thread, and commit
+active + pinned at confidence 1.0. Same fix, same condition, same place it is read
+(`replytools.close_reading_tool` passes it into the writer); the UNPINNED row the element
+still commits is O16's loss shape, deliberately left open.
+
 Refusing the write and telling the owner is the conservative direction; giving unprompted
 text a home on the note is **O16**, open.
 
@@ -1921,8 +1930,9 @@ spans its own live facts are anchored to). The settle's input is a `clarify.Pass
 flattened off the writer by `converse.pass_reading` — `clarify` may not import
 `graphwritetools`, which drags the LLM stack into the API process.
 
-⟲ **Three silent-loss paths found after the wave shipped, all closed, and each was proved
-by running it rather than argued.** (1) `close_reading` latched an incomplete reading from
+⟲ **Six silent-loss paths found after the wave shipped, all closed, and each was proved
+by running it rather than argued.** (4), (5) and (6) are the third review's; the first
+three are the second's. (1) `close_reading` latched an incomplete reading from
 three places and all three were inside or before the element loop, so an exception ESCAPING
 the handler — a pool refusal, a `set_config` blip, a failed COMMIT at block exit — left the
 pass presenting a PREFIX as a complete unclamped reading (`loop.py` reports the raise to
@@ -1931,6 +1941,27 @@ raising call was carrying. The handler body is now wrapped and the latch is the 
 (2) The unprompted-reply narrowing keyed on thread state rather than on the invariant; §3's
 ⟲ has it. (3) That narrowing removed `assert_fact` and left `correct_fact`'s empty-address
 arm, which is the same write with pinning on top; §3's ⟲ has that too.
+(4) The RECLAIM this wave put on the reconciler's five-minute schedule derived its horizon
+from the note turn's cap alone, while the owner's REPLY turn also sits in `running` and
+runs under /chat's cap — more than twice that horizon. A long reply was therefore failed
+as stale, which dropped it out of the same call's live-conversation skip, so the same
+transaction enqueued a rival `note_converse`; that pass closed a complete unclamped
+reading and swept, retracting everything the live reply committed after it — the owner's
+own answer. The horizon is twice the LONGER of the two caps now, and /chat's number has
+one spelling (`models/agent.TURN_WALL_CLOCK`) that both readers derive from.
+(5) `close_reading`'s CORRECTION-NOTE ELEVATION was a third route into `decide()`'s pinning
+branch and was not narrowed with the other two: `_attests` is a span check on the note's
+chunks and never a check that the quoted line supports the value, so on an
+`owner_correction` note a reply turn could pair a real line with a value the owner had only
+typed in the thread and mint active + pinned at confidence 1.0 — unsweepable, unsupersedable,
+unreachable by any correction note. It is gated now on the same `ASSERT_FACT not in
+ctx.agent_tools` the empty-address arm uses, read at the reply registry where it is exact.
+The UNPINNED row such an element still commits is O16's loss shape and stays deferred.
+(6) `dropped` — the list `owner_words_reached_note` reads — was not filled on two paths that
+lose the owner's words: a repeated `question_id` overwrote its predecessor silently, and an
+answer past `MAX_ANSWERS` was cut before `_pair` could account for it (unreachable only by
+an arithmetic coincidence between `ask_owner.tool`'s cap of 5 and `MAX_ANSWERS` of 10).
+Both now report, and `owner_reply_notice` names all three ways instead of the one.
 
 **The two-verb hole R2's review found is closed by (a), narrowing.** `assert_fact` is off
 `NOTE_INGEST_UNATTENDED_TOOLS` and onto the reply set, in BOTH locks — the allowlist and
@@ -2019,6 +2050,21 @@ held row a retirement path it did not have; the decision stays the owner's.
    there. A reading whose clamp state is unknown must not license a retraction, so that
    path keeps exactly the settle it had. §2's "that reading sweeps" is therefore still
    owed, and closing it means exposing that cache.
+
+   ⚠ **And whoever exposes it inherits an OPEN BUG in it** — filed by R3's third review
+   (F5), inert today and load-bearing the moment this residual is closed. That cache is an
+   **LRU** (`_MAX_LIVE_WRITERS`, oldest-first eviction). A writer that is evicted and then
+   rebuilt carries the BUDGETS forward by hand and, on the rebuild path that runs when the
+   turn's read scopes changed, the `Reading` too — but an eviction loses the object
+   outright, so the next call mints a fresh `Reading()` with `clamped=False`. The comment
+   at that rebuild (`replytools.py`, "a rebuild that dropped it would launder an incomplete
+   reading into a complete-looking one") states exactly the thing eviction then does. It
+   costs nothing while `api/agent.py` settles with `reading=None`: no reading is read back,
+   so no laundered one can license anything. **R3f and R4 must not read a reading off this
+   cache without fixing it first** — a clamped prefix presenting as a complete reading is
+   the one input the §2 gate exists to refuse, and the fix is a reading that outlives the
+   writer (keyed on the conversation, not on the cache slot) rather than one carried by
+   hand across two rebuild paths and lost on a third.
 2. **A `failed` pass flips `integrated`**, which is what "every pass ending" means, so the
    reconciler will not retry it. The retry lever is the PWA's re-run button (which now
    enqueues `note_converse` and 409s only on a job twin or a LIVE thread — a failed thread
@@ -2517,6 +2563,20 @@ words reached no note), which makes O16's cost more visible rather than larger: 
 3. **Leave it refused, and say so well.** What ships today. Cost: the owner has to know
    that a finished thread is not a place to record things, which is exactly the kind of
    invisible rule this system is supposed to not have.
+
+**What the refusal actually leaves behind, stated precisely** (R3's third review; a
+description of the residue, not a change to the decision). The refusal covers the two
+verbs that MINT — `assert_fact` and `correct_fact`'s empty-address arm — and, since that
+review, `close_reading`'s correction-note elevation as well. What it does not cover is an
+element inside a reply-turn `close_reading`: that commits, and three things are true of it.
+It is **unpinned and falsifiable**, so the next clean reading of the note releases it —
+that is the loss this item is about, and closing it needs the `ToolContext` flag threaded
+through three `AgentLoop` sites, which no wave has taken on. It is **"sweepable
+eventually", not swept**: an unprompted reply changes nothing about the note, so
+`integration_state` stays `integrated` and nothing re-enqueues it — the row stands until
+the note is next edited or `analysis/rebuild.py` runs. And on a **third-party** note
+nothing is ever swept at all (`clarify.PassReading.third_party` refuses the sweep
+permanently), so such a row persists by D10's design rather than by this gap.
 
 Nothing here is urgent — the loss it replaces is already closed — and none of it is a
 small edit. `docs/plans/AGENT_INGEST_REWRITE.md` R3's review is where the refusal is
