@@ -872,6 +872,13 @@ says these words were read by a machine, and what the persona is taught to disco
 blocks ride INSIDE the untrusted note fence with the body: text read off a photograph is
 the most attacker-controllable input on the box.
 
+**Capped, and the cut says so** (`MAX_ATTACHMENT_TEXT_CHARS`). The deleted path bounded
+this by FANNING OUT; a conversation has one turn 0 and cannot, so the bound is a cap. Its
+absence would let the largest input on the box — a decrypted medical PDF, OCR'd page by
+page — take the whole context window and fail the pass. When it bites, a line inside the
+fence names how many blocks were cut and says the rest was not read: a reading over text
+the model never saw omits facts, and this producer's sweep acts on omission.
+
 *What this replaced, and why the shape changed.* One shared extraction call used to give
 every source's blocks a SINGLE fact budget, so a content-rich attachment could crowd the
 note body's own first-party facts out of it entirely — the observed failure where a note

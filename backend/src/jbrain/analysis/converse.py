@@ -199,9 +199,25 @@ NOTE_CONVERSE_SPEC = ActionSpec(
 _TITLE_LEN = 60
 
 
+# How much MACHINE-READ attachment text one note may add to turn 0, in total.
+#
+# The deleted `integrate_note` bounded this by FANNING OUT: a long note became several
+# `note.extract` calls, each under `GROUP_CHAR_BUDGET`. A conversation has one turn 0 and
+# cannot fan out, so the bound has to be a cap. Without one the largest input on the box
+# — a decrypted medical PDF, OCR'd page by page into `attachment_extracts` — lands whole
+# in a single prompt and takes the context window with it, failing the pass on exactly
+# the notes whose facts `emr_parse` writes deterministically anyway (and where the
+# persona holds no graph-write verb at all).
+#
+# Generous for the shapes this exists for: a receipt, a letter, a voice memo. A note's
+# own typed BODY is deliberately not capped — it is human-sized, and it is the source of
+# truth this whole path exists to read.
+MAX_ATTACHMENT_TEXT_CHARS = 24_000
+
+
 async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> str:
     """The note as the agent must read it: the composed body, then every
-    MACHINE-READ attachment block after it.
+    MACHINE-READ attachment block after it, up to `MAX_ATTACHMENT_TEXT_CHARS`.
 
     Without this a photographed receipt, a scanned letter and a voice memo say
     nothing to the graph. The deleted `integrate_note` read the note's paragraph
@@ -218,19 +234,41 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     attacker-controllable text on the box (anyone can put words in front of a camera),
     so they are fenced exactly like a third party's body and never lifted out of it.
     Ordering is the attachment order, after the body, so the body's own title and
-    first-reference order still lead the reading."""
+    first-reference order still lead the reading.
+
+    **A cut says so, in the text.** Silently handing the agent a prefix is the failure
+    `close_reading`'s own clamp reporting exists to prevent: a reading over text the
+    model never saw is a reading that omits facts, and this producer's sweep acts on
+    omission. The notice sits inside the fence with the blocks it describes, which means
+    a hostile attachment can forge one — it says only "there was more", which buys an
+    attacker nothing the fence does not already deny."""
     blocks: list[str] = [note.body]
+    budget = MAX_ATTACHMENT_TEXT_CHARS
+    cut = 0
     for att in note.attachments:
         for ex in await notes.list_extracts(ctx, att.id) or []:
-            if ex.text.strip():
-                blocks.append(
-                    prompt_block(
-                        ex.text,
-                        source_kind=ex.kind,
-                        filename=att.filename,
-                        confidence=ex.confidence,
-                    )
+            body = ex.text.strip()
+            if not body:
+                continue
+            if len(body) > budget:
+                body, cut = body[:budget], cut + 1
+            budget -= len(body)
+            if not body:
+                continue
+            blocks.append(
+                prompt_block(
+                    body,
+                    source_kind=ex.kind,
+                    filename=att.filename,
+                    confidence=ex.confidence,
                 )
+            )
+    if cut:
+        blocks.append(
+            f"[{cut} attachment text(s) above were cut short: a note carries at most"
+            f" {MAX_ATTACHMENT_TEXT_CHARS} characters of machine-read text. What is not"
+            " shown here was not read — do not record anything about it.]"
+        )
     return "\n\n".join(blocks)
 
 

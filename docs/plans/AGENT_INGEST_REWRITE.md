@@ -1616,7 +1616,12 @@ all, on a capture the owner watched succeed (CLAUDE.md #10). R2's measurement co
 have caught this: the harness seeds one chunk, the note body verbatim, and no scenario has
 an attachment. **Closed here** — `converse.note_text` composes body + marked extract blocks
 inside the same untrusted fence, and `note_ingest.prompt` gained a paragraph naming the
-four markers (v7 → v8).
+four markers (v7 → v8). Capped at `MAX_ATTACHMENT_TEXT_CHARS`, because the fix's own
+failure mode is the opposite one: the deleted path bounded a long input by FANNING OUT
+into several `note.extract` calls and a conversation has one turn 0, so an uncapped
+compose would hand a decrypted medical PDF's page-by-page OCR to a single prompt and
+fail the pass outright. A cut is announced inside the fence — a reading over text the
+model never saw omits facts, and this producer's sweep acts on omission.
 
 *The durable predicate-alias collapse lost its last caller.* `canonicalize_intent` ran in
 `integrate_note` before the arbiter keyed facts, applying the owner's own past

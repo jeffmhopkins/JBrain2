@@ -183,6 +183,44 @@ async def test_the_note_the_agent_reads_is_the_body_when_a_note_has_no_attachmen
     assert await note_text(_NoRepo(), SessionContext(), note) == note.body  # type: ignore[arg-type]
 
 
+async def test_the_note_the_agent_reads_caps_machine_read_text_and_says_it_cut() -> None:
+    """A decrypted medical PDF is OCR'd page by page into `attachment_extracts`, and the
+    conversation has ONE turn 0 to put it in — the deleted producer fanned out instead.
+    So the text is capped, and the cut is announced: a reading over text the model never
+    saw omits facts, and this producer's sweep acts on omission."""
+    from jbrain.analysis.converse import MAX_ATTACHMENT_TEXT_CHARS, note_text
+    from jbrain.notes.service import ExtractInfo
+
+    class _BigRepo:
+        async def list_extracts(self, ctx: Any, attachment_id: str) -> list[ExtractInfo]:
+            return [
+                ExtractInfo(
+                    kind="ocr",
+                    text="x" * (MAX_ATTACHMENT_TEXT_CHARS + 5_000),
+                    tool="t",
+                    confidence=None,
+                    created_at=datetime(2026, 3, 5, tzinfo=UTC),
+                )
+            ]
+
+    note = replace(
+        _note_info(created_at=datetime(2026, 3, 5, 6, 10, tzinfo=UTC)),
+        attachments=[
+            AttachmentInfo(
+                id="a-1", filename="records.pdf", media_type="application/pdf", size_bytes=1
+            )
+        ],
+    )
+    text = await note_text(_BigRepo(), SessionContext(), note)  # type: ignore[arg-type]
+
+    head, marker, rest = text.partition("[ocr from records.pdf]\n")
+    assert head == "body\n\n" and marker
+    block, _, notice = rest.partition("\n\n")
+    assert block == "x" * MAX_ATTACHMENT_TEXT_CHARS  # the cap, exactly
+    assert notice.startswith("[1 attachment text(s) above were cut short")
+    assert "do not record anything about it" in notice
+
+
 def test_a_capture_time_rides_inside_the_same_frame() -> None:
     framed = framed_note("body", captured="Tuesday, March 04, 2026, 23:10 (UTC-07:00)", nonce="n1")
     assert "[captured Tuesday, March 04, 2026, 23:10 (UTC-07:00)]" in framed
