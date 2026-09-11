@@ -68,7 +68,6 @@ from jbrain.models.wiki import (
 from jbrain.models.workflow import (
     Event,
     Pipeline,
-    ResolutionPin,
     Schedule,
     Trigger,
 )
@@ -101,7 +100,6 @@ __all__ = [
     "Pipeline",
     "PlaceGeofence",
     "Principal",
-    "ResolutionPin",
     "ReviewItem",
     "Run",
     "RunStep",

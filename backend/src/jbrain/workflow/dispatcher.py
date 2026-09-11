@@ -313,7 +313,7 @@ def _describe(w: WouldEnqueue) -> dict[str, Any]:
 # A kind absent here has no note-keyed twin; if it carries no per-target payload key
 # at all it is deduped kind-only (_KIND_DEDUP below), else its own action keeps its
 # dedup.
-_NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "integrate_note", "note_converse"))
+_NOTE_DEDUP_KINDS: frozenset[str] = frozenset(("ingest_note", "note_converse"))
 
 # Payload-keyless idempotent sweeps the dispatcher live-enqueues off an event but
 # which carry NO per-target key (so the note-keyed guard above cannot apply).
@@ -369,15 +369,6 @@ async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnque
       `processing`/`indexed`/`failed` the pending reconciler (which keys on
       `ingest_state = 'pending'`) would not re-enqueue it, so neither does a live
       dispatch of a stale/re-delivered `note.created` event.
-    - `integrate_note`: skip on a queued integrate twin (the note-keyed
-      active-analysis check), AND skip when `integration_state == 'integrated'`. The
-      state check is no longer congruence with the reconciler — since R3 that sweep
-      re-enqueues `note_converse`, because the conversation is what writes this state now
-      — but it is still the right skip for this kind: `integrated` means a producer has
-      run to completion on the note, and a re-delivered `note.ingested` for an unchanged
-      note must not re-run the analyzer. A genuine re-ingest flips `integrated -> stale`
-      first (`ingest/pipeline.py`), so it stays eligible. The whole arm goes with the kind
-      in R4.
 
     The job check stays queued-only on purpose (mirroring the hardcoded callers and
     the reconcilers): a RUNNING job may have read stale chunks, so it must never
@@ -399,13 +390,6 @@ async def _already_active(maker: async_sessionmaker[AsyncSession], w: WouldEnque
         return await queue.has_active_kind(maker, SYSTEM_CTX, w.kind)
     if w.kind not in _NOTE_DEDUP_KINDS or not isinstance(note_id, str):
         return False
-    if w.kind == "integrate_note":
-        if await queue.has_active_analysis(maker, SYSTEM_CTX, note_id, statuses=("queued",)):
-            return True
-        state = await _note_state(maker, note_id)
-        # Skip a note already integrated (past the reconciler's eligibility); an
-        # absent note (None) is left to the handler's own missing-note no-op.
-        return state is not None and state[1] == "integrated"
     if w.kind == "note_converse":
         # A note has at most one LIVE conversation, and `note_conversations_one_live`
         # (migration 0191) is what makes that race-free. But the index refuses the

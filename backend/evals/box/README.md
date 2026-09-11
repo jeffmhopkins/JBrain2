@@ -2,7 +2,7 @@
 
 The owner-run half of the calibration loop (`docs/archive/CALIBRATION_LOOP.md`): drive the
 committed eval corpora through the **local model on the box** and score them with
-the **same scorers CI uses** (`jbrain.evals.{runner,integrate_runner,disambiguate_runner}`).
+the **same scorers CI uses** (`jbrain.evals.disambiguate_runner`).
 
 This is the ONLY eval path that calls the box. It is never wired into CI, and it
 refuses to run without the minted capability token in the environment.
@@ -14,8 +14,10 @@ cd backend
 JBRAIN_DEBUG_TOKEN=<minted-payload> uv run python -m evals.box.run_layer <layer> [--samples N] [--limit N]
 ```
 
-`<layer>` ∈ `extract` | `integrate` | `disambiguate`. `--samples` repeats the
-corpus (the model is non-deterministic — the signal is a per-case pass *rate*).
+`<layer>` ∈ `disambiguate`. `--samples` repeats the corpus (the model is
+non-deterministic — the signal is a per-case pass *rate*). The `extract` and `integrate`
+layers went with their prompts in R4 of `docs/plans/AGENT_INGEST_REWRITE.md`; a
+`close_reading` corpus to replace them is R5's.
 
 ## Rules (non-negotiable)
 
@@ -26,8 +28,7 @@ corpus (the model is non-deterministic — the signal is a per-case pass *rate*)
 3. **Async jobs.** A long extraction would exceed the Cloudflare tunnel's ~100s
    edge timeout, so every call is submit + poll.
 4. **The local prompt is what runs.** The scorers send the prompt/registry from
-   the working tree, so an UNCOMMITTED edit is validated before it ships (how
-   `note-extract-v22` was validated without deploying).
+   the working tree, so an UNCOMMITTED edit is validated before it ships.
 
 ## The loop
 

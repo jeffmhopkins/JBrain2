@@ -1,11 +1,11 @@
 """Task-profile routing: every LLM call happens under a named task.
 
 OWNER DECISION (recorded verbatim): every LLM call happens under a named task
-profile. Initial tasks: note.extract, entity.disambiguate, fact.adjudicate,
+profile. Tasks include agent.turn, entity.disambiguate, fact.adjudicate,
 correction_note.extract, vision.ocr, vision.caption. Each task maps to
 "provider:model" and is INDIVIDUALLY configurable; the default for EVERY task
 is "xai:grok-4.3". Config via pydantic-settings: a JBRAIN_LLM_TASKS env var
-holding a JSON object of overrides ({"note.extract":
+holding a JSON object of overrides ({"agent.turn":
 "anthropic:claude-sonnet-4-6"}) merged over the defaults.
 
 The "local" provider must exist now so going all-local is config, not
@@ -51,7 +51,6 @@ log = structlog.get_logger()
 XAI_BASE_URL = "https://api.x.ai/v1"
 
 TASK_DEFAULTS: dict[str, str] = {
-    "note.extract": "xai:grok-4.3",
     "entity.disambiguate": "xai:grok-4.3",
     "fact.adjudicate": "xai:grok-4.3",
     "correction_note.extract": "xai:grok-4.3",
@@ -65,10 +64,6 @@ TASK_DEFAULTS: dict[str, str] = {
     # Defaults to the multimodal cloud model; an on-box operator overrides it to
     # the local vision model (local:qwen3-vl-30b-a3b) so the image never leaves the box.
     "agent.vision": "xai:grok-4.3",
-    # The note→graph Integrator: graph-aware coreference/relationship/gender
-    # judgment that produces an IntegrationIntent (docs/archive/INTEGRATOR_PLAN.md). Strong
-    # tier — it owns the hard decisions the deterministic core then validates.
-    "integrate.note": "xai:grok-4.3",
     # Guided-intake materialization: read a captured submission's UNTRUSTED transcript
     # and propose per-claim leaves for the owner to approve (docs/archive/GUIDED_INTAKE_PLAN.md).
     # Strong tier — it reasons over adversarial input behind a strict data/instruction
@@ -129,7 +124,6 @@ TASK_DEFAULTS: dict[str, str] = {
 # else that thinks. Vision tasks carry no effort (their model has no thinking channel).
 TASK_REASONING_BUCKET: dict[str, str] = {
     # High reasoning
-    "integrate.note": "high",
     "fact.adjudicate": "high",
     "wiki.ground": "high",
     "wiki.lint.contradiction": "high",
@@ -137,7 +131,6 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "pet.statue": "high",
     # Medium reasoning
     "agent.turn": "medium",
-    "note.extract": "medium",
     "correction_note.extract": "medium",
     "video.summarize": "medium",
     "wiki.rewrite": "medium",

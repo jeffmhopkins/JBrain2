@@ -71,7 +71,7 @@ class NoteInfo:
     ingest_state: str = "pending"
     # True once hidden from the home stream (still searchable; see set_hidden).
     hidden: bool = False
-    # True once note.extract has written the note_analysis row — the quiet
+    # True once a producer has written the note_analysis row — the quiet
     # end of the pipeline lifecycle chip (indexing → ocr → analyzing → gone).
     analyzed: bool = False
     # 'human' (captured by the owner) or 'agent' (enacted from a Proposal). The

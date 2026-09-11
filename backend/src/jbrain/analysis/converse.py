@@ -5,10 +5,10 @@ point: *the agent reads a note in a visible thread*. No tools, no chip, no inbox
 routes. The whole point of the wave landing is that the thread exists and can be
 looked at.
 
-It runs BESIDE `integrate_note`, never instead of it (D13: no PR removes a producer
-before its replacement is merged). `note.ingested` therefore drives two pipelines —
-the shipped integration that still writes the graph, and this conversation, which in
-this wave writes nothing at all. That is plan risk 4, accepted at ratification.
+It ran BESIDE `integrate_note` while that producer lived (D13: no PR removes a producer
+before its replacement is merged). R4 deleted it, so `note.ingested` drives this
+conversation and — on an EMR note — the deterministic parser, and nothing else reads a
+note. That is plan risk 4, accepted at ratification.
 
 What that costs, stated as it actually bills. It is one `agent.turn` per
 `note.ingested` EVENT, and that is NOT one per note — the event fires on every SETTLED
@@ -28,8 +28,8 @@ thread. Three re-ingests are shipped and ordinary:
 rather than an oversight. `backfill_pending_integration` used to enqueue `integrate_note`
 directly against `app.jobs`, so a corpus-wide rebuild cost nothing here; it now enqueues
 `note_converse`, because the conversation is the producer that writes
-`integration_state` (`_mark_integrated`) and re-enqueuing a producer that no longer
-writes that state would re-run the analyzer forever. So a rebuild is now one agent turn
+`integration_state` (`_mark_integrated`) — and since R4 it is the only note producer
+there is. So a rebuild is now one agent turn
 per note, serially, on one GPU — which is what a rebuild of an agent-written graph IS,
 and is why `_integration_drained` polls rather than waits. The notes tab that shows the
 threads a re-ingested note accumulates is W3 (D4).
@@ -161,7 +161,7 @@ NOTE_CONVERSE_SPEC = ActionSpec(
     # ledger rows. It writes no GRAPH in W2 — the persona has no tools — but `mutating`
     # describes blast radius, not usefulness, and W3 hangs the graph writes here.
     mutating=True,
-    # One `agent.turn` per note on a serial GPU. `integrate_note` is already
+    # One `agent.turn` per note on a serial GPU. The chain this replaced was already
     # `expensive` for strictly less model work than this.
     cost_class="expensive",
     # A note must never end up with two conversations. The advisory hint here names
@@ -437,8 +437,8 @@ class NoteConverseRunner:
             # finish" — instead of raising out of the job and retrying forever. Failing
             # closed is the right direction: a pass that ignored the owner's rules and
             # settled anyway would write the graph the way he asked it not to, and the
-            # `integrate_note` pipeline is still writing beside this one (D13), so a
-            # failed conversation costs a thread, not the note.
+            # failed conversation costs a thread. Since R4 nothing else reads the note,
+            # so the reconciler (`backfill_pending_integration`) is what re-drives it.
             profile = replace(
                 profile,
                 prompt=with_standing_instructions(profile.prompt, await self._rules(owner_ctx)),
@@ -682,7 +682,7 @@ def note_converse_handler(
 
     `pipeline` is the shared `AnalysisPipeline` (the worker's, with its embedder and
     settings store); one is built here when a caller has none, which is the harness case
-    — resolution then runs without embedding layer 2, exactly as `integrate_note` does
+    — resolution then runs without embedding layer 2, exactly as the write path does
     on a box with no embed client."""
     analyzer = pipeline if pipeline is not None else AnalysisPipeline(maker, router)
     entities = SqlAnalysisRepo(maker)
@@ -708,7 +708,7 @@ def note_converse_handler(
                 domain=note.domain,
                 captured_at=note.created_at,
                 tz_offset_minutes=note.tz_offset_minutes,
-                # Read from the note row, like `integrate_note` read it: an
+                # Read from the note row: an
                 # `owner_correction` note's attested facts force-supersede + pin
                 # (`NoteTarget.is_correction`). This is the same value `is_third_party`
                 # below already reads, so the conversation now branches on provenance in
@@ -716,7 +716,7 @@ def note_converse_handler(
                 # for the owner's own correction.
                 provenance=note.provenance,
             ),
-            # The WRITE session is the owner at FULL scope, like `integrate_note`'s:
+            # The WRITE session is the owner at FULL scope:
             # entity resolution layer 1 carries no domain predicate (narrowing mints
             # duplicates) and a floored fact write would be refused by RLS outright
             # (plan constraint 2). `read_scopes` is passed separately so the writer

@@ -335,14 +335,19 @@ async def has_active_analysis(
     *,
     statuses: tuple[str, ...] = ACTIVE_STATUSES,
 ) -> bool:
-    """Whether an integrate_note job is active for this note — the guard that
+    """Whether a `note_converse` job is active for this note — the guard that
     keeps the trigger from enqueuing a second pass over a note already in
-    flight (both would write the same note)."""
+    flight (both would write the same note).
+
+    Its subject moved with the producer in R4: every caller asked about the
+    `integrate_note` twin it was about to enqueue, and that kind no longer exists.
+    The note conversation is what reads a note now, so that is what "analysis is
+    already in flight" means."""
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
-                    "SELECT 1 FROM app.jobs WHERE kind = 'integrate_note'"
+                    "SELECT 1 FROM app.jobs WHERE kind = 'note_converse'"
                     " AND status IN :statuses AND payload->>'note_id' = :nid LIMIT 1"
                 ).bindparams(bindparam("statuses", expanding=True)),
                 {"statuses": list(statuses), "nid": note_id},
@@ -620,11 +625,11 @@ async def backfill_pending_integration(
     **It enqueues the CONVERSATION since R3**, because the conversation is what flips
     `integration_state` now (`analysis/converse.NoteConverseRunner._mark_integrated`), on
     every pass ending. Re-enqueuing `integrate_note` off a state that producer no longer
-    writes would have re-run the analyzer every five minutes for the life of each note,
+    wrote would have re-run the analyzer every five minutes for the life of each note,
     and would have left the conversation — the producer this state is now ABOUT — with no
-    safety net at all, which it has never had.
+    safety net at all, which it had never had. R4 then deleted that producer outright.
 
-    Three skips, and the middle one is new with the kind:
+    Three skips:
 
     - an active `note_converse` job for the note (the twin check);
     - a LIVE conversation on it, which is the clause `dispatcher._already_active` already

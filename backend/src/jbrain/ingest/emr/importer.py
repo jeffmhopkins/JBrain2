@@ -1,10 +1,12 @@
 """The EmrImporter — lower typed parser candidates into IntegrationIntents
 (docs/plans/EMR_IMPORT_PLAN.md §6.6).
 
-Structured EMR data is deterministic, so the LLM Extractor and Integrator are
-bypassed: this builder emits the SAME `IntegrationIntent` object the LLM
-Integrator would, and the shipped deterministic core (`plan_intent` ->
-`apply_intent`) validates, weighs, firewalls, supersedes, and commits it. The
+Structured EMR data is deterministic, so no model reads it: this builder emits an
+`IntegrationIntent` directly, and the deterministic core (`plan_intent` ->
+`AnalysisPipeline.commit_intent`) validates, weighs, firewalls, supersedes and commits
+it. R4 deleted the LLM Integrator that intent shape was originally cut for; this importer
+is the only producer that still speaks it (AGENT_INGEST_REWRITE.md O1, decided (iii): a
+re-point onto `commit_facts` is a follow-on wave, not this one). The
 importer populates the new `IntentFact.fhir_status` (§3.5) and runs the Layer-2
 location firewall guard (§3.6) so a stray whereabouts fact can never reach the
 graph.
@@ -448,9 +450,9 @@ def lower_parse_result(
     settles the whole note (`settle_note` retracts facts a re-apply doesn't
     re-assert, pipeline.py's touched-set sweep), so a second per-unit apply on the
     same note would retract the first unit's facts. The plan's §6.6 per-unit transaction
-    isolation (crash-resumability at 216-page scale) is a follow-on that needs
-    `apply_intent` to support incremental note commits; for correctness one intent
-    per note is right.
+    isolation (crash-resumability at 216-page scale) is a follow-on; `EmrNoteCommit`
+    already commits per source and settles once, so the remaining gap is a resumable
+    cursor, not the write shape.
     """
     b = _IntentBuilder(note_id, chunk_for_anchor)
     enc_ref_by_key = {e.key: f"enc:{e.key}" for e in result.encounters}

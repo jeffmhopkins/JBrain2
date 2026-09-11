@@ -13,7 +13,7 @@ composed almost entirely from shipped parts:
                    -> wiki_prune + wiki_rebuild('all') + wiki_refresh once it settles
 
 **"The WHOLE graph" has to include the deterministic half.** A health `Records` note's
-facts come from TWO producers, not one: the generic LLM extraction (`integrate_note`)
+facts come from TWO producers, not one: the note conversation's reading (`note_converse`)
 and the EMR parsers (`emr_parse`, migration 0122), which are what turn a lab PDF into
 cited analyte readings. Both fan out from one `note.ingested` event at ingest, and only
 the first has a re-drive path — so a purge that re-queued integration alone would return
@@ -78,7 +78,7 @@ GRAPH_REBUILD_SPEC = ActionSpec(
     handler=GRAPH_REBUILD_KIND,
     domain_optional=True,
     mutating=True,  # purges every note's derived graph and re-drives integration
-    cost_class="expensive",  # every note goes back through the Integrator
+    cost_class="expensive",  # every note is read again, one agent turn each
     dedup_key_expr=None,
     description="Re-derive the whole entity graph from the notes, keeping the notes.",
     category="maintenance",
@@ -278,10 +278,8 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
     parser was still writing.
 
     `note_converse` joined the list with the flip (R3) — it is what re-integration
-    enqueues now (`queue.backfill_pending_integration`) — and `integrate_note` STAYS on
-    it, which is a superset rather than the plan's swap: that producer is still live
-    beside the conversation (D13) and still writing this same graph, so a drain that
-    stopped watching it would chain over its writes. R4 takes it off with the kind.
+    enqueues now (`queue.backfill_pending_integration`) — and R4 took `integrate_note`
+    off it with the kind, leaving the note's one graph producer and the EMR parser.
 
     **A note WAITING ON THE OWNER does not count as pending, and that is a fix rather
     than a loosening.** `_rebuild_one` sets every candidate `pending_integration`, and
@@ -313,7 +311,7 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
             await session.execute(
                 text(
                     "SELECT count(*) FROM app.jobs"
-                    " WHERE kind IN ('integrate_note', 'note_converse', 'emr_parse')"
+                    " WHERE kind IN ('note_converse', 'emr_parse')"
                     " AND status IN ('queued', 'running')"
                 )
             )

@@ -324,7 +324,7 @@ class IngestPipeline:
                     "has_zip_attachment": any(a.media_type in ZIP_MEDIA_TYPES for a in attachments),
                     "has_pdf_attachment": any(a.media_type == PDF_MEDIA_TYPE for a in attachments),
                 },
-                enqueued=wf_events.shadow_enqueued("integrate_note", {"note_id": note_id}),
+                enqueued=wf_events.shadow_enqueued("note_converse", {"note_id": note_id}),
             )
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))
 

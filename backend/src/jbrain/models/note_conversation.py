@@ -462,7 +462,7 @@ class ConversationWrites:
 
     Who owns a note's settle is no longer open (W4c/3, docs/plans/SETTLE_OWNERSHIP.md):
     each producer sweeps the rows it stamped and cannot reach a co-writer's — which
-    closed the shipped loss where `integrate_note`'s settle retracted this ledger's facts
+    closed the shipped loss where the analyzer's settle retracted this ledger's facts
     outright.
 
     **The conversation sweeps again since R3, and `facts` is still not its input.** One

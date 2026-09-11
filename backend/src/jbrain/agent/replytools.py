@@ -77,7 +77,7 @@ live rows, and works only inside a note conversation — while the wiki's correc
 takes PROSE from a Talk thread or a lint card, in a place with no note conversation at
 all, and its whole point is to leave a NOTE behind: the citable source
 `wiki_citations.chunk_id` (NOT NULL) needs and the corpus rebuild re-derives the graph
-from. So `file_correction` keeps minting the note; what it lost with `integrate_note` is
+from. So `file_correction` keeps minting the note; what it lost with the analyzer is
 only the flag, and `graphwritetools.NoteTarget.is_correction` sets it now.
 
 **`merge_entities` can only ever STAGE** (constraint 12). A fold is a full-owner write —

@@ -1,14 +1,16 @@
-"""The `IntegrationIntent` — the one seam between the Integrator agent and the
+"""The `IntegrationIntent` — the one seam between a structured producer and the
 deterministic arbiter (docs/archive/INTEGRATOR_PLAN.md §3).
 
-The agent reads a note's stored `Extraction` plus the live graph and emits an
-`IntegrationIntent`: its *judgment* about who is who, what is true, and what
-supersedes what — as a proposal, never a write. The arbiter (the hardened
-commit path) validates this object and performs every structural mutation itself.
+A producer builds an `IntegrationIntent` — who is who, what is true, and what
+supersedes what — as a proposal, never a write. The arbiter (the hardened commit path)
+validates this object and performs every structural mutation itself.
 
-Bounding the agent's non-determinism at this one value object is what keeps the
-system testable and safe: the agent decides *semantics*; the deterministic core
-decides *structure and the firewall* and owns commit (plan N1). So this module
+It was cut for an LLM Integrator, and bounding that agent's non-determinism at one value
+object is what kept the system testable: the agent decided *semantics*; the deterministic
+core decides *structure and the firewall* and owns commit (plan N1). R4 deleted that
+agent. The shape survives because the deterministic EMR importer speaks it and carries a
+field no model-facing tool has (`IntentFact.fhir_status`) — AGENT_INGEST_REWRITE.md O1,
+decided (iii). So this module
 deliberately carries NO chain pointers, NO offsets, and NO domain decisions —
 the arbiter derives all three. An intent expresses intent; it never expresses a
 committed fact.

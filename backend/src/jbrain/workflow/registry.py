@@ -174,17 +174,6 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         category="note",
     ),
     ActionSpec(
-        name="integrate_note",
-        version=1,
-        handler="integrate_note",
-        domain_optional=True,
-        mutating=True,
-        cost_class="expensive",
-        dedup_key_expr="note_id",
-        description="Extract facts, resolve entities, and write the graph.",
-        category="note",
-    ),
-    ActionSpec(
         name="ocr_attachment",
         version=1,
         handler="ocr_attachment",

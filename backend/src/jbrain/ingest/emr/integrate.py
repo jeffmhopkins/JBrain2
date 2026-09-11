@@ -18,19 +18,18 @@ so there is no second, `fhir_status`-less path onto the same note.
 
 **One note, one settle.** `settle_note` is whole-note: it retracts every non-pinned
 fact of the note NOT in `touched` (plan constraint 6). A decrypted EMR archive attaches
-MANY PDFs to ONE note and each is parsed separately, so committing them through
-`apply_intent` in a loop made each attachment's settle retract the previous
+MANY PDFs to ONE note and each is parsed separately, so committing them through a
+commit+settle pair in a loop made each attachment's settle retract the previous
 attachment's facts — a two-PDF import kept only the last PDF's readings. `EmrNoteCommit`
 is the fix: every source commits through `commit_intent` in its own transaction, the
 `touched`/`projected`/`mention_ids` sets, the resolved-entity map and the extractions
 accumulate, and ONE `settle_note` runs at the end over their union.
 
-Note the ordering caveat that fix does NOT reach: in production `integrate_note` and
-`emr_parse` both fan out of one `note.ingested` with no ordering between them, and each
-ends in a whole-note settle, so a real import still loses ALL of one producer's facts or
-none. That collision is older and wider than this module (it is the shipped `apply_intent`
-on both sides) and is recorded as open in the plan's W4 section; what is fixed here is the
-importer destroying its OWN earlier attachments.
+The cross-PRODUCER version of that collision — an EMR note whose `note.ingested` also
+opens a note conversation, each ending in a whole-note settle with no ordering between
+them — is closed elsewhere and not here: every settle is scoped to the rows its own
+producer claimed (`analysis/settle_owner.py`, migrations 0196/0197). What is fixed HERE is
+the importer destroying its OWN earlier attachments.
 
 The EMR facts are all surface-attested (deterministic parse), so every fact gets
 `surface_attested=True`; `fhir_status` — not `correction` — drives the lab
@@ -354,8 +353,8 @@ class EmrNoteCommit:
 
         Refuses on an empty run and says so with its return value. That is not tidiness:
         `settle_note` with an empty `touched` retracts every non-pinned fact of the note,
-        so settling a run that parsed nothing would delete the note's graph — including
-        whatever the still-running `integrate_note` producer wrote beside it (D13).
+        so settling a run that parsed nothing would delete every fact this producer
+        holds a claim on.
         """
         if not self._extractions:
             return False

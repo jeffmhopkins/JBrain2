@@ -677,17 +677,17 @@ async def run_scenario(maker: async_sessionmaker[AsyncSession], scenario: Scenar
 
 
 def _print_prompt() -> None:
-    from jbrain.analysis.prompt import SYSTEM_PROMPT, build_user_prompt
+    """Print the persona the harness plays: the note-conversation prompt the live agent
+    reads a note under. It was the `note.extract` system+user pair until R4 deleted that
+    prompt; the note is now turn 0 of a conversation, so there is one artifact to read."""
+    from pathlib import Path as _Path
 
-    body = (
-        "Saw Dr. Patel today, BP was 128/82. She wants me back in 3 months. "
-        "Bumped into Sarah from accounting — she just moved to Denver."
-    )
-    anchor = datetime.fromisoformat("2026-06-10T17:11:00-06:00")
-    print("================ SYSTEM PROMPT ================")
-    print(SYSTEM_PROMPT)
-    print("\n================ USER PROMPT (anchor as the model sees it) ====")
-    print(build_user_prompt([body], anchor=anchor, domain="general"))
+    import jbrain
+    from jbrain.llm.promptfile import load_prompt
+
+    pf = load_prompt(_Path(jbrain.__file__).parent / "agent" / "prompts" / "note_ingest.prompt")
+    print(f"================ {pf.name} ({pf.version}) ================")
+    print(pf.render())
 
 
 async def _cli_run(url: str, path: str) -> int:

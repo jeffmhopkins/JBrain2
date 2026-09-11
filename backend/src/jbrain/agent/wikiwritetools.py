@@ -7,8 +7,8 @@ they file the inputs the builder re-derives from.
   ingestion — its surface-attested facts force-supersede + pin the conflicting head (Wave A+), and
   the rebuilt article reflects the correction. The owner "out-argues the wiki."
   **What turns the provenance into that force-supersede is no longer the arbiter.** It was
-  `analysis/pipeline.integrate_note` reading the provenance and calling
-  `plan_intent(correction=True)`; both are W5a's deletion. The note's own agent conversation now
+  the write path reading the provenance and calling
+  `plan_intent(correction=True)`; R4 deleted that reader. The note's own agent conversation now
   carries the rule — `graphwritetools.NoteTarget.is_correction` — so this tool keeps minting the
   NOTE, which is the part `correct_fact` cannot replace: a citable, re-derivable source with real
   chunks behind `wiki_citations.chunk_id` (NOT NULL) rather than a triple typed into a thread that

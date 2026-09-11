@@ -19,9 +19,8 @@ so the repair has to happen while both generations of chunk exist. This module i
 pure half: given the old shapes and the newly built ones, decide
 
 1. **reuse** — a new chunk byte-identical to an old one in every stored column keeps the
-   OLD ROW. Nothing referencing it ever notices the re-ingest, its embedding is not
-   thrown away, and `resolution_pin` (whose PK contains `chunk_id` and whose
-   `occurrence_index` is chunk-relative, so it can be carried no other way) survives.
+   OLD ROW. Nothing referencing it ever notices the re-ingest and its embedding is not
+   thrown away.
 2. **re-anchor** — an old chunk with no identical twin, but whose span is COVERED by a
    surviving chunk of the same source, hands its references over before it is deleted.
    Covering is the condition that makes the mention spans translatable: they are
@@ -35,10 +34,6 @@ Anything else — the owner rewrote the body, the note moved domain — matches 
 and behaves exactly as before: the references go with the chunk. Never worse, and the
 common case is now whole.
 
-`resolution_pin` rides on reuse ONLY. Its primary key is
-`(note_id, chunk_id, occurrence_index, decision_kind)`, so two old chunks re-anchored
-onto one new chunk would collide on it, and `occurrence_index` counts occurrences within
-the OLD chunk's text — a number a span shift cannot correct.
 """
 
 from collections import defaultdict, deque

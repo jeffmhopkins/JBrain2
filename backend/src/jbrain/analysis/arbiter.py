@@ -1,15 +1,18 @@
 """The arbiter's planning core — decides an IntegrationIntent's disposition.
 
-This is the pure decision brain of Track A (plan §1, N3/N11): given the agent's
-validated `IntegrationIntent` and the deterministic per-fact signals the arbiter
-gathered, it partitions the intent into commit / review / reject — without
-touching the DB. The DB executor (A1b) consumes the resulting `ArbiterPlan` and
-performs the structural writes through the existing deterministic primitives
-(_resolve validation, _upsert_fact, supersession.decide, the sweep).
+This is the pure decision brain of Track A (plan §1, N3/N11): given a validated
+`IntegrationIntent` and the deterministic per-fact signals the arbiter gathered, it
+partitions the intent into commit / review / reject — without touching the DB. The DB
+executor (A1b) consumes the resulting `ArbiterPlan` and performs the structural writes
+through the existing deterministic primitives (_resolve validation, _upsert_fact,
+supersession.decide, the sweep).
 
-Keeping the disposition logic pure here means the agent's non-determinism is
-adjudicated by code that is fully unit-testable and reviewable; the agent never
-decides its own commit-vs-review.
+**One producer reaches it now.** It was built to adjudicate an LLM Integrator's
+non-determinism, and R4 deleted that agent; the deterministic EMR importer
+(`ingest/emr/integrate.py`) is the only caller left, and the three intent-REPAIR helpers
+that existed for the model — `derive_kinship_gender`, `recover_dropped_fields`,
+`dedup_intent_facts` — went with it. Re-pointing EMR off `IntegrationIntent` entirely
+would take the rest (AGENT_INGEST_REWRITE.md O1, decided (iii): a follow-on wave).
 
 What the plan encodes:
 - A FATAL structural violation (validate_intent) rejects the WHOLE intent — the
@@ -27,10 +30,9 @@ What the plan encodes:
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -43,7 +45,6 @@ from jbrain.analysis.intent import (
     EntityResolution,
     IntegrationIntent,
     IntentFact,
-    IntentTemporal,
     IntentViolation,
     has_fatal,
     validate_intent,
@@ -328,250 +329,6 @@ def _gender_grounded(fact: IntentFact, haystack: str) -> bool:
 # noun for each side. A `children` edge to a child the note calls a "daughter"
 # implies the child is female; spouse/parent/sibling likewise. Neutral terms (kid,
 # child, partner, sibling, parent) imply nothing and are intentionally absent.
-_KINSHIP_GENDER_TERMS: dict[str, dict[str, frozenset[str]]] = {
-    "children": {
-        "female": frozenset({"daughter", "daughters"}),
-        "male": frozenset({"son", "sons"}),
-    },
-    "spouse": {"female": frozenset({"wife"}), "male": frozenset({"husband"})},
-    "parent": {"female": frozenset({"mother", "mom"}), "male": frozenset({"father", "dad"})},
-    "sibling": {
-        "female": frozenset({"sister", "sisters"}),
-        "male": frozenset({"brother", "brothers"}),
-    },
-}
-
-
-def derive_kinship_gender(intent: IntegrationIntent, note_text: str) -> IntegrationIntent:
-    """Emit the gender a kinship edge DETERMINISTICALLY implies for its object, so a
-    roster the model captured as relationships but for which it omitted gender ("four
-    daughters named …" → four children edges, no gender) still records each child's
-    gender — the recall companion to `_gender_grounded`, which only weights a gender
-    fact once it exists.
-
-    For each kinship predicate, derive the object gender ONLY when the note uses that
-    predicate's gendered term for exactly ONE gender (all daughters, or all sons); a
-    mixed roster ("a daughter and a son") can't be associated to each object
-    positionally here, so it is left to the model/review. An object that already
-    carries a gender fact this note is left untouched. The derived fact is `inferred`
-    (the note never types "female"), but `_gender_grounded` attests it, so it commits
-    rather than landing in review."""
-    registry = get_registry()
-    haystack = _norm(note_text)
-    implied: dict[str, str] = {}
-    for canon, by_gender in _KINSHIP_GENDER_TERMS.items():
-        present = {
-            g for g, terms in by_gender.items() if any(_token_present(t, haystack) for t in terms)
-        }
-        if len(present) == 1:
-            implied[canon] = next(iter(present))
-    if not implied:
-        return intent
-
-    have_gender = {
-        f.entity_ref for f in intent.facts if registry.normalize_predicate(f.predicate) == "gender"
-    }
-    added: list[IntentFact] = []
-    seen: set[str] = set()
-    for fact in intent.facts:
-        gender = implied.get(registry.normalize_predicate(fact.predicate))
-        obj = fact.object_entity_ref
-        if gender is None or obj is None or obj in have_gender or obj in seen:
-            continue
-        seen.add(obj)
-        added.append(
-            IntentFact(
-                entity_ref=obj,
-                predicate="gender",
-                qualifier="",
-                kind="state",
-                statement=f"{obj}'s gender is {gender}.",
-                value_json={"value": gender},
-                assertion="asserted",
-                object_entity_ref=None,
-                temporal=None,
-                attested_span=None,
-                self_confidence=1.0,
-                inferred=True,
-            )
-        )
-    if not added:
-        return intent
-    return replace(intent, facts=[*intent.facts, *added])
-
-
-def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) -> IntegrationIntent:
-    """Backfill the object AND value the integrator drops when it re-types a fact.
-
-    note.extract reliably emits `object_entity_ref` (Me.children -> Eli),
-    `value_json` (grade {"value": "7th"}), and the `temporal` it resolved (an age
-    phrase -> birthDate); the integrator non-deterministically omits them when it
-    re-types the fact — orphaning the edge, blanking the value, or stripping the
-    date phrase, after which the arbiter finds no named object / no datum / no
-    grounding and holds the fact as inferred. Restore all three deterministically
-    from the extraction — the source of truth for what the note states — keyed on
-    the subject + canonical predicate. Then GUARANTEE every referenced entity
-    (subject and object) carries a resolution: a backfilled object with no
-    resolution would otherwise make apply_intent DROP the whole fact, so mint a
-    provisional from the extraction mention's kind. Only fills gaps — an existing
-    object/value/temporal/resolution (including a deliberate `ambiguous`) is never
-    overridden."""
-    registry = get_registry()
-    # Objects can be MULTI-valued on one (subject, predicate): a set-valued
-    # predicate (Me.children -> each kid) has one extraction edge per object, and
-    # the integrator may drop the object on several of them at once. Keep EVERY
-    # extraction object, in order, and hand them out positionally below — a single
-    # value broadcast to all the object-less edges would turn N distinct edges
-    # into N copies of the first, which then de-dup to one (the enumerated-kinship
-    # collapse). value/temporal stay single-valued: they key on distinct subjects
-    # (summer.name, lydian.name), not a shared one, so the first-wins is correct.
-    ext_objs: dict[tuple[str, str], list[str]] = {}
-    ext_val: dict[tuple[str, str], dict] = {}
-    ext_temporal: dict[tuple[str, str], ExtractedTemporal] = {}
-    for f in extraction.facts:
-        key = (f.entity_ref, registry.normalize_predicate(f.predicate))
-        if f.object_entity_ref:
-            objs = ext_objs.setdefault(key, [])
-            if f.object_entity_ref not in objs:
-                objs.append(f.object_entity_ref)
-        if isinstance(f.value_json, dict) and f.value_json:
-            ext_val.setdefault(key, f.value_json)
-        if f.temporal and f.temporal.phrase and f.temporal.resolved_start:
-            ext_temporal.setdefault(key, f.temporal)
-    mention_kind = {m.name: m.kind for m in extraction.mentions}
-    resolved = {r.mention_ref for r in intent.entity_resolutions}
-    # Objects still free to backfill per key: the extraction's, minus any an intent
-    # edge already carries, so a kept edge's object is never handed to a sibling
-    # too. The main loop consumes these in order as it meets each object-less edge.
-    avail_objs: dict[tuple[str, str], list[str]] = {k: list(v) for k, v in ext_objs.items()}
-    for kept in intent.facts:
-        if kept.object_entity_ref:
-            free = avail_objs.get((kept.entity_ref, registry.normalize_predicate(kept.predicate)))
-            if free and kept.object_entity_ref in free:
-                free.remove(kept.object_entity_ref)
-
-    facts: list[IntentFact] = []
-    added: list[EntityResolution] = []
-    for fact in intent.facts:
-        key = (fact.entity_ref, registry.normalize_predicate(fact.predicate))
-        if fact.object_entity_ref is None:
-            free = avail_objs.get(key)
-            if free:
-                fact = replace(fact, object_entity_ref=free.pop(0))
-        if not isinstance(fact.value_json, dict) and key in ext_val:
-            fact = replace(fact, value_json=ext_val[key])
-        if fact.temporal is None and key in ext_temporal:
-            t = ext_temporal[key]
-            fact = replace(
-                fact,
-                temporal=IntentTemporal(
-                    phrase=t.phrase,
-                    resolved_start=t.resolved_start,
-                    resolved_end=t.resolved_end,
-                    precision=t.precision,
-                ),
-            )
-        # A relationship is an edge to another entity, so a relationship fact left
-        # with NO object after recovery is an edge to nothing — drop it rather than
-        # persist or park a meaningless object-less row in review (e.g. a bare
-        # `parent` the model emitted with no parent named).
-        if fact.kind == "relationship" and fact.object_entity_ref is None:
-            continue
-        facts.append(fact)
-        for ref in (fact.entity_ref, fact.object_entity_ref):
-            if ref and ref not in resolved and ref in mention_kind:
-                added.append(
-                    EntityResolution(
-                        mention_ref=ref, mode="new", new_kind=mention_kind[ref], new_name=ref
-                    )
-                )
-                resolved.add(ref)
-    if not added and facts == intent.facts:
-        return intent
-    return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
-
-
-def dedup_intent_facts(intent: IntegrationIntent, chunk_texts: list[str]) -> IntegrationIntent:
-    """Collapse a fact the Integrator emitted more than once, keeping the complete,
-    best-grounded copy. The extraction has `dedup_facts`, but the Integrator re-emits
-    facts with NO equivalent pass, so a note that lists two medications in one
-    sentence ("lisinopril 10 mg and hydrochlorothiazide 12.5 mg daily") can come back
-    with one drug DUPLICATED — and the duplicate is the degenerate one: the good copy
-    binds the drug as its OBJECT entity (`Me.medication -> hydrochlorothiazide`, which
-    `_object_named` grounds because the drug name is verbatim in the note), while the
-    spurious twin DROPS its object and folds the drug into a free-text statement. Left
-    alone the arbiter commits the object-bearing copy active and holds the object-less
-    twin for review (no object to ground, a paraphrased statement the note never
-    states verbatim), so the owner sees a review card for a fact already on the graph
-    (the medication-bite-review case).
-
-    Facts are grouped on a base key that EXCLUDES both the object AND the statement —
-    entity, predicate, qualifier, assertion, value_json — so a genuinely SET-VALUED
-    predicate keeps its distinct members: two edges to DIFFERENT objects (enumerated
-    children, two different medications) survive as separate edges (split by object
-    below), while N PARAPHRASES of one value collapse. The statement is deliberately
-    out of the key: for a prose-valued attribute the model puts the value in the
-    SENTENCE and leaves value_json null (`account.address` rendered nine ways —
-    "the address should be…", "corrected address:…", "account address set to…" — one
-    per re-framing), so keying on statement would fragment one value into N groups and
-    file an attribute_collision card per paraphrase. Value distinction rides value_json
-    (a datum the note-extract contract requires for every non-edge fact) and the object,
-    never the free-text rendering. Within a group an object-less copy is SUBSUMED by any
-    object-bearing sibling (the dropped-object twin adds no datum the bound edge lacks)
-    and dropped; same-object duplicates — and an all-object-less group — collapse to the
-    single best copy (grounded + not inferred, then higher self_confidence, then
-    earliest), i.e. the copy the arbiter would have committed, never the drifted twin.
-    Order-preserving. Runs AFTER predicate canonicalization so aliased spellings share
-    one key."""
-    haystack = _norm("\n".join(chunk_texts))
-
-    def rank(f: IntentFact) -> tuple[bool, bool, bool, float]:
-        grounded = (
-            not f.inferred
-            and f.attested_span is not None
-            and _norm(f.attested_span.surface) in haystack
-        )
-        return (grounded, not f.inferred, f.attested_span is not None, f.self_confidence)
-
-    def base_key(f: IntentFact) -> tuple:
-        return (
-            f.entity_ref,
-            f.predicate,
-            f.qualifier,
-            f.assertion,
-            json.dumps(f.value_json, sort_keys=True),
-        )
-
-    groups: dict[tuple, list[int]] = {}
-    for i, fact in enumerate(intent.facts):
-        groups.setdefault(base_key(fact), []).append(i)
-
-    keep: set[int] = set()
-    for idxs in groups.values():
-        objful = [i for i in idxs if intent.facts[i].object_entity_ref is not None]
-        if objful:
-            # Distinct-object edges each survive; an object-less twin is subsumed.
-            best_by_obj: dict[str, int] = {}
-            for i in objful:
-                obj = intent.facts[i].object_entity_ref
-                assert obj is not None  # objful filtered on this
-                if obj not in best_by_obj or rank(intent.facts[i]) > rank(
-                    intent.facts[best_by_obj[obj]]
-                ):
-                    best_by_obj[obj] = i
-            keep.update(best_by_obj.values())
-        else:
-            best = idxs[0]
-            for i in idxs[1:]:
-                if rank(intent.facts[i]) > rank(intent.facts[best]):
-                    best = i
-            keep.add(best)
-
-    if len(keep) == len(intent.facts):
-        return intent
-    return replace(intent, facts=[f for i, f in enumerate(intent.facts) if i in keep])
-
-
 def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> bool:
     """A date-shape attribute is grounded when the temporal PHRASE it was resolved
     from appears in the note — even if the model flagged it inferred. An age ->

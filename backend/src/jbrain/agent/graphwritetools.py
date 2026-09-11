@@ -92,7 +92,7 @@ for retiring the correction-note machinery). `file_correction`, `POST
 /api/wiki/{id}/corrections` and the lint card's `correct` verb all mint one note with
 `provenance='owner_correction'`, and `PHASE6_WIKI_PLAN.md` §4 names what happened next —
 `arbiter.plan_intent(correction=True)` — as the wiki correction loop's shipped exit
-criterion. That bridge was two lines inside `integrate_note`, which W5a deletes, so the
+criterion. That bridge was two lines inside `integrate_note`, which R4 deleted, so the
 same rule is now `NoteTarget.is_correction` and the branch in `_assert_one`: a fact the
 correction note's own text ATTESTS is written with `correction=True` at full weight, and
 an inferred one is not. Nothing about it is model-facing (constraint 5) — provenance is
@@ -181,7 +181,7 @@ GRAPH_WRITE_TOOLS = frozenset({RESOLVE_ENTITY, ASSERT_FACT, CLOSE_READING})
 MAX_ENTITIES = 12
 MAX_FACTS = 8
 # The reading's tag list. Not a batch ceiling like the two above — a tag costs nothing to
-# write and everything to browse, and `note.extract`'s own prompt asks for a few.
+# write and everything to browse, and the reading's own tool text asks for a few.
 MAX_TAGS = 8
 # How many same-named candidates an ambiguity result names. Past a handful the list stops
 # being a question the agent can answer and starts being a wall of text on a turn that
@@ -204,9 +204,9 @@ _STOPWORDS = frozenset(
 RESOLVE_CALL_BUDGET = 8
 ASSERT_CALL_BUDGET = 10
 # `close_reading` counts separately from `assert_fact` because it is a different job with
-# a different ceiling: the reading is the WHOLE note, and the extraction path's own cap is
-# 40 facts (`note_extract.prompt`), so six calls of eight is already more than any note
-# carries. Past it the model is re-reading rather than finishing.
+# a different ceiling: the reading is the WHOLE note, and the per-note parse cap is
+# 40 facts (`analysis/prompt.MAX_FACTS`), so six calls of eight is already more than any
+# note carries. Past it the model is re-reading rather than finishing.
 READING_CALL_BUDGET = 6
 
 # What a resolved entity's facts cost the context, bounded twice — per entity and per
@@ -254,9 +254,8 @@ _KIND_HINTS: dict[str, str] = {
     "drug": "Medication",
     "animal": "Animal",
     "pet": "Animal",
-    # The registry declares these and the `note.extract` prompt teaches them
-    # ("kind prefers a schema.org type … Product"), so a note about a car or a
-    # laptop had no word here and degraded to `Thing`.
+    # The registry declares these ("kind prefers a schema.org type … Product"), so a
+    # note about a car or a laptop had no word here and degraded to `Thing`.
     "product": "Product",
     "device": "Device",
     "vehicle": "Vehicle",
@@ -421,7 +420,7 @@ def _temporal(when: str, anchor: datetime, tz_offset_minutes: int | None) -> Ext
     A bare year or month is expanded to its first day, because `fromisoformat` rejects
     both. A CLOCK time with no offset is read in the note's own zone, never UTC: a 5pm
     local appointment pinned to 17:00Z is a fact that is wrong by the owner's offset
-    forever (the same rule `extraction._naive_tz` states for the note.extract path)."""
+    forever (the same rule `extraction._naive_tz` states for the parse path)."""
     body = when.strip()
     precision = _precision(body)
     if precision == "year":
@@ -1504,7 +1503,7 @@ class NoteGraphWriter:
             # THE CORRECTION-NOTE ELEVATION, ported off `arbiter.plan_intent(correction=
             # True)` (W5's stated precondition). `PHASE6_WIKI_PLAN.md` §4 names that call
             # as the wiki correction loop's shipped exit criterion, and its only bridge
-            # was two lines inside `integrate_note` — which W5a deletes. Without the same
+            # was two lines inside `integrate_note` — which R4 deleted. Without the same
             # rule here, an owner correction filed from Talk or from a lint card would
             # land as an ordinary capped fact and quietly stop out-arguing the graph.
             #
@@ -1584,7 +1583,7 @@ class NoteGraphWriter:
                 # An undated recurring note ("gym every Tuesday and Thursday") gives the
                 # rule no start, and a token must have one — so the rule starts when the
                 # note says it, which is the note's own capture day. That is what
-                # `note.extract`'s temporal tokens have always resolved against, and it is
+                # the note's temporal tokens have always resolved against, and it is
                 # what lets a later note restating the schedule supersede this one.
                 dated = temporal is not None and temporal.resolved_start is not None
                 start = temporal.resolved_start if temporal is not None else None
