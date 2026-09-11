@@ -1941,6 +1941,17 @@ and would take away the clear branch a non-truncating EMR re-run needs — a swe
 still to do. They stay, `settle_note` says why in place, and whether the EMR producer
 should keep filing those cards at all is R4's question rather than this wave's.
 
+*Two things near the edges, both left as they were:* the one open card on the live box
+with a NULL `settle_owner` (filed before migration 0197) is retired by no sweep at all,
+because both halves match on `settle_owner = :owner` — its escape hatches are the owner
+dismissing it, `purge.delete_review_items` when the fact it names is retracted, note
+deletion, the corpus rebuild (which retires OPEN items), and R5's wipe. And **O15 is
+untouched**: `sweep_note` has always released and retracted `pending_review` rows as well
+as `active` ones, so a held row the note stops saying is now swept with everything else —
+but O15's case is two facts that disagree while the note still says BOTH, and a reading
+that re-states both leaves both in `touched`, so neither is released. Nothing here gives a
+held row a retirement path it did not have; the decision stays the owner's.
+
 *Named residuals, none of them regressions:*
 
 1. **The reply path settles tail-only.** `api/agent.py` passes `reading=None`: a reply
