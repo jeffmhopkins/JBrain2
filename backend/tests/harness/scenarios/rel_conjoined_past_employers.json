@@ -1,6 +1,6 @@
 {
   "name": "conjoined past employers each close as former, none held in review",
-  "description": "The owner's report (the screenshots): 'I work for SpaceX, I used to work for the US army and Oregon Lithoprint.' The CURRENT worksFor (SpaceX, open) and BOTH closed past ones must land — SpaceX active/open, the two former jobs superseded behind it — with NONE held in review. The failure the owner hit: the integrator fumbles the SECOND conjoined object's own attestation quote (it reconstructs 'worked at Oregon Lithoprint', which is not verbatim in the note), Under the tool path that quote fails assert_fact's `_attests` check, so the edge commits at the UNATTESTED weight rather than being dropped or parked - Lever A: it commits, it just cannot overwrite a confident prior. Both `used to` statements are closed by normalize_past_assertion, which reads the statement and not a temporal field, so the interval close survives the tool surface's single `when`. worksFor is a declared Person predicate whose fact kind the write path derives as `relationship` (it points at an entity). The two former jobs are co-equal closed history, so no fact_conflict. Authored tool calls: the faithful default quotes every fact accurately and so cannot reproduce a fumbled one. TOOL-PATH NOTE: the three worksFor facts asserted kind='state' before the W3 re-point and now assert 'relationship', which _fact_kind returns for every object edge -- so the kind assertion is a tautology and the supersession is carried by status/chained. Two {count: 0} review specs (new_predicate, low_confidence_inference) were removed as unfalsifiable: both are arbiter cards and this path never runs the arbiter.",
+  "description": "The owner's report (the screenshots): 'I work for SpaceX, I used to work for the US army and Oregon Lithoprint.' The CURRENT worksFor (SpaceX, open) and BOTH closed past ones must land — SpaceX active/open, the two former jobs superseded behind it — with NONE held in review. The failure the owner hit: the integrator fumbles the SECOND conjoined object's own attestation quote (it reconstructs 'worked at Oregon Lithoprint', which is not verbatim in the note), Under the tool path that quote fails assert_fact's `_attests` check, so the edge commits at the UNATTESTED weight rather than being dropped or parked - Lever A: it commits, it just cannot overwrite a confident prior. Both `used to` statements are closed by normalize_past_assertion, which reads the statement and not a temporal field, so the interval close survives the tool surface's single `when`. worksFor is a declared Person predicate whose fact kind the write path derives as `relationship` (it points at an entity). The two former jobs are co-equal closed history, so no fact_conflict. Authored tool calls: the faithful default quotes every fact accurately and so cannot reproduce a fumbled one. They are authored as the READING close_reading takes (R2), not as the retired assert_fact batch -- the fumbled quote has to be tested on the call the agent actually makes. TOOL-PATH NOTE: the three worksFor facts asserted kind='state' before the W3 re-point and now assert 'relationship', which _fact_kind returns for every object edge -- so the kind assertion is a tautology and the supersession is carried by status/chained. Two {count: 0} review specs (new_predicate, low_confidence_inference) were removed as unfalsifiable: both are arbiter cards and this path never runs the arbiter.",
   "steps": [
     {
       "domain": "general",
@@ -27,11 +27,13 @@
           {"surface": "US army", "kind": "organization"},
           {"surface": "Oregon Lithoprint", "kind": "organization"}
         ],
-        "facts": [
-          {"subject": "Me", "predicate": "worksFor", "object": "SpaceX", "statement": "I work for SpaceX.", "when": "", "quote": "work for SpaceX"},
-          {"subject": "Me", "predicate": "worksFor", "object": "US army", "statement": "I used to work for the US army.", "when": "", "quote": "used to work for the US army"},
-          {"subject": "Me", "predicate": "worksFor", "object": "Oregon Lithoprint", "statement": "I used to work for Oregon Lithoprint.", "when": "", "quote": "worked at Oregon Lithoprint"}
-        ]
+        "reading": {
+          "facts": [
+            {"subject": "Me", "predicate": "worksFor", "object": "SpaceX", "statement": "I work for SpaceX.", "when": "", "quote": "work for SpaceX"},
+            {"subject": "Me", "predicate": "worksFor", "object": "US army", "statement": "I used to work for the US army.", "when": "", "quote": "used to work for the US army"},
+            {"subject": "Me", "predicate": "worksFor", "object": "Oregon Lithoprint", "statement": "I used to work for Oregon Lithoprint.", "when": "", "quote": "worked at Oregon Lithoprint"}
+          ]
+        }
       }
     }
   ],

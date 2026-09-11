@@ -33,14 +33,18 @@ class Step:
     # extraction matters. This is how a scenario scripts "the model now reads
     # the same note differently" (re-extraction after an edit or upgrade).
     reanalyze_step: int | None = None
-    # The `resolve_entity` / `assert_fact` ARGUMENTS this step's agent sends,
-    # `{"entities": [...], "facts": [...]}`, batched by the runner at the tools'
-    # own ceilings. Omit it and the runner derives them faithfully from the
-    # extraction (every named surface resolved, every fact asserted, each quoting
-    # its subject's own span) — enough for scenarios whose point is the write
-    # path, not a specific model call. Author it only when the default cannot
-    # express the case under test: a deliberately fumbled `quote`, or an object
-    # the model chose to leave as a literal. See runner._tool_calls.
+    # The ARGUMENTS this step's agent sends, addressed per tool —
+    # `{"entities": [...], "reading": {"title": ..., "tags": [...], "facts": [...]}}`,
+    # batched by the runner at each tool's own ceiling. The surfaces go to
+    # `resolve_entity` and the reading to `close_reading`, which is the whole turn:
+    # there is no third block because the agent has no third write verb on this path.
+    # `title`/`tags` are optional and default to the step's scripted extraction.
+    # Omit the field entirely and the runner derives the whole turn faithfully from the
+    # extraction (every named surface resolved, every fact read back, each quoting its
+    # subject's own span) — enough for scenarios whose point is the write path, not a
+    # specific model call. Author it only when the default cannot express the case under
+    # test: a deliberately fumbled `quote`, or an object the model chose to leave as a
+    # literal. See runner._tool_calls.
     tool_calls: dict[str, Any] | None = None
 
 
