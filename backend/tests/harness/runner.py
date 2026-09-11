@@ -142,13 +142,9 @@ from jbrain.agent.graphwritetools import (
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.analysis.entities import ResolvedEntity, get_or_create_me
-from jbrain.analysis.extraction import ExtractedFact, Extraction
-from jbrain.analysis.pipeline import (
-    AnalysisPipeline,
-    CommitOutcome,
-    _extract_note,
-    local_anchor,
-)
+from jbrain.analysis.extraction import ExtractedFact, Extraction, parse_extraction
+from jbrain.analysis.pipeline import AnalysisPipeline, CommitOutcome, local_anchor
+from jbrain.analysis.prompt import fact_cap
 from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
@@ -418,28 +414,23 @@ def _authored_calls(step: Step) -> tuple[list[dict], list[dict]]:
     )
 
 
-async def _parse_extraction(step: Step, domain: str) -> Extraction:
-    """Run the note's scripted extraction through the genuine `note.extract`
-    parse (dedup, fact-cap, drop-invalid), the same front half the ingest path
-    runs, so the tool calls reflect extraction-layer behaviour rather than the raw
-    scripted JSON."""
+def _parse_extraction(step: Step) -> Extraction:
+    """Lower the note's scripted extraction into an `Extraction` through the genuine
+    parse (dedup, fact-cap, drop-invalid), so the tool calls reflect extraction-layer
+    behaviour rather than the raw scripted JSON.
+
+    R4 deleted `note.extract` — the prompt, its schema and the `_extract_note` call that
+    wrapped this parse — so the scripted JSON is parsed DIRECTLY instead of round-tripping
+    through a faked model call. Byte-identical for a harness step: one body block is one
+    group, `merge_extractions` passes a single part through untouched, and the group's cap
+    is `fact_cap(step.body)`. The scenario format still authors a `note.extract` payload;
+    re-cutting it onto the reading's own shape is §5's outstanding item, and until then
+    this parse is the last live reader of it."""
     created = datetime.fromisoformat(step.created_at)
     offset = created.utcoffset()
     tz = int(offset.total_seconds() // 60) if offset is not None else None
-    prompt_anchor = local_anchor(created, tz)
-    parse_anchor = prompt_anchor if tz is not None else None
-    router = LlmRouter(
-        {"xai": FakeLlmClient([json.dumps(step.extraction)])},
-        {"note.extract": ("xai", "grok-4.3")},
-    )
-    return await _extract_note(
-        router,
-        [step.body],
-        domain=domain,
-        prompt_anchor=prompt_anchor,
-        parse_anchor=parse_anchor,
-        note_id="harness",
-    )
+    parse_anchor = local_anchor(created, tz) if tz is not None else None
+    return parse_extraction(step.extraction, anchor=parse_anchor, max_facts=fact_cap(step.body))
 
 
 # --- the note ---------------------------------------------------------------
@@ -527,7 +518,7 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     if step.tool_calls is not None:
         resolves, readings = _authored_calls(step)
     else:
-        resolves, readings = _tool_calls(await _parse_extraction(step, note.domain), step)
+        resolves, readings = _tool_calls(_parse_extraction(step), step)
     for arguments in resolves:
         await writer.resolve_entity(arguments, ctx)
     for arguments in readings:
