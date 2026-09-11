@@ -852,18 +852,27 @@ export function useFullBrain(
     // Spent, but not thrown away. A turn that reaches the server not at all left the block
     // frozen-and-answered with the draft gone (R3f's review, finding 7), so the owner
     // re-tapped three candidates against a block claiming he had already answered. The
-    // snapshot rides the turn and comes back if it settles as an error.
+    // snapshot rides the turn and comes back if it settles having reached NOTHING.
     //
     // ⟲ **What this comment used to say about recovering, and did not check** (R3f's
     // fourth review, finding 5 — the same paragraph the third review had already deleted
     // from DESIGN.md and the plan, left here word for word): that the restore is 62
     // minutes away, the send disabled throughout, and the owner with "no way to send his
     // answers again for an hour". Driven, it is not: while `busy` the composer's send IS
-    // the Stop button (`Omnibox`, wired to this surface's `stop`), one tap ends the wait
-    // inside a `RECONCILE_INTERVAL_MS` sleep — ~3 s — and takes `recover()`'s give-up
-    // branch, which hands the answers back AND drops the optimistic turn, so the block
-    // re-arms in place with them still in it. `RECONCILE_TIMEOUT_MS` is the ceiling on
-    // being patient, not the cost of recovering.
+    // the Stop button (`Omnibox`, wired to this surface's `stop`), and one tap ends the
+    // wait inside a `RECONCILE_INTERVAL_MS` sleep — ~3 s — rather than at
+    // `RECONCILE_TIMEOUT_MS`, which is the ceiling on being patient, not the cost of
+    // recovering.
+    //
+    // ⟲ **What Stop then DOES is decided by the run id, not by where the loop was**
+    // (R3f's fifth review, finding 4). It used to be a race: a tap landing in the sleep
+    // took `recover()`'s give-up branch and handed everything back, a tap landing inside
+    // `resumeLive` returned through its own abort branch and handed back nothing — and
+    // which one you got said nothing about whether the server had the turn. Both branches
+    // now ride one predicate (`runIdRef.current === null`, see `recover`): no run id means
+    // `/chat` never answered, so the answers reached no note and the whole send comes
+    // back; a run id means `record_owner_reply` already filed them and the turn stays put,
+    // Stopped, with the block frozen over a set the server has closed.
     const spent = answers.length > 0 ? draft : undefined;
     if (answers.length > 0) clearAnswers(turnSessionId);
     void runTurn(body, controller, turnSessionId, baseline, undefined, 0, spent);
@@ -945,6 +954,10 @@ export function useFullBrain(
         }
       } catch {
         if (controller.signal.aborted) {
+          // A Stop landing HERE keeps the turn and hands nothing back, and that is not a
+          // second policy: `resumeLive` runs only with a run id, and a run id is proof the
+          // answers are already on the note (see `recover`'s give-up branch, which reaches
+          // the same conclusion through the same predicate).
           setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
           return true;
         }
@@ -1001,11 +1014,37 @@ export function useFullBrain(
         // has, whatever the recovery window then failed to reload, and un-sending that
         // would be the same misreport the other way up. Every other failed send keeps the
         // errored bubble it has always had — the owner's words stay on screen.
-        const neverLeft = spentAnswers !== undefined && unsent(messagesRef.current[turnSessionId]);
+        //
+        // ⟲ **A RUN ID is the proof, and the buffer is only the corroboration** (R3f's
+        // fifth review, finding 1). `unsent` asks whether the optimistic bubble took a
+        // token, a step, a view or a line of reasoning — which a POST that succeeded and
+        // then lost its socket before the first frame has NOT, so the fourth round's fix
+        // un-sent turns the server had already committed. `X-Run-Id` is minted by
+        // `runlog.start`, and `record_owner_reply` runs BEFORE it (`api/agent.py`): it
+        // claims the wait, flips the thread to `running` and appends the answers to the
+        // note. So a run id means the answers ARE on the note and that question set is
+        // CLOSED — re-arming the block over it would have the owner answer again into
+        // `record_owner_reply`'s `state != "waiting_on_owner"` branch, which returns
+        // `None` and files nothing, while `stop()` has left the thread `running` with no
+        // turn and `useNoteThreads` (`!row.live`) has dropped its chip from the stream.
+        // This is the same invariant `resumeLive`'s abort branch rides — `resumeLive`
+        // only runs with a run id — so the two Stop paths now agree instead of racing:
+        // the draft comes back exactly when no run id was ever minted, whichever branch
+        // the tap lands in (§3b I6).
+        const neverLeft =
+          spentAnswers !== undefined &&
+          runIdRef.current === null &&
+          unsent(messagesRef.current[turnSessionId]);
         setSessionMessages(turnSessionId, (ms) =>
-          neverLeft ? ms.slice(0, -2) : endStream(ms, "error"),
+          neverLeft
+            ? ms.slice(0, -2)
+            : endStream(ms, controller.signal.aborted ? "stopped" : "error"),
         );
-        if (spentAnswers) {
+        // Gated on the same predicate as the un-send, and not on `spentAnswers` alone:
+        // handing the draft back over a turn the server HAS is the data-loss half of the
+        // same misreport — the second send is discarded in silence by the closed-set
+        // branch above, and the block then reports answers no note received.
+        if (neverLeft) {
           setAnswerDrafts((prev) => ({
             ...prev,
             [turnSessionId]: { ...spentAnswers, ...(prev[turnSessionId] ?? {}) },

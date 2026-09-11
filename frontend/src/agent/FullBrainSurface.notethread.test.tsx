@@ -435,6 +435,50 @@ describe("the reply turn", () => {
     );
   });
 
+  // R3f's FIFTH review, finding 1 — the hand-back's own data-loss path, and the reason
+  // `unsent()` is not the whole predicate. `X-Run-Id` comes off the POST response, which
+  // `record_owner_reply` reaches only after it has claimed the wait, flipped the thread to
+  // `running` and appended the answers to the note. So a run id is proof the server HAS
+  // this turn — while the optimistic bubble, which is all `unsent` can see, looks exactly
+  // as it does for a POST that never landed. Un-sending here erased a committed turn: the
+  // block re-armed live over a set the server had closed, the owner's second send hit
+  // `record_owner_reply`'s `state != "waiting_on_owner"` branch and was discarded in
+  // silence, and the Stopped run left the thread `running` with no live turn — which
+  // `useNoteThreads` filters out of the stream and the notes tab, so nothing re-asked
+  // until `reclaim_stale`.
+  it("keeps a turn the server already has, even though the bubble took no frame", async () => {
+    const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {
+      // The POST succeeded — this is the header frame, minted after the answers were
+      // filed — and then the socket died before the first real one.
+      yield { type: "run", run_id: "r1" } as ChatEvent;
+      throw new Error("socket closed");
+    });
+    await openThread(deps({ chat }));
+    fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.getByTestId("busy")).toHaveTextContent("true"));
+      fireEvent.click(screen.getByRole("button", { name: "stop" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      await waitFor(() => expect(screen.getByTestId("busy")).toHaveTextContent("false"));
+    } finally {
+      vi.useRealTimers();
+    }
+    // The owner's turn stays on screen, and the block stays frozen over the set the note
+    // now holds the answers to.
+    expect(document.querySelectorAll(".bubble.me")).toHaveLength(1);
+    expect(document.querySelector(".fb-qblock-done")).not.toBeNull();
+    expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
+    // And nothing is handed back to be re-sent against a question set that has closed.
+    expect(screen.getByTestId("draft")).toHaveTextContent("{}");
+    expect(screen.getByTestId("restored")).toHaveTextContent("");
+    expect(screen.queryByText("3 questions · answers ride with your next send")).toBeNull();
+  });
+
   // The other half of the same hand-back: a MIXED send loses nothing either. The bubble
   // that held the typed aside is gone with the turn, so the words go back to the composer
   // the way a calendar handoff seeds it (`restoredText`), beside the answers that go back

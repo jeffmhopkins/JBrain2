@@ -492,10 +492,14 @@ export function endStream(messages: TranscriptMessage[], reason: string): Transc
  * pair a send appends — the owner's turn and an assistant bubble that never received a
  * token, a tool step, a view or a line of reasoning.
  *
- * The one state in which un-sending is honest: the recovery window closed with no live run
- * to ride and nothing persisted (`useFullBrain.recover`), so nothing above is a record of
- * anything. A bubble that took even one delta is a turn the server HAS, and dropping it
- * would misreport in the other direction. */
+ * NECESSARY, not sufficient, and that distinction is R3f's fifth review, finding 1. This
+ * reads the BUFFER, and a POST that succeeded and then lost its socket before the first
+ * frame leaves a buffer indistinguishable from one that never left the device. The proof
+ * of the other half is the run id (`useFullBrain.recover`): `X-Run-Id` exists only once
+ * `/chat` responded, and `record_owner_reply` files the answers before `runlog.start`
+ * mints one. So un-sending is honest only when this is true AND no run id was minted —
+ * a bubble that took a delta, or a turn that has a run id, is a turn the server HAS, and
+ * dropping either would misreport in the other direction. */
 export function unsent(messages: TranscriptMessage[] | undefined): boolean {
   if (!messages || messages.length < 2) return false;
   const last = messages[messages.length - 1];
