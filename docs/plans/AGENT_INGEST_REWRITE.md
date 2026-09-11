@@ -1147,6 +1147,25 @@ reply").**
    reported as still open. Finding 4 is the same boundary from a non-PWA client:
    `AnswerIn.answer` is an unconstrained `str`, so `capped_answers` now flattens it to one
    line the way `_one_line` flattens the question.
+
+   ⟲⟲ **The sanitiser reached the TURN and not the NOTE, and it deleted the owner's own
+   words** (R3f's third review, finding 3). Two halves, and the second is why the first could
+   not simply be applied as it stood. (a) `record_owner_reply` took `message` raw, `_pair`
+   filed it under the oldest open question, and `notes.compose.clarification_block` renders
+   `A: {answer}` verbatim — so on every prose-only reply the transcript showed the sanitised
+   words and the durable note kept the quoted pair. The note is the sole source of truth
+   (D6), so the next reading takes that text as the channel's own labelling of words that are
+   the owner's. (b) The instrument was a per-LINE strip, and `Two options:` / `A: the
+   cardiologist` / `B: the paediatrician` came out with his `A:` deleted and his `B:` kept —
+   an enumerated reply mangled into nonsense, while three documents claimed every owner word
+   survived. Survivable while it stopped at the transcript; putting it on the path to the
+   note makes it a sentence nobody wrote in his own corpus, which is the one thing this
+   channel exists to refuse. So the cut is now made **only on a chunk the read-back would
+   actually accept as a pair** (`clarify._PAIR_CHUNK` / `asked.PAIR_CHUNK`, the same constant
+   `answersFromReply` reads with), and everything else is left exactly as typed. The trade
+   that buys: the sanitiser is defined by what the reader accepts rather than by being
+   maximally destructive — the reader is display-only, no backend path parses pairs back out
+   of turn text, and one drift test pins both patterns, both flags and both call sites.
 2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
    `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
    set left open — was written when the composer was the only affordance, so typed words
@@ -1176,17 +1195,37 @@ as ruled. ⟲ R3f's review, finding 7: the draft is cleared as the turn starts, 
 that reaches the server NOT AT ALL now hands it back, rather than leaving a frozen block
 claiming he has already answered.
 
-⟲ **What that hand-back is worth, corrected** (R3f's second review, finding 3a). It is the
-END of the reconnect window, not a prompt recovery: the restore sits in `recover()`'s
-give-up branch, `RECONCILE_TIMEOUT_MS` — **62 minutes** — after the send, and for all of it
-`busy` stays true, so the composer's send is disabled and the owner cannot retry at all.
-Reopening the thread does not re-arm the block either: both transcript-reload effects bail
-while the chat holds the live turn. A full PWA reload does clear that hold and replays the
-ask as the last message — the server holds no user turn for a POST that never landed — but
-`answerDrafts` is React state, so the answers are gone with it. The window is inherited
-from the chat recovery loop, not introduced here; what it costs in a note thread is an hour
-in which the one screen the owner has offers him no way to send his answers again. Designing
-it down is open work and is NOT R3f's.
+⟲⟲ **What that hand-back is worth, corrected TWICE — and the second correction is that the
+first one was also false** (R3f's second review, finding 3a; its third, finding 2). The
+second round wrote that the restore is 62 minutes away and that "the composer's send is
+disabled… the one screen he has offers him no way to send them again for an hour". Driven,
+it is not: while `busy` the send button **becomes a Stop button** (`Omnibox.tsx:501-511`),
+and a note thread wires it to `fb.stop` like every other surface (`HomeScreen.tsx:376`). One
+tap aborts the controller, `recover()`'s loop exits at its next check — it sleeps
+`RECONCILE_INTERVAL_MS`, 3 s, between attempts — and falls into the same give-up branch:
+`busy` clears, the draft comes back under anything typed since, and `turnSessionRef` is
+cleared in the `finally`, so leaving the thread and returning re-arms the block with the
+answers in it. `RECONCILE_TIMEOUT_MS` is what happens if he does nothing, not what he has to
+wait for. *Two rounds asserted this window from the code's shape rather than by running it;
+the third ran it. Neither the plan nor DESIGN.md should describe a recovery path without
+driving it.*
+
+**What both rounds missed, and it is the part worth a wave.** For the whole window the
+frozen block reads `2 answered` about a send that reached nothing, while the server still
+holds the thread `waiting_on_owner` — the block reports an outcome it does not produce, and
+"the POST landed nowhere" is a state it cannot see. Stop does not clear THAT: the optimistic
+user turn the block reads its outcomes out of stays until a transcript reload replaces it. It is the same misreport class as I9's
+finding 1, one path over, and `FullBrainSurface.notethread.test.tsx` now asserts what the
+block SAYS across that window rather than only what the draft holds. Closing it is open work
+and is not R3f's.
+
+*One residue, recorded rather than fixed.* Aborting while `resumeLive()` is mid-flight
+returns through its own `aborted` branch (`useFullBrain.ts:929-931`) and skips the restore.
+That is correct where it is reachable: `resumeLive` only runs with a `runIdRef`, a run id
+only exists once `/chat` responded, and `record_owner_reply` files the answers BEFORE
+`runlog.start` mints one (`api/agent.py:966`, `:1010`) — so a turn with a run id is a turn
+whose answers already reached the note, and handing the draft back would re-post against a
+set that has closed.
 
 ### I8 — The reply turn
 
@@ -1236,14 +1275,34 @@ needs no card.
 
 What exists: a settled agent session already reopens by id and replays its transcript. And
 **the persisted state the block needs is already on the wire**, which is the finding that
-makes I9 cheap: the questions are the `ask_owner` call's own arguments, recorded in the
-conversation's ledger inside the ask's transaction (`agent/asktools.py:142-151`) and carried
-to the PWA as the step's `args`, which a PERSISTED turn replays as well as a live one
-(`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:88-90`); the answers are the
-note's clarification blocks, which have a built route the app already calls
+makes I9 cheap: the questions are the ask step's `args`, which a PERSISTED turn replays as
+well as a live one (`agent/useFullBrain.ts:210-234`, `agent/transcript.ts:88-90`); the
+answers are the note's clarification blocks, which have a built route the app already calls
 (`api/client.ts:2493-2499`, consumed by `components/Clarifications.tsx`). So a reopened block
 renders from the transcript plus a read that exists — no new endpoint, and no answer state
 that lives only in a component.
+
+⟲ **"The `ask_owner` call's own arguments" was ONE phrase covering TWO blobs, and that is
+R3f's third review, finding 1 — the wave's blocking bug.** The ledger row the ask writes
+inside its transaction (`agent/asktools.py`) carries a question id per question, minted
+server-side because the tool declares no `id` property and the model therefore never sends
+one. The transcript step is `call.arguments` — the model's raw arguments, with no ids at all
+— written by a different writer (`loop.py`, `transcript_accumulator.py`). So the block fell
+to `asked.askedQuestions`' positional `q${i+1}` fallback and posted ids the open set had
+never held; `clarify._pair` dropped every one as unknown. **Every tapped answer was
+discarded, on every real send**: the note received nothing, `clarified` stayed False so no
+re-ingest and no graph, the frozen block drew rows as answered that had sent nothing, and
+the agent — told truthfully that the reply answered none of them — re-asked the whole set,
+forever. Fixed by ECHOING the recorded args onto the step the loop streams and the step it
+persists (`ToolOutput.recorded_args` → `ToolResultEvent.args`), which is the only option of
+the three that keeps ids unique: declaring `id` on the tool would have the MODEL invent them
+(`required` buys presence, not membership), and pairing on the question STRING is the key
+`sentAnswers` was already fixed away from. Ids stay random for R1c's reason. What let three
+rounds miss it is that both test fixtures hand-built a shape the wire could not produce —
+`FullBrainSurface.notethread.test.tsx` wrote its own ids into `ASK_ARGS`, `test_ask_owner_pg`
+took its ids from the ledger — so `backend/tests/integration/test_ask_owner_pg.py` now
+carries the one test that CROSSES the seam: it drives a real ask through the real runner,
+reads the ids off the persisted transcript the way the PWA does, and answers with them.
 
 ⟲ **R3f took the answers off the TRANSCRIPT rather than off the clarification route, and
 the paragraph above is why that is the same claim rather than a weaker one.**
@@ -2301,7 +2360,7 @@ resolver assembles: `asked.parseCandidates` splits it on top-level commas only (
 carries its own) and answers with the name, falling back to the whole candidate when two
 share one.
 
-*What its two review rounds cost, since R3f is the first wave the owner sees.* The first
+*What its three review rounds cost, since R3f is the first wave the owner sees.* The first
 round fixed the MIXED send — the turn text, the bubble, the frozen block and `_pair`'s
 rule — and a second, independent round found the PARTIAL send still wrong in the same
 place: a block that said "answered" over questions it had left open, while the agent, told
@@ -2311,7 +2370,22 @@ needs its own rendering, and the ones nobody walks are the ones that lie. The sa
 turned two remaining ASSUMPTIONS into properties — the `Q:`/`A:` boundary against the
 owner's own typed words and against a non-PWA client's newlines — and replaced the ask
 chip's bleeding hit area with a grown box, because that row wraps and an out-of-flow target
-takes its wrapped neighbour's taps. **O15 and O16 remain neither decided nor built.**
+takes its wrapped neighbour's taps.
+
+**A third round found the wave's acceptance walk itself broken**, and its lesson is not the
+same as the first two. The question ids the PWA posted were never the ids the ledger held
+(I9), so every tapped answer was dropped — the block, the turn text and the three-outcome
+display were all correct as code and all defeated by one seam nothing tested. The seam was
+between two blobs one sentence in this plan called by one name, and both test fixtures
+hand-built a shape the wire could not produce, which is how three rounds walked past it.
+*What to carry into R4: a component that renders one writer's data and posts to another
+needs a test that goes from the first to the second — a fixture written by hand asserts the
+renderer, never the join.* The same round found a THIRD false claim in binding DESIGN.md,
+inside the paragraph written to replace the second (the "no way to send them again for an
+hour" window, which a Stop button ends in seconds — see I7), and the label sanitiser
+reaching the turn and not the note while deleting the owner's own `A:` labels (I7 again).
+Two rounds had described that recovery window from the code's shape; the third drove it.
+**O15 and O16 remain neither decided nor built.**
 
 *I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
 `ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:

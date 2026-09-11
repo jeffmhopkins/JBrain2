@@ -1533,16 +1533,21 @@ There is no bespoke ingest view and no second idiom for the same information.
   agent was told the truth and re-asks exactly those questions on its next turn, so the
   screen and the assistant contradict each other in front of the one person who cannot
   check either.
-- **A send that reaches the server not at all is not recoverable for an hour.** The answers
-  are given back to the block, but only when the reconnect window closes — 62 minutes — and
-  for the whole of that window the turn counts as in flight: the composer's send is
-  disabled, and reopening the thread does NOT re-arm the block (a transcript reload is
-  skipped while the chat holds the live turn). A full PWA reload clears that hold and
-  replays the ask, but the draft lives in memory, so the answers are gone with it. This is
-  inherited from the chat recovery loop rather than introduced by the thread, and what it
-  costs here is specific: the owner taps three candidates, the send reaches nothing, and
-  the one screen he has offers him no way to send them again for an hour. Designing that
-  window down is open work, not something the block can fix from where it sits.
+- **A send that reaches the server not at all is ended by Stop — and the block misreports it
+  until the thread is reopened.** While the turn counts as in flight the composer's send IS the
+  Stop button (the same control, swapped), wired to this surface's own stop, so recovery is
+  one tap and a few seconds: `busy` clears, the answers are handed back to the block under
+  anything typed since, and the live-turn hold is released, so leaving the thread and coming
+  back re-arms the block with those answers still in it. Left alone, the same hand-back
+  happens when the reconnect window closes — 62 minutes — which is the ceiling on being
+  patient, not the cost of recovering. **What the window actually costs is a wrong reading:**
+  for all of it the frozen block reads *"2 answered"* about a send that never left the
+  device, while the server still holds the thread `waiting_on_owner` with those very
+  questions open — and Stop does not clear that, because the optimistic turn it is reading
+  stays put until a transcript reload replaces it. That is the same class as a block claiming
+  a row the send left open, one path over, and closing it is open work: the block reports an
+  outcome it does not itself produce, and "the POST reached nothing" is a state it cannot
+  currently see.
 - **The chip is not permanent, and the thread does not expire.** The stream shows the last
   two days, so a note parked longer than that scrolls off it and loses its chip — the ask
   itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review

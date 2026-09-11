@@ -131,6 +131,13 @@ function Thread({ d }: { d: FullBrainDeps }) {
       {/* The draft itself, which the carry strip cannot show once the block is no longer
           the last message — what finding 7 is about. */}
       <output data-testid="draft">{JSON.stringify(fb.answers)}</output>
+      {/* The in-flight flag and the control the composer's send BECOMES while it is set
+          (`Omnibox.tsx`, wired to `fb.stop` on this surface by `HomeScreen.tsx`) — the
+          recovery two review rounds described as unavailable. */}
+      <output data-testid="busy">{String(fb.busy)}</output>
+      <button type="button" onClick={() => fb.stop()}>
+        stop
+      </button>
       <button
         type="button"
         onClick={() => {
@@ -343,6 +350,54 @@ describe("the reply turn", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(RECONCILE_WINDOW_MS);
       });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(JSON.parse(screen.getByTestId("draft").textContent ?? "{}")).toEqual({
+      q1: "amlodipine",
+      q2: "Dr. Ray Chen",
+    });
+  });
+
+  // R3f's third review, finding 2. Both earlier rounds wrote that this window is
+  // unrecoverable — "the composer's send is disabled… the one screen he has offers him no
+  // way to send them again for an hour" — and the test above asserted only the DRAFT, so
+  // neither claim was ever driven. Two things are true instead: while `busy` the send
+  // button IS the Stop button, and across the window the block reports a send that reached
+  // nothing as answered.
+  it("reads 2 answered for a send that reached nothing, until Stop hands them back", async () => {
+    const chat = vi.fn(
+      // biome-ignore lint/correctness/useYield: the generator throws before it yields
+      async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {
+        throw new Error("offline");
+      },
+    );
+    await openThread(deps({ chat }));
+    fireEvent.change(screen.getByLabelText("What's the medication called?"), {
+      target: { value: "amlodipine" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.getByTestId("busy")).toHaveTextContent("true"));
+      // THE MISREPORT, pinned rather than only described: the POST reached nothing, the
+      // server still holds the thread waiting on all three, and the block says two of them
+      // are answered — for the whole window, with the draft spent.
+      await waitFor(() =>
+        expect(screen.getByText("3 questions · 2 answered, 1 still open")).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("draft")).toHaveTextContent("{}");
+
+      // One tap on the control the send button became. The recovery loop only checks the
+      // abort between attempts, and it sleeps RECONCILE_INTERVAL_MS (3 s) — so the window
+      // ends inside one of those, not inside RECONCILE_TIMEOUT_MS.
+      fireEvent.click(screen.getByRole("button", { name: "stop" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      await waitFor(() => expect(screen.getByTestId("busy")).toHaveTextContent("false"));
     } finally {
       vi.useRealTimers();
     }
