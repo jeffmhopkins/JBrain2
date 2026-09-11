@@ -8,6 +8,7 @@ import {
   ownerTurnText,
   parseCandidates,
   sentAnswers,
+  sentOutcomes,
   turnQuestions,
 } from "./asked";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -274,5 +275,78 @@ describe("a frozen block's answers", () => {
 
   it("puts no words in the owner's mouth when the reply was free prose", () => {
     expect(sentAnswers(qs, "it was Alice, and 5mg")).toEqual({ q1: "", q2: "" });
+  });
+});
+
+// R3f's SECOND review, finding 1. `sentAnswers` returns "" both for "the reply carried no
+// words for this row" and for "the reply did not answer this row at all", and the block
+// read that "" as *answered in your reply* — telling the owner, live and on every reopen,
+// that questions it had left OPEN were answered somewhere. The agent was told the truth
+// (`owner_reply_notice`) and re-asked them on its next turn.
+describe("what a settled reply DID to each question", () => {
+  const qs = askedQuestions(ARGS);
+
+  it("marks an unpaired row OPEN when the reply carried pairs beside its prose", () => {
+    const reply = ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" });
+    expect(sentOutcomes(qs, reply)).toEqual({
+      q1: { kind: "open" },
+      q2: { kind: "paired", answer: "Dr. Ray Chen" },
+    });
+  });
+
+  // Prose ALONE is the one reply where "answered in your reply" is true, and it is true
+  // of exactly one row: `clarify._pair` gives free text the OLDEST open question.
+  it("names the one row a prose-only reply answered, and opens the rest", () => {
+    expect(sentOutcomes(qs, "it was Alice, and 5mg")).toEqual({
+      q1: { kind: "in-reply" },
+      q2: { kind: "open" },
+    });
+  });
+
+  it("claims nothing for a reply that is not there at all", () => {
+    expect(sentOutcomes(qs, "")).toEqual({ q1: { kind: "open" }, q2: { kind: "open" } });
+  });
+
+  it("reads a fully answered set as fully answered", () => {
+    const reply = ownerTurnText("", qs, { q1: "amlodipine", q2: "Dr. Ray Chen" });
+    expect(sentOutcomes(qs, reply)).toEqual({
+      q1: { kind: "paired", answer: "amlodipine" },
+      q2: { kind: "paired", answer: "Dr. Ray Chen" },
+    });
+  });
+});
+
+// R3f's second review, finding 3(b). "The typed half carries no labels" was an assumption
+// about what the owner types, not a property of the code: the composer is a bare
+// `<textarea>`, Enter inserts a newline, and the questions sit on screen directly above
+// it. Quoting one back forged a pair — the block showed a question answered in words the
+// backend had dropped and told the agent were still open.
+describe("the typed half cannot forge a Q/A pair", () => {
+  const qs = askedQuestions(ARGS);
+
+  it("strips the labels a quoted question would carry, beside a tapped answer", () => {
+    const reply = ownerTurnText("Q: Which Dr. Chen?\nA: nobody at all", qs, { q1: "amlodipine" });
+    expect(reply).toBe(
+      "Q: What's the medication called?\nA: amlodipine\n\nWhich Dr. Chen?\nnobody at all",
+    );
+    expect(sentOutcomes(qs, reply)).toEqual({
+      q1: { kind: "paired", answer: "amlodipine" },
+      q2: { kind: "open" },
+    });
+  });
+
+  // The prose-only send is the same hole from the other side: there the typed words ARE
+  // the whole turn text, so nothing else has to go wrong for the forgery to be read back.
+  it("strips them on a prose-only send too", () => {
+    const reply = ownerTurnText("Q: Which Dr. Chen?\nA: nobody at all", qs, {});
+    expect(reply).toBe("Which Dr. Chen?\nnobody at all");
+    expect(answersFromReply(reply)).toEqual([]);
+  });
+
+  it("leaves every word the owner wrote, and ordinary prose untouched", () => {
+    expect(ownerTurnText("also the dinner is cancelled", qs, {})).toBe(
+      "also the dinner is cancelled",
+    );
+    expect(ownerTurnText("  A: 5mg, twice", qs, {})).toBe("5mg, twice");
   });
 });

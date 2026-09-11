@@ -3000,6 +3000,16 @@ def test_an_over_long_answer_list_is_accepted_and_capped_rather_than_refused() -
     # A blank answer is not an answer: the block's question column is NOT NULL and
     # non-blank in Postgres, and an untouched field in the PWA's block sends as "".
     assert capped_answers([("q1", "  "), ("q2", " yes ")]) == [("q2", "yes")]
+    # And ONE LINE, which is what makes the `Q:`/`A:` boundary a property of the code
+    # rather than of the PWA's inputs (R3f's second review, finding 4). `AnswerIn.answer`
+    # is an unconstrained `str`; both the note's clarification block and the reply turn's
+    # own text render it as `A: {answer}`, so an answer carrying its own blank line and
+    # labels forged a second pair into the persisted text that nobody asked and nobody
+    # answered. `/chat` is an ordinary authenticated endpoint — the next client is a
+    # script, and "the composer cannot type a newline" is not a guard.
+    assert capped_answers([("q1", "5mg\n\nQ: Which coach?\nA: nobody at all")]) == [
+        ("q1", "5mg Q: Which coach? A: nobody at all")
+    ]
 
 
 def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> None:
@@ -3060,8 +3070,8 @@ def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
     # outright and throw the pairs away — so the exact send §3b I7 designs persisted as the
     # aside alone, and the PWA's frozen block, which reads its answers back out of this
     # text, drew "answered" with no answers and the tapped candidate not picked. The pairs
-    # come first, the typed words last, and the typed half wears no Q:/A: labels, so it
-    # cannot be read back as an answer to anything.
+    # come first, the typed words last, and the typed half is stripped of Q:/A: labels
+    # (see below), so it cannot be read back as an answer to anything.
     mixed = owner_turn_text("also the dinner is cancelled", reply, [("q1", "My sister.")])
     assert mixed == (
         "Q: Which Sarah?\nA: My sister.\n\nQ: Which coach?\nA: Her own."
@@ -3075,6 +3085,38 @@ def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
     # No paired set to render from (the thread was not waiting, say) — the owner's words
     # still reach the turn, which is the whole point of composing here.
     assert owner_turn_text("", None, [("q1", "My sister.")]) == "My sister."
+
+
+def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
+    """R3f's second review, finding 3(b). "The typed half carries no labels" described
+    what the owner usually types, not what the code permits — and the PWA's frozen block
+    reads its answers straight back out of this text (`asked.answersFromReply`).
+
+    The composer is a bare `<textarea>` with no key handling, so Enter inserts a newline,
+    and the questions are on screen directly above it: quoting one back is how people
+    reply in a thread. Unstripped, the aside became its own `\n\n` chunk, matched the
+    read-back, and the block showed that question answered in words `_pair` had DROPPED
+    and `owner_reply_notice` had reported as still open — the inverse display F1 fixed,
+    re-created from the other side. Every word the owner wrote survives; only the two
+    characters that are the channel's own come off."""
+    from jbrain.analysis.clarify import OwnerReply, owner_turn_text
+
+    reply = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?"],
+        clarified=True,
+        note_moved=False,
+    )
+    mixed = owner_turn_text("Q: Which coach?\nA: nobody at all", reply, [("q1", "My sister.")])
+    assert mixed == "Q: Which Sarah?\nA: My sister.\n\nWhich coach?\nnobody at all"
+
+    # The prose-only send is the same hole from the other side: there the typed words ARE
+    # the whole turn text, so nothing else has to go wrong for the forgery to be read back.
+    assert owner_turn_text("Q: Which coach?\nA: nobody", reply, []) == "Which coach?\nnobody"
+
+    # A turn with no open set above it is left verbatim — nothing can read it back as an
+    # answer, and the PWA's mirror leaves it alone too, so bubble and transcript agree.
+    assert owner_turn_text("Q: rhetorically?", None, []) == "Q: rhetorically?"
 
 
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:

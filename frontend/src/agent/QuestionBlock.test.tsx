@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuestionBlock } from "./QuestionBlock";
-import { askedQuestions } from "./asked";
+import { askedQuestions, ownerTurnText, sentAnswers, sentOutcomes } from "./asked";
 
 const QUESTIONS = askedQuestions({
   questions: [
@@ -15,14 +15,39 @@ const QUESTIONS = askedQuestions({
   ],
 });
 
-function block(over: { answers?: Record<string, string>; frozen?: boolean } = {}) {
+// The set the review's own walk-through uses: two typed rows around one candidate row,
+// which is what makes a PARTIAL send (tap one, leave two) renderable at all.
+const THREE = askedQuestions({
+  questions: [
+    { id: "q1", question: "What's the medication called?", blocks: "medication.started" },
+    {
+      id: "q2",
+      question: "Which Dr. Chen?",
+      blocks: 'resolve_entity("Dr. Chen")',
+      candidates: "Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)",
+    },
+    { id: "q3", question: "What dose?", blocks: "medication.dose" },
+  ],
+});
+
+const STILL_OPEN = "still open — not answered in your reply";
+
+/** A LIVE block, or — given `reply` — one frozen against that reply turn's own text.
+ *
+ * Frozen through `sentOutcomes` rather than a hand-built freeze on purpose: what a
+ * settled row may claim is derived from the wire, and a test that hands the component a
+ * shape the wire cannot produce pins nothing about what the owner sees. */
+function block(
+  over: { answers?: Record<string, string>; reply?: string; questions?: typeof QUESTIONS } = {},
+) {
   const onAnswer = vi.fn();
+  const qs = over.questions ?? QUESTIONS;
   render(
     <QuestionBlock
-      questions={QUESTIONS}
-      answers={over.answers ?? {}}
+      questions={qs}
+      answers={over.reply === undefined ? (over.answers ?? {}) : sentAnswers(qs, over.reply)}
       onAnswer={onAnswer}
-      frozen={over.frozen ?? false}
+      sent={over.reply === undefined ? null : sentOutcomes(qs, over.reply)}
     />,
   );
   return onAnswer;
@@ -112,7 +137,7 @@ describe("the question block", () => {
     });
 
     it("is not offered on a frozen block", () => {
-      block({ frozen: true, answers: { q1: "amlodipine", q2: "the locum" } });
+      block({ reply: ownerTurnText("", QUESTIONS, { q1: "amlodipine", q2: "the locum" }) });
       expect(screen.queryByRole("button", { name: "Something else" })).not.toBeInTheDocument();
       expect(screen.getByText("the locum")).toBeInTheDocument();
     });
@@ -125,17 +150,49 @@ describe("the question block", () => {
 
   describe("once it is answered", () => {
     it("goes inert and says what was said", () => {
-      block({ frozen: true, answers: { q1: "amlodipine", q2: "Dr. Ray Chen" } });
+      block({ reply: ownerTurnText("", QUESTIONS, { q1: "amlodipine", q2: "Dr. Ray Chen" }) });
       expect(screen.getByText("2 questions · answered")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toBeDisabled();
       expect(screen.getByText("amlodipine")).toBeInTheDocument();
       expect(screen.queryByText(/Nothing here sends/)).not.toBeInTheDocument();
     });
 
-    // A reply the owner TYPED carries no pairs; the row is honest rather than blank.
-    it("puts no words in the owner's mouth when it cannot pair one", () => {
-      block({ frozen: true, answers: { q1: "", q2: "" } });
+    // R3f's SECOND review, finding 1. The block is the one thing on screen reporting the
+    // outcome of a send, and on the send §3b I7 actually designs — one candidate tapped,
+    // the other rows left blank, an aside typed — it said the rows it had left OPEN were
+    // "answered in your reply". The aside reached no note (F5), the questions stayed open,
+    // `owner_reply_notice` told the agent so, and the agent's next turn re-asked exactly
+    // the rows the block had just called answered.
+    it("says a question the send left open is still open, not answered elsewhere", () => {
+      block({
+        questions: THREE,
+        reply: ownerTurnText("also the dinner is cancelled", THREE, { q2: "Dr. Ray Chen" }),
+      });
+      expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
+      expect(screen.getAllByText(STILL_OPEN)).toHaveLength(2);
+      expect(screen.queryByText("answered in your reply")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    // Prose ALONE has exactly one thing it could be answering, and `clarify._pair` gives
+    // it the OLDEST open question. So one row is genuinely answered in the reply — and
+    // the rest are not, which is what the whole set used to claim.
+    it("names only the one question a prose-only reply actually answered", () => {
+      block({ questions: THREE, reply: "it was Alice, and 5mg" });
+      expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
       expect(screen.getByText("answered in your reply")).toBeInTheDocument();
+      expect(screen.getAllByText(STILL_OPEN)).toHaveLength(2);
+    });
+
+    // Every structured answer named a question that is not open (a stale block replayed
+    // off a reopened thread): the reply paired nothing, and the header says so.
+    it("claims nothing at all when the reply paired nothing", () => {
+      block({ questions: THREE, reply: "" });
+      expect(screen.getByText("3 questions · still open")).toBeInTheDocument();
+      expect(screen.getAllByText(STILL_OPEN)).toHaveLength(3);
     });
   });
 });
@@ -168,7 +225,7 @@ describe("the block cannot start a turn", () => {
 
   it("has no submit of its own — every control inside it is type=button", () => {
     const { container } = render(
-      <QuestionBlock questions={QUESTIONS} answers={{}} onAnswer={vi.fn()} frozen={false} />,
+      <QuestionBlock questions={QUESTIONS} answers={{}} onAnswer={vi.fn()} sent={null} />,
     );
     expect(container.querySelector("form")).toBeNull();
     for (const b of container.querySelectorAll("button")) {

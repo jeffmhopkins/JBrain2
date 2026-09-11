@@ -30,7 +30,7 @@
 // the inbox already use, and the words carry it either way.
 
 import { type ReactNode, useState } from "react";
-import type { AskCandidate, AskedQuestion } from "./asked";
+import type { AskCandidate, AskedQuestion, SentOutcome } from "./asked";
 
 function Candidate({
   candidate,
@@ -57,6 +57,27 @@ function Candidate({
   );
 }
 
+/** What a FROZEN row says about itself, and the whole of R3f's second review, finding 1.
+ *
+ * The row has to distinguish three things the old rendering collapsed into one: the words
+ * that were paired to it, a prose-only reply whose words are the turn itself, and a
+ * question the send LEFT OPEN. Saying "answered in your reply" over the third is a lie
+ * the owner cannot check and the agent immediately contradicts — it re-asks exactly those
+ * questions on its next turn, because `owner_reply_notice` was told the truth.
+ *
+ * A pair claimed with blank words (a reply turn hand-edited to `A:` and nothing) falls to
+ * the middle line rather than an empty row: the pair IS on the turn, it just says
+ * nothing. */
+function Settled({ outcome }: { outcome: SentOutcome }): ReactNode {
+  if (outcome.kind === "open") {
+    return <p className="fb-q-open">still open — not answered in your reply</p>;
+  }
+  if (outcome.kind === "paired" && outcome.answer !== "") {
+    return <p className="fb-q-answered">{outcome.answer}</p>;
+  }
+  return <p className="fb-q-answered">answered in your reply</p>;
+}
+
 /** One question's row: what it blocks, the question, and its answer affordance.
  *
  * Its own component because the typed ESCAPE is per-question local state, and because
@@ -77,14 +98,17 @@ function QuestionRow({
   question,
   answer,
   onAnswer,
-  frozen,
+  outcome,
 }: {
   question: AskedQuestion;
   answer: string;
   onAnswer: (questionId: string, answer: string) => void;
-  frozen: boolean;
+  /** What the reply that settled this block did to THIS question — null while it is
+   * live. Its presence is what freezes the row. */
+  outcome: SentOutcome | null;
 }): ReactNode {
   const q = question;
+  const frozen = outcome !== null;
   const [escaped, setEscaped] = useState(false);
   const picked = q.candidates.some((c) => c.value === answer);
   // Revealed by a tap, and revealed anyway while it holds words that are not a candidate
@@ -129,10 +153,14 @@ function QuestionRow({
                 <span className="fb-q-opt-name">Something else</span>
               </button>
             )}
-            {/* A frozen block whose answer was none of the candidates (typed free
-                text, or a set answered from another device) still says what landed. */}
-            {frozen && answer !== "" && !picked && <p className="fb-q-answered">{answer}</p>}
           </div>
+          {/* A frozen block whose answer was none of the candidates (typed free text, or
+              a set answered from another device) still says what landed; a row the reply
+              did not answer says THAT. Below the chips rather than among them: it is a
+              sentence about the row, not one more thing to wrap in the candidate flow. */}
+          {outcome !== null && !(outcome.kind === "paired" && picked) && (
+            <Settled outcome={outcome} />
+          )}
           {typing && !frozen && (
             <input
               className="fb-q-input"
@@ -146,8 +174,8 @@ function QuestionRow({
             />
           )}
         </>
-      ) : frozen ? (
-        <p className="fb-q-answered">{answer || "answered in your reply"}</p>
+      ) : outcome !== null ? (
+        <Settled outcome={outcome} />
       ) : (
         <input
           className="fb-q-input"
@@ -166,24 +194,41 @@ export function QuestionBlock({
   questions,
   answers,
   onAnswer,
-  frozen,
+  sent,
 }: {
   questions: readonly AskedQuestion[];
-  /** The draft, keyed by question id. On a frozen block these are the answers that were
-   * sent, recovered from the reply turn's own text. */
+  /** The live draft, keyed by question id — the caller holds it until the composer
+   * sends. On a frozen block this is the WORDS of `sent`, so a candidate the owner
+   * tapped still draws as picked. */
   answers: Readonly<Record<string, string>>;
   /** Record one answer. LOCAL STATE ONLY — the caller holds it until the composer sends. */
   onAnswer: (questionId: string, answer: string) => void;
-  /** The set has been answered (or the thread moved on): show what was said, inert. */
-  frozen: boolean;
+  /** What the reply that settled this block did to each question (`asked.sentOutcomes`),
+   * or null while the block is live. Its presence is what freezes the block, and its
+   * contents are what the header is allowed to claim. */
+  sent: Readonly<Record<string, SentOutcome>> | null;
 }): ReactNode {
   if (questions.length === 0) return null;
   const n = questions.length;
+  // What was ACTUALLY answered, never the size of the set. A send that answers one of
+  // three is one of three on the header too — the count is the first thing the owner
+  // reads, and "3 questions · answered" over a partial send is the same false report the
+  // rows used to make, made once more in the loudest place on the block.
+  const answered = sent === null ? 0 : questions.filter((q) => sent[q.id]?.kind !== "open").length;
   return (
-    <section className={`fb-qblock${frozen ? " fb-qblock-done" : ""}`} aria-label="Questions">
+    <section
+      className={`fb-qblock${sent !== null ? " fb-qblock-done" : ""}`}
+      aria-label="Questions"
+    >
       <p className="fb-qblock-head">
         {n} question{n === 1 ? "" : "s"}
-        {frozen ? " · answered" : " · answers ride with your next send"}
+        {sent === null
+          ? " · answers ride with your next send"
+          : answered === n
+            ? " · answered"
+            : answered === 0
+              ? " · still open"
+              : ` · ${answered} answered, ${n - answered} still open`}
       </p>
       {questions.map((q) => (
         <QuestionRow
@@ -191,10 +236,10 @@ export function QuestionBlock({
           question={q}
           answer={answers[q.id] ?? ""}
           onAnswer={onAnswer}
-          frozen={frozen}
+          outcome={sent === null ? null : (sent[q.id] ?? { kind: "open" })}
         />
       ))}
-      {!frozen && (
+      {sent === null && (
         <p className="fb-q-foot">Nothing here sends — your answers ride with the composer.</p>
       )}
     </section>

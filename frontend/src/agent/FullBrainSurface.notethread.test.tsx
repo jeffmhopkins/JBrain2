@@ -281,8 +281,13 @@ describe("the reply turn", () => {
       "true",
     );
     expect(screen.getByText("amlodipine")).toBeInTheDocument();
-    // The third question was not answered, and the block says so by picking nothing —
-    // the typed aside is not read back as an answer to it.
+    // The third question was not answered, and the block says so IN WORDS as well as by
+    // picking nothing (R3f's second review, finding 1) — the typed aside is not read back
+    // as an answer to it, and a row the send left open must not read as answered
+    // somewhere else. The header counts what landed, not the size of the set.
+    expect(screen.getByText("3 questions · 2 answered, 1 still open")).toBeInTheDocument();
+    expect(screen.getByText("still open — not answered in your reply")).toBeInTheDocument();
+    expect(screen.queryByText("answered in your reply")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sam Okonkwo/ })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -377,7 +382,9 @@ describe("a settled thread, reopened later", () => {
   it("replays the block frozen in its answered state, with no live affordance", async () => {
     render(<Thread d={deps({ getTranscript: vi.fn(async () => SETTLED) })} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
-    await screen.findByText("3 questions · answered");
+    // Two of the three, which is what that turn text says — a reopened thread is exactly
+    // where a header that assumed the set was answered would go on lying for weeks.
+    await screen.findByText("3 questions · 2 answered, 1 still open");
     // The answers come back off the reply turn's own text — no new endpoint, and no
     // answer state that lives only in a component.
     expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toHaveAttribute(
@@ -388,6 +395,7 @@ describe("a settled thread, reopened later", () => {
     // The typed aside is part of the same persisted turn and carries no Q:/A: labels, so
     // it is read as what it is — the owner's words, not an answer to a third question.
     expect(screen.getByText("Which Sam is dinner with?")).toBeInTheDocument();
+    expect(screen.getByText("still open — not answered in your reply")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sam Reyes/ })).toHaveAttribute(
       "aria-pressed",
       "false",

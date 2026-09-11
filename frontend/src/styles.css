@@ -27497,6 +27497,15 @@ button.wf-sigpill {
   color: var(--text-2);
   font-size: var(--fs-secondary);
 }
+/* A row the send did NOT answer, on a block that is otherwise spent. Amber, the open-ask
+   register the block and the stream chip already wear, because this is the one line on a
+   dimmed block the owner has to notice: the agent may re-ask exactly these, and a row
+   that read as answered is what sent him round that loop (R3f's second review). */
+.fb-shell .fb-q-open {
+  margin: 7px 0 0;
+  color: var(--amber);
+  font-size: var(--fs-secondary);
+}
 /* States what the block cannot do, where the owner would otherwise assume it does. */
 .fb-shell .fb-q-foot {
   margin: 10px 0 0;

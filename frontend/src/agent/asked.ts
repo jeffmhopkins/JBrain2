@@ -183,6 +183,29 @@ export function answerList(
     .filter((a) => a.answer !== "");
 }
 
+/** The typed half, with the channel's own `Q:`/`A:` labels taken off the front of any
+ * line that carries them — the client's mirror of `clarify._strip_pair_labels`, and it
+ * must stay byte-identical to it.
+ *
+ * The labels are a SAFETY BOUNDARY rather than formatting (see `ownerTurnText`), and a
+ * boundary that holds only while the owner does not type the labels himself is not one.
+ * The composer is a plain `<textarea>` with no key handling, so Enter inserts a newline
+ * and the questions are on screen directly above it — quoting one back is how people
+ * reply in a thread:
+ *
+ *     Q: Which coach?
+ *     A: nobody at all
+ *
+ * lands as its own `\n\n`-separated chunk, matches `answersFromReply`, and the block
+ * then shows that question answered in words the backend dropped and told the agent were
+ * still open — F1's inverse display, re-created from the other side. This makes it a
+ * property of the code instead of an assumption about what the owner types: the two
+ * characters that are OURS come off, every word that is his stays, and what is left
+ * cannot form a pair. */
+export function stripPairLabels(text: string): string {
+  return text.replace(/^[ \t]*[QA]: /gm, "");
+}
+
 /** What the reply turn SAYS — the client's mirror of `analysis/clarify.owner_turn_text`,
  * so the optimistic user bubble reads exactly as the persisted turn does on reload.
  *
@@ -197,8 +220,9 @@ export function answerList(
  *
  * The `Q:`/`A:` labels are a safety boundary rather than formatting — only the `A:` half
  * is the owner's; the `Q:` half is a string a MODEL wrote while reading a note body that
- * may carry someone else's text. The typed half carries no labels, which is also what
- * keeps it out of the read-back. */
+ * may carry someone else's text. The typed half is stripped of those labels
+ * (`stripPairLabels`) so it cannot be read back as a pair — a property of the rendering
+ * rather than an assumption about what the owner types into a free-text box. */
 export function ownerTurnText(
   message: string,
   questions: readonly AskedQuestion[],
@@ -208,9 +232,12 @@ export function ownerTurnText(
     .map((q) => ({ q: q.question, a: (draft[q.id] ?? "").trim() }))
     .filter((p) => p.a !== "");
   const rendered = answered.map((p) => `Q: ${p.q}\nA: ${p.a}`).join("\n\n");
-  const typed = message.trim();
+  // Sanitised HERE, once, so every branch below carries a typed half that cannot forge a
+  // pair — including the prose-only one, where the words are the whole turn text.
+  const safe = stripPairLabels(message);
+  const typed = safe.trim();
   if (rendered && typed) return `${rendered}\n\n${typed}`;
-  return rendered || message;
+  return rendered || safe;
 }
 
 /** One Q/A pair a reply turn's own text carries back. */
@@ -241,27 +268,75 @@ export function answersFromReply(text: string): ReplyPair[] {
   return pairs;
 }
 
-/** A frozen block's answers, keyed by QUESTION ID — the reply turn's own Q/A rendering,
- * paired back by the exact question string the ask recorded. Every id is present, so a
- * question the reply could not be paired to renders as answered-without-words rather
- * than as still open.
+/** What a settled reply DID to one question of the open set.
+ *
+ * THREE outcomes and not two, which is R3f's second review, finding 1. `sentAnswers`
+ * collapsed the last two into `""`, and the block read `""` as "answered in your reply":
+ * on the partial send §3b I7 designs — one candidate tapped, two rows left blank, an
+ * aside typed — it told the owner that the two rows it had left OPEN were answered
+ * somewhere in his reply, live and on every reopen, while `owner_reply_notice` told the
+ * agent they were open and the agent's next turn asked them again. The screen said you
+ * answered it and the agent asked again, on the one screen the owner has. */
+export type SentOutcome =
+  /** Its words are on the reply turn, paired to it by the exact question string. */
+  | { kind: "paired"; answer: string }
+  /** The reply was PROSE ALONE, and this is the question the backend paired it with —
+   * `clarify._pair`'s degrade rule, "free text alone answers the OLDEST open question".
+   * The words are the whole turn text rather than this row's, so the row says where they
+   * are instead of putting them in the owner's mouth. */
+  | { kind: "in-reply" }
+  /** Nothing paired it. It is still open, the agent was told so (`owner_reply_notice`),
+   * and it may be re-asked on the next turn. */
+  | { kind: "open" };
+
+/** What a settled reply did to each question of the set, keyed by QUESTION ID — read out
+ * of the reply turn's own Q/A rendering (§3b I9), paired by the exact question string the
+ * ask recorded and never by position alone.
  *
  * A pair is CONSUMED once it is claimed, so two questions worded identically take the
  * first and the second rendering rather than both taking the last. Both sides walk the
  * open set in its asked order — `ownerTurnText` and `clarify.owner_turn_text` render in
  * that order, this reads in it — so the n-th same-worded row gets the n-th answer, which
- * is the one it was given. */
+ * is the one it was given.
+ *
+ * The `in-reply` rule MIRRORS the backend rather than guessing: prose beside any
+ * structured answer is an aside `_pair` files nowhere (F5), so a reply that carries pairs
+ * leaves every unpaired row plainly open; prose ALONE has exactly one thing it could be
+ * answering, and `_pair` gives it the oldest open question — the first of this set. The
+ * one reply it can still over-claim is prose the backend refused to file at all (a thread
+ * that was no longer waiting, a lost claim), which leaves no trace on the wire for any
+ * client to read. */
+export function sentOutcomes(
+  questions: readonly AskedQuestion[],
+  replyText: string,
+): Record<string, SentOutcome> {
+  const pairs = answersFromReply(replyText);
+  const proseOnly = pairs.length === 0 && replyText.trim() !== "";
+  const claimed = new Set<number>();
+  const out: Record<string, SentOutcome> = {};
+  questions.forEach((q, n) => {
+    const i = pairs.findIndex((p, j) => !claimed.has(j) && p.question === q.question);
+    if (i >= 0) {
+      claimed.add(i);
+      out[q.id] = { kind: "paired", answer: pairs[i]?.answer ?? "" };
+    } else {
+      out[q.id] = proseOnly && n === 0 ? { kind: "in-reply" } : { kind: "open" };
+    }
+  });
+  return out;
+}
+
+/** A frozen block's answers, keyed by QUESTION ID — the WORDS of `sentOutcomes`, `""`
+ * where the reply carried none. Kept as its own reading because that is what the
+ * candidate rows compare against to draw a pick; which rows are still open is the
+ * outcome's job, not this one's. */
 export function sentAnswers(
   questions: readonly AskedQuestion[],
   replyText: string,
 ): Record<string, string> {
-  const pairs = answersFromReply(replyText);
-  const claimed = new Set<number>();
   const out: Record<string, string> = {};
-  for (const q of questions) {
-    const i = pairs.findIndex((p, j) => !claimed.has(j) && p.question === q.question);
-    if (i >= 0) claimed.add(i);
-    out[q.id] = i >= 0 ? (pairs[i]?.answer ?? "") : "";
+  for (const [id, o] of Object.entries(sentOutcomes(questions, replyText))) {
+    out[id] = o.kind === "paired" ? o.answer : "";
   }
   return out;
 }

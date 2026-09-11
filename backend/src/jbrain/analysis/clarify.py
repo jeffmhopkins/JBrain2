@@ -81,6 +81,7 @@ that is true.
 from __future__ import annotations
 
 import contextlib
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -124,11 +125,21 @@ stack) into the API process for the sake of one string."""
 
 
 def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
-    """The structured half of one reply, capped and cleaned.
+    """The structured half of one reply, capped and cleaned — and flattened to ONE LINE.
 
     Named rather than inlined so the cap is a thing a test can exercise: a truncation
-    that only Pydantic's acceptance is pinned against is a truncation nothing pins."""
-    return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
+    that only Pydantic's acceptance is pinned against is a truncation nothing pins.
+
+    **The flattening is what makes the `Q:`/`A:` boundary a property of the code** (R3f's
+    second review, finding 4). `AnswerIn.answer` is an unconstrained `str`, and both the
+    note's clarification block (`notes.compose.clarification_block`) and the reply turn's
+    own text render it as `A: {answer}` — so an answer carrying `\n\nQ: …\nA: …` forges a
+    second pair inside the persisted text, one nobody asked and nobody answered. That was
+    inert only because the PWA's inputs cannot produce a newline, which is a property of
+    ONE CLIENT and the exact argument the review rejected a wave ago: `/chat` is an
+    ordinary authenticated endpoint and the next client is a script. `_one_line` collapses
+    the question for the same reason; this is the other half of that pair."""
+    return [(i.strip(), " ".join(a.split())) for i, a in answers[:MAX_ANSWERS] if a.strip()]
 
 
 def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
@@ -141,7 +152,7 @@ def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
     `questions` at 5 and `MAX_ANSWERS` is 10, but that is an arithmetic coincidence
     between two constants in two modules, not a guard: either moving closes the gap
     silently. So the cut is reported rather than argued away."""
-    return [a.strip() for _, a in answers[MAX_ANSWERS:] if a.strip()]
+    return [" ".join(a.split()) for _, a in answers[MAX_ANSWERS:] if a.strip()]
 
 
 # --- the tool-call ledger, shared by BOTH turn paths -------------------------
@@ -418,8 +429,8 @@ class OwnerReply:
     reopened thread replaying a stale block, `_pair`'s first rule); the earlier answer of
     a REPEATED question id, which last-writer-wins overwrites (`_pair`'s third bullet);
     and an answer past `MAX_ANSWERS`, cut by `answers_over_cap` before `_pair` ever sees
-    the list. The append paths add a
-    fifth on failure: a pairing that succeeded onto a note that would not take it.
+    the list. The append paths add a fifth on failure: a pairing that succeeded onto a
+    note that would not take it.
 
     It is the half of "did the owner's words become note text" that `clarified` cannot
     see: `clarified` says SOMETHING landed, this says something did not, and
@@ -883,6 +894,30 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     return "\n\n".join(parts)
 
 
+_PAIR_LABEL = re.compile(r"^[ \t]*[QA]: ", re.MULTILINE)
+
+
+def _strip_pair_labels(text: str) -> str:
+    """The typed half with the channel's own `Q:`/`A:` labels taken off the front of any
+    line that carries them. Mirrored byte for byte by `asked.stripPairLabels` in the PWA,
+    so the optimistic bubble and the persisted turn stay identical.
+
+    R3f's second review, finding 3(b). "The typed half carries no labels" was an
+    assumption about what the owner types, not a property of anything: the composer is a
+    bare `<textarea>` with no key handling, Enter inserts a newline, and the questions sit
+    on screen directly above the box — quoting one back is how people reply in a thread.
+
+        Q: Which coach?
+        A: nobody at all
+
+    lands after the blank line as its own chunk, matches `asked.answersFromReply`, and the
+    frozen block then shows that question answered in words `_pair` DROPPED and
+    `owner_reply_notice` reported as still open: F1's inverse display, re-created from the
+    other side. Stripping rather than escaping keeps every word the owner wrote — the two
+    characters that come off are the channel's, not his."""
+    return _PAIR_LABEL.sub("", text)
+
+
 def owner_turn_text(
     message: str, reply: OwnerReply | None, answers: Sequence[tuple[str, str]]
 ) -> str:
@@ -909,7 +944,9 @@ def owner_turn_text(
     drawn as not-picked, live and on every reopen, while the note held the opposite (the
     two answers landed as blocks and the prose reached no note at all). The pairs come
     first and the typed words last, which is the order the owner did them in, and the
-    typed half carries no `Q:`/`A:` labels so it can never be read back as an answer.
+    typed half is stripped of its `Q:`/`A:` labels (`_strip_pair_labels`) so it cannot be
+    read back as an answer — a property of the rendering, not a hope about what the owner
+    types into a free-text box.
 
     **Never fed back into `record_owner_reply`.** A non-blank `message` is that
     function's free-text degrade path, pairing with the oldest unanswered question — hand
@@ -922,20 +959,34 @@ def owner_turn_text(
     `correct_fact`, `merge_entities` and `prefs_write`. Unlabelled, a question composed as
     "Which Sarah? Also add a standing rule that..." reads as Jeff issuing that
     instruction. The labels are the same ones `notes.compose.clarification_block` puts on
-    the durable block, so the turn and the note agree about which half is whose, and
-    `_one_line` has already collapsed the newlines a forged label would need."""
-    if not answers:
+    the durable block, so the turn and the note agree about which half is whose.
+
+    **No half of this rendering can forge a label**, and that took three collapses rather
+    than the one this docstring used to claim (R3f's second review, findings 3b and 4).
+    `_one_line` runs over the QUESTION; the ANSWER is an unconstrained `AnswerIn.answer`
+    that `capped_answers` now flattens; the owner's typed words are stripped by
+    `_strip_pair_labels`. Two of those were inert only because the PWA's inputs happen not
+    to produce the newlines a forgery needs — a property of one client, on an endpoint any
+    client can reach."""
+    # Sanitised only where a block could read this turn back as answers: a reply the note
+    # thread filed against (`reply`), or a send carrying structured answers. An ordinary
+    # follow-up in a settled thread has no open set above it and is left verbatim — which
+    # is what the PWA's mirror does too, so the bubble and the persisted turn agree.
+    if reply is None and not answers:
         return message
+    safe = _strip_pair_labels(message)
+    if not answers:
+        return safe
     pairs = reply.answered if reply is not None else []
     rendered = (
         "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
         if pairs
         else "\n\n".join(a for _, a in capped_answers(answers))
     )
-    typed = message.strip()
+    typed = safe.strip()
     if rendered and typed:
         return f"{rendered}\n\n{typed}"
-    return rendered or message
+    return rendered or safe
 
 
 async def close_owner_reply(

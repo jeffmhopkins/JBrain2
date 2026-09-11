@@ -771,7 +771,15 @@ export function useFullBrain(
     // the server renders the Q/A pairs into the turn's own text so the words survive a
     // failed clarification append (`clarify.owner_turn_text`); mirroring that here is what
     // keeps the optimistic bubble identical to the one a reload replays.
-    const shownText = answers.length > 0 ? ownerTurnText(text, asked, draft) : text;
+    //
+    // Also over a send with NO structured answers, whenever a block is open above it: the
+    // server sanitises that turn's typed half too (a quoted `Q:`/`A:` cannot be allowed to
+    // forge a pair — R3f's second review, finding 3b), so a bubble rendered from the raw
+    // text would differ from the one a reload replays. The condition is the client's
+    // mirror of the server's `reply is not None`: a thread with an open ask above the
+    // composer is a thread the reply path files against.
+    const shownText =
+      answers.length > 0 || asked.length > 0 ? ownerTurnText(text, asked, draft) : text;
     // A deferred-outcome turn is driven by a server-authored system notice, not owner
     // input — so it appends NO user bubble (the answer stands on its own after the analysis
     // card). Rendering the notice as an owner bubble is the "guest blurb"; the server

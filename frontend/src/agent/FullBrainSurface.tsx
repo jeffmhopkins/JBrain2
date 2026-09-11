@@ -29,7 +29,13 @@ import { ProposalsPanel } from "./ProposalsPanel";
 import { QuestionBlock } from "./QuestionBlock";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
-import { type AskedQuestion, sentAnswers, turnQuestions } from "./asked";
+import {
+  type AskedQuestion,
+  type SentOutcome,
+  sentAnswers,
+  sentOutcomes,
+  turnQuestions,
+} from "./asked";
 import { attachmentKind } from "./attachmentKind";
 import { stepWriteState, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
@@ -698,6 +704,7 @@ function ask(
       questions: readonly AskedQuestion[];
       live: boolean;
       answers: Readonly<Record<string, string>>;
+      sent: Readonly<Record<string, SentOutcome>> | null;
       onAnswer: (questionId: string, answer: string) => void;
     }
   | undefined {
@@ -707,10 +714,15 @@ function ask(
   if (questions.length === 0) return undefined;
   const live = i === messages.length - 1;
   const reply = messages[i + 1];
+  const replyText = reply?.role === "user" ? reply.text : "";
   return {
     questions,
     live,
-    answers: live ? draft : sentAnswers(questions, reply?.role === "user" ? reply.text : ""),
+    answers: live ? draft : sentAnswers(questions, replyText),
+    // Not just the words — WHICH questions the reply actually answered. A frozen block
+    // that assumes the set was answered tells the owner his open questions were settled,
+    // and the agent's next turn re-asks them (R3f's second review, finding 1).
+    sent: live ? null : sentOutcomes(questions, replyText),
     onAnswer,
   };
 }
@@ -766,13 +778,15 @@ function Bubble({
     | undefined;
   /** This turn ended on an `ask_owner`: its question block, and how it is answered
    * (§3b I6). `live` means the set is still open — the controls fill LOCAL state and
-   * nothing else; frozen means the owner already replied and `answers` is what they said.
+   * nothing else; otherwise the owner already replied, `sent` says what that reply did to
+   * each question, and `answers` carries the words it paired.
    * Absent on every turn that asked nothing, which is every turn outside a note thread. */
   ask?:
     | {
         questions: readonly AskedQuestion[];
         live: boolean;
         answers: Readonly<Record<string, string>>;
+        sent: Readonly<Record<string, SentOutcome>> | null;
         onAnswer: (questionId: string, answer: string) => void;
       }
     | undefined;
@@ -1228,7 +1242,7 @@ function Bubble({
       questions={ask.questions}
       answers={ask.answers}
       onAnswer={ask.onAnswer}
-      frozen={!ask.live}
+      sent={ask.sent}
     />
   ) : null;
 
