@@ -731,16 +731,40 @@ duplicated tokens. A reply turn that has re-read the whole note ends with `close
 too, and that is what sweeps; a reply turn that only added a fact does not sweep, which is
 correct.
 
-⟲ **And only on a reply turn that is ANSWERING** (R3's review). The set above is the
-turn's ceiling; `agents.narrow_for_unprompted_reply` takes `assert_fact` back off when the
-thread is not `waiting_on_owner`, applied from `clarify.reply_profile_for_session` beside
-W4's two narrowings — and before `record_owner_reply` claims the thread, which is the last
-moment the two cases are distinguishable. The reason is the founding premise: only an
-ANSWER becomes text on the note (D6 pairs a question with an answer, and
-`note_clarifications.question` is NOT NULL), so a fact asserted on any other reply turn
-cites text that exists nowhere, and the note's next unattended pass — one producer, one
-claim — retracts it. Refusing the write and telling the owner is the conservative
-direction; giving unprompted text a home on the note is **O16**, open.
+⟲ **And only on a reply turn whose words LANDED ON THE NOTE** (R3's review, re-keyed by
+its second round). The set above is the turn's ceiling;
+`agents.narrow_for_unprompted_reply` takes `assert_fact` back off otherwise. The reason is
+the founding premise: only text that reaches the note is a source of truth (D6 pairs a
+question with an answer, and `note_clarifications.question` is NOT NULL), so a fact
+asserted on any other reply turn cites text that exists nowhere, and the note's next
+unattended pass — one producer, one claim — retracts it.
+
+⟲ **The first round keyed that on the thread being `waiting_on_owner` and applied it from
+`clarify.reply_profile_for_session`, before `record_owner_reply` claimed the thread. That
+is a PROXY and it leaks**, three ways, each of them a waiting turn on which the note
+receives nothing: I7's DESIGNED send carries the structured answers plus whatever free text
+is in the box and `_pair` drops the prose when the structured set is complete (the O16 gap,
+and this is the ordinary case rather than a failure); an `append_failed` or soft-deleted
+note leaves `clarified` False with the verb still bound; and an `owner_authored=False` turn
+(a deferred-tool outcome, a proposal enact) returns before `claim_waiting`, so the state
+still reads `waiting_on_owner`. The narrowing is now keyed on `record_owner_reply`'s own
+OUTCOME — `clarify.owner_words_reached_note`, i.e. a block landed and nothing the owner
+said was dropped — and applied in `api/agent.py` on the one line between that call and the
+model call, which is the earliest point the outcome exists. `record_owner_reply` reports
+what it could not file (`OwnerReply.dropped`) and `owner_reply_notice` tells the agent
+whenever the owner's words reached no note, so a refused write is never a silent one. W4's
+EMR narrowing stays where it was: it depends on the note row and on nothing the reply does.
+
+⟲ **And the subtraction was incomplete: `correct_fact` at an EMPTY address commits active +
+PINNED**, so the first round told the agent it could not record a fact while leaving it a
+verb that records one permanently — unfalsifiable as well as unrecoverable, which is the
+thing O16 names as worse than the loss. It is not fixed by subtracting the verb: correcting
+a fact that IS on file is the owner's repair path on a settled thread and pinning is the
+designed mechanism there. `replytools.correct_fact_tool` refuses the empty-address ARM on
+the same condition instead, keyed on the turn's own allowlist, and says what to do instead.
+
+Refusing the write and telling the owner is the conservative direction; giving unprompted
+text a home on the note is **O16**, open.
 
 `NOTE_GRAPH_WRITE_TOOLS` (`agents.py:586`, the set W4's two narrowings subtract) becomes
 `{resolve_entity, close_reading, assert_fact, correct_fact, merge_entities}`. Both new
@@ -1897,6 +1921,17 @@ spans its own live facts are anchored to). The settle's input is a `clarify.Pass
 flattened off the writer by `converse.pass_reading` — `clarify` may not import
 `graphwritetools`, which drags the LLM stack into the API process.
 
+⟲ **Three silent-loss paths found after the wave shipped, all closed, and each was proved
+by running it rather than argued.** (1) `close_reading` latched an incomplete reading from
+three places and all three were inside or before the element loop, so an exception ESCAPING
+the handler — a pool refusal, a `set_config` blip, a failed COMMIT at block exit — left the
+pass presenting a PREFIX as a complete unclamped reading (`loop.py` reports the raise to
+the model as recoverable, so the turn can end on it), and the sweep retracted whatever the
+raising call was carrying. The handler body is now wrapped and the latch is the fourth.
+(2) The unprompted-reply narrowing keyed on thread state rather than on the invariant; §3's
+⟲ has it. (3) That narrowing removed `assert_fact` and left `correct_fact`'s empty-address
+arm, which is the same write with pinning on top; §3's ⟲ has that too.
+
 **The two-verb hole R2's review found is closed by (a), narrowing.** `assert_fact` is off
 `NOTE_INGEST_UNATTENDED_TOOLS` and onto the reply set, in BOTH locks — the allowlist and
 the handlers `NoteToolset` binds. The argument for (a) over (b) (union the pass's own
@@ -2027,8 +2062,10 @@ reconciled in the same PR.
 ⟲ **Two things this paragraph used to hand R4 are already settled and must not be
 re-attempted.** *`assert_fact` narrows to the reply set* — R3 did it
 (`agents.NOTE_INGEST_UNATTENDED_TOOLS`), and R3's review narrowed it once more: it is off
-a reply turn whose thread is not `waiting_on_owner`, because only an ANSWER becomes text
-on the note and a fact with no source text is one the next pass retracts (O16 below).
+a reply turn whose words did not land on the note as source text
+(`clarify.owner_words_reached_note` — the second review re-keyed it off the thread's
+state, see §3), because a fact with no source text is one the next pass retracts (O16
+below), and `correct_fact`'s empty-address arm refuses on the same condition.
 *`review_items.settle_owner` loses its last reader* — refuted by the ⟲ in R3's paragraph
 forty lines above: `settle_note`'s two card halves stay, `emr_parse` outlives this plan
 and still calls them, so the column keeps a live reader after the deletion.
@@ -2443,6 +2480,15 @@ note that does not say it and the sweep retracted it, silently. The review's fix
 the verb on that turn (`agents.narrow_for_unprompted_reply`) and has the agent say it
 cannot record it there. **That is a refusal, not a feature** — the owner's sentence is
 still lost, he is just told so.
+
+⟲ **And the gap is WIDER than "a settled thread", which is what the second review found.**
+The same dead end is reached on a thread that IS waiting, by the send §3b I7 designs: one
+send carries the structured answers and whatever free text is in the box, and when the
+structured set is complete `_pair` drops the prose — so "tap the answer AND type one more
+thing" is an ordinary, correct interaction that loses the typed half. The refusal now
+covers it (the narrowing keys on the append's outcome, and `owner_reply_notice` says the
+words reached no note), which makes O16's cost more visible rather than larger: option 1's
+"an unprompted note addendum" is exactly the shape that send already produces.
 
 **Why the two obvious shortcuts are worse, not cheaper.**
 
