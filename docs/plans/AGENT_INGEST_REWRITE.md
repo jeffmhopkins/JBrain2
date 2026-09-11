@@ -2410,7 +2410,7 @@ resolver assembles: `asked.parseCandidates` splits it on top-level commas only (
 carries its own) and answers with the name, falling back to the whole candidate when two
 share one.
 
-*What its three review rounds cost, since R3f is the first wave the owner sees.* The first
+*What its four review rounds cost, since R3f is the first wave the owner sees.* The first
 round fixed the MIXED send — the turn text, the bubble, the frozen block and `_pair`'s
 rule — and a second, independent round found the PARTIAL send still wrong in the same
 place: a block that said "answered" over questions it had left open, while the agent, told

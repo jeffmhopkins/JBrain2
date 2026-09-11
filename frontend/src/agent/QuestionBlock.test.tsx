@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuestionBlock } from "./QuestionBlock";
 import { askedQuestions, ownerTurnText, sentAnswers, sentOutcomes } from "./asked";
 
+/** Ids as the TOOL mints them (`q` + 8 hex), never `q1`/`q2`: those are byte-identical to
+ * `askedQuestions`' deploy-window fallback, so a fixture written that way asserts nothing
+ * about the ids the block actually renders (R3f's fourth review, finding 8). */
 const QUESTIONS = askedQuestions({
   questions: [
-    { id: "q1", question: "What's the medication called?", blocks: "medication.started" },
+    { id: "qf2011e6f", question: "What's the medication called?", blocks: "medication.started" },
     {
-      id: "q2",
+      id: "q38035b59",
       question: "Which Dr. Chen?",
       blocks: 'resolve_entity("Dr. Chen")',
       candidates: "Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)",
@@ -19,14 +22,14 @@ const QUESTIONS = askedQuestions({
 // which is what makes a PARTIAL send (tap one, leave two) renderable at all.
 const THREE = askedQuestions({
   questions: [
-    { id: "q1", question: "What's the medication called?", blocks: "medication.started" },
+    { id: "qf2011e6f", question: "What's the medication called?", blocks: "medication.started" },
     {
-      id: "q2",
+      id: "q38035b59",
       question: "Which Dr. Chen?",
       blocks: 'resolve_entity("Dr. Chen")',
       candidates: "Dr. Alice Chen (cardiology, 4 notes), Dr. Ray Chen (paediatrics, 2 notes)",
     },
-    { id: "q3", question: "What dose?", blocks: "medication.dose" },
+    { id: "q7c1a904d", question: "What dose?", blocks: "medication.dose" },
   ],
 });
 
@@ -88,9 +91,9 @@ describe("the question block", () => {
   it("reports a tap as local state and shows the pick", () => {
     const onAnswer = block();
     fireEvent.click(screen.getByRole("button", { name: /Dr\. Alice Chen/ }));
-    expect(onAnswer).toHaveBeenCalledWith("q2", "Dr. Alice Chen");
+    expect(onAnswer).toHaveBeenCalledWith("q38035b59", "Dr. Alice Chen");
 
-    block({ answers: { q2: "Dr. Alice Chen" } });
+    block({ answers: { q38035b59: "Dr. Alice Chen" } });
     expect(screen.getAllByRole("button", { name: /Dr\. Alice Chen/ })[1]).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -99,9 +102,9 @@ describe("the question block", () => {
 
   // A stray tap must not commit anything, so it must be undoable.
   it("unpicks the chosen candidate on a second tap", () => {
-    const onAnswer = block({ answers: { q2: "Dr. Ray Chen" } });
+    const onAnswer = block({ answers: { q38035b59: "Dr. Ray Chen" } });
     fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
-    expect(onAnswer).toHaveBeenCalledWith("q2", "");
+    expect(onAnswer).toHaveBeenCalledWith("q38035b59", "");
   });
 
   it("reports typing the same way", () => {
@@ -109,7 +112,7 @@ describe("the question block", () => {
     fireEvent.change(screen.getByLabelText("What's the medication called?"), {
       target: { value: "amlodipine" },
     });
-    expect(onAnswer).toHaveBeenCalledWith("q1", "amlodipine");
+    expect(onAnswer).toHaveBeenCalledWith("qf2011e6f", "amlodipine");
   });
 
   // R3f's review, finding 4. A candidate row rendered candidates OR a field, never both,
@@ -124,13 +127,13 @@ describe("the question block", () => {
       fireEvent.change(screen.getByLabelText("Which Dr. Chen?"), {
         target: { value: "Dr. Ray Chen's locum" },
       });
-      expect(onAnswer).toHaveBeenCalledWith("q2", "Dr. Ray Chen's locum");
+      expect(onAnswer).toHaveBeenCalledWith("q38035b59", "Dr. Ray Chen's locum");
     });
 
     it("drops the pick it replaces, and is undoable like every other tap", () => {
-      const onAnswer = block({ answers: { q2: "Dr. Alice Chen" } });
+      const onAnswer = block({ answers: { q38035b59: "Dr. Alice Chen" } });
       fireEvent.click(screen.getByRole("button", { name: "Something else" }));
-      expect(onAnswer).toHaveBeenCalledWith("q2", "");
+      expect(onAnswer).toHaveBeenCalledWith("q38035b59", "");
       fireEvent.click(screen.getByRole("button", { name: "Something else" }));
       expect(screen.queryByLabelText("Which Dr. Chen?")).not.toBeInTheDocument();
     });
@@ -138,12 +141,14 @@ describe("the question block", () => {
     // A draft restored after a failed send has to come back visible, not stranded
     // behind a tap the owner has no reason to make twice.
     it("comes back open on words that are not one of the candidates", () => {
-      block({ answers: { q2: "the locum" } });
+      block({ answers: { q38035b59: "the locum" } });
       expect(screen.getByLabelText("Which Dr. Chen?")).toHaveValue("the locum");
     });
 
     it("is not offered on a frozen block", () => {
-      block({ reply: ownerTurnText("", QUESTIONS, { q1: "amlodipine", q2: "the locum" }) });
+      block({
+        reply: ownerTurnText("", QUESTIONS, { qf2011e6f: "amlodipine", q38035b59: "the locum" }),
+      });
       expect(screen.queryByRole("button", { name: "Something else" })).not.toBeInTheDocument();
       expect(screen.getByText("the locum")).toBeInTheDocument();
     });
@@ -156,7 +161,9 @@ describe("the question block", () => {
 
   describe("once it is answered", () => {
     it("goes inert and says what was said", () => {
-      block({ reply: ownerTurnText("", QUESTIONS, { q1: "amlodipine", q2: "Dr. Ray Chen" }) });
+      block({
+        reply: ownerTurnText("", QUESTIONS, { qf2011e6f: "amlodipine", q38035b59: "Dr. Ray Chen" }),
+      });
       expect(screen.getByText("2 questions · answered")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toBeDisabled();
       expect(screen.getByText("amlodipine")).toBeInTheDocument();
@@ -172,7 +179,7 @@ describe("the question block", () => {
     it("says a question the send left open is still open, not answered elsewhere", () => {
       block({
         questions: THREE,
-        reply: ownerTurnText("also the dinner is cancelled", THREE, { q2: "Dr. Ray Chen" }),
+        reply: ownerTurnText("also the dinner is cancelled", THREE, { q38035b59: "Dr. Ray Chen" }),
       });
       expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
       expect(screen.getAllByText(STILL_OPEN)).toHaveLength(2);
