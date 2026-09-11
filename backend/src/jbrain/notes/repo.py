@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.chunker import PARAGRAPH
+from jbrain.ingest.extract import KIND_TEXT_LAYER
 from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note, NoteClarification
 from jbrain.notes.compose import compose_body, strip_clarifications
 from jbrain.notes.service import (
@@ -449,3 +451,26 @@ class SqlNotesRepo:
                 )
                 for r in rows
             ]
+
+    async def list_text_layer(self, ctx: SessionContext, note_id: str) -> dict[str, str]:
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    select(Chunk.attachment_id, Chunk.text)
+                    .where(
+                        Chunk.note_id == uuid.UUID(note_id),
+                        Chunk.granularity == PARAGRAPH,
+                        Chunk.source_kind == KIND_TEXT_LAYER,
+                        Chunk.attachment_id.is_not(None),
+                    )
+                    # `seq` is the extractor's own order (a PDF's pages in order), so
+                    # rejoining on it reads the document the way it was written.
+                    .order_by(Chunk.seq)
+                )
+            ).all()
+        by_attachment: dict[str, list[str]] = {}
+        for attachment_id, chunk_text in rows:
+            by_attachment.setdefault(str(attachment_id), []).append(chunk_text)
+        # Blank-line joined: chunking split these on paragraph boundaries, and the
+        # reader gets paragraphs back rather than one run-on wall.
+        return {att: "\n\n".join(texts) for att, texts in by_attachment.items()}

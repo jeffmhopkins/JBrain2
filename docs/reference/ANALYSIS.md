@@ -872,6 +872,15 @@ says these words were read by a machine, and what the persona is taught to disco
 blocks ride INSIDE the untrusted note fence with the body: text read off a photograph is
 the most attacker-controllable input on the box.
 
+That text comes from two stores, and both are read. `attachment_extracts` holds what a
+MODEL read (OCR, caption, transcript). A PDF carrying its own text layer is never OCR'd
+and a `text/*` file was never an OCR candidate, so a lab report, a statement, a lease or
+a `.md` file has no extract row at all and its words exist only as chunks —
+`notes.list_text_layer` is that half (`text-layer` chunks, in `seq` order, so a PDF reads
+page by page). It is consulted per attachment and only where the vision cache gave that
+attachment nothing, which is what keeps an attachment from being read into the prompt
+twice; both halves spend the one shared budget below, in attachment order.
+
 **Capped, and the cut says so** (`MAX_ATTACHMENT_TEXT_CHARS`). The deleted path bounded
 this by FANNING OUT; a conversation has one turn 0 and cannot, so the bound is a cap. Its
 absence would let the largest input on the box — a decrypted medical PDF, OCR'd page by

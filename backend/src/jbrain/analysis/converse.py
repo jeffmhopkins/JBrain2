@@ -110,6 +110,7 @@ from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
+from jbrain.ingest.extract import KIND_TEXT_LAYER
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
@@ -225,6 +226,20 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     would have left this conversation reading the typed body alone — a capture the
     owner watched succeed that quietly produced no facts (CLAUDE.md #10).
 
+    Machine-read text arrives from TWO places, and reading only one of them is the same
+    loss in a different disguise. `attachment_extracts` holds what a MODEL read — OCR,
+    caption, transcript. A PDF that carries its own text layer is deliberately never
+    OCR'd (`ingest/pipeline.py`) and a `text/*` file was never an OCR candidate, so a
+    lab report, a statement, a lease or a `.md` file has no extract row at all: its
+    words exist only as chunks. `list_text_layer` is that half. It is consulted per
+    attachment and ONLY when the vision cache gave that attachment nothing, so an
+    attachment can never be read into the prompt twice — and since both halves are
+    walked in `note.attachments` order, inside the same loop, the reading stays
+    byte-identical run to run.
+
+    Both halves spend the SAME budget, in that order, and both count the same cuts, so
+    the notice below stays true whichever half overflows it.
+
     Each block keeps `prompt_block`'s provenance marker, which is not decoration: it
     is the only thing in the text that says these words were read by a machine rather
     than written by Jeff, and the persona discounts them accordingly (a garbled OCR
@@ -245,11 +260,19 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
     blocks: list[str] = [note.body]
     budget = MAX_ATTACHMENT_TEXT_CHARS
     cut = 0
+    text_layer: dict[str, str] | None = None
     for att in note.attachments:
-        for ex in await notes.list_extracts(ctx, att.id) or []:
-            body = ex.text.strip()
-            if not body:
-                continue
+        reads = [
+            (ex.kind, stripped, ex.confidence)
+            for ex in await notes.list_extracts(ctx, att.id) or []
+            if (stripped := ex.text.strip())
+        ]
+        if not reads:
+            if text_layer is None:
+                text_layer = await notes.list_text_layer(ctx, note.id)
+            layer = text_layer.get(att.id, "").strip()
+            reads = [(KIND_TEXT_LAYER, layer, None)] if layer else []
+        for kind, body, confidence in reads:
             if len(body) > budget:
                 body, cut = body[:budget], cut + 1
             budget -= len(body)
@@ -258,9 +281,9 @@ async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> st
             blocks.append(
                 prompt_block(
                     body,
-                    source_kind=ex.kind,
+                    source_kind=kind,
                     filename=att.filename,
-                    confidence=ex.confidence,
+                    confidence=confidence,
                 )
             )
     if cut:

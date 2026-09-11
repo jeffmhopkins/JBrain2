@@ -258,6 +258,19 @@ class NotesRepo(Protocol):
         attachment is missing or out of scope."""
         ...
 
+    async def list_text_layer(self, ctx: SessionContext, note_id: str) -> dict[str, str]:
+        """Each attachment's MACHINE-READ text that never reaches `attachment_extracts`,
+        keyed by attachment id — a PDF's own text layer, a .txt/.md/.csv file's contents.
+
+        The vision cache holds only what a MODEL read (OCR, caption, transcript). A PDF
+        that carries a text layer is deliberately never OCR'd and a `text/*` file was
+        never an OCR candidate, so for those the extracted words live only in
+        `app.chunks`. `converse.note_text` needs both halves or the reading loses the
+        document (R4 — the deleted producer read every paragraph chunk).
+
+        Empty when the note is gone, out of scope, or has no such attachment."""
+        ...
+
     async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:
         """Deletes the row (never the shared blob); returns the note_id for
         re-ingestion, or None when missing/out of scope."""

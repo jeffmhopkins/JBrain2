@@ -1605,7 +1605,7 @@ LIVE conversation — plus the fact that an event is marked dispatched once. The
 pinned the deleted skip (`test_live_tick_state_skips_an_already_integrated_note_no_enqueue`)
 went with it; `ingest_note`'s state skip, the other half of that pair, is untouched.
 
-**(8) Two capability losses R4 would have caused silently, both closed in the wave.**
+**(8) Three capability losses R4 would have caused silently, all closed in the wave.**
 
 *Machine-read attachment text stopped reaching any reader.* `integrate_note` built its
 prompt out of the note's paragraph CHUNKS, which include each attachment's OCR, caption and
@@ -1623,6 +1623,21 @@ into several `note.extract` calls and a conversation has one turn 0, so an uncap
 compose would hand a decrypted medical PDF's page-by-page OCR to a single prompt and
 fail the pass outright. A cut is announced inside the fence — a reading over text the
 model never saw omits facts, and this producer's sweep acts on omission.
+
+*A document's OWN text stopped reaching the reader too.* The first fix read
+`attachment_extracts`, which is only half of the machine-read text: a PDF carrying a text
+layer is deliberately never OCR'd (`ingest/pipeline.py`) and a `text/*` file was never an
+OCR candidate, so a lab report, a statement, a lease or a `.txt`/`.md`/`.csv` file has no
+extract row at all and its words exist only as `text-layer` chunks. The deleted producer
+saw them (it selected EVERY paragraph chunk); the extract-only compose did not, so the
+same class of silent loss survived one layer down. **Closed here** —
+`notes.list_text_layer` reads those chunks in `seq` order, consulted per attachment and
+only where the vision cache gave that attachment nothing, so no attachment is read twice;
+it spends the same `MAX_ATTACHMENT_TEXT_CHARS` budget and counts the same cuts, so the
+notice stays true whichever half overflows. The blind spot that hid it is closed too: the
+reading-side tests covered OCR and transcript and nothing covered a text layer
+(`test_ingest_pg.test_the_note_the_agent_reads_carries_a_text_layer_attachment`, plus the
+double-count and budget arms in `test_note_converse.py`).
 
 *The durable predicate-alias collapse lost its last caller.* `canonicalize_intent` ran in
 `integrate_note` before the arbiter keyed facts, applying the owner's own past
