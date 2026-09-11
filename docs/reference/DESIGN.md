@@ -1120,6 +1120,13 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 
 - Text contrast ≥ 4.5:1 against its surface in both themes (the muted accents
   are for chrome/tints; body text is always `--text`/`--text-2`).
+- **Never dim a container with `opacity`.** It multiplies every colour beneath it,
+  a descendant cannot undo it, and the figures above are token-to-token: one
+  `opacity: 0.72` on a block took four of its lines under the floor, `--text-2`
+  included, and each had to be bought back by hand. Dim by token — give up the
+  fill, the accent border, the inviting head colour — so the words keep the
+  contrast their tokens certify. (Gated for the question block by
+  `backend/tests/unit/test_block_contrast.py`.)
 - Visible focus rings on `:focus-visible`; full keyboard operability on
   desktop layouts.
 - Status conveyed by dot color is always paired with text.
@@ -1533,21 +1540,34 @@ There is no bespoke ingest view and no second idiom for the same information.
   agent was told the truth and re-asks exactly those questions on its next turn, so the
   screen and the assistant contradict each other in front of the one person who cannot
   check either.
-- **A send that reaches the server not at all is ended by Stop — and the block misreports it
-  until the thread is reopened.** While the turn counts as in flight the composer's send IS the
-  Stop button (the same control, swapped), wired to this surface's own stop, so recovery is
-  one tap and a few seconds: `busy` clears, the answers are handed back to the block under
-  anything typed since, and the live-turn hold is released, so leaving the thread and coming
-  back re-arms the block with those answers still in it. Left alone, the same hand-back
-  happens when the reconnect window closes — 62 minutes — which is the ceiling on being
-  patient, not the cost of recovering. **What the window actually costs is a wrong reading:**
-  for all of it the frozen block reads *"2 answered"* about a send that never left the
-  device, while the server still holds the thread `waiting_on_owner` with those very
-  questions open — and Stop does not clear that, because the optimistic turn it is reading
-  stays put until a transcript reload replaces it. That is the same class as a block claiming
-  a row the send left open, one path over, and closing it is open work: the block reports an
-  outcome it does not itself produce, and "the POST reached nothing" is a state it cannot
-  currently see.
+- **"Spent" is dimmed by TOKEN, never by `opacity`.** An ancestor's opacity multiplies every
+  colour beneath it and no descendant can undo it, so a dimmed block silently re-prices every
+  line inside it: R3f shipped `opacity: 0.72` on the frozen block and put four lines under the
+  4.5:1 floor above — the "still open" line at 1.81:1 in light, and `--text-2`, which this
+  document certifies as body text, at 3.41:1. A spent object recedes by giving up the things
+  that read as controls (a raised chip fill, an accent border, an inviting head colour), which
+  is a statement about the controls; opacity is a statement about the words.
+- **A block that cannot be answered says so, and offers nothing to tap.** The one state
+  where the questions are real but their ids are not — a thread left waiting across the
+  deploy that gave the question set its ids — renders read-only: every question visible, no
+  candidates, no field, no carry strip, and a line saying to answer in the composer (free
+  text alone answers the oldest open question, so the owner is never stuck). Disabled
+  controls would be the wrong shape: a greyed candidate invites a tap that cannot work, and
+  the reason nothing is offered is that nothing tapped here could be filed.
+- **A send that reaches the server not at all is UN-SENT, and Stop is how the owner says
+  so.** While the turn counts as in flight the composer's send IS the Stop button (the same
+  control, swapped), wired to this surface's own stop, so recovery is one tap and a few
+  seconds; left alone, the same thing happens when the reconnect window closes, which is the
+  ceiling on being patient rather than the cost of recovering. What comes back is the whole
+  send: the answers to the block, the typed words to the composer, and the optimistic turn
+  itself is dropped — so the block re-arms live, holding them, over a thread the server still
+  holds `waiting_on_owner`. For the length of the window the frozen block does read
+  *"2 answered"* about a send that never left the device; that is the cost of showing the
+  owner his turn immediately, and it ends when the window does rather than lasting until the
+  thread is reopened. **Only when nothing of the turn arrived.** A stream that delivered even
+  one token is a turn the server HAS, whatever a later reload failed to find, and un-sending
+  that would be the same misreport the other way up — those keep the errored bubble, with the
+  owner's words still on screen.
 - **The chip is not permanent, and the thread does not expire.** The stream shows the last
   two days, so a note parked longer than that scrolls off it and loses its chip — the ask
   itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review

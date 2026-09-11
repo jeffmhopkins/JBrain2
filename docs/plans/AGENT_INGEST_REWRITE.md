@@ -1166,6 +1166,15 @@ reply").**
    that buys: the sanitiser is defined by what the reader accepts rather than by being
    maximally destructive — the reader is display-only, no backend path parses pairs back out
    of turn text, and one drift test pins both patterns, both flags and both call sites.
+   ⟲ **"Byte-identical" was measured over twenty-three inputs and was false on two** (R3f's
+   fourth review, finding 6): both sides took the line start from a flag, and the flags do
+   not mean the same thing — JS's `/m` counts a lone `\r` and U+2028/U+2029 as line starts
+   where `re.MULTILINE` counts only `\n`, so a pasted Windows clipboard had a label cut in
+   the optimistic bubble that the persisted turn (and, since 3(a), the note) kept. No forgery
+   either way — the READER is identical in both languages — but the drift test compares
+   pattern text and flags and so could not see a difference that lived in what a flag MEANS.
+   Both now spell the line start `(^|\n)`, the test asserts neither side carries the flag,
+   and the two divergent inputs are pinned as behaviour in both suites.
 2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
    `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
    set left open — was written when the composer was the only affordance, so typed words
@@ -1210,14 +1219,21 @@ wait for. *Two rounds asserted this window from the code's shape rather than by 
 the third ran it. Neither the plan nor DESIGN.md should describe a recovery path without
 driving it.*
 
-**What both rounds missed, and it is the part worth a wave.** For the whole window the
-frozen block reads `2 answered` about a send that reached nothing, while the server still
-holds the thread `waiting_on_owner` — the block reports an outcome it does not produce, and
-"the POST landed nowhere" is a state it cannot see. Stop does not clear THAT: the optimistic
-user turn the block reads its outcomes out of stays until a transcript reload replaces it. It is the same misreport class as I9's
-finding 1, one path over, and `FullBrainSurface.notethread.test.tsx` now asserts what the
-block SAYS across that window rather than only what the draft holds. Closing it is open work
-and is not R3f's.
+**What both rounds missed, and the fourth review closed.** For the whole window the frozen
+block read `2 answered` about a send that reached nothing, while the server still held the
+thread `waiting_on_owner` — the same misreport class as I9's finding 1, one path over. The
+third round called that "a state the block cannot see" and filed it as open work; the fourth
+found that sentence written from the code's shape rather than from the code (finding 5). The
+give-up branch IS that state — no live run to ride and nothing persisted for the whole window
+— and it already hands the draft back two lines above. So it now drops the optimistic
+exchange as well, when the buffer shows it never left the device (`transcript.unsent`: the
+assistant bubble took no token, no step, no view, no reasoning). The block re-arms live,
+holding the answers, over a thread the server still has open; the typed half of a mixed send
+goes back to the composer through the same seam a calendar handoff uses
+(`useFullBrain.restoredText`). Every other failed send keeps the errored bubble it has always
+had — a turn that delivered anything is a turn the server HAS, and un-sending it would be the
+same misreport the other way up. `FullBrainSurface.notethread.test.tsx` drives Stop and
+asserts the re-armed block, the carry strip, and the words coming back.
 
 *One residue, recorded rather than fixed.* Aborting while `resumeLive()` is mid-flight
 returns through its own `aborted` branch (`useFullBrain.ts:929-931`) and skips the restore.
@@ -1303,6 +1319,40 @@ rounds miss it is that both test fixtures hand-built a shape the wire could not 
 took its ids from the ledger — so `backend/tests/integration/test_ask_owner_pg.py` now
 carries the one test that CROSSES the seam: it drives a real ask through the real runner,
 reads the ids off the persisted transcript the way the PWA does, and answers with them.
+(The frontend fixture's `q1`/`q2`/`q3` were byte-identical to the positional fallback, so
+every assertion over it would have passed with `row.id` ignored entirely — R3f's fourth
+review, finding 8. Both fixtures now use minted ids.)
+
+⟲⟲ **And the echo fixed the block's CONTENTS while leaving its CHOICE OF STEP reading
+`ok === true` — R3f's fourth review, findings 1, 2 and 3, which are one bug wearing three
+coats.** `ok` means "no exception escaped `_dispatch`", not "this call recorded a set":
+every string a handler returns is `is_error=False` (`loop.py`), and `asktools` returns every
+refusal as text on purpose. So the block could be built off a refusal — and was, in three
+ways. (1) `AgentLoop` finishes the round it is in before honouring a halt, so a model that
+emits TWO `ask_owner` calls in one message runs the second into the already-waiting latch;
+its step kept the model's raw second question, last-succeeded-wins selected it, and the owner
+was shown a question the ledger never held while the two real ones stayed invisible. (2) An
+ask refused on a `settled`/`failed` thread — the row rolled back, the server waiting on
+nobody — still drew a live block with a field. (3) A step persisted before the echo shipped
+fell silently through to the positional fallback, which is the deploy window below.
+
+The signal that means "the ledger holds this" is the ECHOED IDS, so `asked.askStep` selects
+on those, and every `ask_owner` path now echoes what it recorded — the set it just recorded,
+the set it is already waiting on (`_already_waiting`, so the block shows the REAL open
+questions whichever call it is built from), or an empty record (`_refused`, so a refusal
+draws nothing rather than the model's own words). An empty record rather than none, because
+"none" is indistinguishable from a pre-echo step, and those two are handled oppositely.
+
+**The deploy window, decided and built.** A thread already `waiting_on_owner` when this ships
+has a step with the model's raw args and no ids while its ledger row holds the real ones:
+tapping would post `q1`/`q2`/`q3`, `_pair` would drop all three, `claim_waiting` would consume
+the set anyway, nothing would reach the note — and `owner_turn_text` would then fall to bare
+prose, which the frozen block reads back as "answered in your reply" over rows that were never
+answered. So such a block renders **read-only**: every question visible, no candidates, no
+field, no carry strip, and one line saying to answer in the composer. Free text alone is
+`_pair`'s degrade and answers the oldest open question, so the owner is never stuck and
+nothing can be dropped as an unknown id. It is deletable — with `askStep`'s legacy branch and
+`_refused`'s empty record — once no `waiting_on_owner` thread predates the echo.
 
 ⟲ **R3f took the answers off the TRANSCRIPT rather than off the clarification route, and
 the paragraph above is why that is the same claim rather than a weaker one.**
@@ -2385,7 +2435,26 @@ inside the paragraph written to replace the second (the "no way to send them aga
 hour" window, which a Stop button ends in seconds — see I7), and the label sanitiser
 reaching the turn and not the note while deleting the owner's own `A:` labels (I7 again).
 Two rounds had described that recovery window from the code's shape; the third drove it.
-**O15 and O16 remain neither decided nor built.**
+
+**A fourth round found the same seam one layer up, and the finding generalises past this
+wave.** The third round's fix put the ledger's ids on the step; the fourth found the block
+still choosing WHICH step by `ok === true` — which means "no exception escaped", not "this
+call recorded a set", and `ask_owner` returns every refusal as text on purpose. One bug
+wearing three coats: a second `ask_owner` in one message (the loop finishes its round before
+honouring a halt) showed a question the ledger never held; an ask refused on a closed thread
+drew a live block on a thread the server was not waiting on; and a step written before the
+echo fell silently to the positional fallback the third round had just proved fatal. *What to
+carry into R4: when a fix adds the field that means "this is real", make the SELECTION read
+that field too — otherwise the renderer is right and the row it renders is not.* The same
+round measured the two "byte-identical" label sanitisers and found them differing on two
+inputs of twenty-three (`/m` is not `re.MULTILINE`), found this wave's own `opacity: 0.72`
+dragging four lines under DESIGN.md's 4.5:1 floor — including the "still open" line the
+second round had added and `--text-2`, which DESIGN.md certifies as body text — and found the
+fourth stale claim about the 62-minute window, this time left in the code after the third
+round deleted it from both documents. It also found the third round's "a state the block
+cannot see" to be a defect renamed rather than a state: the give-up branch is that state, and
+it now un-sends the exchange that never left the device (I7). **O15 and O16 remain neither
+decided nor built.**
 
 *I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
 `ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:

@@ -38,7 +38,12 @@ const STILL_OPEN = "still open — not answered in your reply";
  * settled row may claim is derived from the wire, and a test that hands the component a
  * shape the wire cannot produce pins nothing about what the owner sees. */
 function block(
-  over: { answers?: Record<string, string>; reply?: string; questions?: typeof QUESTIONS } = {},
+  over: {
+    answers?: Record<string, string>;
+    reply?: string;
+    questions?: typeof QUESTIONS;
+    readOnly?: boolean;
+  } = {},
 ) {
   const onAnswer = vi.fn();
   const qs = over.questions ?? QUESTIONS;
@@ -48,6 +53,7 @@ function block(
       answers={over.reply === undefined ? (over.answers ?? {}) : sentAnswers(qs, over.reply)}
       onAnswer={onAnswer}
       sent={over.reply === undefined ? null : sentOutcomes(qs, over.reply)}
+      readOnly={over.readOnly ?? false}
     />,
   );
   return onAnswer;
@@ -231,5 +237,35 @@ describe("the block cannot start a turn", () => {
     for (const b of container.querySelectorAll("button")) {
       expect(b).toHaveAttribute("type", "button");
     }
+  });
+});
+
+// R3f's fourth review, finding 2 — the deploy window. The questions are real and their ids
+// are not: an answer posted against a positional stand-in names no open question, `_pair`
+// drops it, and the set is consumed anyway. So the block shows and offers nothing.
+describe("a block whose ids the ledger never held", () => {
+  it("shows every question and no way to answer it here", () => {
+    block({ questions: THREE, readOnly: true });
+    expect(screen.getByText("What's the medication called?")).toBeInTheDocument();
+    expect(screen.getByText("Which Dr. Chen?")).toBeInTheDocument();
+    expect(screen.getByText("What dose?")).toBeInTheDocument();
+    // Nothing to tap and nothing to type — not disabled controls, which would invite a tap
+    // that cannot work.
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  });
+
+  it("says where the answer goes, and the header does not promise a send", () => {
+    block({ questions: THREE, readOnly: true });
+    expect(screen.getByText("3 questions · answer in your reply")).toBeInTheDocument();
+    expect(screen.getByText(/answer the first question above/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing here sends/)).not.toBeInTheDocument();
+  });
+
+  it("is a LIVE state only — a frozen block reads its outcomes as usual", () => {
+    const reply = ownerTurnText("amlodipine", THREE, {});
+    block({ questions: THREE, reply, readOnly: true });
+    expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
+    expect(screen.getAllByText(STILL_OPEN)).toHaveLength(2);
   });
 });

@@ -269,11 +269,19 @@ async def test_a_second_ask_is_refused_while_the_first_set_is_open(
 
     second = await handler(_ask(DOSE), _ctx(owner, session_id))
 
-    assert not isinstance(second, ToolOutput)  # no halt: the turn was not ended again
+    assert isinstance(second, ToolOutput)
+    assert second.halt is None  # the turn was not ended again
     assert "already waiting" in second
     assert "2 questions" in second
     assert QUESTION in second
     assert len(await _ledger(maker, owner, session_id)) == 1
+    # And the STEP it leaves carries the set the ledger holds, not the question this call
+    # made up (R3f's fourth review, finding 1). The block is built from an `ask_owner`
+    # step; a refusal that echoed nothing left the model's own second question there.
+    (row,) = await _ledger(maker, owner, session_id)
+    assert second.recorded_args is not None
+    assert [q["id"] for q in second.recorded_args["questions"]] == _ids(row)
+    assert [q["question"] for q in second.recorded_args["questions"]] == [QUESTION, COACH]
 
 
 async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
@@ -285,7 +293,12 @@ async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
 
     out = await handler(_ask("   "), _ctx(owner, session_id))
 
-    assert not isinstance(out, ToolOutput)
+    assert isinstance(out, ToolOutput)
+    assert out.halt is None
+    # It recorded NOTHING, and the step says so rather than keeping the model's arguments:
+    # an empty record is the one shape the PWA can tell apart from a step written before
+    # the echo existed (`asked.askStep`), and it draws no block at all.
+    assert out.recorded_args == {"questions": []}
     assert await _ledger(maker, owner, session_id) == []
     state, _ = await _state(maker, owner, session_id)
     assert state == "running"
@@ -305,6 +318,34 @@ async def test_outside_a_note_conversation_it_refuses_in_words(
     assert "only inside a note's conversation" in await handler(
         _ask(QUESTION), _ctx(owner, orphan.id)
     )
+
+
+async def test_an_ask_on_a_closed_thread_records_nothing_and_says_so(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's fourth review, finding 3. `settled`/`failed` are terminal, so the state flip
+    raises and the ledger row rolls back with it — the conversation holds nothing and the
+    server is not waiting on anyone. The refusal reaches the model as text (a raised
+    exception would teach it nothing), and it used to reach the TRANSCRIPT as the model's
+    raw questions: the PWA then drew a live question block, with an answer field, on a
+    thread whose reply path would file the words nowhere. An empty record draws nothing."""
+    note_id = await _note(maker, owner)
+    # Opened live and settled the way a finished pass settles it — a conversation cannot be
+    # opened into a terminal state (it would release a note it never read).
+    session_id = await _conversation(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, session_id, "settled")
+    handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
+
+    out = await handler(_ask(QUESTION), _ctx(owner, session_id))
+
+    assert isinstance(out, ToolOutput)
+    assert out.halt is None
+    assert "NOT waiting on anyone" in out
+    assert out.recorded_args == {"questions": []}
+    assert await _ledger(maker, owner, session_id) == []
+    state, _ = await _state(maker, owner, session_id)
+    assert state == "settled"
 
 
 async def test_a_waiting_conversation_cannot_be_settled(
@@ -1410,6 +1451,83 @@ async def test_the_ids_the_pwa_posts_are_the_ids_the_ledger_holds(
     assert reply.dropped == []
     assert reply.unanswered == []
     assert await _blocks(maker, owner, note_id) == reply.answered
+
+
+async def test_two_asks_in_one_message_leave_the_pwa_the_set_the_ledger_holds(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's fourth review, finding 1, driven rather than described.
+
+    `AgentLoop` finishes the round it is in before it honours a halt (it iterates
+    `turn.tool_calls` and stops after), so a model that emits TWO `ask_owner` calls in one
+    message runs the second one after the first has already ended the turn. The second hits
+    the already-waiting latch — a refusal, and `_dispatch` marks every returned string
+    `is_error=False`, so its step is `ok: true` like any other.
+
+    That is the step the PWA used to build the block from (last succeeded ask wins), and it
+    carried the model's raw second question: the owner was shown a question the ledger had
+    never held while the two real ones were invisible, and a tap posted an id `_pair`
+    dropped. Both halves are fixed and both are asserted here — the refusal echoes the OPEN
+    set, so every ask step on this turn names the questions the ledger holds, with its ids.
+    """
+    note_id = await _note(maker, owner)
+    fake = FakeLlmClient(
+        turns=[
+            LlmTurn(
+                "",
+                (
+                    ToolCall("c1", ASK_OWNER_TOOL, _ask(QUESTION, COACH)),
+                    ToolCall("c2", ASK_OWNER_TOOL, _ask(DOSE)),
+                ),
+                "tool_use",
+                LlmUsage(10, 3),
+            )
+        ]
+    )
+    transcript = AgentTranscript(maker)
+    runner = NoteConverseRunner(
+        maker,
+        notes=SqlNotesRepo(maker),
+        sessions=AgentSessionRepo(maker),
+        runlog=AgentRunLog(maker),
+        transcript=transcript,
+        executor=LoopTurnExecutor(
+            LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}),
+            note_registry(TOOLS_DIR, build_ask_owner_handlers(maker)),
+        ),
+        owner_principal_id=_const(owner.principal_id),
+    )
+    await runner.note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid FROM app.note_conversations"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+        ).one()
+    session_id = row.sid
+
+    steps = [
+        step
+        for turn in await transcript.load(owner, session_id)
+        for step in turn.tools
+        if step.get("name") == ASK_OWNER_TOOL and step.get("ok") is True
+    ]
+    # BOTH calls ran, and both look succeeded — which is exactly why `ok` was never the
+    # signal to select on.
+    assert len(steps) == 2
+    assert DOSE not in str(steps)
+    # One ledger row: the second ask was refused, not recorded.
+    assert len(await _ledger(maker, owner, session_id)) == 1
+    async with scoped_session(maker, owner) as s:
+        open_set = await open_questions(s, NoteConversationRepo(), session_id)
+    for step in steps:
+        posted = questions_from_args(step.get("args"))
+        assert [(q.id, q.question) for q in posted] == [(q.id, q.question) for q in open_set]
 
 
 async def test_two_overlapping_replies_and_exactly_one_claims_the_set(

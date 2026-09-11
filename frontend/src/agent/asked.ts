@@ -209,15 +209,19 @@ export interface TurnAsk {
  *   landed, and the agent re-asked. (The latch now echoes the REAL open set too, so this
  *   step is trustworthy when it does win; this filter is what makes the block right
  *   whether or not it does.)
- * - **An ask refused on a `settled`/`failed` thread.** Nothing was recorded, the server is
- *   not waiting, and the block must not offer to answer. No ids, no block.
+ * - **An ask refused on a `settled`/`failed` thread.** Its ledger row rolled back with the
+ *   state flip, so nothing is recorded and the server is waiting on nobody — the block must
+ *   not offer to answer. Its record is empty, so no block is drawn at all.
  * - **A step persisted BEFORE the id echo shipped.** Detected rather than silently falling
  *   through to the positional fallback — see `TurnAsk.answerable`.
  *
- * The deploy-window fallback is the last succeeded ask, and it is reachable only because
+ * The deploy-window fallback is the last succeeded ask, and it is sound only because
  * `asktools` echoes an EMPTY record (`{"questions": []}`) from every refusal path: a
- * refusal therefore lands here as a step with no questions, not as one with the model's
- * raw ones. The day that echo is older than every waiting thread, both halves go. */
+ * refusal therefore lands here as a step with no questions rather than one with the model's
+ * raw ones, which is what keeps "refused" and "written before the echo" apart. The one
+ * shape that stays ambiguous is a refusal persisted BEFORE the echo, and read-only is the
+ * safe side of it: questions shown, nothing postable. The day the echo is older than every
+ * `waiting_on_owner` thread, this branch and that empty record both go. */
 export function askStep(message: TranscriptMessage): TurnAsk {
   const asks = message.tools.filter((t) => t.name === "ask_owner" && t.ok === true);
   const recorded = asks.filter((t) => recordsIds(t.args));
