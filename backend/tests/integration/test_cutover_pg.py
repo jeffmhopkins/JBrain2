@@ -93,9 +93,11 @@ async def _integrate_jobs(maker, note_id: str) -> int:  # noqa: F811
         ).scalar_one()
 
 
-async def test_has_active_analysis_detects_the_integrate_job(maker) -> None:  # noqa: F811
+async def test_has_active_analysis_detects_the_note_conversation_job(maker) -> None:  # noqa: F811
+    # Its subject moved with the producer in R4: every caller asked about the
+    # `integrate_note` twin it was about to enqueue, and that kind no longer exists.
     note = await _seed_note(maker, created="2026-01-01T00:00:00+00:00")
-    await _seed_job(maker, "integrate_note", note)
+    await _seed_job(maker, "note_converse", note)
     assert await queue.has_active_analysis(maker, OWNER, note) is True
     other = await _seed_note(maker, created="2026-01-01T00:00:00+00:00")
     assert await queue.has_active_analysis(maker, OWNER, other) is False
