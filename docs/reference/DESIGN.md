@@ -1491,8 +1491,13 @@ There is no bespoke ingest view and no second idiom for the same information.
 - **The question block is INERT.** When a pass ends on a question set, the answer bubble is
   followed by one row per question carrying what it blocks, the question in plain words, and
   its answer affordance — tappable candidates where the resolver had them, a field where it
-  did not. It renders under the turn and across the FULL column, not inside the 80%-wide
-  bubble — the same placement the sub-agent fan takes, for the same reason. **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
+  did not, and on a candidate row BOTH: **"Something else"** reveals the same field, so a
+  candidate the model's own prose lost is still answerable in words. It renders under the
+  turn and across the full column, OUTSIDE the bubble — the same placement the sub-agent
+  fan takes, and for the same reason: it is its own object rather than part of the answer's
+  prose, and a ruled block inside the bubble's own border is a frame in a frame. (Not for
+  room: an AI bubble is already full width; the 80% cap is on the owner's own bubble.)
+  **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
   flips a conversation state, and a chosen candidate unpicks on a second tap. This is a
   deliberate exception to the inline-component rule below, where `InlineProposal` posts its
   own outcome: there the enact IS the event, here three answers that each posted would cost

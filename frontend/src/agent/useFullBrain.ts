@@ -821,8 +821,16 @@ export function useFullBrain(
     // The block is spent the moment its answers are on a turn: it freezes behind the new
     // user bubble (it is no longer the last message), and the draft it held is gone so a
     // second send cannot re-post the same answers against a set that is now closed.
+    //
+    // Spent, but not thrown away. A turn that reaches the server not at all left the block
+    // frozen-and-answered with the draft gone (R3f's review, finding 7), so the owner
+    // re-tapped three candidates against a block claiming he had already answered. The
+    // snapshot rides the turn and comes back if it settles as an error — and the server
+    // holds no user turn for a POST that never landed, so reopening the thread replays the
+    // ask as the last message, re-arms the block, and finds his answers still in it.
+    const spent = answers.length > 0 ? draft : undefined;
     if (answers.length > 0) clearAnswers(turnSessionId);
-    void runTurn(body, controller, turnSessionId, baseline);
+    void runTurn(body, controller, turnSessionId, baseline, undefined, 0, spent);
     return true;
   }
 
@@ -842,6 +850,8 @@ export function useFullBrain(
     // Reattach mode: the absolute frame offset the seeded snapshot already covers, so the
     // resumed stream picks up AFTER it — no replaying (or missing) a frame. 0 for a fresh POST.
     resumeAfter = 0,
+    // The question-block draft this turn spent, to hand back if the turn reaches nothing.
+    spentAnswers?: Readonly<Record<string, string>>,
   ): Promise<void> {
     // How many SERVER frames we've folded — the offset a reconnect resumes from. Seeded from
     // the reattach snapshot's frame offset (0 for a fresh POST). The synthetic `run` event is
@@ -933,7 +943,18 @@ export function useFullBrain(
         }
         if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
       }
-      if (!recovered) setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+      if (!recovered) {
+        setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+        // The one outcome that means the turn reached nothing: no live run to ride and no
+        // persisted exchange for the whole recovery window. Give the answers back, under
+        // anything typed into the block since, so a retry does not start from blank.
+        if (spentAnswers) {
+          setAnswerDrafts((prev) => ({
+            ...prev,
+            [turnSessionId]: { ...spentAnswers, ...(prev[turnSessionId] ?? {}) },
+          }));
+        }
+      }
     };
     try {
       if (resumeRunId) {

@@ -1214,12 +1214,15 @@ function Bubble({
   // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
   // down and the persisted `subagent_synthesis` roster card (rendered with the answer's
   // views) takes its place — so a finished fan looks the same live as it does on reopen.
-  // The block sits directly under the turn it belongs to, but OUTSIDE the bubble and
-  // across the full column — the same placement the sub-agent fan takes, and for the same
-  // reason: a bubble is capped at 80% of a phone's width, which is not enough room for
-  // three questions and their candidates. Only this render path carries it; the
-  // image-split and analysis-card paths belong to tools a note conversation's tool set
-  // does not hold, so a question can never land in one.
+  // The block sits directly under the turn it belongs to, but OUTSIDE the bubble — the
+  // same placement the sub-agent fan takes, and for the same reason: it is its OWN
+  // object, not part of the answer's prose. It is interactive where the bubble is read,
+  // it freezes on its own, and drawing an amber-ruled block inside the bubble's own
+  // border would be a frame inside a frame. Width is NOT the reason (R3f's review,
+  // finding 3): `.fb-shell .bubble.ai` is already `max-width: 100%` — the 80% cap is on
+  // the owner's own bubble. Only this render path carries the block; the image-split and
+  // analysis-card paths belong to tools a note conversation's tool set does not hold, so
+  // a question can never land in one.
   const questionBlock = ask ? (
     <QuestionBlock
       questions={ask.questions}

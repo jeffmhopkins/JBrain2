@@ -29,7 +29,18 @@
  * header quotes its own closing marker ("…the line [END CAPTURED NOTE #…]…"), so the
  * bracket that ends it is the LAST one on the line. */
 const OPEN = /^\[CAPTURED NOTE #([0-9a-f]{4,}) — [^\n]*\]\n/;
-const CAPTURED = /^\[captured ([^\n\]]*)\]\n/;
+/** The optional capture line, matched on its CONTENT and not only its label.
+ *
+ * `framed_note` emits this line only when it has a capture time, and its default is
+ * `captured=""` — so on a frame with no time, a note whose own first line happens to read
+ * `[captured on my phone]` would have been eaten as scaffolding and never shown to the
+ * owner (R3f's review, finding 11). Unreachable through the shipped caller, because
+ * `converse.capture_line` always returns a time, but that is a property of one call site
+ * rather than of this function. `capture_line` renders `%A, %B %d, %Y, %H:%M` on both of
+ * its branches, so requiring the `YYYY, HH:MM` tail is the producer's own shape — and a
+ * line that does not match stays visible as what it is, which is the same
+ * honest-but-ugly direction the nonce check fails in. */
+const CAPTURED = /^\[captured ([^\n\]]*\d{4}, \d{2}:\d{2}[^\n\]]*)\]\n/;
 
 export interface UnframedNote {
   /** The note's own text, exactly as the owner wrote it. */

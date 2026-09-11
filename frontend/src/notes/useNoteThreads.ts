@@ -15,7 +15,7 @@
 // What the join costs is one request beside the stream's own poll, and what it buys is
 // that the chip and the notes tab cannot disagree about what is waiting.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { onForegroundSignals } from "../visibility";
 
@@ -30,9 +30,13 @@ export interface NoteThread {
   questions: number;
 }
 
-/** Keyed by note id. Empty until the first load resolves, and empty again if the route
- * fails: a stream that silently shows no chip is the shipped behaviour, where an error
- * state on every row would be the loudest thing on the screen. */
+/** Keyed by note id. Empty until the FIRST load resolves — a stream that silently shows
+ * no chip is the shipped behaviour, where an error state on every row would be the
+ * loudest thing on the screen. After that the last good value STANDS through a failure
+ * (R3f's review, finding 8): blanking it on one transient 500 took every ask chip off the
+ * stream for up to a poll, and the chip is the only route to the thread, so the owner's
+ * question simply disappeared until it came back. A stale chip that opens a settled
+ * thread is a far smaller wrong than a question with no door. */
 export type NoteThreads = ReadonlyMap<string, NoteThread>;
 
 const EMPTY: NoteThreads = new Map();
@@ -43,8 +47,13 @@ const POLL_MS = 20_000;
 
 export function useNoteThreads(enabled: boolean): NoteThreads {
   const [threads, setThreads] = useState<NoteThreads>(EMPTY);
+  // Which load is the newest. The poll, the foreground catch-up and the mount tick can
+  // all be in flight at once, and they resolve in whatever order the network gives back;
+  // without this a slow early load lands after a fast later one and the chips go stale.
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = (generation.current += 1);
     try {
       const { items } = await api.notesInbox();
       const next = new Map<string, NoteThread>();
@@ -59,9 +68,10 @@ export function useNoteThreads(enabled: boolean): NoteThreads {
           questions: row.asks.length,
         });
       }
-      setThreads(next);
+      if (mine === generation.current) setThreads(next);
     } catch {
-      setThreads(EMPTY);
+      // Keep the last good value. The next tick is 20 s away at worst, and the route
+      // failing says nothing about whether a thread is still waiting.
     }
   }, []);
 

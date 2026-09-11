@@ -27385,8 +27385,9 @@ button.wf-sigpill {
 .fb-shell .fb-qblock {
   display: flex;
   flex-direction: column;
-  /* Full column, not the bubble's 80%: three questions and their candidates do not fit
-     in a phone-width bubble. It sits under the turn it belongs to, like the fan. */
+  /* Its own frame under the turn, like the sub-agent fan — stretched to the column
+     because it is a separate object, not because the bubble is narrow: `.bubble.ai` is
+     already `max-width: 100%` and only `.bubble.me` keeps the 80% cap. */
   align-self: stretch;
   margin-top: -2px;
   padding: 10px 12px;

@@ -2,13 +2,19 @@
 // docs/mocks/agent-ingest-thread/note-thread.html): turn 0 with its fence off, the
 // question block, and the ONE send that carries every answer as one turn.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FullBrainSurface } from "./FullBrainSurface";
 import { answeredCount } from "./asked";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
+
+/** `useFullBrain`'s RECONCILE_TIMEOUT_MS plus a tick — how long the detached-turn
+ * recovery keeps trying before it calls the turn an error. Spelled here rather than
+ * exported: the hook's constant is private, and a test that reached for it would be
+ * asserting the number rather than the behaviour behind it. */
+const RECONCILE_WINDOW_MS = 3_720_000 + 5_000;
 
 const NONCE = "a1b2c3d4e5f60718";
 const NOTE =
@@ -122,6 +128,9 @@ function Thread({ d }: { d: FullBrainDeps }) {
           {answered} of {fb.openQuestions.length} answered
         </output>
       )}
+      {/* The draft itself, which the carry strip cannot show once the block is no longer
+          the last message — what finding 7 is about. */}
+      <output data-testid="draft">{JSON.stringify(fb.answers)}</output>
       <button
         type="button"
         onClick={() => {
@@ -298,6 +307,44 @@ describe("the reply turn", () => {
     await waitFor(() => expect(document.querySelector(".fb-qblock-done")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Dr\. Alice Chen/ })).toBeDisabled();
     expect(screen.queryByTestId("carry")).not.toBeInTheDocument();
+  });
+
+  // R3f's review, finding 7. The draft is cleared the moment the turn starts, so a turn
+  // that reached the server NOT AT ALL left the block frozen-and-answered with the
+  // answers gone — the owner re-tapping three candidates against a block that claims he
+  // has already answered. The server holds no user turn for a POST that never landed, so
+  // reopening the thread re-arms the block; what has to survive until then is the draft.
+  it("hands the answers back when the turn reaches nothing at all", async () => {
+    const chat = vi.fn(
+      // biome-ignore lint/correctness/useYield: the generator throws before it yields
+      async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {
+        throw new Error("offline");
+      },
+    );
+    await openThread(deps({ chat }));
+    fireEvent.change(screen.getByLabelText("What's the medication called?"), {
+      target: { value: "amlodipine" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Dr\. Ray Chen/ }));
+    // `shouldAdvanceTime` so the real-time waits below still settle while the recovery
+    // loop's own 3 s sleeps are under this test's control.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "send" }));
+      await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+      // Spent while the turn is in flight, so a second send cannot re-post the same set.
+      await waitFor(() => expect(screen.getByTestId("draft")).toHaveTextContent("{}"));
+      // The recovery window closes with no live run to ride and nothing persisted.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RECONCILE_WINDOW_MS);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(JSON.parse(screen.getByTestId("draft").textContent ?? "{}")).toEqual({
+      q1: "amlodipine",
+      q2: "Dr. Ray Chen",
+    });
   });
 
   it("does not send an untouched block — an empty answer list behaves as before", async () => {

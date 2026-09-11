@@ -35,10 +35,23 @@ describe("unframeNote", () => {
     expect(unframeNote(frame(body))?.body).toBe(body);
   });
 
+  // The producer's real shape, `%A, %B %d, %Y, %H:%M` plus the zone
+  // (`converse.capture_line`), not an abbreviation of it.
   it("carries the capture line out of the frame", () => {
-    const out = unframeNote(frame("bins out", "0123456789abcdef", "Tuesday, 21:14 (UTC-07:00)"));
-    expect(out?.captured).toBe("Tuesday, 21:14 (UTC-07:00)");
+    const when = "Tuesday, September 09, 2026, 21:14 (UTC-07:00)";
+    const out = unframeNote(frame("bins out", "0123456789abcdef", when));
+    expect(out?.captured).toBe(when);
     expect(out?.body).toBe("bins out");
+  });
+
+  // R3f's review, finding 11. `framed_note` omits the line entirely when it has no time
+  // (its `captured` default is ""), so a body whose FIRST line wears the same label would
+  // have been eaten as scaffolding and never shown. Matching the producer's timestamp
+  // shape leaves it visible as what it is — the note's own words.
+  it("leaves a note's own [captured …] first line in the body", () => {
+    const out = unframeNote(frame("[captured on my phone]\nbins out"));
+    expect(out?.captured).toBe("");
+    expect(out?.body).toBe("[captured on my phone]\nbins out");
   });
 
   it("leaves an ordinary user turn alone", () => {
