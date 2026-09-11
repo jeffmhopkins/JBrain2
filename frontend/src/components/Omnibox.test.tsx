@@ -40,6 +40,38 @@ describe("Omnibox", () => {
     expect(onConsumeDraft).toHaveBeenCalled();
   });
 
+  // R3f's fifth review, finding 5. The seam has two writers — a calendar handoff and the
+  // typed half of a note-thread send that reached nothing — and the second fires while the
+  // box is LIVE (the composer is never disabled during a turn, only send becomes Stop). An
+  // unconditional `setText` therefore deleted whatever the owner had typed while waiting.
+  it("seeds ABOVE what is already typed rather than over it", () => {
+    const onConsumeDraft = vi.fn();
+    const { rerender } = render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onConsumeDraft={onConsumeDraft}
+      />,
+    );
+    const box = screen.getByLabelText("Composer") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "a new thought" } });
+    rerender(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        draft="the words that never left"
+        onConsumeDraft={onConsumeDraft}
+      />,
+    );
+    expect(box.value).toBe("the words that never left\n\na new thought");
+  });
+
   it("shows the appointment pill and clears it on tap", () => {
     const onClearApptRef = vi.fn();
     render(

@@ -400,7 +400,14 @@ export function HomeScreen({
         // calendar handoff — the block takes its own half back at the same moment
         // (`useFullBrain.restoredText`). Both hand the composer words the owner still has
         // to send himself.
-        draft={pendingDraft || (conversational ? fb.restoredText : "")}
+        //
+        // ⟲ **JOINED, not `||`** (R3f's fifth review, finding 5). With two writers on one
+        // seam and one consume, `a || b` masked `b` — and `consumeDraft` then cleared both,
+        // so a restore that landed in the same render as a calendar handoff was dropped
+        // without ever reaching the box. Restored words first: they are the older ones.
+        draft={[conversational ? fb.restoredText : "", pendingDraft]
+          .filter((t) => t !== "")
+          .join("\n\n")}
         onConsumeDraft={consumeDraft}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}

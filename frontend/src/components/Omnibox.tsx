@@ -82,7 +82,9 @@ interface OmniboxProps {
   /** Per-segment label overrides. The active research-mode tab reads "Teacher"
    * while a Teacher session is open, otherwise the mode's own label stands. */
   labels?: Partial<Record<Mode, string>> | undefined;
-  /** Text to seed the composer with (e.g. a calendar "reschedule" handoff). */
+  /** Text to seed the composer with — a calendar "reschedule" handoff, or the typed half
+   * of a note-thread send that reached nothing. Seeded ABOVE anything already typed rather
+   * than over it; the seam has two writers and neither may discard the other's words. */
   draft?: string;
   onConsumeDraft?: () => void;
   /** A calendar handoff's appointment, shown as a removable pill in the attach
@@ -162,9 +164,18 @@ export function Omnibox({
 
   // A handoff (e.g. the calendar's "reschedule") seeds the composer once, then
   // clears so a re-render can't re-seed; the owner reviews and sends themselves.
+  //
+  // ⟲ **It used to `setText(draft)` outright, which DELETED whatever was typed** (R3f's
+  // fifth review, finding 5). That was survivable while the only writer was a calendar tap
+  // the owner had just made; the second writer is a note-thread send that reached nothing
+  // (`useFullBrain.restoredText`), and it fires while the box is live — the composer is
+  // never disabled during a turn, only SEND becomes Stop — so anything typed while waiting
+  // was overwritten the moment the window closed, silently, by the owner's own older
+  // words. Neither half is this seam's to throw away: a handoff goes ABOVE what is already
+  // there (it is the older text in both cases, and the owner can see both and edit).
   useEffect(() => {
     if (draft) {
-      setText(draft);
+      setText((cur) => (cur.trim() === "" ? draft : `${draft}\n\n${cur}`));
       onConsumeDraft?.();
       inputRef.current?.focus();
     }
