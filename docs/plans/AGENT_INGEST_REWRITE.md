@@ -1574,9 +1574,10 @@ as its retirer. Deleting them would leave the EMR importer filing cards no settl
 retire. The producer scoping (migration 0197) now earns its keep twice over — see (7).
 
 **(6) Rows the table did not have, which die with the prompt anyway.** The `note.extract`
-EVAL — `evals/runner.py` (310), `evals/cases/*.json` (12 files, ~5,400 lines of curated
-corpus), the `backend/evals/run.py` CLI, `backend/evals/audit.py`, `scripts/prompt-eval.sh`
-and the `extract` arm of `evals/box/run_layer.py` — scores a prompt that no longer exists,
+EVAL — `evals/runner.py` (310), `evals/cases/*.json` (12 files, 6,384 lines of curated
+corpus), the `backend/evals/run.py` CLI, `backend/evals/audit.py`, `scripts/prompt-eval.sh`,
+`scripts/grok-eval.sh` (which drove the DB-mode `tests/eval/` harness, itself unlisted) and
+the `extract` arm of `evals/box/run_layer.py` — scores a prompt that no longer exists,
 exactly as `integrate_runner` does. It goes. *The corpus is the input R5's `close_reading`
 eval should be re-cut from; it is recoverable at this wave's parent commit.* Also not in
 the table and also dead with the kind: the `note.extract` / `integrate.note` LLM task
@@ -1637,18 +1638,18 @@ beside them are the repoints and the corrected prose, not new behaviour):
 
 | | removed | added |
 |---|---|---|
-| `backend/src/**/*.py` + `*.prompt` — the chain, its prompts, its modules | 3,388 | 339 |
+| `backend/src/**/*.py` + `*.prompt` — the chain, its prompts, its modules | 3,388 | 377 |
 | `backend/src/jbrain/evals/{cases,integrate_cases}/*.json` — the two eval corpora | 6,491 | 0 |
-| `backend/evals/` + `scripts/prompt-eval.sh` — the CLIs and the box layer | 353 | 34 |
-| `backend/tests/` — the deleted producer's specs, and the repoints | 12,211 | 857 |
+| `backend/evals/` + `scripts/{prompt-eval,grok-eval}.sh` — the CLIs and the box layer | 368 | 36 |
+| `backend/tests/` — the deleted producer's specs, and the repoints | 12,375 | 1,089 |
 | `backend/migrations/` — 0200 | 0 | 110 |
-| **total** | **22,443** | **1,340** |
+| **total** | **22,622** | **1,612** |
 
 Against the table's ~3,825 for `src/`: the CODE came in at 3,388 — close, once the card
 machinery's zero and `trace.py` / `parse_extraction` staying are netted against the eval
 runners and the prompt/route/setting rows the table omitted. The eval CORPORA (6,491 lines
 of curated JSON) are the single largest block and appear nowhere in it. And the test
-figure is 12,211 against ~7,352, because `test_extraction_pg.py` and
+figure is 12,375 against ~7,352, because `test_extraction_pg.py` and
 `test_apply_intent_pg.py` were bigger than the table's count and because
 `tests/eval/` — a whole DB-mode eval harness for the same producer — was not listed
 at all.
@@ -2742,8 +2743,8 @@ see §4's ⟲ (7) for what that means for the analyzer's open cards, and (4) for
 machinery was already closed by gating rather than deletion.
 
 *What R4 actually deleted, and the two things it had to ADD to avoid deleting more than it
-meant to,* are §4's corrections: the measured figure is 22,443 lines removed (3,388 of `src/` CODE,
-6,491 of eval corpora, 12,211 of tests), the corpora the table omitted are its single
+meant to,* are §4's corrections: the measured figure is 22,622 lines removed (3,388 of `src/` CODE,
+6,491 of eval corpora, 12,375 of tests), the corpora the table omitted are its single
 largest block, and two capability losses
 the wave would have caused silently — machine-read attachment text reaching no reader at
 all, and the durable predicate-alias collapse losing its last caller — are closed in the
