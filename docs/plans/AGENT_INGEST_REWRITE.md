@@ -1761,6 +1761,22 @@ and files nothing". True of a sequential second reply only.** `set_state`'s UPDA
 and two overlapping replies both won it. The claim is now a conditional UPDATE of its own
 (`claim_waiting`); the wave's decision is unchanged, the argument for it is not. See I8.
 
+⟲ **Three more defects the same review found, all shipped fixed on top of R1c.** (1) The
+per-field cap was counted in SOURCE characters against a ledger cap counted in SERIALIZED
+ones, so a question of 800 quotes, 800 CJK characters or 800 emoji — each inside the
+sidecar's own schema — degraded the whole `args` blob to its key names: a `waiting_on_owner`
+thread with no readable question, whose owner's answer then filed nothing and told the agent
+nothing. The set is now measured as exactly the blob that will be recorded and shrunk to fit
+(context first, the question text last, never by dropping a question). (2) `open_questions`
+fell through an empty newest ask to an OLDER, already-answered set — reachable from (1), and
+it pairs the owner's prose with a question that closed; it now takes the newest succeeded row
+and whatever it parses to, and `notes_inbox` gained the `t.ok` filter so the tab and the reply
+path cannot read different sets. (3) A structured answer had no durable home: on the
+answers-only send `message` is blank, so a failed append or a soft-deleted note lost the
+owner's tapped answers entirely. `clarify.owner_turn_text` now renders them into the turn's
+own text for the transcript and the model — §3b I7's own shape, the prose being the RENDERING
+of the turn — and `owner_reply_notice` tells the agent when they did not reach the note.
+
 *What a later wave can remove:* `questions_from_args` reads the PRE-BATCH ledger shape
 (`args["question"]`, a bare string) and synthesizes a positional id for it. That is a
 **deploy-window fallback**: the box is live, so a thread could be sitting in
