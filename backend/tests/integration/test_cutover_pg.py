@@ -78,11 +78,14 @@ async def _seed_job(maker, kind: str, note_id: str, *, status: str = "queued") -
 
 
 async def _integrate_jobs(maker, note_id: str) -> int:  # noqa: F811
+    """The note's queued graph-producer jobs. `note_converse` since R3: the conversation
+    is what writes `integration_state` now, so it is what the reconciler re-enqueues from
+    it."""
     async with scoped_session(maker, OWNER) as s:
         return (
             await s.execute(
                 text(
-                    "SELECT count(*) FROM app.jobs WHERE kind = 'integrate_note'"
+                    "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
                     " AND payload->>'note_id' = :n"
                 ),
                 {"n": note_id},
@@ -104,7 +107,7 @@ async def test_backfill_pending_integration_bounded_oldest_first_and_skips(maker
     n_new = await _seed_note(maker, created="2026-03-01T00:00:00+00:00")
     n_done = await _seed_note(maker, integrated=True, created="2025-01-01T00:00:00+00:00")
     n_busy = await _seed_note(maker, created="2025-06-01T00:00:00+00:00")
-    await _seed_job(maker, "integrate_note", n_busy)  # active job → skip (no second job)
+    await _seed_job(maker, "note_converse", n_busy)  # active job → skip (no second job)
     n_pending = await _seed_note(maker, indexed=False, created="2025-01-01T00:00:00+00:00")
 
     # Bounded: only the two oldest eligible (old, mid) — not new, integrated,
@@ -120,7 +123,7 @@ async def test_backfill_pending_integration_bounded_oldest_first_and_skips(maker
     assert await _integrate_jobs(maker, n_pending) == 0
 
     # Second pass drains the remainder (n_new) but never re-enqueues a note that
-    # now has an active integrate_note job (old, mid).
+    # now has an active note_converse job (old, mid).
     again = await queue.backfill_pending_integration(maker, OWNER, limit=100)
     assert again == 1
     assert await _integrate_jobs(maker, n_new) == 1

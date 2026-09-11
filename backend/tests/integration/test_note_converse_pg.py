@@ -35,6 +35,7 @@ What each test is defending:
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain import queue
 from jbrain.agent.agents import (
     NOTE_GRAPH_WRITE_TOOLS,
     NOTE_INGEST_ON_REPLY_TOOLS,
@@ -370,8 +372,11 @@ async def test_a_note_a_stranger_wrote_runs_the_unattended_pass_on_the_third_par
     profile = executor.profiles[0]
     assert profile.tools == NOTE_INGEST_THIRD_PARTY_TOOLS
     assert "ask_owner" not in (profile.tools or frozenset())
-    # The write path is untouched — D10 is "unrestricted in WHAT it may write".
-    assert {"resolve_entity", "assert_fact"} <= (profile.tools or frozenset())
+    # The write path is untouched — D10 is "unrestricted in WHAT it may write". Two verbs
+    # and not three since R3: this set is derived from the unattended one, which now holds
+    # a single fact verb so no pass can write a fact its own closing reading omits.
+    assert {"resolve_entity", "close_reading"} <= (profile.tools or frozenset())
+    assert "assert_fact" not in (profile.tools or frozenset())
     # Still the closed allowlist, never the curator wildcard (D16).
     assert profile.tools is not None and profile.extra_tools == frozenset()
 
@@ -964,27 +969,24 @@ async def test_an_owner_with_no_standing_instructions_pays_nothing(
     assert turn.profiles[0].prompt == agent_for(NOTE_CONVERSE_AGENT).prompt
 
 
-async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
+async def test_a_finished_pass_flips_the_note_and_stamps_only_what_it_read(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The W5a gate, pinned: `settled` is the CONVERSATION's state, never the note's.
+    """`settled` is the CONVERSATION's state; `integrated` is the NOTE's — and since R3
+    this pass writes both, in that order and from two different places.
 
-    S2 gave the conversation the settle's TAIL and this test SURVIVED it, which is the
-    point of keeping it. The pass now ends by calling `settle_tail`, so its writes finally
-    project (`analysis/clarify.settle_conversation`, and the runner above is wired with a
-    real pipeline so that call genuinely runs here). It calls no `sweep_note` — a sweep
-    for this producer was built and dropped (SETTLE_OWNERSHIP.md S3) — and no
-    `stamp_analysis`, because the conversation has no title or tags verb and the stamp's
-    `on_conflict_do_update` is unconditional; and nothing anywhere flips
-    `integration_state`, which `integrate_note` still owns alone.
+    The state comes off `state_for_stop` and gates the settle. The flip is the terminal
+    block's own step (`_mark_integrated`) and fires on EVERY pass ending, because the
+    column has never meant "the graph is complete" — the analyzer flips it even on a
+    rejected plan — only *the note's graph producer ran to completion on it*. It has to
+    move here with the producer: `queue.backfill_pending_integration` re-enqueues
+    `note_converse` from `integration_state <> 'integrated'` now, so a pass that ended
+    without flipping would be re-opened as a new thread every five minutes.
 
-    Both remaining absences are UNOWNED preconditions of retiring `integrate_note`
-    (docs/plans/SETTLE_OWNERSHIP.md, preconditions 3 and 4), not oversights: a title has
-    no second source yet, and a thread that can park on `ask_owner` for days cannot be
-    what declares a note integrated. So this asserts an ABSENCE on purpose. Retiring
-    `integrate_note` while it holds strands the corpus at `pending_integration`, which
-    `backfill_pending_integration` and the workflow reconciler both key on.
-    """
+    The `note_analysis` row is the other half and is NOT unconditional: this turn is
+    faked and calls no tool, so it closed no reading, and a pass with no reading has no
+    title to stamp and nothing to sweep. A pass that DOES close one stamps — that is
+    `tests/integration/test_conversation_settle_pg.py`."""
     note_id = await _note(maker, owner, "Kaiya started a new medication today.")
 
     await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
@@ -1005,8 +1007,80 @@ async def test_a_finished_pass_settles_the_conversation_and_not_the_note(
                 {"n": note_id},
             )
         ).scalar_one()
-    assert state == "pending_integration"
+    assert state == "integrated"
     assert analyzed == 0
+
+
+async def test_the_reconciler_skips_a_live_thread_and_reclaims_a_stranded_one(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`queue.backfill_pending_integration` is the conversation's dropped-event safety
+    net now, and both of its new clauses are here.
+
+    It re-enqueues `note_converse` from `integration_state <> 'integrated'`, so it needs
+    the skip `dispatcher._already_active` already applies: the handler declines a note
+    that has a live thread (`already_live`), and without the clause a thread parked on a
+    question would collect a dead job every five minutes until the owner answered.
+
+    And it RECLAIMS first, which is what keeps that skip from being permanent. A pass
+    killed mid-turn — an `Ops -> Update` quiesce is a `stop -t 30` — leaves a `running`
+    row nothing else asks about, because `reclaim_stale` is otherwise reached only
+    through `live_for_note`. After R3 this sweep is the only thing that would ask, and
+    the owner has no terminal to clear it with (CLAUDE.md #10)."""
+    note_id = await _note(maker, owner, "Kaiya started a new medication today.")
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    rows = await _conversation(maker, owner, note_id)
+    assert [r.state for r in rows] == ["settled"]
+
+    async def _eligible(state: str, age: timedelta) -> None:
+        """Put the note back in the reconciler's candidate set with its thread in
+        `state`, transitioned `age` ago."""
+        async with scoped_session(maker, owner) as s:
+            await s.execute(
+                text(
+                    "UPDATE app.notes SET ingest_state = 'indexed',"
+                    " integration_state = 'pending_integration' WHERE id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id},
+            )
+            await s.execute(
+                text(
+                    "UPDATE app.note_conversations SET state = :st,"
+                    " updated_at = now() - make_interval(secs => :age)"
+                    " WHERE note_id = CAST(:n AS uuid)"
+                ),
+                {"n": note_id, "st": state, "age": age.total_seconds()},
+            )
+
+    async def _queued() -> int:
+        async with scoped_session(maker, owner) as s:
+            return (
+                await s.execute(
+                    text(
+                        "SELECT count(*) FROM app.jobs WHERE kind = 'note_converse'"
+                        " AND payload->>'note_id' = :n"
+                    ),
+                    {"n": note_id},
+                )
+            ).scalar_one()
+
+    # A thread waiting on the owner is live however long it waits: never reaped (that
+    # would drop the question out of the notes tab), and never re-enqueued here.
+    await _eligible("waiting_on_owner", 10 * STALE_CONVERSATION)
+    await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+    assert await _queued() == 0
+
+    # A RUNNING thread inside the wall clock is a pass genuinely in flight.
+    await _eligible("running", timedelta(seconds=1))
+    await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+    assert await _queued() == 0
+
+    # Past the stale horizon it is a pass whose worker died. The reclaim fails it, and
+    # the same call then re-enqueues the note.
+    await _eligible("running", STALE_CONVERSATION + timedelta(minutes=1))
+    await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+    assert await _queued() == 1
+    assert [r.state for r in await _conversation(maker, owner, note_id)] == ["failed"]
 
 
 # --- W4c/1: the ledger records BOTH turn paths --------------------------------
