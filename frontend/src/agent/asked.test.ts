@@ -81,6 +81,27 @@ describe("parseCandidates", () => {
     expect(parseCandidates("Alice, Bob").map((c) => c.value)).toEqual(["Alice", "Bob"]);
     expect(parseCandidates("")).toEqual([]);
   });
+
+  // Measured against real model output (R3f's review, finding 4). The tool asks for
+  // commas; the model writes what it writes, and a semicolon-joined list parsed as ONE
+  // candidate — so the only tappable thing named both people, and a tap would have put
+  // that whole string into the note as the owner's answer.
+  it("splits on a top-level semicolon too", () => {
+    const out = parseCandidates("Sarah Whitfield (sister); Sarah Chen (work)");
+    expect(out.map((c) => c.label)).toEqual(["Sarah Whitfield", "Sarah Chen"]);
+    expect(out.map((c) => c.detail)).toEqual(["sister", "work"]);
+  });
+
+  // A malformed list is left alone on purpose: every repair available here invents
+  // candidates the model never wrote ("4 notes" offered as a person), and a candidate the
+  // owner taps becomes a sentence in his own note. The typed escape is what makes the
+  // unreachable candidate survivable — see QuestionBlock's "Something else".
+  it("does not invent candidates out of an unbalanced list", () => {
+    const out = parseCandidates(
+      "Dr. Alice Chen (cardiology, 4 notes, Dr. Ray Chen (paediatrics, 2 notes)",
+    );
+    expect(out).toHaveLength(1);
+  });
 });
 
 describe("askedQuestions", () => {
@@ -196,8 +217,18 @@ describe("ownerTurnText", () => {
     );
   });
 
-  it("lets typed text stand alone, as the server does", () => {
-    expect(ownerTurnText("it was Alice", qs, { q2: "Dr. Alice Chen" })).toBe("it was Alice");
+  it("lets typed text stand alone when the block answered nothing", () => {
+    expect(ownerTurnText("it was Alice", qs, {})).toBe("it was Alice");
+  });
+
+  // R3f's review, finding 1. Typed text used to win OUTRIGHT and throw the pairs away,
+  // so the designed mixed send persisted as the sentence alone — and the frozen block,
+  // which reads its answers back out of this very text, then drew "2 questions ·
+  // answered" with neither answer shown and the tapped candidate not picked.
+  it("carries BOTH halves of a mixed send, pairs first", () => {
+    expect(ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" })).toBe(
+      "Q: Which Dr. Chen?\nA: Dr. Ray Chen\n\nalso the dinner is cancelled",
+    );
   });
 });
 
@@ -206,8 +237,32 @@ describe("a frozen block's answers", () => {
 
   it("pairs back out of the reply's own text, by question and never by position", () => {
     const reply = ownerTurnText("", qs, { q1: "amlodipine", q2: "Dr. Ray Chen" });
-    expect(answersFromReply(reply).get("Which Dr. Chen?")).toBe("Dr. Ray Chen");
+    expect(answersFromReply(reply)).toContainEqual({
+      question: "Which Dr. Chen?",
+      answer: "Dr. Ray Chen",
+    });
     expect(sentAnswers(qs, reply)).toEqual({ q1: "amlodipine", q2: "Dr. Ray Chen" });
+  });
+
+  // The other half of finding 1: a mixed send's typed words are not a Q/A pair, so they
+  // are not read back as an answer — and the pairs beside them still are.
+  it("reads a mixed send's pairs back and leaves its typed words out of them", () => {
+    const reply = ownerTurnText("also the dinner is cancelled", qs, { q2: "Dr. Ray Chen" });
+    expect(sentAnswers(qs, reply)).toEqual({ q1: "", q2: "Dr. Ray Chen" });
+  });
+
+  // R3f's review, finding 6. Keyed by question STRING, two rows worded the same both
+  // replayed the second answer; `ask_owner` does not dedupe its set, and the plan asserts
+  // the pairing as a property rather than a rendering convenience.
+  it("gives two identically worded questions their own answers", () => {
+    const twins = askedQuestions({
+      questions: [
+        { id: "q1", question: "Which Sam?" },
+        { id: "q2", question: "Which Sam?" },
+      ],
+    });
+    const reply = ownerTurnText("", twins, { q1: "Sam Okonkwo", q2: "Sam Reyes" });
+    expect(sentAnswers(twins, reply)).toEqual({ q1: "Sam Okonkwo", q2: "Sam Reyes" });
   });
 
   it("leaves a partially answered set honest about which rows have words", () => {

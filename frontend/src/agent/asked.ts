@@ -43,12 +43,26 @@ function oneLine(value: unknown): string {
     .join(" ");
 }
 
-/** Split a candidate list on its top-level commas only.
+/** Split a candidate list on its top-level separators only.
  *
  * The tool teaches the model to write "Sarah Whitfield (sister, 12 notes), Sarah Chen
  * (work, 3 notes)" (`ask_owner.tool`), so the separator and the detail's own punctuation
  * are the same character. Splitting naively turns two candidates into four, and "12
- * notes)" is not something to offer as an answer. */
+ * notes)" is not something to offer as an answer.
+ *
+ * **A SEMICOLON separates too**, which R3f's review found by measuring real model output:
+ * "Sarah Whitfield (sister); Sarah Chen (work)" parsed as ONE candidate, so the only
+ * tappable thing on the row was a string naming both people — and a tap would have put
+ * that whole string into the note as the owner's own answer. The tool asks for commas and
+ * the model writes what it writes; a top-level semicolon is never part of a name.
+ *
+ * **What this deliberately does NOT try to repair is a MALFORMED list** — an unclosed
+ * paren swallows the separators after it and the tail parses as one candidate. Every
+ * recovery available here (re-splitting on the raw commas, clamping the depth) invents
+ * candidates the model never wrote — "4 notes" offered as a person to tap — and a
+ * candidate the owner taps is a sentence in his own note. So the parser fails to the
+ * honest side and the ESCAPE is what makes that survivable: every candidate row also
+ * carries "Something else", which answers in words (§3b I6, R3f's review finding 4). */
 function splitCandidates(raw: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -56,7 +70,7 @@ function splitCandidates(raw: string): string[] {
   for (const ch of raw) {
     if (ch === "(" || ch === "[") depth += 1;
     else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
-    else if (ch === "," && depth === 0) {
+    else if ((ch === "," || ch === ";") && depth === 0) {
       parts.push(current);
       current = "";
       continue;
@@ -172,49 +186,82 @@ export function answerList(
 /** What the reply turn SAYS — the client's mirror of `analysis/clarify.owner_turn_text`,
  * so the optimistic user bubble reads exactly as the persisted turn does on reload.
  *
- * Typed text wins outright, as it does server-side: a non-blank message is the free-text
- * degrade path and the answers ride it structurally. An answers-only send renders as the
- * Q/A pairs, and the `Q:`/`A:` labels are a safety boundary rather than formatting — only
- * the `A:` half is the owner's; the `Q:` half is a string a MODEL wrote while reading a
- * note body that may carry someone else's text. */
+ * A MIXED send renders BOTH halves: the Q/A pairs the block answered, then the words the
+ * owner typed beside them. Typed text used to win outright and throw the pairs away, and
+ * the turn text is not only prose for the model — it is the transcript's own record of
+ * what the owner did, and what the frozen block reads its answers back out of
+ * (`answersFromReply`). So the exact send §3b I7 designs (tap two, type a sentence) drew
+ * the inverse of what happened: the block said "2 questions · answered" with neither
+ * answer shown and the tapped candidate not picked, live and on every reopen, while the
+ * note held the opposite — the two answers landed and the typed sentence reached no note.
+ *
+ * The `Q:`/`A:` labels are a safety boundary rather than formatting — only the `A:` half
+ * is the owner's; the `Q:` half is a string a MODEL wrote while reading a note body that
+ * may carry someone else's text. The typed half carries no labels, which is also what
+ * keeps it out of the read-back. */
 export function ownerTurnText(
   message: string,
   questions: readonly AskedQuestion[],
   draft: Readonly<Record<string, string>>,
 ): string {
-  if (message.trim() !== "") return message;
   const answered = questions
     .map((q) => ({ q: q.question, a: (draft[q.id] ?? "").trim() }))
     .filter((p) => p.a !== "");
-  return answered.map((p) => `Q: ${p.q}\nA: ${p.a}`).join("\n\n");
+  const rendered = answered.map((p) => `Q: ${p.q}\nA: ${p.a}`).join("\n\n");
+  const typed = message.trim();
+  if (rendered && typed) return `${rendered}\n\n${typed}`;
+  return rendered || message;
 }
 
-/** The answers a reply turn's own text carries back, keyed by the question they answer.
+/** One Q/A pair a reply turn's own text carries back. */
+export interface ReplyPair {
+  question: string;
+  answer: string;
+}
+
+/** The Q/A pairs a reply turn's own text carries back, IN ORDER.
  *
  * A frozen block reads its answers from here (§3b I9). It is the same rendering
  * `ownerTurnText` writes and `clarify.owner_turn_text` persists, so the pairing is by the
- * exact question string the ask recorded — never by position, which is the mispairing
- * this whole channel is built to refuse. A reply the owner TYPED carries no pairs, and
- * the block then says a row was answered without putting words in their mouth. */
-export function answersFromReply(text: string): Map<string, string> {
-  const pairs = new Map<string, string>();
+ * exact question string the ask recorded — never by position alone, which is the
+ * mispairing this whole channel is built to refuse. A reply the owner TYPED carries no
+ * pairs, and the block then says a row was answered without putting words in their mouth;
+ * the free text a MIXED send appends after the pairs carries no `Q:`/`A:` labels, so it
+ * is not a pair and is not read back as one.
+ *
+ * A LIST rather than a map, because a question string is not a key: two rows of one set
+ * can ask the same words (`ask_owner` does not dedupe them), and a map made both rows
+ * replay the second answer. */
+export function answersFromReply(text: string): ReplyPair[] {
+  const pairs: ReplyPair[] = [];
   for (const chunk of text.split("\n\n")) {
     const m = /^Q: ([^\n]+)\nA: ([\s\S]+)$/.exec(chunk.trim());
-    if (m) pairs.set((m[1] ?? "").trim(), (m[2] ?? "").trim());
+    if (m) pairs.push({ question: (m[1] ?? "").trim(), answer: (m[2] ?? "").trim() });
   }
   return pairs;
 }
 
-/** A frozen block's answers, keyed by question id — the reply turn's own Q/A rendering,
+/** A frozen block's answers, keyed by QUESTION ID — the reply turn's own Q/A rendering,
  * paired back by the exact question string the ask recorded. Every id is present, so a
  * question the reply could not be paired to renders as answered-without-words rather
- * than as still open. */
+ * than as still open.
+ *
+ * A pair is CONSUMED once it is claimed, so two questions worded identically take the
+ * first and the second rendering rather than both taking the last. Both sides walk the
+ * open set in its asked order — `ownerTurnText` and `clarify.owner_turn_text` render in
+ * that order, this reads in it — so the n-th same-worded row gets the n-th answer, which
+ * is the one it was given. */
 export function sentAnswers(
   questions: readonly AskedQuestion[],
   replyText: string,
 ): Record<string, string> {
   const pairs = answersFromReply(replyText);
+  const claimed = new Set<number>();
   const out: Record<string, string> = {};
-  for (const q of questions) out[q.id] = pairs.get(q.question) ?? "";
+  for (const q of questions) {
+    const i = pairs.findIndex((p, j) => !claimed.has(j) && p.question === q.question);
+    if (i >= 0) claimed.add(i);
+    out[q.id] = i >= 0 ? (pairs[i]?.answer ?? "") : "";
+  }
   return out;
 }

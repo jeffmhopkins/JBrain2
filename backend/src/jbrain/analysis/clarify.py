@@ -410,14 +410,15 @@ class OwnerReply:
     dropped: list[str] = field(default_factory=list)
     """The owner's words on this turn that reached NO note.
 
-    FOUR ways it fills, and none is an error path: free text beside a COMPLETE structured
-    set (§3b I7's one send carries the tapped answers AND whatever is in the box, and
-    `_pair`'s third rule drops the prose because `note_clarifications.question` is NOT
-    NULL and an unprompted block has no shape — the O16 gap); a structured answer naming
-    a question the open set does not carry (a reopened thread replaying a stale block,
-    `_pair`'s first rule); the earlier answer of a REPEATED question id, which
-    last-writer-wins overwrites (`_pair`'s third bullet); and an answer past `MAX_ANSWERS`,
-    cut by `answers_over_cap` before `_pair` ever sees the list. The append paths add a
+    FOUR ways it fills, and none is an error path: free text beside ANY structured answer
+    (§3b I7's one send carries the tapped answers AND whatever is in the box, and `_pair`
+    refuses to pair the prose with a question the owner was not answering with it — the
+    O16 gap, since `note_clarifications.question` is NOT NULL and an unprompted block has
+    no shape); a structured answer naming a question the open set does not carry (a
+    reopened thread replaying a stale block, `_pair`'s first rule); the earlier answer of
+    a REPEATED question id, which last-writer-wins overwrites (`_pair`'s third bullet);
+    and an answer past `MAX_ANSWERS`, cut by `answers_over_cap` before `_pair` ever sees
+    the list. The append paths add a
     fifth on failure: a pairing that succeeded onto a note that would not take it.
 
     It is the half of "did the owner's words become note text" that `clarified` cannot
@@ -697,17 +698,30 @@ def _pair(
       (§3b I9), so a stale block can post an id from a set that closed weeks ago — and
       filing it against whatever is open now is precisely the mispairing this channel
       cannot afford.
-    - **Free text with no structured answers answers the OLDEST open question**, leaving
-      the rest open. This is today's semantics on a one-item set, it never mispairs, and
-      it is what lets the batched ask ship ahead of the PWA block that fills `answers`.
-      Beside a PARTIAL structured set it answers the oldest question that set left open.
+    - **Free text ALONE answers the OLDEST open question**, leaving the rest open. It
+      never mispairs, because a send with no structured answer leaves exactly one thing
+      the typed words could be answering. It is the genuine degrade path — a client that
+      cannot render the question block, and the way every reply arrived before R3f.
     - **A REPEATED question id keeps the last answer and drops the earlier one**, which
       is the rule an over-eager block or a double-filled form produces. Last-writer-wins
       is right (a re-send is a correction); reporting the loser is what makes it honest.
-    - **Free text beside a COMPLETE structured set files nothing.** It is chat:
-      `note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
-      no shape for an unprompted block, and inventing a question the agent never asked
-      would put a sentence into the owner's own note that nobody said.
+    - **Free text beside ANY structured answer files nothing.** It rides the turn as the
+      owner's words (`owner_turn_text`) and goes into `dropped`, so `owner_reply_notice`
+      tells the agent he said something that reached no note.
+
+    ⟲ **That last rule used to fire only on a COMPLETE structured set; beside a PARTIAL
+    one the prose answered the oldest question the taps left open.** R1c wrote that rule
+    when the composer was the ONLY affordance, so typed words could only ever be an
+    answer. §3b I7 puts the block and the composer on screen together and invites the
+    free reply ("answer above, or just reply"), which makes the old rule actively wrong:
+    three questions, the owner taps q2 and q3 and types "this note is about Kaiya not
+    me", and that sentence is appended to the note as his answer to "What's the
+    medication called?" — permanently, searchably, with the clarification eraser as the
+    only undo. **A block that pairs an answer with the wrong question is a wrong sentence
+    in the owner's own corpus, not a cosmetic slip** (`asktools.py:35-37`), so this
+    refuses to guess, which is the same choice R3 made four times over. The cost is that
+    a typed aside beside one tap now lands nowhere durable — the O16 gap, reported rather
+    than papered over, and the owner's own note is how such a sentence lands.
     """
     by_id = {q.id: q for q in open_set}
     answered: dict[str, str] = {}
@@ -736,14 +750,20 @@ def _pair(
             dropped.append(answered[question_id])
         answered[question_id] = answer
     if prose:
-        oldest_open = next((q for q in open_set if q.id not in answered), None)
+        # Keyed on `structured`, not on `answered`: a send whose every structured answer
+        # named a closed question still came from a block the owner was typing beside, so
+        # the typed words are no more an answer to the oldest open question than they
+        # would be beside a tap that landed.
+        oldest_open = (
+            None if structured else next((q for q in open_set if q.id not in answered), None)
+        )
         if oldest_open is not None:
             answered[oldest_open.id] = prose
         else:
-            # The designed send of §3b I7, not a malformed one: the structured set
-            # answered everything, and the free text in the box beside it is a sentence
-            # about the note that no question is open for. It stands as chat and lands
-            # nowhere durable, which is exactly what the turn's write verbs must be told.
+            # The designed send of §3b I7, not a malformed one: the block carried the
+            # answers, and the free text in the box beside it is a sentence about the
+            # note that no question is open for. It stands as chat and lands nowhere
+            # durable, which is exactly what the turn's write verbs must be told.
             dropped.append(prose)
     return answered, dropped
 
@@ -758,11 +778,11 @@ def owner_words_reached_note(reply: OwnerReply | None) -> bool:
     that exists nowhere:
 
     - the DESIGNED send (§3b I7). One send carries the structured answers plus whatever
-      free text is in the box. With a complete structured set `_pair`'s third rule drops
-      the prose, because `note_clarifications.question` is NOT NULL and an unprompted
-      block has no shape (the O16 gap). The thread was `waiting_on_owner`, the owner
-      typed "also Dana moved to 412 Oak St", the agent reads it on the turn
-      (`owner_turn_text`) — and the note never says it;
+      free text is in the box. Beside any structured answer `_pair` drops the prose,
+      because it is not an answer to any question the block left open and
+      `note_clarifications.question` is NOT NULL (the O16 gap). The thread was
+      `waiting_on_owner`, the owner typed "also Dana moved to 412 Oak St", the agent
+      reads it on the turn (`owner_turn_text`) — and the note never says it;
     - `append_failed` and the soft-deleted note. The thread was waiting, the block did
       not land, `clarified` is False;
     - an `owner_authored=False` turn (a deferred-tool outcome, a proposal enact).
@@ -879,6 +899,18 @@ def owner_turn_text(
     Composed from the PAIRED answers where there are any, because the question is what
     makes an answer legible a week later in a replayed transcript.
 
+    ⟲ **A MIXED send renders BOTH halves, and typed text no longer wins outright.** It
+    used to return `message` whenever one was typed, which threw the Q/A rendering away —
+    and the turn text is not only prose for the model to read, it is the transcript's own
+    record of what the owner did and what the PWA's frozen block reads its answers back
+    out of (`asked.answersFromReply`). So the exact send §3b I7 designs — two candidates
+    tapped, a sentence typed beside them — persisted as the sentence alone: the block
+    said "2 questions · answered" with neither answer shown and the tapped candidate
+    drawn as not-picked, live and on every reopen, while the note held the opposite (the
+    two answers landed as blocks and the prose reached no note at all). The pairs come
+    first and the typed words last, which is the order the owner did them in, and the
+    typed half carries no `Q:`/`A:` labels so it can never be read back as an answer.
+
     **Never fed back into `record_owner_reply`.** A non-blank `message` is that
     function's free-text degrade path, pairing with the oldest unanswered question — hand
     it this rendering and it files a second block saying what the first one said.
@@ -892,12 +924,18 @@ def owner_turn_text(
     instruction. The labels are the same ones `notes.compose.clarification_block` puts on
     the durable block, so the turn and the note agree about which half is whose, and
     `_one_line` has already collapsed the newlines a forged label would need."""
-    if message.strip() or not answers:
+    if not answers:
         return message
     pairs = reply.answered if reply is not None else []
-    if pairs:
-        return "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
-    return "\n\n".join(a for _, a in capped_answers(answers))
+    rendered = (
+        "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
+        if pairs
+        else "\n\n".join(a for _, a in capped_answers(answers))
+    )
+    typed = message.strip()
+    if rendered and typed:
+        return f"{rendered}\n\n{typed}"
+    return rendered or message
 
 
 async def close_owner_reply(

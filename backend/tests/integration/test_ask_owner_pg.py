@@ -943,12 +943,20 @@ async def test_free_prose_alone_answers_the_oldest_open_question(
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
 
 
-async def test_free_prose_beside_a_partial_set_answers_the_oldest_it_left_open(
+async def test_free_prose_beside_a_partial_set_is_not_filed_as_an_answer(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """One send carries both halves (§3b I7): the taps AND whatever was typed. The typed
-    part cannot answer a question the taps already answered, so it takes the oldest one
-    they left."""
+    """R3f's review, finding 5 — the rule R1c wrote when the composer was the only
+    affordance, reversed now that §3b I7 puts the block beside it and invites the free
+    reply.
+
+    The prose used to answer the oldest question the taps left open. On a three-question
+    set that means the owner taps two, types "this note is about Kaiya not me", and that
+    sentence is appended to his own note as the answer to a question it does not answer —
+    permanently, searchably, with the clarification eraser as the only undo. A block that
+    pairs an answer with the wrong question is a wrong sentence in the owner's corpus, so
+    the typed half is no longer paired at all: it rides the turn's text for the agent to
+    read, and `dropped` says it reached no note."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
@@ -960,16 +968,23 @@ async def test_free_prose_beside_a_partial_set_answers_the_oldest_it_left_open(
         owner,
         session_id=session_id,
         agent=NOTE_CONVERSE_AGENT,
-        message="Her own, she hired him in March.",
+        message="this note is about Kaiya not me",
         answers=[(ids[0], "My sister.")],
     )
 
     assert reply is not None
-    assert reply.answered == [
-        (QUESTION, "My sister."),
-        (COACH, "Her own, she hired him in March."),
-    ]
-    assert reply.unanswered == [DOSE]
+    assert reply.answered == [(QUESTION, "My sister.")]
+    # The two the taps did not answer are still OPEN — neither was silently spent on a
+    # sentence that does not answer it.
+    assert reply.unanswered == [COACH, DOSE]
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
+    assert reply.dropped == ["this note is about Kaiya not me"]
+    assert owner_words_reached_note(reply) is False
+    # And the agent hears both halves: the sentence that reached no note, and the
+    # questions still open.
+    notice = owner_reply_notice(reply)
+    assert "Kaiya" in notice and "did NOT reach the note" in notice
+    assert COACH in notice and "still open" in notice
 
 
 async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
