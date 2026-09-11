@@ -925,7 +925,7 @@ async def live_entity_by_id(session: AsyncSession, entity_id: uuid.UUID):
     A caller holding an entity id may be holding one the owner has since merged away:
     every context builder filters `status != 'merged'`, but a fold that lands while an
     analysis is in flight turns the id it echoes back into a tombstone, and any replay
-    of a stored decision (`app.resolution_pin` already keeps entity ids) would make that
+    of a stored decision (a memo keyed by entity id) would make that
     routine rather than a race. Loading that id raw hands back a merged row, and writing
     to it resurrects the duplicate the merge removed. The fold records where it went
     (`merged_into_id`), and merging is the owner's decision that the two are the same

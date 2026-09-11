@@ -47,7 +47,7 @@ from jbrain.analysis import rebuild
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import (
+from tests.integration.pg_fixtures import (
     analyzer,
     extraction_payload,
     ingest,

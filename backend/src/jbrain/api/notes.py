@@ -481,10 +481,8 @@ async def analyze_note(
     OCR outstanding): the ingest gate owns that sequencing.
 
     It enqueues `note_converse` since R3, with `integration_state`: the flip is the
-    conversation's now, so a re-run that enqueued `integrate_note` would move the graph
-    without moving the state the PWA's chip and the reconciler read, and would leave the
-    button 202-ing a producer the plan retires next wave (CLAUDE.md #10 — this button is
-    the owner's only no-terminal re-analysis lever).
+    conversation's, and since R4 there is no other producer to enqueue (CLAUDE.md #10 —
+    this button is the owner's only no-terminal re-analysis lever).
 
     The 409s are what keep it honest, and the live-conversation one is new with the kind.
     A queued twin would double-process; a LIVE conversation would make the handler decline
@@ -498,9 +496,8 @@ async def analyze_note(
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
     # A 409 if a pass is already in flight, so the note can't be raced into
-    # double-processing. `has_active` rather than `has_active_analysis`: that helper's
-    # three other callers are each about the `integrate_note` twin THEY enqueue, and it
-    # keeps that subject until R4 takes the kind.
+    # double-processing. `has_active` names the kind at the call site rather than
+    # inheriting `has_active_analysis`'s, which since R4 is the same `note_converse`.
     if await jobs.has_active(ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id):
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     live = await _live_conversation(maker, ctx, note_id)

@@ -175,7 +175,8 @@ def test_the_pipeline_seams_require_the_key_rather_than_defaulting_it() -> None:
     saying so; pyright refuses the call instead. Asserted here so that a later
     "convenience" default has to argue with a test.
     """
-    for name in ("commit_facts", "commit_intent", "apply_intent", "settle_note"):
+    # `apply_intent` was the fourth until R4 deleted it with its only caller.
+    for name in ("commit_facts", "commit_intent", "settle_note"):
         param = inspect.signature(getattr(AnalysisPipeline, name)).parameters["settle_owner"]
         assert param.default is inspect.Parameter.empty, name
         assert param.kind is inspect.Parameter.KEYWORD_ONLY, name

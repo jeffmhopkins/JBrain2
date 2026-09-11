@@ -200,7 +200,7 @@ class Fact(Base):
 
 
 class NoteAnalysis(Base):
-    """Per-note product of the note.extract call; analyzed_at is the Phase 3
+    """Per-note product of a producer's reading of the note; analyzed_at is the
     minimal reprocessing watermark (docs/reference/ANALYSIS.md "Reprocessing")."""
 
     __tablename__ = "note_analysis"

@@ -1,4 +1,4 @@
-"""The action registry validates the six shipped handlers as data and fails the
+"""The action registry validates the shipped handlers as data and fails the
 boot (ActionRegistryError) on any action/handler mismatch — the W0.1 boot gate that
 moves an unknown-kind failure from job run time to startup (E3)."""
 
@@ -21,10 +21,11 @@ async def _noop(payload: dict[str, Any]) -> None:  # a stand-in handler
     return None
 
 
+# `integrate_note` was the sixth until R4 deleted the producer; migration 0200 takes its
+# `app.actions` row and its `note.ingested` trigger with it.
 SHIPPED_KINDS = {
     "ingest_note",
     "embed_note",
-    "integrate_note",
     "ocr_attachment",
     "consolidate_predicates",
     "sync_predicates",
@@ -35,7 +36,7 @@ def _handlers(names: set[str]) -> dict[str, Any]:
     return {name: _noop for name in names}
 
 
-def test_shipped_registry_covers_the_six_handlers() -> None:
+def test_shipped_registry_covers_the_shipped_handlers() -> None:
     registry = build_registry()
     assert registry.names() == SHIPPED_KINDS
     # Every shipped spec maps its name straight to the existing job kind, so the
@@ -91,8 +92,8 @@ def test_registry_basics() -> None:
     assert len(registry) == len(SHIPPED_KINDS)
     assert "ingest_note" in registry
     assert "nope" not in registry
-    spec = registry.get("integrate_note")
+    spec = registry.get("ocr_attachment")
     assert spec.version == 1
     assert spec.cost_class == "expensive"
     assert spec.mutating is True
-    assert spec.dedup_key_expr == "note_id"
+    assert spec.dedup_key_expr == "attachment_id"

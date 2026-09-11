@@ -104,7 +104,8 @@ numbers from a different tree, and at least five claims `origin/main` contradict
 loads it reports as open are closed; a `_default_residency` it cites no longer exists; the
 "eight uncoordinated budgets" are six). Re-derive it against `origin/main`, add the sites it
 never listed — `local_gateway`'s three internal short circuits, `state_of`/`_note_not_ready`,
-`dbless_coordinator`, `host_settings`'s TTM read — and record the **fifteen conflations** where
+`dbless_coordinator` (since deleted with the eval CLIs that called it, R4 of
+`AGENT_INGEST_REWRITE.md`), `host_settings`'s TTM read — and record the **fifteen conflations** where
 one value answers two questions. Nothing else in this plan is trustworthy until this lands.
 
 **Done 2026-08-22.** Audited by a cold pass told to falsify rather than confirm. Findings, in

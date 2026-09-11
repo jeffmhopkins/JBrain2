@@ -2,8 +2,10 @@
 table (CLAUDE.md rule 3, docs/archive/WORKFLOW_ENGINE_PLAN.md E2).
 
 Two postures are proven separately:
-- domain-firewalled tables (`events`, `resolution_pin`): a health-domain row is
-  invisible without the health scope — the analysis-table pattern;
+- domain-firewalled tables (`events`): a health-domain row is invisible without the
+  health scope — the analysis-table pattern. `resolution_pin` was the second of these
+  until migration 0200 dropped it with the Integrator that was its only writer
+  (`AGENT_INGEST_REWRITE.md` R4);
 - owner/system tables (`triggers`, `schedules`): visible to the owner context,
   invisible to any narrowed (owner_scoped) session — the agent_runs pattern;
 - `pipelines` is global-read reference data (canonical_predicates precedent): every
@@ -50,8 +52,8 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
 
 async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
     """Insert one health-domain row in every domain-firewalled workflow table
-    (plus the note/chunk/entity/principal a resolution_pin and event need); return
-    ids. Fresh UUIDs per call so parametrized tests never collide."""
+    (plus the note/chunk/entity/principal an event's firewall needs a subject for);
+    return ids. Fresh UUIDs per call so parametrized tests never collide."""
     ids = {name: str(uuid.uuid4()) for name in ("note", "chunk", "entity", "principal", "event")}
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
@@ -89,16 +91,6 @@ async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
             ),
             {"id": ids["event"], "pid": ids["principal"]},
         )
-        await s.execute(
-            text(
-                "INSERT INTO app.resolution_pin"
-                " (note_id, chunk_id, occurrence_index, decision_kind, surface,"
-                "  span_text_hash, entity_id, domain_code)"
-                " VALUES (:nid, :cid, 0, 'identity', 'Dr. Patel', 'deadbeef',"
-                "  :eid, 'health')"
-            ),
-            {"nid": ids["note"], "cid": ids["chunk"], "eid": ids["entity"]},
-        )
     return ids
 
 
@@ -113,11 +105,6 @@ async def count_visible(
 # (table, the WHERE that picks the seeded row, the id key into seed ids)
 DOMAIN_TABLES = [
     ("events", "SELECT count(*) FROM app.events WHERE id = :id", "event"),
-    (
-        "resolution_pin",
-        "SELECT count(*) FROM app.resolution_pin WHERE note_id = :id",
-        "note",
-    ),
 ]
 
 
@@ -137,22 +124,17 @@ async def test_workflow_domain_tables_enforce_firewall(
 async def test_scoped_writer_cannot_smuggle_workflow_rows_across_domains(
     maker: async_sessionmaker,
 ) -> None:
-    """A general-only writer cannot stamp a health domain on ANY firewalled row —
-    events and resolution_pin (the content-bearing tables) both carry the same
-    WITH CHECK (has_domain_scope(domain_code)), so the write firewall is exercised
-    on each, not just one."""
-    ids = await seed_health_workflow(maker)
+    """A general-only writer cannot stamp a health domain on a firewalled row: the
+    content-bearing table carries WITH CHECK (has_domain_scope(domain_code)).
+
+    It exercised `resolution_pin` beside `events` until 0200 dropped that table with the
+    producer that wrote it; the clause is the same one, on the one table left."""
+    await seed_health_workflow(maker)
     smuggles = [
         (
             "INSERT INTO app.events (id, type, domain_code)"
             " VALUES (gen_random_uuid(), 'sneak', 'health')",
             {},
-        ),
-        (
-            "INSERT INTO app.resolution_pin (note_id, chunk_id, occurrence_index,"
-            " decision_kind, normalized_predicate, domain_code)"
-            " VALUES (:nid, :cid, 0, 'predicate_key', 'spouse', 'health')",
-            {"nid": ids["note"], "cid": ids["chunk"]},
         ),
     ]
     for stmt, params in smuggles:

@@ -28,7 +28,8 @@ Four tests, and each one holds a different half of that claim honest:
 - the hazard the fix must not introduce: the analyzer still retracts its OWN stale facts
   after the model behind its extractor string changes.
 
-The LLM is faked throughout (CLAUDE.md #5): `apply_intent` consumes a pre-built intent,
+The LLM is faked throughout (CLAUDE.md #5): the commit+settle pair consumes a pre-built
+intent,
 and the writer's router is a stub its resolver never calls out through.
 """
 
@@ -50,13 +51,12 @@ from jbrain.models.analysis import EntityMention, Fact
 from jbrain.models.notes import Note
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_apply_intent_pg import (
+from tests.integration.pg_fixtures import (  # noqa: F401
     _SURFACE,
     _fact,
     _intent,
     _load_chunks,
-)
-from tests.integration.test_extraction_pg import (  # noqa: F401
+    commit_and_settle,
     ingest,
     make_note,
     maker,
@@ -174,7 +174,7 @@ async def _integrate(
     """The analyzer's half of the same note: commit ONE fact of its own and settle,
     with `touched` holding only what this pass wrote.
 
-    `apply_intent` is the highest seam that runs without a live model — it is what
+    `commit_intent` + `settle_note` is the highest seam that runs without a live model — what
     `integrate_note` calls once the arbiter has ruled — so this is the analyzer's real
     commit+settle pair, not a hand-rolled `settle_note`."""
     router = LlmRouter({"xai": FakeLlmClient()}, {"note.extract": ("xai", "grok-4.3")})
@@ -192,7 +192,8 @@ async def _integrate(
     )
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        await AnalysisPipeline(maker, router).apply_intent(
+        await commit_and_settle(
+            AnalysisPipeline(maker, router),
             session,
             note_id=uuid.UUID(note_id),
             note_domain="general",
@@ -381,7 +382,8 @@ async def _analyzer_also_claims(
     )
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        await AnalysisPipeline(maker, router).apply_intent(
+        await commit_and_settle(
+            AnalysisPipeline(maker, router),
             session,
             note_id=uuid.UUID(note_id),
             note_domain="general",

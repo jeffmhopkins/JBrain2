@@ -15,7 +15,7 @@ not the model. Two reasons, and both are mechanical rather than stylistic:
   that the conversation's write path is `commit_facts` only
   (`agent/graphwritetools.py`) and calls `settle_note` nowhere. That reasoning was wrong
   in the way that matters: a producer does not need a sweep of its own to LOSE, only a
-  co-writer that has one — and `integrate_note` and `emr_parse` both had one, each
+  co-writer that has one — and the analyzer and `emr_parse` both had one, each
   retracting the other's facts on every settle of the note. That is fixed rather than
   avoided: the sweep is scoped by `settle_owners` (`analysis/settle_owner.py`,
   docs/plans/SETTLE_OWNERSHIP.md S1), so each producer releases only its own claim and a

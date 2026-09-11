@@ -17,15 +17,13 @@ import pytest
 import structlog.testing
 from sqlalchemy import text
 
-from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.predicates import raw_descriptor, record_predicate_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
-from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import analyzer, ingest, make_note, maker  # noqa: F401
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -34,7 +32,18 @@ pytestmark = [
 ]
 
 _MODEL = "test-embed-v1"
-_STMT = "Pat is married to Dana."
+
+
+def _pair() -> tuple[str, str, str]:
+    """Fresh subject, object and note body per test.
+
+    The suite shares one database and `pg_fixtures.default_intent` resolves a name to an
+    EXISTING entity when one carries it — so two tests that both assert `spouse` on "Pat"
+    land the same identity key, the second one REFRESHES the first's row in place, and its
+    own note ends up with no fact at all. Unique names keep each test's claim its own."""
+    sfx = uuid.uuid4().hex[:8]
+    subject, obj = f"Pat{sfx}", f"Dana{sfx}"
+    return subject, obj, f"{subject} is married to {obj}."
 
 
 def _vec(t: str) -> list[float]:
@@ -51,52 +60,33 @@ class _FakeEmbed:
         return [_vec(t) for t in texts]
 
 
-def _router(predicate: str) -> LlmRouter:
-    extract = json.dumps(
+def _extraction(predicate: str, subject: str, obj: str, body: str) -> str:
+    """The scripted reading of `body`: one relationship edge on `predicate`."""
+    return json.dumps(
         {
             "title": "t",
             "tags": [],
             "mentions": [
-                {"name": "Pat", "kind": "Person", "surface_text": "Pat"},
-                {"name": "Dana", "kind": "Person", "surface_text": "Dana"},
-            ],
-            "facts": [],
-            "temporal_tokens": [],
-        }
-    )
-    intent = json.dumps(
-        {
-            "resolutions": [
-                {"mention_ref": "m1", "mode": "new", "new_kind": "Person", "new_name": "Pat"},
-                {"mention_ref": "m2", "mode": "new", "new_kind": "Person", "new_name": "Dana"},
+                {"name": subject, "kind": "Person", "surface_text": subject},
+                {"name": obj, "kind": "Person", "surface_text": obj},
             ],
             "facts": [
                 {
-                    "entity_ref": "m1",
+                    "entity_ref": subject,
+                    "object_entity_ref": obj,
                     "predicate": predicate,
+                    "qualifier": "",
                     "kind": "relationship",
                     "assertion": "asserted",
-                    "statement": _STMT,
-                    "object_entity_ref": "m2",
-                    "self_confidence": 0.95,
-                    "surface": "married",
+                    "statement": body,
+                    "value_json": None,
+                    "temporal": None,
+                    "domain": "general",
+                    "confidence": 0.95,
                 }
             ],
+            "temporal_tokens": [],
         }
-    )
-    return LlmRouter(
-        {"xai": FakeLlmClient(responses=[extract, intent])},
-        {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-    )
-
-
-def _pipeline(maker, predicate: str, *, embedder: _FakeEmbed | None = None) -> AnalysisPipeline:  # noqa: F811
-    return AnalysisPipeline(
-        maker,
-        _router(predicate),
-        embedder=embedder,
-        embed_model=_MODEL if embedder else "",
-        settings=SqlSettingsStore(maker),
     )
 
 
@@ -149,11 +139,14 @@ async def test_durable_alias_rewrites_the_committed_predicate(maker, tmp_path): 
     # A past owner map_to_existing decision collapses the drift spelling — with
     # NO embedder configured, proving the collapse is a pure aliases lookup.
     pred = "isHitchedTo"
+    subject, obj, body = _pair()
     await _seed_alias(maker, pred, "spouse")
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
 
-    await _pipeline(maker, pred).integrate_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred, subject, obj, body)]).analyze_note(
+        {"note_id": note_id}
+    )
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates  # rewritten before keying
@@ -165,13 +158,19 @@ async def test_longtail_predicate_commits_raw_with_no_card(maker, tmp_path):  # 
     # new_predicate card (embedder live, setting ON) now commits the raw
     # predicate with no card and logs predicate.longtail_kept instead.
     pred = "isBondedWith"
+    subject, obj, body = _pair()
     await _set_flag(maker, True)
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
     embedder = _FakeEmbed()
 
     with structlog.testing.capture_logs() as logs:
-        await _pipeline(maker, pred, embedder=embedder).integrate_note({"note_id": note_id})
+        await analyzer(
+            maker,
+            [_extraction(pred, subject, obj, body)],
+            embedder=embedder,
+            embed_model=_MODEL,
+        ).analyze_note({"note_id": note_id})
 
     assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
     # The live embedder still serves graph-context entity candidates, but the
@@ -187,12 +186,15 @@ async def test_alias_collapse_ignores_the_repurposed_setting(maker, tmp_path):  
     # predicate_canonicalization now gates only the held-fact suggestion picker;
     # the durable collapse honors past owner decisions regardless of the flag.
     pred = "isPairedWith"
+    subject, obj, body = _pair()
     await _seed_alias(maker, pred, "spouse")
     await _set_flag(maker, False)
-    note_id = await make_note(maker, domain="general", body=_STMT)
+    note_id = await make_note(maker, domain="general", body=body)
     await ingest(maker, note_id, tmp_path)
 
-    await _pipeline(maker, pred).integrate_note({"note_id": note_id})
+    await analyzer(maker, [_extraction(pred, subject, obj, body)]).analyze_note(
+        {"note_id": note_id}
+    )
 
     predicates = await _committed_predicates(maker, note_id)
     assert "spouse" in predicates

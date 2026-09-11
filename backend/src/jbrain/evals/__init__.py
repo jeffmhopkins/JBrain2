@@ -1,8 +1,11 @@
-"""The note.extract eval corpus + scorer, shipped IN the `jbrain` package.
+"""Eval corpora + scorers shipped IN the `jbrain` package.
 
-The runtime-needed pieces — the curated case fixtures (`cases/*.json`) and the
-scoring core (`runner.py`) — live here, inside the installed package, so the
-nightly `eval_run` workflow (Phase-5 Track H·B) can score the live model in
-PRODUCTION (the container image ships `src/jbrain`). The dev-only CLI wrapper
-(`backend/evals/run.py`, `backend/evals/audit.py`) imports its core from here.
+The runtime-needed pieces — the case fixtures and the scoring cores — live here, inside
+the installed package, so a scheduled `eval_run` can score the live model in PRODUCTION
+(the container image ships `src/jbrain`). The owner-run box calibration CLI
+(`backend/evals/box/`) imports its scorers from here.
+
+R4 deleted the `note.extract` and `integrate.note` corpora with the prompts they scored.
+What is left scores `entity.disambiguate` and the wiki lint; the reading that replaced
+the deleted two has no committed corpus yet (R5, beside the wipe).
 """

@@ -133,10 +133,17 @@ class _Store(FsBlobStore):
         return self.free
 
 
-#: Event-loop turns a test will give the recorder's background task before giving up.
-#: Generous — the finalize is several awaits deep — and finite, so a property that never
-#: becomes true fails with a sentence rather than hanging the suite.
+#: Bare event-loop turns first: an already-ready task costs no wall clock at all.
 _TURNS = 1_000
+#: Then a real deadline. Turns alone are the WRONG UNIT here — the finalize ends in
+#: `put_stream`, whose writes run on a worker thread (`storage.py`, `asyncio.to_thread`),
+#: so what these tests wait for completes in wall clock, not in scheduler turns. A bare
+#: `sleep(0)` is a plain yield: 1,000 of them can burn through in microseconds without the
+#: OS ever scheduling that thread. On an idle machine it wins anyway; on a loaded CI runner
+#: (`-n auto` workers plus coverage tracing, two cores) it loses, which is exactly how this
+#: read as an intermittent flake rather than as the missing wait it is. Finite either way,
+#: so a property that never becomes true fails with a sentence rather than hanging.
+_DEADLINE_S = 10.0
 
 
 async def _until(done: Any) -> None:
@@ -148,6 +155,12 @@ async def _until(done: Any) -> None:
         if done():
             return
         await asyncio.sleep(0)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _DEADLINE_S
+    while loop.time() < deadline:
+        if done():
+            return
+        await asyncio.sleep(0.001)
     raise AssertionError("the recorder never got there")
 
 

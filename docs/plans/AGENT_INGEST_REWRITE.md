@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4◻️ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -1484,6 +1484,11 @@ Two tiers. Tier 1 is unconditional. Tier 2 depends on **O1** (§8), the EMR ques
 
 ### Tier 1 — the model-side chain and its tests
 
+⟲ **The table below is what R4 was BRIEFED with, kept as written. It was drafted before R1,
+and three waves moved the terrain under it — so every row R4 found false is marked and
+corrected UNDER the table rather than silently edited into agreement. The measured totals
+at the end are R4's, not this table's.**
+
 | Module / span | Lines | Note |
 |---|---|---|
 | `analysis/pipeline.py:401-580` `integrate_note` | 180 | the handler |
@@ -1493,33 +1498,201 @@ Two tiers. Tier 1 is unconditional. Tier 2 depends on **O1** (§8), the EMR ques
 | `analysis/integrate_prompt.py` | 53 | |
 | `analysis/prompts/integrate_note.prompt` | 168 | |
 | `analysis/prompts/note_extract.prompt` | 259 | the reading replaces it |
-| `analysis/prompt.py` (`EXTRACTION_SCHEMA`, `fact_cap`, `group_texts`, `PROMPT_VERSION`) | 167 | see the `prompt_version` note below |
-| `analysis/extraction.py` — `parse_extraction` and its parse half | ~350 of 1086 | the VALUE OBJECTS (`Extraction`, `ExtractedFact`, `ExtractedToken`) and the write-path helpers (`domain_floor`, `ratchet_domain`, `finalize_temporal`, `normalize_*`, `parse_datetime`) all SURVIVE — they are the commit path |
+| `analysis/prompt.py` (`EXTRACTION_SCHEMA`, `fact_cap`, `group_texts`, `PROMPT_VERSION`) | 167 | ⟲ **PARTIAL** — see (2) |
+| `analysis/extraction.py` — `parse_extraction` and its parse half | ~350 of 1086 | ⟲ **FALSE** — see (3). The VALUE OBJECTS and the write-path helpers survive, as written |
 | `analysis/intent_parse.py` | 293 | |
 | `analysis/graph_context.py` | 362 | the Integrator's graph-aware context builder |
 | `analysis/persist.py` | 286 | `IntegrationRunLog` — only caller `integrate_note` (`pipeline.py:563`) |
 | `analysis/pins.py` | 151 | only importer `persist.py` |
-| `analysis/trace.py` | 143 | only caller `_file_inference_reviews` (`pipeline.py:948`) |
+| `analysis/trace.py` | 143 | ⟲ **FALSE — it stays.** See (1) |
 | `analysis/arbiter.py` — `derive_kinship_gender` (`:345-402`), `recover_dropped_fields` (`:403-493`), `dedup_intent_facts` (`:494-574`) | 230 | one production caller each, all in `integrate_note` (`pipeline.py:505`, `:510`, `:519`) |
-| `analysis/flow_trace.py` — the `extract` / `intent` / `plan` arms | ~120 of 266 | the `vision` arm survives (`ingest/ocr.py:289`) |
+| `analysis/flow_trace.py` — the `extract` / `intent` / `plan` arms | ~120 of 266 | the `vision` arm survives (`ingest/ocr.py:289`) — and so does `commit`, which `commit_facts` calls |
 | `evals/integrate_runner.py` + `evals/integrate_cases/00_core.json` | 362 | scores a prompt that will not exist |
 | **subtotal, the old chain** | **~3,290** | |
 
 And the card machinery one channel closes — a second, independent deletion the review-inbox
 decision buys:
 
+⟲ **THIS WHOLE TABLE IS FALSE, and R1b is why.** See (4): one channel was closed by GATING
+these filers on the producer, not by deleting them, and EMR is a producer that still files.
+Two of its rows were already gone before R4 even looked.
+
 | Module / span | Lines | Note |
 |---|---|---|
-| `analysis/pipeline.py:3042-3100` + `:3259-3290` — the two `if decision.review_kind is not None:` card blocks | ~100 | the `FactWrite` report beside them already carries the reason and the conflicting statement (`:2992-2999`) |
-| `analysis/pipeline.py:1742-1790` `_file_ambiguous_review` | 49 | replaced by naming the candidates in `resolve_entity`'s result |
-| `analysis/pipeline.py:1496-1564` `_sync_truncation_review` | 69 | a clamped pass says so in the thread |
-| `analysis/pipeline.py:1458-1495` `_sweep_stale_ambiguous` | 38 | nothing left to retire |
-| `analysis/pipeline.py:1962-1990` `_file_confirm_entity_card` | 29 | `confirm_entity` goes silent |
-| `agent/graphwritetools.py:1157-1176` `_self_report` | 20 | the `confidence` field goes |
-| `analysis/repo.py` — the resolution arms for `fact_conflict` / `attribute_collision` / `low_confidence` / `ambiguous_mention` / `extraction_truncated` / `confirm_entity` (`:1505-1595`, `:1621-1630`, `:1813-…`) | ~150 | `merge_proposal` and `domain_promotion` arms survive |
-| `analysis/display.py` — the card-field renderers for the dead kinds | ~80 of 211 | |
-| **subtotal, the card machinery** | **~535** | |
-| **Tier 1 `src/` total** | **~3,825** | |
+| `analysis/pipeline.py:3042-3100` + `:3259-3290` — the two `if decision.review_kind is not None:` card blocks | ~100 | ⟲ gated on `file_review_cards`, not deleted |
+| `analysis/pipeline.py:1742-1790` `_file_ambiguous_review` | 49 | ⟲ same gate; EMR still files |
+| `analysis/pipeline.py:1496-1564` `_sync_truncation_review` | 69 | ⟲ R3 already refuted this; it is the card's FILER |
+| `analysis/pipeline.py:1458-1495` `_sweep_stale_ambiguous` | 38 | ⟲ R3 already refuted this |
+| `analysis/pipeline.py:1962-1990` `_file_confirm_entity_card` | 29 | ⟲ already deleted before R4 |
+| `agent/graphwritetools.py:1157-1176` `_self_report` | 20 | ⟲ already deleted before R4 |
+| `analysis/repo.py` — the resolution arms for `fact_conflict` / `attribute_collision` / `low_confidence` / `ambiguous_mention` / `extraction_truncated` / `confirm_entity` (`:1505-1595`, `:1621-1630`, `:1813-…`) | ~150 | ⟲ every arm stays: the owner's open cards of these kinds are still on the box |
+| `analysis/display.py` — the card-field renderers for the dead kinds | ~80 of 211 | ⟲ same |
+| **subtotal, the card machinery** | **~535** | ⟲ **0** |
+| **Tier 1 `src/` total** | **~3,825** | ⟲ **measured: 4,384 — see the tally below** |
+
+#### ⟲ What R4 actually found, row by row
+
+**(1) `analysis/trace.py` stays, and the justification column is what gave it away.** "Its
+only caller is `_file_inference_reviews`" is true, and `_file_inference_reviews` is TIER 2
+— which O1 (decided (iii)) keeps. `build_trace` is imported at `pipeline.py` and called
+inside the `low_confidence_inference` card payload, on the `commit_intent` path the EMR
+importer runs. The rule the table stated for itself — *where a row's justification says
+"its only production caller is X", verify X is itself going* — is the rule that saves it.
+
+**(2) `analysis/prompt.py` is a partial deletion, not a whole one.** Three things in it are
+not the prompt's and outlive it. `PROMPT_VERSION` the table itself flags below; its source
+moved to the note-conversation persona's own prompt file, exactly as written there.
+`MAX_FACTS` / `MIN_FACTS` / `fact_cap` are the per-note fact BUDGET, which
+`parse_extraction` still enforces. And `prompt_block` — the `[ocr from …]` /
+`[transcript from …]` markers — turned out to be load-bearing in a way nothing had
+noticed; see (8).
+
+**(3) `parse_extraction` does not go, because the harness parses through it.** §5's item 2
+— re-cut the scenario format onto the reading's own shape — has not been done: a scenario
+still authors a `note.extract` payload, and `runner._parse_extraction` lowers it through
+the genuine parse so the tool calls reflect extraction-layer behaviour (dedup, fact-cap,
+drop-invalid) rather than raw scripted JSON. Deleting the parse means rewriting 75
+scenarios, which is the standing acceptance itself (52 passed / 23 xfailed) and not a
+deletion wave's business. R4 took the model-call wrapper off it instead: the harness now
+calls `parse_extraction` directly (one body block is one group, `merge_extractions` passes
+a single part through untouched, the cap is `fact_cap(step.body)` — byte-identical), and
+`merge_extractions`, which had no other caller, went. **The format re-cut is owed, and it
+is what finally retires the parse.**
+
+**(4) The card machinery was already closed, by GATING rather than deleting (R1b).**
+`commit_facts` derives `file_review_cards = settle_owner != CONVERSATION` and threads it
+through every filer. So the conversation files nothing and is told through `FactWrite`
+instead — which is what §2's one channel asked for — while the EMR importer, which has no
+agent in the room, still files every one of these kinds. Deleting the filers would have
+taken the cards away from the producer that needs them. `_file_confirm_entity_card` and
+`_self_report` were already gone (earlier waves). **Net from this table: zero lines.**
+
+**(5) The two settle card halves stay, and §4 now says so.** R3's ⟲ (in §7) established it
+and this table never agreed: `settle_note` has a second caller, `emr_parse`, which outlives
+the plan, and `_sync_truncation_review` is the `extraction_truncated` card's FILER as well
+as its retirer. Deleting them would leave the EMR importer filing cards no settle can
+retire. The producer scoping (migration 0197) now earns its keep twice over — see (7).
+
+**(6) Rows the table did not have, which die with the prompt anyway.** The `note.extract`
+EVAL — `evals/runner.py` (310), `evals/cases/*.json` (12 files, 6,384 lines of curated
+corpus), the `backend/evals/run.py` CLI, `backend/evals/audit.py`, `scripts/prompt-eval.sh`,
+`scripts/grok-eval.sh` (which drove the DB-mode `tests/eval/` harness, itself unlisted) and
+the `extract` arm of `evals/box/run_layer.py` — scores a prompt that no longer exists,
+exactly as `integrate_runner` does. It goes. *The corpus is the input R5's `close_reading`
+eval should be re-cut from; it is recoverable at this wave's parent commit.* Also not in
+the table and also dead with the kind: the `note.extract` / `integrate.note` LLM task
+routes (`llm/router.py`) and their rows in the owner's Settings model-routing screen
+(`api/llm_settings.py` — a lever that does nothing is a CLAUDE.md #10 defect), the
+`integration_persist` setting, and the job kind's own `app.actions` row and `note.ingested`
+trigger (migration 0200, beside the `app.resolution_pin` drop the table did name).
+
+**(7) What happens to the open cards the deleted producer left on the box.** Nothing
+breaks and nothing is migrated: **R4 removed no card KIND**, so every one of those rows
+still opens, still renders and is still the owner's to accept, reject or dismiss. What
+changes is that no sweep retires them automatically any more — both settle halves are
+scoped to their filer (0197) and their filer is gone — so they retire by the owner's hand,
+by `purge.delete_review_items` when the fact they name is retracted, by note deletion, by
+the corpus rebuild, or in R5's wipe. That scoping is also what stops an EMR settle from
+deleting one: `test_settle_review_cards_pg.py` pins exactly that, and is now pinning a live
+condition rather than a hypothetical co-writer.
+
+**(7b) One guard went with the arm, and the plan already said it would.** The dispatcher's
+`integrate_note` arm skipped a re-delivered `note.ingested` for a note already
+`integrated`; `note_converse`'s arm deliberately never gained that skip (R3's paragraph:
+"a behaviour change no one asked for"). So a re-delivered event for an integrated note now
+enqueues a pass. What still holds it down is the arm's own two checks — a queued twin and a
+LIVE conversation — plus the fact that an event is marked dispatched once. The test that
+pinned the deleted skip (`test_live_tick_state_skips_an_already_integrated_note_no_enqueue`)
+went with it; `ingest_note`'s state skip, the other half of that pair, is untouched.
+
+**(8) Three capability losses R4 would have caused silently, all closed in the wave.**
+
+*Machine-read attachment text stopped reaching any reader.* `integrate_note` built its
+prompt out of the note's paragraph CHUNKS, which include each attachment's OCR, caption and
+transcript text, each marked by `prompt_block`. The note conversation's turn 0 is
+`note.body` plus clarifications — it has never seen an attachment's text, and nothing
+noticed because until R4 the old producer was still reading them (D13). Deleting it would
+have made a photographed receipt, a scanned letter and a voice memo produce no facts at
+all, on a capture the owner watched succeed (CLAUDE.md #10). R2's measurement could not
+have caught this: the harness seeds one chunk, the note body verbatim, and no scenario has
+an attachment. **Closed here** — `converse.note_text` composes body + marked extract blocks
+inside the same untrusted fence, and `note_ingest.prompt` gained a paragraph naming the
+four markers (v7 → v8). Capped at `MAX_ATTACHMENT_TEXT_CHARS`, because the fix's own
+failure mode is the opposite one: the deleted path bounded a long input by FANNING OUT
+into several `note.extract` calls and a conversation has one turn 0, so an uncapped
+compose would hand a decrypted medical PDF's page-by-page OCR to a single prompt and
+fail the pass outright. A cut is announced inside the fence — a reading over text the
+model never saw omits facts, and this producer's sweep acts on omission.
+
+*A document's OWN text stopped reaching the reader too.* The first fix read
+`attachment_extracts`, which is only half of the machine-read text: a PDF carrying a text
+layer is deliberately never OCR'd (`ingest/pipeline.py`) and a `text/*` file was never an
+OCR candidate, so a lab report, a statement, a lease or a `.txt`/`.md`/`.csv` file has no
+extract row at all and its words exist only as `text-layer` chunks. The deleted producer
+saw them (it selected EVERY paragraph chunk); the extract-only compose did not, so the
+same class of silent loss survived one layer down. **Closed here** —
+`notes.list_text_layer` reads those chunks in `seq` order, consulted per attachment and
+only where the vision cache gave that attachment nothing, so no attachment is read twice;
+it spends the same `MAX_ATTACHMENT_TEXT_CHARS` budget and counts the same cuts, so the
+notice stays true whichever half overflows. The blind spot that hid it is closed too: the
+reading-side tests covered OCR and transcript and nothing covered a text layer
+(`test_ingest_pg.test_the_note_the_agent_reads_carries_a_text_layer_attachment`, plus the
+double-count and budget arms in `test_note_converse.py`).
+
+*And a dual-engine OCR attachment reached the reader TWICE.* Dual-engine OCR persists two
+`kind="ocr"` rows per source anchor — the VLM's reading and RapidOCR's, RapidOCR being
+stock stack and up on the box on every deploy. The chunk builder keeps one per anchor
+(`ingest.extract.image_segments` / `_prefer_ocr`); the compose took every non-blank row,
+so a receipt landed in turn 0 twice and a scanned PDF spent the cap at roughly half its
+pages — silent loss on exactly the input the cap exists for — while the VLM's wording sat
+in the prompt but in NO chunk, so a fact quoting it could never have its span attested.
+**Closed here** by reading the cache THROUGH `image_segments`, not by a second copy of the
+preference rule beside it: one implementation, so the block the reader sees is the row the
+chunk table holds by construction. Per source anchor, never per attachment — one row per
+attachment would drop every page of a scan but one. `ExtractInfo` gained `source_anchor` to
+carry it. The same fix pinned the order the budget is spent in: `Note.attachments` had no
+`order_by` at all, so WHICH document the cap truncated was whatever the planner returned,
+and two passes that cut differently would retract and re-assert across passes — the
+flapping this wave exists to close. It orders by `created_at` then `id` now (attachments
+posted in one request share a server timestamp). The blind spot: the integration test that
+composed `note_text` wired no RapidOCR, so it only ever built one row
+(`test_ocr_pg.test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_anchor`
+closes it, alongside the per-anchor arms in `test_note_converse.py` — page ORDER is
+stable but not numeric, and is task #28).
+
+*The durable predicate-alias collapse lost its last caller.* `canonicalize_intent` ran in
+`integrate_note` before the arbiter keyed facts, applying the owner's own past
+map-to-existing decisions (`app.predicate_aliases`). The conversation normalizes through
+the REGISTRY in `graphwritetools` — a different map — and never reached that seam. **Closed
+here** by moving the collapse into `commit_facts`, which is the one seam every producer
+goes through, so it now applies to the conversation and to EMR alike.
+
+#### ⟲ The measured deletion
+
+`git diff --numstat` against the wave's parent, counting LINES REMOVED (the additions
+beside them are the repoints and the corrected prose, not new behaviour):
+
+| | removed | added |
+|---|---|---|
+| `backend/src/**` — the chain, its prompts, its modules, its package READMEs | 3,446 | 532 |
+| `backend/src/jbrain/evals/{cases,integrate_cases}/*.json` — the two eval corpora | 6,491 | 0 |
+| `backend/evals/` + the eval `scripts/*.sh` — the CLIs and the box layer | 370 | 39 |
+| `backend/tests/` — the deleted producer's specs, and the repoints | 12,608 | 1,440 |
+| `backend/migrations/` — 0200 | 0 | 110 |
+| **total** | **22,915** | **2,121** |
+
+Re-measured against the wave's final head: the review fixes are part of the wave, so the
+ADDED column drifts up each time one lands (most of it is tests for what the deletion
+nearly dropped, and corrected prose). The removed column is settled.
+
+Against the table's ~3,825 for `src/`: the CODE came in at 3,446 — close, once the card
+machinery's zero and `trace.py` / `parse_extraction` staying are netted against the eval
+runners and the prompt/route/setting rows the table omitted. The eval CORPORA (6,491 lines
+of curated JSON) are the single largest block and appear nowhere in it. And the test
+figure is 12,608 against ~7,352, because `test_extraction_pg.py` and
+`test_apply_intent_pg.py` were bigger than the table's count and because
+`tests/eval/` — a whole DB-mode eval harness for the same producer — was not listed
+at all.
 
 Tests, all Tier 1:
 
@@ -2597,10 +2770,32 @@ the reply path settles with.
 R5**, the wipe — the first note the new system reads is the first one the owner watches
 being read.
 
-**R4 — the deletion.** The old-chain half of §4, in one PR, because the chain is a chain
-and a half-deleted one does not typecheck. `review_items` loses
-`low_confidence_inference` and `new_predicate` (subject to O1). The docs of §9 are
-reconciled in the same PR.
+**R4 — the deletion. ✅** The old-chain half of §4, in one PR, because the chain is a
+chain and a half-deleted one does not typecheck. The docs of §9 are reconciled in the same
+PR.
+
+⟲ **`review_items` loses NEITHER kind, and the sentence above was wrong twice.**
+`low_confidence_inference` stays because O1 is decided (iii) and Tier 2 stays with it;
+`new_predicate` had already stopped being filed before R4 (the two-tier cutover, whose
+open backlog `worker.retire_open_new_predicate_cards` retires at startup) and its
+resolution arms stay for the rows still on the box. **R4 removed no card kind at all** —
+see §4's ⟲ (7) for what that means for the analyzer's open cards, and (4) for why the card
+machinery was already closed by gating rather than deletion.
+
+*What R4 actually deleted, and the two things it had to ADD to avoid deleting more than it
+meant to,* are §4's corrections: the measured figure is 22,915 lines removed (3,446 of `src/` CODE,
+6,491 of eval corpora, 12,608 of tests), the corpora the table omitted are its single
+largest block, and two capability losses
+the wave would have caused silently — machine-read attachment text reaching no reader at
+all, and the durable predicate-alias collapse losing its last caller — are closed in the
+wave rather than recorded as debt (§4 ⟲ (8)).
+
+**One asset R4 deleted and R5 owes back:** `tests/integration/test_persona_e2e_box.py`, the
+stateful box calibration that fed a year of persona notes through the real chain
+chronologically. It cannot be repointed — the equivalent is an agent loop against the box,
+not a pipeline call — and it belongs beside the `close_reading` eval corpus R5 already owes.
+The note.extract case corpus R4 deleted (`jbrain/evals/cases/*.json`, 12 files) is the
+input that corpus should be cut from; it is recoverable at R4's parent commit.
 
 ⟲ **Two things this paragraph used to hand R4 are already settled and must not be
 re-attempted.** *`assert_fact` narrows to the reply set* — R3 did it
@@ -2652,6 +2847,23 @@ about notes); **(ii)** re-point it in R4 and delete the arbiter entirely; **(iii
 it in a follow-on wave once the note path is proven.
 *Recommendation:* (iii). It keeps this rewrite's blast radius on notes, and (ii)'s payoff
 is line count rather than capability.
+
+**DECIDED (iii), in R4.** Tier 2 is not in this rewrite. `analysis/intent.py`, the rest of
+`analysis/arbiter.py` and `pipeline.commit_intent` / `_resolve_from_intent` /
+`_file_inference_reviews` survive, and the EMR importer is now their only caller — each of
+those modules says so in place. Two consequences R4 had to honour rather than discover
+later: `analysis/trace.py` survives with them (§4 ⟲ (1)), and so does every review-card
+filer and resolution arm, because EMR is a producer with no agent in the room (§4 ⟲ (4)).
+
+*The follow-on wave, named:* **re-point `ingest/emr/importer.py` off `IntegrationIntent`
+onto `commit_facts` + `settle_note` like every other producer, and delete Tier 2 with it
+(~1,200 lines).** It belongs to `EMR_IMPORT_PLAN.md`, not here, and it is blocked on
+nothing: `plan_intent` is close to a pass-through for EMR's input (the ambiguity flags and
+the I5 net never fire), and the one thing the tool surface cannot carry —
+`IntentFact.fhir_status`, which `supersession._lab_status_transition` reads — reaches
+`commit_facts` through `ExtractedFact` already. What it is NOT is a tidy-up: it must keep
+the lab lifecycle transition and the whole-note single settle, both of which have their own
+regression tests.
 
 **O2 — Is `repeats` an RRULE or a phrase? DECIDED by R0: NEITHER, and it is not a model
 field.** 0 parseable RRULEs in 113 values and 0 in 115 on the sharpened retry; the phrase
@@ -3136,12 +3348,14 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 - **`docs/reference/ANALYSIS.md`** — the largest. **Its review-gate half is reconciled by
   R1b**: the Lever B disposition paragraph now says where a `decide()` flag GOES depends on
   the producer, "Review inbox integration" says what the queue is NOT, and the resolution
-  layers end in NO LINK reported to whoever asked rather than in the inbox. What is left
-  for later waves is the extraction half — "Reprocessing" is the Living doc that
-  asserts the retraction behaviour; it stays TRUE under this design (unlike under the
-  teardown, which would have made it false), but its mechanism changes from an extraction
-  by `integrate_note` to a reading by the conversation. Also the review gates, the arbiter
-  holds, the I5 net, `_apply`'s decomposition.
+  layers end in NO LINK reported to whoever asked rather than in the inbox. **Its
+  extraction half is reconciled by R4**, which is the wave that made it false: the
+  two-stage `note.extract` → Integrator chain it described is deleted, "Per-source
+  extraction" is now the note conversation composing body + marked attachment blocks
+  (`converse.note_text`), and "Reprocessing" keeps its behaviour with a new mechanism — a
+  reading by the conversation rather than an extraction by `integrate_note`. The arbiter
+  holds and the I5 net stay documented as the EMR importer's path, which is what they now
+  are (O1, decided (iii)).
 - **`docs/reference/ASSISTANT.md`** — #10 (untrusted-origin content and background jobs),
   the memory model, `owner_prefs`.
 - **`docs/reference/DESIGN.md`** — the largest change after ANALYSIS.md. The inbox's two
@@ -3170,14 +3384,21 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
 - **`docs/plans/EMR_IMPORT_PLAN.md`** — O1.
 - **`backend/tests/harness/README.md`** — §5 rewrites its gap table, its "what W5 may not
   delete" section (void) and its "gate this corpus does NOT close" section (closed).
-- **`backend/evals/README.md`** — the `integrate` corpus goes, a `close_reading` corpus
-  arrives. R0's three suites are already documented there.
+- **`backend/evals/README.md`** — **reconciled by R4**, which deleted the `note.extract`
+  corpus and CLI with the prompt they scored, as well as the `integrate` one. What is left
+  there is `shape_probe.py` (R0's three behavioural suites) and the box calibration track;
+  the `close_reading` corpus that replaces both is R5's, and so is the stateful box E2E R4
+  deleted with `test_persona_e2e_box.py`.
 - **`docs/plans/README.md`** — this doc's row, and the three superseded rows.
-- **Migrations to un-seed or amend, not docs:** `0040` (the `note.ingested` →
-  `integrate_note` trigger seed, and the `resolution.changed` trigger whose consolidate
-  pipeline drove retroactive predicate consolidation), `0041`
-  (`reconcile_pending_integration`'s schedule, repointed in R3), `0194` (the
-  `note_converse` seed, which becomes the only note producer).
+- **Migrations to un-seed or amend, not docs:** `0040`'s `note.ingested` →
+  `integrate_note` trigger, its pipeline row and the `app.actions` row from `0035`, **all
+  un-seeded by migration `0200` in R4, which also drops `app.resolution_pin`**. That
+  migration is not bookkeeping and its docstring says so: `resolve_event` fails a WHOLE
+  event when one trigger names an action the in-code registry lacks, and `note.ingested`
+  drives the conversation off the same event — so an unmigrated database on the new image
+  would drop the conversation's enqueue too. Still open: `0040`'s `resolution.changed`
+  trigger, whose consolidate pipeline drove retroactive predicate consolidation, and `0041`
+  (`reconcile_pending_integration`'s schedule, repointed in R3).
 
 ## Related
 

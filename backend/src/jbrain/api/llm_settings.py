@@ -68,10 +68,8 @@ router = APIRouter()
 TASK_LABELS: dict[str, str] = {
     "agent.turn": "Agent turn",
     "agent.vision": "Agent image analysis",
-    "integrate.note": "Integrate note",
     "intake.materialize": "Intake materialize",
     "fact.adjudicate": "Fact adjudicate",
-    "note.extract": "Note extract",
     "entity.disambiguate": "Entity disambiguate",
     "correction_note.extract": "Correction extract",
     "vision.ocr": "Vision OCR",

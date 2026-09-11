@@ -90,7 +90,8 @@ _SYSTEM = SessionContext(principal_id="worker", principal_kind="owner")
 class EmrImportPipeline:
     """The `emr_parse` job handler. Constructor-injected deps mirror the shipped
     pipelines (OcrPipeline); `pipeline` is the shared `AnalysisPipeline` whose
-    deterministic arbiter (`apply_intent`) commits the lowered candidates."""
+    deterministic arbiter (`plan_intent` -> `commit_intent`) commits the lowered
+    candidates."""
 
     def __init__(
         self, maker: async_sessionmaker, blobs: BlobStore, pipeline: AnalysisPipeline

@@ -9,12 +9,9 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
     ExtractedTemporal,
-    ExtractedToken,
-    Extraction,
     ExtractionError,
     dedup_facts,
     link_relationship_objects,
-    merge_extractions,
     normalize_future_assertion,
     normalize_past_assertion,
     parse_datetime,
@@ -26,19 +23,7 @@ from jbrain.analysis.extraction import (
     validate_backward_temporal,
 )
 from jbrain.analysis.pipeline import local_anchor
-from jbrain.analysis.prompt import (
-    EXTRACTION_SCHEMA,
-    GROUP_CHAR_BUDGET,
-    MAX_FACTS,
-    MIN_FACTS,
-    PROMPT_VERSION,
-    SYSTEM_PROMPT,
-    build_user_prompt,
-    fact_cap,
-    group_texts,
-    group_texts_by_source,
-    prompt_block,
-)
+from jbrain.analysis.prompt import MAX_FACTS, MIN_FACTS, PROMPT_VERSION, fact_cap
 
 
 def valid_payload() -> dict[str, Any]:
@@ -380,204 +365,18 @@ def test_ratchet_same_domain_is_identity() -> None:
     assert ratchet_domain("health", "health") == ("health", False)
 
 
-# --- prompt assembly --------------------------------------------------------
+# --- the stamped version ----------------------------------------------------
 
 
-def test_system_prompt_carries_the_fact_grammar() -> None:
-    for needle in (
-        "schema.org",
-        "event",
-        "measurement",
-        "state",
-        "attribute",
-        "preference",
-        "relationship",
-        "asserted",
-        "hypothetical",
-        "expected",
-        '"Me"',
-        "capture anchor",
-        str(MAX_FACTS),
-        "confidence",
-    ):
-        assert needle in SYSTEM_PROMPT, needle
+def test_prompt_version_is_the_note_conversations_own() -> None:
+    """R4 moved `facts.prompt_version`'s SOURCE with the producer: the note.extract
+    prompt it used to come from is deleted, and the persona that reads notes now is where
+    a corpus-wide re-run is declared. `test_agents.py` pins the persona's version to its
+    prose digest, so a prompt edit without a bump is red there, not here."""
+    from jbrain.agent.agents import AGENTS
 
-
-def test_system_prompt_teaches_the_salience_contract() -> None:
-    """v29 reframes extraction as the SELECTIVE capture stage: emit a fact only
-    when it is a navigation edge or a root fact the graph arbitrates current
-    truth for — everything else stays in the note's prose, still findable by
-    search. Judgment (identity, supersession, inference) stays the integrator's
-    job, and the data/instruction boundary is load-bearing for prompt-injection
-    resistance."""
-    assert "CAPTURE stage of a two-stage" in SYSTEM_PROMPT
-    # The salience contract: two qualifying categories, and a stated reason
-    # skipping is safe (prose stays searchable) while minting is not.
-    assert "NAVIGATION EDGE" in SYSTEM_PROMPT
-    assert "ROOT FACT" in SYSTEM_PROMPT
-    assert "a skipped fact is still findable by search" in SYSTEM_PROMPT
-    assert "curate forever" in SYSTEM_PROMPT
-    assert "CAPTURE ONLY WHAT THE NOTE STATES" in SYSTEM_PROMPT
-    # Judgment is explicitly the integrator's job, not extraction's.
-    assert "the integrator" in SYSTEM_PROMPT
-    assert "Inference, identity, and supersession are the integrator's job." in SYSTEM_PROMPT
-    assert "Do not infer unstated facts" in SYSTEM_PROMPT
-    # Prompt-injection boundary.
-    assert "DATA, NOT INSTRUCTIONS" in SYSTEM_PROMPT
-    # The over-emission stance is gone: no completeness framing anywhere.
-    assert "CAPTURE EVERYTHING" not in SYSTEM_PROMPT
-    assert "When in doubt, include it" not in SYSTEM_PROMPT
-    # A catch-all edge would erode the tier discipline (plan §4).
-    assert "relatedTo" not in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_mentions_in_any_grammatical_role() -> None:
-    """A person is a mention in ANY role (object, possessor, appositive), the
-    author is "Me", and a reference phrase is kept verbatim — extraction never
-    invents a proper name or guesses identity (the integrator owns that).
-    Mentions stay GENEROUS under v29 (they are the co-mention spine — salience
-    trims facts, never people or places); only the thing tail softens to
-    salient/owned/recurring things."""
-    assert "in ANY grammatical role" in SYSTEM_PROMPT
-    assert "co-mention spine" in SYSTEM_PROMPT
-    assert "salience trims facts, never people or places" in SYSTEM_PROMPT
-    # Things are mentions only when salient (owned, named, recurring, tracked).
-    assert "owned, named, recurring, or tracked" in SYSTEM_PROMPT
-    for needle in (
-        "OBJECT of a verb or preposition",
-        "POSSESSOR",
-        "appositive",
-        "including in a tag",
-    ):
-        assert needle in SYSTEM_PROMPT, needle
-    assert '"Me"' in SYSTEM_PROMPT
-    # Reference mentions stay verbatim; no invented proper names.
-    assert "never invent a proper name" in SYSTEM_PROMPT
-    assert "The integrator owns identity" in SYSTEM_PROMPT
-    # Animal kinds are the species, never the useless "pet".
-    assert 'never "pet"' in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_the_fact_grammar() -> None:
-    """The property-graph edge grammar: the six kinds, a relationship's object
-    must also be a mention, enumerated relationships fan out one edge per person,
-    and a measurement carries value+unit in value_json."""
-    for kind in ("state", "event", "measurement", "attribute", "preference", "relationship"):
-        assert kind in SYSTEM_PROMPT, kind
-    # A relationship's object must be a real mention, not buried in the statement.
-    assert "object_entity_ref to the OTHER party's mention name" in SYSTEM_PROMPT
-    assert 'MUST also appear in "mentions"' in SYSTEM_PROMPT
-    # Enumerated relationships fan out to one edge per person.
-    assert "ONE edge PER person" in SYSTEM_PROMPT
-    # Measurement value shape.
-    assert '{"value": 178, "unit": "lb"}' in SYSTEM_PROMPT
-    # v29 cut the soft-fact datum machinery: everyday likes/goals/to-dos stay in
-    # prose rather than minting preference facts with a phrase datum.
-    assert "A SOFT or SUBJECTIVE fact" not in SYSTEM_PROMPT
-    assert "goals, and intentions are NOT facts" in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_declared_names_and_aliases() -> None:
-    """A declared name/alias must become its own name.* attribute carrying the
-    bare string in value_json — the datum entity_aliases resolution depends on —
-    never folded into a statement or the ownership edge. Possessive
-    introductions decompose into owns edge + name attribute."""
-    assert "A name or alias the note DECLARES" in SYSTEM_PROMPT
-    for predicate in ("name.full", "name.preferred", "name.nickname"):
-        assert predicate in SYSTEM_PROMPT, predicate
-    assert 'value_json {"value": "..."}' in SYSTEM_PROMPT
-    assert "BOTH the owns edge AND the name attribute" in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_assertions_and_backward_temporal() -> None:
-    """Assertion typing (future->expected, second-hand->reported, weighed
-    possibility->hypothetical, denial->negated) and backward temporal: a
-    relative phrase resolves against the anchor's LOCAL day, never invented."""
-    assert "expected" in SYSTEM_PROMPT and 'is "reported"' in SYSTEM_PROMPT
-    assert "hypothetical" in SYSTEM_PROMPT and "negated" in SYSTEM_PROMPT
-    # Backward temporal: "last night" from a morning capture is the prior day.
-    assert "last night" in SYSTEM_PROMPT and "PRIOR calendar day" in SYSTEM_PROMPT
-    assert "Never invent a date" in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_dated_ranges_close_their_interval() -> None:
-    """v20: an explicit dated range on a state ("from 2008 to 2016") is a CLOSED
-    interval — both bounds set — so a past job records as bounded history and
-    does not contend as a second current employer (the worksFor "conflict" bug)."""
-    assert "EXPLICIT DATED range" in SYSTEM_PROMPT
-    assert "BOTH resolved_start AND resolved_end" in SYSTEM_PROMPT
-    # The worked example shows the closed US Army interval beside a current job.
-    assert "from 2008 to 2016" in SYSTEM_PROMPT
-    assert "never competes as a second CURRENT employer" in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_age_resolves_to_birthdate() -> None:
-    """v20: age is relative-to-now and goes stale, so it resolves to an
-    approximate birthDate attribute, never a static `age` predicate (which also
-    avoids the misfiring new_predicate card on the unknown `age` spelling)."""
-    assert "AGE is relative-to-NOW" in SYSTEM_PROMPT
-    assert "resolves to an approximate birthDate" in SYSTEM_PROMPT
-    assert "coin an `age` predicate" in SYSTEM_PROMPT
-    # The worked example renders the birth year, not the age.
-    assert "Boss was born around 2018." in SYSTEM_PROMPT
-
-
-def test_system_prompt_teaches_per_fact_domain_for_the_firewall() -> None:
-    """Domain is judged PER FACT regardless of the note's capture domain, so a
-    family member's health fact in a general journal still floors to health —
-    the firewall's input. When unsure, choose the sensitive domain."""
-    assert "judged PER FACT" in SYSTEM_PROMPT
-    assert "health even inside a general journal" in SYSTEM_PROMPT
-    assert "choose the sensitive one" in SYSTEM_PROMPT
-
-
-def test_user_prompt_carries_the_per_note_fact_budget() -> None:
-    anchor = datetime(2026, 6, 10, 9, 30, tzinfo=UTC)
-    prompt = build_user_prompt(["a note"], anchor=anchor, domain="general", max_facts=17)
-    assert "Fact budget for this note: at most 17 facts" in prompt
-
-
-def test_prompt_version_is_current() -> None:
-    assert PROMPT_VERSION == "note-extract-v31"
-
-
-def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:
-    anchor = datetime(2026, 6, 10, 9, 30, tzinfo=UTC)
-    prompt = build_user_prompt(["BP was 118/76", "second chunk"], anchor=anchor, domain="health")
-    assert "2026-06-10T09:30:00+00:00" in prompt
-    assert "health" in prompt
-    assert "BP was 118/76" in prompt and "second chunk" in prompt
-
-
-def test_user_prompt_appends_domain_block_for_sensitive_domains() -> None:
-    # v6: health/finance notes get an entity-shape block (baseline showed
-    # meds/conditions/accounts captured only as fact values, not mentions);
-    # general/location get none.
-    health = build_user_prompt(
-        ["BP 120/80, lisinopril"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="health"
-    )
-    assert "MEDICATION" in health and "linkable entity" in health
-    # v7: a named clinician becomes a patient -> provider treatedBy edge, not
-    # only a mention (the live eval showed providers never wired into a fact).
-    assert "treatedBy" in health and "CLINICIAN" in health
-    finance = build_user_prompt(
-        ["paid rent, 401k"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="finance"
-    )
-    assert "FINANCIAL INSTITUTION" in finance and "FUND" in finance
-    general = build_user_prompt(
-        ["went for a run"], anchor=datetime(2026, 6, 10, tzinfo=UTC), domain="general"
-    )
-    assert "MEDICATION" not in general and "FINANCIAL INSTITUTION" not in general
-
-
-def test_user_prompt_anchor_carries_local_date_not_utc() -> None:
-    """Bug 2: an evening-local capture whose UTC instant is the next calendar
-    day must reach the model as its LOCAL date, or "today" drifts a day."""
-    # 2026-06-10 17:11 at UTC-07:00 == 2026-06-11 00:11 UTC.
-    local = datetime(2026, 6, 10, 17, 11, tzinfo=timezone(timedelta(hours=-7)))
-    prompt = build_user_prompt(["note"], anchor=local, domain="general")
-    assert "2026-06-10T17:11:00-07:00" in prompt
-    assert "2026-06-11" not in prompt  # never the UTC-rolled date
+    assert AGENTS["note_ingest"].version == PROMPT_VERSION
+    assert PROMPT_VERSION.startswith("agent-note-ingest-v")
 
 
 # --- capture anchor locality (Bug 2) ----------------------------------------
@@ -734,25 +533,6 @@ def test_already_dated_fact_is_left_alone() -> None:
     fact = _past_rel("Me used to work for the US army.", temporal=dated)
     out = normalize_past_assertion(fact, _PAST_ANCHOR)
     assert out.temporal is dated  # a model-supplied date wins; the guard defers
-
-
-def test_schema_and_version_are_stable_contract_surface() -> None:
-    assert PROMPT_VERSION  # stamped on every fact
-    assert set(EXTRACTION_SCHEMA["required"]) == {
-        "title",
-        "tags",
-        "mentions",
-        "facts",
-        "temporal_tokens",
-    }
-    fact_schema = EXTRACTION_SCHEMA["properties"]["facts"]["items"]
-    assert "temporal" in fact_schema["properties"]
-    assert fact_schema["properties"]["domain"]["enum"] == [
-        "general",
-        "health",
-        "finance",
-        "location",
-    ]
 
 
 # --- same-key dedup within one extraction (field: triple height) ------------
@@ -1453,225 +1233,6 @@ def test_parse_extraction_links_relationship_objects() -> None:
     }
     [fact] = parse_extraction(payload).facts
     assert fact.object_entity_ref == "Celine Hopkins"
-
-
-# --- chunk-level map-reduce: grouping + merge -------------------------------
-
-
-def test_group_texts_keeps_a_short_note_as_one_group() -> None:
-    """The common path is unchanged: content under the budget is one group, so
-    a short note still makes exactly one extraction call."""
-    texts = ["a paragraph", "another short one"]
-    assert group_texts(texts) == [texts]
-
-
-def test_group_texts_fans_out_over_the_budget_without_splitting_blocks() -> None:
-    """Long notes partition into ordered groups, each under budget; a block is
-    never split (paragraph chunks are the atomic citation unit)."""
-    half = "x" * (GROUP_CHAR_BUDGET // 2 + 100)  # two of these exceed one budget
-    groups = group_texts([half, half, "tail"])
-    assert groups == [[half], [half, "tail"]]
-    # Every block survives intact and in order across the partition.
-    assert [t for g in groups for t in g] == [half, half, "tail"]
-
-
-def test_group_texts_isolates_a_lone_oversize_block() -> None:
-    big = "y" * (GROUP_CHAR_BUDGET * 2)
-    assert group_texts([big, "small"]) == [[big], ["small"]]
-
-
-def test_group_texts_by_source_never_mixes_body_and_attachments() -> None:
-    """The note body and each attachment extract in separate calls, so a rich
-    attachment can't crowd the body's own facts out of a shared budget. A body plus
-    one attachment (two small blocks) yields TWO groups, body first (its title wins
-    the reduce)."""
-    body, ocr, cap = "body text", "ocr text", "caption text"
-    groups = group_texts_by_source([body, ocr, cap], ["note", "att-1", "att-1"])
-    assert groups == [["body text"], ["ocr text", "caption text"]]
-
-
-def test_group_texts_by_source_keeps_a_plain_note_as_one_group() -> None:
-    """A note with a single source is one group — identical to group_texts, so the
-    common no-attachment path stays exactly one extraction call."""
-    assert group_texts_by_source(["a", "b"], ["note", "note"]) == [["a", "b"]]
-
-
-def test_group_texts_by_source_splits_two_attachments_apart() -> None:
-    """Distinct attachments are distinct sources: each extracts independently, so
-    two receipts can't crowd each other either."""
-    groups = group_texts_by_source(["body", "r1", "r2"], ["note", "att-1", "att-2"])
-    assert groups == [["body"], ["r1"], ["r2"]]
-
-
-def _fact_json(predicate: str, statement: str, entity: str, obj: str | None) -> dict[str, Any]:
-    return {
-        "predicate": predicate,
-        "qualifier": "",
-        "kind": "relationship" if obj else "attribute",
-        "statement": statement,
-        "value_json": None if obj else {"value": statement},
-        "assertion": "asserted",
-        "entity_ref": entity,
-        "object_entity_ref": obj,
-        "temporal": None,
-        "domain": "finance",
-        "confidence": 0.9,
-    }
-
-
-async def test_extract_note_per_source_preserves_body_facts_alongside_attachment() -> None:
-    """The regression this fix targets: a content-rich attachment must not crowd the
-    note body's OWN facts out of the extraction. Per-source grouping extracts the
-    body and the attachment in separate note.extract calls, so the merged extraction
-    carries BOTH — the body's 'car loan' edge survives even though the attachment (a
-    membership card) yields its own dense facts. Empirically, a single shared call
-    drops the body facts entirely once the card text is present."""
-    import json as _json
-
-    from jbrain.analysis.pipeline import _extract_note
-    from jbrain.llm import FakeLlmClient, LlmRouter
-    from jbrain.llm.types import LlmResult, LlmUsage
-
-    body_extraction = {
-        "title": "Car loan for the Kia",
-        "tags": ["finance", "loan", "car"],
-        "mentions": [
-            {"name": "Me", "kind": "Person", "surface_text": "Me"},
-            {"name": "car loan", "kind": "FinancialAccount", "surface_text": "car loan"},
-        ],
-        "facts": [
-            _fact_json("owns", "Me owns the Addition car loan for the Kia.", "Me", "car loan")
-        ],
-        "temporal_tokens": [],
-    }
-    attachment_extraction = {
-        "title": "Membership cards",
-        "tags": ["finance", "account", "bank"],
-        "mentions": [
-            {"name": "Checking Account", "kind": "FinancialAccount", "surface_text": "Checking"}
-        ],
-        "facts": [
-            _fact_json("identifier", "Routing/ABA number is 263181384.", "Checking Account", None)
-        ],
-        "temporal_tokens": [],
-    }
-
-    class _ContentRoutedFake(FakeLlmClient):
-        """Answers by which source group's text it sees, so the two source groups get
-        their own distinct extractions (what separate calls produce in production).
-        Subclasses FakeLlmClient so it satisfies the full LlmClient protocol."""
-
-        def __init__(self) -> None:
-            super().__init__([])
-            self.seen: list[str] = []
-
-        async def complete(self, *, user_text: str, json_schema: Any = None, **_: Any) -> LlmResult:
-            self.seen.append(user_text)
-            payload = body_extraction if "car loan" in user_text else attachment_extraction
-            return LlmResult(text=_json.dumps(payload), parsed=payload, usage=LlmUsage(1, 1))
-
-    fake = _ContentRoutedFake()
-    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")})
-    body_block = prompt_block(
-        "Addition car loan for the kia is attached", source_kind="note", filename=None
-    )
-    ocr_block = prompt_block(
-        "Membership Card Routing/ABA #:263181384",
-        source_kind="ocr",
-        filename="c.jpg",
-        confidence=0.7,
-    )
-    anchor = datetime(2026, 8, 6, tzinfo=UTC)
-    extraction = await _extract_note(
-        router,
-        [body_block, ocr_block],
-        sources=["note", "att-1"],
-        domain="finance",
-        prompt_anchor=anchor,
-        parse_anchor=anchor,
-        note_id="n1",
-    )
-
-    # Two source groups → two note.extract calls (the body and the attachment never
-    # share a budget), and the merge keeps facts from BOTH.
-    assert len(fake.seen) == 2
-    statements = [f.statement for f in extraction.facts]
-    assert any("car loan" in s.lower() for s in statements)  # the body fact SURVIVES
-    assert any("263181384" in s for s in statements)  # the attachment fact too
-
-
-def _mr_part(
-    *,
-    title: str = "",
-    tags: list[str] | None = None,
-    mentions: list[ExtractedMention] | None = None,
-    facts: list[ExtractedFact] | None = None,
-    tokens: list[ExtractedToken] | None = None,
-    dropped: int = 0,
-) -> Extraction:
-    return Extraction(
-        title=title,
-        tags=tags or [],
-        mentions=mentions or [],
-        facts=facts or [],
-        tokens=tokens or [],
-        dropped_facts=dropped,
-    )
-
-
-def _mr_rel(entity: str, obj: str | None, *, predicate: str = "spouse") -> ExtractedFact:
-    return ExtractedFact(
-        predicate=predicate,
-        qualifier="",
-        kind="relationship",
-        statement=f"{entity}.{predicate} -> {obj}",
-        value_json=None,
-        assertion="asserted",
-        entity_ref=entity,
-        object_entity_ref=obj,
-        temporal=None,
-        domain="general",
-        confidence=0.9,
-    )
-
-
-def _mr_person(name: str) -> ExtractedMention:
-    return ExtractedMention(name=name, kind="Person", surface_text=name)
-
-
-def test_merge_extractions_passes_a_single_part_through_untouched() -> None:
-    part = _mr_part(title="T", facts=[_mr_rel("Me", "Bob")])
-    assert merge_extractions([part]) is part
-
-
-def test_merge_extractions_unions_metadata_and_sums_dropped() -> None:
-    a = _mr_part(title="First", tags=["x", "y"], mentions=[_mr_person("Ann")], dropped=2)
-    b = _mr_part(
-        title="Second", tags=["y", "z"], mentions=[_mr_person("Ann"), _mr_person("Bob")], dropped=3
-    )
-    merged = merge_extractions([a, b])
-    assert merged.title == "First"  # first non-empty wins
-    assert merged.tags == ["x", "y", "z"]  # ordered union
-    assert [m.name for m in merged.mentions] == ["Ann", "Bob"]  # deduped by name
-    assert merged.dropped_facts == 5  # truncation summed for the note-level card
-
-
-def test_merge_extractions_rebinds_a_relationship_object_named_in_another_group() -> None:
-    """The cross-group win: a relationship whose object entity was mentioned in a
-    DIFFERENT group still links, because the object binding re-runs over the
-    full mention set. A per-group pass could not have snapped the possessive."""
-    group1 = _mr_part(mentions=[_mr_person("Celine")])
-    # The object ref is a possessive near-miss and Celine is not in THIS group's
-    # mentions, so parse's per-group link could not bind it.
-    group2 = _mr_part(mentions=[_mr_person("Jeff")], facts=[_mr_rel("Jeff", "Celine's")])
-    [fact] = merge_extractions([group1, group2]).facts
-    assert fact.object_entity_ref == "Celine"
-
-
-def test_merge_extractions_dedups_a_fact_restated_across_groups() -> None:
-    shared = _mr_rel("Me", "Bob", predicate="sibling")
-    merged = merge_extractions([_mr_part(facts=[shared]), _mr_part(facts=[shared])])
-    assert len(merged.facts) == 1
 
 
 class TestRecoverScalarValue:

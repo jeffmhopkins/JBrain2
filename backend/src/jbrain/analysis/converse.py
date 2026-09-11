@@ -5,10 +5,10 @@ point: *the agent reads a note in a visible thread*. No tools, no chip, no inbox
 routes. The whole point of the wave landing is that the thread exists and can be
 looked at.
 
-It runs BESIDE `integrate_note`, never instead of it (D13: no PR removes a producer
-before its replacement is merged). `note.ingested` therefore drives two pipelines —
-the shipped integration that still writes the graph, and this conversation, which in
-this wave writes nothing at all. That is plan risk 4, accepted at ratification.
+It ran BESIDE `integrate_note` while that producer lived (D13: no PR removes a producer
+before its replacement is merged). R4 deleted it, so `note.ingested` drives this
+conversation and — on an EMR note — the deterministic parser, and nothing else reads a
+note. That is plan risk 4, accepted at ratification.
 
 What that costs, stated as it actually bills. It is one `agent.turn` per
 `note.ingested` EVENT, and that is NOT one per note — the event fires on every SETTLED
@@ -28,8 +28,8 @@ thread. Three re-ingests are shipped and ordinary:
 rather than an oversight. `backfill_pending_integration` used to enqueue `integrate_note`
 directly against `app.jobs`, so a corpus-wide rebuild cost nothing here; it now enqueues
 `note_converse`, because the conversation is the producer that writes
-`integration_state` (`_mark_integrated`) and re-enqueuing a producer that no longer
-writes that state would re-run the analyzer forever. So a rebuild is now one agent turn
+`integration_state` (`_mark_integrated`) — and since R4 it is the only note producer
+there is. So a rebuild is now one agent turn
 per note, serially, on one GPU — which is what a rebuild of an agent-written graph IS,
 and is why `_integration_drained` polls rather than waits. The notes tab that shows the
 threads a re-ingested note accumulates is W3 (D4).
@@ -105,10 +105,12 @@ from jbrain.analysis.clarify import (
 )
 from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.prompt import prompt_block
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.thirdparty import is_third_party
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
+from jbrain.ingest.extract import KIND_TEXT_LAYER, CachedExtract, Segment, image_segments
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
@@ -161,7 +163,7 @@ NOTE_CONVERSE_SPEC = ActionSpec(
     # ledger rows. It writes no GRAPH in W2 — the persona has no tools — but `mutating`
     # describes blast radius, not usefulness, and W3 hangs the graph writes here.
     mutating=True,
-    # One `agent.turn` per note on a serial GPU. `integrate_note` is already
+    # One `agent.turn` per note on a serial GPU. The chain this replaced was already
     # `expensive` for strictly less model work than this.
     cost_class="expensive",
     # A note must never end up with two conversations. The advisory hint here names
@@ -196,6 +198,135 @@ NOTE_CONVERSE_SPEC = ActionSpec(
 # a waiting one, and this distinction is what it keys on.
 
 _TITLE_LEN = 60
+
+
+# How much MACHINE-READ attachment text one note may add to turn 0, in total.
+#
+# The deleted `integrate_note` bounded this by FANNING OUT: a long note became several
+# `note.extract` calls, each under `GROUP_CHAR_BUDGET`. A conversation has one turn 0 and
+# cannot fan out, so the bound has to be a cap. Without one the largest input on the box
+# — a decrypted medical PDF, OCR'd page by page into `attachment_extracts` — lands whole
+# in a single prompt and takes the context window with it, failing the pass on exactly
+# the notes whose facts `emr_parse` writes deterministically anyway (and where the
+# persona holds no graph-write verb at all).
+#
+# Generous for the shapes this exists for: a receipt, a letter, a voice memo. A note's
+# own typed BODY is deliberately not capped — it is human-sized, and it is the source of
+# truth this whole path exists to read.
+MAX_ATTACHMENT_TEXT_CHARS = 24_000
+
+
+async def note_text(notes: NotesRepo, ctx: SessionContext, note: NoteInfo) -> str:
+    """The note as the agent must read it: the composed body, then every
+    MACHINE-READ attachment block after it, up to `MAX_ATTACHMENT_TEXT_CHARS`.
+
+    Without this a photographed receipt, a scanned letter and a voice memo say
+    nothing to the graph. The deleted `integrate_note` read the note's paragraph
+    CHUNKS, which include each attachment's OCR / caption / transcript text, and R4
+    would have left this conversation reading the typed body alone — a capture the
+    owner watched succeed that quietly produced no facts (CLAUDE.md #10).
+
+    Machine-read text arrives from TWO places, and reading only one of them is the same
+    loss in a different disguise. `attachment_extracts` holds what a MODEL read — OCR,
+    caption, transcript. A PDF that carries its own text layer is deliberately never
+    OCR'd (`ingest/pipeline.py`) and a `text/*` file was never an OCR candidate, so a
+    lab report, a statement, a lease or a `.md` file has no extract row at all: its
+    words exist only as chunks. `list_text_layer` is that half. It is consulted per
+    attachment and ONLY when the vision cache gave that attachment nothing, so an
+    attachment can never be read into the prompt twice — and both halves are walked in
+    an order the DATABASE guarantees, so the reading stays byte-identical run to run:
+    BETWEEN attachments by the relationship (`models/notes.py`, `created_at` then `id` —
+    several attachments posted in one request share a timestamp), and WITHIN one by
+    `list_extracts`' total-order tiebreak and by chunk `seq`. That ordering is
+    load-bearing, not tidiness: one shared budget is spent down this list, so an
+    unordered list would truncate a different document on a different pass, and this
+    producer's settle retracts what a reading did not restate.
+
+    Byte-identical is not the same as correct. A scan's pages arrive in a STABLE order,
+    not necessarily page order: the tiebreak sorts anchors lexically ("page 10" before
+    "page 2"), and `image_segments` emits a mixed-coverage scan in winner order rather
+    than page order. Task #28 carries both — what matters here is that the same note
+    reads the same way twice, which is what stops the settle from flapping.
+
+    The vision half is deduped by `image_segments` — the SAME function the chunk builder
+    reads it with, deliberately not a second copy of the rule. Dual-engine OCR persists
+    two `kind="ocr"` rows per anchor (the VLM's reading and RapidOCR's), and `_prefer_ocr`
+    keeps one per SOURCE ANCHOR, so a scanned PDF still contributes every page while a
+    page contributes one engine's transcription. Per anchor matters twice over: keeping
+    one row per attachment would drop every page but one, and picking a different engine
+    here than the chunk builder picked would put words in turn 0 that exist in no chunk —
+    a fact quoting them could then never be attested.
+
+    Both halves spend the SAME budget, in that order, and both count the same cuts, so
+    the notice below stays true whichever half overflows it.
+
+    Each block keeps `prompt_block`'s provenance marker, which is not decoration: it
+    is the only thing in the text that says these words were read by a machine rather
+    than written by Jeff, and the persona discounts them accordingly (a garbled OCR
+    line must not supersede a confident value). A low-confidence transcript says so.
+
+    The blocks ride INSIDE the note frame, with the body — they are the most
+    attacker-controllable text on the box (anyone can put words in front of a camera),
+    so they are fenced exactly like a third party's body and never lifted out of it.
+    Ordering is the attachment order, after the body, so the body's own title and
+    first-reference order still lead the reading.
+
+    **A cut says so, in the text.** Silently handing the agent a prefix is the failure
+    `close_reading`'s own clamp reporting exists to prevent: a reading over text the
+    model never saw is a reading that omits facts, and this producer's sweep acts on
+    omission. The notice sits inside the fence with the blocks it describes, which means
+    a hostile attachment can forge one — it says only "there was more", which buys an
+    attacker nothing the fence does not already deny. It says "cut short or omitted
+    entirely" because once the budget is spent the NEXT attachment contributes no block
+    at all: the reader would otherwise take the fence for a complete list of what the
+    note carries, short a few words each."""
+    blocks: list[str] = [note.body]
+    budget = MAX_ATTACHMENT_TEXT_CHARS
+    cut = 0
+    text_layer: dict[str, str] | None = None
+    for att in note.attachments:
+        reads = image_segments(
+            CachedExtract(
+                kind=ex.kind,
+                text=ex.text,
+                anchor=ex.source_anchor,
+                # `image_segments` reads the cache with a required confidence; the only
+                # thing downstream reads it for is `prompt_block`'s low-confidence
+                # transcript qualifier, and that treats a missing confidence and a full
+                # one alike, so widening None to 1.0 is not observable in the text.
+                confidence=1.0 if ex.confidence is None else ex.confidence,
+                tool=ex.tool,
+            )
+            for ex in await notes.list_extracts(ctx, att.id) or []
+        )
+        if not reads:
+            if text_layer is None:
+                text_layer = await notes.list_text_layer(ctx, note.id)
+            layer = text_layer.get(att.id, "").strip()
+            reads = [Segment(kind=KIND_TEXT_LAYER, text=layer)] if layer else []
+        for read in reads:
+            body = read.text
+            if len(body) > budget:
+                body, cut = body[:budget], cut + 1
+            budget -= len(body)
+            if not body:
+                continue
+            blocks.append(
+                prompt_block(
+                    body,
+                    source_kind=read.kind,
+                    filename=att.filename,
+                    confidence=read.confidence,
+                )
+            )
+    if cut:
+        blocks.append(
+            f"[{cut} attachment text(s) were cut short or omitted entirely: a note"
+            f" carries at most {MAX_ATTACHMENT_TEXT_CHARS} characters of machine-read"
+            " text. What is not shown here was not read — do not record anything about"
+            " it.]"
+        )
+    return "\n\n".join(blocks)
 
 
 def capture_line(note: NoteInfo) -> str:
@@ -412,7 +543,7 @@ class NoteConverseRunner:
         # forge one either — which is the property that matters most on the one note
         # whose author is known to be somebody else.
         turn_0 = framed_note(
-            note.body,
+            await note_text(self.notes, owner_ctx, note),
             captured=capture_line(note),
             about=THIRD_PARTY_ABOUT if is_third_party(note.provenance) else OWN_NOTE_ABOUT,
         )
@@ -437,8 +568,8 @@ class NoteConverseRunner:
             # finish" — instead of raising out of the job and retrying forever. Failing
             # closed is the right direction: a pass that ignored the owner's rules and
             # settled anyway would write the graph the way he asked it not to, and the
-            # `integrate_note` pipeline is still writing beside this one (D13), so a
-            # failed conversation costs a thread, not the note.
+            # failed conversation costs a thread. Since R4 nothing else reads the note,
+            # so the reconciler (`backfill_pending_integration`) is what re-drives it.
             profile = replace(
                 profile,
                 prompt=with_standing_instructions(profile.prompt, await self._rules(owner_ctx)),
@@ -682,7 +813,7 @@ def note_converse_handler(
 
     `pipeline` is the shared `AnalysisPipeline` (the worker's, with its embedder and
     settings store); one is built here when a caller has none, which is the harness case
-    — resolution then runs without embedding layer 2, exactly as `integrate_note` does
+    — resolution then runs without embedding layer 2, exactly as the write path does
     on a box with no embed client."""
     analyzer = pipeline if pipeline is not None else AnalysisPipeline(maker, router)
     entities = SqlAnalysisRepo(maker)
@@ -708,7 +839,7 @@ def note_converse_handler(
                 domain=note.domain,
                 captured_at=note.created_at,
                 tz_offset_minutes=note.tz_offset_minutes,
-                # Read from the note row, like `integrate_note` read it: an
+                # Read from the note row: an
                 # `owner_correction` note's attested facts force-supersede + pin
                 # (`NoteTarget.is_correction`). This is the same value `is_third_party`
                 # below already reads, so the conversation now branches on provenance in
@@ -716,7 +847,7 @@ def note_converse_handler(
                 # for the owner's own correction.
                 provenance=note.provenance,
             ),
-            # The WRITE session is the owner at FULL scope, like `integrate_note`'s:
+            # The WRITE session is the owner at FULL scope:
             # entity resolution layer 1 carries no domain predicate (narrowing mints
             # duplicates) and a floored fact write would be refused by RLS outright
             # (plan constraint 2). `read_scopes` is passed separately so the writer

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
-# The note→graph Integrator lifecycle (docs/archive/INTEGRATOR_PLAN.md §4). Mirrored in
+# The note→graph lifecycle (docs/archive/INTEGRATOR_PLAN.md §4). Mirrored in
 # migration 0029's CHECK constraint — keep the two in sync.
 INTEGRATION_STATES = frozenset(
     {"pending_integration", "integrating", "integrated", "stale", "skipped"}
@@ -40,8 +40,8 @@ class Note(Base):
     # 'indexed' means chunked + FTS-searchable; embeddings arrive in Step 3.
     ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # The note→graph Integrator lifecycle (INTEGRATION_STATES). An indexed note
-    # is 'pending_integration' until the integrate_note job runs and commits it.
+    # The note→graph lifecycle (INTEGRATION_STATES). An indexed note is
+    # 'pending_integration' until a note_converse pass ends on it (`_mark_integrated`).
     integration_state: Mapped[str] = mapped_column(
         Text, default="pending_integration", server_default="pending_integration"
     )
@@ -97,12 +97,21 @@ class Note(Base):
     # every pass ending that read the note, `waiting_on_owner` included — because
     # NO row is what makes this false forever, which is a permanently amber chip
     # and a re-run button polling an analyzed_at that never moves (CLAUDE.md #10).
-    # `integrate_note` and `emr_parse` still stamp it through `settle_note`.
+    # `emr_parse` stamps it through `settle_note`.
     analyzed: Mapped[bool] = column_property(
         select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
     )
 
-    attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
+    # Ordered like `clarifications` below, and for the same reason: every reader of the
+    # note walks this list in order. `analysis.converse.note_text` spends ONE shared
+    # machine-read-text budget down it, so without an ORDER BY which document gets
+    # truncated is whatever the planner returns — and a producer whose settle retracts
+    # what a reading did not restate would then retract and re-assert across passes.
+    # `created_at` alone does not settle it: several attachments posted in one request
+    # share a server timestamp, so `id` breaks the tie into a total order.
+    attachments: Mapped[list["Attachment"]] = relationship(
+        lazy="selectin", order_by="(Attachment.created_at, Attachment.id)"
+    )
     # Owner answers appended to this note (D6, migration 0193). Eager like
     # attachments because EVERY reader of the note's text needs them: the body a
     # reader sees is `compose_body(note.body, note.clarifications)`, never the raw

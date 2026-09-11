@@ -31,7 +31,8 @@ the filer still retires its OWN stale cards, an EMR import files no truncation c
 still keeps a card the owner already answered out of every sweep.
 
 The LLM is faked throughout (CLAUDE.md #5): the analyzer's half goes through
-`apply_intent` over a pre-built intent, the EMR half parses a real Epic fixture
+a pre-built intent through `commit_intent` + `settle_note`, the EMR half parses a real
+Epic fixture
 deterministically, and neither router is ever called out through.
 """
 
@@ -56,13 +57,12 @@ from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, EntityAlias, ReviewItem
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_apply_intent_pg import (
+from tests.integration.pg_fixtures import (  # noqa: F401
     _SURFACE,
     _fact,
     _intent,
     _load_chunks,
-)
-from tests.integration.test_extraction_pg import (  # noqa: F401
+    commit_and_settle,
     ingest,
     make_note,
     maker,
@@ -104,9 +104,11 @@ async def _analyzer_settle(
     dropped_facts: int = 0,
     org: str | None = None,
 ) -> None:
-    """The analyzer's commit+settle over one fact of its own — `apply_intent` is the
-    highest seam that runs without a live model, i.e. exactly what `integrate_note`
-    calls once the arbiter has ruled.
+    """A non-EMR producer's commit+settle over one fact of its own, stamped `analyzer`.
+
+    That is the key the DELETED `integrate_note` wrote under, and its open cards are
+    still on the owner's box — so what this file pins is now doubly live: an EMR settle
+    must not sweep a card whose filer no longer exists to re-file it.
 
     `dropped_facts` is the per-note cap's tail-drop count riding out of
     `parse_extraction`; a non-zero one is what files the `extraction_truncated` card."""
@@ -125,7 +127,8 @@ async def _analyzer_settle(
     )
     chunks = await _load_chunks(maker, note_id)
     async with scoped_session(maker, SYSTEM_CTX) as session:
-        await _pipeline(maker).apply_intent(
+        await commit_and_settle(
+            _pipeline(maker),
             session,
             note_id=uuid.UUID(note_id),
             note_domain="health",

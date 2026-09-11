@@ -1,6 +1,8 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-09-11 — R4 deleted the `note.extract` and
+> `integrate.note` tasks with their prompts; the note conversation runs on `agent.turn` under
+> the `note_ingest` persona.
 
 > **Applied (2026-08-18):** the Qwen3.8 KV estimate is **8.0**, superseding the 2.0 note below —
 > which was the last word on the number here while the code served 8.0, i.e. this doc had a reader
@@ -126,7 +128,7 @@ in `backend/src/jbrain/llm/router.py` and the owner's live per-task overrides
 ## Two tiering concepts — don't conflate them
 
 - **Per-task routing (authoritative, owner-configurable).** Every LLM call runs
-  under a named *task* (`agent.turn`, `integrate.note`, `vision.ocr`, …). Each task
+  under a named *task* (`agent.turn`, `fact.adjudicate`, `vision.ocr`, …). Each task
   is routed to a provider **and** a reasoning effort. The effort has a **codified
   default** — the task's reasoning bucket (`TASK_REASONING_BUCKET` in `router.py`) —
   so a fresh box is right without any hand-tuning; a stored per-task effort
@@ -144,8 +146,8 @@ reads as a deviation (the card shows "mixed"):
 
 | Bucket · default effort | Model | Tasks |
 |---|---|---|
-| **High reasoning** · high | gpt-oss-120b | `integrate.note`, `fact.adjudicate`, `wiki.ground` |
-| **Medium reasoning** · medium | gpt-oss-120b | `agent.turn`, `note.extract`, `correction_note.extract`, `video.summarize`, `wiki.rewrite`, `intake.materialize` |
+| **High reasoning** · high | gpt-oss-120b | `fact.adjudicate`, `wiki.ground`, `wiki.lint.*`, `pet.statue` |
+| **Medium reasoning** · medium | gpt-oss-120b | `agent.turn`, `correction_note.extract`, `video.summarize`, `wiki.rewrite`, `intake.materialize` |
 | **Low reasoning** · low | gpt-oss-120b | `entity.disambiguate`, `research.title`, `triage.classify` |
 | **Vision** · none | Qwen3-VL-30B-A3B | `vision.ocr`, `vision.caption`, `agent.vision` |
 
@@ -163,9 +165,10 @@ actually turns thinking off** (a snappy Instruct one-shot), while any other leve
 the full trace. See the note under the Low bucket below.
 
 Prompt → task, for reference: `agent.turn` runs the interactive personas (jerv,
-curator/`system`, archivist, teacher) and the spawned sub-agents (research, review,
-summarize); the rest map name-for-name (`note.extract`→note_extract,
-`integrate.note`→integrate_note, `correction_note.extract`→correction_mine,
+curator/`system`, archivist, teacher), the NOTE CONVERSATION (`note_ingest`, which is
+what reads a captured note since `AGENT_INGEST_REWRITE.md` R4 deleted `note.extract` and
+`integrate.note`) and the spawned sub-agents (research, review, summarize); the rest map
+name-for-name (`correction_note.extract`→correction_mine,
 `wiki.rewrite`/`wiki.ground`→wiki_editor, `video.summarize`→video_summary,
 `intake.materialize`→intake_materialize, the Low-bucket tasks→their same-named
 prompts, and the Vision tasks→vision_ocr/vision_caption/video_frame).
@@ -265,12 +268,12 @@ sits in *is* this decision. The rationale, task by task:
 
 | Task | Bucket | Why |
 |---|---|---|
-| `integrate.note` (Integrator) | **High** | Graph coreference/relationship/supersession calls that *write* the knowledge graph; runs in async ingestion, so latency is free. The best place to spend it. |
+| `agent.turn` under `note_ingest` | **Medium** (the bucket `agent.turn` carries) | The note conversation: coreference, relationship and supersession judgments that *write* the knowledge graph. It runs in async ingestion, so latency is free, and it is the best place on the box to spend reasoning — an operator who wants more can raise `agent.turn`'s effort, which raises it for every persona. |
 | `fact.adjudicate` (arbiter) | **High** | Hard conflict/supersession judgment the deterministic core then validates; async. |
 | `wiki.ground` (Phase 6) | **High** | Strict "graph wins on conflict" grounding verification; correctness-critical, batch. |
 | `wiki.rewrite` (Phase 6) | Medium | Generative drafting, not judgment; override to High only if grounding rejects too much. |
 | `agent.turn` (chat) | Medium | Interactive (owner on phone) *and* tool-driven → High would buy runaway-before-tools + slow UX. Deep research depth is already tunable per *sub-agent* at spawn time. |
-| `note.extract`, `correction_note.extract`, `video.summarize`, `intake.materialize` | Medium | Structured/bounded work; Medium is the right cost. |
+| `correction_note.extract`, `video.summarize`, `intake.materialize` | Medium | Structured/bounded work; Medium is the right cost. |
 | One-shots (`entity.disambiguate`, `session.title`, `triage.classify`) | Low | Deterministic; Low is correct. |
 
 The test in one line: *async + reasoning-bound + correctness-critical → High;

@@ -29,7 +29,7 @@ from jbrain.models.notes import Attachment, Chunk
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import (  # noqa: F401
+from tests.integration.pg_fixtures import (  # noqa: F401
     analyzer,
     extraction_payload,
     ingest,

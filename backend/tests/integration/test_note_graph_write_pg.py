@@ -47,7 +47,7 @@ from jbrain.models.analysis import Entity, EntityMention, Fact
 from jbrain.models.note_conversation import NoteConversationRepo
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import (  # noqa: F401
+from tests.integration.pg_fixtures import (  # noqa: F401
     ingest,
     make_note,
     maker,

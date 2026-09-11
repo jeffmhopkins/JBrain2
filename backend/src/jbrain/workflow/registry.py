@@ -1,4 +1,4 @@
-"""The action registry: the six job handlers described as data, bound to the
+"""The action registry: the shipped job handlers described as data, bound to the
 handler that runs each, validated at boot (E3, docs/archive/WORKFLOW_ENGINE_PLAN.md §2).
 
 An `action` *names* an existing registered handler — the engine cannot invent a
@@ -145,7 +145,8 @@ class ActionRegistry:
         return {spec.handler: handlers[spec.handler] for spec in self._by_name.values()}
 
 
-# The six handlers shipped through Phase 4, described as data. The `handler` key is
+# The handlers shipped through Phase 4 that still exist, described as data (R4 took
+# `integrate_note` with its producer). The `handler` key is
 # the existing `app.jobs.kind` so the dispatch table the worker builds is identical.
 # `mutating`/`cost_class` are conservative: every one writes (notes, embeddings,
 # facts, the predicate index), and the LLM-backed analysis/OCR actions are costed
@@ -171,17 +172,6 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="standard",
         dedup_key_expr="note_id",
         description="Embed a note's chunks for retrieval.",
-        category="note",
-    ),
-    ActionSpec(
-        name="integrate_note",
-        version=1,
-        handler="integrate_note",
-        domain_optional=True,
-        mutating=True,
-        cost_class="expensive",
-        dedup_key_expr="note_id",
-        description="Extract facts, resolve entities, and write the graph.",
         category="note",
     ),
     ActionSpec(

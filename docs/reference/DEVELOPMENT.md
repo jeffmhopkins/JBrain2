@@ -24,11 +24,12 @@ artifact — prose, output JSON schema, token budget, capability tier (`strength
 — high/low/vision/embedding, resolved to a concrete model by the adapter, never a
 model id), and a `version` — in YAML frontmatter + a templated body, loaded by
 `jbrain.llm.promptfile` beside the module that uses it (e.g.
-`analysis/prompts/note_extract.prompt`). The version is stamped on every record
-the prompt produces, so a CI guard fails if the prose changes without a version
-bump (a re-run is then a deliberate migration). Every prompt lives this way
-(e.g. `note.extract`, `entity.disambiguate`, `vision.ocr`, `vision.caption`, and
-the wiki/intake/agent prompts added since); a new prompt is a new `.prompt` file,
+`agent/prompts/note_ingest.prompt`, `analysis/prompts/entity_disambiguate.prompt`).
+The version is stamped on every record the prompt produces, so a CI guard fails if the
+prose changes without a version bump (a re-run is then a deliberate migration) —
+`facts.prompt_version` carries the note-conversation persona's version for exactly
+that reason. Every prompt lives this way (e.g. `agent.turn`'s personas,
+`entity.disambiguate`, `vision.ocr`, `vision.caption`, and the wiki/intake prompts); a new prompt is a new `.prompt` file,
 never an in-code string, and tool definitions adopt the same sidecar pattern
 (`.tool` files, with a matching version-bump CI guard). A new `.tool` also ships
 its PWA step polish in the same PR — a friendly label and an inline-arg policy in

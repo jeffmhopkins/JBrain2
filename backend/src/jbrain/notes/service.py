@@ -50,6 +50,11 @@ class ExtractInfo:
     created_at: datetime
     # Per-word transcript breakdown (transcript rows only; None otherwise).
     words: list[dict[str, Any]] | None = None
+    # Where in the media this reading came from ("page 3", or the filename for a
+    # whole-file read). Dual-engine OCR writes TWO `ocr` rows per anchor — the VLM's
+    # reading and RapidOCR's — so a reader that must show each anchor once needs this
+    # to tell a second engine's twin from the next page (`ingest.extract.image_segments`).
+    source_anchor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,7 +76,7 @@ class NoteInfo:
     ingest_state: str = "pending"
     # True once hidden from the home stream (still searchable; see set_hidden).
     hidden: bool = False
-    # True once note.extract has written the note_analysis row — the quiet
+    # True once a producer has written the note_analysis row — the quiet
     # end of the pipeline lifecycle chip (indexing → ocr → analyzing → gone).
     analyzed: bool = False
     # 'human' (captured by the owner) or 'agent' (enacted from a Proposal). The
@@ -256,6 +261,19 @@ class NotesRepo(Protocol):
     ) -> list[ExtractInfo] | None:
         """The attachment's vision-cache rows (may be empty); None when the
         attachment is missing or out of scope."""
+        ...
+
+    async def list_text_layer(self, ctx: SessionContext, note_id: str) -> dict[str, str]:
+        """Each attachment's MACHINE-READ text that never reaches `attachment_extracts`,
+        keyed by attachment id — a PDF's own text layer, a .txt/.md/.csv file's contents.
+
+        The vision cache holds only what a MODEL read (OCR, caption, transcript). A PDF
+        that carries a text layer is deliberately never OCR'd and a `text/*` file was
+        never an OCR candidate, so for those the extracted words live only in
+        `app.chunks`. `converse.note_text` needs both halves or the reading loses the
+        document (R4 — the deleted producer read every paragraph chunk).
+
+        Empty when the note is gone, out of scope, or has no such attachment."""
         ...
 
     async def remove_attachment(self, ctx: SessionContext, attachment_id: str) -> str | None:

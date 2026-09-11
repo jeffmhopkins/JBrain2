@@ -49,7 +49,7 @@ def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
     Renders the bare datum from value_json (a recognized shape, else the first
     string leaf of an unhandled shape), and falls back to the statement when
     value_json carries no datum. NEVER empty: a choice button / value cell must
-    always show something, so the statement is the floor (the note.extract prompt
+    always show something, so the statement is the floor (a reading's own prompt
     is what keeps value_json a bare datum; this only renders what is stored)."""
     return _structured_label(value_json) or statement
 

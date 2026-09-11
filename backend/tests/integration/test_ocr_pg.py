@@ -25,10 +25,11 @@ from jbrain.ingest.ocr import DESCRIPTION_SYSTEM, MAX_OCR_BYTES, OCR_SYSTEM, Ocr
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.vision import OcrResult, OcrServiceError
-from tests.conftest import SchemaRoutedLlmClient, docker_available
+from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
 pytestmark = [
@@ -266,12 +267,18 @@ async def test_ocr_round_trip_blob_to_searchable_chunks(
     assert await ocr_jobs_for(maker, attachment_id) == 1
 
 
-async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
+async def test_the_note_the_agent_reads_carries_marked_ocr_text(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
-    """The extraction call must SEE which text is machine-read: OCR chunks
-    reach note.extract prefixed with their provenance marker (Guards)."""
-    from jbrain.analysis.pipeline import AnalysisPipeline
+    """A photographed receipt has to SAY something to the graph, and the reader has to
+    know which words a machine read.
+
+    The deleted `integrate_note` built its prompt out of the note's paragraph chunks,
+    which is where OCR and caption text live; the note conversation reads the note
+    through `converse.note_text`, which composes the same thing — body first, then each
+    attachment's extract behind its provenance marker (Guards). Without that a capture
+    the owner watched succeed produces no facts at all (CLAUDE.md #10)."""
+    from jbrain.analysis.converse import note_text
 
     note_id, attachment_id = await make_note_with_image(
         maker, blobs, body="filed the receipt", filename="receipt.png", domain="general"
@@ -283,28 +290,14 @@ async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
     ).ocr_attachment({"attachment_id": attachment_id})
     await pipeline.ingest_note({"note_id": note_id})
 
-    # The body and the attachment now extract in SEPARATE note.extract calls
-    # (per-source extraction), so the markers are asserted across every extract call.
-    # A schema-routed fake answers each note.extract with the extraction and the lone
-    # integrate.note with the empty intent, regardless of how many source groups run.
-    fake = SchemaRoutedLlmClient(
-        '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-        ' "temporal_tokens": []}',
-        '{"resolutions": [], "facts": []}',
-    )
-    analyzer = AnalysisPipeline(
-        maker,
-        LlmRouter(
-            {"xai": fake},
-            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-        ),
-    )
-    await analyzer.integrate_note({"note_id": note_id})
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(SYSTEM_CTX, note_id)
+    assert note is not None
+    text_read = await note_text(repo, SYSTEM_CTX, note)
 
-    extract_text = "\n".join(c["user_text"] for c in fake.calls)
-    assert "[ocr from receipt.png]\nTotal: $41.20" in extract_text
-    assert "[image caption of receipt.png]\nA grocery receipt." in extract_text
-    assert "filed the receipt" in extract_text  # body chunk stays unmarked
+    assert "[ocr from receipt.png]\nTotal: $41.20" in text_read
+    assert "[image caption of receipt.png]\nA grocery receipt." in text_read
+    assert text_read.startswith("filed the receipt")  # the body leads, unmarked
 
 
 async def test_ingest_skips_ocr_for_oversized_images(
@@ -521,6 +514,110 @@ async def test_ocr_cross_validation_stores_both_rows(
     assert all(r["confidence"] == pytest.approx(0.7) for r in ocr_rows)
     rapid_row = next(r for r in ocr_rows if r["tool"] == "rapidocr")
     assert rapid_row["text"] == "RAPID: Total 41.20"
+
+
+async def test_the_note_the_agent_reads_carries_one_ocr_block_per_dual_engine_anchor(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """Dual-engine OCR persists two `kind="ocr"` rows per anchor, and RapidOCR is stock
+    stack — up on the owner's box on every deploy. Turn 0 must still carry ONE reading of
+    the receipt: two would spend the machine-read-text budget twice on a scanned PDF (the
+    input the cap exists for, truncating it at half the pages), and would put the VLM's
+    wording in the prompt while the chunk table holds RapidOCR's, so a fact quoting it
+    could never have its span attested.
+
+    The unit tests pin the rule; this pins that the rule meets the real cache, which is
+    where it went wrong — `test_the_note_the_agent_reads_carries_marked_ocr_text` wires no
+    RapidOCR, so it only ever builds one row."""
+    from jbrain.analysis.converse import note_text
+
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="filed the receipt", filename="receipt.png", domain="general"
+    )
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+    await OcrPipeline(
+        maker,
+        blobs,
+        vision_router(FakeLlmClient(["VLM: Total 41.20", "A grocery receipt."])),
+        SqlSettingsStore(maker),
+        _StoreRapid(OcrResult(text="RAPID: Total 41.20", mean_score=0.95)),  # type: ignore[arg-type]
+    ).ocr_attachment({"attachment_id": attachment_id})
+    await pipeline.ingest_note({"note_id": note_id})
+
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(SYSTEM_CTX, note_id)
+    assert note is not None
+    text_read = await note_text(repo, SYSTEM_CTX, note)
+
+    assert len([r for r in await extract_rows(maker, attachment_id) if r["kind"] == "ocr"]) == 2
+    assert text_read.count("[ocr from receipt.png]") == 1
+    # The block is the engine the chunk builder chunked: turn 0 and the chunk table agree,
+    # so every word the reader can quote is a word a span check can find.
+    async with scoped_session(maker, OWNER) as s:
+        chunked = (
+            await s.execute(
+                text(
+                    "SELECT text FROM app.chunks WHERE attachment_id = :aid"
+                    " AND source_kind = 'ocr' ORDER BY seq"
+                ),
+                {"aid": attachment_id},
+            )
+        ).scalars()
+        ocr_chunks = list(chunked)
+    assert ocr_chunks == ["RAPID: Total 41.20"]
+    assert "[ocr from receipt.png]\nRAPID: Total 41.20" in text_read
+    assert "VLM: Total 41.20" not in text_read
+
+
+async def test_the_extract_cache_comes_back_in_the_same_order_every_read(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """`created_at` is a TIE across one OCR job, not an order. Every row of a scan is
+    written by a single `add_all` in one transaction, and `now()` is the TRANSACTION
+    timestamp in Postgres, so all of them carry the same value — leaving the planner free
+    to hand a document's pages back differently on different reads.
+
+    That is not cosmetic. One shared budget is spent down this list in `converse.note_text`,
+    so an unstable order means a DIFFERENT SUBSET of pages survives the cap on different
+    passes, and this producer's settle retracts what a reading did not restate — the
+    flapping the whole wave exists to close. The anchor+id tiebreak makes the order total.
+
+    Stable is not numeric: "page-10" still sorts before "page-2" (task #28). What this pins
+    is the property the settle needs — the same note reads the same way twice."""
+    _, attachment_id = await make_note_with_image(maker, blobs, domain="general")
+    # ONE transaction, the way `OcrPipeline` writes a scan — which is what makes every row
+    # share `created_at` and puts the tiebreak in charge. Separate transactions would each
+    # get their own timestamp and never reach it, so this test would pass without the fix.
+    # Inserted out of anchor order, so insertion order and sorted order disagree.
+    async with scoped_session(maker, OWNER) as s:
+        for anchor in ("page-3", "page-1", "page-2"):
+            await s.execute(
+                text(
+                    "INSERT INTO app.attachment_extracts"
+                    " (id, attachment_id, kind, tool, text, confidence, source_anchor,"
+                    " domain_code)"
+                    " VALUES (:id, :aid, 'ocr', 'fake:model', :txt, 0.7, :anchor, 'general')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "aid": attachment_id,
+                    "txt": f"text of {anchor}",
+                    "anchor": anchor,
+                },
+            )
+
+    repo = SqlNotesRepo(maker)
+    reads = [
+        [
+            (r.source_anchor, r.text)
+            for r in (await repo.list_extracts(SYSTEM_CTX, attachment_id) or [])
+        ]
+        for _ in range(3)
+    ]
+    assert reads[0] == reads[1] == reads[2]
+    # Total, not insertion: the tiebreak sorts the anchors it was handed.
+    assert [a for a, _ in reads[0]] == ["page-1", "page-2", "page-3"]
 
 
 async def test_ocr_cross_validation_degrades_when_sidecar_down(

@@ -2,11 +2,12 @@
 
 `settle_note` retracts every unpinned, non-derived, active/pending_review fact of a
 note it was not handed in `touched`, and `_reconcile_mentions` deletes that note's
-mentions the same whole-note way. Up to three producers write ONE note — the analyzer
-(`integrate_note`), the note conversation (`agent/graphwritetools.py`, both runs) and
-the EMR importer (`ingest/emr/integrate.py`) — and on an ordinary note the first two
-fan out of a single `note.ingested` event, so a note-keyed sweep retracts whatever the
-co-writer just committed. That is shipped loss, not a race: the conversation asserts
+mentions the same whole-note way. THREE producers have written one note — the analyzer
+(`integrate_note`, deleted in R4 but the stamp on rows it left behind), the note
+conversation (`agent/graphwritetools.py`, both runs) and the EMR importer
+(`ingest/emr/integrate.py`) — and while the first two fanned out of a single
+`note.ingested` event, a note-keyed sweep retracted whatever the co-writer had just
+committed. That is shipped loss, not a race: the conversation asserts
 once and revises by supersession, so it never re-asserts and loses again on EVERY later
 settle of the note (re-ingest, `queue.backfill_pending_integration`,
 `analysis/rebuild.py`). The reasoning and the sequencing are
@@ -16,9 +17,9 @@ settle of the note (re-ingest, `queue.backfill_pending_integration`,
 (migration 0006) and every writer sets one, so it does distinguish the writers — but
 equality on it is the wrong key, twice:
 
-- The analyzer's value is `f"{provider}:{model}"` (`analysis/pipeline.py`), read live
-  from the router. A PWA task override, an on-box model swap or a provider fallback
-  changes it with nobody asking, and an extractor-scoped sweep would then stop
+- The analyzer's value was `f"{provider}:{model}"`, read live from the router. A PWA
+  task override, an on-box model swap or a provider fallback changes it with nobody
+  asking, and an extractor-scoped sweep would then stop
   retracting the note's OWN stale rows from the previous model — they match no future
   sweep and stay `active`, i.e. citable, forever. That breaks the sweep's primary job.
 - `note_ingest` (unattended pass) and `note_ingest_reply` (the owner's reply turn) are
@@ -145,9 +146,9 @@ a projection of its source — so the shadow sweep reads the SOURCE's status and
 shadow's own set (`settle_note`). Its stamp exists only because the column is NOT NULL.
 
 **What catches a writer that gets it wrong.** `settle_owner` is a required keyword with
-no default on `commit_facts`, `commit_intent`, `apply_intent` and `settle_note`, so a new
-producer that goes THROUGH those four seams and forgets it is a pyright error (that is
-what caught all ten call sites the day the parameter landed). Nothing about the tables
+no default on `commit_facts`, `commit_intent` and `settle_note`, so a new producer that
+goes THROUGH those three seams and forgets it is a pyright error (that is what caught all ten
+call sites the day the parameter landed). Nothing about the tables
 themselves is type-checked: SQLAlchemy's declarative constructors take `**kw: Any`, so
 `Fact(...)` with no stamp type-checks fine, and raw SQL is invisible to pyright
 entirely. `tests/unit/test_settle_owner.py` covers what pyright cannot see — it fails on
@@ -251,7 +252,7 @@ planned work.
 (`_sweep_stale_ambiguous`, `_sync_truncation_review`, both in `analysis/pipeline.py`)
 were the last note-keyed, producer-blind destructive paths — S1's two residuals — and
 they are closed by `review_items.settle_owner` (migration 0197). The EMR direction was
-the deterministic one: on a health `Records` note `note.ingested` fans out to
+the deterministic one: on a health `Records` note `note.ingested` fanned out to
 `integrate_note` and `emr_parse`, EMR cannot truncate (`ingest/emr/integrate.py` says
 why, at the seam), so its settle always took `_sync_truncation_review`'s clear branch
 and deleted the analyzer's open `extraction_truncated` card — the owner never told that
@@ -260,8 +261,10 @@ in that direction and quieter: an EMR `Extraction`'s refs are semantic keys
 (`org:Quest`, `cond:E11.9` — `ingest/emr/importer.py`) sharing no surface with anyone
 else's names, so its `NOT IN :names` clause spared nothing and an EMR settle deleted
 essentially every open `ambiguous_mention` card on the note, on re-enqueue paths
-(`queue.backfill_pending_integration`, `analysis/rebuild.py`) that re-run
-`integrate_note`/`emr_parse` and so never give the filer a chance to re-file.
+(`queue.backfill_pending_integration`, `analysis/rebuild.py`) that re-ran both producers
+and so never gave the filer a chance to re-file. R4 deleted the analyzer, which narrows
+the live pairing to one card filer (EMR) — and leaves every card the analyzer filed
+standing under its own key, which is exactly what this column is now protecting.
 
 **One filer, not a claim set — the one place the card model differs from the row
 model.** A fact states something about the world, which is why two producers reading one
@@ -303,8 +306,19 @@ whose settle never reaches a card at all.
 
 from __future__ import annotations
 
-#: `integrate_note`'s facts and mentions — the `f"{provider}:{model}"` extractors,
-#: whatever the live model is.
+#: The deleted `integrate_note` producer's facts, mentions and cards — the
+#: `f"{provider}:{model}"` extractors, whatever the live model was. Nothing writes this
+#: stamp any more (R4); it still NAMES the rows that producer left on the box, which is
+#: what keeps a surviving producer's sweep off them.
+#:
+#: Which is also why `app.facts.settle_owners` keeps `DEFAULT ARRAY['analyzer']` from
+#: migration 0196 rather than being migrated to a live producer: the default is what the
+#: box's existing analyzer rows were written under, and re-pointing it would not move a
+#: single stored row while costing a migration. The cost of leaving it is narrow and
+#: already guarded — a future raw INSERT that forgot the column would stamp a retired
+#: producer nothing sweeps, and `tests/unit/test_settle_owner.py` fails CI on exactly
+#: that shape (an unstamped write site in `src/`), so the default is never the thing
+#: that decides a row's owner.
 ANALYZER = "analyzer"
 
 #: The note conversation's, from BOTH runs: `note_ingest` (unattended pass) and

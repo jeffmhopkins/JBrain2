@@ -1,12 +1,15 @@
-"""The integrate_note job handler: one note.extract call -> Integrator -> facts,
-entities, mentions, temporal tokens, review items, note_analysis (docs/reference/ANALYSIS.md).
+"""The graph WRITE path: facts, entities, mentions, temporal tokens, review items,
+note_analysis (docs/reference/ANALYSIS.md).
 
-Failure contract: transient LLM faults propagate and ride the queue's normal
-retry backoff; an extraction that stayed malformed through the adapter's
-re-ask is a PermanentJobError. All writes happen in one transaction, so a
-failed run never partial-writes facts, and re-analysis is idempotent: facts
-upsert on the structural identity key, mentions rebuild wholesale (the chunks
-pattern), tokens are reused by (phrase, resolved value).
+It has no producer of its own. Two callers drive it — the note conversation through the
+graph-write tools (`agent/graphwritetools.py`), and the deterministic EMR importer
+(`ingest/emr/integrate.py`) — and each brings its own reading of a note. R4 deleted the
+third, `integrate_note`: the note.extract -> Integrator -> arbiter chain that used to read
+notes here is gone, and what is left is the commit + settle machinery those two share.
+
+All writes happen in one transaction, so a failed run never partial-writes facts, and
+re-analysis is idempotent: facts upsert on the structural identity key, mentions rebuild
+wholesale (the chunks pattern), tokens are reused by (phrase, resolved value).
 
 A note is captured in one domain, but a fact may ratchet UP (a health reading
 in a `general` note). Its citation must not point at a chunk the fact's own RLS
@@ -23,7 +26,6 @@ from typing import Any
 
 import structlog
 from sqlalchemy import (
-    and_,
     any_,
     bindparam,
     case,
@@ -42,11 +44,7 @@ from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.arbiter import (
     ArbiterPlan,
     compute_signals,
-    dedup_intent_facts,
-    derive_kinship_gender,
-    plan_intent,
     plan_to_extraction,
-    recover_dropped_fields,
 )
 from jbrain.analysis.canonical import (
     promote_if_corroborated,
@@ -80,7 +78,6 @@ from jbrain.analysis.entities import (
     build_disambiguation_prompt,
     create_provisional,
     declared_alias,
-    get_or_create_me,
     live_entity_by_id,
     near_duplicate_entity,
     normalize_alias,
@@ -93,35 +90,19 @@ from jbrain.analysis.entities import (
 from jbrain.analysis.extraction import (
     ExtractedFact,
     Extraction,
-    ExtractionError,
     domain_floor,
-    merge_extractions,
     normalize_future_assertion,
     normalize_past_assertion,
-    parse_extraction,
     ratchet_domain,
     recover_scalar_value,
 )
 from jbrain.analysis.geofence_projection import project_place_geofences
-from jbrain.analysis.graph_context import build_graph_context
-from jbrain.analysis.integrate import Integrator
-from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
-from jbrain.analysis.persist import IntegrationRunLog
 from jbrain.analysis.predicates import alias_canonicals, decide_predicates
 from jbrain.analysis.prompt import (
-    EXTRACT_MAX_TOKENS,
-    EXTRACTION_SCHEMA,
-    NOTE_EXTRACT_STRENGTH,
     PROMPT_VERSION,
-    SYSTEM_PROMPT,
-    build_user_prompt,
-    fact_cap,
-    group_texts,
-    group_texts_by_source,
-    prompt_block,
 )
-from jbrain.analysis.settle_owner import ANALYZER, CONVERSATION
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.analysis.supersession import (
     Candidate,
     Decision,
@@ -132,9 +113,7 @@ from jbrain.analysis.supersession import (
 )
 from jbrain.analysis.trace import build_trace
 from jbrain.analysis.weight import ConfidenceSignals
-from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient
-from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.llm import LlmBadResponseError, LlmError, LlmRouter
 from jbrain.models.analysis import (
     Entity,
@@ -144,10 +123,8 @@ from jbrain.models.analysis import (
     ReviewItem,
     TemporalToken,
 )
-from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
-from jbrain.notes.compose import compose_body
-from jbrain.queue import SYSTEM_CTX, PermanentJobError
-from jbrain.schema import SchemaError, get_registry
+from jbrain.queue import SYSTEM_CTX
+from jbrain.schema import get_registry
 from jbrain.schema.models import _norm_key
 from jbrain.settings_store import SqlSettingsStore
 
@@ -362,53 +339,6 @@ def _review_card_domain(predicate: str, note_domain: str) -> str:
     return card_domain
 
 
-async def _extract_note(
-    router: LlmRouter,
-    texts: list[str],
-    *,
-    domain: str,
-    prompt_anchor: datetime,
-    parse_anchor: datetime | None,
-    note_id: str,
-    sources: list[str] | None = None,
-) -> Extraction:
-    """Run the note.extract call(s) over a note's chunk groups and merge them into
-    one Extraction, the shared front half of integrate_note so the extraction
-    logic lives in one place. Raises
-    PermanentJobError if the output is unusable after the adapter's one re-ask —
-    retrying would just re-bill the same garbage; a SchemaError is config drift,
-    also permanent. Nothing is written here (the merge is in-memory).
-
-    `sources` (parallel to `texts`, a per-block source key: the note body vs each
-    attachment) opts into per-source grouping so a content-rich attachment can't
-    crowd the note's own body facts out of a shared fact budget
-    (docs/reference/ANALYSIS.md "Per-source extraction"). Omitted (the eval/harness call
-    sites that pass flat text) keeps the plain budget-only grouping — for a note with
-    a single source the two are identical, so this only ever adds calls when a note
-    genuinely spans body + attachments."""
-    try:
-        parts: list[Extraction] = []
-        groups = (
-            group_texts_by_source(texts, sources) if sources is not None else group_texts(texts)
-        )
-        for group in groups:
-            group_cap = fact_cap("\n\n".join(group))
-            result = await router.complete(
-                "note.extract",
-                system=SYSTEM_PROMPT,
-                user_text=build_user_prompt(
-                    group, anchor=prompt_anchor, domain=domain, max_facts=group_cap
-                ),
-                json_schema=EXTRACTION_SCHEMA,
-                max_tokens=EXTRACT_MAX_TOKENS,
-                strength=NOTE_EXTRACT_STRENGTH,
-            )
-            parts.append(parse_extraction(result.parsed, anchor=parse_anchor, max_facts=group_cap))
-        return merge_extractions(parts)
-    except (LlmBadResponseError, ExtractionError, SchemaError) as exc:
-        raise PermanentJobError(f"note.extract unusable for note {note_id}: {exc}") from exc
-
-
 class AnalysisPipeline:
     def __init__(
         self,
@@ -421,11 +351,6 @@ class AnalysisPipeline:
     ):
         self._maker = maker
         self._router = router
-        # The note→graph judgment agent (docs/archive/INTEGRATOR_PLAN.md Track B).
-        self._integrator = Integrator(router)
-        # Net-new integration run + resolution-pin persistence (§E7b), gated by the
-        # integration_persist setting below — inert without a settings store.
-        self._runlog = IntegrationRunLog(maker)
         # Optional on purpose: without an embed client, resolution layer 2 is
         # skipped entirely (no degraded guessing) — the harness and older
         # call sites keep their exact behavior.
@@ -436,242 +361,6 @@ class AnalysisPipeline:
         # picker); None ⇒ both off, so the harness/older call sites are
         # byte-unchanged.
         self._settings = settings
-
-    async def integrate_note(self, payload: dict[str, Any]) -> None:
-        """The note→graph path (docs/archive/INTEGRATOR_PLAN.md): extract → Integrator
-        (graph-aware agent judgment) → plan_intent (deterministic disposition) →
-        apply_intent (deterministic commit + review cards). Missing/deleted note
-        is a no-op."""
-        note_id = str(payload["note_id"])
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            note = (
-                await session.execute(select(Note).where(Note.id == note_id))
-            ).scalar_one_or_none()
-            if note is None or note.deleted_at is not None:
-                log.info("integration.skipped", note_id=note_id, reason="missing or deleted")
-                return
-            # Composed (D6): `body` is only the chunkless fallback below, but an
-            # owner's answer is part of the note's text wherever it is read.
-            body = compose_body(note.body, note.clarifications)
-            domain, captured_at = note.domain_code, note.created_at
-            tz_offset = note.tz_offset_minutes
-            # An owner correction note (Phase 6 §4) extracts at full weight and
-            # force-supersedes + pins the current head, so it out-argues the graph.
-            correction = note.provenance == "owner_correction"
-            # The LEFT JOIN pulls the source extract's confidence for a machine-read
-            # chunk (matched on attachment + kind, one row per pair). It feeds the
-            # transcript marker's "low-confidence" qualifier; NULL for note text.
-            chunk_rows = (
-                await session.execute(
-                    select(
-                        Chunk.id,
-                        Chunk.text,
-                        Chunk.source_kind,
-                        Chunk.attachment_id,
-                        Attachment.filename,
-                        AttachmentExtract.confidence,
-                    )
-                    .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
-                    .join(
-                        AttachmentExtract,
-                        and_(
-                            AttachmentExtract.attachment_id == Chunk.attachment_id,
-                            AttachmentExtract.kind == Chunk.source_kind,
-                        ),
-                        isouter=True,
-                    )
-                    .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
-                    .order_by(Chunk.seq)
-                )
-            ).all()
-        chunks = [_ChunkRef(id=r.id, text=r.text) for r in chunk_rows]
-        texts = [
-            prompt_block(
-                r.text, source_kind=r.source_kind, filename=r.filename, confidence=r.confidence
-            )
-            for r in chunk_rows
-        ] or [body]
-        # Per-block source key: the note body is one source, each attachment another,
-        # so _extract_note groups them into separate note.extract calls and one
-        # source's content can't crowd another's facts out of a shared fact budget
-        # (docs/reference/ANALYSIS.md "Per-source extraction"). Empty on the body-only
-        # fallback (no chunk_rows) — one source, so grouping is a no-op there.
-        sources = [
-            "note" if r.attachment_id is None else str(r.attachment_id) for r in chunk_rows
-        ] or ["note"]
-
-        prompt_anchor = local_anchor(captured_at, tz_offset)
-        parse_anchor = prompt_anchor if tz_offset is not None else None
-        extraction = await _extract_note(
-            self._router,
-            texts,
-            sources=sources,
-            domain=domain,
-            prompt_anchor=prompt_anchor,
-            parse_anchor=parse_anchor,
-            note_id=note_id,
-        )
-        flow_trace.extract(note_id, extraction)
-
-        # Graph-aware context: the existing entities + active facts near this
-        # note's mentions, so the agent can resolve to known entities and propose
-        # merges/supersessions instead of always minting new. Runs under the
-        # all-seeing SYSTEM_CTX; build_graph_context applies the domain firewall
-        # itself (RLS does not scope SYSTEM_CTX). get_or_create_me anchors the
-        # owner the agent resolves first person to.
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            owner = await get_or_create_me(session)
-            graph_context = await build_graph_context(
-                session,
-                owner_id=owner.id,
-                mentions=extraction.mentions,
-                note_domain=domain,
-                embedder=self._embedder,
-                embed_model=self._embed_model,
-            )
-        note_text = "\n\n".join(c.text for c in chunks) or body
-        intent = await self._integrator.integrate(
-            note_id=note_id,
-            extraction=extraction,
-            graph_context=graph_context,
-            schema_version=_SCHEMA_VERSION,
-            note_text=note_text,
-        )
-        flow_trace.intent(note_id, "integrate", intent)
-        # Restore objects the integrator dropped when re-typing relationship facts
-        # (it non-deterministically omits object_entity_ref the extraction carried),
-        # so the edge links instead of orphaning + holding for review.
-        intent = recover_dropped_fields(intent, extraction)
-        flow_trace.intent(note_id, "recover", intent)
-        # Deterministically emit the gender a kinship edge implies for its object
-        # (four "daughters" → four female children) when the model captured the
-        # edges but omitted gender; _gender_grounded then attests it so it commits.
-        intent = derive_kinship_gender(intent, note_text)
-        # Collapse durably-aliased predicates BEFORE the arbiter keys facts, so
-        # a past owner map/rename decision lands on the canonical graph address;
-        # unaliased long-tail predicates commit raw (two-tier model).
-        await self.canonicalize_intent(intent)
-        # Collapse a fact the Integrator emitted twice (a note listing two meds in
-        # one sentence comes back with one drug duplicated) to its best-grounded
-        # copy — otherwise the arbiter commits one copy and holds its identical twin
-        # for review. AFTER canonicalization so aliased predicates share one key.
-        intent = dedup_intent_facts(intent, [c.text for c in chunks])
-        flow_trace.intent(note_id, "dedup", intent)
-        signals = compute_signals(intent, [c.text for c in chunks])
-        plan = plan_intent(intent, signals, correction=correction)
-        flow_trace.plan(note_id, plan, signals)
-
-        provider, model = await self._router.effective_spec("integrate.note", INTEGRATE_STRENGTH)
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            resolved = await self.apply_intent(
-                session,
-                note_id=uuid.UUID(note_id),
-                note_domain=domain,
-                captured_at=captured_at,
-                chunks=chunks,
-                intent=intent,
-                plan=plan,
-                title=extraction.title,
-                tags=extraction.tags,
-                extractor=f"{provider}:{model}",
-                # The stamp does NOT move with the model the extractor names — that
-                # is the whole point of the key (analysis/settle_owner.py).
-                settle_owner=ANALYZER,
-                dropped_facts=extraction.dropped_facts,
-            )
-            await session.execute(
-                update(Note)
-                .where(Note.id == uuid.UUID(note_id))
-                .values(integration_state="integrated")
-            )
-        # Net-new run + pin persistence (§E7b), gated. Skipped on a rejected plan:
-        # apply_intent committed NOTHING (returns {}), so there is no new decision
-        # to record and — critically — re-touching the pin table here would wipe a
-        # previously-converged note's pins on a transient rejection (a silent flip,
-        # N10). A persistence fault is swallowed: the graph + integration_state are
-        # already durable above, so a run-log/pin write must never fail the job (and
-        # never roll back the commit — persist runs in its own transaction).
-        # SYSTEM_CTX with ran_as='system' recorded on the run: the integration
-        # pipeline legitimately crosses every firewall (E1), and the audit says so.
-        if (
-            not plan.rejected
-            and self._settings is not None
-            and await self._settings.integration_persist(SYSTEM_CTX)
-        ):
-            try:
-                run_id = await self._runlog.persist(
-                    SYSTEM_CTX,
-                    note_id=note_id,
-                    note_domain=domain,
-                    intent=intent,
-                    plan=plan,
-                    chunks=chunks,
-                    resolved=resolved,
-                )
-                log.info("integration.run_persisted", note_id=note_id, run_id=run_id)
-            except Exception as exc:  # noqa: BLE001 — persistence is best-effort audit
-                log.warning("integration.persist_failed", note_id=note_id, error=repr(exc))
-        log.info(
-            "integration.done",
-            note_id=note_id,
-            committed=len(plan.to_commit),
-            review=len(plan.to_review),
-        )
-
-    async def apply_intent(
-        self,
-        session: AsyncSession,
-        *,
-        note_id: uuid.UUID,
-        note_domain: str,
-        captured_at: datetime,
-        chunks: list[_ChunkRef],
-        intent: IntegrationIntent,
-        plan: ArbiterPlan,
-        title: str,
-        tags: list[str],
-        extractor: str,
-        settle_owner: str,
-        dropped_facts: int = 0,
-    ) -> dict[str, ResolvedEntity | None]:
-        """Commit an arbiter-approved IntegrationIntent AND settle its note — the
-        whole-note, one-intent-per-note path (plan §9, Option 1).
-
-        A caller with SEVERAL intents for one note must not call this in a loop:
-        `settle_note` is whole-note, so the second call's sweep retracts the first
-        call's facts. Use `commit_intent` per intent, union the outcomes, and settle
-        once (`ingest/emr/integrate.py` is the in-repo caller that does)."""
-        applied = await self.commit_intent(
-            session,
-            note_id=note_id,
-            note_domain=note_domain,
-            captured_at=captured_at,
-            chunks=chunks,
-            intent=intent,
-            plan=plan,
-            title=title,
-            tags=tags,
-            extractor=extractor,
-            settle_owner=settle_owner,
-            dropped_facts=dropped_facts,
-        )
-        if applied is None:
-            return {}
-        # One note, one pass: this run's sets ARE the whole conversation's.
-        await self.settle_note(
-            session,
-            note_id=note_id,
-            note_domain=note_domain,
-            chunks=chunks,
-            extraction=applied.extraction,
-            extractor=extractor,
-            settle_owner=settle_owner,
-            resolved=applied.outcome.resolved,
-            touched=applied.outcome.touched,
-            projected=applied.outcome.projected,
-            mention_ids=applied.outcome.mention_ids,
-        )
-        return applied.override
 
     async def commit_intent(
         self,
@@ -689,8 +378,9 @@ class AnalysisPipeline:
         settle_owner: str,
         dropped_facts: int = 0,
     ) -> AppliedIntent | None:
-        """Everything `apply_intent` does EXCEPT `settle_note` — the half a caller
-        with several intents for ONE note may run in a loop.
+        """Commit an arbiter-approved `IntegrationIntent` WITHOUT settling its note —
+        the half a caller with several intents for ONE note runs in a loop, settling once
+        at the end (`ingest/emr/integrate.py` is the in-repo caller that does).
 
         This is the seam the EMR importer writes through (plan D9 / TOOL_SURFACE gap
         3): `IntentFact.fhir_status` rides `plan_to_extraction` into `ExtractedFact`
@@ -709,15 +399,13 @@ class AnalysisPipeline:
         low_confidence_inference card — all in this one transaction (N5), so a human
         can later accept (pin) or reject (retract) it.
 
-        `AppliedIntent.override` is the committed mention_ref -> entity map, so the
-        caller can persist the Integrator's resolution pins from the SAME entities the
-        commit used, without re-resolving (which would double-mint provisionals).
+        `AppliedIntent.override` is the committed mention_ref -> entity map, so a caller
+        can reuse the SAME entities the commit used without re-resolving (which would
+        double-mint provisionals).
 
-        `dropped_facts` is the upstream per-note cap's tail-drop count, carried so
-        the rebuilt extraction can file the `extraction_truncated` card (W0). The
-        DB-mode eval runner threads the real `extraction.dropped_facts` (it runs
-        the cap), matching production; pre-built-plan callers with no extraction
-        leave it 0 — no cap ran, so no truncation card is owed."""
+        `dropped_facts` is an upstream per-note cap's tail-drop count, carried so
+        the rebuilt extraction can file the `extraction_truncated` card (W0). EMR runs no
+        cap and leaves it 0 — nothing was dropped, so no truncation card is owed."""
         if plan.rejected:
             log.info(
                 "integration.rejected",
@@ -1013,33 +701,42 @@ class AnalysisPipeline:
                 )
             )
 
-    async def canonicalize_intent(self, intent: IntegrationIntent) -> None:
-        """Public entry for the durable predicate-alias collapse — the supported
-        seam the eval harness calls (production integrate_note uses it too)."""
-        await self._canonicalize_predicates(intent)
+    async def _canonicalize_predicates(
+        self, session: AsyncSession, extraction: Extraction, note_id: uuid.UUID
+    ) -> None:
+        """Collapse each unknown predicate through the durable `predicate_aliases` map
+        (past owner map/rename decisions) before anything keys it. An unaliased predicate
+        is tier-2 long-tail: it commits raw — no embed round-trip, no card, never
+        rejected (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
 
-    async def _canonicalize_predicates(self, intent: IntegrationIntent) -> None:
-        """Collapse each unknown predicate in the intent through the durable
-        `predicate_aliases` map (past owner map/rename decisions) before the
-        arbiter keys it. An unaliased predicate is tier-2 long-tail: it commits
-        raw — no embed round-trip, no new_predicate card, never rejected
-        (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
+        It runs HERE, on the extraction every producer commits, because R4 deleted the
+        one that used to run it. `integrate_note` collapsed its `IntegrationIntent` before
+        handing it to the arbiter, and the note conversation — which normalizes through
+        the REGISTRY in `graphwritetools`, a different map — never reached that seam at
+        all. Leaving it there would have retired the owner's own past mapping decisions
+        silently, on the only producer that reads notes now.
+
+        One ordering difference that seam move costs, stated rather than hidden: on the
+        `commit_intent` path the caller has already run `plan_intent`, so an aliased
+        predicate is planned under its RAW spelling and committed under its canonical one.
+        The only planning input that reads the predicate is the sensitive-inference net,
+        which needs `fact.inferred`, and the one producer on that path mints no inferred
+        facts. On the conversation's path — the one that reads notes — this IS before
+        everything, which is where it has to be."""
         registry = get_registry()
         unknown = [
             (i, f)
-            for i, f in enumerate(intent.facts)
+            for i, f in enumerate(extraction.facts)
             if not registry.declares_predicate(f.predicate)
         ]
         if not unknown:
             return
-        async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            aliases = await alias_canonicals(session, [f.predicate for _, f in unknown])
+        aliases = await alias_canonicals(session, [f.predicate for _, f in unknown])
         kept: set[str] = set()  # one longtail log line per raw spelling per run
         for i, fact in unknown:
             canonical = aliases.get(_norm_key(fact.predicate))
             if canonical is not None:
-                intent.facts[i] = replace(fact, predicate=canonical)
-                self._rewrite_supersession(intent, fact.predicate, canonical)
+                extraction.facts[i] = replace(fact, predicate=canonical)
                 log.info("predicate.canonicalized", raw=fact.predicate, canonical=canonical)
             elif fact.predicate not in kept:
                 kept.add(fact.predicate)
@@ -1047,18 +744,8 @@ class AnalysisPipeline:
                     "predicate.longtail_kept",
                     predicate=fact.predicate,
                     kind=fact.kind,
-                    note_id=intent.note_id,
+                    note_id=str(note_id),
                 )
-
-    @staticmethod
-    def _rewrite_supersession(intent: IntegrationIntent, raw: str, canonical: str) -> None:
-        """Carry a STRONG predicate rewrite into the matching supersession
-        proposals, so compute_signals keys is_supersede on the SAME (canonical)
-        predicate the rewritten fact now uses — otherwise the proposal would name
-        the raw predicate and the supersession would silently drop."""
-        for j, sp in enumerate(intent.supersession_proposals):
-            if sp.predicate == raw:
-                intent.supersession_proposals[j] = replace(sp, predicate=canonical)
 
     async def commit_facts(
         self,
@@ -1117,6 +804,9 @@ class AnalysisPipeline:
         # A producer with an agent reading its results is told there; everyone else
         # files. `CONVERSATION` is precisely "the note conversation, both runs".
         file_review_cards = settle_owner != CONVERSATION
+        # Before anything keys a fact: a past owner map/rename decision lands on the
+        # canonical graph address, for EVERY producer.
+        await self._canonicalize_predicates(session, extraction, note_id)
         resolved = await self._resolve_entities(
             session,
             extraction,
@@ -1226,10 +916,10 @@ class AnalysisPipeline:
         docs/plans/SETTLE_OWNERSHIP.md): `sweep_note` releases this producer's claim,
         `settle_tail` refreshes what the graph derives from the rows, and
         `stamp_analysis` writes the `note_analysis` row. This method is their
-        composition and stays the ONLY thing `integrate_note` and `emr_parse` call, so
-        the split changed nothing for either of them.
+        composition and stays the ONLY thing `emr_parse` calls, so the split changed
+        nothing for it.
 
-        The split exists because the third caller cannot take all five. The note
+        The split exists because the other caller cannot take all five. The note
         conversation holds no `Extraction` at all — it has a READING (`close_reading`),
         which carries a title, tags and the fact ids a sweep needs but nothing
         extraction-shaped — so since R3 it calls the three public seams directly and
@@ -1251,15 +941,20 @@ class AnalysisPipeline:
         `settle_owner` column rather than on where the call sits, so moving them would
         cost correctness nothing; they stay for the `extraction`.
 
-        **And they still have work, which is why R3 left them standing** (its paragraph
-        in AGENT_INGEST_REWRITE.md expected to delete them). Both are producer-scoped, and
-        `_sync_truncation_review` is not only the RETIRER of `extraction_truncated` but
-        its FILER; `_file_ambiguous_review` in `_resolve_entities` still files
-        `ambiguous_mention` for every caller of `commit_intent`. Both of this method's
-        callers are live — and `emr_parse` outlives the whole rewrite, so R4's
-        `integrate_note` deletion does not make either half unreachable. Deleting them
-        now would leave the EMR importer filing cards no settle can ever retire, and take
+        **And they still have work, which is why R3 left them standing and R4 did not
+        take them** (both waves' paragraphs in AGENT_INGEST_REWRITE.md expected to delete
+        them, and §4's table still listed them). `_sync_truncation_review` is not only the
+        RETIRER of `extraction_truncated` but its FILER, and `_file_ambiguous_review` in
+        `_resolve_entities` still files `ambiguous_mention` for every caller of
+        `commit_intent`. `emr_parse` outlives the whole rewrite and calls this, so the
+        deletion of `integrate_note` did not make either half unreachable. Deleting them
+        would leave the EMR importer filing cards no settle can ever retire, and take
         away the clear branch a non-truncating EMR re-run needs.
+
+        The producer scoping now earns its keep in a second way the wave that added it did
+        not need: the analyzer's own open cards are still on the box and nothing files
+        under that key any more, so the `settle_owner` clause is what keeps an EMR settle
+        from sweeping a card the owner has not answered yet.
         """
         retracted_entities = await self.sweep_note(
             session,
@@ -1493,7 +1188,7 @@ class AnalysisPipeline:
         extractor: str,
     ) -> None:
         """Stamp the note's `note_analysis` row — the settle's third half, and since R3
-        the one three producers call: `integrate_note` and `emr_parse` through
+        the one every producer calls: `emr_parse` through
         `settle_note`, and the note conversation through
         `analysis/clarify.settle_conversation`, which hands it the closing reading's own
         title and tags.
@@ -1699,8 +1394,8 @@ class AnalysisPipeline:
         pending: dict[str, NeedsDisambiguation] = {}
         for name in names:
             if resolution_override is not None and name in resolution_override:
-                # The Integrator agent already resolved this mention; honor its
-                # validated choice instead of re-resolving (plan §9, Option 1).
+                # The caller already resolved this mention; honor its validated choice
+                # instead of re-resolving (plan §9, Option 1).
                 # Synthetic mention_ref "names" can't be re-resolved anyway. A
                 # non-rejected plan covers every fact ref EXCEPT one the same-name
                 # guard (_resolve_from_intent) deliberately withheld — that ref
@@ -1766,8 +1461,8 @@ class AnalysisPipeline:
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
         conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
-        cost"). Every failure mode — task not routed (the harness router only
-        carries note.extract), bad JSON after the adapter's re-ask, an
+        cost"). Every failure mode — task not routed (a bare harness router carries
+        no `entity.disambiguate` at all), bad JSON after the adapter's re-ask, an
         unanswered mention, a hallucinated id — degrades to NO LINK: an uncertain
         resolver leaves the name unresolved, it never guesses, and its caller is told
         (a card for `file_review_cards`, the tool result otherwise). A "none of

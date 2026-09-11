@@ -142,13 +142,9 @@ from jbrain.agent.graphwritetools import (
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.analysis.entities import ResolvedEntity, get_or_create_me
-from jbrain.analysis.extraction import ExtractedFact, Extraction
-from jbrain.analysis.pipeline import (
-    AnalysisPipeline,
-    CommitOutcome,
-    _extract_note,
-    local_anchor,
-)
+from jbrain.analysis.extraction import ExtractedFact, Extraction, parse_extraction
+from jbrain.analysis.pipeline import AnalysisPipeline, CommitOutcome, local_anchor
+from jbrain.analysis.prompt import fact_cap
 from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
@@ -418,28 +414,24 @@ def _authored_calls(step: Step) -> tuple[list[dict], list[dict]]:
     )
 
 
-async def _parse_extraction(step: Step, domain: str) -> Extraction:
-    """Run the note's scripted extraction through the genuine `note.extract`
-    parse (dedup, fact-cap, drop-invalid), the same front half the ingest path
-    runs, so the tool calls reflect extraction-layer behaviour rather than the raw
-    scripted JSON."""
+def _parse_extraction(step: Step) -> Extraction:
+    """Lower the note's scripted extraction into an `Extraction` through the genuine
+    parse (dedup, fact-cap, drop-invalid), so the tool calls reflect extraction-layer
+    behaviour rather than the raw scripted JSON.
+
+    R4 deleted `note.extract` — the prompt, its schema and the `_extract_note` call that
+    wrapped this parse — so the scripted JSON is parsed DIRECTLY instead of round-tripping
+    through a faked model call. Byte-identical for a harness step: the deleted chain
+    made one group of a single body block and `merge_extractions` passed that lone part
+    through untouched, so the parse below sees what it saw, under the same
+    `fact_cap(step.body)`. The scenario format still authors a `note.extract` payload;
+    re-cutting it onto the reading's own shape is §5's outstanding item, and until then
+    this parse is the last live reader of it."""
     created = datetime.fromisoformat(step.created_at)
     offset = created.utcoffset()
     tz = int(offset.total_seconds() // 60) if offset is not None else None
-    prompt_anchor = local_anchor(created, tz)
-    parse_anchor = prompt_anchor if tz is not None else None
-    router = LlmRouter(
-        {"xai": FakeLlmClient([json.dumps(step.extraction)])},
-        {"note.extract": ("xai", "grok-4.3")},
-    )
-    return await _extract_note(
-        router,
-        [step.body],
-        domain=domain,
-        prompt_anchor=prompt_anchor,
-        parse_anchor=parse_anchor,
-        note_id="harness",
-    )
+    parse_anchor = local_anchor(created, tz) if tz is not None else None
+    return parse_extraction(step.extraction, anchor=parse_anchor, max_facts=fact_cap(step.body))
 
 
 # --- the note ---------------------------------------------------------------
@@ -527,7 +519,7 @@ async def _run_step(maker: async_sessionmaker[AsyncSession], step: Step, note: _
     if step.tool_calls is not None:
         resolves, readings = _authored_calls(step)
     else:
-        resolves, readings = _tool_calls(await _parse_extraction(step, note.domain), step)
+        resolves, readings = _tool_calls(_parse_extraction(step), step)
     for arguments in resolves:
         await writer.resolve_entity(arguments, ctx)
     for arguments in readings:
@@ -686,17 +678,17 @@ async def run_scenario(maker: async_sessionmaker[AsyncSession], scenario: Scenar
 
 
 def _print_prompt() -> None:
-    from jbrain.analysis.prompt import SYSTEM_PROMPT, build_user_prompt
+    """Print the persona the harness plays: the note-conversation prompt the live agent
+    reads a note under. It was the `note.extract` system+user pair until R4 deleted that
+    prompt; the note is now turn 0 of a conversation, so there is one artifact to read."""
+    from pathlib import Path as _Path
 
-    body = (
-        "Saw Dr. Patel today, BP was 128/82. She wants me back in 3 months. "
-        "Bumped into Sarah from accounting — she just moved to Denver."
-    )
-    anchor = datetime.fromisoformat("2026-06-10T17:11:00-06:00")
-    print("================ SYSTEM PROMPT ================")
-    print(SYSTEM_PROMPT)
-    print("\n================ USER PROMPT (anchor as the model sees it) ====")
-    print(build_user_prompt([body], anchor=anchor, domain="general"))
+    import jbrain
+    from jbrain.llm.promptfile import load_prompt
+
+    pf = load_prompt(_Path(jbrain.__file__).parent / "agent" / "prompts" / "note_ingest.prompt")
+    print(f"================ {pf.name} ({pf.version}) ================")
+    print(pf.render())
 
 
 async def _cli_run(url: str, path: str) -> int:

@@ -150,6 +150,50 @@ async def test_chunks_domain_firewall(maker: async_sessionmaker[AsyncSession]) -
             )
 
 
+async def test_the_note_the_agent_reads_carries_a_text_layer_attachment(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """A lab report, a statement, a lease, a .txt list: a document with real text in it
+    is never OCR'd (a PDF with a text layer is skipped by design; `text/*` was never an
+    OCR candidate), so it has NO `attachment_extracts` row and its words exist only as
+    chunks. `converse.note_text` has to read that half too, or the whole document is
+    missing from the conversation the graph is written out of and the owner watches a
+    capture succeed that produces nothing (CLAUDE.md #10)."""
+    from jbrain.analysis.converse import note_text
+
+    note_id = await make_note(maker, domain="general", body="filed the lab results")
+    await add_attachment(
+        maker,
+        blobs,
+        note_id,
+        filename="list.txt",
+        media_type="text/plain",
+        data=b"oat milk and coffee beans",
+    )
+    await add_attachment(
+        maker,
+        blobs,
+        note_id,
+        filename="labs.pdf",
+        media_type="application/pdf",
+        data=pdf_bytes("Sodium 141 mmol/L", "Potassium 4.1 mmol/L"),
+    )
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(OWNER, note_id)
+    assert note is not None
+    text_read = await note_text(repo, OWNER, note)
+
+    assert text_read.startswith("filed the lab results")  # the body still leads
+    assert "oat milk and coffee beans" in text_read
+    # Every page of the PDF, in page order, not just the first.
+    assert text_read.index("Sodium 141 mmol/L") < text_read.index("Potassium 4.1 mmol/L")
+    # No OCR ran, so nothing is marked as machine-vision output — and nothing is doubled.
+    assert "[ocr from" not in text_read
+    assert text_read.count("Sodium 141 mmol/L") == 1
+
+
 async def test_pipeline_ingests_note_with_attachments(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:

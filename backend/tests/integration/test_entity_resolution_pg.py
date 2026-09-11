@@ -20,9 +20,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from jbrain.analysis.entities import (
-    DISAMBIGUATE_MAX_TOKENS,
-    DISAMBIGUATE_SCHEMA,
-    DISAMBIGUATE_SYSTEM,
     AmbiguousEntity,
     NeedsDisambiguation,
     ResolvedEntity,
@@ -33,9 +30,7 @@ from jbrain.analysis.entities import (
     register_declared_alias,
     resolve_entity,
 )
-from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
-from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, EntityAlias, Fact
 from jbrain.models.core import Subject
 from jbrain.queue import SYSTEM_CTX
@@ -46,17 +41,6 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
-
-# These exercise the DETERMINISTIC resolver / disambiguation through the full
-# pipeline (run_note -> analyze). Under integrate the agent resolves every
-# mention, so that resolver path is bypassed; the resolver layers stay covered
-# by the direct resolve_entity unit tests in this file, and declared-name /
-# collision by the harness scenarios (name_legal_reprojects_canonical,
-# adv_same_first_name_collapses). Tracked in docs/archive/CUTOVER_V1_REMOVAL.md.
-_CUTOVER_SKIP = (
-    "deterministic resolver via pipeline is bypassed under integrate;"
-    " see docs/archive/CUTOVER_V1_REMOVAL.md"
-)
 
 NOTE_TIME = datetime(2026, 6, 2, 16, 0, tzinfo=UTC)
 EARLIER = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
@@ -543,19 +527,6 @@ async def test_embedding_below_band_creates_provisional(
     assert outcome.created
 
 
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_embedding_never_autolinks_subject_bearing_entities(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    mom = await seed_entity(maker, "Mom", with_subject=True)
-    fake = FakeEmbed([("Mom", _vec(0.97))])
-    outcome = await resolve(maker, "Mum", embedder=fake)
-    # Cross-subject misattribution is a leak: strong similarity alone may
-    # not attach a subject-bearing entity — layer 3 / review decides.
-    assert isinstance(outcome, NeedsDisambiguation)
-    assert [c.id for c in outcome.candidates] == [mom]
-
-
 # --- layer 3: batched disambiguation through the pipeline ---------------------
 
 BODY = "Bob Smith called about the fence."
@@ -591,26 +562,6 @@ def near_tie_embedder() -> FakeEmbed:
     return FakeEmbed([("Robert Smith", _vec(0.85)), ("Bobby Smith", _vec(0.84))])
 
 
-async def run_note(
-    maker: async_sessionmaker[AsyncSession],
-    fake_llm: FakeLlmClient,
-    *,
-    tasks: dict[str, tuple[str, str]],
-    embedder: FakeEmbed,
-) -> None:
-    note_id = await seed_note(maker, body=BODY)
-    await seed_chunk(maker, note_id, BODY)
-    pipeline = AnalysisPipeline(
-        maker,
-        LlmRouter({"xai": fake_llm}, tasks),
-        embedder=embedder,
-        embed_model="test-embed",
-    )
-    # Only the (skipped) resolver-through-pipeline tests call this; under integrate
-    # that path is the agent's job. Reference the real handler so it type-checks.
-    await pipeline.integrate_note({"note_id": str(note_id)})
-
-
 BOTH_TASKS = {
     "note.extract": ("xai", "grok-4.3"),
     "entity.disambiguate": ("xai", "grok-4.3"),
@@ -620,90 +571,6 @@ BOTH_TASKS = {
 async def fetch_rows(maker: async_sessionmaker[AsyncSession], sql: str) -> list[Any]:
     async with scoped_session(maker, SYSTEM_CTX) as s:
         return list((await s.execute(text(sql))).all())
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_disambiguation_call_shape_and_link(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    robert = await seed_entity(maker, "Robert Smith")
-    bobby = await seed_entity(maker, "Bobby Smith")
-    fake = FakeLlmClient(
-        [
-            extraction_json(),
-            json.dumps({"choices": [{"name": "Bob Smith", "entity_id": str(robert)}]}),
-        ]
-    )
-    await run_note(maker, fake, tasks=BOTH_TASKS, embedder=near_tie_embedder())
-
-    assert len(fake.calls) == 2
-    call = fake.calls[1]
-    assert call["system"] == DISAMBIGUATE_SYSTEM
-    assert call["json_schema"] == DISAMBIGUATE_SCHEMA
-    assert call["max_tokens"] == DISAMBIGUATE_MAX_TOKENS
-    payload = json.loads(call["user_text"])
-    [item] = payload["mentions"]
-    assert item["name"] == "Bob Smith"
-    assert {c["id"] for c in item["candidates"]} == {str(robert), str(bobby)}
-    assert "Bob Smith" in (item["context"] or "")
-
-    mentions = await fetch_rows(
-        maker, "SELECT entity_id::text AS eid, link_method FROM app.entity_mentions"
-    )
-    assert [(m.eid, m.link_method) for m in mentions] == [(str(robert), "llm")]
-    facts = await fetch_rows(maker, "SELECT entity_id::text AS eid FROM app.facts")
-    assert [f.eid for f in facts] == [str(robert)]
-    # The mention resolved: no third "Bob Smith" entity, no review item.
-    assert len(await fetch_rows(maker, "SELECT 1 FROM app.entities")) == 2
-    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_disambiguation_none_creates_provisional(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    await seed_entity(maker, "Robert Smith")
-    await seed_entity(maker, "Bobby Smith")
-    fake = FakeLlmClient(
-        [
-            extraction_json(),
-            json.dumps({"choices": [{"name": "Bob Smith", "entity_id": None}]}),
-        ]
-    )
-    await run_note(maker, fake, tasks=BOTH_TASKS, embedder=near_tie_embedder())
-
-    rows = await fetch_rows(
-        maker, "SELECT canonical_name, status FROM app.entities ORDER BY canonical_name"
-    )
-    assert ("Bob Smith", "provisional") in [(r.canonical_name, r.status) for r in rows]
-    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_disambiguation_degrades_to_review_when_task_unrouted(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    await seed_entity(maker, "Robert Smith")
-    await seed_entity(maker, "Bobby Smith")
-    fake = FakeLlmClient([extraction_json()])
-    await run_note(
-        maker,
-        fake,
-        tasks={"note.extract": ("xai", "grok-4.3")},  # the harness router shape
-        embedder=near_tie_embedder(),
-    )
-
-    # No disambiguate call was even attempted; the mention filed for review
-    # instead of linking (or minting) anything.
-    assert len(fake.calls) == 1
-    reviews = await fetch_rows(maker, "SELECT kind, payload->>'name' AS name FROM app.review_items")
-    assert [(r.kind, r.name) for r in reviews] == [("ambiguous_mention", "Bob Smith")]
-    assert await fetch_rows(maker, "SELECT 1 FROM app.entity_mentions") == []
-    assert await fetch_rows(maker, "SELECT 1 FROM app.facts") == []
-    names = {
-        r.canonical_name for r in await fetch_rows(maker, "SELECT canonical_name FROM app.entities")
-    }
-    assert "Bob Smith" not in names
 
 
 # --- declared-name aliasing --------------------------------------------------
@@ -837,124 +704,3 @@ async def test_plan_merge_keeps_the_subject_then_the_older(
         assert plan.keep_id == me.id and plan.gone_id == provisional
         assert plan.keep_name == "Me" and plan.gone_name == "Jeffrey Mark Hopkins"
         assert (await plan_merge(s, me.id, provisional)).keep_id == me.id
-
-
-# --- declared-name near-duplicate merge proposals (embedding) ---------------
-
-
-def _declare_name_extraction() -> str:
-    """A note that declares a legal name on a newly-mentioned 'Sammy'."""
-    return json.dumps(
-        {
-            "title": "Sammy",
-            "tags": ["neighbor"],
-            "mentions": [{"name": "Sammy", "kind": "Person", "surface_text": "Sammy"}],
-            "facts": [
-                {
-                    "predicate": "name.legal",
-                    "qualifier": "",
-                    "kind": "attribute",
-                    "statement": "Sammy's legal name is Celine Kitina Hopkins.",
-                    "value_json": {"value": "Celine Kitina Hopkins"},
-                    "assertion": "asserted",
-                    "entity_ref": "Sammy",
-                    "object_entity_ref": None,
-                    "temporal": None,
-                    "domain": "general",
-                    "confidence": 1.0,
-                }
-            ],
-            "temporal_tokens": [],
-        }
-    )
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_declared_name_near_duplicate_files_merge_proposal(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    """A self-declared legal name that NEAR-matches a different entity surfaces
-    a merge proposal (Celine Kitina Hopkins ~ the existing Celine Hopkins) — the
-    same-person signal the exact-alias collision check cannot see. Proposal
-    only: nothing auto-merges."""
-    await seed_entity(maker, "Celine Hopkins")
-    # 'Sammy' is orthogonal to the Celine cluster (so the mention does NOT
-    # auto-link); the declared legal name lands right on it.
-    orth = [0.0, 0.0, 1.0] + [0.0] * 381
-    embedder = FakeEmbed(
-        [("Sammy", orth), ("Celine Kitina Hopkins", _vec(0.2)), ("Celine Hopkins", _vec(0.2))]
-    )
-    await run_note(
-        maker, FakeLlmClient([_declare_name_extraction()]), tasks=BOTH_TASKS, embedder=embedder
-    )
-
-    reviews = await fetch_rows(maker, "SELECT kind FROM app.review_items")
-    assert [r.kind for r in reviews] == ["merge_proposal"]
-    # No auto-merge: both entities survive for the human to adjudicate.
-    live = await fetch_rows(
-        maker, "SELECT count(*) AS n FROM app.entities WHERE status != 'merged'"
-    )
-    assert live[0].n == 2
-
-
-def _declare_given_name_extraction() -> str:
-    """Declares only a GIVEN name (a first-name component) on 'Sammy'."""
-    return json.dumps(
-        {
-            "title": "Sammy",
-            "tags": ["neighbor"],
-            "mentions": [{"name": "Sammy", "kind": "Person", "surface_text": "Sammy"}],
-            "facts": [
-                {
-                    "predicate": "name.given",
-                    "qualifier": "",
-                    "kind": "attribute",
-                    "statement": "Sammy's first name is Celine.",
-                    "value_json": {"value": "Celine"},
-                    "assertion": "asserted",
-                    "entity_ref": "Sammy",
-                    "object_entity_ref": None,
-                    "temporal": None,
-                    "domain": "general",
-                    "confidence": 1.0,
-                }
-            ],
-            "temporal_tokens": [],
-        }
-    )
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_given_name_does_not_propose_a_merge(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    """A first-name component must NOT seed a near-duplicate merge proposal —
-    that is the bare-first-name fan-out ANALYSIS rejected. Only full names do."""
-    await seed_entity(maker, "Celine Hopkins")
-    orth = [0.0, 0.0, 1.0] + [0.0] * 381
-    embedder = FakeEmbed([("Sammy", orth), ("Celine", _vec(0.2)), ("Celine Hopkins", _vec(0.2))])
-    await run_note(
-        maker,
-        FakeLlmClient([_declare_given_name_extraction()]),
-        tasks=BOTH_TASKS,
-        embedder=embedder,
-    )
-    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
-
-
-@pytest.mark.skip(reason=_CUTOVER_SKIP)
-async def test_near_duplicate_across_subjects_is_never_proposed(
-    maker: async_sessionmaker[AsyncSession],
-) -> None:
-    """A subject-bearing near match is dropped: proposing it would put a
-    cross-subject fact repoint one click away (a firewall leak)."""
-    await seed_entity(maker, "Celine Hopkins", with_subject=True)
-    orth = [0.0, 0.0, 1.0] + [0.0] * 381
-    embedder = FakeEmbed(
-        [("Sammy", orth), ("Celine Kitina Hopkins", _vec(0.2)), ("Celine Hopkins", _vec(0.2))]
-    )
-    await run_note(
-        maker, FakeLlmClient([_declare_name_extraction()]), tasks=BOTH_TASKS, embedder=embedder
-    )
-    # Same-name, distinct-subject people must NOT become a merge card.
-    assert await fetch_rows(maker, "SELECT 1 FROM app.review_items") == []
