@@ -231,21 +231,38 @@ export function askStep(message: TranscriptMessage): TurnAsk {
   return { questions: legacy ? askedQuestions(legacy.args) : [], answerable: false };
 }
 
-/** The open question set of a thread: the questions of the LAST message when that message
- * is the ask itself.
+/** The ask a thread is sitting on: the LAST message's, when that message is the ask
+ * itself. Read-only steps included — `answerable` says which.
  *
  * "Is it last" is the whole test, and it is deliberately not `stop_reason`: a persisted
  * turn replays no stop reason (`fromTurn`), so a reopened waiting thread would look
  * settled. A turn the owner has answered has their reply after it; one they have not is
  * the end of the transcript. That holds live and on reopen, and a thread that asked
  * twice freezes the older block and arms the newer one with no extra state. */
-export function openQuestions(messages: readonly TranscriptMessage[]): AskedQuestion[] {
+export function openAsk(messages: readonly TranscriptMessage[]): TurnAsk {
   const last = messages[messages.length - 1];
-  if (!last || last.role !== "assistant" || last.streaming) return [];
-  // ANSWERABLE ones only: this is the set a send posts `answers` for, and a deploy-window
-  // step can only name its questions positionally. Posting those ids is the drop `_pair`
-  // makes silently, so the set is empty here and the block says so on screen.
-  const ask = askStep(last);
+  if (!last || last.role !== "assistant" || last.streaming) {
+    return { questions: [], answerable: false };
+  }
+  return askStep(last);
+}
+
+/** The open set a send may post ANSWERS for — `openAsk` narrowed to an answerable step.
+ *
+ * A deploy-window step can only name its questions positionally, and posting those ids is
+ * the drop `_pair` makes silently, so the set is empty here and the block says so on
+ * screen.
+ *
+ * **Not the test for whether the reply is SANITISED**, and conflating the two was R3f's
+ * fifth review, finding 2. The server sanitises on `reply is not None` —
+ * `record_owner_reply` claimed a thread that was `waiting_on_owner` — which has nothing to
+ * do with whether the PWA could name the questions. On a read-only thread this returns [],
+ * so a client mirroring the server off THIS reading sanitised nothing while the server
+ * sanitised, and one send was reported two ways: the owner's quoted `Q:`/`A:` stood in the
+ * optimistic bubble and was cut on reload. Use `openAsk().questions` for that — a block
+ * above the composer, answerable or not, is a thread the reply path files against. */
+export function openQuestions(messages: readonly TranscriptMessage[]): AskedQuestion[] {
+  const ask = openAsk(messages);
   return ask.answerable ? ask.questions : [];
 }
 

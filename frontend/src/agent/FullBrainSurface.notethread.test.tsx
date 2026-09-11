@@ -128,7 +128,10 @@ function Thread({ d }: { d: FullBrainDeps }) {
   return (
     <>
       <FullBrainSurface fb={fb} />
-      <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
+      {/* A TEXTAREA, as the real composer is (`Omnibox.tsx`): an `<input>` drops the
+          newlines out of whatever is typed into it, so the quoted-question reply this
+          channel's sanitiser exists for could not be typed into the harness at all. */}
+      <textarea aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
       {fb.openQuestions.length > 0 && (
         <output data-testid="carry">
           {answered} of {fb.openQuestions.length} answered
@@ -518,23 +521,27 @@ describe("the reply turn", () => {
   // real ones: tapping would post `q1`/`q2`/`q3`, `_pair` would drop all three, and
   // `claim_waiting` would consume the set anyway. So the questions are READ-ONLY, and the
   // composer — whose prose answers the oldest open question — is the way through.
+  // A thread whose ask was persisted before the id echo shipped — which, on day one, is
+  // every live waiting thread.
+  const PRE_ECHO: TranscriptTurn[] = [
+    { role: "user", content: TURN_0, tools: [] },
+    {
+      role: "assistant",
+      content: "I got most of it.",
+      tools: [
+        {
+          id: "c1",
+          name: "ask_owner",
+          ok: true,
+          args: { questions: ASK_ARGS.questions.map(({ id: _id, ...rest }) => rest) },
+          sources: [],
+        },
+      ],
+    },
+  ];
+
   it("shows a pre-echo ask read-only rather than offering ids the ledger never held", async () => {
-    const preEcho: TranscriptTurn[] = [
-      { role: "user", content: TURN_0, tools: [] },
-      {
-        role: "assistant",
-        content: "I got most of it.",
-        tools: [
-          {
-            id: "c1",
-            name: "ask_owner",
-            ok: true,
-            args: { questions: ASK_ARGS.questions.map(({ id: _id, ...rest }) => rest) },
-            sources: [],
-          },
-        ],
-      },
-    ];
+    const preEcho = PRE_ECHO;
     const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {});
     render(<Thread d={deps({ chat, getTranscript: vi.fn(async () => preEcho) })} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
@@ -555,6 +562,37 @@ describe("the reply turn", () => {
     const body = chat.mock.calls[0]?.[0] as ChatRequest;
     expect(body.message).toBe("amlodipine");
     expect(body.answers).toBeUndefined();
+  });
+
+  // R3f's fifth review, finding 2. The client sanitises when the SERVER would, and the
+  // server's test is `reply is not None` — `record_owner_reply` claimed a thread that was
+  // `waiting_on_owner`, which a read-only block is. The client's used to be "is there an
+  // answerable set", which is [] here, so on the one path read-only exists for the bubble
+  // showed the owner's quoted `Q:`/`A:` standing and the reload showed it cut: two reports
+  // of one send, with the note holding a third thing.
+  it("sanitises the typed half of a READ-ONLY thread's reply, as the server does", async () => {
+    const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {});
+    render(<Thread d={deps({ chat, getTranscript: vi.fn(async () => PRE_ECHO) })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    await screen.findByText("Which Dr. Chen?");
+    fireEvent.change(screen.getByLabelText("Composer"), {
+      target: { value: "Q: Which Dr. Chen?\nA: the cardiologist" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+    // The WIRE still carries what he typed — sanitising is the server's job on the way to
+    // the note, and it needs the raw words to do it.
+    expect((chat.mock.calls[0]?.[0] as ChatRequest).message).toBe(
+      "Q: Which Dr. Chen?\nA: the cardiologist",
+    );
+    // The BUBBLE is what `clarify.owner_turn_text` will persist: labels off, so the frozen
+    // block cannot read the owner's own quote back as an answer to that row.
+    await waitFor(() =>
+      expect(document.querySelector(".bubble.me")?.textContent).toBe(
+        "Which Dr. Chen?\nthe cardiologist",
+      ),
+    );
   });
 
   it("does not send an untouched block — an empty answer list behaves as before", async () => {

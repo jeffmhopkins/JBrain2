@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type ReasoningEffort, api } from "../api/client";
 import { freshCoords } from "../location";
 import { isForeground } from "../visibility";
-import { type AskedQuestion, answerList, openQuestions, ownerTurnText } from "./asked";
+import { type AskedQuestion, answerList, openAsk, openQuestions, ownerTurnText } from "./asked";
 import { endTurnRate, recordStreamedText } from "./tokenMeter";
 import {
   type TranscriptMessage,
@@ -747,7 +747,10 @@ export function useFullBrain(
     // every answer plus whatever free text is in the box. Narrowed to the set that is
     // actually open, so a draft left over from a set the thread has moved past cannot
     // post an id `_pair` would only drop.
-    const asked = openQuestions(messages);
+    const ask = openAsk(messages);
+    // ANSWERABLE ones only ride the send: a deploy-window step names its questions
+    // positionally, and `_pair` drops those ids in silence.
+    const asked = ask.answerable ? ask.questions : [];
     const draft = active ? (answerDrafts[active.id] ?? {}) : {};
     const answers = answerList(asked, draft);
     // Returns whether the turn actually STARTED — a caller (the inline-approval card)
@@ -797,8 +800,17 @@ export function useFullBrain(
     // text would differ from the one a reload replays. The condition is the client's
     // mirror of the server's `reply is not None`: a thread with an open ask above the
     // composer is a thread the reply path files against.
+    //
+    // ⟲ **Mirrored off `ask.questions`, NOT off the answerable set** (R3f's fifth review,
+    // finding 2). It read `asked.length`, and `asked` is empty on a READ-ONLY thread —
+    // which the plan says every live waiting thread is in on day one. So on exactly the
+    // path read-only was built for, the server sanitised (`record_owner_reply` claims a
+    // `waiting_on_owner` thread whatever the PWA could name) and the client did not: the
+    // owner quoted a question back in words, the bubble showed his `Q:`/`A:` standing and
+    // the reload showed it cut, with the note holding a third thing. Whether the PWA can
+    // NAME the questions has nothing to do with whether the server files the reply.
     const shownText =
-      answers.length > 0 || asked.length > 0 ? ownerTurnText(text, asked, draft) : text;
+      answers.length > 0 || ask.questions.length > 0 ? ownerTurnText(text, asked, draft) : text;
     // A deferred-outcome turn is driven by a server-authored system notice, not owner
     // input — so it appends NO user bubble (the answer stands on its own after the analysis
     // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
@@ -1323,7 +1335,7 @@ export function useFullBrain(
   // The thread's open question set, derived from the transcript rather than stored: the
   // questions ARE the `ask_owner` step's recorded args, so a reopened thread needs no
   // extra wire and no answer state that lives only in a component (§3b I9).
-  const openAsk: AskedQuestion[] = openQuestions(messages);
+  const openSet: AskedQuestion[] = openQuestions(messages);
   const answers = activeId !== null ? (answerDrafts[activeId] ?? EMPTY_ANSWERS) : EMPTY_ANSWERS;
   const setAnswer = useCallback((questionId: string, answer: string) => {
     const id = activeRef.current?.id;
@@ -1361,7 +1373,7 @@ export function useFullBrain(
           return true; // the stream runs in the background now; any failure settles there
         },
       ),
-    openQuestions: openAsk,
+    openQuestions: openSet,
     answers,
     setAnswer,
     restoredText: handedBack !== null && handedBack.session === activeId ? handedBack.text : "",
