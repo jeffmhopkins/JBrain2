@@ -33,6 +33,7 @@ from jbrain.analysis import rebuild
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
 from tests.conftest import docker_available
+from tests.integration.test_note_conversation_rls import owner_ctx
 from tests.integration.test_note_purge_pg import (
     seed_entity,
     seed_fact,
@@ -94,6 +95,32 @@ async def indexed_note(maker: async_sessionmaker[AsyncSession]) -> str:
             {"id": note},
         )
     return note
+
+
+async def parked_conversation(
+    maker: async_sessionmaker[AsyncSession], note_id: str, state: str = "waiting_on_owner"
+) -> str:
+    """A live note conversation on `note_id`, in the state given — the thing that makes a
+    note un-re-enqueueable: `backfill_pending_integration` skips a note with a live
+    thread, and only a `running` one is ever reclaimed."""
+    owner = await owner_ctx(maker)
+    sid = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions (id, principal_id, agent, domain_scopes)"
+                " VALUES (CAST(:id AS uuid), :pid, 'note_ingest', '{general}')"
+            ),
+            {"id": sid, "pid": owner.principal_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.note_conversations (session_id, note_id, state, note_body_sha)"
+                " VALUES (CAST(:sid AS uuid), CAST(:nid AS uuid), :state, 'abc123')"
+            ),
+            {"sid": sid, "nid": note_id, "state": state},
+        )
+    return sid
 
 
 async def entity_of(maker: async_sessionmaker[AsyncSession], table: str, row_id: str) -> str:
@@ -618,6 +645,76 @@ async def test_rebuild_chains_into_a_wiki_rebuild_once_integration_drains(
     # A later fire finds no open run and queues no second rebuild.
     assert (await rebuild.rebuild_batch(maker)).run_id is None
     assert await count(maker, QUEUED_JOBS, kind="wiki_rebuild") == 1
+
+
+async def test_one_unanswered_question_does_not_hold_the_whole_rebuild_for_a_day(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A note parked on `ask_owner` is not in flight — it is STOPPED, on a human — and
+    the drain must not wait on it.
+
+    The chain that made it wait: `_rebuild_one` sets every candidate
+    `pending_integration`; the only engine that clears it is
+    `backfill_pending_integration`, which skips a note with a live conversation; and a
+    `waiting_on_owner` thread is never reclaimed (`reclaim_stale` takes `running` alone —
+    a question waits as long as the owner does). So ONE unanswered question meant every
+    corpus rebuild sat out `DRAIN_DEADLINE_HOURS` — 24 of them — before chaining the wiki
+    repair it exists to chain.
+
+    Both halves, because "drains immediately" is also what a deleted gate looks like: an
+    ordinary un-integrated note beside it still holds the run open."""
+    await quiesce(maker)
+    asked = await indexed_note(maker)
+    ordinary = await indexed_note(maker)
+    await parked_conversation(maker, asked)
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+    # Nothing was enqueued for the parked note — the reconciler skips a live thread — so
+    # nothing will ever flip it.
+    assert progress.status == "draining"
+    (parked_row,) = await fetch(
+        maker,
+        "SELECT integration_state AS st FROM app.notes WHERE id = :id",
+        id=asked,
+    )
+    assert parked_row.st == "pending_integration"
+
+    # The ordinary note re-integrates the way any note does.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET integration_state = 'integrated' WHERE id = :id"),
+            {"id": ordinary},
+        )
+        await s.execute(text("UPDATE app.jobs SET status = 'done' WHERE kind = 'note_converse'"))
+
+    progress = await rebuild.rebuild_batch(maker)
+
+    assert progress.status == "completed", "an unanswered question held the wiki repair"
+    row = await run_row(maker)
+    assert row.wiki_rebuild_job_id is not None
+    # And it really is still un-integrated: the run finished AROUND it, not by giving up
+    # on it. When the owner answers, his reply appends to the note and re-ingests it.
+    (parked_row,) = await fetch(
+        maker,
+        "SELECT integration_state AS st FROM app.notes WHERE id = :id",
+        id=asked,
+    )
+    assert parked_row.st == "pending_integration"
+
+
+async def test_a_running_conversation_still_holds_the_drain_open(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The other half of the clause above, and the reason it names one state rather than
+    "has a live thread": a pass actually IN FLIGHT is re-integration work, and chaining
+    the wiki repair over it rebuilds articles from a graph still being written."""
+    await quiesce(maker)
+    note = await indexed_note(maker)
+    await parked_conversation(maker, note, state="running")
+
+    progress = await rebuild.rebuild_batch(maker, start=True)
+    assert progress.status == "draining"
+    assert (await run_row(maker)).wiki_rebuild_job_id is None
 
 
 async def test_drain_fire_without_a_run_is_inert(maker: async_sessionmaker[AsyncSession]) -> None:

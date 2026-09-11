@@ -281,13 +281,29 @@ async def _integration_drained(maker: async_sessionmaker[AsyncSession]) -> bool:
     enqueues now (`queue.backfill_pending_integration`) — and `integrate_note` STAYS on
     it, which is a superset rather than the plan's swap: that producer is still live
     beside the conversation (D13) and still writing this same graph, so a drain that
-    stopped watching it would chain over its writes. R4 takes it off with the kind."""
+    stopped watching it would chain over its writes. R4 takes it off with the kind.
+
+    **A note WAITING ON THE OWNER does not count as pending, and that is a fix rather
+    than a loosening.** `_rebuild_one` sets every candidate `pending_integration`, and
+    the only engine that clears it is `backfill_pending_integration`, which R3 taught to
+    skip a note with a live conversation — so a single thread parked on `ask_owner` is a
+    note nothing will ever re-enqueue (`reclaim_stale` reaps `running` alone, by design:
+    a question waits as long as the owner does). Counted as pending, ONE unanswered
+    question makes every corpus rebuild sit out `DRAIN_DEADLINE_HOURS` before chaining
+    the wiki repair — 24 hours, every time, for a note that is not in flight but stopped,
+    on a human. Excluding it chains the repair at the same corpus state the deadline
+    would have reached anyway, a day earlier; when the owner answers, his reply appends
+    to the note, re-ingests it, and the note's own re-integration flips the dirty bits
+    `wiki_refresh` is driven by."""
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pending = (
             await session.execute(
                 text(
                     f"SELECT count(*) FROM app.notes n WHERE {_CANDIDATE_WHERE}"
                     " AND n.integration_state <> 'integrated'"
+                    " AND NOT EXISTS (SELECT 1 FROM app.note_conversations c"
+                    "                 WHERE c.note_id = n.id"
+                    "                   AND c.state = 'waiting_on_owner')"
                 )
             )
         ).scalar_one()
