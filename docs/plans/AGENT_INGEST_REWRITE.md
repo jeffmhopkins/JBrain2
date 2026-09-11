@@ -1137,7 +1137,16 @@ reply").**
    shown and the tapped candidate drawn as not-picked, live and on every reopen, while the
    note held the opposite (the two answers landed as blocks, the typed sentence reached no
    note). Both renderers now write the pairs, then the typed words, which is the order the
-   owner did them in; the typed half wears no labels, so it is not read back as an answer.
+   owner did them in; the typed half is STRIPPED of `Q:`/`A:` labels on both renderers
+   (`asked.stripPairLabels`, `clarify._strip_pair_labels`), so it cannot be read back as an
+   answer. ⟲ R3f's second review, finding 3b: "the typed half carries no labels" described
+   what the owner usually types, not what the code permits. The composer is a bare
+   `<textarea>` with no key handling and the questions sit on screen directly above it, so
+   quoting one back — `Q: Which coach?` / `A: nobody at all` — became its own chunk, matched
+   the read-back, and showed that question answered in words the backend had dropped and
+   reported as still open. Finding 4 is the same boundary from a non-PWA client:
+   `AnswerIn.answer` is an unconstrained `str`, so `capped_answers` now flattens it to one
+   line the way `_one_line` flattens the question.
 2. **Typed words beside ANY structured answer are not paired to a question.** R1c's
    `_pair` rule — prose beside a PARTIAL structured set answers the oldest question that
    set left open — was written when the composer was the only affordance, so typed words
@@ -1164,9 +1173,20 @@ is `.omni-carry`, above the input, where the appointment pill sits — `2 of 3 a
 rides with your next send`, and at zero `0 of 3 answered — answer above, or just reply`,
 which names both affordances at the one moment neither has been used. The mode row stays,
 as ruled. ⟲ R3f's review, finding 7: the draft is cleared as the turn starts, and a turn
-that reaches the server NOT AT ALL now hands it back — the server holds no user turn for a
-POST that never landed, so reopening the thread re-arms the block and finds the answers
-still in it, rather than a frozen block claiming he has already answered.
+that reaches the server NOT AT ALL now hands it back, rather than leaving a frozen block
+claiming he has already answered.
+
+⟲ **What that hand-back is worth, corrected** (R3f's second review, finding 3a). It is the
+END of the reconnect window, not a prompt recovery: the restore sits in `recover()`'s
+give-up branch, `RECONCILE_TIMEOUT_MS` — **62 minutes** — after the send, and for all of it
+`busy` stays true, so the composer's send is disabled and the owner cannot retry at all.
+Reopening the thread does not re-arm the block either: both transcript-reload effects bail
+while the chat holds the live turn. A full PWA reload does clear that hold and replays the
+ask as the last message — the server holds no user turn for a POST that never landed — but
+`answerDrafts` is React state, so the answers are gone with it. The window is inherited
+from the chat recovery loop, not introduced here; what it costs in a note thread is an hour
+in which the one screen the owner has offers him no way to send his answers again. Designing
+it down is open work and is NOT R3f's.
 
 ### I8 — The reply turn
 
@@ -1236,12 +1256,26 @@ string the ask recorded, CONSUMING each rendered pair as it claims it (⟲ R3f's
 finding 6: a map keyed by the question string made two identically worded rows — which
 `ask_owner` does not dedupe — both replay the second answer; both sides walk the open set
 in its asked order, so the n-th same-worded row now gets the n-th answer). Never by
-position alone — and a reply the owner TYPED (which carries no pairs) leaves the row
-saying "answered in your reply" rather than putting words in his mouth. The typed half of
-a MIXED send is the same kind of thing: it is appended after the pairs without labels, so
-it is his words on the turn and not an answer to any row. Both halves of the claim hold: no new endpoint, and nothing living only in a
-component. The clarification list keeps its own job, which is the note screen's durable,
-ERASABLE view — one tap away under I2 (ii).
+position alone. The typed half of a MIXED send is his words on the turn and not an answer
+to any row: it is appended after the pairs and stripped of `Q:`/`A:` labels, so nothing
+reads it back as one. Both halves of the claim hold: no new endpoint, and nothing living
+only in a component. The clarification list keeps its own job, which is the note screen's
+durable, ERASABLE view — one tap away under I2 (ii).
+
+⟲ **A frozen row says which of THREE things happened to it, and that is R3f's second
+review, finding 1.** `sentAnswers` returns `""` both for "the reply carried no words for
+this row" and for "the reply did not answer this row at all", and both renderings read
+that `""` as *answered in your reply*. On the send I7 designs — one candidate tapped, two
+rows left blank, an aside typed — the block told the owner that the two rows it had left
+OPEN were answered somewhere in his reply, live and on every reopen, while the aside had
+reached no note, the questions were still open, and `owner_reply_notice` had said so. The
+agent's next turn then re-asked exactly the rows the block called answered: **the screen
+says you answered it and the agent asks again**, on the one screen the owner has. So
+`asked.sentOutcomes` distinguishes *paired* (its words are on the turn), *answered in your
+reply* (the reply was PROSE ALONE, which `_pair` gives to the oldest open question — so
+exactly ONE row may say it), and *still open*; the header counts what landed rather than
+assuming the set did. Both the partial send and the prose-only send are pinned by tests
+that assert the open rows read as open.
 
 ### What is genuinely new build
 
@@ -2247,7 +2281,9 @@ candidate and asserts no request was made. **I7** — the draft lives per sessio
 `answer above, or just reply` at zero), and one send posts one turn filling R1c's
 `ChatRequest.answers` with `{question_id, answer}` pairs beside whatever free text is in
 the box. **I8/I9** — the block freezes because it is no longer the last message, and a
-reopened thread reads its answers back out of the reply turn's own Q/A rendering. **I1** — the waiting set is joined client-side off
+reopened thread reads out of the reply turn's own Q/A rendering not only the answers but
+which questions the reply LEFT OPEN, which is the one thing on that screen reporting the
+outcome of a send. **I1** — the waiting set is joined client-side off
 `/api/review/notes` (`notes/useNoteThreads.ts`), which IS that set already, so no note
 route grew a second copy of the conversation's state.
 
@@ -2255,14 +2291,27 @@ route grew a second copy of the conversation's state.
 the TRANSCRIPT, not from `listClarifications`.** That route needs a note id and nothing on
 the session wire carries one, so reading it would have meant widening `AgentSession` for a
 note-only concern; the reply turn's own text is the same rendering
-`clarify.owner_turn_text` persists, so the pairing is by the exact question string and a
-free-prose reply says "answered in your reply" rather than inventing words. The
+`clarify.owner_turn_text` persists, so the pairing is by the exact question string, and a
+free-prose reply says "answered in your reply" — over the ONE question `_pair` gives it,
+the oldest open one, and never over the rest of the set (R3f's second review, finding 1). The
 clarification list stays what it is — the note screen's durable, erasable view, which I2
 (ii) keeps one tap away. **I6's candidates arrive as the model's comma-separated STRING**
 (`ask_owner.tool`'s `candidates` param), not as the `{id, name, kind, summary}` the
 resolver assembles: `asked.parseCandidates` splits it on top-level commas only (the detail
 carries its own) and answers with the name, falling back to the whole candidate when two
 share one.
+
+*What its two review rounds cost, since R3f is the first wave the owner sees.* The first
+round fixed the MIXED send — the turn text, the bubble, the frozen block and `_pair`'s
+rule — and a second, independent round found the PARTIAL send still wrong in the same
+place: a block that said "answered" over questions it had left open, while the agent, told
+the truth, re-asked them. The pattern behind both is worth carrying into R4: the block
+reports an outcome it does not itself produce, so every state the reply path can end in
+needs its own rendering, and the ones nobody walks are the ones that lie. The same round
+turned two remaining ASSUMPTIONS into properties — the `Q:`/`A:` boundary against the
+owner's own typed words and against a non-PWA client's newlines — and replaced the ask
+chip's bleeding hit area with a grown box, because that row wraps and an out-of-flow target
+takes its wrapped neighbour's taps. **O15 and O16 remain neither decided nor built.**
 
 *I4 was already closed by R1* — `status.ts` gained `resolve_entity`, `close_reading` and
 `ask_owner` with the verb — so what R3f owed was the gate R1's paragraph deferred here:

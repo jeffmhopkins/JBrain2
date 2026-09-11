@@ -16,7 +16,10 @@ and vitest stubs a `?raw` stylesheet import to the empty string.
 **Scoped to this wave's controls, not to every button in the app**, for the reason
 §3b I4 gave when it scoped the live-phase gate: a gate that lands red over hundreds of
 existing selectors is a gate that gets skipped. What it pins is that each of these three
-declares the minimum, which is exactly what a later edit would drop silently."""
+reaches the minimum — and, for the one that shares a WRAPPING row with other tappables,
+that it does so without taking their hit area with it (R3f's second review, finding 2:
+a gate that asserts a declaration is not a gate that establishes the property named in
+its own comment)."""
 
 import re
 from pathlib import Path
@@ -32,18 +35,42 @@ def _rule(selector: str) -> str:
     return src[at : src.index("}", at)]
 
 
-def test_the_streams_ask_chip_is_tappable_without_being_redrawn() -> None:
-    """The drawing is untouched and only the HIT AREA grows — DESIGN.md's own precedent
-    for making a small thing a control (the vitals chart: "the drawing is untouched … and
-    only the hit area grows to clear the 44px minimum"). The chip has to keep the stream
-    row's density: it is one chip in a wrapping row inside a taller row."""
-    hit = _rule("button.chip-ask::before")
-    assert re.search(r"position:\s*absolute", hit)
-    assert re.search(r"min-width:\s*44px", hit)
-    assert re.search(r"min-height:\s*44px", hit)
-    # The chips row claims the height the hit area bleeds into, so the growth cannot
-    # reach the note body above it — whose tap opens the note screen instead.
-    assert re.search(r"min-height:\s*44px", _rule(".note-chips:has(.chip-ask)"))
+def test_the_streams_ask_chip_is_a_44px_box_that_cannot_overlap_its_neighbours() -> None:
+    """The 44px minimum, and — the half the first version of this gate did not reach —
+    that reaching it costs no OTHER tappable on the row its own hit area.
+
+    ⟲ **It used to assert only that `button.chip-ask::before` declared `min-height: 44px`,
+    which was true and did not establish what its comment claimed** (R3f's second review,
+    finding 2). `.note-chips` is `flex-wrap: wrap` and holds the attachment links BEFORE
+    this chip. On one line the bleeding pseudo-element was contained by the row's own
+    floor; on two lines the wrapped chip's 44px pseudo reached ~6px up into line 1, and —
+    absolutely positioned on a relative button, so painted after the static flex items —
+    it won the hit test. A tap on the bottom third of an attachment chip opened the thread
+    instead of the attachment, at ~400px with two ordinary filenames. The old assertions
+    all passed over that.
+
+    So this pins the PROPERTY instead: the chip's tap area is its own IN-FLOW box, which
+    is the only shape that cannot reach a sibling, whatever the row does. It is the same
+    trade `.fb-q-opt` makes below and for the same stated reason — a wrapping row of
+    tappables is where a bleeding hit area stops being free."""
+    # The premise the whole finding rests on, pinned so it cannot quietly stop being true:
+    # the row WRAPS, and it holds other tap targets — the attachment links, rendered into
+    # `.note-chips` ahead of this chip (`Stream.tsx`).
+    assert re.search(r"flex-wrap:\s*wrap", _rule(".note-chips"))
+    stream = (_REPO / "frontend" / "src" / "components" / "Stream.tsx").read_text(encoding="utf-8")
+    chips_row = stream[stream.index('<div className="note-chips">') :]
+    assert chips_row.index("<a\n") < chips_row.index("<AskChip")
+
+    chip = _rule("button.chip-ask")
+    assert re.search(r"min-width:\s*44px", chip)
+    assert re.search(r"min-height:\s*44px", chip)
+    # IN FLOW: no positioning on the chip, and no out-of-flow hit area hung off it. A
+    # `position: absolute` pseudo is exactly what reached the neighbouring chip, so its
+    # absence is the property, not a style preference.
+    assert not re.search(r"position:\s*(absolute|fixed|relative)", chip)
+    src = _STYLES.read_text(encoding="utf-8")
+    assert "button.chip-ask::before" not in src
+    assert "button.chip-ask::after" not in src
 
 
 def test_a_question_candidate_is_a_44px_box() -> None:

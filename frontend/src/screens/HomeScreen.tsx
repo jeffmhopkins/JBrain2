@@ -41,8 +41,10 @@ interface HomeScreenProps {
   /** Open an entity page by id (from a Full Brain response chip). */
   onOpenEntity?: (entityId: string) => void;
   /** A stream row's ask chip → open that note's conversation (§3b I1/I2). Flips to the
-   * tab that hosts the persona and opens the thread by id, leaving a back marker — the
-   * same handoff the notes-tab redirect makes. */
+   * tab that hosts the persona and opens the thread by id. The same handoff the notes-tab
+   * redirect makes, MINUS the card to drop: the stream is already on home, so there is no
+   * back marker to leave (`App.tsx`) — the conversation tab IS home, and Entry is one tap
+   * left. */
   onOpenThread?: (sessionId: string, agent: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;

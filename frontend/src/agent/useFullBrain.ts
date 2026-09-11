@@ -833,9 +833,19 @@ export function useFullBrain(
     // Spent, but not thrown away. A turn that reaches the server not at all left the block
     // frozen-and-answered with the draft gone (R3f's review, finding 7), so the owner
     // re-tapped three candidates against a block claiming he had already answered. The
-    // snapshot rides the turn and comes back if it settles as an error — and the server
-    // holds no user turn for a POST that never landed, so reopening the thread replays the
-    // ask as the last message, re-arms the block, and finds his answers still in it.
+    // snapshot rides the turn and comes back if it settles as an error.
+    //
+    // What that DOES NOT buy, stated plainly because the plan and DESIGN.md both used to
+    // claim it (R3f's second review, finding 3a): a prompt retry. The restore is inside
+    // `recover()`'s give-up branch, which is `RECONCILE_TIMEOUT_MS` — 62 minutes — away,
+    // and for all of it `busy` stays true, so the composer's send is disabled; both
+    // transcript-reload effects bail while this chat holds the live turn, so navigating
+    // away and back does not re-arm the block either. A full PWA reload clears the hold
+    // and the server (holding no turn for a POST that never landed) replays the ask as the
+    // last message — but `answerDrafts` is React state, so the answers are gone anyway.
+    // The window is the chat recovery loop's, inherited rather than introduced here; the
+    // cost it carries into a note thread is an hour in which the one screen the owner has
+    // offers him no way to send his answers again.
     const spent = answers.length > 0 ? draft : undefined;
     if (answers.length > 0) clearAnswers(turnSessionId);
     void runTurn(body, controller, turnSessionId, baseline, undefined, 0, spent);
@@ -955,7 +965,9 @@ export function useFullBrain(
         setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
         // The one outcome that means the turn reached nothing: no live run to ride and no
         // persisted exchange for the whole recovery window. Give the answers back, under
-        // anything typed into the block since, so a retry does not start from blank.
+        // anything typed into the block since, so a retry does not start from blank. It
+        // is the END of the window, not a prompt hand-back — see `send`'s note on what
+        // the owner can and cannot do while it runs.
         if (spentAnswers) {
           setAnswerDrafts((prev) => ({
             ...prev,

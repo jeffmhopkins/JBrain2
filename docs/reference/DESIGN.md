@@ -1483,7 +1483,11 @@ There is no bespoke ingest view and no second idiom for the same information.
 - **The chip is the door; the row is not.** Tapping the row opens the NOTE SCREEN, which is
   the only no-terminal route to the Analysis tab, the attachments, the edit path, the answer
   eraser and the re-run button. Tapping the chip opens the thread. The note screen itself
-  does not change and gains no tab.
+  does not change and gains no tab. The chip is a full **44px box** rather than a small
+  drawing with a bleeding hit area: it shares a **wrapping** row with the attachment links,
+  and an out-of-flow target that reaches a wrapped neighbour takes that neighbour's tap —
+  the same reason the question block's candidates grow their boxes. A near-miss here does
+  not no-op, so the row it costs height is the right trade.
 - **Turn 0 is the note, frozen** — ruled in the note's own domain colour, labelled as THE
   NOTE rather than as something the owner said, and with its injection fence stripped **for
   display only**. The frame is a security property the model must keep seeing whole; the
@@ -1518,10 +1522,27 @@ There is no bespoke ingest view and no second idiom for the same information.
   read and reaches no note, and the agent is told so. Pairing it with whichever question the
   taps left open would put a sentence into the owner's own note under a question it does not
   answer, and a mispaired answer is a wrong sentence in his corpus, not a cosmetic slip.
-- **Sent is spent.** The block dims and its controls go inert the moment the send goes; a
-  settled thread reopened later replays the same transcript with the block frozen in its
-  answered state, no live line and no carry strip. A send that reaches the server not at all
-  hands the answers back to the block rather than losing them.
+- **Sent is spent, and a frozen block claims only what the reply actually did.** The block
+  dims and its controls go inert the moment the send goes; a settled thread reopened later
+  replays the same transcript with the block frozen in its answered state, no live line and
+  no carry strip. Each row then reads back out of the reply turn's own text: the words that
+  were paired to it, or — where the reply was prose alone, which answers the oldest open
+  question and nothing else — that it was answered in the reply, or that it is **still
+  open**. The header counts what landed rather than the size of the set. A block that says
+  "answered" over a question the send left open is the worst thing on this screen: the
+  agent was told the truth and re-asks exactly those questions on its next turn, so the
+  screen and the assistant contradict each other in front of the one person who cannot
+  check either.
+- **A send that reaches the server not at all is not recoverable for an hour.** The answers
+  are given back to the block, but only when the reconnect window closes — 62 minutes — and
+  for the whole of that window the turn counts as in flight: the composer's send is
+  disabled, and reopening the thread does NOT re-arm the block (a transcript reload is
+  skipped while the chat holds the live turn). A full PWA reload clears that hold and
+  replays the ask, but the draft lives in memory, so the answers are gone with it. This is
+  inherited from the chat recovery loop rather than introduced by the thread, and what it
+  costs here is specific: the owner taps three candidates, the send reaches nothing, and
+  the one screen he has offers him no way to send them again for an hour. Designing that
+  window down is open work, not something the block can fix from where it sits.
 - **The chip is not permanent, and the thread does not expire.** The stream shows the last
   two days, so a note parked longer than that scrolls off it and loses its chip — the ask
   itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review

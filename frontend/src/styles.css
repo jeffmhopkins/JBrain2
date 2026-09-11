@@ -606,34 +606,40 @@ button.vitals:focus-visible {
    attachments, the edit path and the clarification eraser. It keeps chip-pending's amber:
    rose is the medical domain, and this row already wears its domain as a dot.
 
-   As a control the DRAWING is unchanged — only the hit area grows, the same trade the
-   vitals chart makes one surface over. A `.chip` is 3px of padding around 9px of text,
-   about 17px tall, and DESIGN.md's 44px minimum is binding; it matters more here than
-   almost anywhere because this chip sits INSIDE a row whose own tap opens the note
-   screen, so a near-miss does not no-op, it opens the wrong screen. The pseudo-element
-   is out of flow, so the chip's own box and the row's density are untouched, and the
-   chips row claims the height it bleeds into so the growth cannot reach the body text
-   above it. */
+   DESIGN.md's 44px minimum is binding, and it matters more here than almost anywhere: a
+   `.chip` is 3px of padding around 9px of text — 18.6px of box at the default text size —
+   and this one sits INSIDE a row whose own tap opens the note screen, so a near-miss does
+   not no-op, it opens the wrong screen.
+
+   The BOX grows, the way `.fb-q-opt` grows and NOT the way the vitals chart's out-of-flow
+   hit area does (R3f's second review, finding 2). The bleeding pseudo-element was right
+   for a chart, which has no tappable siblings; here `.note-chips` is `flex-wrap: wrap`
+   and holds the attachment links BEFORE this chip. On one line the arithmetic held. On
+   two it did not: 18.6 + 6 + 18.6 = 43.2px of content stretched to the row's 44px floor
+   gives ~19px lines, so the wrapped chip's centre sat at y≈34.5 and a 44px pseudo spanned
+   y≈12.5–56.5 — over the bottom third of line 1. Being absolutely positioned on a
+   relative button, it painted above the static flex items and WON THE HIT TEST: a tap
+   near the bottom of an attachment chip opened the thread instead of the attachment,
+   reachable at ~400px with two ordinary filenames. That is the builder's own argument for
+   `.fb-q-opt` — "the candidates WRAP, so a tap near the edge lands on the wrong one" —
+   and this row wraps too.
+
+   The cost, stated rather than denied: the chip's own drawing is no longer untouched, and
+   a WRAPPED chips row now grows to ~68px instead of claiming 44 and overlapping itself. A
+   single-line row is unchanged — it was already floored at 44px by the rule below, which
+   is where the ~27px every waiting row pays has always come from. */
 button.chip-ask {
-  position: relative;
   font: inherit;
   font-size: var(--fs-micro);
-  cursor: pointer;
-}
-button.chip-ask::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 100%;
-  height: 100%;
   min-width: 44px;
   min-height: 44px;
-  transform: translate(-50%, -50%);
+  padding: 0 16px;
+  justify-content: center;
+  cursor: pointer;
 }
 .note-chips:has(.chip-ask) {
+  /* The short attachment chips centre against the tall one they share a line with. */
   align-items: center;
-  min-height: 44px;
 }
 
 /* The calendar handoff's appointment pill — the agent reference, in the attach
