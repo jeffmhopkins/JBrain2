@@ -245,14 +245,33 @@ def _reasoning_capable(provider: str, model: str) -> bool:
     )
 
 
+# Task names this repo once routed and has since deleted. A stale pin naming one is
+# DROPPED, never fatal — the only override map that is not editable from the PWA is the
+# `JBRAIN_LLM_TASKS` env var in `/opt/jbrain2/.env`, on a box whose owner has no terminal
+# (CLAUDE.md #10). `build_router` runs inside both the API lifespan and the worker, so a
+# raise there is a box that comes back from Ops -> Update dead, unrecoverably. The
+# DB-stored overrides need no such set: `_resolve_live` reads them per task
+# (`overrides.get(task)`), so a stale stored key is already inert.
+#
+# No TIER has ever been retired, which is why `resolve_tiers` carries no twin; retiring
+# one needs the same set, for the same reason.
+RETIRED_TASKS: frozenset[str] = frozenset({"note.extract", "integrate.note"})
+
+
 def resolve_tasks(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
     """Merge overrides over TASK_DEFAULTS and split each "provider:model".
 
     Strict on unknown tasks, unknown providers, and malformed specs — a typo
-    in routing config should fail at startup, not silently fall back.
+    in routing config should fail at startup, not silently fall back. A name in
+    RETIRED_TASKS is the one exception, and the asymmetry is deliberate: a typo is a
+    config bug with no deployed history, while a retired name is config that WAS valid
+    and would otherwise turn an update into an unbootable box.
     """
     merged = dict(TASK_DEFAULTS)
     for task, spec in overrides.items():
+        if task in RETIRED_TASKS:
+            log.warning("llm.task_override_retired", task=task, spec=spec)
+            continue
         if task not in TASK_DEFAULTS:
             raise LlmError(f"unknown LLM task in overrides: {task!r}")
         merged[task] = spec

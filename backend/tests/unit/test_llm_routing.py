@@ -53,6 +53,24 @@ def test_unknown_task_in_overrides_raises() -> None:
         resolve_tasks({"note.extrct": "xai:grok-4.3"})
 
 
+def test_a_retired_task_pinned_in_the_env_is_dropped_not_fatal() -> None:
+    """The owner's deployed `.env` pins `note.extract` at a local model
+    (docs/runbooks/STRIX_HALO_SETUP.md). R4 deleted the task; `build_router` runs in
+    both the API lifespan and the worker, so raising on that pin would bring the box
+    back from Ops -> Update dead, with no terminal to edit /opt/jbrain2/.env."""
+    tasks = resolve_tasks(
+        {"note.extract": "local:gpt-oss-120b", "integrate.note": "local:gpt-oss-120b"}
+    )
+    assert set(tasks) == EXPECTED_TASKS  # dropped, and nothing else moved
+    assert tasks["fact.adjudicate"] == ("xai", "grok-4.3")
+
+
+def test_a_retired_task_is_dropped_before_its_spec_is_validated() -> None:
+    """A pin left behind by a deleted task must not be held to today's provider list
+    either — the point is that nothing about the stale entry can stop a boot."""
+    assert set(resolve_tasks({"integrate.note": "nonsense"})) == EXPECTED_TASKS
+
+
 def test_unknown_provider_raises() -> None:
     with pytest.raises(LlmError, match="unknown LLM provider"):
         resolve_tasks({"correction_note.extract": "openai:gpt-4o"})
