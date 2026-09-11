@@ -430,19 +430,25 @@ class ConversationWrites:
     pass's closing READING (`close_reading`, `clarify.settle_conversation`) — a different
     claim by a different verb. An empty `facts` means "this session's successful calls
     wrote no fact", and never "nothing was recorded" — but it also never means "the note
-    no longer says that", which is the reading a sweep needs. The
-    the conversation asserts once and revises by supersession; `correct_fact`
-    supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
-    holds beside rather than superseding — O15); and a re-assert refreshes the SAME row in
-    place, returning `ALREADY` when that row is live and `HELD` when it was already held.
-    No path retracts, and every one of them yields a row id: this ledger never SHRINKS.
-    So a session can only ever release another session's claims, and judging
-    those needs a complete current reading of the note, which a record of writes
-    structurally is not — the agent is told to read before it writes and rewarded for not
-    restating what is already there, so a silent pass is the designed output. A sound
-    conversation sweep is therefore empty and a non-empty one is unsound
-    (docs/plans/SETTLE_OWNERSHIP.md S3). This set is the settle TAIL's input: what this
-    pass touched is what wants reprojecting."""
+    no longer says that", which is the claim a retraction needs, and that gap is why this
+    field is not the sweep's input and must not become it:
+
+    - the conversation asserts once and revises by supersession; `correct_fact`
+      supersedes an ACTIVE head and pins the new value (against a `pending_review` head it
+      holds beside rather than superseding — O15); and a re-assert refreshes the SAME row
+      in place, returning `ALREADY` when that row is live and `HELD` when it was already
+      held. No path retracts, and every one of them yields a row id: this ledger never
+      SHRINKS;
+    - so a session could only ever release ANOTHER session's claims off this field, and
+      judging those needs a complete current reading of the note, which a record of writes
+      structurally is not — the agent is told to read before it writes and rewarded for
+      not restating what is already there, so a silent pass is the designed output.
+
+    That is why a LEDGER sweep is sound only when it is empty (docs/plans/
+    SETTLE_OWNERSHIP.md S3), and it is not a statement about the sweep that shipped: a
+    READING sweep is soundest exactly when it retracts something, because that is the note
+    having stopped saying it. This set is the settle TAIL's input: what this pass touched
+    is what wants reprojecting."""
 
     facts: frozenset[uuid.UUID] = field(default_factory=frozenset)
     """The fact ids the conversation's successful calls wrote, across every turn of it —

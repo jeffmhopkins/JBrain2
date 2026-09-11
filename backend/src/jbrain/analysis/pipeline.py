@@ -2940,11 +2940,14 @@ class AnalysisPipeline:
                 # channel it is the failure the channel exists to prevent — the line
                 # reads "ok … already recorded" and `contracts.write_status` maps it to
                 # `written`, so the D3 chip shows the owner a live fact. And it is
-                # reachable inside a single pass without any re-ingest: `assert_fact`
-                # collides and holds both sides, then `close_reading` restates the note
-                # whole (its sidecar requires that: "all of it, not only what is new"),
-                # the refresh loop admits `pending_review`, and `ok` becomes the agent's
-                # LAST word on a fact the graph does not serve.
+                # reachable inside a single pass without any re-ingest: one identity key
+                # stated twice — two elements of one reading, or, on an owner reply turn,
+                # `assert_fact` beside it — holds both sides, and a later `close_reading`
+                # restates the note whole (its sidecar requires that: "all of it, not only
+                # what is new"), the refresh loop admits `pending_review`, and `ok` becomes
+                # the agent's LAST word on a fact the graph does not serve. R3 left the
+                # unattended pass one fact verb, which narrows the shapes that reach here
+                # and removes none of them.
                 #
                 # The standing reason is not stored on the row — it only ever lived in
                 # the card payload — so the CONTEST is reconstructed from what is on the

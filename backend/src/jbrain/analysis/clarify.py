@@ -430,7 +430,9 @@ async def reply_profile_for_session(
     the reason is the OTHER predicate. `thirdparty.conversation_is_third_party` asks the
     SAME two questions of the SAME two rows on this same turn and fails closed, so a note
     read that blips already narrows the turn — to the third-party set, which still holds
-    `resolve_entity` and `assert_fact`. Failing open here meant a blip left the graph
+    `resolve_entity` and (since R3 took `assert_fact` off the unattended set this one is
+    derived from) `close_reading`, the verb that WRITES the graph and licenses a
+    retraction. Failing open here meant a blip left the graph
     writes bound on precisely the notes where a write is unsupersedable: `correct_fact`
     at an empty address commits active + PINNED, and a pinned lab head makes every later
     import of that reading `held`. The cost of the closed direction is that one reply

@@ -299,9 +299,11 @@ class NoteConverseRunner:
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
     prefs: OwnerPrefsRepo = field(default_factory=OwnerPrefsRepo)
-    # The settle the pass runs at its end: `sweep_note` + `settle_tail` +
-    # `stamp_analysis` for a pass that closed a reading, the tail alone for one that did
-    # not (R3). `clarify.settle_conversation` holds the gate and the reasoning.
+    # The settle the pass runs at its end: `sweep_note` + `settle_tail` for a pass that
+    # ended `settled` with a clean reading, the tail alone for one that did not, and
+    # `stamp_analysis` on ANY pass that read the note — `waiting_on_owner` included, which
+    # is the one part that sits outside the gate (§2 rule 1).
+    # `clarify.settle_conversation` holds the gate and the reasoning.
     #
     # None keeps W2's behaviour, which is what the tests that fake a turn with no write
     # tools use: a pass that wrote nothing has nothing to project.
