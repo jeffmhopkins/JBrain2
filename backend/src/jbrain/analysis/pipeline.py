@@ -714,7 +714,15 @@ class AnalysisPipeline:
         handing it to the arbiter, and the note conversation — which normalizes through
         the REGISTRY in `graphwritetools`, a different map — never reached that seam at
         all. Leaving it there would have retired the owner's own past mapping decisions
-        silently, on the only producer that reads notes now."""
+        silently, on the only producer that reads notes now.
+
+        One ordering difference that seam move costs, stated rather than hidden: on the
+        `commit_intent` path the caller has already run `plan_intent`, so an aliased
+        predicate is planned under its RAW spelling and committed under its canonical one.
+        The only planning input that reads the predicate is the sensitive-inference net,
+        which needs `fact.inferred`, and the one producer on that path mints no inferred
+        facts. On the conversation's path — the one that reads notes — this IS before
+        everything, which is where it has to be."""
         registry = get_registry()
         unknown = [
             (i, f)

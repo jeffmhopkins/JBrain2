@@ -419,7 +419,6 @@ const LLM_SETTINGS: LlmSettings = {
       provider: "grok",
       reasoning_effort: "medium",
     },
-    { id: "note.extract", label: "Note extract", provider: "grok", reasoning_effort: "low" },
     {
       id: "correction_note.extract",
       label: "Correction extract",

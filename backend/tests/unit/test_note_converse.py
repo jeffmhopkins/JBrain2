@@ -168,6 +168,21 @@ def _note_info(*, created_at: Any, tz_offset_minutes: int | None = None) -> Any:
     )
 
 
+async def test_the_note_the_agent_reads_is_the_body_when_a_note_has_no_attachments() -> None:
+    """The no-attachment case, which is almost every note: composing the text must be a
+    no-op on it, byte for byte. `note_text` exists for the attachment case (R4 — see the
+    OCR/transcript integration tests), and the cheapest way it could go wrong is by
+    changing the ordinary note's own text out from under every quote anchored to it."""
+    from jbrain.analysis.converse import note_text
+
+    class _NoRepo:
+        async def list_extracts(self, ctx: Any, attachment_id: str) -> list[Any] | None:
+            raise AssertionError("a note with no attachments must not be asked for extracts")
+
+    note = _note_info(created_at=datetime(2026, 3, 5, 6, 10, tzinfo=UTC))
+    assert await note_text(_NoRepo(), SessionContext(), note) == note.body  # type: ignore[arg-type]
+
+
 def test_a_capture_time_rides_inside_the_same_frame() -> None:
     framed = framed_note("body", captured="Tuesday, March 04, 2026, 23:10 (UTC-07:00)", nonce="n1")
     assert "[captured Tuesday, March 04, 2026, 23:10 (UTC-07:00)]" in framed
