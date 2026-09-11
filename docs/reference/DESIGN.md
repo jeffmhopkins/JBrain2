@@ -1579,10 +1579,18 @@ There is no bespoke ingest view and no second idiom for the same information.
   holds `waiting_on_owner`. For the length of the window the frozen block does read
   *"2 answered"* about a send that never left the device; that is the cost of showing the
   owner his turn immediately, and it ends when the window does rather than lasting until the
-  thread is reopened. **Only when nothing of the turn arrived.** A stream that delivered even
-  one token is a turn the server HAS, whatever a later reload failed to find, and un-sending
-  that would be the same misreport the other way up — those keep the errored bubble, with the
-  owner's words still on screen.
+  thread is reopened. **Only when the server provably has nothing — and the buffer is the
+  weaker half of that test.** Two things must both hold: no `X-Run-Id` ever reached the
+  client, AND the optimistic bubble took no frame. The run id is the load-bearing one:
+  `record_owner_reply` files the answers onto the note BEFORE `runlog.start` mints it
+  (`api/agent.py`), so a run id is proof the note already has them — while a stream that
+  opened and died before its first token is indistinguishable, on the buffer alone, from one
+  that never left. An earlier revision of this rule tested the buffer only; that un-sent a
+  committed turn, re-armed the block over a set `claim_waiting` had already consumed, and the
+  owner's second send was discarded in silence while the block said it landed. Both Stop
+  paths ride the one predicate now, so where the tap lands no longer decides the outcome. A
+  turn that delivered even one token, or that minted a run id, keeps its errored bubble with
+  the owner's words still on screen.
 - **The chip is not permanent, and the thread does not expire.** The stream shows the last
   two days, so a note parked longer than that scrolls off it and loses its chip — the ask
   itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review

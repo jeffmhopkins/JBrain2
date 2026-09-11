@@ -1248,22 +1248,42 @@ third round called that "a state the block cannot see" and filed it as open work
 found that sentence written from the code's shape rather than from the code (finding 5). The
 give-up branch IS that state — no live run to ride and nothing persisted for the whole window
 — and it already hands the draft back two lines above. So it now drops the optimistic
-exchange as well, when the buffer shows it never left the device (`transcript.unsent`: the
-assistant bubble took no token, no step, no view, no reasoning). The block re-arms live,
-holding the answers, over a thread the server still has open; the typed half of a mixed send
-goes back to the composer through the same seam a calendar handoff uses
-(`useFullBrain.restoredText`). Every other failed send keeps the errored bubble it has always
-had — a turn that delivered anything is a turn the server HAS, and un-sending it would be the
-same misreport the other way up. `FullBrainSurface.notethread.test.tsx` drives Stop and
-asserts the re-armed block, the carry strip, and the words coming back.
+exchange as well — but **the buffer alone is not the test, and shipping it as the test was
+this wave's own worst defect.** `transcript.unsent` (the assistant bubble took no token, no
+step, no view, no reasoning) is also exactly what a POST that SUCCEEDED and then lost its
+socket looks like. The fifth review drove it: run id received, `claim_waiting` already
+committed, the owner's turn erased from the screen, the block re-armed live over a closed
+set — and his second send then hit `state != waiting_on_owner`, returned `None`, and was
+discarded in silence while the block said it landed. `stop()` having cancelled the run left
+the thread `running` with no turn, so the chip left the stream for ~4h10m until
+`reclaim_stale`.
 
-*One residue, recorded rather than fixed.* Aborting while `resumeLive()` is mid-flight
-returns through its own `aborted` branch (`useFullBrain.ts:929-931`) and skips the restore.
-That is correct where it is reachable: `resumeLive` only runs with a `runIdRef`, a run id
-only exists once `/chat` responded, and `record_owner_reply` files the answers BEFORE
-`runlog.start` mints one (`api/agent.py:966`, `:1010`) — so a turn with a run id is a turn
-whose answers already reached the note, and handing the draft back would re-post against a
-set that has closed.
+So the un-send requires **both** `runIdRef.current === null` and the buffer test, and **both
+Stop paths ride that one predicate** — which also retires the coin-flip the same review
+found (Stop in the reconcile sleep un-sent and handed back; Stop inside `resumeLive` did
+neither, and which you got was a race on where the 3s loop happened to be). The run id is
+the load-bearing half: `record_owner_reply` files the answers BEFORE `runlog.start` mints
+one (`api/agent.py`), so a turn with a run id is a turn whose answers already reached the
+note, and handing the draft back would re-post against a set that has closed. That invariant
+was written in this very section and applied in the `resumeLive` branch while the branch
+beside it, deciding the same thing, did not use it.
+
+**The rule that falls out, and it is the wave's lesson:** when the code already states the
+predicate that decides a branch, apply it in every branch deciding the same thing.
+
+The block re-arms live, holding the answers, over a thread the server still has open; the
+typed half of a mixed send goes back to the composer through the same seam a calendar
+handoff uses (`useFullBrain.restoredText`). Every other failed send keeps the errored bubble
+it has always had. `FullBrainSurface.notethread.test.tsx` drives both Stop paths and asserts
+the re-armed block, the carry strip, the words coming back, and — against a generator that
+yields a run id and then fails — that a committed turn is NOT un-sent.
+
+*The window the predicate narrows but cannot close.* `runIdRef.current === null` means "no
+`X-Run-Id` reached me", not "the server has nothing": the id only rides the response
+headers, so a POST that committed and lost its socket before them leaves it null. `recover()`
+polls the transcript every 3s for the whole window and finds the detached turn, so reaching
+it needs the turn to die too — an `Ops → Update` restart mid-turn is the realistic one. The
+answers are on the note either way; what is wrong is the block's account of the second send.
 
 ⟲ **The seam the words come back through had two writers and one consume, and it dropped
 both halves in turn** (R3f's fifth review, finding 5). `Omnibox` wrote `setText(draft)`

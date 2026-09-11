@@ -307,7 +307,7 @@ export function answeredCount(
   questions: readonly AskedQuestion[],
   draft: Readonly<Record<string, string>>,
 ): number {
-  return questions.filter((q) => (draft[q.id] ?? "").trim() !== "").length;
+  return questions.filter((q) => answerText(draft[q.id]) !== "").length;
 }
 
 /** The draft, narrowed to the open set and cleaned — what rides the send as
@@ -318,7 +318,7 @@ export function answerList(
   draft: Readonly<Record<string, string>>,
 ): { question_id: string; answer: string }[] {
   return questions
-    .map((q) => ({ question_id: q.id, answer: (draft[q.id] ?? "").trim() }))
+    .map((q) => ({ question_id: q.id, answer: answerText(draft[q.id]) }))
     .filter((a) => a.answer !== "");
 }
 
@@ -346,6 +346,29 @@ const PAIR_TRIM =
 /** `text` with the shared whitespace class cut off both ends — `clarify._pair_trim`. */
 function pairTrim(text: string): string {
   return text.replace(PAIR_TRIM, "");
+}
+
+/** One answer as `clarify.capped_answers` will see it — **the server's test for "is this
+ * blank?", not `String.trim()`'s.**
+ *
+ * R3f's sixth review, finding 2, and the SEVENTH instance of this wave's signature defect:
+ * the client re-implements a server predicate and the two drift. The server drops an answer
+ * on `a.strip()` being empty and flattens what survives with `" ".join(a.split())`; both use
+ * Python's whitespace set, which `String.trim()` does not match. An answer of nothing but
+ * U+0085 or U+001C-U+001F — ordinary in pasted or PDF-extracted text — counted here, posted,
+ * and rendered by the block as that row's answer, while `capped_answers` dropped it; if it
+ * was the only one and the box was empty, `record_owner_reply` returned `None`, the thread
+ * stayed `waiting_on_owner`, and the agent was told nothing.
+ *
+ * `pairTrim` is the measured union of both languages' whitespace, so trimming with it and
+ * collapsing runs the way `" ".join(split())` does makes the two agree on both halves —
+ * what counts as blank, and what the surviving text is. */
+function answerText(raw: string | undefined): string {
+  return pairTrim(raw ?? "").replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the same class, for the same reason.
+    /[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/g,
+    " ",
+  );
 }
 
 /** What a chunk has to look like to be read back as a Q/A pair — the one shape
