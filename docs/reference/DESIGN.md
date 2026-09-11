@@ -1530,9 +1530,9 @@ There is no bespoke ingest view and no second idiom for the same information.
   taps left open would put a sentence into the owner's own note under a question it does not
   answer, and a mispaired answer is a wrong sentence in his corpus, not a cosmetic slip.
 - **Sent is spent, and a frozen block claims only what the reply actually did.** The block
-  dims and its controls go inert the moment the send goes; a settled thread reopened later
-  replays the same transcript with the block frozen in its answered state, no live line and
-  no carry strip. Each row then reads back out of the reply turn's own text: the words that
+  goes quiet and its controls go inert the moment the send goes; a settled thread reopened
+  later replays the same transcript with the block frozen in its answered state, no live line
+  and no carry strip. Each row then reads back out of the reply turn's own text: the words that
   were paired to it, or — where the reply was prose alone, which answers the oldest open
   question and nothing else — that it was answered in the reply, or that it is **still
   open**. The header counts what landed rather than the size of the set. A block that says
