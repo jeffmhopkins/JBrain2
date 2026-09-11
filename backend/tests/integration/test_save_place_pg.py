@@ -8,9 +8,10 @@ extraction → `project_place_geofences` — produces a Place entity + a `geofen
 fact + the mirror row. So the place is authored by an owner-approved NOTE, exactly
 as the doctrine requires.
 
-Both model calls (note.extract, integrate.note) are faked with scripted JSON
-standing in for what the extractor would read off the staged note body. RLS:
-staging is refused for a narrowed/non-owner session.
+No model runs at all since R4: the reading is a scripted payload driven straight
+through the surviving deterministic write path (`pg_fixtures.analyzer`), standing in
+for what a producer would read off the staged note body. RLS: staging is refused for
+a narrowed/non-owner session.
 """
 
 import json

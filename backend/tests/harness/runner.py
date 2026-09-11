@@ -421,9 +421,10 @@ def _parse_extraction(step: Step) -> Extraction:
 
     R4 deleted `note.extract` — the prompt, its schema and the `_extract_note` call that
     wrapped this parse — so the scripted JSON is parsed DIRECTLY instead of round-tripping
-    through a faked model call. Byte-identical for a harness step: one body block is one
-    group, `merge_extractions` passes a single part through untouched, and the group's cap
-    is `fact_cap(step.body)`. The scenario format still authors a `note.extract` payload;
+    through a faked model call. Byte-identical for a harness step: the deleted chain
+    made one group of a single body block and `merge_extractions` passed that lone part
+    through untouched, so the parse below sees what it saw, under the same
+    `fact_cap(step.body)`. The scenario format still authors a `note.extract` payload;
     re-cutting it onto the reading's own shape is §5's outstanding item, and until then
     this parse is the last live reader of it."""
     created = datetime.fromisoformat(step.created_at)

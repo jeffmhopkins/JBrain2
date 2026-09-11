@@ -854,28 +854,3 @@ def test_date_grounding_is_scoped_to_date_predicates():
         ],
     )
     assert compute_signals(intent, ["Saw them Tuesday."])[0].surface_attested is False
-
-
-# --- dedup_intent_facts (the medication-bite-review duplicate) --------------
-#
-# The production shape (confirmed on the box): a medication is `Me.medication ->
-# <drug>` with the drug as an OBJECT entity, which `_object_named` grounds because
-# the drug name is verbatim in the note. The Integrator's spurious duplicate DROPS
-# the object and folds the drug into the free-text statement — that object-less twin
-# is the copy that lands in review.
-
-
-def _med_fact(statement: str, *, obj: str | None, self_confidence: float = 0.5) -> IntentFact:
-    return _fact(
-        entity_ref="Me",
-        predicate="medication",
-        kind="state",
-        object_entity_ref=obj,
-        value_json=None,
-        statement=statement,
-        # The bound copy quotes nothing special; it grounds on its named object. The
-        # object-less twin carries no span either — its problem is the missing object.
-        attested_span=None,
-        self_confidence=self_confidence,
-        inferred=False,
-    )

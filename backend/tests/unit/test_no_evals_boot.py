@@ -80,9 +80,20 @@ def evals_hidden() -> Iterator[None]:
 
 def test_evals_is_actually_hidden(evals_hidden: None) -> None:
     """Sanity: the fixture genuinely makes `evals` unimportable, so the assertions
-    below are meaningful (a no-op fixture would make this whole test vacuous)."""
+    below are meaningful (a no-op fixture would make this whole test vacuous).
+
+    Aimed at a module that EXISTS and imports cleanly on its own — R4 deleted
+    `evals/run.py`, and a deleted module raises ModuleNotFoundError with the fixture or
+    without it, which is precisely the vacuum this assertion is here to rule out. The
+    assertion below proves the aim: unhidden, the same import works."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("evals.run")
+        importlib.import_module("evals.shape_probe")
+
+
+def test_the_sanity_target_imports_when_evals_is_not_hidden() -> None:
+    """The other half of the sanity check: without the fixture the module is importable,
+    so the failure above can only be the fixture's doing."""
+    assert importlib.import_module("evals.shape_probe") is not None
 
 
 def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:

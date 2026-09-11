@@ -310,6 +310,15 @@ from __future__ import annotations
 #: `f"{provider}:{model}"` extractors, whatever the live model was. Nothing writes this
 #: stamp any more (R4); it still NAMES the rows that producer left on the box, which is
 #: what keeps a surviving producer's sweep off them.
+#:
+#: Which is also why `app.facts.settle_owners` keeps `DEFAULT ARRAY['analyzer']` from
+#: migration 0196 rather than being migrated to a live producer: the default is what the
+#: box's existing analyzer rows were written under, and re-pointing it would not move a
+#: single stored row while costing a migration. The cost of leaving it is narrow and
+#: already guarded — a future raw INSERT that forgot the column would stamp a retired
+#: producer nothing sweeps, and `tests/unit/test_settle_owner.py` fails CI on exactly
+#: that shape (an unstamped write site in `src/`), so the default is never the thing
+#: that decides a row's owner.
 ANALYZER = "analyzer"
 
 #: The note conversation's, from BOTH runs: `note_ingest` (unattended pass) and

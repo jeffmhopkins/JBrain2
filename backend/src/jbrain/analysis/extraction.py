@@ -193,9 +193,8 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
 # are one predicate, and the floor must not be dodgeable by choosing a different one.
 # This matters now that a model writes predicates through `assert_fact` rather than
 # only through the deleted note.extract prompt (which taught camelCase): the agent's
-# snake_case
-# `blood_pressure` used to miss the table entirely and land a clinical fact in the
-# note's domain (AGENT_INGEST_CONVERSATION_PLAN.md D18 — the agent's domain choice IS
+# snake_case `blood_pressure` used to miss the table entirely and land a clinical fact
+# in the note's domain (AGENT_INGEST_CONVERSATION_PLAN.md D18 — the agent's domain choice IS
 # its predicate choice, so the predicate lookup is what has to hold).
 _PREDICATE_SEPARATORS = re.compile(r"[\s_\-]+")
 

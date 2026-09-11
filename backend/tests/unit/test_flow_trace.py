@@ -14,35 +14,6 @@ from jbrain.analysis import flow_trace
 from jbrain.analysis.supersession import Decision, FactView
 
 
-def _ext_fact(
-    entity_ref: str,
-    predicate: str,
-    obj: str | None,
-    *,
-    kind: str = "relationship",
-    qualifier: str = "",
-    assertion: str = "asserted",
-    inferred: bool = False,
-    value_json: dict[str, Any] | None = None,
-    temporal: Any = None,
-    attested_span: Any = None,
-    self_confidence: float = 0.9,
-) -> Any:
-    return SimpleNamespace(
-        entity_ref=entity_ref,
-        predicate=predicate,
-        qualifier=qualifier,
-        object_entity_ref=obj,
-        kind=kind,
-        assertion=assertion,
-        inferred=inferred,
-        value_json=value_json,
-        temporal=temporal,
-        attested_span=attested_span,
-        self_confidence=self_confidence,
-    )
-
-
 def _factview(id: str, obj: str | None, status: str = "active") -> FactView:
     return cast(FactView, SimpleNamespace(id=id, object_entity_id=obj, status=status))
 

@@ -411,7 +411,6 @@ const LLM_SETTINGS: LlmSettings = {
       provider: "grok",
       reasoning_effort: null,
     },
-    { id: "integrate.note", label: "Integrate note", provider: "grok", reasoning_effort: "medium" },
     { id: "fact.adjudicate", label: "Fact adjudicate", provider: "grok", reasoning_effort: "high" },
     {
       id: "entity.disambiguate",

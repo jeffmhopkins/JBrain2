@@ -9,8 +9,6 @@ from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
     ExtractedTemporal,
-    ExtractedToken,
-    Extraction,
     ExtractionError,
     dedup_facts,
     link_relationship_objects,
@@ -1235,64 +1233,6 @@ def test_parse_extraction_links_relationship_objects() -> None:
     }
     [fact] = parse_extraction(payload).facts
     assert fact.object_entity_ref == "Celine Hopkins"
-
-
-# --- chunk-level map-reduce: grouping + merge -------------------------------
-
-
-def _fact_json(predicate: str, statement: str, entity: str, obj: str | None) -> dict[str, Any]:
-    return {
-        "predicate": predicate,
-        "qualifier": "",
-        "kind": "relationship" if obj else "attribute",
-        "statement": statement,
-        "value_json": None if obj else {"value": statement},
-        "assertion": "asserted",
-        "entity_ref": entity,
-        "object_entity_ref": obj,
-        "temporal": None,
-        "domain": "finance",
-        "confidence": 0.9,
-    }
-
-
-def _mr_part(
-    *,
-    title: str = "",
-    tags: list[str] | None = None,
-    mentions: list[ExtractedMention] | None = None,
-    facts: list[ExtractedFact] | None = None,
-    tokens: list[ExtractedToken] | None = None,
-    dropped: int = 0,
-) -> Extraction:
-    return Extraction(
-        title=title,
-        tags=tags or [],
-        mentions=mentions or [],
-        facts=facts or [],
-        tokens=tokens or [],
-        dropped_facts=dropped,
-    )
-
-
-def _mr_rel(entity: str, obj: str | None, *, predicate: str = "spouse") -> ExtractedFact:
-    return ExtractedFact(
-        predicate=predicate,
-        qualifier="",
-        kind="relationship",
-        statement=f"{entity}.{predicate} -> {obj}",
-        value_json=None,
-        assertion="asserted",
-        entity_ref=entity,
-        object_entity_ref=obj,
-        temporal=None,
-        domain="general",
-        confidence=0.9,
-    )
-
-
-def _mr_person(name: str) -> ExtractedMention:
-    return ExtractedMention(name=name, kind="Person", surface_text=name)
 
 
 class TestRecoverScalarValue:

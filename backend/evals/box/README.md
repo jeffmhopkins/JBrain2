@@ -34,8 +34,9 @@ layers went with their prompts in R4 of `docs/plans/AGENT_INGEST_REWRITE.md`; a
 
 1. Run a layer; read the per-case pass rates + the `{task, safety}` split.
 2. Cluster the failures into a named failure mode.
-3. Fix: a prompt nudge (version + digest bump — `note.extract` is
-   `SELF_EDIT_LOCKED`, so a human PR) or a registry addition.
+3. Fix: a prompt nudge (version + digest bump — `entity_disambiguate.prompt`, the
+   only prompt this track scores, is not `self_editable`, so a human PR) or a
+   registry addition.
 4. Re-run; confirm the rate moved and nothing regressed.
 5. Add ~10 cases around the failure mode so it can't silently return.
 6. Record the box output as a CI golden transcript (planned, phase E) so CI
