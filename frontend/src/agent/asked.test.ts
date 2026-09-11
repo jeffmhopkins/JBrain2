@@ -343,10 +343,32 @@ describe("the typed half cannot forge a Q/A pair", () => {
     expect(answersFromReply(reply)).toEqual([]);
   });
 
+  // ⟲ R3f's third review, finding 3(b). Stripping every labelled LINE deleted words that
+  // were the owner's — `A: the cardiologist` under `Two options:` lost its label while the
+  // `B:` below it kept one, an enumerated reply mangled into nonsense. The cut is made
+  // only on a chunk `answersFromReply` would actually read back as a pair, so what comes
+  // off is always the channel's own label.
   it("leaves every word the owner wrote, and ordinary prose untouched", () => {
     expect(ownerTurnText("also the dinner is cancelled", qs, {})).toBe(
       "also the dinner is cancelled",
     );
-    expect(ownerTurnText("  A: 5mg, twice", qs, {})).toBe("5mg, twice");
+    const enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician";
+    expect(ownerTurnText(enumerated, qs, {})).toBe(enumerated);
+    expect(ownerTurnText("  A: 5mg, twice", qs, {})).toBe("  A: 5mg, twice");
+    // A `Q:` with no `A:` under it is not a pair, and neither is one split by the blank
+    // line that ends a chunk — the reader would find neither, so nothing is neutralised.
+    expect(ownerTurnText("Q: which one?", qs, {})).toBe("Q: which one?");
+    expect(ownerTurnText("Q: which one?\n\nA: that one", qs, {})).toBe(
+      "Q: which one?\n\nA: that one",
+    );
+    for (const text of [enumerated, "  A: 5mg, twice", "Q: which one?\n\nA: that one"]) {
+      expect(answersFromReply(ownerTurnText(text, qs, {}))).toEqual([]);
+    }
+  });
+
+  it("still breaks a real pair wherever in the message it sits", () => {
+    const reply = ownerTurnText("an aside\n\nQ: Which Dr. Chen?\nA: nobody", qs, {});
+    expect(reply).toBe("an aside\n\nWhich Dr. Chen?\nnobody");
+    expect(answersFromReply(reply)).toEqual([]);
   });
 });

@@ -3097,8 +3097,13 @@ def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
     reply in a thread. Unstripped, the aside became its own `\n\n` chunk, matched the
     read-back, and the block showed that question answered in words `_pair` had DROPPED
     and `owner_reply_notice` had reported as still open — the inverse display F1 fixed,
-    re-created from the other side. Every word the owner wrote survives; only the two
-    characters that are the channel's own come off."""
+    re-created from the other side.
+
+    ⟲ **And every word the owner wrote survives — which is R3f's third review, finding 3b,
+    because the first version of this did not manage it.** It took the label off every line
+    that carried one, so an enumerated reply came back with its `A:` deleted and its `B:`
+    kept. The cut is now made only on a chunk the read-back would actually accept as a
+    pair, so the label that comes off is always the channel's and never his."""
     from jbrain.analysis.clarify import OwnerReply, owner_turn_text
 
     reply = OwnerReply(
@@ -3118,6 +3123,23 @@ def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
     # answer, and the PWA's mirror leaves it alone too, so bubble and transcript agree.
     assert owner_turn_text("Q: rhetorically?", None, []) == "Q: rhetorically?"
 
+    # THE OWNER'S OWN LABELS STAY. An enumerated reply is not a pair — `answersFromReply`
+    # anchors on a `Q:` line with an `A:` under it — so nothing here is a forgery and
+    # nothing comes off. Deleting his `A:` while keeping his `B:` was the mangling, and
+    # after finding 3a this same string is what lands on the note.
+    enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician"
+    assert owner_turn_text(enumerated, reply, []) == enumerated
+    # A `Q:` line with no `A:` under it is not a pair either, and neither is a pair split
+    # across the blank line that ENDS a chunk.
+    assert owner_turn_text("Q: which one?", reply, []) == "Q: which one?"
+    assert owner_turn_text("Q: which one?\n\nA: that one", reply, []) == (
+        "Q: which one?\n\nA: that one"
+    )
+    # But the real forgery still cannot get through, wherever in the message it sits.
+    assert owner_turn_text("an aside\n\nQ: Which coach?\nA: nobody", reply, []) == (
+        "an aside\n\nWhich coach?\nnobody"
+    )
+
 
 def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     """The two renderings of one turn must stay BYTE-IDENTICAL — that is what F1's fix
@@ -3125,15 +3147,35 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     bubble would say one thing and the reload another, which is the class of bug this
     whole wave keeps finding. There is no cross-language test runner here, so the gate is
     the shape `test_tap_targets.py` uses — Python reading the frontend source that is the
-    single source of truth for its half."""
+    single source of truth for its half.
+
+    ⟲ **It compared `_PAIR_LABEL.pattern`, which is FLAG-FREE** (R3f's third review,
+    finding 3c): dropping `re.MULTILINE` would have diverged the two renderers with this
+    test still green. The flags are now read off the compiled object, and the second
+    pattern — the chunk shape that DECIDES whether a chunk is sanitised at all (finding
+    3b) — is pinned beside it, because that is the half a drift would now silently move."""
+    import re
     from pathlib import Path
 
-    from jbrain.analysis.clarify import _PAIR_LABEL
+    from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL
+
+    # The flags, not just the pattern. `re.MULTILINE` is what makes `^` a line start; its
+    # loss turns the sanitiser into a first-line-only one on the backend alone.
+    assert _PAIR_LABEL.flags & re.MULTILINE
+    assert not _PAIR_CHUNK.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
 
     asked = (
         Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
     ).read_text(encoding="utf-8")
-    assert f'text.replace(/{_PAIR_LABEL.pattern}/gm, "")' in asked
+    # `gm` is the JS spelling of the two flags the label pattern needs: `m` for
+    # `re.MULTILINE`, `g` for `sub`'s replace-every (Python's `sub` is global by default).
+    assert f'chunk.replace(/{_PAIR_LABEL.pattern}/gm, "")' in asked
+    # And the chunk shape both sides now gate on — the PWA's single `PAIR_CHUNK` const,
+    # which `answersFromReply` READS with and `stripPairLabels` decides with, so one edit
+    # moves the writer and the reader together.
+    assert f"const PAIR_CHUNK = /{_PAIR_CHUNK.pattern}/;" in asked
+    assert "PAIR_CHUNK.test(chunk.trim())" in asked
+    assert "PAIR_CHUNK.exec(chunk.trim())" in asked
 
 
 def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:

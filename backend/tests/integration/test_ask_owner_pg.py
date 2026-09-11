@@ -1005,6 +1005,78 @@ async def test_free_prose_alone_answers_the_oldest_open_question(
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
 
 
+async def test_the_note_and_the_turn_carry_the_same_sanitised_words(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3f's third review, finding 3a. The sanitiser reached the TURN and not the NOTE.
+
+    `record_owner_reply` took the message raw, `_pair` filed it under the oldest open
+    question, and `compose.clarification_block` renders `A: {answer}` verbatim — so the
+    durable note kept a quoted `Q:`/`A:` pair the transcript had already broken, on every
+    prose-only reply. The note is the sole source of truth (D6): the next reading takes
+    that text as the channel's own labelling of words that are the owner's.
+
+    The second half is finding 3b, which is why the fix is not a blunt strip: an enumerated
+    reply is not a pair, so it reaches the note exactly as he typed it. Deleting his `A:`
+    while keeping his `B:` would be a sentence nobody wrote in his own corpus — which is
+    what this whole module exists to refuse."""
+    note_id = await _note(maker, owner)
+    session_id, _ = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+
+    quoted = f"Q: {COACH}\nA: nobody at all"
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message=quoted,
+        answers=[],
+    )
+    assert reply is not None and reply.clarified is True
+
+    # THE NOTE holds the broken pair, not the quoted one — and it is byte-identical to what
+    # the turn says, which is the disagreement this closes.
+    sanitised = f"{COACH}\nnobody at all"
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, sanitised)]
+    assert reply.answered == [(QUESTION, sanitised)]
+    # The prose-only send's turn text IS the prose (there are no structured answers to
+    # render pairs from), so this is the two strings side by side: what the turn says and
+    # what the note now holds.
+    assert owner_turn_text(quoted, reply, []) == sanitised
+    note = await SqlNotesRepo(maker).get_note(owner, note_id)
+    assert note is not None and f"Q: {COACH}" not in note.body
+
+
+async def test_an_enumerated_reply_reaches_the_note_with_every_word_he_typed(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The other side of the sanitiser, and the reason it is not a blunt per-line strip
+    (R3f's third review, finding 3b). `Two options:` / `A: …` / `B: …` is not a shape
+    anything reads back as a pair, so nothing is neutralised and the block on the note says
+    what he said."""
+    note_id = await _note(maker, owner)
+    session_id, _ = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+
+    enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician"
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message=enumerated,
+    )
+
+    assert reply is not None and reply.clarified is True
+    assert await _blocks(maker, owner, note_id) == [(QUESTION, enumerated)]
+    assert owner_turn_text(enumerated, reply, []) == enumerated
+
+
 async def test_free_prose_beside_a_partial_set_is_not_filed_as_an_answer(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:

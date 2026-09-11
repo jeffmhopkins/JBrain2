@@ -199,8 +199,15 @@ export function answerList(
     .filter((a) => a.answer !== "");
 }
 
-/** The typed half, with the channel's own `Q:`/`A:` labels taken off the front of any
- * line that carries them — the client's mirror of `clarify._strip_pair_labels`, and it
+/** What a chunk has to look like to be read back as a Q/A pair — the one shape
+ * `answersFromReply` accepts, and therefore the one shape `stripPairLabels` neutralises.
+ * Shared by both so the writer's sanitiser and the reader's parser cannot drift apart, and
+ * mirrored by `clarify._PAIR_CHUNK`. No `g` flag: it is used with `.test`/`.exec`, which
+ * carry `lastIndex` between calls on a global regex. */
+const PAIR_CHUNK = /^Q: ([^\n]+)\nA: ([\s\S]+)$/;
+
+/** The typed half, with the channel's own `Q:`/`A:` labels taken off any chunk that would
+ * otherwise be read back as a pair — the client's mirror of `clarify._strip_pair_labels`, and it
  * must stay byte-identical to it.
  *
  * The labels are a SAFETY BOUNDARY rather than formatting (see `ownerTurnText`), and a
@@ -214,12 +221,22 @@ export function answerList(
  *
  * lands as its own `\n\n`-separated chunk, matches `answersFromReply`, and the block
  * then shows that question answered in words the backend dropped and told the agent were
- * still open — F1's inverse display, re-created from the other side. This makes it a
- * property of the code instead of an assumption about what the owner types: the two
- * characters that are OURS come off, every word that is his stays, and what is left
- * cannot form a pair. */
+ * still open — F1's inverse display, re-created from the other side.
+ *
+ * ⟲ **It used to take the labels off EVERY line, which deleted words that were the
+ * owner's** (R3f's third review, finding 3b): `Two options:` / `A: the cardiologist` /
+ * `B: the paediatrician` came back with his `A:` gone and his `B:` kept, an enumerated
+ * reply mangled into nonsense — and the backend now runs this same sanitiser on the way
+ * to the NOTE, where that is a sentence nobody wrote in his own corpus. So the cut is made
+ * only where the forgery is: a chunk that `PAIR_CHUNK` (what `answersFromReply` accepts)
+ * would read back as a pair. A chunk that would not is left exactly as typed. A bare `A:`
+ * line was never readable as a pair on its own — the reader anchors on the `Q:` — so
+ * stripping it bought nothing and cost a word. */
 export function stripPairLabels(text: string): string {
-  return text.replace(/^[ \t]*[QA]: /gm, "");
+  return text
+    .split("\n\n")
+    .map((chunk) => (PAIR_CHUNK.test(chunk.trim()) ? chunk.replace(/^[ \t]*[QA]: /gm, "") : chunk))
+    .join("\n\n");
 }
 
 /** What the reply turn SAYS — the client's mirror of `analysis/clarify.owner_turn_text`,
@@ -278,7 +295,7 @@ export interface ReplyPair {
 export function answersFromReply(text: string): ReplyPair[] {
   const pairs: ReplyPair[] = [];
   for (const chunk of text.split("\n\n")) {
-    const m = /^Q: ([^\n]+)\nA: ([\s\S]+)$/.exec(chunk.trim());
+    const m = PAIR_CHUNK.exec(chunk.trim());
     if (m) pairs.push({ question: (m[1] ?? "").trim(), answer: (m[2] ?? "").trim() });
   }
   return pairs;

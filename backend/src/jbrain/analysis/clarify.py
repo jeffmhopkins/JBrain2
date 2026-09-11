@@ -539,7 +539,14 @@ async def record_owner_reply(
         return None
     if not owner_authored:
         return None
-    prose = message.strip()
+    # Sanitised HERE and not only on the turn text, and that is R3f's third review,
+    # finding 3a. `prose` is what `_pair` files into `answered`, which `compose
+    # .clarification_block` renders verbatim as the durable `A:` of a block on the note —
+    # so a reply the turn showed sanitised was written to the NOTE raw, and the two
+    # disagreed on every prose-only reply. The note is the sole source of truth (D6): a
+    # `Q:`/`A:` pair the owner typed becomes note text that the next reading takes as the
+    # channel's own labelling of someone else's words. One call closes both.
+    prose = _strip_pair_labels(message).strip()
     structured = capped_answers(answers)
     # What the cap CUT rides along to every `OwnerReply` below: those answers reach no
     # note, and `owner_words_reached_note` is the reader that has to know (finding 4).
@@ -895,12 +902,17 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
 
 
 _PAIR_LABEL = re.compile(r"^[ \t]*[QA]: ", re.MULTILINE)
+# The exact shape the read-back accepts — `asked.answersFromReply` runs this over each
+# `\n\n`-separated chunk, trimmed. It is the DEFINITION of a forged pair, and the
+# sanitiser below neutralises nothing else, so the two must move together (pinned by
+# `test_both_renderers_strip_the_labels_with_the_same_pattern`).
+_PAIR_CHUNK = re.compile(r"^Q: ([^\n]+)\nA: ([\s\S]+)$")
 
 
 def _strip_pair_labels(text: str) -> str:
-    """The typed half with the channel's own `Q:`/`A:` labels taken off the front of any
-    line that carries them. Mirrored byte for byte by `asked.stripPairLabels` in the PWA,
-    so the optimistic bubble and the persisted turn stay identical.
+    """The typed half with the channel's own `Q:`/`A:` labels taken off the chunks that
+    would otherwise read back as a pair. Mirrored byte for byte by `asked.stripPairLabels`
+    in the PWA, so the optimistic bubble and the persisted turn stay identical.
 
     R3f's second review, finding 3(b). "The typed half carries no labels" was an
     assumption about what the owner types, not a property of anything: the composer is a
@@ -913,9 +925,32 @@ def _strip_pair_labels(text: str) -> str:
     lands after the blank line as its own chunk, matches `asked.answersFromReply`, and the
     frozen block then shows that question answered in words `_pair` DROPPED and
     `owner_reply_notice` reported as still open: F1's inverse display, re-created from the
-    other side. Stripping rather than escaping keeps every word the owner wrote — the two
-    characters that come off are the channel's, not his."""
-    return _PAIR_LABEL.sub("", text)
+    other side.
+
+    ⟲ **It used to run `_PAIR_LABEL` over EVERY line, and that deleted the owner's own
+    words** (R3f's third review, finding 3b). `Two options:\nA: the cardiologist\nB: the
+    paediatrician` came out as `Two options:\nthe cardiologist\nB: the paediatrician` —
+    his `A:` gone, his `B:` kept, an enumerated reply mangled into nonsense while three
+    documents claimed every owner word survived. That was survivable only while the
+    mangling stopped at the TRANSCRIPT; finding 3a puts this same sanitiser on the path to
+    the NOTE, where a sentence nobody wrote is the one thing this module exists to refuse.
+
+    So the cut is made where the forgery actually is. A chunk is only readable as a pair
+    when it matches `_PAIR_CHUNK` — a `Q:` line with an `A:` line under it — and a chunk
+    that does not is left exactly as the owner typed it, whitespace included. A bare `A:`
+    line cannot be read back by anything (`answersFromReply` anchors on the `Q:`), so
+    taking its label off bought nothing and cost a word.
+
+    **The coupling this accepts, stated so it cannot be broken quietly:** the sanitiser is
+    now defined by what the reader accepts rather than by being maximally destructive. The
+    reader is `asked.answersFromReply`, it is display-only (no backend path parses pairs
+    back out of turn text), and both halves of the mirror plus both patterns are pinned by
+    one drift test. Loosening that reader without loosening this is what would re-open the
+    hole."""
+    return "\n\n".join(
+        _PAIR_LABEL.sub("", chunk) if _PAIR_CHUNK.match(chunk.strip()) else chunk
+        for chunk in text.split("\n\n")
+    )
 
 
 def owner_turn_text(
@@ -961,13 +996,22 @@ def owner_turn_text(
     instruction. The labels are the same ones `notes.compose.clarification_block` puts on
     the durable block, so the turn and the note agree about which half is whose.
 
-    **No half of this rendering can forge a label**, and that took three collapses rather
-    than the one this docstring used to claim (R3f's second review, findings 3b and 4).
-    `_one_line` runs over the QUESTION; the ANSWER is an unconstrained `AnswerIn.answer`
-    that `capped_answers` now flattens; the owner's typed words are stripped by
-    `_strip_pair_labels`. Two of those were inert only because the PWA's inputs happen not
-    to produce the newlines a forgery needs — a property of one client, on an endpoint any
-    client can reach."""
+    **No half of this rendering can forge a label**, and that took FOUR collapses rather
+    than the one this docstring used to claim (R3f's second review, findings 3b and 4; its
+    third, finding 4). `_one_line` runs over the QUESTION; a structured ANSWER is an
+    unconstrained `AnswerIn.answer` that `capped_answers` flattens; the owner's typed words
+    are stripped by `_strip_pair_labels`.
+
+    ⟲ **The fourth is the `pairs` branch below, which this paragraph used to miss.** A
+    pair's answer is not always a flattened structured one: on `_pair`'s degrade path it is
+    the PROSE, and `record_owner_reply` used to hand that over raw. So a client posting
+    `answers` that are present-but-blank (`capped_answers` drops them, `structured` is
+    empty, the prose takes the degrade path) beside multi-line prose could still put a
+    `\n\nQ: …\nA: …` inside a rendered answer. It is closed at the source rather than
+    here: `prose` is sanitised in `record_owner_reply` now — it had to be anyway, because
+    that same string is what lands on the NOTE — so every value this branch can render is
+    either flattened or sanitised. Unreachable from the PWA either way; the endpoint is
+    reachable by anything holding the owner's token."""
     # Sanitised only where a block could read this turn back as answers: a reply the note
     # thread filed against (`reply`), or a send carrying structured answers. An ordinary
     # follow-up in a settled thread has no open set above it and is left verbatim — which
