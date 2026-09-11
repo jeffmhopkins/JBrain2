@@ -1218,13 +1218,58 @@ async def test_two_overlapping_replies_and_exactly_one_claims_the_set(
     assert (await _state(maker, owner, session_id))[0] == "running"
 
 
+async def test_two_answers_for_one_question_keep_the_last_and_report_the_first(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's third review, finding 4 — the same class as the round-two blocking finding,
+    in miniature.
+
+    `_pair` accumulates into a dict, so a second answer carrying an id already filled
+    OVERWRITES the first and the first goes nowhere. Last-writer-wins is the right rule
+    (a re-send is a correction) and the silence was not: `dropped` came back empty, so
+    `owner_words_reached_note` said every word Jeff typed had become note text and the
+    turn kept `assert_fact` — while one of his own answers had reached no note."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[(ids[0], "Dana W"), (ids[0], "Dana Whitfield"), (ids[1], "the cafe")],
+    )
+
+    assert reply is not None and reply.clarified is True
+    # The note has the LAST answer, which is the rule; what changed is that the one it
+    # replaced is now accounted for.
+    assert await _blocks(maker, owner, note_id) == [
+        (QUESTION, "Dana Whitfield"),
+        (COACH, "the cafe"),
+    ]
+    assert reply.dropped == ["Dana W"]
+    assert owner_words_reached_note(reply) is False
+
+
 async def test_a_structured_answer_past_the_cap_files_nothing(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
     """`MAX_ANSWERS` truncates rather than 422s (a client bug degrades this turn, never
     fails it) — and truncating means the tail does NOT become blocks. Sent as the 20th
     item of a 20-item list, the real answer is dropped and its question stays open, which
-    is what `OwnerReply.unanswered` then tells the agent."""
+    is what `OwnerReply.unanswered` then tells the agent.
+
+    AND IT IS IN `dropped` (R3's third review, finding 4). The cut happens before `_pair`
+    ever sees the list, so a truncated answer could never appear in the accounting that
+    function keeps — `owner_words_reached_note` read an empty `dropped`, said everything
+    landed, and left the turn holding `assert_fact` while one of Jeff's own sentences had
+    reached no note at all. Unreachable today only because `ask_owner.tool` caps
+    `questions` at 5 while `MAX_ANSWERS` is 10, which is two constants in two modules
+    agreeing by luck, not a guard."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION
@@ -1244,3 +1289,5 @@ async def test_a_structured_answer_past_the_cap_files_nothing(
     assert reply is not None and reply.clarified is False
     assert reply.unanswered == [QUESTION]
     assert await _blocks(maker, owner, note_id) == []
+    assert "My sister." in reply.dropped, "the truncated answer was lost without a trace"
+    assert owner_words_reached_note(reply) is False

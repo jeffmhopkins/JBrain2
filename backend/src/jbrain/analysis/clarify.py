@@ -131,6 +131,19 @@ def capped_answers(answers: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(i.strip(), a.strip()) for i, a in answers[:MAX_ANSWERS] if a.strip()]
 
 
+def answers_over_cap(answers: Sequence[tuple[str, str]]) -> list[str]:
+    """What `capped_answers` CUT — the owner's words that never reach `_pair` at all.
+
+    R3's third review, finding 4. The cut happens before the pairing, so a truncated
+    answer can never appear in `_pair`'s `dropped` however carefully that function
+    accounts for itself — and `owner_words_reached_note` reads `dropped` to decide
+    whether the turn keeps a fact verb. Unreachable TODAY, because `ask_owner.tool` caps
+    `questions` at 5 and `MAX_ANSWERS` is 10, but that is an arithmetic coincidence
+    between two constants in two modules, not a guard: either moving closes the gap
+    silently. So the cut is reported rather than argued away."""
+    return [a.strip() for _, a in answers[MAX_ANSWERS:] if a.strip()]
+
+
 # --- the tool-call ledger, shared by BOTH turn paths -------------------------
 #
 # It lives HERE, beside `close_owner_reply`, and not in `analysis/converse.py`, for the
@@ -514,6 +527,9 @@ async def record_owner_reply(
         return None
     prose = message.strip()
     structured = capped_answers(answers)
+    # What the cap CUT rides along to every return below: those answers reach no note,
+    # and `owner_words_reached_note` is the reader that has to know (finding 4).
+    over_cap = answers_over_cap(answers)
     if not prose and not structured:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
         # stays `waiting_on_owner` — the questions are still open, which is the truth.
@@ -573,10 +589,11 @@ async def record_owner_reply(
             unanswered=[],
             clarified=False,
             note_moved=False,
-            dropped=[a for _, a in structured] + ([prose] if prose else []),
+            dropped=over_cap + [a for _, a in structured] + ([prose] if prose else []),
         )
 
-    answered, dropped = _pair(open_set, structured, prose, session_id=session_id)
+    answered, paired_out = _pair(open_set, structured, prose, session_id=session_id)
+    dropped = over_cap + paired_out
     pairs = [(q.question, answered[q.id]) for q in open_set if q.id in answered]
     unanswered = [q.question for q in open_set if q.id not in answered]
 
@@ -642,15 +659,16 @@ def _pair(
     """Which open question each part of one reply answers, keyed by question id — and
     what of the owner's words it could NOT place.
 
-    The second element is the load-bearing addition (R3's second review, finding 2). Two
-    of the three rules below DROP something the owner said, and a dropped sentence
+    The second element is the load-bearing addition (R3's second review, finding 2).
+    Three of the four rules below DROP something the owner said, and a dropped sentence
     reaches no note: the reply turn's `assert_fact` is bound on "his words became note
     text", so the function that decides which words did has to report which did not.
-    Returning it beats re-deriving it at the call site, which would be the same three
-    rules written twice.
+    Returning it beats re-deriving it at the call site, which would be the same rules
+    written twice. It does NOT cover what never arrived here — the structured list is
+    capped before this call, and `answers_over_cap` is that half.
 
-    Three rules, and each is there because the alternative writes a sentence into the
-    owner's own note that nobody said:
+    Four rules, and each is there because the alternative writes a sentence into the
+    owner's own note that nobody said — or loses one without saying so:
 
     - **A structured answer naming an id the open set does not carry is DROPPED.** A
       reopened old thread replays its ask step's `args` straight out of the transcript
@@ -661,6 +679,9 @@ def _pair(
       the rest open. This is today's semantics on a one-item set, it never mispairs, and
       it is what lets the batched ask ship ahead of the PWA block that fills `answers`.
       Beside a PARTIAL structured set it answers the oldest question that set left open.
+    - **A REPEATED question id keeps the last answer and drops the earlier one**, which
+      is the rule an over-eager block or a double-filled form produces. Last-writer-wins
+      is right (a re-send is a correction); reporting the loser is what makes it honest.
     - **Free text beside a COMPLETE structured set files nothing.** It is chat:
       `note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
       no shape for an unprompted block, and inventing a question the agent never asked
@@ -678,6 +699,19 @@ def _pair(
             )
             dropped.append(answer)
             continue
+        # A REPEATED id overwrites, and the overwritten answer is a word that reached no
+        # note (R3's third review, finding 4). The dict made that silent: two answers for
+        # `q1` left `dropped` empty, so `owner_words_reached_note` said everything landed
+        # and the turn kept `assert_fact` while one of the owner's own sentences had gone
+        # nowhere. Last-writer-wins is kept — it is what a corrected re-send should do —
+        # and the loser is now reported as what it is.
+        if question_id in answered:
+            log.warning(
+                "note_reply.duplicate_answer_for_question",
+                session_id=session_id,
+                question_id=question_id,
+            )
+            dropped.append(answered[question_id])
         answered[question_id] = answer
     if prose:
         oldest_open = next((q for q in open_set if q.id not in answered), None)
@@ -746,7 +780,11 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     when every word the owner said became note text (`owner_words_reached_note`). Words
     that did not land are the `dropped` list, and the agent is told about them SPECIFICALLY
     — because the commonest way they arise is the designed send of §3b I7, where the
-    structured answers land and the prose beside them does not. The agent reads that
+    structured answers land and the prose beside them does not. The sentence names the
+    three ways rather than only that one: R3's third review found the other two (a
+    repeated question id, whose earlier answer is overwritten, and an answer past
+    `MAX_ANSWERS`), and a notice that gave the wrong reason for a real loss would have
+    the agent telling Jeff something untrue about his own words. The agent reads that
     prose on its turn (`owner_turn_text`) and must not believe it can record a fact out
     of it: the note has no such text, so the next unattended pass's reading does not
     restate it and the sweep retracts it.
@@ -762,8 +800,9 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
         # branch below, which is "none of it landed" and reads very differently.
         lost = "; ".join(f"{w!r}" for w in reply.dropped)
         parts.append(
-            "(Some of what Jeff said on this turn did NOT reach the note, because it"
-            f" answered no question you had asked: {lost}. It exists in this thread and"
+            "(Some of what Jeff said on this turn did NOT reach the note — it answered"
+            " no question you had asked, or a later answer replaced it, or it was past"
+            f" the cap on one send: {lost}. It exists in this thread and"
             " nowhere else, so you cannot record a fact from it — the note has no such"
             " text, and the next pass over the note would retract anything you wrote out"
             " of it. Tell him it is not recorded and that a note of his own (or an answer"
@@ -1096,6 +1135,7 @@ __all__ = [
     "LedgerRow",
     "OwnerReply",
     "PassReading",
+    "answers_over_cap",
     "bind_turn_writes",
     "capped_answers",
     "close_owner_reply",
