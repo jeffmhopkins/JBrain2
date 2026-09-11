@@ -1,0 +1,494 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C — The chain: antenna → converter → amp → tuner gain → ADC</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+  --violet-tint: rgba(164,147,201,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.45); --steel-tint: rgba(127,167,201,.18); --amber-tint: rgba(201,163,106,.2);
+  --rose-tint: rgba(207,138,143,.18); --green-tint: rgba(143,188,154,.2);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; position: relative; overflow: hidden; padding-bottom: 40px; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 99; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.harness { border-bottom: 1px solid var(--border); padding: 11px 16px 13px; }
+.harness .hl { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 7px; }
+.hrow { display: flex; gap: 6px; }
+.hrow button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; line-height: 1.25; }
+.hrow button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.hrow em { font-style: normal; display: block; font-size: 10px; color: var(--text-3); }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; } .pane.on { display: block; }
+
+/* --- roster --- */
+.hdr { padding: 16px 16px 4px; font-size: 22px; font-weight: 600; }
+.sub { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); }
+.rcard { margin: 0 16px 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.rtop { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: var(--text); font: inherit; padding: 13px 14px 12px; }
+.rname { display: flex; align-items: baseline; gap: 8px; }
+.rname b { font-size: 16px; font-weight: 500; }
+.rser { font-size: 11px; color: var(--text-3); font-family: ui-monospace, SFMono-Regular, monospace; }
+.rdesc { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; }
+.rstate { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 13px; color: var(--text-2); }
+.dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: var(--text-3); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+
+/* THE GLANCE: the chain itself, shrunk to a strip. Five beads and a caption — the
+   caption carries the meaning, the beads carry the shape. */
+.chainrow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 0 14px;
+  border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text-2); font: inherit; text-align: left; }
+.beads { display: flex; align-items: center; gap: 3px; flex: none; }
+.beads b { width: 13px; height: 13px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--border); display: block; }
+.beads b.on { background: var(--steel-tint); border-color: var(--accent); }
+.beads b.warn { background: var(--amber-tint); border-color: var(--warn); }
+.beads b.gone { background: transparent; border-style: dashed; opacity: .55; }
+.beads i { width: 7px; height: 1px; background: var(--border); display: block; }
+.chaincap { flex: 1; font-size: 12px; line-height: 1.4; }
+.chaincap .w { color: var(--warn); } .chaincap .m { color: var(--text-3); }
+.chainrow .car { color: var(--text-3); }
+
+/* --- the sheet --- */
+.scrim { position: absolute; inset: 0; background: var(--scrim); display: none; z-index: 5; }
+.scrim.on { display: block; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface);
+  border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; transform: translateY(101%);
+  transition: transform .2s ease; max-height: 92%; overflow-y: auto; }
+.sheet.on { transform: none; }
+.grab { width: 32px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 4px; }
+.shtitle { padding: 4px 16px 2px; font-size: 18px; font-weight: 500; }
+.shlead { padding: 0 16px 10px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.shlead b { color: var(--text); }
+
+/* --- the chain drawing --- */
+.chain { padding: 2px 16px 12px; }
+.stage { position: relative; padding-left: 26px; }
+/* the wire down the left, drawn by the stage itself so inserting one redraws the path */
+.stage::before { content: ""; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+.stage:first-child::before { top: 22px; }
+.stage:last-child::before { bottom: auto; height: 22px; }
+.stage::after { content: ""; position: absolute; left: 2px; top: 17px; width: 10px; height: 10px;
+  border-radius: 999px; background: var(--border); }
+.stage.act::after { background: var(--accent); }
+.stage.warned::after { background: var(--warn); }
+.stage.bypassed::after { background: transparent; border: 2px dashed var(--text-3); left: 1px; top: 16px; }
+/* a bypass: the wire visibly goes AROUND the stage rather than through it */
+.stage.bypassed .box { opacity: .55; border-style: dashed; }
+.bypasswire { position: absolute; left: 6px; top: 6px; bottom: 6px; width: 16px; pointer-events: none; }
+.bypasswire span { position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+  border: 2px solid var(--text-3); border-left: 0; border-radius: 0 12px 12px 0; opacity: .6; }
+.box { width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 12px; color: var(--text); font: inherit; padding: 10px 12px; margin-bottom: 8px; min-height: 52px; display: block; }
+button.box { cursor: pointer; }
+.stage.act .box { border-color: var(--accent); }
+.stage.warned .box { border-color: var(--warn); background: var(--amber-tint); }
+.box .k { display: flex; align-items: baseline; gap: 8px; }
+.box .k b { font-size: 14px; font-weight: 500; }
+.box .k .t { margin-left: auto; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.box .k .t.warn { color: var(--warn); } .box .k .t.mute { color: var(--text-3); }
+.box .d { display: block; font-size: 11px; color: var(--text-3); margin-top: 3px; line-height: 1.45; }
+.box.inert { background: transparent; color: var(--text-2); }
+.box.inert .k b { color: var(--text-2); font-weight: 400; }
+
+/* a stage's own controls, opened in place — never a second sheet (DESIGN.md: one modal) */
+.ctl { display: none; margin: -2px 0 12px; padding: 12px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); }
+.stage.open .ctl { display: block; }
+.seg { display: flex; gap: 6px; margin-bottom: 12px; }
+.seg button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 12px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.seg button[aria-pressed=true].amb { border-color: var(--warn); background: var(--amber-tint); }
+.lad { display: flex; gap: 5px; margin-bottom: 8px; }
+.lad button { flex: 1; min-height: 60px; border: 1px solid var(--border); border-radius: 10px; background: transparent;
+  color: var(--text-2); font: inherit; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; padding: 5px 0; }
+.lad .bar { width: 13px; border-radius: 2px 2px 0 0; background: var(--text-3); }
+.lad button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.lad button[aria-pressed=true] .bar { background: var(--accent); }
+.lad .g { font-size: 12px; font-variant-numeric: tabular-nums; }
+.lad .s { font-size: 9px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fine { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.fine button { width: 52px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text); font: inherit; font-size: 17px; }
+.fine .now { flex: 1; text-align: center; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 19px; font-variant-numeric: tabular-nums; }
+.fine .now small { display: block; font-family: inherit; font-size: 11px; color: var(--text-3); }
+.said { font-size: 12px; line-height: 1.55; color: var(--text-2); margin: 0; }
+.said b { color: var(--text); }
+.said.warnbox { padding: 10px 11px; border-radius: 10px; background: var(--amber-tint);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); }
+.said.warnbox b { color: var(--warn); }
+.said.steelbox { padding: 10px 11px; border-radius: 10px; background: var(--steel-tint);
+  border: 1px solid color-mix(in srgb, var(--steel) 40%, var(--border)); }
+.said ul { margin: 6px 0 0; padding-left: 17px; } .said li { margin-bottom: 3px; }
+.said .act { margin-top: 9px; width: 100%; min-height: 44px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--accent); font: inherit; font-size: 13px; }
+.offrow { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.offrow input { flex: 1; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 16px;
+  font-family: ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+.offrow .u { font-size: 11px; color: var(--text-3); width: 92px; line-height: 1.3; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chips button { min-height: 44px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+.route { display: flex; gap: 6px; margin-bottom: 12px; }
+.route button { flex: 1; min-height: 62px; border: 1px solid var(--border); border-radius: 12px; background: transparent;
+  color: var(--text-2); font: inherit; font-size: 12px; line-height: 1.3; padding: 6px 8px; text-align: left; }
+.route button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.route button b { display: block; font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.done { margin: 2px 16px 16px; width: calc(100% - 32px); min-height: 46px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; }
+
+/* --- waterfall pane: the chain strip IS the warning --- */
+.wfmeta { display: flex; justify-content: space-between; padding: 12px 16px 8px; font-size: 12px; color: var(--text-2); }
+.strip { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 0 14px; margin: 0 0 0;
+  border: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; text-align: left; }
+.strip.warned { background: var(--amber-tint); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); color: var(--text); }
+.strip b.w { color: var(--warn); }
+.wf { height: 200px; background: #0a0c10; position: relative; overflow: hidden; }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf canvas { display: block; width: 100%; height: 100%; }
+.wfscale { position: absolute; left: 8px; top: 8px; font-size: 11px; color: #9a9da3;
+  font-family: ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums;
+  background: rgba(10,12,16,.7); padding: 3px 7px; border-radius: 7px; }
+.wfscale.warn { color: var(--warn); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>C &mdash; The chain.</b> A <b>bottom sheet</b> (DESIGN.md's workhorse for a contextual form) that draws the radio as the <b>signal path it actually is</b>: antenna &rarr; upconverter &rarr; amp &rarr; tuner gain &rarr; ADC. Two stages are settings and the rest are facts read from what the radio is already described as, so the sheet says which stages you can touch and which merely explain the ones you can.<br><br>Its bet is that the owner's problem is a <em>chain</em> problem &mdash; an amp they added is driving the tuner too hard &mdash; and that a number is easier to choose when you can see what is in front of it. Direct sampling is not an error message here: it is the wire visibly going <b>around</b> the tuner.</div>
+
+  <div class="harness">
+    <div class="hl">Harness &mdash; what the radio is tuned to</div>
+    <div class="hrow" id="freqs">
+      <button type="button" data-f="162.550" aria-pressed="true">162.550<em>VHF &middot; tuner in path</em></button>
+      <button type="button" data-f="7.200">7.200<em>HF &middot; 40 m</em></button>
+      <button type="button" data-f="18.100">18.100<em>the 14.4&ndash;24 hole</em></button>
+    </div>
+  </div>
+  <div class="swap" role="tablist">
+    <button id="t-roster" aria-pressed="true" type="button">Radios</button>
+    <button id="t-wf" aria-pressed="false" type="button">Waterfall</button>
+  </div>
+
+  <div class="pane on" id="p-roster">
+    <div class="hdr">Radios</div>
+    <div class="sub">What each one is doing right now.</div>
+    <div class="rcard">
+      <div class="rtop">
+        <span class="rname"><b>Long wire</b><span class="rser">77192819</span></span>
+        <span class="rdesc">Long wire via 9:1 unun, north window &middot; inline LNA</span>
+        <span class="rstate"><span class="dot ok" id="d1" aria-hidden="true"></span><span id="state1">Listening &mdash; 162.550 MHz NFM</span></span>
+      </div>
+      <button class="chainrow" type="button" id="open1">
+        <span class="beads" id="beads1" aria-hidden="true"></span>
+        <span class="chaincap" id="cap1"></span>
+        <span class="car" aria-hidden="true">&rsaquo;</span>
+      </button>
+    </div>
+    <div class="rcard">
+      <div class="rtop">
+        <span class="rname"><b>Discone</b><span class="rser">09022796</span></span>
+        <span class="rdesc">Discone on the mast &middot; dedicated to APRS</span>
+        <span class="rstate"><span class="dot ok" aria-hidden="true"></span><span>Logging APRS &mdash; 144.390 MHz</span></span>
+      </div>
+      <button class="chainrow" type="button">
+        <span class="beads" aria-hidden="true"><b></b><i></i><b class="gone"></b><i></i><b></b><i></i><b class="warn"></b><i></i><b></b></span>
+        <span class="chaincap">Discone &rarr; tuner <span class="w">auto gain</span></span>
+        <span class="car" aria-hidden="true">&rsaquo;</span>
+      </button>
+    </div>
+    <p class="sub" style="padding-top:6px">The glance is a <b style="color:var(--text-2)">five-bead strip</b> &mdash; the chain, shrunk. A missing stage is a dashed bead, a stage that needs looking at is amber, and the caption beside it says which in words.</p>
+  </div>
+
+  <div class="pane" id="p-wf">
+    <div class="wfmeta"><span>Long wire &middot; 162.350&ndash;162.750 MHz</span><span>2 rows/s</span></div>
+    <button class="strip" type="button" id="strip">
+      <span class="beads" id="beads2" aria-hidden="true"></span>
+      <span class="chaincap" id="cap2"></span>
+      <span class="car" aria-hidden="true">&rsaquo;</span>
+    </button>
+    <div class="wf"><canvas id="cv" width="390" height="200"></canvas><div class="wfscale" id="wfscale"></div></div>
+    <p class="sub" style="padding-top:12px">The chain strip rides <b style="color:var(--text-2)">above the picture on every waterfall</b>, because the picture's dB scale is a property of the chain that produced it. When the tuner stage is on Auto the strip goes amber and says so; tapping it opens the sheet <b style="color:var(--text-2)">at that stage</b>.</p>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Signal chain">
+    <div class="grab"></div>
+    <div class="shtitle">Long wire &mdash; the chain</div>
+    <p class="shlead">Everything between the wire and the samples. <b>Two stages are settings</b>; the rest is what the radio is already described as.</p>
+    <div class="chain" id="chain"></div>
+    <button class="done" type="button" id="done">Done</button>
+  </div>
+</div>
+<script>
+// Measured, and where each figure comes from:
+//   the ladder, and 30 dB as its landing point ....... deploy/sdr/listen.py MEASURING_GAIN_DB
+//   the AGC spur comb + the 162.35 phantom ........... listen.py Tuner.tuner_gain_db
+//   the tuner floor, the hole, the direct-path image . backend/src/jbrain/sdr/tuner.py
+//   "gain is a no-op under direct_samp" .............. deploy/sdr/radio.py Radio.set_gain
+const LADDER = [ {db:0,snr:20.2}, {db:10,snr:40.5}, {db:20,snr:41.4}, {db:30,snr:39.7}, {db:40,snr:32.8} ];
+const TUNER_MIN = 24, NYQUIST = 14.4, TUNER_MAX = 1766;
+// The amp is NOT a third setting — it is read from the radio's description, which
+// Settings → Radios already stores ("what it is plugged into"). The chain renders it
+// because it is why the tuner's number should be low, not so it can be edited here.
+const DESC = "Long wire via 9:1 unun, north window · inline LNA";
+const hasAmp = /lna|amp|preamp/i.test(DESC);
+
+const S = { freq: 162.550, mode: "fixed", db: 30, up: false, off: 125.0, open: null };
+const $ = id => document.getElementById(id);
+const hw = () => S.up ? S.freq + S.off : S.freq;
+const tunerInPath = () => hw() >= TUNER_MIN;
+const autoLive = () => S.mode === "auto" && tunerInPath();
+const holeRefusal = () => !S.up && S.freq > NYQUIST && S.freq < TUNER_MIN;
+const rung = () => LADDER.some(l => l.db === S.db);
+
+function ladderHtml() {
+  return LADDER.map(l => `<button type="button" data-db="${l.db}" aria-pressed="${l.db === S.db}">
+      <span class="bar" style="height:${Math.round(l.snr * 0.8)}px"></span>
+      <span class="g">${l.db}</span><span class="s">${l.snr}</span></button>`).join("");
+}
+
+function drawChain() {
+  const inPath = tunerInPath();
+  const stages = [];
+
+  // 1 — antenna. A fact, from the description.
+  stages.push({ id: "ant", cls: "", html: `<div class="box inert"><span class="k"><b>Antenna</b><span class="t mute">described</span></span>
+    <span class="d">Long wire via 9:1 unun, north window. Change it in Settings &rarr; Radios.</span></div>` });
+
+  // 2 — the converter. A SETTING, and the stage that either exists or does not.
+  // A converter inline makes this an HF radio: VHF never reaches the mixer, whatever the
+  // dongle is told to tune. So the stage is WARNED rather than quietly wrong.
+  const vhfBlocked = S.up && S.freq >= TUNER_MIN;
+  stages.push({
+    id: "up", cls: vhfBlocked ? "warned" : S.up ? "act" : "",
+    html: `<button class="box" type="button" data-stage="up"><span class="k"><b>Upconverter</b>
+      <span class="t ${S.up ? "" : "mute"}">${S.up ? "+" + S.off.toFixed(3) + " MHz" : "not inline"}</span></span>
+      <span class="d">${vhfBlocked
+        ? `<b style="color:var(--warn)">${S.freq.toFixed(3)} MHz never reaches the mixer.</b> A converter's input passband is HF; the dongle would tune ${hw().toFixed(3)} and hear nothing. A radio with one inline is an HF radio until it is bypassed or unplugged.`
+        : S.up
+        ? `Everything you type is tuned ${S.off.toFixed(3)} MHz higher in hardware. HF arrives through the tuner, so it has a gain control.`
+        : `Off. Below ${TUNER_MIN} MHz the radio takes the other route instead &mdash; straight into the ADC, tuner powered down.`}</span></button>`,
+    ctl: `<div class="route" id="route">
+        <button type="button" data-r="direct" aria-pressed="${!S.up}"><b>Direct path</b>ADC straight off the antenna. 0.1&ndash;14.4 MHz. No gain control, and a mirror of 28.8&nbsp;&minus;&nbsp;f rides along with everything.</button>
+        <button type="button" data-r="up" aria-pressed="${S.up}"><b>Through a converter</b>Mixed up into the tuner's range. Gain works, the 14.4&ndash;24 hole closes, no mirror.</button>
+      </div>
+      <div id="offbits" ${S.up ? "" : "hidden"}>
+        <div class="offrow">
+          <input id="offmhz" type="number" inputmode="decimal" step="0.001" min="0.001" max="1700" value="${S.off.toFixed(3)}" aria-label="Offset in MHz">
+          <span class="u">MHz the converter adds</span>
+        </div>
+        <div class="chips" id="chips">
+          <button type="button" data-o="125">125.000 &mdash; Ham It Up</button>
+          <button type="button" data-o="124.997">124.997 &mdash; trimmed</button>
+          <button type="button" data-o="120">120.000</button>
+        </div>
+        <p class="said steelbox" id="upmaths"></p>
+      </div>
+      <p class="said" style="margin-top:10px">The standard Ham It Up crystal is 125&nbsp;MHz, but it is a crystal: if WWV lands 3&nbsp;kHz off, trim the number here rather than living with it.</p>`,
+  });
+
+  // 3 — the amp. A fact, and the reason the next stage should be low.
+  if (hasAmp) stages.push({ id: "amp", cls: "", html: `<div class="box inert"><span class="k"><b>Amp inline</b><span class="t mute">described</span></span>
+    <span class="d">An LNA's gain lands <b style="color:var(--text-2)">before</b> the tuner's. Whatever it gives you is already applied by the time the number below is.</span></div>` });
+
+  // 4 — the tuner. A SETTING, and the one that can vanish from the path.
+  const gainT = !inPath ? "bypassed" : S.mode === "auto" ? "auto" : `${S.db} dB`;
+  stages.push({
+    id: "gain",
+    cls: !inPath ? "bypassed" : autoLive() ? "warned" : "act",
+    html: `${!inPath ? '<span class="bypasswire"><span></span></span>' : ""}
+      <button class="box" type="button" data-stage="gain"><span class="k"><b>Tuner gain</b>
+      <span class="t ${!inPath ? "mute" : autoLive() ? "warn" : ""}">${gainT}</span></span>
+      <span class="d">${!inPath
+        ? `The wire goes <b style="color:var(--text-2)">around</b> this stage at ${S.freq.toFixed(3)} MHz. Every gain stage an R820T2 has is inside the tuner, and the tuner is powered down &mdash; ${S.mode === "auto" ? "Auto" : S.db + " dB"} is stored, not applied.`
+        : `One number for listening, APRS, the waterfall and every survey.`}</span></button>`,
+    ctl: !inPath
+      ? `<p class="said">Nothing to set while the tuner is out of the path. Put it back by giving this radio a converter &mdash; the stage above.</p>
+         <button class="act" type="button" data-jump="up">Open the upconverter stage &rarr;</button>`
+      : `<div class="seg" id="gainmode">
+          <button type="button" data-m="fixed" aria-pressed="${S.mode === "fixed"}">Fixed</button>
+          <button type="button" data-m="auto" class="amb" aria-pressed="${S.mode === "auto"}">Auto</button>
+        </div>
+        ${S.mode === "fixed" ? `
+          <div class="lad" id="lad">${ladderHtml()}</div>
+          <p class="said" style="margin-bottom:10px"><b>Bars are signal-to-noise measured on this radio</b>, 162.550 through the fixed listen chain. 10&ndash;30 is one flat shelf; 0 is 20 dB deafer and 40 is already overloading.</p>
+          <div class="fine">
+            <button type="button" id="down" aria-label="one dB down">&minus;</button>
+            <span class="now">${S.db} dB<small>${rung() ? "a measured rung" : "between rungs — not measured"}</small></span>
+            <button type="button" id="up" aria-label="one dB up">+</button>
+          </div>
+          ${hasAmp ? `<p class="said steelbox"><b>There is an amp ahead of this stage.</b> Its gain and this one add up, so the answer to a signal that is too hot is a <b>lower</b> number here, not a different mode. The shelf is flat from 10 to 30 &mdash; the bottom of it costs nothing.
+            <button class="act" type="button" data-set="12">Set 12 dB</button></p>` : ""}`
+        : `<p class="said warnbox"><b>Auto gain invents stations on this radio.</b> Measured on air, three sweeps each way over 162.3&ndash;162.7:
+            <ul><li>Auto found <b>seven</b> signals &mdash; a phantom at 162.35 and a comb at &plusmn;55.5 / 111 / 166 / 222 kHz.</li>
+            <li>Pinned at 30 dB found <b>one</b>, ~29 dB over the floor.</li>
+            <li>Under Auto the real station read only <b>11 dB</b> over the floor.</li></ul>
+            <button class="act" type="button" data-set="30">Pin at 30 dB instead</button></p>`}`,
+  });
+
+  // 5 — the ADC. A fact, and where the consequence lands.
+  stages.push({ id: "adc", cls: "", html: `<div class="box inert"><span class="k"><b>ADC &amp; demod</b>
+    <span class="t mute">${!inPath ? "direct, Q branch" : "via tuner"}</span></span>
+    <span class="d">${!inPath
+      ? `8-bit samples at 28.8 MS/s. Everything down here arrives summed with a reversed image of 28.8 &minus; f.`
+      : `8-bit samples. ${autoLive() ? "With gain moving, dBFS means nothing from one row to the next." : `Levels are comparable against other readings taken at ${S.db} dB, and against nothing else.`}`}</span></div>` });
+
+  $("chain").innerHTML = stages.map(s =>
+    `<div class="stage ${s.cls} ${S.open === s.id ? "open" : ""}" data-id="${s.id}">
+       ${s.html}${s.ctl ? `<div class="ctl">${s.ctl}</div>` : ""}
+     </div>`).join("");
+
+  if (S.up) {
+    const wouldHw = S.freq + S.off;
+    const m = $("upmaths");
+    if (m) m.innerHTML = [
+      `You tune <b>${S.freq.toFixed(3)}</b> &rarr; the dongle tunes <b>${wouldHw.toFixed(3)} MHz</b>.`,
+      wouldHw > TUNER_MAX ? `Past the tuner's ${TUNER_MAX} MHz ceiling &mdash; nothing to hear.`
+        : wouldHw >= TUNER_MIN ? `Inside the tuner's ${TUNER_MIN}&ndash;${TUNER_MAX} MHz range, so the chain above is complete.`
+        : `Too small to lift ${S.freq.toFixed(3)} above ${TUNER_MIN} MHz &mdash; the tuner stays bypassed.`,
+    ].join("<br>");
+  }
+}
+
+function beadsFor(el) {
+  const inPath = tunerInPath();
+  const b = [
+    "on",                                   // antenna
+    S.up ? "on" : "gone",                   // converter
+    hasAmp ? "on" : "gone",                 // amp
+    !inPath ? "gone" : autoLive() ? "warn" : "on", // tuner gain
+    "on",                                   // adc
+  ];
+  el.innerHTML = b.map((c, i) => `<b class="${c}"></b>`).join('<i></i>');
+}
+
+function caption() {
+  const inPath = tunerInPath();
+  const parts = [];
+  parts.push(S.up ? `+${S.off.toFixed(3)}` : null);
+  parts.push(hasAmp ? "LNA" : null);
+  parts.push(!inPath ? `<span class="m">tuner bypassed</span>`
+    : autoLive() ? `<span class="w">auto gain</span>` : `${S.db} dB`);
+  return "Wire &rarr; " + parts.filter(Boolean).join(" &rarr; ");
+}
+
+function paintWaterfall() {
+  const cv = $("cv"), ctx = cv.getContext("2d"), auto = autoLive();
+  for (let row = 0; row < 67; row++) {
+    for (let i = 0; i < 96; i++) {
+      const x = (i - 48) / 48;
+      const breathe = auto ? Math.sin(row / 5) * 0.32 : 0;
+      let v = (auto ? 0.34 : 0.1) + Math.random() * 0.05 + breathe * 0.3;
+      v += Math.exp(-(x * x) / 0.0016) * (auto ? 0.42 : 0.8);
+      if (auto) {
+        [0.28, 0.56, 0.83, 1.11].forEach(d => [-1, 1].forEach(s => { v += Math.exp(-((x - s * d) ** 2) / 0.0016) * 0.3; }));
+        v += Math.exp(-((x + 0.5) ** 2) / 0.0016) * 0.34;
+      }
+      v = Math.max(0, Math.min(1, v));
+      ctx.fillStyle = `rgb(${Math.round(20 + v * 200)},${Math.round(28 + v * 150)},${Math.round(46 + v * 90)})`;
+      ctx.fillRect(i * (cv.width / 96), row * 3, cv.width / 96 + 1, 3);
+    }
+  }
+  $("wfscale").className = "wfscale" + (auto ? " warn" : "");
+  $("wfscale").textContent = auto ? "dB · relative" : tunerInPath() ? `dBFS @ ${S.db} dB` : "dBFS · no gain stage";
+}
+
+function render() {
+  drawChain();
+  beadsFor($("beads1")); beadsFor($("beads2"));
+  $("cap1").innerHTML = caption();
+  $("cap2").innerHTML = autoLive()
+    ? `<b class="w">Tuner gain is moving</b> &mdash; the dB scale is relative`
+    : caption();
+  $("strip").className = "strip" + (autoLive() ? " warned" : "");
+  $("state1").textContent = holeRefusal()
+    ? `Refused — nothing between ${NYQUIST} and ${TUNER_MIN} MHz`
+    : `Listening — ${S.freq.toFixed(3)} MHz ${hw() < TUNER_MIN ? "AM" : "NFM"}`;
+  $("d1").className = "dot " + (holeRefusal() ? "warn" : "ok");
+  paintWaterfall();
+}
+
+// --- wiring ---
+function openSheet(stage) {
+  S.open = stage ?? S.open;
+  $("sheet").classList.add("on"); $("scrim").classList.add("on"); render();
+}
+function closeSheet() { $("sheet").classList.remove("on"); $("scrim").classList.remove("on"); }
+$("open1").addEventListener("click", () => openSheet("gain"));
+$("strip").addEventListener("click", () => { show("roster"); openSheet("gain"); });
+$("scrim").addEventListener("click", closeSheet);
+$("done").addEventListener("click", closeSheet);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+
+$("chain").addEventListener("click", e => {
+  const jump = e.target.closest("[data-jump]");
+  if (jump) { S.open = jump.dataset.jump; render(); return; }
+  const set = e.target.closest("[data-set]");
+  if (set) { S.mode = "fixed"; S.db = Number(set.dataset.set); render(); return; }
+  const st = e.target.closest("[data-stage]");
+  if (st) { S.open = S.open === st.dataset.stage ? null : st.dataset.stage; render(); return; }
+  const r = e.target.closest("#route button");
+  if (r) { S.up = r.dataset.r === "up"; render(); return; }
+  const m = e.target.closest("#gainmode button");
+  if (m) { S.mode = m.dataset.m; render(); return; }
+  const l = e.target.closest("#lad button");
+  if (l) { S.db = Number(l.dataset.db); render(); return; }
+  if (e.target.closest("#down")) { S.db = Math.max(0, S.db - 1); render(); return; }
+  if (e.target.closest("#up")) { S.db = Math.min(49, S.db + 1); render(); return; }
+  const c = e.target.closest("#chips button");
+  if (c) { S.off = Number(c.dataset.o); render(); return; }
+});
+$("chain").addEventListener("input", e => {
+  if (e.target.id !== "offmhz") return;
+  const v = Number(e.target.value);
+  if (Number.isFinite(v) && v > 0) {
+    S.off = v;
+    // Redrawing the whole chain on every keystroke would steal the caret, so only the
+    // readouts that depend on the number are refreshed while it is being typed.
+    const wouldHw = S.freq + v;
+    $("upmaths").innerHTML = `You tune <b>${S.freq.toFixed(3)}</b> &rarr; the dongle tunes <b>${wouldHw.toFixed(3)} MHz</b>.<br>`
+      + (wouldHw >= TUNER_MIN ? `Inside the tuner's range, so the chain is complete.` : `Too small to lift it above ${TUNER_MIN} MHz.`);
+    beadsFor($("beads1")); beadsFor($("beads2"));
+    $("cap1").innerHTML = caption();
+  }
+});
+$("freqs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.freq = Number(b.dataset.f);
+  $("freqs").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  render();
+});
+const panes = { roster: $("p-roster"), wf: $("p-wf") };
+const tabs = { roster: $("t-roster"), wf: $("t-wf") };
+function show(k) { for (const x in panes) { panes[x].classList.toggle("on", x === k); tabs[x].setAttribute("aria-pressed", String(x === k)); } }
+for (const k in tabs) tabs[k].addEventListener("click", () => { closeSheet(); show(k); });
+const themeBtn = $("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+render();
+</script>

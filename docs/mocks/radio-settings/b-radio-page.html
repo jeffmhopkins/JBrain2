@@ -1,0 +1,493 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B — The radio's own page: a full screen that argues before you choose</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+  --violet-tint: rgba(164,147,201,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18); --amber-tint: rgba(201,163,106,.2);
+  --rose-tint: rgba(207,138,143,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; padding-bottom: 40px; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 9; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.harness { border-bottom: 1px solid var(--border); padding: 11px 16px 13px; }
+.harness .hl { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 7px; }
+.hrow { display: flex; gap: 6px; }
+.hrow button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; line-height: 1.25; }
+.hrow button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.hrow em { font-style: normal; display: block; font-size: 10px; color: var(--text-3); }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; } .pane.on { display: block; }
+
+/* --- roster --- */
+.hdr { padding: 16px 16px 4px; font-size: 22px; font-weight: 600; }
+.sub { padding: 0 16px 10px; font-size: 12px; color: var(--text-3); }
+.rcard { margin: 0 16px 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.rtop { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: var(--text); font: inherit; padding: 13px 14px 12px; }
+.rname { display: flex; align-items: baseline; gap: 8px; }
+.rname b { font-size: 16px; font-weight: 500; }
+.rser { font-size: 11px; color: var(--text-3); font-family: ui-monospace, SFMono-Regular, monospace; }
+.rdesc { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; }
+.rstate { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 13px; color: var(--text-2); }
+.dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: var(--text-3); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+/* THE GLANCE: one settings line, read as a sentence, with the exception carrying the colour. */
+.sline { display: flex; align-items: center; width: 100%; gap: 9px; min-height: 48px; padding: 0 14px;
+  border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text-2);
+  font: inherit; font-size: 13px; text-align: left; }
+.sline .gv { font-variant-numeric: tabular-nums; color: var(--text); }
+.sline .gv.warn { color: var(--warn); } .sline .gv.mute { color: var(--text-3); }
+.sline .car { margin-left: auto; color: var(--text-3); }
+
+/* --- the settings screen --- */
+.topbar { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--border); }
+.back { width: 44px; height: 44px; border: 0; background: transparent; color: var(--text); font-size: 26px; line-height: 1; }
+.ttl { font-size: 18px; font-weight: 500; }
+.ttl small { display: block; font-size: 11px; color: var(--text-3); font-weight: 400; font-family: ui-monospace, SFMono-Regular, monospace; }
+.sec { margin: 14px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.sechd { padding: 13px 14px 4px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.secbd { padding: 4px 14px 14px; }
+.lead { font-size: 13px; color: var(--text-2); line-height: 1.55; margin: 0 0 12px; }
+.lead b { color: var(--text); }
+
+.seg { display: flex; gap: 6px; margin: 0 0 14px; }
+.seg button { flex: 1; min-height: 46px; border: 1px solid var(--border); border-radius: 12px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; line-height: 1.2; }
+.seg button em { font-style: normal; display: block; font-size: 10px; color: var(--text-3); }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.seg button[aria-pressed=true].amb { border-color: var(--warn); background: var(--amber-tint); }
+.seg button:disabled { opacity: .4; }
+
+/* the measured ladder, drawn as the chart it is */
+.chart { position: relative; height: 132px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface-2); padding: 10px 8px 26px; display: flex; align-items: flex-end; gap: 6px; }
+.chart .plateau { position: absolute; left: 0; right: 0; top: 0; bottom: 0; pointer-events: none; }
+.chart .plateau i { position: absolute; top: 6px; bottom: 26px; background: var(--green-tint);
+  border-left: 1px dashed color-mix(in srgb, var(--ok) 50%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--ok) 50%, transparent); }
+.chart .plateau span { position: absolute; top: 8px; font-size: 9px; color: var(--ok); letter-spacing: .06em; text-transform: uppercase; }
+.chart button { position: relative; flex: 1; height: 100%; border: 0; background: transparent; padding: 0;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; color: var(--text-2); font: inherit; }
+.chart .col { width: 100%; max-width: 30px; border-radius: 3px 3px 0 0; background: var(--text-3); }
+.chart button[aria-pressed=true] .col { background: var(--accent); }
+.chart button[aria-pressed=true] { color: var(--text); }
+.chart .snr { font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart .gx { position: absolute; bottom: -22px; left: 0; right: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart button[aria-pressed=true] .gx { color: var(--accent); }
+.axis { font-size: 10px; color: var(--text-3); margin: 8px 0 12px; }
+
+.fine { display: flex; align-items: center; gap: 8px; margin: 14px 0 4px; }
+.fine button { width: 56px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text); font: inherit; font-size: 17px; }
+.fine .now { flex: 1; text-align: center; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 21px; font-variant-numeric: tabular-nums; }
+.fine .now small { display: block; font-size: 11px; color: var(--text-3); font-family: inherit; }
+
+/* the A/B: two sweeps of the same 400 kHz, drawn from the measured floors and peaks */
+.ab { display: flex; gap: 8px; margin-top: 12px; }
+.ab figure { flex: 1; margin: 0; }
+.ab figcaption { font-size: 10px; color: var(--text-3); margin-bottom: 5px; display: flex; justify-content: space-between; }
+.ab figcaption b { font-weight: 500; }
+.ab .warnc b { color: var(--warn); } .ab .okc b { color: var(--ok); }
+.sweep { height: 74px; background: #0a0c10; border-radius: 8px; position: relative; overflow: hidden; }
+:root[data-theme=light] .sweep { background: #0e1218; }
+.sweep .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .6; }
+.sweep .bin.spur { background: var(--amber); opacity: .9; }
+.sweep .fl { position: absolute; left: 0; right: 0; border-top: 1px dashed rgba(154,157,163,.4); }
+.sweep .fllab { position: absolute; left: 4px; font-size: 8px; color: #9a9da3; font-variant-numeric: tabular-nums; }
+
+.cost { margin: 12px 0 0; padding: 11px 12px; border-radius: 12px; background: var(--amber-tint);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); font-size: 12px; line-height: 1.55; }
+.cost b { color: var(--warn); }
+.cost ul { margin: 7px 0 0; padding-left: 17px; color: var(--text-2); }
+.cost li { margin-bottom: 4px; }
+.cost li b { color: var(--text); }
+.advice { margin: 12px 0 0; padding: 11px 12px; border-radius: 12px; background: var(--steel-tint);
+  border: 1px solid color-mix(in srgb, var(--steel) 40%, var(--border)); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.advice b { color: var(--text); }
+.advice button { margin-top: 9px; width: 100%; min-height: 44px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--accent); font: inherit; font-size: 13px; }
+
+.inert { padding: 12px; border-radius: 12px; border: 1px dashed var(--border); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.inert b { color: var(--text); }
+
+.sw { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.sw .lab { flex: 1; font-size: 14px; }
+.sw .lab small { display: block; color: var(--text-3); font-size: 11px; }
+.track { width: 50px; height: 30px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); position: relative; flex: none; padding: 0; }
+.track i { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 999px; background: var(--text-3); transition: left .16s ease, background .16s ease; }
+.track[aria-pressed=true] { background: var(--steel-tint); border-color: var(--accent); }
+.track[aria-pressed=true] i { left: 23px; background: var(--accent); }
+.offrow { display: flex; gap: 8px; align-items: center; margin: 12px 0 8px; }
+.offrow input { flex: 1; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 16px;
+  font-family: ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+.offrow .u { font-size: 12px; color: var(--text-3); width: 96px; line-height: 1.3; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.chips button { min-height: 44px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+.maths { font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.maths b { color: var(--text); font-family: ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+.maths .bad { color: var(--danger); } .maths .good { color: var(--ok); }
+.apply { margin-top: 12px; width: 100%; min-height: 46px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-3); font: inherit; font-size: 14px; }
+.apply.live { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+
+/* --- the waterfall pane: where the warning lives in this shape --- */
+.wfscreen { padding: 0; }
+.wfmeta { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px 8px; font-size: 12px; color: var(--text-2); }
+.wf { height: 210px; background: #0a0c10; position: relative; overflow: hidden; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf canvas { display: block; width: 100%; height: 100%; }
+/* The legend IS the warning. A scale that cannot be trusted says so on itself, not in a
+   strip above the picture that the eye learns to skip. */
+.legend { position: absolute; left: 10px; top: 10px; padding: 6px 9px; border-radius: 9px;
+  background: rgba(10,12,16,.82); font-size: 11px; line-height: 1.45; color: #9a9da3;
+  font-family: ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+.legend b { display: block; color: #e6e7e9; font-weight: 500; }
+.legend.warn { background: rgba(201,163,106,.22); border: 1px solid var(--warn); color: #e6e7e9; }
+.legend.warn b { color: var(--warn); }
+.legend .fix { display: block; margin-top: 6px; min-height: 44px; width: 100%; padding: 0 9px; border-radius: 8px;
+  border: 1px solid var(--warn); background: transparent; color: #e6e7e9; font: inherit; font-size: 11px; }
+.peaks { padding: 10px 16px 0; font-size: 12px; color: var(--text-2); }
+.peaks .p { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.peaks .p.spur { color: var(--warn); }
+button:focus-visible, .track:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>B &mdash; The radio's own page.</b> A <b>full screen with a back chevron</b> (DESIGN.md's paradigm for a primary task), reached from a settings line on the roster card. Its bet is that <b>one gain for every job is a decision, not a preference</b>, and a decision deserves the evidence beside the control: the measured SNR ladder as a chart, and the two sweeps &mdash; Auto and pinned &mdash; drawn side by side so &ldquo;Auto invents four signals&rdquo; is something you <em>see</em>.<br><br>Its cost is a journey: two taps from the roster, and a screen you leave to get back to the radio you were adjusting.</div>
+
+  <div class="harness">
+    <div class="hl">Harness &mdash; what the radio is tuned to</div>
+    <div class="hrow" id="freqs">
+      <button type="button" data-f="162.550" aria-pressed="true">162.550<em>VHF &middot; tuner in path</em></button>
+      <button type="button" data-f="7.200">7.200<em>HF &middot; direct sampling</em></button>
+      <button type="button" data-f="18.100">18.100<em>the 14.4&ndash;24 hole</em></button>
+    </div>
+  </div>
+  <div class="swap" role="tablist">
+    <button id="t-roster" aria-pressed="true" type="button">Radios</button>
+    <button id="t-set" aria-pressed="false" type="button">Its settings</button>
+    <button id="t-wf" aria-pressed="false" type="button">Waterfall</button>
+  </div>
+
+  <div class="pane on" id="p-roster">
+    <div class="hdr">Radios</div>
+    <div class="sub">What each one is doing right now.</div>
+    <div class="rcard">
+      <div class="rtop">
+        <span class="rname"><b>Long wire</b><span class="rser">77192819</span></span>
+        <span class="rdesc">Long wire via 9:1 unun, north window &middot; inline LNA</span>
+        <span class="rstate"><span class="dot ok" id="d1" aria-hidden="true"></span><span id="state1">Listening &mdash; 162.550 MHz NFM</span></span>
+      </div>
+      <button class="sline" type="button" id="open1">
+        <span>Gain <span class="gv" id="g1">30 dB</span> &middot; <span class="gv" id="o1">no offset</span></span>
+        <span class="car" aria-hidden="true">&rsaquo;</span>
+      </button>
+    </div>
+    <div class="rcard">
+      <div class="rtop">
+        <span class="rname"><b>Discone</b><span class="rser">09022796</span></span>
+        <span class="rdesc">Discone on the mast &middot; dedicated to APRS</span>
+        <span class="rstate"><span class="dot ok" aria-hidden="true"></span><span>Logging APRS &mdash; 144.390 MHz</span></span>
+      </div>
+      <button class="sline" type="button">
+        <span>Gain <span class="gv warn">auto</span> &middot; <span class="gv mute">no offset</span></span>
+        <span class="car" aria-hidden="true">&rsaquo;</span>
+      </button>
+    </div>
+    <p class="sub" style="padding-top:6px">The glance is <b style="color:var(--text-2)">one line, read as a sentence</b>. A radio at its defaults reads quietly; the exception carries the colour, and the word <span style="color:var(--warn)">auto</span> carries it too, so colour is never doing the work alone.</p>
+  </div>
+
+  <div class="pane" id="p-set">
+    <div class="topbar">
+      <button class="back" type="button" id="back" aria-label="Back">&lsaquo;</button>
+      <div class="ttl">Long wire<small>77192819</small></div>
+    </div>
+
+    <section class="sec">
+      <div class="sechd">Gain &mdash; one setting, every job</div>
+      <div class="secbd">
+        <p class="lead">Listening, APRS, the waterfall and a survey all run at <b>this</b> number. Change it and every reading this radio has ever published becomes incomparable with the ones after it &mdash; which is why the picture stamps the gain it was drawn at.</p>
+
+        <div id="gaincontrols">
+          <div class="seg" id="gainmode">
+            <button type="button" data-m="fixed" aria-pressed="true">Fixed<em>the box holds it</em></button>
+            <button type="button" data-m="auto" class="amb">Auto<em>the tuner decides</em></button>
+          </div>
+
+          <div id="fixedside">
+            <div class="chart" id="chart"><div class="plateau" id="plateau"></div></div>
+            <p class="axis">Signal-to-noise, dB &mdash; measured on <b style="color:var(--text-2)">this radio</b>, 162.550 through the fixed listen chain.</p>
+            <div class="fine">
+              <button type="button" id="down" aria-label="one dB down">&minus;</button>
+              <span class="now"><span id="nowdb">30</span> dB<small id="nowsub">a measured rung</small></span>
+              <button type="button" id="up" aria-label="one dB up">+</button>
+            </div>
+            <div class="advice" id="advice"></div>
+          </div>
+
+          <div id="autoside" hidden>
+            <div class="ab">
+              <figure>
+                <figcaption class="warnc"><b>Auto</b><span id="afound">7 signals</span></figcaption>
+                <div class="sweep" id="sw-auto"></div>
+              </figure>
+              <figure>
+                <figcaption class="okc"><b>Pinned 30 dB</b><span>1 signal</span></figcaption>
+                <div class="sweep" id="sw-fix"></div>
+              </figure>
+            </div>
+            <div class="cost">
+              <b>What Auto costs on this radio.</b> Three sweeps each way over 162.3&ndash;162.7 MHz, measured on air:
+              <ul>
+                <li>A <b>phantom station at 162.35</b> &mdash; not a NOAA channel, never was. It is the tuner breathing.</li>
+                <li>A symmetric <b>spur comb at &plusmn;55.5 / 111 / 166 / 222 kHz</b>. Four more signals that do not exist.</li>
+                <li>The real station reads <b>11 dB</b> over the floor instead of ~29.</li>
+                <li>The floor itself wanders; pinned, three sweeps agreed to <b>0.2 dB</b>.</li>
+                <li>Retunes settle in <b>1.47 ms</b> under AGC against <b>0.09 ms</b> fixed.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="inert" id="gaininert" hidden>
+          <b>Gain does nothing at 7.200 MHz.</b> Under 24 MHz the radio powers its tuner down and feeds the ADC straight off the antenna &mdash; and every gain stage an R820T2 has is inside that tuner. The number below is <b>stored and not applied</b>; it comes back the moment this radio is above 24 MHz, or the moment an upconverter puts it there.
+        </div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <div class="sechd">Tuning offset &mdash; an upconverter in front</div>
+      <div class="secbd">
+        <p class="lead">A converter mixes the whole HF band up into the tuner's range. You keep typing <b>real</b> frequencies; only the hardware tune moves.</p>
+        <div class="sw">
+          <span class="lab">Upconverter inline<small>this radio only, remembered against its serial</small></span>
+          <button class="track" type="button" id="uptog" aria-pressed="false" aria-label="Upconverter inline"><i></i></button>
+        </div>
+        <div id="offdetail" hidden>
+          <div class="offrow">
+            <input id="offmhz" type="number" inputmode="decimal" step="0.001" min="0.001" max="1700" value="125.000" aria-label="Offset in MHz">
+            <span class="u">MHz the converter adds</span>
+          </div>
+          <div class="chips">
+            <button type="button" data-o="125">125.000 &mdash; Ham It Up</button>
+            <button type="button" data-o="124.997">124.997 &mdash; trimmed</button>
+            <button type="button" data-o="120">120.000</button>
+          </div>
+          <p class="maths" id="maths"></p>
+          <button class="apply" id="apply" type="button" disabled>Apply &mdash; retunes this radio</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="pane" id="p-wf">
+    <div class="wfmeta"><span>Long wire &middot; 162.350&ndash;162.750 MHz</span><span id="wfrate">2 rows/s</span></div>
+    <div class="wf">
+      <canvas id="cv" width="390" height="210"></canvas>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="peaks" id="peaklist"></div>
+  </div>
+</div>
+<script>
+// Measured, and where each figure comes from:
+//   the ladder, and 30 dB as its landing point ....... deploy/sdr/listen.py MEASURING_GAIN_DB
+//   the AGC spur comb + the 162.35 phantom ........... listen.py Tuner.tuner_gain_db
+//   AGC vs fixed retune settle (1.47 / 0.09 ms) ...... deploy/sdr/radio.py, soapy-probe 2026-09-06
+//   the tuner floor and the 14.4–24 MHz hole ......... backend/src/jbrain/sdr/tuner.py
+const LADDER = [ {db:0,snr:20.2}, {db:10,snr:40.5}, {db:20,snr:41.4}, {db:30,snr:39.7}, {db:40,snr:32.8} ];
+const TUNER_MIN = 24, NYQUIST = 14.4, TUNER_MAX = 1766;
+const S = { freq: 162.550, mode: "fixed", db: 30, up: false, off: 125.0, applied: { up: false, off: 125.0 } };
+const $ = id => document.getElementById(id);
+const hw = () => S.applied.up ? S.freq + S.applied.off : S.freq;
+const tunerInPath = () => hw() >= TUNER_MIN;
+const rung = () => LADDER.some(l => l.db === S.db);
+const autoLive = () => S.mode === "auto" && tunerInPath();
+
+// --- the ladder chart ---
+const maxSnr = 45;
+$("chart").insertAdjacentHTML("beforeend", LADDER.map(l =>
+  `<button type="button" data-db="${l.db}" aria-pressed="false">
+     <span class="snr">${l.snr}</span>
+     <span class="col" style="height:${Math.round((l.snr / maxSnr) * 86)}px"></span>
+     <span class="gx">${l.db}</span>
+   </button>`).join(""));
+// The plateau is the argument the chart exists to make: 10–30 dB is one flat shelf, so
+// "lower" inside it costs nothing and buys headroom.
+$("plateau").innerHTML = '<i style="left:22%;right:12%"></i><span style="left:26%">10&ndash;30 dB is flat</span>';
+
+function sweep(el, auto) {
+  const W = 186, n = 62, floorH = auto ? 26 : 8;
+  let html = "", peakN = 0;
+  for (let i = 0; i < n; i++) {
+    const x = (i - n / 2) / (n / 2);
+    let h = floorH + Math.random() * (auto ? 4 : 2);
+    let spur = false;
+    h += Math.exp(-(x * x) / 0.002) * (auto ? 16 : 44);
+    if (auto) {
+      [0.28, 0.56, 0.83, 1.11].forEach(d => [-1, 1].forEach(s => {
+        const g = Math.exp(-((x - s * d) ** 2) / 0.002) * 13;
+        if (g > 3) { h += g; spur = true; }
+      }));
+      const ph = Math.exp(-((x + 0.5) ** 2) / 0.002) * 15;
+      if (ph > 3) { h += ph; spur = true; }
+    }
+    html += `<div class="bin${spur ? " spur" : ""}" style="left:${i * (W / n)}px;height:${Math.max(2, Math.min(70, h))}px"></div>`;
+  }
+  html += `<div class="fl" style="bottom:${floorH}px"></div>`;
+  html += `<div class="fllab" style="bottom:${floorH + 2}px">floor ${auto ? "-7.4" : "-29.2"} dBFS</div>`;
+  el.innerHTML = html;
+}
+
+// --- the waterfall pane ---
+function paintWaterfall() {
+  const cv = $("cv"), ctx = cv.getContext("2d");
+  const auto = autoLive();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  for (let row = 0; row < 70; row++) {
+    for (let i = 0; i < 96; i++) {
+      const x = (i - 48) / 48;
+      // Under AGC the whole row's level breathes row to row — which is precisely what
+      // makes the colour scale meaningless from one row to the next.
+      const breathe = auto ? Math.sin(row / 5) * 0.32 : 0;
+      let v = (auto ? 0.34 : 0.1) + Math.random() * 0.05 + breathe * 0.3;
+      v += Math.exp(-(x * x) / 0.0016) * (auto ? 0.42 : 0.8);
+      if (auto) {
+        [0.28, 0.56, 0.83, 1.11].forEach(d => [-1, 1].forEach(s => {
+          v += Math.exp(-((x - s * d) ** 2) / 0.0016) * 0.3;
+        }));
+        v += Math.exp(-((x + 0.5) ** 2) / 0.0016) * 0.34;
+      }
+      v = Math.max(0, Math.min(1, v));
+      const r = Math.round(20 + v * 200), g = Math.round(28 + v * 150), b = Math.round(46 + v * 90);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(i * (cv.width / 96), row * 3, cv.width / 96 + 1, 3);
+    }
+  }
+  $("legend").className = "legend" + (auto ? " warn" : "");
+  $("legend").innerHTML = auto
+    ? `<b>dB &middot; relative</b>gain is moving<br>rows are not comparable<button class="fix" type="button" id="pin">Pin this radio at 30 dB</button>`
+    : !tunerInPath()
+      ? `<b>dBFS &middot; no gain stage</b>tuner bypassed`
+      : `<b>dBFS @ ${S.db} dB</b>fixed &mdash; rows comparable`;
+  const pin = $("pin");
+  if (pin) pin.addEventListener("click", () => { S.mode = "fixed"; S.db = 30; render(); });
+  $("peaklist").innerHTML = auto
+    ? [["162.550", "+6.2 dB", false], ["162.350", "+5.1 dB", true], ["162.494", "+3.9 dB", true],
+       ["162.606", "+3.8 dB", true], ["162.439", "+3.7 dB", true], ["162.661", "+3.7 dB", true]]
+        .map(([f, d, s]) => `<div class="p${s ? " spur" : ""}"><span>${f} MHz</span><span>${d}${s ? " &middot; not on the air" : ""}</span></div>`).join("")
+    : `<div class="p"><span>162.550 MHz</span><span>+29.1 dB over floor</span></div>`;
+}
+
+function render() {
+  const inPath = tunerInPath();
+  $("gaincontrols").hidden = !inPath;
+  $("gaininert").hidden = inPath;
+  $("gaininert").innerHTML = `<b>Gain does nothing at ${S.freq.toFixed(3)} MHz.</b> Under ${TUNER_MIN} MHz the radio powers its tuner down and feeds the ADC straight off the antenna &mdash; and every gain stage an R820T2 has is inside that tuner. <b>${S.mode === "auto" ? "Auto" : S.db + " dB"}</b> is stored and not applied; it comes back the moment this radio is above ${TUNER_MIN} MHz, or the moment an upconverter puts it there.`;
+
+  $("gainmode").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.m === S.mode)));
+  $("fixedside").hidden = S.mode !== "fixed";
+  $("autoside").hidden = S.mode !== "auto";
+  $("chart").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.db) === S.db)));
+  $("nowdb").textContent = S.db;
+  $("nowsub").textContent = rung() ? "a measured rung" : "between rungs — nothing was measured here";
+
+  // The advice tracks where on the ladder you are, because the owner's symptom is an amp
+  // in front of the tuner, and the fix is to come DOWN.
+  $("advice").innerHTML = S.db >= 40
+    ? `<b>You are at the top of the ladder.</b> SNR has already fallen from 41.4 to 32.8 here &mdash; the front end is overloading. With an amp inline it will be worse.`
+    : S.db === 0
+      ? `<b>0 dB is 20 dB deafer</b>, not "safe". 20.2 dB of SNR against 41.4 at the plateau. Something in the 10&ndash;30 shelf is the floor of usable, not this.`
+      : `<b>An amp adds its gain ahead of the tuner.</b> Whatever the LNA gives you is already applied before this number is; if the signal is too hot, come <b>down</b> the ladder &mdash; the 10&ndash;30 shelf is flat, so the bottom of it costs you nothing and buys headroom.` +
+        `<button type="button" id="try12">Try 12 dB</button>`;
+  const t = $("try12"); if (t) t.addEventListener("click", () => { S.db = 12; render(); });
+
+  $("uptog").setAttribute("aria-pressed", String(S.up));
+  $("offdetail").hidden = !S.up;
+  const wouldHw = S.up ? S.freq + S.off : S.freq;
+  $("maths").innerHTML = S.up ? [
+    `You tune <b>${S.freq.toFixed(3)}</b> &rarr; the dongle tunes <b>${wouldHw.toFixed(3)} MHz</b>.`,
+    wouldHw > TUNER_MAX ? `<span class="bad">Past the tuner's ${TUNER_MAX} MHz ceiling.</span>`
+      : wouldHw >= TUNER_MIN
+        ? `<span class="good">The tuner is back in the path</span> &mdash; gain works on HF, the 14.4&ndash;24 MHz hole closes, and the direct path's mirror image goes away.`
+        : `<span class="bad">Too small an offset to lift ${S.freq.toFixed(3)} above ${TUNER_MIN} MHz.</span>`,
+    `<b>Not a companion to direct sampling</b> &mdash; the two are different routes through the same socket. Turning this on turns that off.`,
+    S.freq >= TUNER_MIN
+      ? `<span class="bad">${S.freq.toFixed(3)} MHz is above the converter's input passband.</span> The dongle would tune ${wouldHw.toFixed(3)}, and hear nothing: the converter stops VHF at its own input. A radio with one inline is an <b>HF radio</b> until it is bypassed or unplugged.`
+      : null,
+  ].filter(Boolean).join("<br>") : "";
+  const dirty = S.up !== S.applied.up || S.off !== S.applied.off;
+  $("apply").disabled = !dirty;
+  $("apply").className = "apply" + (dirty ? " live" : "");
+  $("apply").textContent = dirty ? "Apply — retunes this radio" : "Applied";
+
+  const gv = !inPath ? "no control" : S.mode === "auto" ? "auto" : `${S.db} dB`;
+  $("g1").textContent = gv;
+  $("g1").className = "gv" + (!inPath ? " mute" : S.mode === "auto" ? " warn" : "");
+  $("o1").textContent = S.applied.up ? `+${S.applied.off.toFixed(3)} MHz` : "no offset";
+  $("o1").className = "gv" + (S.applied.up ? "" : " mute");
+  const hole = !S.applied.up && S.freq > NYQUIST && S.freq < TUNER_MIN;
+  $("state1").textContent = hole ? `Refused — nothing between ${NYQUIST} and ${TUNER_MIN} MHz`
+    : `Listening — ${S.freq.toFixed(3)} MHz ${hw() < TUNER_MIN ? "AM" : "NFM"}`;
+  $("d1").className = "dot " + (hole ? "warn" : "ok");
+
+  sweep($("sw-auto"), true); sweep($("sw-fix"), false);
+  paintWaterfall();
+}
+
+// --- wiring ---
+const panes = { roster: $("p-roster"), set: $("p-set"), wf: $("p-wf") };
+const tabs = { roster: $("t-roster"), set: $("t-set"), wf: $("t-wf") };
+function show(k) { for (const x in panes) { panes[x].classList.toggle("on", x === k); tabs[x].setAttribute("aria-pressed", String(x === k)); } }
+for (const k in tabs) tabs[k].addEventListener("click", () => show(k));
+$("open1").addEventListener("click", () => show("set"));
+$("back").addEventListener("click", () => show("roster"));
+$("freqs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.freq = Number(b.dataset.f);
+  $("freqs").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  render();
+});
+$("gainmode").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { S.mode = b.dataset.m; render(); } });
+$("chart").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { S.db = Number(b.dataset.db); render(); } });
+$("down").addEventListener("click", () => { S.db = Math.max(0, S.db - 1); render(); });
+$("up").addEventListener("click", () => { S.db = Math.min(49, S.db + 1); render(); });
+$("uptog").addEventListener("click", () => { S.up = !S.up; render(); });
+$("offmhz").addEventListener("input", e => { const v = Number(e.target.value); if (Number.isFinite(v) && v > 0) { S.off = v; render(); } });
+document.querySelector(".chips").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.off = Number(b.dataset.o); $("offmhz").value = S.off.toFixed(3); render();
+});
+$("apply").addEventListener("click", () => { S.applied = { up: S.up, off: S.off }; render(); });
+const themeBtn = $("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+render();
+</script>
