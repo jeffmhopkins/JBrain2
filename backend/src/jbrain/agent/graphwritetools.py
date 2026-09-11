@@ -1155,10 +1155,10 @@ class NoteGraphWriter:
         """
         del ctx  # the write session is the note's, never the turn's read scope
         try:
-            return await self._read_note(arguments)
+            return await self._close_reading(arguments)
         except BaseException:
             # THE OUTER LATCH, and the only one that covers the whole body. The three
-            # inside `_read_note` each catch a way the ENGINE declined a stated fact; this
+            # inside `_close_reading` each catch a way the ENGINE declined a stated fact; this
             # catches the call ending before it could decline anything — a pool that would
             # not give a connection, a `set_config` blip on the scoped session, a COMMIT
             # that failed at block exit, a cancellation while the batch was mid-flight.
@@ -1172,7 +1172,7 @@ class NoteGraphWriter:
             self.reading.mark_incomplete()
             raise
 
-    async def _read_note(self, arguments: dict) -> ToolOutput:
+    async def _close_reading(self, arguments: dict) -> ToolOutput:
         """`close_reading`'s body. Split out so the latch above wraps ALL of it —
         including the lines that are not inside any `try` here (the session open, the
         note load, the union, the commit at block exit)."""
