@@ -1090,9 +1090,14 @@ def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
 
 
 def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
-    """Subtract `assert_fact` from a reply turn whose thread is NOT `waiting_on_owner`
-    (R3's review, finding 2). The other narrowing of the on-reply widening, applied on the
-    same seam and for a reason of the same kind: a write the system cannot keep.
+    """Subtract `assert_fact` from a reply turn whose words did not become the note's own
+    text (`clarify.owner_words_reached_note`). The other narrowing of the on-reply
+    widening, applied on the same seam and for a reason of the same kind: a write the
+    system cannot keep.
+
+    ⟲ This line used to say "whose thread is NOT `waiting_on_owner`", which the ⟲ twelve
+    lines down refutes — and a ⟲ correcting the summary a reader skims and a signature
+    hover shows is a ⟲ nobody reads in time (R3's third review).
 
     **The premise is the founding one — notes are the sole sources of truth.** A reply
     into a WAITING thread is an ANSWER: `clarify.record_owner_reply` appends it to the
