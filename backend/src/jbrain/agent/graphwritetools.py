@@ -668,6 +668,21 @@ class NoteGraphWriter:
         self.reading_budget = ToolCallBudget(READING_CALL_BUDGET)
         self.reading = Reading()
 
+    @property
+    def target(self) -> NoteTarget:
+        """The note every write of this conversation lands on, and the provenance the
+        settle's third-party clause reads (R3). Exposed read-only: it is fixed at
+        construction from the note ROW, and a settable one would be the note id from the
+        model this class exists not to take."""
+        return self._target
+
+    @property
+    def extractor(self) -> str:
+        """Which RUN of this producer is writing — `note_ingest` unattended,
+        `note_ingest_reply` on the owner's reply. It names the run on `note_analysis`
+        and never the settle owner, which groups both (`analysis/settle_owner.py`)."""
+        return self._extractor
+
     # --- handles ---------------------------------------------------------------
 
     def _remember(self, handle: Handle) -> None:

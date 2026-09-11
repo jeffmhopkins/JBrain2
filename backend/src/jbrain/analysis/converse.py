@@ -68,6 +68,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -92,7 +93,12 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import bind_turn_writes, record_turn_writes, settle_conversation
+from jbrain.analysis.clarify import (
+    PassReading,
+    bind_turn_writes,
+    record_turn_writes,
+    settle_conversation,
+)
 from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -106,6 +112,7 @@ from jbrain.models.note_conversation import (
     note_body_sha,
     state_for_stop,
 )
+from jbrain.models.notes import Note
 from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import NoteInfo, NotesRepo
@@ -235,6 +242,45 @@ def _title(note: NoteInfo) -> str:
     return (first[:_TITLE_LEN] or "Note").strip()
 
 
+@dataclass(frozen=True)
+class NoteTurnTools:
+    """What one note's pass runs on: the executor, and the WRITER behind its graph verbs.
+
+    The writer rides along because the settle needs the pass's closing reading and the
+    reading lives on the writer — it is the union of that conversation's `close_reading`
+    calls, and no other object in the pass has it (R3). Returning the executor alone, as
+    this factory used to, meant the only thing that could license a retraction was thrown
+    away the moment the turn ended."""
+
+    executor: TurnExecutor
+    writer: NoteGraphWriter
+
+
+def _pass_reading(tools: NoteTurnTools | None, note: NoteInfo) -> PassReading | None:
+    """The pass's closing reading, in the shape `settle_conversation` gates on — or None
+    when this pass closed none, which is every pass that truncated before it read the
+    note out, ended on `ask_owner`, or held no `close_reading` verb at all (an EMR note's
+    registry binds no graph write, so its writer's reading stays empty by construction).
+
+    `calls`, not `fact_ids`: a reading that names NO fact is a claim — the model read the
+    note and says it says nothing — and it is exactly the case a sweep should act on."""
+    if tools is None or tools.writer.reading.calls == 0:
+        return None
+    reading = tools.writer.reading
+    return PassReading(
+        facts=frozenset(uuid.UUID(fact_id) for fact_id in reading.fact_ids),
+        note_domain=note.domain,
+        extractor=tools.writer.extractor,
+        title=reading.title,
+        tags=reading.tags,
+        clamped=reading.clamped,
+        # Read off the note row the writer was BUILT from, never off the turn: the
+        # provenance is what decides whether this reading may retract, and a stranger's
+        # body must not be able to reach the field that decides it.
+        third_party=tools.writer.target.is_third_party,
+    )
+
+
 @dataclass
 class NoteConverseRunner:
     """Runs one note's conversation. Constructed once in the worker; `note_converse`
@@ -249,21 +295,20 @@ class NoteConverseRunner:
     owner_principal_id: Callable[[], Awaitable[str | None]]
     conversations: NoteConversationRepo = field(default_factory=NoteConversationRepo)
     prefs: OwnerPrefsRepo = field(default_factory=OwnerPrefsRepo)
-    # The settle the pass runs at its end (S2): `settle_tail`, so its writes finally
-    # project and reproject. That is the WHOLE settle for this producer — no sweep, no
-    # stamp, no state flip. See `clarify.settle_conversation` for why a sweep here cannot
-    # be made sound rather than merely why this one does not have it.
+    # The settle the pass runs at its end: `sweep_note` + `settle_tail` +
+    # `stamp_analysis` for a pass that closed a reading, the tail alone for one that did
+    # not (R3). `clarify.settle_conversation` holds the gate and the reasoning.
     #
     # None keeps W2's behaviour, which is what the tests that fake a turn with no write
     # tools use: a pass that wrote nothing has nothing to project.
     # `note_converse_handler` always sets this, so no production path runs without one.
     pipeline: AnalysisPipeline | None = None
     # Builds the turn executor for ONE note, so the graph-write tools can be BOUND to
-    # that note (W3): `resolve_entity`/`assert_fact` take no note id from the model —
+    # that note (W3): `resolve_entity`/`close_reading` take no note id from the model —
     # a write primitive a hostile body could point at another note is not a tool, it is
     # a hole. None keeps W2's behaviour (the fixed `executor` above, whose registry is
     # empty), which is what the tests that fake a turn use.
-    executor_for_note: Callable[[NoteInfo, Sequence[str]], TurnExecutor] | None = None
+    executor_for_note: Callable[[NoteInfo, Sequence[str]], NoteTurnTools] | None = None
 
     async def note_converse(self, payload: dict[str, Any]) -> object:
         """Open the note's conversation, read the note in it, and settle it.
@@ -377,6 +422,9 @@ class NoteConverseRunner:
         status, stop_reason, steps, cost = "error", "error", 0, 0
         state = "failed"
         ran = False
+        # Bound BEFORE the try, because the settle below reads the reading off it: a pass
+        # that died building its executor closed no reading, and `None` says so.
+        tools: NoteTurnTools | None = None
         try:
             # The owner's standing instructions (D15), read INSIDE the try so a DB blip
             # lands the conversation `failed` — the shipped path for "this pass did not
@@ -396,11 +444,9 @@ class NoteConverseRunner:
             # exactly the state that suppresses every future pass over the note. The
             # reclaim below is the backstop for a KILLED worker; this is the bound for a
             # worker that is still alive and getting nowhere.
-            executor = (
-                self.executor
-                if self.executor_for_note is None
-                else self.executor_for_note(note, read_scopes)
-            )
+            if self.executor_for_note is not None:
+                tools = self.executor_for_note(note, read_scopes)
+            executor = self.executor if tools is None else tools.executor
             async with asyncio.timeout(NOTE_TURN_WALL_CLOCK.total_seconds()):
                 executed = await executor.run_turn(
                     profile=profile,
@@ -487,8 +533,8 @@ class NoteConverseRunner:
                 await self.conversations.set_state(s, session_id, state)
         # AFTER the state block, never before it: the `question_stands` branch above can
         # still turn a `settled` verdict into `waiting_on_owner`, and a settle run ahead
-        # of it would have projected (and, since S3, swept) a pass that is in fact still
-        # waiting for the owner. `state` here is what the database now says.
+        # of it would have swept and projected a pass that is in fact still waiting for
+        # the owner. `state` here is what the database now says.
         if self.pipeline is not None:
             await settle_conversation(
                 self.maker,
@@ -496,10 +542,43 @@ class NoteConverseRunner:
                 self.pipeline,
                 session_id=session_id,
                 state=state,
+                reading=_pass_reading(tools, note),
             )
+        await self._mark_integrated(owner_ctx, note.id)
         with contextlib.suppress(Exception):
             await self.sessions.touch(owner_ctx, session_id)
         log.info("note_converse.settled", session_id=session_id, state=state, steps=steps)
+
+    async def _mark_integrated(self, owner_ctx: SessionContext, note_id: str) -> None:
+        """Flip `integration_state` to `'integrated'` — on EVERY pass ending (R3,
+        `W5_PRECONDITIONS.md` §2's option (ii)).
+
+        It preserves what the state has always MEANT rather than tightening it: the
+        analyzer's flip is unconditional and fires even on a rejected plan, so the column
+        has never said "the graph is complete", only *the note's graph producer ran to
+        completion on it*. A pass that truncated, failed or parked on `ask_owner` ran to
+        completion in that sense — it read the note and said what it could — and a flip
+        withheld from those endings would leave `backfill_pending_integration` re-opening
+        a thread for the same note every five minutes, including for one that is simply
+        waiting for an answer.
+
+        It sits OUTSIDE the settle, and after it, because it is not conditional on the
+        settle's gate: an unclean pass flips and does not sweep.
+
+        Best-effort, deliberately. The state's only readers are the reconciler, the
+        dispatcher's skip and the rebuild's drain, and all three degrade to doing the
+        work AGAIN rather than to losing it — where a raise here retries the whole job
+        against a note whose conversation is no longer live, which opens a second thread
+        for it."""
+        try:
+            async with scoped_session(self.maker, owner_ctx) as s:
+                await s.execute(
+                    update(Note)
+                    .where(Note.id == uuid.UUID(note_id))
+                    .values(integration_state="integrated")
+                )
+        except Exception as exc:  # noqa: BLE001 — the reconciler is the backstop
+            log.warning("note_converse.integration_flip_failed", note_id=note_id, error=repr(exc))
 
     async def _rules(self, owner_ctx: SessionContext) -> list[str]:
         """The owner's standing instructions for this pass (D15).
@@ -614,7 +693,7 @@ def note_converse_handler(
     inherited = {k: v for k, v in inherited.items() if k in NOTE_READ_TOOLS}
     ask_owner = build_ask_owner_handlers(maker)
 
-    def executor_for_note(note: NoteInfo, read_scopes: Sequence[str]) -> TurnExecutor:
+    def executor_for_note(note: NoteInfo, read_scopes: Sequence[str]) -> NoteTurnTools:
         writer = NoteGraphWriter(
             maker,
             analyzer,
@@ -658,7 +737,11 @@ def note_converse_handler(
             inherited=inherited if is_third_party(note.provenance) else inherited | ask_owner,
             writes_graph=not note_owned_by_emr(note),
         )
-        return LoopTurnExecutor(router, note_registry(tools_dir, toolset.handlers()))
+        return NoteTurnTools(
+            executor=LoopTurnExecutor(router, note_registry(tools_dir, toolset.handlers())),
+            # The settle reads this pass's closing reading off it once the turn ends.
+            writer=writer,
+        )
 
     runner = NoteConverseRunner(
         maker,

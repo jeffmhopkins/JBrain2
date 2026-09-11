@@ -1643,17 +1643,29 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     # The reply turn's writes are the conversation's too, so the pass
                     # settles from HERE as well as from the worker's unattended pass —
                     # otherwise a conversation that ended by asking a question would
-                    # never project what the answer wrote, and (S3) would never release
-                    # its `conversation` claim at all. `close_owner_reply` returns the
-                    # state it actually wrote, which is the gate: a truncated turn, a
+                    # never project what the answer wrote. `close_owner_reply` returns
+                    # the state it actually wrote, which is the gate: a truncated turn, a
                     # turn still `waiting_on_owner`, and the `record_failed` degrade
                     # above all return something other than `settled` and settle nothing.
+                    #
+                    # `reading=None`, and it is a KNOWN GAP rather than a claim that this
+                    # turn read nothing. A reply turn's `close_reading` is real and its
+                    # `Reading` is accumulated — but on this path the writer lives inside
+                    # the chat registry's own per-conversation cache (`replytools`), built
+                    # once at startup and reachable from no seam here, so the pass's
+                    # reading (the CLAMP latch included) cannot be read back at the turn
+                    # seam. A reading whose clamp state is unknown must not license a
+                    # retraction, so this path keeps the tail-only settle it has always
+                    # had: it commits, it projects, it retracts nothing. Closing it means
+                    # exposing that cache, which is R3f/R4's to carry with the reply
+                    # turn's own surface (AGENT_INGEST_REWRITE.md §7, R3).
                     await settle_conversation(
                         request.app.state.session_maker,
                         owner_ctx,
                         _settle_pipeline(request),
                         session_id=str(session.id),
                         state=closed or "",
+                        reading=None,
                     )
             finally:
                 # Completion is UNCONDITIONAL: even if a second cancellation (e.g. a Stop

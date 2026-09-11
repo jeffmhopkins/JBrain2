@@ -92,6 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import AgentProfile, narrow_for_emr
 from jbrain.agent.asktools import ASK_OWNER_TOOL, open_questions
+from jbrain.analysis.settle_owner import CONVERSATION
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.models.agent import AgentTurn
@@ -168,7 +169,9 @@ class LedgerRow:
     entity_ids: tuple[str, ...]
     domains: tuple[str, ...]
     # The fact rows the call WROTE (empty for every read tool, and for a write that
-    # landed nothing). Constraint 6's `touched` set is the union of these.
+    # landed nothing). The settle TAIL's projection set is the union of these; the
+    # sweep's `touched` is NOT (R3) — it comes off the pass's closing reading, because
+    # what a producer wrote never licenses a release of what it no longer says.
     fact_ids: tuple[str, ...] = ()
 
 
@@ -180,11 +183,12 @@ def ledger_rows(tool_steps: Sequence[Mapping[str, Any]]) -> list[LedgerRow]:
     `entity_ids`/`domains` come from the step's resolved-entity chips
     (`ToolOutcome.entities`) and `fact_ids` from its WRITE chips (`ToolOutput.facts` /
     `contracts.FactWriteRef`) — both reported by the write path itself, never inferred
-    from what the model ASKED for: `resolve_entity`/`assert_fact` surface the rows they
-    actually wrote, and a call that wrote nothing surfaces nothing. Constraint 6's
-    settle sweep reads this back as `touched`, so the direction matters in both
-    directions: an id here that did not land SPARES a fact the sweep should retract, and
-    a landed id missing here RETRACTS a fact the note still says.
+    from what the model ASKED for: `resolve_entity`/`close_reading` surface the rows they
+    actually wrote, and a call that wrote nothing surfaces nothing. What reads it back is
+    the settle's TAIL — what this conversation touched is what wants reprojecting — and
+    NOT the sweep: `touched` is the closing reading's own fact ids (R3,
+    `settle_conversation`), because a record of writes cannot say what the note stopped
+    saying.
 
     A write's domain is unioned from both chips — a fact's domain is the floored and
     ratcheted one the write path chose, which can be strictly above its entity's.
@@ -755,6 +759,42 @@ async def close_owner_reply(
     return state
 
 
+@dataclass(frozen=True)
+class PassReading:
+    """A pass's CLOSING READING, in the shape the settle acts on — what the model said
+    the note says, not what the pass wrote.
+
+    Flattened from `graphwritetools.Reading` by the caller that holds the writer, rather
+    than imported: `agent/graphwritetools.py` pulls in `analysis/pipeline.py` and through
+    it the LLM stack, which is the one thing this module refuses to drag into the API
+    process (see `NOTE_CONVERSE_AGENT`).
+
+    A pass that closed no reading has none of this and passes `None`. That is the gate in
+    one word: no reading, no sweep and no stamp, which is exactly the behaviour this
+    producer had before R3."""
+
+    facts: frozenset[uuid.UUID]
+    """`Reading.fact_ids` — every fact the pass RESTATED, which is `sweep_note`'s
+    `touched`. EMPTY is a claim and not an absence: the model read the note and said it
+    says nothing, which is precisely when the note's rows should go."""
+    note_domain: str
+    """The note's own domain, for the `note_analysis` row's `domain_code`. It rides here
+    because `note_conversations` carries no domain and the caller has just read the
+    note."""
+    extractor: str
+    """Who is stamping — the writer's own `extractor` (`note_ingest` on the unattended
+    pass), never a provider:model string. The settle owner does not move with it
+    (`analysis/settle_owner.py`)."""
+    title: str = ""
+    tags: tuple[str, ...] = ()
+    clamped: bool = False
+    """The reading is a PREFIX of the note — a call the handler clamped, or one the
+    budget refused. A sweep against a prefix retracts the tail, so this refuses it."""
+    third_party: bool = False
+    """This note's body is somebody else's words (D10). Such a reading COMMITS and never
+    SWEEPS: a reading is a write, not a licence, when the reader is not the owner."""
+
+
 async def settle_conversation(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
@@ -762,60 +802,73 @@ async def settle_conversation(
     *,
     session_id: str,
     state: str,
+    reading: PassReading | None,
 ) -> bool:
-    """Run the note conversation's end-of-pass settle, and say whether it ran. It is the
-    settle's TAIL and nothing else — this producer never retracts, by design.
+    """Run the note conversation's end-of-pass settle, and say whether it ran — the
+    WHOLE settle for a pass that closed a reading: `sweep_note`, `settle_tail`,
+    `stamp_analysis` (R3 of docs/plans/AGENT_INGEST_REWRITE.md).
 
-    **What it does.** Everything the graph DERIVES from a note's rows —
+    Three steps, not five. The settle's two review-card halves stay in `settle_note`
+    with the producers that still file those cards; under one channel the conversation
+    files neither, so it has nothing to retire.
+
+    **The tail.** Everything the graph DERIVES from a note's rows —
     `reproject_canonical_name`, the corroboration promotion, the appointment / EMR /
     geofence projections, the device binding — runs in `AnalysisPipeline.settle_tail`
     and nowhere else in a write path. The conversation's write path is `commit_facts`
     and nothing else (`agent/graphwritetools.py`), which deliberately does nothing
     whole-note. So before this existed a conversation-written appointment landed in NO
     projection and a conversation-written `name.*` fact never refreshed
-    `canonical_name`: the graph held the fact, the appointments view did not. That gap
-    was masked while the analyzer's settle retracted the conversation's facts and then
-    projected the dead rows away, which is why S2 is the payment for S1's debt rather
-    than an improvement on it (docs/plans/SETTLE_OWNERSHIP.md).
+    `canonical_name`: the graph held the fact, the appointments view did not (S2).
 
-    **What it deliberately does NOT do, and why nobody should add it back.** It runs no
-    `sweep_note`, so it never releases the `conversation` claim and never retracts
-    anything. That was built (S3), reviewed, and REMOVED, and the reason is a closed
-    argument rather than a bug count:
+    **The sweep, and what licenses it.** S3 removed a sweep from here and its argument
+    still stands: a release is justified only when a producer RE-DERIVED the note and
+    dropped X, and a record of what a pass WROTE cannot say that — a pass that read the
+    note and chose to write nothing is indistinguishable from one that never looked. So
+    `touched` is NOT the ledger. It is `close_reading`'s own fact ids: the model restates
+    the whole note, every restated identity key comes back `ALREADY` carrying the SAME
+    `fact_id`, and the reading is therefore the complete current reading S3 named as its
+    own door. What the sweep then does is narrow: it releases THIS producer's claim on
+    the rows the reading no longer asserts and retracts only those no producer claims any
+    more (`analysis/settle_owner.py`).
 
-    - a release is justified only when a producer has RE-DERIVED the note and dropped X;
-    - within one session this producer never drops anything — it asserts once and revises
-      by supersession, `correct_fact` supersedes and pins rather than retracting, and a
-      re-assert returns `ALREADY` with the same `fact_id`, so its ledger never shrinks;
-    - so the only claims a release could ever remove are OTHER sessions';
-    - and judging another session's claims needs a complete current READING of the note,
-      which a ledger of what a pass WROTE structurally is not — the agent holds
-      `find_entity`/`read_entity`, is told to read before it writes and is rewarded for
-      not restating what is already there, so a silent second pass is the DESIGNED
-      output, not a statement that the note stopped saying something.
+    S3's failure 4 — the owner answers, the note's text only GROWS, and an earlier fact
+    is retracted — cannot recur, because nothing here is keyed on a generation: the
+    reading states what the note says NOW, a fact the answer did not remove is re-stated,
+    and its id lands in `touched`.
 
-    Therefore a sound conversation sweep is empty and a non-empty one is unsound. The
-    four ways the built version failed — and the one that fired on the feature's own
-    happy path, where the owner ANSWERS a question, the note's text only GROWS, and an
-    earlier fact is retracted — are in SETTLE_OWNERSHIP.md's S3 section. Read it before
-    re-deriving the sweep from "nothing ever releases a `conversation` claim", which is
-    true and is not a reason.
+    **`mentions=None`, deliberately.** The reading carries fact ids and the ledger
+    (migration 0191) records no mention ids at all, so the mention reconcile is SKIPPED
+    rather than run against an empty set — run empty it would release this producer's
+    claim on every mention of the note, the spans its own live facts are anchored to
+    included, and delete the ones left unclaimed. What that leaks is bounded and
+    `sweep_note` says why: `entity_mentions.chunk_id` is ON DELETE CASCADE, so a
+    re-ingest of the note wipes that chunk generation outright.
 
-    It also does NOT stamp `note_analysis` or flip `integration_state` (preconditions 3
-    and 4). The reason for the first is no longer "no title or tags verb" — R1 gave the
-    conversation exactly that verb, and `close_reading` carries both — it is simply that
-    the stamp is unconditional and moving it is R3's step, not this one's.
+    **The gate: fail toward not sweeping.** Every degraded ending lands on the behaviour
+    this producer had before R3 — facts commit, projections run, nothing is retracted:
 
-    **`state` gates it to a clean pass end.** `state_for_stop` gives `SETTLED` to a CLEAN
-    stop alone, so a truncated turn lands `failed`, a turn that ended on `ask_owner` lands
-    `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too, because
-    both callers degrade the stop reason to `record_failed` when their recorder fails
-    (`converse._run_turn`, `record_reply_writes` + `close_owner_reply` in `api/agent.py`).
-    The gate guards nothing DESTRUCTIVE now that the sweep is gone — projecting never
-    retracts — but it is not free: a pass that committed facts and then truncated lands
-    `failed`, so its writes go unprojected until some later settle of the note happens to
-    touch the same entities. It is kept because it is the shape the plan specifies for a
-    pass end, and because a caller who did add a sweep would otherwise inherit no gate.
+    - `state != SETTLED`: `state_for_stop` gives `SETTLED` to a clean stop alone, so a
+      truncated turn lands `failed`, a turn that ended on `ask_owner` lands
+      `waiting_on_owner`, and a turn whose ledger did not record lands `failed` too
+      (both callers degrade the stop reason to `record_failed`). Nothing runs at all.
+    - `reading is None`: the pass never closed one. Tail only.
+    - `reading.clamped`: a PREFIX of the note, and a sweep against a prefix retracts the
+      tail. `_batch`'s clamp report is why this is a safety gate rather than a result
+      line — `maxItems` is not reliably compiled into llama.cpp's tool grammar.
+    - `reading.third_party`: a stranger's body may cause a FACT and nothing else. Without
+      this clause an `untrusted_origin` note would license a retraction of the owner's
+      graph.
+
+    **The stamp runs on any reading**, clamped and third-party included: a clipped
+    reading still read the note from the top and still named it, and NOT stamping leaves
+    no `note_analysis` row at all — which is `Note.analyzed` false forever, a permanent
+    amber "analyzing…" chip on the note, and a re-run button polling an `analyzed_at`
+    that never moves (CLAUDE.md #10). `stamp_analysis` COALESCEs, so a reading with no
+    title cannot blank one an earlier pass wrote.
+
+    It does NOT flip `integration_state`. That is the terminal block's, on EVERY pass
+    ending including the ones that never reach here (`converse._run_turn`).
 
     Never raises. A pass that settled is already `settled` in the database, and a failed
     projection refresh is a stale view, recoverable by the next settle of the note.
@@ -824,17 +877,47 @@ async def settle_conversation(
     """
     if state != SETTLED:
         return False
+    swept: set[uuid.UUID] = set()
     try:
         async with scoped_session(maker, ctx) as s:
             repo = NoteConversationRepo()
-            if await repo.get(s, session_id) is None:
+            conversation = await repo.get(s, session_id)
+            if conversation is None:
                 return False
             entities = set((await repo.writes(s, session_id)).entities)
-            await pipeline.settle_tail(s, referenced=entities, projected=entities)
+            if reading is not None and not reading.clamped and not reading.third_party:
+                # The note the CONVERSATION row says this thread owns — the same note
+                # `NoteTarget` fixed every one of these writes to, read from the row
+                # rather than from the caller because this is the destructive half.
+                swept = await pipeline.sweep_note(
+                    s,
+                    note_id=conversation.note_id,
+                    settle_owner=CONVERSATION,
+                    touched=set(reading.facts),
+                    mentions=None,
+                )
+            # `swept` is the entities whose facts just went: a projection row has to be
+            # REMOVED when its last supporting fact does.
+            await pipeline.settle_tail(s, referenced=entities, projected=entities | swept)
+            if reading is not None:
+                await pipeline.stamp_analysis(
+                    s,
+                    note_id=conversation.note_id,
+                    note_domain=reading.note_domain,
+                    title=reading.title,
+                    tags=list(reading.tags),
+                    extractor=reading.extractor,
+                )
     except Exception as exc:  # noqa: BLE001 — a stale projection, never a retried job
         log.warning("note_settle.failed", session_id=session_id, error=repr(exc))
         return False
-    log.info("note_settle.done", session_id=session_id, entities=len(entities))
+    log.info(
+        "note_settle.done",
+        session_id=session_id,
+        entities=len(entities),
+        read=reading is not None,
+        retracted_entities=len(swept),
+    )
     return True
 
 
@@ -843,6 +926,7 @@ __all__ = [
     "SELF_RECORDED_TOOLS",
     "LedgerRow",
     "OwnerReply",
+    "PassReading",
     "bind_turn_writes",
     "capped_answers",
     "close_owner_reply",
