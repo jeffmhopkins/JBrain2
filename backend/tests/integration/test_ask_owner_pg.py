@@ -66,6 +66,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.clarify import (
     MAX_ANSWERS,
     close_owner_reply,
+    owner_reply_notice,
     owner_words_reached_note,
     record_owner_reply,
 )
@@ -1291,3 +1292,45 @@ async def test_a_structured_answer_past_the_cap_files_nothing(
     assert await _blocks(maker, owner, note_id) == []
     assert "My sister." in reply.dropped, "the truncated answer was lost without a trace"
     assert owner_words_reached_note(reply) is False
+
+
+async def test_a_cut_answer_is_a_reply_even_when_nothing_inside_the_cap_survived(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """R3's fourth review, finding 4 — the ONE return the cut did not ride.
+
+    `capped_answers` drops blanks as well as truncating, so ten blank answers ahead of a
+    real one leave `structured` empty; with an empty `message` beside them the turn fell
+    out of `record_owner_reply` as `None` before any of the accounting ran. The owner's
+    answer was discarded, the thread stayed `waiting_on_owner`, and `owner_reply_notice`
+    was handed nothing to say — the exact silence `dropped` exists to end. The write side
+    was never at risk (`owner_words_reached_note(None)` is already False); the NOTICE was,
+    and on a turn that lost the owner's words the notice is the whole deliverable.
+
+    Reachable only by `MAX_ANSWERS` blank answers ahead of a real one — which is to say
+    only by the same coincidence between two constants in two modules that
+    `answers_over_cap`'s own docstring refuses to rely on."""
+    note_id = await _note(maker, owner)
+    session_id, ids = await _open_set(
+        maker, owner, await _conversation(maker, owner, note_id), QUESTION
+    )
+    blanks = [(f"blank{i}", "   ") for i in range(MAX_ANSWERS)]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="",
+        answers=[*blanks, (ids[0], "My sister.")],
+    )
+
+    assert reply is not None, "the owner answered and the turn reported nothing at all"
+    assert reply.dropped == ["My sister."]
+    assert reply.clarified is False
+    assert await _blocks(maker, owner, note_id) == []
+    assert owner_words_reached_note(reply) is False
+    # And the agent is TOLD, which is the half that was missing.
+    assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(reply)
+    assert reply.unanswered == [QUESTION]

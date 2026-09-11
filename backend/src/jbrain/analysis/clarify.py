@@ -408,15 +408,17 @@ class OwnerReply:
     """Whether the note had changed under the conversation since it was read."""
 
     dropped: list[str] = field(default_factory=list)
-    """The owner's words on this turn that reached NO note — the answers `_pair` could
-    not file against an open question.
+    """The owner's words on this turn that reached NO note.
 
-    Two ways it fills, and neither is an error path: free text beside a COMPLETE
-    structured set (§3b I7's one send carries the tapped answers AND whatever is in the
-    box, and `_pair`'s third rule drops the prose because `note_clarifications.question`
-    is NOT NULL and an unprompted block has no shape — the O16 gap), and a structured
-    answer naming a question the open set does not carry (a reopened thread replaying a
-    stale block, `_pair`'s first rule).
+    FOUR ways it fills, and none is an error path: free text beside a COMPLETE structured
+    set (§3b I7's one send carries the tapped answers AND whatever is in the box, and
+    `_pair`'s third rule drops the prose because `note_clarifications.question` is NOT
+    NULL and an unprompted block has no shape — the O16 gap); a structured answer naming
+    a question the open set does not carry (a reopened thread replaying a stale block,
+    `_pair`'s first rule); the earlier answer of a REPEATED question id, which
+    last-writer-wins overwrites (`_pair`'s third bullet); and an answer past `MAX_ANSWERS`,
+    cut by `answers_over_cap` before `_pair` ever sees the list. The append paths add a
+    fifth on failure: a pairing that succeeded onto a note that would not take it.
 
     It is the half of "did the owner's words become note text" that `clarified` cannot
     see: `clarified` says SOMETHING landed, this says something did not, and
@@ -527,10 +529,30 @@ async def record_owner_reply(
         return None
     prose = message.strip()
     structured = capped_answers(answers)
-    # What the cap CUT rides along to every return below: those answers reach no note,
-    # and `owner_words_reached_note` is the reader that has to know (finding 4).
+    # What the cap CUT rides along to every `OwnerReply` below: those answers reach no
+    # note, and `owner_words_reached_note` is the reader that has to know (finding 4).
+    # The `None` returns below carry it nowhere and need not — each is "this message
+    # answered nothing at all" (the thread is not waiting, the claim was lost, the row
+    # would not read), and `owner_words_reached_note(None)` is False, so such a turn
+    # holds no write verb either way.
     over_cap = answers_over_cap(answers)
-    if not prose and not structured:
+    # ⟲ **`over_cap` is in this condition, and that is R3's fourth review, finding 4.**
+    # The condition used to read `not prose and not structured`, and this is the one
+    # return the cut did not ride — it returns `None` while the owner HAS answered. A
+    # send whose every in-cap answer is blank leaves `structured` empty, so a real answer
+    # sitting past `MAX_ANSWERS` fell out here as "the owner said nothing": his answer
+    # discarded, the thread still `waiting_on_owner`, and the agent told NOTHING — the
+    # exact silence `dropped` exists to end. The write side was already safe
+    # (`owner_words_reached_note(None)` is False), so what it cost was the NOTICE, which
+    # is the whole deliverable of a turn that lost the owner's words.
+    #
+    # A turn carrying a cut answer is a REPLY, so it takes the ordinary reply path: the
+    # claim, a pairing that places nothing, and an `OwnerReply` whose `dropped` says his
+    # words reached no note. It must NOT short-circuit to an `OwnerReply` from here
+    # instead — `close_owner_reply`'s `reopened` is exactly "this call returned one", and
+    # a reply object minted before `claim_waiting` would have a reply turn settling the
+    # worker's own live unattended pass.
+    if not prose and not structured and not over_cap:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
         # stays `waiting_on_owner` — the questions are still open, which is the truth.
         return None
