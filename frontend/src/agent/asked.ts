@@ -126,6 +126,27 @@ export function parseCandidates(raw: string): AskCandidate[] {
   }));
 }
 
+/** One row of a `questions` array as a field bag.
+ *
+ * A row sent as a BARE STRING is read as its question, which is what `asktools._asked`
+ * does with one — and saying so is R3f's fifth review, finding 4. The two readers of this
+ * shape are not reading the same blob: `questions_from_args` reads the LEDGER row, whose
+ * rows `recorded_args` always writes as objects, while a DEPLOY-WINDOW step here carries
+ * the model's raw arguments, where a bare string is a shape the tool accepted and
+ * recorded. Dropping it drew NO BLOCK on a thread that really is waiting — the owner
+ * looking at a conversation that stopped, with nothing on screen saying what for. It
+ * cannot be answered by tapping either way (no minted id, see `recordsIds`), so the choice
+ * is between a read-only block and silence, and a question he can read and answer in words
+ * is the whole of what read-only is for. */
+function askRow(item: unknown): Record<string, unknown> {
+  return typeof item === "object" && item !== null
+    ? (item as Record<string, unknown>)
+    : { question: item };
+}
+
+/** The shape `asktools` mints: `q` and eight hex digits of a uuid4 (`_asked`). */
+const MINTED_ID = /^q[0-9a-f]{8}$/;
+
 /** The question set an `ask_owner` call's arguments hold, in the order it asked them. */
 export function askedQuestions(args: Record<string, unknown> | undefined): AskedQuestion[] {
   const raw = args?.questions;
@@ -138,8 +159,7 @@ export function askedQuestions(args: Record<string, unknown> | undefined): Asked
   }
   const asked: AskedQuestion[] = [];
   raw.forEach((item, i) => {
-    if (typeof item !== "object" || item === null) return;
-    const row = item as Record<string, unknown>;
+    const row = askRow(item);
     const question = oneLine(row.question);
     if (!question) return;
     asked.push({
@@ -157,9 +177,26 @@ export function askedQuestions(args: Record<string, unknown> | undefined): Asked
 }
 
 /** Does this step's `args` carry the TOOL's own record of the set, rather than the
- * model's raw arguments? The test is the minted ids: `ask_owner` declares no `id`, so the
- * model never sends one and an id on the wire can only be the one the handler minted and
- * the ledger row holds (`asktools.recorded_args`).
+ * model's raw arguments? The test is the minted ids — every row carrying `q` and eight hex
+ * digits, which is what `asktools._asked` writes and the ledger row holds
+ * (`recorded_args`).
+ *
+ * ⟲ **It used to test that an id was merely PRESENT, under an absolute that is not one**
+ * (R3f's fifth review, finding 4). The comment here said "the tool declares no `id`, so
+ * the model never sends one and an id on the wire can only be the one the handler minted".
+ * `required` buys presence, not membership — this repo says so at `asktools._asked`, which
+ * has to survive blank questions and bare-string rows for exactly that reason — and an
+ * undeclared property is not a forbidden one: nothing stops a model emitting `id` beside
+ * the fields it was taught. Today no model-raw args reach a step this is asked about with
+ * anything recorded; in the DEPLOY WINDOW they do, and a pre-echo step whose model happened
+ * to write `"id": "1"` would render `answerable: true` and post ids the ledger never held —
+ * `_pair` drops them, the note receives nothing, and the block draws them as sent. Which is
+ * precisely what read-only exists to prevent.
+ *
+ * The SHAPE is not a membership proof either, and is not claimed as one: it is the shape
+ * the minting produces, so a model would have to emit eight hex digits after a `q` to be
+ * mistaken for the handler. The real proof — that this id names a row of the open set —
+ * belongs to `clarify._pair`, which matches against the set and drops what does not.
  *
  * ⟲ **This is the signal `askStep` used to get wrong, and R3f's fourth review, finding
  * 1/2/3 are one bug wearing three coats.** It selected on `ok === true`, which means "no
@@ -176,13 +213,8 @@ export function askedQuestions(args: Record<string, unknown> | undefined): Asked
 function recordsIds(args: Record<string, unknown> | undefined): boolean {
   const raw = args?.questions;
   if (!Array.isArray(raw)) return false;
-  const rows = raw.filter(
-    (item): item is Record<string, unknown> =>
-      typeof item === "object" &&
-      item !== null &&
-      oneLine((item as Record<string, unknown>).question) !== "",
-  );
-  return rows.length > 0 && rows.every((row) => oneLine(row.id) !== "");
+  const rows = raw.map(askRow).filter((row) => oneLine(row.question) !== "");
+  return rows.length > 0 && rows.every((row) => MINTED_ID.test(oneLine(row.id)));
 }
 
 /** The ask a turn ended on: the questions, and whether they can be ANSWERED from the

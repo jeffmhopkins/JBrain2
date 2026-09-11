@@ -3198,6 +3198,35 @@ def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
     assert "const typed = pairTrim(safe);" in asked
 
 
+def test_the_pwa_selects_on_the_id_shape_this_tool_actually_mints() -> None:
+    """The PWA decides whether a question block may be ANSWERED by looking at the ids on
+    the step (`asked.recordsIds`), and it now tests their SHAPE rather than their presence
+    — R3f's fifth review, finding 4. "The model never sends an id" was an absolute, and
+    `required` buys presence, not membership: nothing stops a model emitting an undeclared
+    property, so a deploy-window step whose model wrote its own ids rendered answerable and
+    posted ids the ledger never held.
+
+    A shape is not a membership proof and is not used as one (`clarify._pair` still matches
+    against the open set). What it must be is the shape THIS handler mints, so the gate
+    runs the minting rather than restating it: change `_asked`'s id format and the PWA
+    would quietly read every live block as read-only until this fails."""
+    import re
+    from pathlib import Path
+
+    from jbrain.agent.asktools import _asked
+
+    minted = _asked({"questions": [{"question": "Which Sarah?"}, "a bare string row"]})
+    assert len(minted) == 2
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    assert "const MINTED_ID = /^q[0-9a-f]{8}$/;" in asked
+    assert all(re.fullmatch(r"q[0-9a-f]{8}", q.id) for q in minted), [q.id for q in minted]
+    # And the bare-string row is one this tool RECORDS, which is why the PWA renders it
+    # (read-only) instead of drawing nothing on a thread that is really waiting.
+    assert minted[1].question == "a bare string row"
+
+
 def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
     """The behaviour the pattern comparison above cannot see (R3f's fourth review, finding
     6). Measured over twenty-three inputs, exactly two diverged, and both carried a line

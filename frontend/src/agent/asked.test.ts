@@ -120,9 +120,15 @@ describe("askedQuestions", () => {
     expect(askedQuestions({ questions: [{ question: "Which Sam?" }] })[0]?.id).toBe("q1");
   });
 
-  it("drops a malformed entry rather than rendering a blank row", () => {
+  it("drops a blank row, and reads a bare-string one as its question", () => {
     const qs = askedQuestions({ questions: [{ question: "" }, "nope", { question: "Real?" }] });
-    expect(qs.map((q) => q.question)).toEqual(["Real?"]);
+    // R3f's fifth review, finding 4. A bare string is a row `asktools._asked` ACCEPTS and
+    // records, so dropping it drew no block at all on a thread that really is waiting —
+    // a conversation that stopped with nothing on screen saying what for. It renders, with
+    // a positional id, which makes the whole set unanswerable (`recordsIds`) — read-only,
+    // which is the honest state: the question is readable and answerable in words.
+    expect(qs.map((q) => q.question)).toEqual(["nope", "Real?"]);
+    expect(qs.map((q) => q.id)).toEqual(["q2", "q3"]);
   });
 
   // A thread can be sitting in waiting_on_owner with a pre-batch ledger row the moment
@@ -225,6 +231,38 @@ describe("askStep", () => {
         }),
       ],
     });
+    expect(askStep(m).answerable).toBe(false);
+  });
+
+  // R3f's fifth review, finding 4. "The model never sends an id" was an absolute, and
+  // `required` buys presence, not membership — an undeclared property is not a forbidden
+  // one. A pre-echo step whose model wrote its own ids would have rendered answerable and
+  // posted ids the ledger never held, which is the exact failure read-only exists to stop.
+  // The test is the SHAPE `asktools._asked` mints, not the mere presence of a string.
+  it("is not fooled by ids the MODEL wrote on a step that predates the echo", () => {
+    const m = assistant({
+      tools: [
+        askTool({
+          args: {
+            questions: [
+              { id: "1", question: "Which Sarah?" },
+              { id: "question-2", question: "Dose?" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(askStep(m).answerable).toBe(false);
+    expect(askStep(m).questions.map((q) => q.question)).toEqual(["Which Sarah?", "Dose?"]);
+  });
+
+  // The other half of the same finding: `asktools._asked` reads a bare-string row as its
+  // question and RECORDS it, so a pre-echo step carrying one is a thread really waiting on
+  // a real question. It renders — read-only, since a bare string carries no minted id —
+  // rather than leaving the owner with a conversation that stopped for no visible reason.
+  it("renders a bare-string row read-only rather than drawing nothing", () => {
+    const m = assistant({ tools: [askTool({ args: { questions: ["Which Sarah?"] } })] });
+    expect(askStep(m).questions.map((q) => q.question)).toEqual(["Which Sarah?"]);
     expect(askStep(m).answerable).toBe(false);
   });
 });
