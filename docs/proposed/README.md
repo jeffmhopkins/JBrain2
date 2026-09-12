@@ -67,6 +67,18 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   re-exporting the moved private helpers from `deep_research` so the tests' imports still
   resolve. Its own PR, done in a git-push-capable session. Follows from the scratchpad work
   (PR #1049).
+- `DITOO_PLAN.md` — feasibility + build sketch for driving the owner's **Divoom Ditoo**
+  (16x16 pixel Bluetooth speaker) from the box. Verdict: the display half is integrable and
+  fits the SDR-shaped hardware pattern; the audio half is not (the box has no audio stack at
+  all, and A2DP needs host packages the no-terminal update path cannot install). Three hard
+  parts: Bluetooth sockets only work in the **initial network namespace**, so the sidecar
+  needs `network_mode: host` and forfeits the `internal: true` egress lock that `radio`/
+  `render` rely on; the sidecar therefore **ships its own BlueZ** rather than asking the
+  owner to apt-install one (CLAUDE.md #10); and pairing is driven over BlueZ's D-Bus API
+  from the PWA. Gated on a **free blocking probe (D0)** — the shipped supervisor `/usb`
+  inventory already answers "does this box have a Bluetooth radio at all?", exactly as SDR
+  S0a answered it for the dongle. Payoff wave is **JPet on the panel** (one more
+  `PetBroadcaster` subscriber).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
