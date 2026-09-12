@@ -15,7 +15,10 @@ from typing import Any
 
 import pytest
 
-from jbrain.api.sdr import _Backlog, _clip_seconds, _event, _segments
+from jbrain.api.sdr import _event
+from jbrain.sdr.captions import Backlog as _Backlog
+from jbrain.sdr.captions import clip_seconds as _clip_seconds
+from jbrain.sdr.captions import segments as _segments
 
 
 class _Upstream:

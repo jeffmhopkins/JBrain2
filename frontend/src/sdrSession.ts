@@ -84,9 +84,20 @@ export interface SdrRecordingState {
    *  the session's elapsed time is a different clock on the same poll, and one name for
    *  two quantities is how a surface ends up printing the wrong one. */
   seconds: number;
+  /** What Record is capturing: the clip, or the live closed captions and no audio.
+   *  Absent from an api older than the long press, which could only ever mean `audio`. */
+  kind?: "audio" | "captions";
   /** What has landed in the blob so far. Reported rather than derived from the bitrate:
-   *  the running size is the argument for stopping, so it has to be measured. */
+   *  the running size is the argument for stopping, so it has to be measured.
+   *
+   *  The api sends **null** on a captions capture, which writes no blob. Still typed
+   *  `number` here because every surface that reads it is written for a clip and none of
+   *  them is gated on the kind yet; widening it is part of teaching them, not part of
+   *  this. See `kind`. */
   bytes: number;
+  /** How many captions have landed so far, and null on an audio capture. The running
+   *  figure for the kind that has no size: it is what a deck can count up. */
+  captions?: number | null;
   /** The settings the clip will carry. A retune does not restart the pipeline, so these
    *  are where the recording BEGAN, which is what the library will show. */
   frequency_hz: number;

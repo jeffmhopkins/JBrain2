@@ -2230,6 +2230,14 @@ export interface SdrRecording {
   bandwidth_hz: number | null;
   gain?: string | null;
   serial?: string | null;
+  /** Which kind of recording this row is: a clip, or the closed captions of the same
+   *  reception and no audio at all. Absent from an api older than the long press. */
+  kind?: "audio" | "captions";
+  /** The api sends **null** on a captions row, along with `peaks` and the blob behind
+   *  them: there is no file, so there is nothing measured — never 0, which would read as
+   *  an empty clip rather than as a recording that is not a clip. Still typed `number`
+   *  here because the library, the trim sheet and the deck are all written for a clip;
+   *  widening it is part of gating them on `kind`, not part of adding the kind. */
   bytes: number;
   /** The level envelope the trim sheet draws, 0..1, computed on the box at stop and
    *  again after a trim — so the waveform can never disagree with the clip.

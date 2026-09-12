@@ -27,10 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
 import json
-import wave
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -46,6 +44,7 @@ from jbrain.db.session import scoped_session
 from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
 from jbrain.sdr.audio import cut_clip
+from jbrain.sdr.captions import Backlog, segments
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.health import session_for, shown
@@ -95,11 +94,6 @@ APRS_PURPOSE = "aprs"
 #: parameter takes, and converting at the boundary is better than a second constant.
 APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
-# How far back a single caption may reach. Segments that pile up behind a busy whisper
-# are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
-# much audio one merged clip may carry: past it the oldest is given up, because a caption
-# for something said half a minute ago is not a live caption any more.
-CAPTION_BACKLOG_S = 24.0
 # How long the caption stream waits with nothing to say before sending a comment to hold
 # the socket open. Proxies close an idle event stream, and a quiet band is normal.
 CAPTION_IDLE_S = 15.0
@@ -1409,7 +1403,7 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     **Reading and transcribing run apart.** The reader drains the sidecar as fast as it
     sends; whatever is waiting when whisper comes free is transcribed as ONE merged clip
-    (`_Backlog`). Done in step instead, each whisper call stalls the reader, the
+    (`Backlog`). Done in step instead, each whisper call stalls the reader, the
     sidecar's queue fills behind it, and the captioner settles permanently a backlog
     behind the live edge — which the client cannot correct for, because a caption that
     arrives after its audio was heard can only be shown late.
@@ -1421,7 +1415,7 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
     that mistake. The rule survives being right for a different reason: unloading would
     add the load back on top of the 9.8 s, and the capture route pays exactly that
     because it unloads when it finishes. The cost is flat because whisper.cpp pads every
-    clip to a 30 s window, which is also what makes merging a backlog free (`_Backlog`).
+    clip to a 30 s window, which is also what makes merging a backlog free (`Backlog`).
     It is why captions are an explicit toggle rather than always-on, too, since a
     resident whisper shares the GPU with the chat model.
 
@@ -1440,14 +1434,14 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     async def pump():
         client = httpx.AsyncClient(base_url=base, timeout=None)
-        backlog = _Backlog()
+        backlog = Backlog()
         arrived = asyncio.Event()
         ended = asyncio.Event()
 
         async def read(upstream: httpx.Response) -> None:
             """Drain the sidecar as fast as it sends, whatever whisper is doing."""
             try:
-                async for started, wav in _segments(upstream):
+                async for started, wav in segments(upstream):
                     if wav is None:
                         continue  # a keep-alive; the loop below sends its own
                     backlog.add(started, wav)
@@ -1513,112 +1507,6 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
 def _event(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
-
-
-async def _segments(upstream: httpx.Response):
-    """Split the sidecar's newline-framed stream into (started_at, wav) pairs.
-
-    The frame is a JSON header line then exactly `bytes` of WAV. Framing rather than a
-    request per segment because the gap between requests always lands mid-sentence."""
-    buffer = b""
-    async for block in upstream.aiter_bytes():
-        buffer += block
-        while True:
-            newline = buffer.find(b"\n")
-            if newline < 0:
-                break
-            try:
-                head = json.loads(buffer[:newline] or b"{}")
-            except json.JSONDecodeError:
-                buffer = buffer[newline + 1 :]
-                continue
-            if head.get("keepalive"):
-                buffer = buffer[newline + 1 :]
-                yield 0.0, None
-                continue
-            size = int(head.get("bytes", 0))
-            if size <= 0:
-                # Not a segment frame — a blank line, or a header that lost its size.
-                # Yielding it would hand whisper zero bytes of audio to describe.
-                buffer = buffer[newline + 1 :]
-                continue
-            if len(buffer) < newline + 1 + size:
-                break  # the WAV has not all arrived yet
-            wav = buffer[newline + 1 : newline + 1 + size]
-            buffer = buffer[newline + 1 + size :]
-            yield float(head.get("started_at", 0.0)), wav
-
-
-def _clip_seconds(wav: bytes) -> float:
-    """How much audio a WAV clip holds, without reading its samples."""
-    try:
-        with wave.open(io.BytesIO(wav), "rb") as src:
-            return src.getnframes() / (src.getframerate() or 1)
-    except (wave.Error, EOFError, OSError):
-        return 0.0
-
-
-def _merge(clips: list[bytes]) -> bytes:
-    """Join consecutive WAV clips into one.
-
-    The clips are contiguous slices of the same live capture, so concatenating their
-    frames reproduces the audio exactly as it was on the air — there is no crossfade or
-    resample to get wrong."""
-    frames: list[bytes] = []
-    rate = 0
-    for clip in clips:
-        try:
-            with wave.open(io.BytesIO(clip), "rb") as src:
-                frames.append(src.readframes(src.getnframes()))
-                rate = src.getframerate() or rate
-        except (wave.Error, EOFError, OSError):
-            continue  # a truncated clip is dropped, not allowed to poison the batch
-    if not frames or not rate:
-        return clips[0] if clips else b""
-    out = io.BytesIO()
-    with wave.open(out, "wb") as dst:
-        dst.setnchannels(1)
-        dst.setsampwidth(2)
-        dst.setframerate(rate)
-        dst.writeframes(b"".join(frames))
-    return out.getvalue()
-
-
-class _Backlog:
-    """Segments waiting for whisper, so that READING never waits on TRANSCRIBING.
-
-    Read in step with transcription — the shape this route had first — the reader stalls
-    for the whole of every whisper call, the sidecar's queue fills behind it, and the
-    captioner ends up working through audio that was on the air a minute ago. Because it
-    never catches up, that lag is permanent: captions arrive long after the listener has
-    heard the words, which is the one failure the client cannot correct for.
-
-    What waits here is transcribed TOGETHER rather than one clip at a time. Whisper's
-    cost on this box is flat in clip length (~10.7 s for 4 s of audio and for 11 s
-    alike), so a merged clip costs what a single one does and loses no words — where
-    taking only the newest would silently drop whole sentences. The cap is what keeps a
-    merge from reaching back further than a live caption sensibly can.
-    """
-
-    def __init__(self, max_seconds: float = CAPTION_BACKLOG_S) -> None:
-        self._max = max_seconds
-        self._held: list[tuple[float, bytes, float]] = []
-
-    def add(self, started: float, wav: bytes) -> None:
-        self._held.append((started, wav, _clip_seconds(wav)))
-        # Give up the OLDEST past the cap. Dropping the newest instead would leave the
-        # captioner reading history while the live edge went by unseen.
-        while len(self._held) > 1 and sum(c[2] for c in self._held) > self._max:
-            self._held.pop(0)
-
-    def take(self) -> tuple[float, bytes] | None:
-        """Everything waiting, as one clip stamped with the first segment's start."""
-        if not self._held:
-            return None
-        held, self._held = self._held, []
-        if len(held) == 1:
-            return held[0][0], held[0][1]
-        return held[0][0], _merge([wav for _, wav, _ in held])
 
 
 # --- Recordings ---------------------------------------------------------------------
@@ -1690,14 +1578,41 @@ def _recording_out(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k != "blob_sha256"}
 
 
+#: What `POST /record` may be asked to capture. Bounded here as a query type so an
+#: unknown kind is a 422 before any socket is opened — the sidecar would otherwise be
+#: asked for a stream that does not exist and answer with a 404 dressed as a 502.
+RecordKind = Literal["audio", "captions"]
+
+
+def _captions_transcriber(settings: Any) -> WhisperCppClient:
+    """The model a captions recording feeds, or a 503 saying why there isn't one.
+
+    The same refusal `GET /sdr/captions` gives, deliberately: a box with no whisper
+    gateway cannot caption live and cannot record captions either, and one sentence for
+    both is one thing for the owner to fix. Named as a function so the route reads as
+    "this is what captions needs", rather than a settings lookup buried in an argument.
+    """
+    if not settings.whisper_url:
+        raise HTTPException(
+            status_code=503,
+            detail="There is no whisper gateway on this box, so captions cannot be "
+            "recorded. Record audio instead.",
+        )
+    return WhisperCppClient(
+        settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+    )
+
+
 def _refused_recording(refused: RecorderRefused) -> HTTPException:
     """The sidecar's refusal, mapped the way `_post` maps every other one.
 
     409 is the owner-fixable case and keeps the sidecar's own sentence ("nothing is
     listening"): telling them the box is broken when the fix is to press Listen is the
-    failure this mapping exists to avoid.
+    failure this mapping exists to avoid. 503 is the recorder's own — a box with no
+    whisper gateway — and travels for the same reason: "captions cannot be recorded
+    here" is a fact about the box, not a fault in the radio.
     """
-    if refused.status in (400, 409):
+    if refused.status in (400, 409, 503):
         return HTTPException(status_code=refused.status, detail=refused.detail)
     return HTTPException(status_code=502, detail=f"sdr sidecar: {refused.detail}")
 
@@ -1708,6 +1623,7 @@ async def record(
     owner: OwnerDep,
     recorder: RecorderDep,
     on: Annotated[bool, Query()],
+    kind: Annotated[RecordKind, Query()] = "audio",
 ) -> dict[str, Any]:
     """Start or stop recording the live session. Idempotent both ways, like `/sdr/aprs`.
 
@@ -1716,9 +1632,25 @@ async def record(
     the settings in force when Record was pressed — a retune does not restart the
     pipeline, so a clip may span a frequency change, and the row keeps where it began.
 
+    `kind` is what the long press on Record swaps: `audio` keeps the clip, `captions`
+    keeps the live closed captions and **no audio**. It defaults to `audio` so that a
+    client that has never heard of the swap — every version of the PWA before this one —
+    keeps recording what it always did.
+
+    The settings on the row are read the same way for both, off the live listen session.
+    A transcript with no frequency under it is a page of words about nothing; where it
+    was heard is half of what makes it worth keeping.
+
+    **Captions do not need CC to be on first.** The recorder opens its own segment
+    subscription on the sidecar, so pressing Record starts captioning whether or not the
+    owner has the live caption stream open — "turn CC on, then press Record" is a
+    terminal-shaped answer given to someone who has no terminal (CLAUDE.md #10). It also
+    does not turn CC off, or on, at the end: it never touched it.
+
     Turning it on with nothing listening is a **409 with a sentence** rather than a
-    silent no-op: there is no audio to record, and the owner's next move is to press
-    Listen (CLAUDE.md #10 — the sentence is the whole interface they have).
+    silent no-op: there is no audio to record — and nothing to caption either — and the
+    owner's next move is to press Listen (CLAUDE.md #10 — the sentence is the whole
+    interface they have).
     """
     if not on:
         # No health check on the way out: stopping must work when the sidecar has already
@@ -1741,6 +1673,8 @@ async def record(
         state = await recorder.start(
             ctx_for(owner),
             base_url=base,
+            kind=kind,
+            transcriber=_captions_transcriber(settings) if kind == "captions" else None,
             frequency_hz=int(session.get("frequency_hz") or 0),
             mode=str(session.get("mode") or ""),
             # The sidecar reports 0 for "this session has no channel filter"; None is the
@@ -1823,6 +1757,14 @@ async def recording_audio(
     row = await repo.get(ctx_for(owner), recording_id)
     if row is None:
         raise HTTPException(status_code=404, detail="No such recording.")
+    if row["blob_sha256"] is None:
+        # A captions recording, which is a transcript and nothing else. Said plainly
+        # rather than as a bare 404: the row IS there and the library drew it, so "no
+        # such recording" would read as the box having lost it.
+        raise HTTPException(
+            status_code=404,
+            detail="That recording is captions, not audio — there is no clip to play.",
+        )
     sha = cast(str, row["blob_sha256"])
     if not await blobs.exists(sha):
         # The row outlived its audio — a restore of the database without the blob volume.
@@ -1869,6 +1811,15 @@ async def trim_recording(
     row = await repo.get(ctx, recording_id)
     if row is None:
         raise HTTPException(status_code=404, detail="No such recording.")
+    if row["blob_sha256"] is None:
+        # Checked BEFORE `_check_trim`, because a captions row has a real `duration_s`
+        # (the wall clock it ran for) and would sail through every bound below on its
+        # way to `path_for(None)`. There is no file, and the reason there is no file is
+        # worth a sentence.
+        raise HTTPException(
+            status_code=400,
+            detail="That recording is captions, not audio, so there is nothing to trim.",
+        )
     duration_s = float(row["duration_s"] or 0.0)
     _check_trim(body, duration_s)
 
@@ -1973,15 +1924,22 @@ async def delete_recording(
 
     The row goes first, under the caller's scope, and its blob is freed only if no other
     row still points at it — content-addressed storage means two identical clips are one
-    file, and unlinking on the first delete would silently empty the second.
+    file, and unlinking on the first delete would silently empty the second. A captions
+    row has no blob at all, which is why `remove` hands back the ROW rather than a bare
+    digest: read as a sha, "nothing to free" and "no such recording" are the same answer,
+    and the owner would be shown a 404 for a delete that had just happened.
 
     Returns the new `usage` so the disk meter moves with the list rather than a poll
     later.
     """
     ctx = ctx_for(owner)
-    sha = await repo.remove(ctx, recording_id)
-    if sha is None:
+    removed = await repo.remove(ctx, recording_id)
+    if removed is None:
         raise HTTPException(status_code=404, detail="No such recording.")
-    if not await repo.blob_in_use(ctx, sha):
+    sha = removed["blob_sha256"]
+    # A captions row holds no file, so there is nothing to free — and asking the
+    # reference check about a NULL digest would be asking the wrong question, since
+    # "nothing points at it" is trivially true of a blob that does not exist.
+    if sha is not None and not await repo.blob_in_use(ctx, sha):
         await blobs.delete(sha)
     return {"deleted": True, "usage": await repo.usage(ctx)}

@@ -30,6 +30,29 @@ dropped connection, or a retune that outlives the stream all close it from the f
 and each of those must finalize the blob and write its row rather than discard what was
 captured. That is why `_chunks` RETURNS on every ending — a raised exception would
 propagate out of `put_stream`, unlink the spool file, and lose the audio.
+
+**Two kinds, one recorder.** Long-pressing Record swaps what it captures: `'audio'` is
+everything above, `'captions'` is the SAME reception transcribed and nothing else — the
+sidecar's WAV segments off `GET /listen/segments`, through whisper, into the row's
+`transcript`. The owner chose captions INSTEAD of audio, so a captions recording writes
+**no blob at all** and its `blob_sha256`, `bytes` and `peaks` are NULL rather than a
+digest of nothing, a zero and an empty envelope. The kind picks the SOURCE — which
+stream is opened and what the bytes become — and everything the two share (the gate, the
+slot, the settings on the row, an ending that still saves) is written once.
+
+**The gate stays box-wide across kinds, not per-kind.** There is one radio and one
+listen session, and both kinds are a subscriber on it, so a captions capture running
+beside an audio one would be two recordings of one reception — which `/sdr/status`
+cannot even report, since it carries ONE `recording` that the tape deck draws. The
+button is a SWAP, not a second button: the long press chooses what the one Record does.
+
+**Nothing here touches the caption stream the PWA may have open.** Each captioner
+subscribes separately on the sidecar (`sdr/captions.py`), so a captions recording starts
+its own segments rather than requiring CC to be on first — the owner has no terminal and
+"turn CC on, then press Record" is a worse answer than just doing it (CLAUDE.md #10) —
+and stopping closes only what this recording opened. CC is therefore left exactly as it
+was found, on or off: a recording that silently switched the owner's live captions on,
+or off, would be this feature reaching outside what it was asked to do.
 """
 
 from __future__ import annotations
@@ -40,15 +63,17 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal, cast
 
 import httpx
 import structlog
 
 from jbrain.db.session import SessionContext
 from jbrain.sdr.audio import levels
+from jbrain.sdr.captions import Backlog, segments
 from jbrain.sdr.recordings import RecordingsRepo
 from jbrain.storage import BlobStore
+from jbrain.transcribe import TranscribeClient
 
 log = structlog.get_logger(__name__)
 
@@ -57,13 +82,50 @@ log = structlog.get_logger(__name__)
 #: with nothing to say.
 CONNECT_TIMEOUT_S = 10.0
 
-#: The longest one capture may run, as the bytes it costs. 64 kbps mono MP3 is 8 kB/s
-#: (`deploy/sdr/listen.py`), so this is four hours — longer than any net or event the
-#: radio is pointed at, and 115 MB rather than the 691 MB a Record press forgotten for a
-#: day would spool. Reaching it ends the recording the same way the sidecar dropping the
-#: session does: the blob is finalized and the row written, so the owner finds four hours
-#: in the library rather than a gap where a day went.
+#: What Record captures. The kind picks the SOURCE — which sidecar stream is opened and
+#: what the bytes become — rather than branching inside the spool.
+Kind = Literal["audio", "captions"]
+
+#: The longest one AUDIO capture may run, as the bytes it costs. 64 kbps mono MP3 is
+#: 8 kB/s (`deploy/sdr/listen.py`), so this is four hours — longer than any net or event
+#: the radio is pointed at, and 115 MB rather than the 691 MB a Record press forgotten
+#: for a day would spool. Reaching it ends the recording the same way the sidecar
+#: dropping the session does: the blob is finalized and the row written, so the owner
+#: finds four hours in the library rather than a gap where a day went.
+#:
+#: **It bounds AUDIO only.** Four hours is what this number means; bytes are merely how
+#: audio spends them, and a captions capture spends none at all — measuring one against
+#: a bitrate it does not have is the "8 kB/s" arithmetic applied to something that is
+#: not audio, which is how a bound stops bounding anything.
 MAX_CAPTURE_BYTES = 4 * 60 * 60 * (64_000 // 8)
+
+#: The longest one CAPTIONS capture may run, in seconds — the same four hours, stated
+#: directly because there is no bitrate to state it through.
+#:
+#: The bound is WALL CLOCK rather than transcript size, because size is not what a
+#: forgotten captions recording costs. It writes no blob, so it cannot fill the volume;
+#: what it does hold is a segment subscription on the sidecar and a place in the queue
+#: in front of whisper, which stays resident and shares the GPU with the chat model for
+#: as long as it runs (see `api/sdr.py` `GET /sdr/captions`). And a capture pointed at a
+#: quiet band accumulates NOTHING — the sidecar squelches silence — so a bound on what
+#: has been transcribed would never be reached by the very recording that most needs
+#: ending. Four hours of continuous speech is around 200 000 characters, which is also
+#: what keeps the `transcript` column inside what one response can hand a phone.
+MAX_CAPTION_CAPTURE_S = 4 * 60 * 60
+
+#: How long the captions loop may sit with nothing to transcribe before looking up. A
+#: quiet band is normal and sends nothing at all, so the wall-clock bound above needs a
+#: tick of its own or it would only be checked when somebody next spoke.
+_CAPTION_TICK_S = 5.0
+
+#: How long Stop may wait for the LAST clip to come back from whisper. Measured on this
+#: box: a transcription costs about ten seconds whatever the clip holds (`api/sdr.py`
+#: `GET /sdr/captions`), so this is six times the real figure — and it exists because
+#: `settings.whisper_timeout` defaults to five MINUTES, which is a fine bound for a
+#: background job and a terrible one for a button the owner is holding. Running out
+#: costs the final transmission and nothing else: everything transcribed before it is
+#: already on the recording and the row is written either way.
+_FINAL_CAPTION_S = 60.0
 
 #: Refuse to start, and stop a running capture, below this much free space on the blob
 #: volume. A box that fills its disk stops being fixable from the PWA — Postgres stops
@@ -110,6 +172,56 @@ async def open_audio_stream(base_url: str) -> tuple[httpx.AsyncClient, httpx.Res
         raise
 
 
+async def open_caption_stream(base_url: str) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """Open the sidecar's WAV segments, returning the client so the caller can close both.
+
+    Its own subscription, deliberately: the sidecar fans `subscribe_segments` out to a
+    queue per subscriber, so this neither steals the live caption stream's segments nor
+    needs one to exist. That is what lets Record start captions with CC off.
+
+    A module function for the same reason as `open_audio_stream` — a test replaces it,
+    and nothing below should need a socket to prove.
+    """
+    client = httpx.AsyncClient(
+        base_url=base_url, timeout=httpx.Timeout(None, connect=CONNECT_TIMEOUT_S)
+    )
+    try:
+        request = client.build_request("GET", "/listen/segments")
+        return client, await client.send(request, stream=True)
+    except BaseException:
+        await client.aclose()
+        raise
+
+
+async def _open_source(kind: Kind, base_url: str) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """The stream this kind records: the live MP3, or the WAV segments.
+
+    The ONE place the kind decides where the bytes come from — everything after this
+    point differs in what it does with them, not in where it got them. Resolved by name
+    at the call rather than held in a table built at import, because both openers are
+    module functions precisely so a test can replace them, and a table would have
+    captured the originals before any test could.
+    """
+    opener = open_audio_stream if kind == "audio" else open_caption_stream
+    return await opener(base_url)
+
+
+@dataclass
+class _Caption:
+    """One transcribed transmission, as it will sit in the row's `transcript`.
+
+    `at_s` is seconds from the START of the recording, not the epoch stamp the sidecar
+    sends: an offset is the only reading that survives being looked at later, and it is
+    what a caption list scrubs against. Both clocks are the host's — the sidecar is a
+    container on the same kernel — so the subtraction is a real measurement rather than
+    two clocks compared.
+    """
+
+    at_s: float
+    text: str
+    words: list[dict[str, Any]]
+
+
 @dataclass
 class _Active:
     """The recording in progress — everything the row will need, plus the stop signal."""
@@ -121,8 +233,15 @@ class _Active:
     bandwidth_hz: int | None
     gain: str | None
     serial: str | None
+    #: Defaulted so that `audio` — everything this class meant before there was a second
+    #: kind — stays the thing you get without saying anything.
+    kind: Kind = "audio"
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     bytes: int = 0
+    #: What a CAPTIONS capture has heard so far, in the order it was said. Empty on an
+    #: audio recording, and empty on a captions one that caught nothing — which is the
+    #: same "no row" case as a stream that gave no audio.
+    captions: list[_Caption] = field(default_factory=list)
     task: asyncio.Task[None] | None = None
     #: The row THIS recording wrote, once it has. Held on the recording rather than on
     #: the recorder so that a stop can only ever be handed the row belonging to the
@@ -172,6 +291,8 @@ class SdrRecorder:
         bandwidth_hz: int | None = None,
         gain: str | None = None,
         serial: str | None = None,
+        kind: Kind = "audio",
+        transcriber: TranscribeClient | None = None,
     ) -> dict[str, Any]:
         """Begin recording, or return the recording already running.
 
@@ -181,15 +302,34 @@ class SdrRecorder:
 
         The settings stored are the ones in force NOW. A retune does not restart the
         pipeline, so a recording can span a frequency change; the row keeps where it
-        started, which is what the library shows (the plan's §2).
+        started, which is what the library shows (the plan's §2). A captions recording
+        keeps them too — what was heard is worth as little without where it was heard as
+        a clip would be.
 
         Held under `_gate` for the whole of it — the check, the connect and the
         assignment. The connect is a real socket, and a second press arriving inside it
-        is the ordinary case (a double tap, two tabs), not a rare one.
+        is the ordinary case (a double tap, two tabs), not a rare one. **The gate is
+        box-wide across both kinds** (see this module's docstring): the second press
+        gets back the recording already running, whichever kind it is, because there is
+        one radio and the status carries one recording.
+
+        The free-space floor is checked for BOTH kinds, and that is not an oversight. A
+        captions capture writes no blob, but it does write a row — and a Postgres that
+        has run out of volume refuses that write along with everything else, so starting
+        one on a full disk would spend four hours of whisper on a transcript with
+        nowhere to land.
         """
         async with self._gate:
             if self._active is not None:
                 return _state_of(self._active, datetime.now(tz=UTC))
+            if kind == "captions" and transcriber is None:
+                # Reached only by a caller that skipped the route's check; the sentence
+                # is the same one, because it is the owner who has to read it.
+                raise RecorderRefused(
+                    "There is no whisper gateway on this box, so captions cannot be "
+                    "recorded. Record audio instead.",
+                    status=503,
+                )
             free = self._blobs.free_bytes()
             if free < MIN_FREE_BYTES:
                 raise RecorderRefused(
@@ -197,7 +337,7 @@ class SdrRecorder:
                     "nowhere to put a recording. Trim or delete something first.",
                     status=400,
                 )
-            client, response = await open_audio_stream(base_url)
+            client, response = await _open_source(kind, base_url)
             if response.status_code != 200:
                 detail = await _detail_of(response)
                 await response.aclose()
@@ -211,6 +351,7 @@ class SdrRecorder:
                 bandwidth_hz=bandwidth_hz,
                 gain=gain,
                 serial=serial,
+                kind=kind,
             )
             self._active = active
             # Whatever an earlier recording finalized on its own is no longer collectable
@@ -219,7 +360,14 @@ class SdrRecorder:
             # than clearing a shared slot) is what makes that safe while that earlier
             # recording's finalize may still be running — its row lands on ITS object.
             self._finishing = active
-            active.task = asyncio.create_task(self._run(active, client, response))
+            if kind == "audio":
+                runner = self._run(active, client, response)
+            else:
+                # Not None — the gate refused a captions start without one, above.
+                runner = self._run_captions(
+                    active, client, response, cast(TranscribeClient, transcriber)
+                )
+            active.task = asyncio.create_task(runner)
             return _state_of(active, active.started_at)
 
     async def stop(self) -> dict[str, Any] | None:
@@ -310,6 +458,133 @@ class SdrRecorder:
             peaks=peaks,
         )
 
+    async def _run_captions(
+        self,
+        active: _Active,
+        client: httpx.AsyncClient,
+        response: httpx.Response,
+        transcriber: TranscribeClient,
+    ) -> None:
+        """Transcribe the live session until Stop, then write the row. No blob at all.
+
+        The audio twin of this spools bytes; this one spools SENTENCES, and the shape of
+        the ending is the same in both: every failure is swallowed to the log, because a
+        background task that raises is a recording that vanished on a box whose owner has
+        no terminal (CLAUDE.md #10), and every way the stream can end still saves what was
+        heard.
+        """
+        try:
+            await self._caption_loop(active, response, transcriber)
+        except Exception as exc:  # noqa: BLE001 — a lost transcript must not kill the task
+            log.warning("sdr_recorder.captions_failed", error=repr(exc))
+        finally:
+            with contextlib.suppress(Exception):
+                await response.aclose()
+            with contextlib.suppress(Exception):
+                await client.aclose()
+            # Only if this recording still owns the slot — the same rule, and the same
+            # failure if it is broken, as the audio path's teardown.
+            if self._active is active:
+                self._active = None
+        if not active.captions:
+            # Nothing was said, or everything said was squelched as noise. A row with an
+            # empty transcript is the captions twin of a clip that plays silence: it
+            # reads in the library as a recording and holds nothing.
+            log.info("sdr_recorder.nothing_captioned")
+            return
+        try:
+            active.saved = await self._save_captions(active)
+        except Exception as exc:  # noqa: BLE001 — the transcript is only in memory here
+            log.warning("sdr_recorder.save_failed", error=repr(exc), kind="captions")
+
+    async def _caption_loop(
+        self, active: _Active, response: httpx.Response, transcriber: TranscribeClient
+    ) -> None:
+        """Read segments and transcribe them, with READING never waiting on WHISPER.
+
+        The split is `api/sdr.py`'s and for its reason: a transcription costs about ten
+        seconds whatever the clip holds, so a loop that read and transcribed in step would
+        stall the reader for every call, fill the sidecar's queue behind it and settle
+        permanently behind the live edge. What is waiting when whisper comes free is
+        transcribed as ONE merged clip (`Backlog`), which costs the same and loses no
+        words.
+
+        **Stop takes one last batch rather than dropping it.** Whatever was said in the
+        seconds before the button is exactly what the owner pressed Record for, and the
+        stop path already waits on a finalize (the audio one decodes the whole clip for
+        its waveform). Only ONE final batch, because the backlog merges — so this is a
+        single bounded whisper call, not a queue drained to the end.
+        """
+        backlog = Backlog()
+        arrived = asyncio.Event()
+        ended = asyncio.Event()
+
+        async def read() -> None:
+            try:
+                async for started, wav in segments(response):
+                    if wav is None:
+                        continue  # a keep-alive: nothing to transcribe
+                    backlog.add(started, wav)
+                    arrived.set()
+            except Exception as exc:  # noqa: BLE001 — a dropped stream is not a loss
+                log.info("sdr_recorder.captions_stream_ended", error=repr(exc))
+            finally:
+                ended.set()
+                arrived.set()
+
+        reader = asyncio.create_task(read())
+        stopped = asyncio.ensure_future(active.stop.wait())
+        try:
+            while not active.stop.is_set():
+                if _caption_bound_reached(active):
+                    log.info("sdr_recorder.capture_bound_reached", captions=len(active.captions))
+                    break
+                # Cleared BEFORE looking, so a segment that lands between the look and
+                # the wait still wakes us rather than being slept on.
+                arrived.clear()
+                batch = backlog.take()
+                if batch is None:
+                    if ended.is_set():
+                        break
+                    await _wait_for_segment(arrived, stopped)
+                    continue
+                await _transcribe_into(active, transcriber, batch)
+            final = backlog.take()
+            if final is not None:
+                try:
+                    await asyncio.wait_for(
+                        _transcribe_into(active, transcriber, final), _FINAL_CAPTION_S
+                    )
+                except TimeoutError:
+                    log.info("sdr_recorder.final_caption_timed_out")
+        finally:
+            stopped.cancel()
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
+
+    async def _save_captions(self, active: _Active) -> dict[str, Any]:
+        """Write the transcript row — and no blob, byte count or waveform.
+
+        `duration_s` is the WALL CLOCK the capture ran for, which for captions is the
+        only length there is: nothing was decoded, so there is nothing to measure. It is
+        an honest number for this kind precisely where it would be a fallback for audio.
+        """
+        ended_at = datetime.now(tz=UTC)
+        return await self._repo.add_captions(
+            active.ctx,
+            started_at=active.started_at,
+            ended_at=ended_at,
+            duration_s=max(0.0, (ended_at - active.started_at).total_seconds()),
+            frequency_hz=active.frequency_hz,
+            mode=active.mode,
+            bandwidth_hz=active.bandwidth_hz,
+            gain=active.gain,
+            serial=active.serial,
+            transcript=_transcript_of(active),
+            transcribed_at=ended_at,
+        )
+
     async def _chunks(self, active: _Active, response: httpx.Response) -> AsyncIterator[bytes]:
         """The sidecar's bytes until Stop, and then a plain `return`.
 
@@ -358,11 +633,100 @@ class SdrRecorder:
             stopped.cancel()
 
 
+def _caption_bound_reached(active: _Active) -> bool:
+    return (datetime.now(tz=UTC) - active.started_at).total_seconds() >= MAX_CAPTION_CAPTURE_S
+
+
+async def _wait_for_segment(arrived: asyncio.Event, stopped: asyncio.Future[Any]) -> None:
+    """Sleep until a segment lands, Stop is pressed, or the tick — whichever is first.
+
+    The tick is what makes the wall-clock bound real on a quiet band: nothing arrives and
+    nobody presses anything, and without it the loop would next look up when somebody
+    spoke, which on an empty frequency is never.
+    """
+    waiting = asyncio.ensure_future(arrived.wait())
+    try:
+        await asyncio.wait(
+            (waiting, stopped), timeout=_CAPTION_TICK_S, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        waiting.cancel()
+
+
+async def _transcribe_into(
+    active: _Active, transcriber: TranscribeClient, batch: tuple[float, bytes]
+) -> None:
+    """Transcribe one (merged) clip and keep it, or keep nothing and carry on.
+
+    A failed transcription ends the CLIP, never the recording: the next transmission is a
+    fresh chance, and a recording that stopped itself because whisper hiccuped would lose
+    the hour after the hiccup as well as the sentence during it.
+    """
+    started, wav = batch
+    try:
+        result = await transcriber.transcribe(wav, filename="segment.wav", media_type="audio/wav")
+    except Exception as exc:  # noqa: BLE001 — one bad clip is not the end of the capture
+        log.info("sdr_recorder.caption_failed", error=repr(exc))
+        return
+    text = result.text.strip()
+    if not text:
+        return  # silence, or a clip whisper had nothing to say about
+    at_s = max(0.0, started - active.started_at.timestamp())
+    offset_ms = int(at_s * 1000)
+    active.captions.append(
+        _Caption(
+            at_s=at_s,
+            text=text,
+            # Shifted onto the RECORDING's clock. Whisper times a word from the start of
+            # the clip it was handed, and those clips are minutes apart in a capture —
+            # left unshifted, every transmission would claim to have happened in the
+            # first few seconds.
+            words=[
+                {
+                    "text": w.text,
+                    "start_ms": offset_ms + w.start_ms,
+                    "end_ms": offset_ms + w.end_ms,
+                    "confidence": round(w.confidence, 4),
+                }
+                for w in result.words
+            ],
+        )
+    )
+
+
+def _transcript_of(active: _Active) -> dict[str, Any]:
+    """What lands in `transcript` — the shape every other transcript in the repo has.
+
+    `{text, words, duration_ms}` is what `ingest/video.py` writes and what
+    `AudioTranscript.tsx` renders, so a captions recording needs no viewer of its own.
+    `segments` is the ADDITION, and it earns its place: whisper emits per-word timings
+    only on builds that report them, and without it a text-only build would leave a
+    four-hour capture as one undated paragraph with no way to tell one transmission from
+    the next. It is the one timing that always survives.
+    """
+    return {
+        "text": "\n".join(caption.text for caption in active.captions),
+        "words": [word for caption in active.captions for word in caption.words],
+        "duration_ms": int(
+            max(0.0, (datetime.now(tz=UTC) - active.started_at).total_seconds()) * 1000
+        ),
+        "segments": [
+            {"at_s": round(caption.at_s, 3), "text": caption.text} for caption in active.captions
+        ],
+    }
+
+
 def _state_of(active: _Active, moment: datetime) -> dict[str, Any]:
     return {
         "started_at": active.started_at.isoformat(),
         "seconds": max(0.0, (moment - active.started_at).total_seconds()),
-        "bytes": active.bytes,
+        "kind": active.kind,
+        # A size for audio, a caption count for captions, and NULL for the one the
+        # recording is not. Reporting 0 bytes under a captions capture would put a
+        # measurement on the tape deck for something that is not being measured — and
+        # the running figure is the argument for stopping, so it has to be the real one.
+        "bytes": active.bytes if active.kind == "audio" else None,
+        "captions": len(active.captions) if active.kind == "captions" else None,
         "frequency_hz": active.frequency_hz,
         "mode": active.mode,
         "bandwidth_hz": active.bandwidth_hz,

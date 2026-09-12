@@ -49,6 +49,11 @@ TRIMMED = b"the-kept-part"
 class _Settings:
     sdr_url = "http://sdr:8000"
     supervisor_token = "t"
+    # The real default (`config.py`): a box with no whisper gateway. Spelled out because
+    # it is what makes "captions cannot be recorded here" reachable in a test.
+    whisper_url = ""
+    whisper_model = "whisper"
+    whisper_timeout = 300.0
 
 
 def _listening(**over: Any) -> dict[str, Any]:
@@ -128,7 +133,7 @@ class _Repo:
     async def usage(self, ctx: Any) -> dict[str, int]:
         return {
             "count": len(self.rows),
-            "bytes": sum(int(r["bytes"]) for r in self.rows),
+            "bytes": sum(int(r["bytes"] or 0) for r in self.rows),
             "reclaimed_bytes": 0,
         }
 
@@ -148,12 +153,18 @@ class _Repo:
         row.update(duration_s=duration_s, blob_sha256=blob_sha256, bytes=bytes_, peaks=peaks)
         return dict(row)
 
-    async def remove(self, ctx: Any, recording_id: str) -> str | None:
+    async def remove(self, ctx: Any, recording_id: str) -> dict[str, Any] | None:
         row = self._find(recording_id)
         if row is None:
             return None
         self.rows.remove(row)
-        return str(row["blob_sha256"])
+        # The ROW, as the repo hands it back: None means no such recording, and a NULL
+        # `blob_sha256` inside it means a captions row with no file to free.
+        return {
+            "id": row["id"],
+            "kind": row.get("kind", "audio"),
+            "blob_sha256": row["blob_sha256"],
+        }
 
     async def blob_in_use(self, ctx: Any, sha256: str, *, except_id: str | None = None) -> bool:
         return any(r["blob_sha256"] == sha256 and r["id"] != except_id for r in self.rows)
@@ -743,6 +754,150 @@ async def test_deleting_an_unknown_recording_is_a_404(blobs: FsBlobStore) -> Non
         await sdr_api.delete_recording(ROW_ID, OWNER, _Repo(), blobs)  # type: ignore[arg-type]
 
     assert missing.value.status_code == 404
+
+
+# --- The kind the long press swaps ----------------------------------------------------
+#
+# `POST /record?kind=` chooses what Record captures: the clip as before, or the live
+# closed captions and NO audio. Everything below is about the two staying apart — that a
+# captions row is never asked for a file it does not have, and that the default is still
+# the thing the PWA has always asked for.
+
+
+class _WhisperSettings(_Settings):
+    whisper_url = "http://gateway:8080/v1"
+    whisper_model = "whisper-large"
+    whisper_timeout = 300.0
+
+
+def _captions_row(**over: Any) -> dict[str, Any]:
+    """A recording that is a transcript: NULL where a clip would have its file.
+
+    Not 0 and not `[]` — the row must be indistinguishable from "this was never
+    measured", because it never was."""
+    return {
+        **_row("unused"),
+        "kind": "captions",
+        "blob_sha256": None,
+        "bytes": None,
+        "peaks": None,
+        "transcript": {"text": "net control, K7XYZ", "words": [], "segments": []},
+        **over,
+    }
+
+
+async def test_record_defaults_to_audio_so_an_older_client_keeps_its_meaning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every PWA before the long press sends `?on=true` and nothing else."""
+    _sidecar(monkeypatch, _listening())
+    recorder = _Recorder()
+
+    await sdr_api.record(_Settings(), OWNER, recorder, True)  # type: ignore[arg-type]
+
+    assert recorder.started[0]["kind"] == "audio"
+    assert recorder.started[0]["transcriber"] is None  # no model is loaded for a clip
+
+
+async def test_recording_captions_hands_the_recorder_the_whisper_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """And the same settings a clip would have carried: a transcript with no frequency
+    under it is a page of words about nothing."""
+    _sidecar(monkeypatch, _listening())
+    recorder = _Recorder()
+
+    await sdr_api.record(_WhisperSettings(), OWNER, recorder, True, "captions")  # type: ignore[arg-type]
+
+    started = recorder.started[0]
+    assert started["kind"] == "captions"
+    assert started["transcriber"] is not None
+    assert (started["frequency_hz"], started["mode"], started["serial"]) == (
+        162_550_000,
+        "nfm",
+        "0092",
+    )
+
+
+async def test_captions_on_a_box_with_no_whisper_are_a_503_with_a_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same refusal `GET /sdr/captions` gives, because it is the same missing thing —
+    and refused BEFORE anything starts, so nothing holds a segment subscription open with
+    nowhere to send what it hears."""
+    _sidecar(monkeypatch, _listening())
+    recorder = _Recorder()
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.record(_Settings(), OWNER, recorder, True, "captions")  # type: ignore[arg-type]
+
+    assert refused.value.status_code == 503
+    assert "whisper" in str(refused.value.detail).lower()
+    assert recorder.started == []
+
+
+async def test_a_captions_recording_has_no_audio_to_play_and_says_so(
+    blobs: FsBlobStore,
+) -> None:
+    """A bare 404 would read as the box having lost a recording the library just drew."""
+    repo = _Repo([_captions_row()])
+
+    with pytest.raises(HTTPException) as missing:
+        await sdr_api.recording_audio(ROW_ID, OWNER, repo, blobs)  # type: ignore[arg-type]
+
+    assert missing.value.status_code == 404
+    assert "captions" in str(missing.value.detail).lower()
+
+
+async def test_a_captions_recording_cannot_be_trimmed_and_never_reaches_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch, blobs: FsBlobStore
+) -> None:
+    """Its `duration_s` is real — the wall clock it ran for — so every bound in
+    `_check_trim` passes and the route would arrive at `path_for(None)`."""
+    asked = _ffmpeg(monkeypatch)
+    repo = _Repo([_captions_row()])
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.trim_recording(
+            ROW_ID,
+            sdr_api.TrimIn(start_s=1.0, end_s=9.0),
+            fake(OWNER),
+            fake(repo),
+            blobs,
+        )
+
+    assert refused.value.status_code == 400
+    assert "captions" in str(refused.value.detail).lower()
+    assert asked == []
+
+
+async def test_deleting_a_captions_recording_is_not_a_404_about_a_missing_blob(
+    blobs: FsBlobStore,
+) -> None:
+    """The bug this shape exists to prevent: read as a bare sha, "nothing to free" and
+    "no such recording" are the same answer, and the owner would be shown a 404 for a
+    delete that had just happened."""
+    repo = _Repo([_captions_row()])
+
+    out = await sdr_api.delete_recording(ROW_ID, OWNER, repo, blobs)  # type: ignore[arg-type]
+
+    assert out["deleted"] is True
+    assert repo.rows == []
+
+
+async def test_deleting_a_captions_recording_never_unlinks_a_clip(
+    blobs: FsBlobStore,
+) -> None:
+    """`blob_in_use` is not even asked: "nothing points at it" is trivially true of a
+    blob that does not exist, and acting on that answer is how a delete takes somebody
+    else's file."""
+    sha = await _stored(blobs, CLIP)
+    repo = _Repo([_captions_row(), _row(sha, id="twin")])
+
+    await sdr_api.delete_recording(ROW_ID, OWNER, repo, blobs)  # type: ignore[arg-type]
+
+    assert await blobs.exists(sha)
+    assert [r["id"] for r in repo.rows] == ["twin"]
 
 
 # --- The shutdown finalize ------------------------------------------------------------
