@@ -518,7 +518,10 @@ describe("mock API", () => {
     // 64 kbps mono MP3 is 8 kB/s. Every row's size has to follow from its length, or the
     // trim sheet's "frees N" is arguing from a number nobody can check.
     for (const row of page.recordings) {
-      expect(row.bytes).toBe(Math.round(row.duration_s * 8000));
+      // ...for a CLIP. A captions row has no file, so it has no size — null rather than
+      // the bitrate applied to something that is not audio, which is what the box's own
+      // CHECK holds and what the disk meter is filtered on.
+      expect(row.bytes).toBe(row.kind === "captions" ? null : Math.round(row.duration_s * 8000));
       // The LIST carries no waveform, matching the real route: 400 floats a row would
       // dwarf the response. A fixture that handed it over here would make the by-id
       // fetch — the one path that has to work on a real box — the one path mock mode
@@ -532,6 +535,13 @@ describe("mock API", () => {
     // report; it is derived from duration_s < captured_s, never from a stored flag.
     expect(page.recordings.some((r) => r.duration_s < r.captured_s)).toBe(true);
     expect(page.usage.reclaimed_bytes).toBeGreaterThan(0);
+    // ...and one fixture is captions, because the library has to draw a row with no play
+    // control, no scissors and no size — the shape only the long press produces.
+    expect(page.recordings.some((r) => r.kind === "captions")).toBe(true);
+    // The meter counts every recording but weighs only the clips, exactly as the api's
+    // `FILTER (WHERE kind = 'audio')` does.
+    expect(page.usage.count).toBe(page.recordings.length);
+    expect(page.usage.bytes).toBe(page.recordings.reduce((total, r) => total + (r.bytes ?? 0), 0));
   });
 
   it("carries the waveform on the by-id route, which is the only place it lives", async () => {

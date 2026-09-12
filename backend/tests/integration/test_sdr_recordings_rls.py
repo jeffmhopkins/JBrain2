@@ -16,7 +16,7 @@ playing it.
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import text
@@ -105,6 +105,35 @@ async def test_a_non_owner_sees_nothing(
     # being the owner, and a recording is not domain-scoped data — there is no
     # `domain_code` on this table to widen your way into.
     assert rows == []
+
+
+@pytest.mark.parametrize("ctx_name", ["GENERAL_ONLY", "EVERY_SCOPE", "UNSCOPED"])
+async def test_a_non_owner_cannot_read_a_transcript_either(
+    maker: async_sessionmaker, ctx_name: str
+) -> None:
+    """A captions row is a different kind of exposure from a clip. An audio row hands out
+    an address that has to be resolved before anything can be heard; a transcript is the
+    words themselves, already in the column — other operators' names, callsigns and
+    traffic, readable straight off a SELECT. The same policy covers it, and this is the
+    test that says so rather than assuming it because the rows share a table."""
+    ctx = {"GENERAL_ONLY": GENERAL_ONLY, "EVERY_SCOPE": EVERY_SCOPE, "UNSCOPED": UNSCOPED}[ctx_name]
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.sdr_recordings (kind, frequency_hz, mode, transcript)"
+                " VALUES ('captions', 146520000, 'nfm', CAST(:t AS jsonb))"
+            ),
+            {"t": '{"text": "net control, K7XYZ"}'},
+        )
+        await s.commit()
+    try:
+        async with scoped_session(maker, ctx) as s:
+            rows = (await s.execute(text("SELECT transcript FROM app.sdr_recordings"))).all()
+        assert rows == []
+    finally:
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(text("DELETE FROM app.sdr_recordings"))
+            await s.commit()
 
 
 @pytest.mark.parametrize("ctx_name", ["GENERAL_ONLY", "EVERY_SCOPE", "UNSCOPED"])
@@ -272,9 +301,12 @@ async def test_removing_hands_back_the_blob_to_free(
 ) -> None:
     saved = await _add(maker)
 
-    assert await _repo(maker).remove(OWNER, str(saved["id"])) == "a" * 64
+    removed = await _repo(maker).remove(OWNER, str(saved["id"]))
+    assert removed is not None and removed["blob_sha256"] == "a" * 64
     assert await _repo(maker).get(OWNER, str(saved["id"])) is None
     # Idempotent: a second delete has nothing to free, and says so rather than raising.
+    # None here means "no such row" specifically — a captions row deletes to a row whose
+    # `blob_sha256` is None, which is a different answer and must not read as this one.
     assert await _repo(maker).remove(OWNER, str(saved["id"])) is None
 
 
@@ -293,6 +325,135 @@ async def test_a_blob_two_rows_share_is_reported_as_still_in_use(
     assert await repo.blob_in_use(OWNER, "8" * 64, except_id=str(lonely["id"])) is False
     assert await repo.blob_in_use(OWNER, "8" * 64) is True
     assert await repo.blob_in_use(OWNER, "0" * 64) is False
+
+
+async def _add_captions(maker: async_sessionmaker, **over: object) -> dict[str, object]:
+    started = datetime.now(tz=UTC)
+    fields: dict[str, Any] = {
+        "started_at": started,
+        "ended_at": started + timedelta(seconds=600),
+        "duration_s": 600.0,
+        "frequency_hz": 146_520_000,
+        "mode": "nfm",
+        "bandwidth_hz": None,
+        "gain": None,
+        "serial": "0092",
+        "transcript": {
+            "text": "net control, K7XYZ",
+            "words": [{"text": "net", "start_ms": 0, "end_ms": 200, "confidence": 0.91}],
+            "duration_ms": 600_000,
+            "segments": [{"at_s": 0.0, "text": "net control, K7XYZ"}],
+        },
+        "transcribed_at": started + timedelta(seconds=600),
+    }
+    return await _repo(maker).add_captions(OWNER, **{**fields, **over})
+
+
+async def test_a_captions_row_round_trips_with_no_audio_columns_at_all(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """Migration 0201, against the real table. NULL is the assertion: `bytes = 0` and
+    `peaks = []` would be two measurements of a file that does not exist, and the column
+    defaults that produced them are gone precisely so an INSERT cannot invent them."""
+    saved = await _add_captions(maker)
+
+    assert saved["kind"] == "captions"
+    assert saved["blob_sha256"] is None
+    assert saved["bytes"] is None
+    assert saved["peaks"] is None
+    assert saved["has_transcript"] is True
+    assert cast(dict[str, Any], saved["transcript"])["text"] == "net control, K7XYZ"
+    # Untrimmed for ever: nothing cuts a transcript, so the two stay equal.
+    assert saved["captured_s"] == saved["duration_s"] == 600.0
+
+    fetched = await _repo(maker).get(OWNER, str(saved["id"]))
+    assert fetched is not None
+    assert fetched["transcript"]["segments"] == [{"at_s": 0.0, "text": "net control, K7XYZ"}]
+    assert fetched["transcribed_at"] is not None
+
+
+async def test_an_existing_recording_is_still_audio_without_being_told_so(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """The default carries every row the box already has. `add` does not name `kind` at
+    all — it is the statement that shipped before there were kinds — so this is also the
+    check that the audio path was not quietly asked to start saying what it is."""
+    saved = await _add(maker)
+
+    assert saved["kind"] == "audio"
+
+
+async def test_the_table_refuses_a_row_that_is_neither_shape(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """The CHECK is what makes "a captions row has no blob" a schema fact rather than a
+    convention every future writer has to remember — and the writer who forgets would be
+    found by `blob_refs` handing out a NULL digest, or by a disk meter counting a
+    transcript as audio."""
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises((DBAPIError, ProgrammingError)):
+            await session.execute(
+                text(
+                    "INSERT INTO app.sdr_recordings (kind, frequency_hz, mode, blob_sha256,"
+                    " bytes, peaks) VALUES ('captions', 1, 'nfm', :sha, 0, '[]'::jsonb)"
+                ),
+                {"sha": "a" * 64},
+            )
+        await session.rollback()
+
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises((DBAPIError, ProgrammingError)):
+            await session.execute(
+                text(
+                    "INSERT INTO app.sdr_recordings (kind, frequency_hz, mode)"
+                    " VALUES ('audio', 1, 'nfm')"
+                )
+            )
+        await session.rollback()
+
+
+async def test_usage_never_prices_a_transcript_at_the_audio_bitrate(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """The disk meter is the only argument for deleting anything — nothing expires on its
+    own — so a captions row counted at 8 kB/s would report space that was never taken,
+    and ten minutes of it would read as 4.8 MB the owner could free by deleting words."""
+    await _add(maker, blob_sha256="d" * 64, bytes_=100)
+    before = await _repo(maker).usage(OWNER)
+
+    await _add_captions(maker)
+    after = await _repo(maker).usage(OWNER)
+
+    assert before["bytes"] == after["bytes"] == 100
+    assert after["reclaimed_bytes"] == 0
+    # The COUNT is the library's, which is what the header sits above.
+    assert (before["count"], after["count"]) == (1, 2)
+
+
+async def test_a_captions_row_deletes_without_a_blob_to_free(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """`remove` hands back the ROW: None means no such recording, and a row carrying a
+    NULL digest means there was never a file. Read as a bare sha the two are one answer,
+    and the owner gets a 404 for a delete that happened."""
+    saved = await _add_captions(maker)
+
+    removed = await _repo(maker).remove(OWNER, str(saved["id"]))
+
+    assert removed is not None
+    assert removed["kind"] == "captions"
+    assert removed["blob_sha256"] is None
+    assert await _repo(maker).get(OWNER, str(saved["id"])) is None
+
+
+async def test_a_captions_row_holds_no_blob_open(
+    maker: async_sessionmaker, empty_library: None
+) -> None:
+    """`blob_sha256 = :sha` is NULL rather than true for a row with no digest, so a
+    transcript neither keeps a clip alive nor is mistaken for keeping one."""
+    await _add_captions(maker)
+
+    assert await _repo(maker).blob_in_use(OWNER, "a" * 64) is False
 
 
 async def test_a_non_owner_reads_an_empty_library_through_the_repo(

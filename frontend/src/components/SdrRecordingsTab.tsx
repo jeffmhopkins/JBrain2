@@ -18,13 +18,23 @@
 // live <audio> element for the life of the lease and its createMediaElementSource is
 // one-shot; a recording is a file, served with FileResponse, so this has its own element
 // and gets Range/seeking for free.
+//
+// **Not every row is a file.** Long-pressing Record swaps it to captions, which keeps the
+// transcript of the same reception and no audio at all — so a captions row has no blob,
+// no size and no waveform, and the api answers its audio and trim routes with a sentence
+// saying so. Everything here that assumes an MP3 is gated on `isSdrClip`: the play
+// control, the size in the meta, the scissors and the download. What a captions row
+// offers instead is its transcript, which IS the artifact, rendered by the same
+// `TranscriptBody` the note and tool-result viewers use.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  type SdrClip,
   type SdrRecording,
   type SdrRecordingsPage,
   api,
+  isSdrClip,
   sdrRecordingUrl,
 } from "../api/client";
 import { mhz } from "../mhz";
@@ -39,8 +49,9 @@ import {
   usageFraction,
   usageLine,
 } from "../sdrTrim";
+import { TranscriptBody, transcriptWords } from "./AudioTranscript";
 import { SdrTrimSheet } from "./SdrTrimSheet";
-import { FileIcon, PauseIcon, PlayIcon, ScissorsIcon, TrashIcon } from "./icons";
+import { ClipIcon, FileIcon, PauseIcon, PlayIcon, ScissorsIcon, TrashIcon } from "./icons";
 
 /** How long an armed Delete stays armed, matching the Record control's own window. */
 const ARM_MS = 2600;
@@ -49,7 +60,7 @@ const ARM_MS = 2600;
  *
  *  The row's own identity, not the blob's digest — a content-addressed name in a
  *  downloads folder is unreadable, and the sha never reaches the client anyway. */
-function downloadName(row: SdrRecording): string {
+function downloadName(row: SdrClip): string {
   const at = new Date(row.started_at);
   const stamp = Number.isNaN(at.getTime())
     ? row.id
@@ -82,7 +93,11 @@ function withPendingSave(
     recordings: [row, ...page.recordings],
     usage: {
       ...page.usage,
-      bytes: page.usage.bytes + row.bytes,
+      // Only a clip moves the disk meter, mirroring the api's own `FILTER (WHERE kind =
+      // 'audio')`: a captions row took no space, and pricing one at the bitrate it does
+      // not have would make the header report bytes nothing on the box is holding. The
+      // COUNT moves for both, because it counts the library the rows below add up to.
+      bytes: page.usage.bytes + (row.bytes ?? 0),
       count: page.usage.count + 1,
     },
   };
@@ -93,7 +108,7 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
   const [error, setError] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [positionS, setPositionS] = useState(0);
-  const [trimming, setTrimming] = useState<SdrRecording | null>(null);
+  const [trimming, setTrimming] = useState<SdrClip | null>(null);
   // Which row is expanded, and which one's Delete is armed. Both single-valued: two open
   // bodies is a list that scrolls unpredictably, and two armed deletes is two loaded guns.
   const [openId, setOpenId] = useState<string | null>(null);
@@ -176,6 +191,39 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
     })();
   }, []);
 
+  // The LIST carries no transcript — only `has_transcript` — because a captions recording
+  // may hold four hours of speech (~200 000 characters, `recorder.py`) and five hundred of
+  // those would be a library nobody could load. So the row asks for its own when it opens,
+  // exactly as the trim sheet asks for the waveform the list leaves out. Best-effort: a
+  // failure leaves the body empty rather than putting an error banner over a list that
+  // works, and `transcript !== undefined` is the guard — `null` means the box HAS no
+  // transcript and must not be asked again.
+  useEffect(() => {
+    if (openId === null) return;
+    const row = page?.recordings.find((r) => r.id === openId);
+    if (!row || row.transcript !== undefined || row.has_transcript !== true) return;
+    let live = true;
+    void api.getSdrRecording(openId).then(
+      (full) => {
+        if (!live) return;
+        setPage((was) =>
+          was === null
+            ? was
+            : {
+                ...was,
+                recordings: was.recordings.map((r) =>
+                  r.id === full.id ? { ...r, transcript: full.transcript ?? null } : r,
+                ),
+              },
+        );
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [openId, page]);
+
   // A delete armed and then walked away from must not still be armed on the next visit
   // to this tab — the row it belongs to may not even be the same one on screen.
   useEffect(() => {
@@ -190,7 +238,7 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
     setPositionS(0);
   }, []);
 
-  const toggle = (row: SdrRecording) => {
+  const toggle = (row: SdrClip) => {
     const element = audioRef.current;
     if (!element) return;
     if (playingId === row.id) {
@@ -271,24 +319,40 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
           <section key={group.day}>
             <div className="rec-day">{group.day}</div>
             {group.rows.map((row) => {
+              // The one question the whole row hangs on. A captions row has no file, so
+              // it has nothing to play, nothing to trim, no size and nothing to download.
+              const clip = isSdrClip(row) ? row : null;
               const on = row.id === playingId;
               const open = row.id === openId;
               const trimmed = row.duration_s < row.captured_s;
               const spoken = row.transcript?.text?.trim() ?? "";
+              // The list says WHETHER there is a transcript, never what it says. So an
+              // empty `spoken` on a row that has one means "not fetched yet" — saying
+              // "no speech detected" there would be the library asserting silence it
+              // never read.
+              const unread = row.transcript === undefined && row.has_transcript === true;
               return (
-                <div key={row.id} className={`rec-row${on ? " rec-row-on" : ""}`}>
+                <div
+                  key={row.id}
+                  className={`rec-row${on ? " rec-row-on" : ""}${clip ? "" : " rec-row-cc"}`}
+                >
                   {/* Its own button, not a span inside the row's: the row EXPANDS and the
                       circle PLAYS, which is two actions — one control that guessed from
-                      where the tap landed would be one name for both of them. */}
-                  <button
-                    type="button"
-                    className="rec-play"
-                    aria-label={`${on ? "Pause" : "Play"} the ${mhz(row.frequency_hz)} MHz recording`}
-                    aria-pressed={on}
-                    onClick={() => toggle(row)}
-                  >
-                    {on ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                  </button>
+                      where the tap landed would be one name for both of them.
+                      Absent on a captions row rather than disabled: a dead play control
+                      is a promise the box then refuses, and the api's own answer for that
+                      URL is "there is no clip to play". */}
+                  {clip && (
+                    <button
+                      type="button"
+                      className="rec-play"
+                      aria-label={`${on ? "Pause" : "Play"} the ${mhz(row.frequency_hz)} MHz recording`}
+                      aria-pressed={on}
+                      onClick={() => toggle(clip)}
+                    >
+                      {on ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="rec-main"
@@ -302,29 +366,44 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
                           {row.mode.toUpperCase()}
                           {row.bandwidth_hz ? ` ${bandwidthLabel(row.bandwidth_hz)}` : ""}
                         </span>
+                        {/* What kind of row this is, said on the row rather than inferred
+                            from the absence of a play control. */}
+                        {!clip && <span className="rec-chip rec-chip-cc">CC</span>}
                         {trimmed && <span className="rec-chip rec-chip-cut">trimmed</span>}
                       </b>
                       {/* Untrusted text: a transcript is what a stranger transmitted,
                           machine-read. Rendered as content, never as an instruction. */}
-                      <span className="rec-prev">{spoken || "(no speech detected)"}</span>
+                      <span className="rec-prev">
+                        {spoken || (unread ? "" : "(no speech detected)")}
+                      </span>
                     </span>
                     <span className="rec-meta">
                       {clockLabel(row.started_at)}
                       <br />
-                      {formatDuration(row.duration_s)} · {formatSize(row.bytes)}
+                      {/* The duration is the wall clock the capture ran either way, so it
+                          is true for both kinds. The SIZE is the half only a clip has —
+                          omitted rather than shown as 0 kB, which would read as a
+                          recording that came out empty. */}
+                      {formatDuration(row.duration_s)}
+                      {clip && ` · ${formatSize(clip.bytes)}`}
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    className="rec-trim"
-                    aria-label={`Trim the ${mhz(row.frequency_hz)} MHz recording`}
-                    onClick={() => {
-                      stop();
-                      setTrimming(row);
-                    }}
-                  >
-                    <ScissorsIcon size={17} />
-                  </button>
+                  {/* Trim is MP3-frame surgery end to end — `ffmpeg -c copy` on the box,
+                      72 ms frames in the sheet — so the column is simply not there on a
+                      row with no frames. The api refuses it with a sentence too. */}
+                  {clip && (
+                    <button
+                      type="button"
+                      className="rec-trim"
+                      aria-label={`Trim the ${mhz(row.frequency_hz)} MHz recording`}
+                      onClick={() => {
+                        stop();
+                        setTrimming(clip);
+                      }}
+                    >
+                      <ScissorsIcon size={17} />
+                    </button>
+                  )}
                   {on && (
                     <div className="rec-prog">
                       <i
@@ -336,23 +415,65 @@ export function SdrRecordingsTab({ onOpenRadios }: { onOpenRadios: () => void })
                   )}
                   {open && (
                     // The row's body, from the capture spec (a-tape-deck.html): the
-                    // transcript, and the two actions that are not trimming. Thin until
-                    // R4 lands transcription, which is expected — the actions are the
-                    // reason it exists today.
+                    // transcript, and the two actions that are not trimming.
                     <div className="rec-body">
-                      <p className="rec-tx">
-                        {spoken || "No transcript yet — transcription arrives in a later wave."}
-                      </p>
+                      {clip ? (
+                        <p className="rec-tx">
+                          {spoken ||
+                            (unread
+                              ? "Reading the transcript…"
+                              : "No transcript — an audio recording is not transcribed after the " +
+                                "fact. Long-press Record to keep the captions instead.")}
+                        </p>
+                      ) : (
+                        // On a captions row the transcript IS the recording, so it gets
+                        // the real viewer rather than the two-line preview: the same
+                        // `TranscriptBody` a note's audio attachment and jerv's transcribe
+                        // result use, tinting each word by how sure whisper was. Narrowband
+                        // voice degrades in a patterned way and the numbers are both the
+                        // least certain and usually the payload, which is exactly what the
+                        // gradient shows. No `onSeek`: there is no clip to seek in.
+                        <TranscriptBody
+                          words={transcriptWords(row.transcript?.words)}
+                          currentIdx={-1}
+                          text={
+                            spoken ||
+                            (unread
+                              ? "Reading the transcript…"
+                              : "Nothing was said while this was recording.")
+                          }
+                        />
+                      )}
                       <div className="rl-actions">
-                        {/* A blob never goes through the api client: this is the same
-                            by-id URL the player streams, handed to the browser to save. */}
-                        <a
-                          className="rl-action"
-                          href={sdrRecordingUrl(row.id)}
-                          download={downloadName(row)}
-                        >
-                          <FileIcon size={19} /> Download (.mp3)
-                        </a>
+                        {clip ? (
+                          // A blob never goes through the api client: this is the same
+                          // by-id URL the player streams, handed to the browser to save.
+                          <a
+                            className="rl-action"
+                            href={sdrRecordingUrl(clip.id)}
+                            download={downloadName(clip)}
+                          >
+                            <FileIcon size={19} /> Download (.mp3)
+                          </a>
+                        ) : (
+                          // Copy, not Download: there is no file to hand the browser, and
+                          // minting one here would be this surface inventing an artifact
+                          // the box does not have. Copy is how text leaves every other
+                          // screen in this app (`.rl-action` + ClipIcon, ResearchScreen).
+                          <button
+                            type="button"
+                            className="rl-action"
+                            disabled={!spoken}
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(spoken).catch(() => {
+                                // A clipboard the browser refuses is not worth a dialog:
+                                // the words are on screen and can be selected.
+                              });
+                            }}
+                          >
+                            <ClipIcon size={19} /> Copy transcript
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={`rl-action rl-action-del${armedDelete === row.id ? " rl-action-armed" : ""}`}

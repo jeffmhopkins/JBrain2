@@ -9,8 +9,9 @@
 // Release is a first-class action because it is what hands this session's radio back — and
 // what makes the omnibox icon disappear, since the icon IS the lease.
 
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { api } from "../api/client";
+import { type SdrRecordKind, api } from "../api/client";
 import { mhz } from "../mhz";
 import {
   AUDIO_LATE_S,
@@ -28,6 +29,7 @@ import {
   subscribeSdrCaptions,
 } from "../sdrCaptions";
 import { channelIndex, channelLabel, namedByFrequency, planAt, stepChannel } from "../sdrChannels";
+import { loadRecordKind, saveRecordKind } from "../sdrRecordKind";
 import {
   type SdrListening,
   liveRecording,
@@ -122,6 +124,12 @@ const BACKFILL_ROWS = 120;
  *  2.6 s the delete confirmations elsewhere use. */
 const ARM_MS = 2600;
 
+/** The long press that swaps what Record keeps — the app's shipped gesture, lifted whole
+ *  from the omnibox's mode tabs (`Omnibox.tsx`) rather than tuned again here: the same
+ *  hold, the same travel budget past which a scroll is a scroll and not a press. */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP_PX = 10;
+
 export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +159,80 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     const timer = window.setTimeout(() => setArmed(false), ARM_MS);
     return () => window.clearTimeout(timer);
   }, [armed]);
+
+  // What Record will keep, remembered on this device (sdrRecordKind.ts). Local like the
+  // arming is: the box has no opinion until a capture is asked for, and the api takes the
+  // kind on the START call, so there is nothing to poll.
+  const [kind, setKind] = useState<SdrRecordKind>(loadRecordKind);
+  // The long press that swaps it, in the omnibox's own shape: a timer armed on
+  // pointerdown, cleared by up/leave/cancel and by travel past the slop, and a `longFired`
+  // ref the click reads so the release tap is swallowed rather than counted.
+  const pressTimer = useRef<number | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null);
+  const longFired = useRef(false);
+  useEffect(() => () => window.clearTimeout(pressTimer.current ?? undefined), []);
+
+  /** Swap what Record keeps, and DISARM.
+   *
+   *  Disarming is the whole answer to the collision between the two gestures. This button
+   *  is already arm-then-confirm, and a hold that ends with the button armed would leave
+   *  "Tap again" over a kind the owner never armed — the next tap would start a capture
+   *  of the other thing. Re-arming costs one tap and says out loud what it is about to
+   *  record, which is the state this ceremony exists to create. */
+  const swapKind = () => {
+    setArmed(false);
+    // Written through `saveRecordKind` rather than in a state updater: the updater would
+    // be a side effect inside React's own re-entrant call, and nothing can swap between
+    // the pointerdown that armed the timer and the hold that fires it.
+    setKind(saveRecordKind(kind === "captions" ? "audio" : "captions"));
+  };
+
+  // Ignored WHILE RECORDING, deliberately: the kind is fixed when the stream opens — the
+  // recorder is already spooling one or captioning the other — so there is nothing a swap
+  // could mean beyond stopping and starting again. The timer is never armed, which also
+  // leaves `longFired` false so the tap that ends the hold still reaches Stop.
+  const swappable = recording === null;
+  // ...and a capture that STARTS under a finger already holding the button — a second
+  // device pressed Record, or the box did — drops the pending swap. Otherwise the hold
+  // would fire into a state where it means nothing and would swallow the tap that was
+  // about to stop the capture. `swappable` is only read at pointerdown, so this is the
+  // half of that rule the timer cannot see.
+  useEffect(() => {
+    if (recording === null) return;
+    window.clearTimeout(pressTimer.current ?? undefined);
+    pressTimer.current = null;
+    pressOrigin.current = null;
+  }, [recording]);
+
+  function clearPress() {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressOrigin.current = null;
+  }
+
+  function startPress(event: ReactPointerEvent) {
+    if (!swappable) return;
+    longFired.current = false;
+    pressOrigin.current = { x: event.clientX, y: event.clientY };
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      longFired.current = true;
+      swapKind();
+    }, LONG_PRESS_MS);
+  }
+
+  function movePress(event: ReactPointerEvent) {
+    const origin = pressOrigin.current;
+    if (!origin) return;
+    if (
+      Math.abs(event.clientX - origin.x) > LONG_PRESS_SLOP_PX ||
+      Math.abs(event.clientY - origin.y) > LONG_PRESS_SLOP_PX
+    ) {
+      clearPress();
+    }
+  }
 
   // The band table, for the one question this control asks of it: does a complete
   // channel plan cover where the radio is? Best-effort — a table that fails to load
@@ -656,15 +738,40 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           type="button"
           className={`sdr-act sdr-act-record${armed ? " armed" : ""}`}
           aria-pressed={recording !== null}
+          // The gesture is NAMED, following the read-aloud control's label
+          // (`FullBrainSurface.tsx`): a long press nothing says out loud is a long press
+          // nobody finds. It is also the one path to the swap — see DESIGN.md's
+          // "Long-press Record swaps what it keeps", which records that deviation from
+          // the gesture-is-never-the-only-way rule rather than leaving it as an oversight.
           aria-label={
             recording
               ? "Stop recording"
               : armed
-                ? "Tap again to start recording"
-                : "Record what you are hearing"
+                ? `Tap again to start recording ${kind}`
+                : kind === "captions"
+                  ? "Record the captions of what you are hearing — long-press to record audio instead"
+                  : "Record what you are hearing — long-press to record captions instead"
           }
           disabled={busy}
+          onPointerDown={startPress}
+          onPointerMove={movePress}
+          onPointerUp={clearPress}
+          onPointerLeave={clearPress}
+          onPointerCancel={clearPress}
+          onContextMenu={(event) => {
+            // Desktop analog of the hold, the same one the omnibox's tabs take.
+            if (!swappable) return;
+            event.preventDefault();
+            swapKind();
+          }}
           onClick={() => {
+            // Swallow the tap that trails a completed hold — it has already swapped the
+            // kind, and this button's first tap ARMS, so letting it through would leave
+            // the swap sitting under a "Tap again" the owner never asked for.
+            if (longFired.current) {
+              longFired.current = false;
+              return;
+            }
             if (recording) {
               // No confirmation on the way OUT: stopping destroys nothing, and the clip
               // it lands is the thing the owner asked for.
@@ -686,22 +793,33 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
               return;
             }
             setArmed(false);
-            void act(() => api.sdrRecord(true));
+            void act(() => api.sdrRecord(true, kind));
           }}
         >
           <RecordIcon size={16} />
           {recording ? (
-            // Elapsed and running size, both read off the poll. The size is what argues
-            // for stopping — the owner runs this box remotely and cannot go and look at
-            // the disk (CLAUDE.md #10).
+            // Elapsed and the running figure, both read off the poll. That figure is what
+            // argues for stopping — the owner runs this box remotely and cannot go and
+            // look at the disk (CLAUDE.md #10) — so it is the one the capture actually
+            // has: bytes for a clip, captions counted for the kind that writes no file.
             <>
               <span className="sdr-rec-el">{elapsed(recording.seconds)}</span>
-              <small>{formatSize(recording.bytes)}</small>
+              {recording.bytes !== null ? (
+                <small>{formatSize(recording.bytes)}</small>
+              ) : (
+                <small>{recording.captions ?? 0} CC</small>
+              )}
             </>
-          ) : armed ? (
-            "Tap again"
           ) : (
-            "Record"
+            // The kind rides UNDER the word, the `<em className="sdr-bw">` treatment the
+            // mode segment gives its bandwidth: what Record keeps is one setting with
+            // Record, and `.sdr-actions` is two `flex: 1` buttons that a third would
+            // squeeze. Idle only — the interior is already elapsed + figure while
+            // recording, which is also the one state the swap does nothing in.
+            <span className="sdr-rec-what">
+              {armed ? "Tap again" : "Record"}
+              <em className="sdr-rec-kind">{kind === "captions" ? "captions" : "audio"}</em>
+            </span>
           )}
         </button>
         <button

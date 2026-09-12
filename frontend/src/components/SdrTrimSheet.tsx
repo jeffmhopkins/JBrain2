@@ -27,7 +27,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { type SdrRecording, type SdrTrimResult, api, sdrRecordingUrl } from "../api/client";
+import { type SdrClip, type SdrTrimResult, api, sdrRecordingUrl } from "../api/client";
 import { mhz } from "../mhz";
 import { bandwidthLabel } from "../sdrBandwidth";
 import {
@@ -57,7 +57,11 @@ const BARS = 116;
 const COARSE_STEP_S = 1;
 
 interface TrimSheetProps {
-  recording: SdrRecording;
+  /** An `SdrClip`, not any recording: every line below reads a size, a waveform or the
+   *  audio route, and `ffmpeg -c copy` cuts MP3 frames. A captions row has none of those,
+   *  which is why the library does not offer the scissors on one — and why the type says
+   *  so here rather than this sheet learning to draw a second, fileless shape. */
+  recording: SdrClip;
   onClose: () => void;
   /** What the SERVER cut, and the meter after it. The client asks in seconds; the copy
    *  lands on a frame boundary, so what comes back is the truth and replaces the row

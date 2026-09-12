@@ -8,12 +8,15 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type SdrRecording, api } from "../api/client";
+import { type SdrClip, api } from "../api/client";
 import { FRAME_MS, FRAME_S } from "../sdrTrim";
 import { SdrTrimSheet } from "./SdrTrimSheet";
 
-/** The mock's 3:06 weather clip: its useful twenty seconds cost 1.4 MB to keep whole. */
-const CLIP: SdrRecording = {
+/** The mock's 3:06 weather clip: its useful twenty seconds cost 1.4 MB to keep whole.
+ *
+ *  An `SdrClip` — the sheet takes nothing else. A captions recording has no blob, no
+ *  size and no frames to cut, and the library does not offer it the scissors. */
+const CLIP: SdrClip = {
   id: "wx",
   started_at: "2026-09-10T19:12:00Z",
   ended_at: "2026-09-10T19:15:06Z",
@@ -34,7 +37,7 @@ const CLIP: SdrRecording = {
  *  makes those different types, and the list genuinely omits it. */
 const { peaks: _omitted, ...FROM_LIST } = CLIP;
 
-function open(over: Partial<SdrRecording> = {}, base: SdrRecording = CLIP) {
+function open(over: Partial<SdrClip> = {}, base: SdrClip = CLIP) {
   const onClose = vi.fn();
   const onTrimmed = vi.fn();
   render(<SdrTrimSheet recording={{ ...base, ...over }} onClose={onClose} onTrimmed={onTrimmed} />);

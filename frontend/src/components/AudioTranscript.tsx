@@ -101,7 +101,13 @@ export function currentWordIndex(words: TranscriptWord[], currentMs: number): nu
  * externally-owned clock (`currentIdx`). Shared by AudioTranscript (its own player)
  * and the video-analysis card (one card-wide clock) so both render words identically:
  * tinted on the rose→amber→green gradient, the spoken word a steel pill, tap to seek.
- * Falls back to plain `text` when there is no per-word data. */
+ * Falls back to plain `text` when there is no per-word data.
+ *
+ * **`onSeek` is optional, because a transcript can outlive its media** — an SDR captions
+ * recording is a transcript of what was heard with no clip under it at all. Without it
+ * the words are spans rather than buttons and the legend drops its "tap a word to jump",
+ * so the one thing the surface cannot do is also the one thing it does not offer. The
+ * tinting, which is the reason to reuse this at all, is unchanged. */
 export function TranscriptBody({
   words,
   currentIdx,
@@ -110,7 +116,7 @@ export function TranscriptBody({
 }: {
   words: TranscriptWord[];
   currentIdx: number;
-  onSeek: (ms: number) => void;
+  onSeek?: ((ms: number) => void) | undefined;
   text?: string | undefined;
 }): ReactNode {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -136,15 +142,25 @@ export function TranscriptBody({
             // biome-ignore lint/suspicious/noArrayIndexKey: words are static for this transcript.
             key={i}
           >
-            <button
-              type="button"
-              data-i={i}
-              className={`atx-w${i === currentIdx ? " now" : ""}`}
-              style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
-              onClick={() => onSeek(w.startMs)}
-            >
-              {w.text}
-            </button>{" "}
+            {onSeek ? (
+              <button
+                type="button"
+                data-i={i}
+                className={`atx-w${i === currentIdx ? " now" : ""}`}
+                style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
+                onClick={() => onSeek(w.startMs)}
+              >
+                {w.text}
+              </button>
+            ) : (
+              <span
+                data-i={i}
+                className={`atx-w${i === currentIdx ? " now" : ""}`}
+                style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
+              >
+                {w.text}
+              </span>
+            )}{" "}
           </Fragment>
         ))}
       </div>
@@ -152,7 +168,7 @@ export function TranscriptBody({
         <span>low</span>
         <span className="atx-grad" aria-hidden="true" />
         <span>high confidence</span>
-        <span className="atx-hint">tap a word to jump</span>
+        {onSeek && <span className="atx-hint">tap a word to jump</span>}
       </div>
     </>
   );

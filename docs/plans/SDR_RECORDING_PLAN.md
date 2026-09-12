@@ -1,10 +1,15 @@
 # SDR recording — capture, library, trim
 
-> **Status:** In progress · **Last verified:** 2026-09-10 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4◻️
+> **Status:** In progress · **Last verified:** 2026-09-12 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4🟡
 > (R0 — the two-round GUI gate — is closed: capture is `docs/mocks/recording/a-tape-deck.html`,
 > trim is `docs/mocks/recording/d-trim-sheet.html`, both binding. R1–R3 are built: the api
 > records, the library lists and serves, trim cuts and reclaims, and the PWA drives all
-> three. **Not yet run on the box** — no deploy has been asked for.)
+> three. **R4's backend is built by a different route than the one specced below** — see
+> §6 R4: the `transcript` column is filled by RECORDING the live captions rather than by
+> transcribing a stored clip, and its PWA half is now built too — the long press on
+> Record, and the library gated on the kind. What remains unbuilt under R4 is
+> transcribing a STORED clip after the fact, and the corpus/embedding enqueue.
+> **Not yet run on the box** — no deploy has been asked for.)
 
 The radio can hear but not keep. This adds the third tab of the Radio launcher: press
 Record while listening, and the clip lands in a library you can play, trim and delete.
@@ -63,9 +68,10 @@ log, what the radio overheard is not domain-scoped data, it is simply the owner'
 | `duration_s double precision` | what the clip IS now |
 | `captured_s double precision` | what was originally recorded — `duration_s < captured_s` is what makes a row "trimmed", so the library can say so without a flag that can drift |
 | `frequency_hz bigint`, `mode text`, `bandwidth_hz int`, `gain text?`, `serial text?` | the settings at the moment Record was pressed |
-| `blob_sha256 text`, `bytes bigint` | the audio, through the storage abstraction |
-| `peaks jsonb` | the level envelope the trim sheet draws, computed once at stop and again after a trim (see §5) |
-| `transcript jsonb?`, `transcribed_at timestamptz?` | R3; the shape `AudioTranscript.tsx` consumes |
+| `kind text` | `audio` or `captions` — what Record was asked to keep. Defaults to `audio`, which is what every row before it was. A CHECK pins each kind's shape, so "a captions row has no blob" is a schema fact rather than a convention a future writer can forget |
+| `blob_sha256 text?`, `bytes bigint?` | the audio, through the storage abstraction. **NULL on a captions row**, along with `peaks`: there is no file, and a 0 there would be a measurement of one that does not exist |
+| `peaks jsonb?` | the level envelope the trim sheet draws, computed once at stop and again after a trim (see §5) |
+| `transcript jsonb?`, `transcribed_at timestamptz?` | the shape `AudioTranscript.tsx` consumes. Filled by a captions recording (§6 R4), NULL on an audio row |
 
 Index on `started_at DESC` — the only order the library is read in.
 
@@ -76,15 +82,22 @@ mapping (409 busy, 400 refusal-with-a-sentence, 502 `sdr sidecar: …`, 504 time
 
 | Route | Does |
 | --- | --- |
-| `POST /record?on=true\|false` | Start/stop against the live listen session. Idempotent both ways, like `POST /sdr/aprs`. Starting with nothing listening is a **409 with a sentence**. Returns `{recording, saved?}`. |
+| `POST /record?on=true\|false&kind=audio\|captions` | Start/stop against the live listen session. Idempotent both ways, like `POST /sdr/aprs`. Starting with nothing listening is a **409 with a sentence**; asking for captions on a box with no whisper gateway is a **503** with the one `GET /sdr/captions` gives. `kind` defaults to `audio`, so a client that predates the long press keeps recording clips. Returns `{recording, saved?}`. |
 | `GET /recordings?limit=` | `{recordings: [...], usage: {bytes, count, reclaimed_bytes}}` — newest first, **without `peaks`**: 400 floats a row would dwarf a hundred-row response. |
 | `GET /recordings/{id}` | One row **with `peaks`**. The trim sheet fetches it when it opens; without it the sheet is two handles over an empty picture, which is the shape's whole argument missing. |
-| `GET /recordings/{id}/audio` | `FileResponse(blobs.path_for(sha), media_type="audio/mpeg")` — Range comes free from Starlette, which is what makes the trim sheet's Preview and scrubbing work. Resolve the sha **from the RLS-scoped row**, never from the URL. |
-| `POST /recordings/{id}/trim` | Body `{start_s, end_s}`. Cuts, repoints, **deletes the old blob**. Returns the row. |
-| `DELETE /recordings/{id}` | Row and blob. |
+| `GET /recordings/{id}/audio` | `FileResponse(blobs.path_for(sha), media_type="audio/mpeg")` — Range comes free from Starlette, which is what makes the trim sheet's Preview and scrubbing work. Resolve the sha **from the RLS-scoped row**, never from the URL. A captions row is a **404 saying it is captions**, not a bare one: the library just drew it, so "no such recording" would read as the box having lost it. |
+| `POST /recordings/{id}/trim` | Body `{start_s, end_s}`. Cuts, repoints, **deletes the old blob**. Returns the row. A captions row is a **400 with a sentence** — checked before the bounds, because its `duration_s` is real and would pass all of them on the way to `path_for(None)`. |
+| `DELETE /recordings/{id}` | Row, and the blob if there was one. |
 
 `GET /sdr/status` gains a `recording` object (or null) so the tuner can draw its elapsed
-time and size from the same 1 Hz poll everything else uses — no second timer.
+time and size from the same 1 Hz poll everything else uses — no second timer. It carries
+`kind`, and then EITHER `bytes` or `captions`: the other is null, because a running size
+under a capture that writes no blob would be a measurement of nothing, and the running
+figure is the owner's argument for pressing Stop.
+
+**One recording at a time, box-wide across both kinds.** There is one radio and one
+listen session, and the status carries ONE `recording` — so the long press SWAPS what
+Record does rather than adding a second thing it can do at the same time.
 
 ## 5. Trim
 
@@ -122,14 +135,45 @@ tab replacing the placeholder in `RadioScreen`. The trim sheet on the shared `Sh
 shell. `api/client.ts` methods + `api/mock.ts` fixtures for default/empty/error/offline,
 which DESIGN.md makes part of done.
 
-### R4 — transcription *(deferred, not in the first PR)*
-`transcribe_audio_chunked` over the stored clip, corpus persistence + embedding enqueue
-per `SDR_RADIO_PLAN.md` §4.3, transcript re-cut on trim. The library and trim both work
-without it; the rows simply have no transcript preview yet.
+### R4 — transcription *(backend built, by a cheaper route than this specced)*
+What was planned here: `transcribe_audio_chunked` over the STORED clip, corpus
+persistence + embedding enqueue per `SDR_RADIO_PLAN.md` §4.3, transcript re-cut on trim.
+
+What was built instead, because the owner asked for it and it costs far less: **recording
+the live captions.** Long-pressing Record swaps the button between keeping the audio and
+keeping the closed captions — the same whisper segments `GET /sdr/captions` already
+streams, accumulated into `transcript` — and the owner chose captions **instead of**
+audio, so a captions recording writes no blob at all.
+
+That is cheaper in the way that matters: nothing re-reads a four-hour MP3 through whisper
+after the fact, because the transcription already happened live while the radio was on.
+It is also a different thing from the plan above, and the difference is worth stating —
+a captions row is a transcript of what was heard, not a transcript OF a recording, so
+there is no clip beneath it to re-cut when a trim moves. Trim refuses it outright.
+
+Built: migration `kind` + the CHECK, `sdr/captions.py` (the segment framing and the
+backlog, moved out of `api/sdr.py` so both captioners share one parser),
+`recorder.py`'s `kind='captions'` path with its own wall-clock bound, `add_captions` on
+the repo, `usage()` filtered to audio, `remove()` handing back the row, and the
+`kind=` query on `POST /record`.
+
+Then built on the PWA side: the long press on Record (`SdrTunerControls.tsx`, the omnibox's
+own gesture lifted whole), the device-local preference behind it (`sdrRecordKind.ts`), and
+the library, trim sheet and tape deck gated on the kind. `SdrRecording.bytes` is now
+`number | null`, which is what the api actually sends, and the four affordances that need
+a file — play, download, trim, the size in the row's meta — hang on one `isSdrClip`
+guard; `SdrTrimSheet` takes an `SdrClip`, so handing it a captions row is a compile error
+rather than a `0 kB`. The settled design is in DESIGN.md under "Long-press Record swaps
+what it keeps", including the recorded accessibility deviation (the gesture is the sole
+path to the swap, following the app's two shipped long-presses).
+
+Still open: transcribing a STORED clip after the fact, and the corpus/embedding enqueue
+per `SDR_RADIO_PLAN.md` §4.3. Both remain worth having — they are what would make an
+AUDIO recording searchable, which recording the captions does not.
 
 ## 7. What the build found
 
-Six things the plan did not anticipate, all now in the code:
+Seven things the plan did not anticipate:
 
 - **A full-length "trim" re-puts identical bytes and gets the identical digest**, so
   deleting "the old blob" would delete the audio the row was just repointed at. Guarded
@@ -189,6 +233,16 @@ Six things the plan did not anticipate, all now in the code:
   when the blob volume falls below 1 GiB free, and Record is refused with a sentence when
   there is no room to start. Both bounds finalize rather than discard: an interrupted
   recording is still a recording, whether the interruption is the sidecar or us.
+
+- **The row's two-line transcript preview cannot be served from the list, and never
+  could.** `_LIST_COLUMNS` carries `(transcript IS NOT NULL) AS has_transcript` and not the
+  text, which is right — a captions recording is bounded at four hours, about 200 000
+  characters, and `RECENT_MAX` is 500 rows. The library therefore shows **no preview line**
+  on an unopened row and fetches the transcript by id when the row expands, the same shape
+  the trim sheet already uses for `peaks`. What it must not do is print "(no speech
+  detected)" there: that is the surface asserting a silence it never read, which is this
+  subsystem's recurring failure in its cheapest form. The mock's preview is restorable with
+  a truncated `left(transcript->>'text', N) AS preview` on the list route — **not built**.
 
 ## 8. Open
 

@@ -29,6 +29,7 @@ import type {
   ReviewItem,
   RunDetail,
   RunSummary,
+  SdrRecordKind,
   SdrRecording,
   SdrRecordingsPage,
   SearchHit,
@@ -3166,6 +3167,7 @@ function mockRecording(
   const started = new Date(Date.now() - minutesAgo * 60_000);
   return {
     id: `mock-rec-${seed}`,
+    kind: "audio",
     started_at: started.toISOString(),
     ended_at: new Date(started.getTime() + capturedS * 1000).toISOString(),
     duration_s: durationS,
@@ -3179,6 +3181,57 @@ function mockRecording(
     peaks: mockPeaks(seed, durationS),
     transcript: transcript ? { text: transcript } : null,
     transcribed_at: transcript ? started.toISOString() : null,
+  };
+}
+
+/** A CAPTIONS recording — what the long press on Record keeps instead of the clip.
+ *
+ *  `blob_sha256`, `bytes` and `peaks` are NULL on the box (migration 0201's CHECK holds
+ *  it), so they are null here too: a fixture that priced this at the MP3 bitrate would
+ *  make the library's disk meter — the one number the owner deletes by — the one thing
+ *  mock mode never exercises honestly. `duration_s` is the wall clock the capture ran,
+ *  which is real for this kind as well; `captured_s` equals it for ever, because nothing
+ *  trims a transcript. */
+function mockCaptions(
+  seed: number,
+  minutesAgo: number,
+  frequencyHz: number,
+  mode: string,
+  bandwidthHz: number,
+  ranS: number,
+  said: string,
+): SdrRecording {
+  const started = new Date(Date.now() - minutesAgo * 60_000);
+  // Per-word timings so the row's body exercises the tinted transcript rather than the
+  // plain-text fallback — the confidence gradient is why the viewer is reused at all.
+  const spoken = said.split(" ");
+  const perWordMs = Math.max(1, Math.round((ranS * 1000) / Math.max(spoken.length, 1)));
+  return {
+    id: `mock-cc-${seed}`,
+    kind: "captions",
+    started_at: started.toISOString(),
+    ended_at: new Date(started.getTime() + ranS * 1000).toISOString(),
+    duration_s: ranS,
+    captured_s: ranS,
+    frequency_hz: frequencyHz,
+    mode,
+    bandwidth_hz: bandwidthHz,
+    gain: "auto",
+    serial: "00000001",
+    bytes: null,
+    transcript: {
+      text: said,
+      words: spoken.map((text, i) => ({
+        text,
+        start_ms: i * perWordMs,
+        end_ms: (i + 1) * perWordMs,
+        // A spread rather than a constant: the gradient is the point of the viewer, and
+        // a column of one colour would not show whether it still works.
+        confidence: Number((0.45 + ((i * 7) % 11) / 20).toFixed(2)),
+      })),
+      duration_ms: ranS * 1000,
+    },
+    transcribed_at: new Date(started.getTime() + ranS * 1000).toISOString(),
   };
 }
 
@@ -3231,9 +3284,21 @@ const MOCK_RECORDINGS: SdrRecording[] = [
     240,
     "Buzzer. Repeating tone approximately twenty-five per minute. No voice heard during this capture.",
   ),
-  // No transcript at all — R4 is deferred, so a row with nothing said is the ordinary
-  // case rather than an edge one.
+  // No transcript at all — an audio recording is not transcribed after the fact, so a
+  // row with nothing under its frequency is the ordinary case rather than an edge one.
   mockRecording(6, 4_400, 121_500_000, "am", 8000, 19, ""),
+  // ...and a captions row, which is the OTHER shape the library has to draw: no play
+  // control, no size, no scissors, and the transcript as the artifact.
+  mockCaptions(
+    7,
+    320,
+    146_520_000,
+    "fm",
+    12_500,
+    412,
+    "Calling any station on the calling frequency, this is monitoring. Nothing heard, " +
+      "clear. Repeater is on battery, the mains came back about an hour ago.",
+  ),
 ];
 
 /** What trimming has given back so far, from the rows themselves. Derived rather than
@@ -3241,21 +3306,33 @@ const MOCK_RECORDINGS: SdrRecording[] = [
  *  audio is a counter that can drift away from it. */
 function mockReclaimed(): number {
   return MOCK_RECORDINGS.reduce(
-    (total, r) => total + Math.max(0, Math.round((r.captured_s - r.duration_s) * MOCK_BPS)),
+    (total, r) =>
+      total +
+      (r.kind === "captions"
+        ? 0
+        : Math.max(0, Math.round((r.captured_s - r.duration_s) * MOCK_BPS))),
     0,
   );
 }
 
 function mockRecordingsPage(): SdrRecordingsPage {
-  const bytes = MOCK_RECORDINGS.reduce((total, r) => total + r.bytes, 0);
+  // Audio only, the api's own `FILTER (WHERE kind = 'audio')`: a captions row weighs
+  // nothing on the disk this meter is about. `count` is every row, because that is what
+  // the list under the header adds up to.
+  const bytes = MOCK_RECORDINGS.reduce((total, r) => total + (r.bytes ?? 0), 0);
   return {
     recordings: [...MOCK_RECORDINGS]
       .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-      // `peaks` is STRIPPED here because the real list route omits it (400 floats a row
-      // would dwarf the response) and the trim sheet fetches it by id instead. A fixture
-      // that handed the waveform over with the list would make the one path that has to
-      // work on a real box the one path mock mode never exercises.
-      .map(({ peaks: _envelope, ...row }) => row),
+      // `peaks` AND `transcript` are STRIPPED here because the real list route omits both
+      // — 400 floats a row would dwarf the response, and a captions recording may hold
+      // four hours of speech — and the surfaces fetch them by id instead: the trim sheet
+      // its waveform, the row its transcript when it opens. A fixture that handed either
+      // over with the list would make the one path that has to work on a real box the one
+      // path mock mode never exercises. `has_transcript` is what the list DOES say.
+      .map(({ peaks: _envelope, transcript, ...row }) => ({
+        ...row,
+        has_transcript: transcript !== null,
+      })),
     usage: { bytes, count: MOCK_RECORDINGS.length, reclaimed_bytes: mockReclaimed() },
   };
 }
@@ -3281,16 +3358,25 @@ function mockSdrState(explicit: string | null): string {
 }
 
 /** The capture in flight, or null — what `GET /sdr/status` carries so the Record button
- *  can draw its elapsed time and running size off the one 1 Hz poll. */
-let mockCapture: { started_ms: number } | null = null;
+ *  can draw its elapsed time and running figure off the one 1 Hz poll. One at a time and
+ *  of one kind, because the box has one radio: the long press SWAPS what Record does
+ *  rather than adding a second capture it can run alongside. */
+let mockCapture: { started_ms: number; kind: SdrRecordKind } | null = null;
 
 function mockRecordingState(): SdrRecordingState | null {
   if (!mockCapture) return null;
   const seconds = (Date.now() - mockCapture.started_ms) / 1000;
+  const captions = mockCapture.kind === "captions";
   return {
     started_at: new Date(mockCapture.started_ms).toISOString(),
     seconds,
-    bytes: Math.round(seconds * MOCK_BPS),
+    kind: mockCapture.kind,
+    // A size for the kind that writes a blob, a caption count for the kind that does not,
+    // and null for the one this capture is not — the same split the recorder reports.
+    // Zero bytes under a captions capture would be a measurement of nothing, and the
+    // running figure is the owner's argument for pressing Stop.
+    bytes: captions ? null : Math.round(seconds * MOCK_BPS),
+    captions: captions ? Math.max(1, Math.floor(seconds / 8)) : null,
     // Where the capture BEGAN — the settings the row will carry, whatever the dial does
     // between now and stop.
     frequency_hz: 5_000_000,
@@ -3322,14 +3408,22 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/sdr/record" && method === "POST") {
     const on = url.searchParams.get("on") === "true";
     if (on) {
-      mockCapture ??= { started_ms: Date.now() };
+      const kind: SdrRecordKind =
+        url.searchParams.get("kind") === "captions" ? "captions" : "audio";
+      // Idempotent, and the kind belongs to the capture that is already running: a second
+      // start does not re-point one mid-flight, exactly as the recorder's gate does not.
+      mockCapture ??= { started_ms: Date.now(), kind };
       return json({ recording: mockRecordingState() });
     }
     const running = mockCapture;
     mockCapture = null;
     if (!running) return json({ recording: null });
     const secs = Math.max(1, Math.round((Date.now() - running.started_ms) / 1000));
-    const saved = mockRecording(Date.now() % 997, 0, 5_000_000, "am", 6000, secs, "");
+    const seed = Date.now() % 997;
+    const saved =
+      running.kind === "captions"
+        ? mockCaptions(seed, 0, 5_000_000, "am", 6000, secs, "Nothing heard on this pass.")
+        : mockRecording(seed, 0, 5_000_000, "am", 6000, secs, "");
     MOCK_RECORDINGS.unshift(saved);
     return json({ recording: null, saved });
   }
