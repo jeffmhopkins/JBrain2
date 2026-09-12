@@ -11,13 +11,21 @@ route resolves a recording's blob from the row it just read under the caller's s
 serving `blobs.path_for(sha)` from a sha in the path would hand out any blob on the box
 to anyone who could guess a digest, which is the firewall going around Postgres rather
 than through it.
+
+**Two kinds of row live here, and they are different shapes.** `kind = 'audio'` is a
+clip: a blob, a byte count and a waveform. `kind = 'captions'` is the same reception
+transcribed and nothing else — no blob, and therefore `blob_sha256`, `bytes` and `peaks`
+are NULL rather than 0 and `[]` (migration 0201 holds the CHECK that enforces it). Every
+reader here has to keep that separation: a captions row priced at the audio bitrate makes
+the disk meter report space that was never taken, which is the same class of mistake as a
+duration copied from what a trim ASKED for (the plan's §7).
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,7 +49,7 @@ RECENT_MAX = 500
 # would dwarf everything else in the response. The trim sheet fetches the one clip it is
 # about, which is where the envelope is worth its bytes.
 _LIST_COLUMNS = (
-    "id::text AS id, started_at, ended_at, duration_s, captured_s, frequency_hz, mode,"
+    "id::text AS id, kind, started_at, ended_at, duration_s, captured_s, frequency_hz, mode,"
     " bandwidth_hz, gain, serial, bytes, transcribed_at,"
     " (transcript IS NOT NULL) AS has_transcript"
 )
@@ -106,6 +114,64 @@ class RecordingsRepo:
             await session.commit()
             return saved
 
+    async def add_captions(
+        self,
+        ctx: SessionContext,
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        duration_s: float,
+        frequency_hz: int,
+        mode: str,
+        bandwidth_hz: int | None,
+        gain: str | None,
+        serial: str | None,
+        transcript: dict[str, Any],
+        transcribed_at: datetime,
+    ) -> dict[str, Any]:
+        """Write one finished CAPTIONS recording — a transcript, and no audio at all.
+
+        A separate statement rather than `add` with everything optional, because the two
+        INSERTs name disjoint columns: this one must not mention `blob_sha256`, `bytes` or
+        `peaks` at all, and one call site that can supply either set is one that can
+        supply a captions row with a zero byte count. The columns it omits are NULL by the
+        CHECK's own definition of this kind.
+
+        `duration_s` is the wall clock the capture ran for — there is no decoded length to
+        measure, because there is no file. `captured_s` takes the same value for the same
+        reason `add` does: nothing trims a transcript, so the two stay equal for ever and
+        the library reads a captions row as untrimmed.
+        """
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "INSERT INTO app.sdr_recordings"
+                        " (kind, started_at, ended_at, duration_s, captured_s, frequency_hz,"
+                        " mode, bandwidth_hz, gain, serial, transcript, transcribed_at)"
+                        " VALUES ('captions', :started_at, :ended_at, :duration_s, :duration_s,"
+                        " :hz, :mode, :bandwidth_hz, :gain, :serial, CAST(:transcript AS jsonb),"
+                        " :transcribed_at)"
+                        f" RETURNING {_ONE_COLUMNS}"
+                    ),
+                    {
+                        "started_at": started_at,
+                        "ended_at": ended_at,
+                        "duration_s": duration_s,
+                        "hz": frequency_hz,
+                        "mode": mode,
+                        "bandwidth_hz": bandwidth_hz,
+                        "gain": gain,
+                        "serial": serial,
+                        "transcript": json.dumps(transcript),
+                        "transcribed_at": transcribed_at,
+                    },
+                )
+            ).mappings()
+            saved = dict(row.one())
+            await session.commit()
+            return saved
+
     async def recent(
         self, ctx: SessionContext, *, limit: int = RECENT_DEFAULT
     ) -> list[dict[str, Any]]:
@@ -147,12 +213,22 @@ class RecordingsRepo:
         (`captured_s - duration_s`) rather than remembered, because nothing stores what a
         deleted blob weighed. It is the number the mock's "1.1 MB reclaimed by trimming"
         line shows, and at a constant 64 kbps it is exact to within a frame.
+
+        **Both money columns are filtered to `kind = 'audio'`, and the count is not.**
+        A captions row takes no disk worth reporting and has no bitrate at which to be
+        priced, so seconds of it multiplied by `BYTES_PER_S` would be an invented
+        measurement in the one number the owner uses to decide what to delete — and this
+        is the meter that has to stay true, because nothing here expires on its own.
+        `count` stays whole because it counts the LIBRARY, which is what the header sits
+        above and what the rows under it add up to.
         """
         async with scoped_session(self._maker, ctx) as session:
             result = await session.execute(
                 text(
-                    "SELECT count(*) AS count, COALESCE(sum(bytes), 0) AS bytes,"
-                    " COALESCE(sum(GREATEST(captured_s - duration_s, 0)), 0) AS trimmed_s"
+                    "SELECT count(*) AS count,"
+                    " COALESCE(sum(bytes) FILTER (WHERE kind = 'audio'), 0) AS bytes,"
+                    " COALESCE(sum(GREATEST(captured_s - duration_s, 0))"
+                    "  FILTER (WHERE kind = 'audio'), 0) AS trimmed_s"
                     " FROM app.sdr_recordings"
                 )
             )
@@ -195,22 +271,32 @@ class RecordingsRepo:
             await session.commit()
             return dict(updated) if updated is not None else None
 
-    async def remove(self, ctx: SessionContext, recording_id: str) -> str | None:
-        """Delete a row, returning the blob it held so the caller can free it.
+    async def remove(self, ctx: SessionContext, recording_id: str) -> dict[str, Any] | None:
+        """Delete a row, returning what it held so the caller can free the blob.
 
-        Returning the sha rather than deleting the blob here keeps this module free of
+        Returning the row rather than deleting the blob here keeps this module free of
         file I/O — and the caller has to ask `blob_in_use` before unlinking anyway.
+
+        **The row, not the sha.** This used to hand back `blob_sha256` alone, with None
+        meaning "no such recording" — which was unambiguous only while every row had a
+        blob. A captions row has none, so a bare sha would have reported a delete that
+        HAD happened as a 404 and left the owner pressing Delete on a row already gone.
+        `None` here means the row was not there; a row with `blob_sha256` None means
+        there was never a file to free.
         """
         async with scoped_session(self._maker, ctx) as session:
             row = (
                 await session.execute(
-                    text("DELETE FROM app.sdr_recordings WHERE id = :id RETURNING blob_sha256"),
+                    text(
+                        "DELETE FROM app.sdr_recordings WHERE id = :id"
+                        " RETURNING id::text AS id, kind, blob_sha256"
+                    ),
                     {"id": recording_id},
                 )
             ).mappings()
             gone = row.one_or_none()
             await session.commit()
-            return cast(str, gone["blob_sha256"]) if gone is not None else None
+            return dict(gone) if gone is not None else None
 
     async def blob_in_use(
         self, ctx: SessionContext, sha256: str, *, except_id: str | None = None
@@ -225,6 +311,12 @@ class RecordingsRepo:
         delete that consulted only this table would unlink a live chat attachment. Hence
         `blob_refs.BLOB_REFERENCES`, which is every blob-holding table in the schema;
         this method is `app.sdr_recordings`' door onto it.
+
+        A CAPTIONS row is never a holder: its `blob_sha256` is NULL, and `blob_sha256 =
+        :sha` is NULL rather than true for it, so it neither keeps a blob alive nor is
+        mistaken for keeping one. What the CALLER must not do is ask this about a NULL —
+        there is nothing to free, and the question is not "is it in use" but "is there a
+        file at all".
         """
         async with scoped_session(self._maker, ctx) as session:
             return await blob_referenced(
