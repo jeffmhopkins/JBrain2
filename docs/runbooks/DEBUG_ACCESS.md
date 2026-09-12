@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-09-12 — `POST /sdr/sweep` and `POST /sdr/capture` now honour the chosen radio's stored gain and upconverter offset, and a sweep reports the gain its rows were MEASURED at.
+> **Status:** Living · **Last verified:** 2026-09-12 — a dial outside the converter's own input passband (300 Hz - 65 MHz on this Ham It Up, owner-supplied) is now a 400 on every tune and sweep route, naming the converter and the tune it would have produced; a span it blocks part of is refused whole rather than trimmed. Prior: `POST /sdr/sweep` and `POST /sdr/capture` now honour the chosen radio's stored gain and upconverter offset, and a sweep reports the gain its rows were MEASURED at.
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read

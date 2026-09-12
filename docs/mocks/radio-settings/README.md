@@ -45,7 +45,7 @@ scale legend goes from `dBFS @ 30 dB` to `relative — gain is moving`.
 132.200, and every frequency the owner reads stays at 7.200. The offset is
 editable because 125 MHz is this unit's number, not every unit's.
 
-## What this deliberately does not claim
+## What this claims, and what it deliberately does not
 
 HF is **already reachable** without a converter — `TUNABLE_MIN_MHZ` is 0.1 via
 direct sampling — so “unlocks HF” is not the argument and is not made. What the
@@ -54,9 +54,19 @@ tuner down, so gain is a no-op there), no `28.8 − f` mirror summed into every
 bin, no 14.4–24 MHz hole, and hopped HF waterfalls. The card states the first,
 because it is the one the owner is about to feel.
 
-Nor does it assert a passband edge for the converter. No one has measured this
-unit's, so the card warns when a VHF frequency is tuned with the converter
-inline rather than naming a number it does not have.
+It did not assert a passband edge for the converter either, because no one had
+measured this unit's. **The owner supplied it on 2026-09-12: this Ham It Up
+passes 300 Hz to 65 MHz.** They own the unit, so that is the number — and it is
+now a refusal rather than a warning. `tuner.CONVERTER_MIN_MHZ` /
+`CONVERTER_MAX_MHZ` carry it, and a dial outside it with the converter inline is
+refused naming both the dial and the tune it would have produced. (The mock's own
+harness guessed the edge at 30 MHz, in `a-two-more-fields.html`; it is left as the
+design record it is, and 65 is the number the code uses.)
+
+What made this worth fixing rather than documenting: the owner set Inline /
+125 MHz and swept 88-108, and every check passed. 98 + 125 is 223 MHz, which the
+dongle tunes perfectly — nothing anywhere asked whether the converter's input
+had passed the 98.
 
 ## Built, and what shipped instead of a switch
 
@@ -85,8 +95,9 @@ band, so every shortwave row used to carry `gain_db: 30` with the tuner powered 
 Whether this Ham It Up has the **hardware bypass switch**. The app cannot see its
 position, so with a bypass the setting probably wants three states
 (`off · inline · bypassed`) rather than two — otherwise the stored offset is a
-claim only the owner can keep true. Shipped with two states and a warning that names
-no passband edge, which is the honest version of not knowing.
+claim only the owner can keep true. Shipped with two states; the passband edge
+the note left blank is filled in now (300 Hz - 65 MHz), so what is still unknown
+is only whether a bypass switch can make the stored offset a lie.
 
 ## The harness is the argument
 

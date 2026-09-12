@@ -638,15 +638,37 @@ CONVERTED = Radio(serial="77192819", gain="20", upconverter_hz=125_000_000)
 async def test_the_radios_stored_gain_and_offset_reach_a_waterfall(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """40 m rather than FM broadcast, and that is the point of the converter: a band the
+    dongle reaches badly on its own, drawn through the tuner. This test used to ask for
+    `fm-broadcast` THROUGH the converter, which the api accepted — 88 + 125 is an
+    ordinary tuning — and the radio then heard nothing, because the converter's input
+    passes 300 Hz to 65 MHz (`tuner.CONVERTER_MAX_MHZ`). It is a 400 now."""
     seen = _posts(monkeypatch, CONVERTED)
 
-    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="40m")
 
     _path, body = seen[0]
     assert body["gain"] == "20"
     assert body["upconverter_hz"] == 125_000_000
     # The EDGES are the owner's, not the tune. They label the axis.
-    assert body["start_hz"] == 88_000_000
+    assert body["start_hz"] == 7_125_000
+
+
+async def test_a_band_the_converter_cannot_pass_is_refused_rather_than_drawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The incident, at the route. The owner set Inline / 125 MHz on the long wire and
+    swept 88-108: every bound here is about the TUNE, 88 + 125 = 213 MHz is inside all
+    of them, and the waterfall came back as noise. The refusal has to name the converter
+    and the way out, because Settings is where the fix is."""
+    _posts(monkeypatch, CONVERTED)
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+
+    assert refused.value.status_code == 400
+    assert "converter passes" in refused.value.detail
+    assert "turn the converter Off" in refused.value.detail
 
 
 async def test_a_gain_asked_for_by_this_call_beats_the_radios_standing_one(
@@ -657,7 +679,7 @@ async def test_a_gain_asked_for_by_this_call_beats_the_radios_standing_one(
     explicit request is not a default to be overridden."""
     seen = _posts(monkeypatch, CONVERTED)
 
-    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast", gain="0")
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="40m", gain="0")
 
     assert seen[0][1]["gain"] == "0"
 

@@ -56,6 +56,24 @@ DIRECT_MIN_MHZ = 0.1
 #: which one a frequency uses must ask `direct_sampling`, never compare against this.
 TUNABLE_MIN_MHZ = DIRECT_MIN_MHZ
 
+#: What the CONVERTER passes at its own INPUT — a bound on the DIAL, not on the tune.
+#: A Ham It Up is a 125 MHz mixer behind a low-pass filter, and the filter is the part
+#: nothing here asked about: 98 MHz + 125 is 223 MHz, an ordinary tuning this dongle
+#: takes without complaint, so an FM sweep through the converter was accepted and came
+#: back as noise. Every other bound in this file is about what the DONGLE can do, which
+#: is exactly why this one was missing.
+#:
+#: **The owner gave 300 Hz - 65 MHz on 2026-09-12** and owns the unit; that is the whole
+#: provenance, and it is a better one than a datasheet. Nothing in this repo measured it.
+#: 300 Hz is written as 0.0003 MHz on purpose — a floor of 0 would silently re-admit the
+#: DC end the filter does not pass, which is what an `int()` or a tidier literal costs.
+#:
+#: ONE pair of numbers, not a per-radio setting: one converter is in play. A second one
+#: would make this a table keyed by the stored offset — which is why the names say
+#: `CONVERTER` rather than being folded into the tuner's own bounds above.
+CONVERTER_MIN_MHZ = 0.0003
+CONVERTER_MAX_MHZ = 65.0
+
 
 def tuned_mhz(mhz: float, upconverter_mhz: float = 0.0) -> float:
     """Where the DONGLE sits to receive `mhz`, given whatever is in front of it.
@@ -103,7 +121,12 @@ def aliased(mhz: float, upconverter_mhz: float = 0.0) -> str | None:
     A converter takes the hole away rather than narrowing it: with one inline the dongle
     tunes above `MIN_MHZ`, the R820T2 is back in circuit and mixes properly, and there
     is no direct-sampling fold to refuse. That is what the converter is FOR — not
-    "unlocking HF", which direct sampling already does."""
+    "unlocking HF", which direct sampling already does.
+
+    Deliberately asked of the TUNE, and it stays that way: whether the ADC folds depends
+    on where the dongle sits and on nothing else. Whether the converter's input filter
+    passed the dial is a different question with a different answer, and it belongs to
+    `out_of_range` (`CONVERTER_MAX_MHZ`) — the same is true of `direct_sampling`."""
     tuned = tuned_mhz(mhz, upconverter_mhz)
     if NYQUIST_MHZ < tuned < MIN_MHZ:
         return (
@@ -130,11 +153,32 @@ def out_of_range(mhz: float, upconverter_mhz: float = 0.0) -> str | None:
     7.200 MHz is a frequency this dongle cannot mix and 132.200 is an ordinary one, and
     which of those the hardware is asked for is the whole content of the setting. The
     refusals then name BOTH numbers, because an owner reading "132.2 MHz is above what
-    this radio reaches" about a request for 7.2 would have no way to connect the two."""
+    this radio reaches" about a request for 7.2 would have no way to connect the two.
+
+    **But the DIAL is asked first, of the converter.** Reachability of the tune was the
+    only converter question here, and it is only half of one: the owner set 125 MHz
+    inline and swept 88-108, every frequency of which tunes comfortably inside 24-1766
+    and none of which the converter's input filter passes — accepted, and noise
+    (2026-09-12). First rather than last because it is the NEARER cause: 1700 MHz
+    through this converter is both past the dongle's ceiling and outside the converter's
+    input, and only one of those two refusals names something the owner can change."""
     if upconverter_mhz > 0:
         tuned = tuned_mhz(mhz, upconverter_mhz)
         if mhz <= 0:
             return f"{mhz:g} MHz is not a frequency."
+        if mhz > CONVERTER_MAX_MHZ:
+            return (
+                f"{mhz:g} MHz is above what the converter passes ({CONVERTER_MAX_MHZ:g} MHz at "
+                f"its input), so tuning {tuned:g} MHz would hear nothing — turn the converter "
+                f"Off for VHF and up."
+            )
+        if mhz < CONVERTER_MIN_MHZ:
+            # No remedy offered, unlike the top edge: with the converter Off this is
+            # below `DIRECT_MIN_MHZ` too, so "turn it off" would be a fix that fails.
+            return (
+                f"{mhz:g} MHz is below what the converter passes ({CONVERTER_MIN_MHZ:g} MHz at "
+                f"its input), so tuning {tuned:g} MHz would hear nothing."
+            )
         if tuned > MAX_MHZ:
             return (
                 f"{mhz:g} MHz tunes {tuned:g} MHz through the converter, which is above "
@@ -176,9 +220,47 @@ def viewable(start_mhz: float, stop_mhz: float, upconverter_mhz: float = 0.0) ->
     A converter moves the whole question onto the tuner path: the capture plan is chosen
     against the frequencies the DONGLE will see, because that is what decides which
     rates are legal and whether a span can be hopped. The refusals still name the
-    owner's edges, since those are the numbers they typed."""
+    owner's edges, since those are the numbers they typed.
+
+    **A span the converter blocks part of is refused WHOLE, never trimmed.** Trimming
+    would hand back a picture of 60-65 MHz labelled with the 60-70 that was asked for —
+    and every edge this function returns goes on to caption a waterfall, size a sweep's
+    occupancy window and anchor `peaks.find`. A quiet stripe where the converter stops
+    is indistinguishable from a quiet band, which is this module's whole reason for
+    refusing rather than serving something adjacent. So the refusal says the overlap out
+    loud and leaves asking for it to the owner."""
     if stop_mhz <= start_mhz:
         return "a waterfall needs a range, not a single frequency."
+    if upconverter_mhz > 0:
+        # Asked of the SPAN before the edges, so a blocked range is answered in a
+        # sentence about a range: the per-edge `out_of_range` below refuses the same
+        # requests, but while talking about one frequency and one tune. Only the edge
+        # that is actually in the way is named, as everywhere else in this module.
+        if start_mhz > CONVERTER_MAX_MHZ:
+            return (
+                f"{start_mhz:g}-{stop_mhz:g} MHz is above what the converter passes "
+                f"({CONVERTER_MAX_MHZ:g} MHz at its input), so none of it reaches the dongle — "
+                f"turn the converter Off for VHF and up."
+            )
+        if stop_mhz > CONVERTER_MAX_MHZ:
+            return (
+                f"{start_mhz:g}-{stop_mhz:g} MHz runs past the top of what the converter passes "
+                f"({CONVERTER_MAX_MHZ:g} MHz at its input), and a span it blocks part of is "
+                f"refused whole rather than trimmed. Ask for {start_mhz:g}-"
+                f"{CONVERTER_MAX_MHZ:g} MHz, or turn the converter Off."
+            )
+        if stop_mhz < CONVERTER_MIN_MHZ:
+            return (
+                f"{start_mhz:g}-{stop_mhz:g} MHz is below what the converter passes "
+                f"({CONVERTER_MIN_MHZ:g} MHz at its input), so none of it reaches the dongle."
+            )
+        if start_mhz < CONVERTER_MIN_MHZ:
+            return (
+                f"{start_mhz:g}-{stop_mhz:g} MHz starts below what the converter passes "
+                f"({CONVERTER_MIN_MHZ:g} MHz at its input), and a span it blocks part of is "
+                f"refused whole rather than trimmed. Ask for {CONVERTER_MIN_MHZ:g}-"
+                f"{stop_mhz:g} MHz."
+            )
     for edge in (start_mhz, stop_mhz):
         refusal = out_of_range(edge, upconverter_mhz)
         if refusal:
