@@ -26,7 +26,16 @@ const WHIP = "09022796";
 const WIRE = "77192819";
 
 function radio(serial: string, over: Record<string, unknown> = {}) {
-  return { serial, name: "", description: "", role: "general", attached: true, ...over };
+  return {
+    serial,
+    name: "",
+    description: "",
+    role: "general",
+    attached: true,
+    gain: "",
+    upconverter_hz: 0,
+    ...over,
+  };
 }
 
 function session(over: Record<string, unknown> = {}) {

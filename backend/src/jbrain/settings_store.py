@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.sdr.roles import GENERAL, Radio
+from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
 ImageAnalysisMode = Literal["full", "ocr"]
 IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
@@ -473,6 +473,27 @@ def _dedup_str_list(raw: object) -> list[str]:
     return out
 
 
+def _sdr_gain(raw: object) -> str:
+    """One radio's stored tuner gain, or "" for unset. Never raises.
+
+    Only the MEASURED rungs and `auto` survive, so a stored value this build does not
+    recognise reads as no choice at all rather than reaching `rtl_fm -g` or
+    `setGain` as a number nobody measured."""
+    return raw if isinstance(raw, str) and raw in GAIN_CHOICES else ""
+
+
+def _sdr_upconverter_hz(raw: object) -> int:
+    """One radio's stored converter offset in Hz, or 0 for none. Never raises.
+
+    Bounded at both ends, and `bool` excluded because `True` is an `int` in Python and
+    a radio tuned 1 Hz high is a radio nobody can debug. Out of range reads as NO
+    converter, which is the one fallback that cannot mis-tune: it is what the box did
+    before this field existed."""
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    return raw if 0 <= raw <= UPCONVERTER_MAX_HZ else 0
+
+
 class SqlSettingsStore:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -860,23 +881,50 @@ class SqlSettingsStore:
                 # the tuner is the silent-substitution failure this whole feature exists
                 # to stop. It stays reserved and unusable until the owner says otherwise.
                 role=role[:SDR_RADIO_ROLE_MAX] if isinstance(role, str) and role else GENERAL,
+                # UNSET is the fallback for both, and it is the opposite decision to the
+                # role above — deliberately. An unreadable role could be a reservation a
+                # newer build understands, so keeping it costs a radio nobody needed; an
+                # unreadable gain or offset is a claim about the SIGNAL PATH, and a
+                # half-read one would have the radio tune somewhere nobody asked for or
+                # pin a gain nobody chose. Unset is the behaviour of a box that never
+                # opened this screen, which is the safe place to fail to.
+                gain=_sdr_gain(entry.get("gain")),
+                upconverter_hz=_sdr_upconverter_hz(entry.get("upconverter_hz")),
             )
         return clean
 
     async def set_sdr_radio(
-        self, ctx: SessionContext, serial: str, *, name: str, description: str, role: str
+        self,
+        ctx: SessionContext,
+        serial: str,
+        *,
+        name: str,
+        description: str,
+        role: str,
+        gain: str = "",
+        upconverter_hz: int = 0,
     ) -> dict[str, Radio]:
         """Describe one radio, leaving the others alone. Returns the whole map.
 
         Read-modify-write on one jsonb key, which is safe here because the only writer
         is the owner editing a settings screen — there is no concurrent updater to lose
-        an entry to."""
+        an entry to.
+
+        The two tuning fields default to UNSET rather than to whatever is stored, because
+        the card saves all of a radio at once: a caller that sent four fields and meant
+        to leave the fifth alone would be a caller that could not clear it."""
         current = await self.get(ctx, SDR_RADIOS_KEY, {})
         entries = dict(current) if isinstance(current, dict) else {}
         entries[serial] = {
             "name": name.strip()[:SDR_RADIO_NAME_MAX],
             "description": description.strip()[:SDR_RADIO_DESC_MAX],
             "role": role.strip()[:SDR_RADIO_ROLE_MAX] or GENERAL,
+            # Sanitized on the way IN as well as on the way out. The read is the guard
+            # that matters — it is what a value written by an older build meets — but
+            # storing junk here would leave the settings blob saying something the radio
+            # never did, and the debug console reads the blob.
+            "gain": _sdr_gain(gain),
+            "upconverter_hz": _sdr_upconverter_hz(upconverter_hz),
         }
         await self.upsert(ctx, SDR_RADIOS_KEY, entries)
         return await self.sdr_radios(ctx)

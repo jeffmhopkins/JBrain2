@@ -677,6 +677,7 @@ class Radio:
         bufflen_bytes: int = BUFFLEN_BYTES,
         stream_args: dict[str, str] | None = None,
         doing: str = "reading I/Q",
+        upconverter_hz: int = 0,
     ) -> None:
         self._driver = driver
         self.serial = serial
@@ -721,6 +722,17 @@ class Radio:
         #: `close()` therefore waits for whatever call is in flight — one read at worst,
         #: which is what `deactivateStream` does anyway when it joins the async thread.
         self._io_lock = threading.Lock()
+        #: How far a converter in front of this dongle shifts the TUNE, in Hz. 0 is no
+        #: converter, which is every radio until the owner says otherwise.
+        #:
+        #: **This is the only place in the program the shifted number exists.** Callers
+        #: hand `center_hz` the frequency they mean, `center_hz` reads back the
+        #: frequency they meant, and every `Buffer` is stamped with it — so nothing
+        #: downstream has an offset to subtract, and therefore nothing downstream can
+        #: forget to. The alternative, letting the shifted value into the session and
+        #: taking it off again at each of the dozen places a frequency is reported,
+        #: needs every one of them to be right; this needs one line to be.
+        self.upconverter_hz = max(0, int(upconverter_hz))
         self._rate_hz = 0
         self._achieved_rate_hz = 0.0
         #: The last `readStream`'s `flags` and `timeNs` (C17). Zero until something
@@ -745,14 +757,19 @@ class Radio:
         stream_args: dict[str, str] | None = None,
         driver: Driver | None = None,
         doing: str = "reading I/Q",
+        upconverter_hz: int = 0,
     ) -> "Radio":
-        """Open one radio, configure it, and start its stream. Never blocks."""
+        """Open one radio, configure it, and start its stream. Never blocks.
+
+        `center_hz` is the frequency the CALLER means throughout, converter or no
+        converter — see `upconverter_hz`."""
         radio = cls(
             driver if driver is not None else _Soapy(),
             serial=serial,
             bufflen_bytes=bufflen_bytes,
             stream_args=stream_args,
             doing=doing,
+            upconverter_hz=upconverter_hz,
         )
         _claim(radio.key, radio)
         try:
@@ -799,6 +816,11 @@ class Radio:
 
     @property
     def center_hz(self) -> int:
+        """Where this radio is listening — the OWNER's frequency, not the dongle's.
+
+        With a converter inline the two differ by `upconverter_hz`, and this is the one
+        that gets reported, stamped on buffers and drawn on axes. Nothing outside
+        `_apply_locked` ever sees the other."""
         return self._center_hz
 
     @property
@@ -1037,7 +1059,12 @@ class Radio:
             # Not optional: the centre the driver just restored is the OLD mode's.
             center_hz = self._center_hz if center_hz is None else center_hz
         if center_hz is not None:
-            device.setFrequency(self._driver.RX, CHANNEL, "RF", float(center_hz))
+            # THE ONE PLACE THE OFFSET IS APPLIED. To hear 7.200 MHz through a Ham It Up
+            # the dongle is told 132.200; `self._center_hz` keeps 7.200, which is what
+            # every caller asked for and what every reader gets back.
+            device.setFrequency(
+                self._driver.RX, CHANNEL, "RF", float(center_hz + self.upconverter_hz)
+            )
             self._center_hz = int(center_hz)
 
     def barrier(self, settle_s: float | None = None) -> int:

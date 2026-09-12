@@ -209,21 +209,34 @@ def test_a_waterfall_with_no_range_at_all_is_refused() -> None:
 # --- starting and moving --------------------------------------------------------
 
 
-def _posts(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+def _posts(
+    monkeypatch: pytest.MonkeyPatch, stored: Radio | None = None
+) -> list[tuple[str, dict[str, Any]]]:
     seen: list[tuple[str, dict[str, Any]]] = []
+    radio = stored or Radio(serial="77192819")
 
     async def post(_settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
         seen.append((path, body))
         return {"session_id": "s1", "purpose": "spectrum"}
 
     async def radio_for(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(
-            serial="77192819", radio=Radio(serial="77192819"), conflict=None, refusal=None
-        )
+        return SimpleNamespace(serial="77192819", radio=radio, conflict=None, refusal=None)
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Radio]:
+            return {radio.serial: radio}
+
+    async def session_radio(*_a: Any, **_k: Any) -> str:
+        return radio.serial
 
     monkeypatch.setattr(sdr_api, "_post", post)
     monkeypatch.setattr(sdr_api, "_radio_for", radio_for)
     monkeypatch.setattr(sdr_api, "_refuse", lambda _c: None)
+    monkeypatch.setattr(sdr_api, "get_settings_store", lambda _r: _Store())
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _o: object())
+    # Which dongle holds the session being retuned. Read off the sidecar's health in
+    # production; here the fake answers with the one radio these tests have.
+    monkeypatch.setattr(sdr_api, "_session_radio", session_radio)
     return seen
 
 
@@ -257,6 +270,7 @@ async def test_moving_the_picture_never_releases_the_radio(
     seen = _posts(monkeypatch)
 
     await sdr_api.spectrum_tune(
+        _request(),
         _settings(),
         OWNER,
         section="air-tower",
@@ -569,7 +583,9 @@ async def test_retuning_can_change_only_the_filter(
     is no separate "set bandwidth" route to get out of step with `/tune`."""
     seen = _posts(monkeypatch)
 
-    await sdr_api.tune(_settings(), OWNER, frequency_mhz=5.0, session_id="s1", bandwidth_hz=4_000)
+    await sdr_api.tune(
+        _request(), _settings(), OWNER, frequency_mhz=5.0, session_id="s1", bandwidth_hz=4_000
+    )
 
     path, body = seen[-1]
     assert path == "/listen/tune"
@@ -607,3 +623,72 @@ def test_the_bandwidth_is_bounded_by_the_schema(route: Any) -> None:
     assert low <= 1_800 and high >= 180_000
     for absurd in (0, 6, 500, 500_000):
         assert not (low <= absurd <= high), absurd
+
+
+# --- what the radio's own settings do to a start ------------------------------------
+#
+# Gain and an upconverter are stored per radio, on the same `sdr_radios` entry as the
+# name and the role (docs/mocks/radio-settings/README.md). What the api owes them is to
+# read them off the radio it just chose and put them on the body — every purpose, with
+# the frequency left alone.
+
+CONVERTED = Radio(serial="77192819", gain="20", upconverter_hz=125_000_000)
+
+
+async def test_the_radios_stored_gain_and_offset_reach_a_waterfall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+
+    _path, body = seen[0]
+    assert body["gain"] == "20"
+    assert body["upconverter_hz"] == 125_000_000
+    # The EDGES are the owner's, not the tune. They label the axis.
+    assert body["start_hz"] == 88_000_000
+
+
+async def test_a_gain_asked_for_by_this_call_beats_the_radios_standing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ONE mechanism, not two. The per-session `?gain=` predates the setting and is how
+    the debug console and jerv measure the same band at two gains on purpose, so an
+    explicit request is not a default to be overridden."""
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast", gain="0")
+
+    assert seen[0][1]["gain"] == "0"
+
+
+async def test_an_unconfigured_radio_sends_what_it_always_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A radio nobody has opened this screen for must behave bit-for-bit as it did: no
+    gain named, so the sidecar's per-purpose default applies, and no offset."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=146.52)
+
+    for _path, body in seen:
+        assert body["gain"] is None
+        assert body["upconverter_hz"] == 0
+
+
+async def test_the_frequency_on_the_wire_is_never_the_shifted_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression this feature is most likely to cause, guarded at the api door as
+    well as in the sidecar: 7.200 MHz through a 125 MHz converter is a request for
+    7.200, plus an offset the RADIO applies. A `frequency_hz` of 132_200_000 here would
+    label a session, its recording and its heard log 125 MHz wrong."""
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=7.2, mode="usb")
+
+    _path, body = seen[0]
+    assert body["frequency_hz"] == 7_200_000
+    assert body["upconverter_hz"] == 125_000_000
+    assert "132200000" not in json.dumps(body)

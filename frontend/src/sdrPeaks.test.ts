@@ -31,6 +31,7 @@ function row(
     passbandHz: 0,
     passbandCentreHz: 0,
     gainDb: null,
+    tunerBypassed: false,
     channelHz,
     view: "band" as const,
     peaks: peaks.map((p) => ({ measuredHz: p.hz, ...p, overDb: 12 })),

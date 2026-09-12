@@ -1213,6 +1213,56 @@ button.chip-ask {
   gap: 8px;
 }
 
+/* Gain and Upconverter are <fieldset>s so the group's name is its <legend> — the
+   segmented control is a set of buttons, and a plain label would name only whichever
+   one the pointer happened to be over. The browser's own fieldset chrome is dropped:
+   this card's fields are flush blocks, not boxes inside boxes. */
+fieldset.settings-field {
+  border: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+fieldset.settings-field > legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+/* A line under a control saying what the setting will actually do — Settings → Radios
+   uses them for gain and the upconverter. ALWAYS present rather than only in the bad
+   state: a caption that appears when something is wrong teaches the reader to ignore
+   captions (docs/mocks/radio-settings/README.md). */
+.settings-note {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  margin: 6px 0 0;
+}
+/* A choice the measurements argue against — auto, 0 dB, 40 dB, a converter inline —
+   reads louder than one they support, without becoming an error: every one of them is
+   a legal setting the owner may want. */
+.settings-note.warn {
+  color: var(--text);
+}
+/* A setting that is not doing anything recedes instead. */
+.settings-note.off {
+  color: var(--text-3);
+}
+
+/* The upconverter's MHz field: a short number beside its unit, not a full-width input —
+   a frequency offset is three or four digits. */
+.settings-offset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.settings-offset input {
+  width: 8em;
+}
+
 /* jmolt's review queue: staged writes the owner releases or discards while autonomy is
    off. Content is rendered as inert text (M15) — no HTML, links defanged. */
 .settings-subsection {

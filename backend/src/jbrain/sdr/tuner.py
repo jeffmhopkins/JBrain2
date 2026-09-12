@@ -57,7 +57,20 @@ DIRECT_MIN_MHZ = 0.1
 TUNABLE_MIN_MHZ = DIRECT_MIN_MHZ
 
 
-def direct_sampling(mhz: float) -> bool:
+def tuned_mhz(mhz: float, upconverter_mhz: float = 0.0) -> float:
+    """Where the DONGLE sits to receive `mhz`, given whatever is in front of it.
+
+    The whole of the upconverter, in one line. A Ham It Up mixes the band up by its
+    crystal, so to hear 7.200 the dongle tunes 132.200 — and this is the only direction
+    the shift is ever computed in. Nothing subtracts it back off, because nothing else
+    ever holds the shifted number: every frequency any layer reports is the owner's, and
+    the tune is derived from it at the two places that actually talk to the hardware
+    (`deploy/sdr/radio.Radio._apply_locked` and the one `-f` argv). A codebase with a
+    subtraction in it is a codebase where one caller can forget one."""
+    return mhz + max(upconverter_mhz, 0.0)
+
+
+def direct_sampling(mhz: float, upconverter_mhz: float = 0.0) -> bool:
     """Whether this frequency is reached with the tuner bypassed.
 
     Three consequences follow, and every one of them is a thing the UI must not offer:
@@ -68,10 +81,10 @@ def direct_sampling(mhz: float) -> bool:
     clock and the fold is in the samples rather than in the picture. The band table
     names the folded band per section (`image_start_hz`); this used to say the images
     started above 14.4 MHz, which was the *aliasing* rule and not the image one."""
-    return mhz < MIN_MHZ
+    return tuned_mhz(mhz, upconverter_mhz) < MIN_MHZ
 
 
-def aliased(mhz: float) -> str | None:
+def aliased(mhz: float, upconverter_mhz: float = 0.0) -> str | None:
     """Why tuning here would hand back a DIFFERENT frequency, or None.
 
     The hole between the two signal paths, and the reason it is a refusal rather than a
@@ -85,8 +98,14 @@ def aliased(mhz: float) -> str | None:
 
     Refused rather than served with a note, because the failure is silent by
     construction: nothing downstream — not the level meter, not whisper, not the
-    waterfall's colour scale — can tell the two apart."""
-    if NYQUIST_MHZ < mhz < MIN_MHZ:
+    waterfall's colour scale — can tell the two apart.
+
+    A converter takes the hole away rather than narrowing it: with one inline the dongle
+    tunes above `MIN_MHZ`, the R820T2 is back in circuit and mixes properly, and there
+    is no direct-sampling fold to refuse. That is what the converter is FOR — not
+    "unlocking HF", which direct sampling already does."""
+    tuned = tuned_mhz(mhz, upconverter_mhz)
+    if NYQUIST_MHZ < tuned < MIN_MHZ:
         return (
             f"{mhz:g} MHz is not receivable: below {MIN_MHZ:g} MHz this radio bypasses "
             f"its tuner and samples directly, and that path is honest only up to "
@@ -96,7 +115,7 @@ def aliased(mhz: float) -> str | None:
     return None
 
 
-def out_of_range(mhz: float) -> str | None:
+def out_of_range(mhz: float, upconverter_mhz: float = 0.0) -> str | None:
     """Why this frequency cannot be tuned, or None. One sentence, for an operator.
 
     Says which END it is outside rather than quoting the whole range, because "0.1 to
@@ -105,7 +124,31 @@ def out_of_range(mhz: float) -> str | None:
     not that it is legal.
 
     The range has a HOLE in it, which is the other reason not to quote the ends:
-    14.4-24 MHz is inside both numbers and reachable by neither path (`aliased`)."""
+    14.4-24 MHz is inside both numbers and reachable by neither path (`aliased`).
+
+    With a converter inline the question is asked of the TUNE rather than of the dial:
+    7.200 MHz is a frequency this dongle cannot mix and 132.200 is an ordinary one, and
+    which of those the hardware is asked for is the whole content of the setting. The
+    refusals then name BOTH numbers, because an owner reading "132.2 MHz is above what
+    this radio reaches" about a request for 7.2 would have no way to connect the two."""
+    if upconverter_mhz > 0:
+        tuned = tuned_mhz(mhz, upconverter_mhz)
+        if mhz <= 0:
+            return f"{mhz:g} MHz is not a frequency."
+        if tuned > MAX_MHZ:
+            return (
+                f"{mhz:g} MHz tunes {tuned:g} MHz through the converter, which is above "
+                f"what this radio reaches ({MAX_MHZ:g} MHz)."
+            )
+        if tuned < MIN_MHZ:
+            # Not a frequency problem — an OFFSET problem, and saying so is the
+            # difference between an owner correcting a setting and an owner concluding
+            # the radio cannot hear a band it can.
+            return (
+                f"{mhz:g} MHz tunes {tuned:g} MHz through the converter, below the "
+                f"tuner's floor ({MIN_MHZ:g} MHz) — the offset is too small for it."
+            )
+        return None
     if mhz > MAX_MHZ:
         return f"{mhz:g} MHz is above what this radio reaches ({MAX_MHZ:g} MHz)."
     if mhz < DIRECT_MIN_MHZ:
@@ -117,7 +160,7 @@ def out_of_range(mhz: float) -> str | None:
 MAX_SPAN_MHZ = 60.0
 
 
-def viewable(start_mhz: float, stop_mhz: float) -> str | None:
+def viewable(start_mhz: float, stop_mhz: float, upconverter_mhz: float = 0.0) -> str | None:
     """Why a live spectrum cannot cover this range, or None. One sentence, as ever.
 
     **The only question now, for the picture and for the survey alike.** These used to
@@ -128,14 +171,21 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
     What replaces it down there is a NARROWER rule, not none: below `MIN_MHZ` the
     picture is one capture or nothing, because the thing that stitches several hops
     together is the tool that cannot go there. `bands.capture_for` answers whether one
-    exists, so the band table and this refusal cannot disagree about the same range."""
+    exists, so the band table and this refusal cannot disagree about the same range.
+
+    A converter moves the whole question onto the tuner path: the capture plan is chosen
+    against the frequencies the DONGLE will see, because that is what decides which
+    rates are legal and whether a span can be hopped. The refusals still name the
+    owner's edges, since those are the numbers they typed."""
     if stop_mhz <= start_mhz:
         return "a waterfall needs a range, not a single frequency."
     for edge in (start_mhz, stop_mhz):
-        refusal = out_of_range(edge)
+        refusal = out_of_range(edge, upconverter_mhz)
         if refusal:
             return refusal
-    if direct_sampling(start_mhz) != direct_sampling(stop_mhz):
+    tuned_start_hz = int(round(tuned_mhz(start_mhz, upconverter_mhz) * 1_000_000))
+    tuned_stop_hz = int(round(tuned_mhz(stop_mhz, upconverter_mhz) * 1_000_000))
+    if direct_sampling(start_mhz, upconverter_mhz) != direct_sampling(stop_mhz, upconverter_mhz):
         # Not a bandwidth problem, which is why it is said separately: the tuner is
         # powered down on one side of this line and in circuit on the other, so no
         # single capture exists that could cover both halves.
@@ -144,10 +194,8 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
             f"changes signal path — the tuner is bypassed below it and in circuit "
             f"above. Ask for one side at a time."
         )
-    if direct_sampling(start_mhz):
-        start_hz = int(round(start_mhz * 1_000_000))
-        stop_hz = int(round(stop_mhz * 1_000_000))
-        if bands.capture_for(start_hz, stop_hz) is None:
+    if direct_sampling(start_mhz, upconverter_mhz):
+        if bands.capture_for(tuned_start_hz, tuned_stop_hz) is None:
             return (
                 f"{stop_mhz - start_mhz:g} MHz at once is more than one capture below "
                 f"{MIN_MHZ:g} MHz, and the sweep that stitches several together cannot "
@@ -159,9 +207,10 @@ def viewable(start_mhz: float, stop_mhz: float) -> str | None:
             f"{stop_mhz - start_mhz:g} MHz at once is wider than the radio can sweep "
             f"({MAX_SPAN_MHZ:g} MHz). Pick a section of it."
         )
-    start_hz = int(round(start_mhz * 1_000_000))
-    stop_hz = int(round(stop_mhz * 1_000_000))
-    if bands.capture_for(start_hz, stop_hz) is None and bands.hop_plan(start_hz, stop_hz) is None:
+    if (
+        bands.capture_for(tuned_start_hz, tuned_stop_hz) is None
+        and bands.hop_plan(tuned_start_hz, tuned_stop_hz) is None
+    ):
         # THE ENGINE'S OWN LIMIT, said rather than served by a different engine. Until
         # B1 this fell through to `rtl_power`, which draws the range on its own
         # uncalibrated scale — and both engines land on the same `Frame.db`, the same

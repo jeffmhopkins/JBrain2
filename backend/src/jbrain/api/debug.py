@@ -75,7 +75,7 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
-from jbrain.sdr.roles import GENERAL
+from jbrain.sdr.roles import GENERAL, Radio
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
 from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range
 from jbrain.settings_store import SqlSettingsStore
@@ -132,6 +132,20 @@ async def _radio(request: Request, settings: Any, want: str) -> str | None:
     if detail is not None:
         raise HTTPException(status_code=409, detail=detail)
     return choice.serial
+
+
+async def _rig(request: Request, serial: str | None) -> Radio:
+    """What the owner has said about that radio's signal path — its pinned gain and any
+    converter in front of it.
+
+    The debug console is a third door onto the same hardware, so it has to honour the
+    same settings: a sweep from here that forgot the converter would tune the raw
+    shortwave frequency, power the tuner down, and measure an antenna the converter's
+    output is not connected to — a picture of silence, confidently labelled."""
+    if not serial:
+        return Radio(serial="")
+    stored = await _store(request).sdr_radios(_OWNER_CTX)
+    return stored.get(serial) or Radio(serial=serial)
 
 
 def _gateway(request: Request) -> Any:
@@ -1048,6 +1062,20 @@ class SdrSweepOut(BaseModel):
     png_base64: str
     csv_chars: int
     csv: str | None = None
+    gain_db: float | None = None
+    """The tuner gain these rows were MEASURED at, or None when the tuner was on its own
+    loop. A survey's numbers are dBFS, and dBFS is comparable only against the same gain
+    and the same bin width — the width was reported and the gain was not, so two runs
+    taken at 10 and at 30 dB came back looking like the same instrument. The api cannot
+    derive it: absent in the request means the sidecar's per-purpose default, and since
+    the gain became a per-radio setting it can also mean whatever that radio stores."""
+    tuner_bypassed: bool = False
+    """True when the sweep ran below 24 MHz with no converter, where the tuner is
+    powered down and there is no gain stage at all. A third answer, not a missing one:
+    the levels are true dBFS with no gain to quote, rather than a moving reference."""
+    upconverter_hz: int = 0
+    """The converter offset the radio was tuned through, in Hz. Every frequency in this
+    response — `start_hz`, `stop_hz`, every bin — is the owner's, never the tune."""
     """The raw rtl_power CSV, when asked for. Off by default because it is megabytes and
     dwarfs everything else here — but a calibration instrument that will not hand back
     its measurements is not one, and inferring a floor from PNG pixel brightness (which
@@ -1811,7 +1839,14 @@ async def sdr_sweep(
     # `_span` checks BOTH EDGES, which the sidecar cannot: it validates the sweep's
     # centre, so a 10-70 MHz request centres on 40 and passes every check while its
     # bottom half cannot be measured at all and comes back reported as quiet.
-    start_hz, stop_hz, _picture_bin, capture = sdr_api._span(None, start_mhz, stop_mhz)  # noqa: SLF001
+    # WHICH RADIO FIRST, because the capture plan depends on what is in front of it: a
+    # converted shortwave span is the tuner doing ordinary work at VHF, not the ADC
+    # branch its own edges imply.
+    serial = await _radio(request, settings, GENERAL)
+    rig = await _rig(request, serial)
+    start_hz, stop_hz, _picture_bin, capture = sdr_api._span(  # noqa: SLF001
+        None, start_mhz, stop_mhz, rig.upconverter_hz
+    )
 
     body: dict[str, Any] = {
         "start_hz": start_hz,
@@ -1821,11 +1856,14 @@ async def sdr_sweep(
         # used; nothing here assumes they are equal.
         "bin_hz": int(round(bin_khz * 1_000)),
         "seconds": seconds,
-        "gain": gain,
+        # This call's gain if it named one — measuring the same band at two gains on
+        # purpose is what this route is for — and otherwise the radio's standing choice.
+        "gain": sdr_api._tuner_gain(gain, rig),  # noqa: SLF001
+        "upconverter_hz": rig.upconverter_hz,
         # A sweep is a general use of the radio, so it may not take one reserved for a
         # service. Resolved BEFORE the job is queued, so a refusal is this request's 409
         # rather than an error the caller has to poll for.
-        "serial": await _radio(request, settings, GENERAL),
+        "serial": serial,
     }
     if capture is not None:
         # The capture the plan named, as the spectrum routes send it: the band table
@@ -1904,6 +1942,13 @@ async def sdr_sweep(
                 # unparsed one without paying for the whole CSV.
                 csv_chars=len(csv_text),
                 csv=csv_text if include_csv else None,
+                gain_db=(
+                    float(payload["gain_db"])
+                    if isinstance(payload.get("gain_db"), (int, float))
+                    else None
+                ),
+                tuner_bypassed=payload.get("tuner_bypassed") is True,
+                upconverter_hz=body["upconverter_hz"],
             )
             jobs[job_id] = {"status": "done", "result": out, "error": None}
         except Exception as exc:  # noqa: BLE001 - a debug job must surface, not crash the loop
@@ -1915,15 +1960,18 @@ async def sdr_sweep(
     return JobSubmitOut(job_id=job_id)
 
 
-def _receivable(frequency_mhz: float) -> None:
+def _receivable(frequency_mhz: float, upconverter_hz: int = 0) -> None:
     """Refuse a frequency the radio would answer with a DIFFERENT one — the debug twin
     of `api/sdr.py`'s `_tunable`, and needed here for the same reason the owner routes
     need it: the `Query` bounds check the ENDS, and 14.4-24 MHz sits inside them and is
     reached by neither path. Below 24 MHz the sidecar tunes with `-E direct2`, and
     direct sampling folds the second Nyquist zone back onto the first, so 18.1 MHz is
     received as 10.7 (SDR_IQ_SPECTRUM_PLAN §8). A capture from there transcribes
-    cleanly and names the wrong band."""
-    refusal = out_of_range(frequency_mhz)
+    cleanly and names the wrong band.
+
+    A converter takes that hole away rather than narrowing it, so the question is asked
+    of the TUNE (`jbrain.sdr.tuner.out_of_range`)."""
+    refusal = out_of_range(frequency_mhz, upconverter_hz / 1_000_000)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
 
@@ -1952,22 +2000,27 @@ async def sdr_capture(
     transcript of an empty band is whisper hallucinating on noise, so judge the audio by
     `peak` first and the words second."""
     request.state.debug_detail = f"sdr capture {frequency_mhz} MHz {mode}"
-    _receivable(frequency_mhz)
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
 
+    serial = await _radio(request, settings, GENERAL)
+    rig = await _rig(request, serial)
+    _receivable(frequency_mhz, rig.upconverter_hz)
     freq_hz = int(round(frequency_mhz * 1_000_000))
     async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=seconds + 60) as client:
         resp = await client.post(
             "/capture",
             json={
+                # The OWNER's frequency. The offset below is what shifts the tune, and
+                # the WAV that comes back is stamped with this one.
                 "frequency_hz": freq_hz,
                 "seconds": seconds,
                 "mode": mode,
-                "gain": gain,
+                "gain": sdr_api._tuner_gain(gain, rig),  # noqa: SLF001
+                "upconverter_hz": rig.upconverter_hz,
                 # A capture is a general use of the radio. The sidecar has accepted a
                 # serial here since before radio roles existed; nothing had ever sent one.
-                "serial": await _radio(request, settings, GENERAL),
+                "serial": serial,
             },
         )
     if resp.status_code == 409:

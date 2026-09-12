@@ -42,6 +42,7 @@ function row(
     passbandCentreHz,
     channelHz: 0,
     gainDb: null,
+    tunerBypassed: false,
     view: "channel" as const,
   };
 }
@@ -70,6 +71,7 @@ function wideRow(offsetHz: number, { widthHz = 160_000, peakDb = -30, floorDb = 
     passbandCentreHz: 0,
     channelHz: 0,
     gainDb: null,
+    tunerBypassed: false,
     view: "channel" as const,
   } satisfies SpectrumRow;
 }
@@ -287,6 +289,7 @@ describe("a neighbour on the raster (C21)", () => {
       passbandCentreHz: 0,
       channelHz: 200_000,
       gainDb: null,
+      tunerBypassed: false,
       view: "channel" as const,
     };
   }

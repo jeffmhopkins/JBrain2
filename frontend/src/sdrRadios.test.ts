@@ -10,6 +10,8 @@ import {
   type SdrRadio,
   type SdrRadios,
   asRadios,
+  converterNote,
+  gainNote,
   generalOutcome,
   isKnownRole,
   labelFor,
@@ -21,7 +23,16 @@ const WHIP = "09022796";
 const WIRE = "77192819";
 
 function radio(serial: string, over: Partial<SdrRadio> = {}): SdrRadio {
-  return { serial, name: "", description: "", role: "general", attached: true, ...over };
+  return {
+    serial,
+    name: "",
+    description: "",
+    role: "general",
+    attached: true,
+    gain: "",
+    upconverter_hz: 0,
+    ...over,
+  };
 }
 
 function state(radios: SdrRadio[], over: Partial<SdrRadios> = {}): SdrRadios {
@@ -147,7 +158,30 @@ describe("reading the wire defensively", () => {
       description: "",
       role: "general",
       attached: false,
+      // Unset, not zero: 0 dB is a real gain this radio has run at, and a falsy default
+      // would report a choice nobody made — and the one the measurements call deaf.
+      gain: "",
+      upconverter_hz: 0,
     });
+  });
+
+  it("reads a gain this build does not know as UNSET, not as a setting", () => {
+    // A rung nobody measured must not reach a control that offers only measured ones,
+    // and must certainly not be drawn as chosen. Unset is the state every box was in
+    // before this field existed, so it is the safe place to land.
+    for (const junk of ["25", "auto ", 30, null, {}]) {
+      expect(asRadios({ radios: [{ serial: WHIP, gain: junk }] })?.radios[0]?.gain).toBe("");
+    }
+  });
+
+  it("reads a junk or negative offset as no converter", () => {
+    // The one fallback that cannot mis-tune: it is what the box did before the field
+    // existed. A half-read offset would have the radio tune somewhere nobody asked for.
+    for (const junk of ["125", -1, 0, Number.NaN, null]) {
+      expect(
+        asRadios({ radios: [{ serial: WHIP, upconverter_hz: junk }] })?.radios[0]?.upconverter_hz,
+      ).toBe(0);
+    }
   });
 
   it("treats a missing scan_ok as ok, so one absent field does not blank every row", () => {
@@ -177,5 +211,40 @@ describe("when the scan could not look", () => {
 
     expect(out.text).toContain("Unknown");
     expect(out.text).not.toContain("No radio attached");
+  });
+});
+
+describe("what the two new fields promise", () => {
+  // Both notes are the only place the CONSEQUENCE of the setting is stated, so they are
+  // tested as claims rather than as strings: what they must say, and what they must not.
+
+  it("offers the measured rungs as measurements, never as a range", () => {
+    // 0 is not the safe end of a slider — measured 20.2 dB SNR against 41.4 at 20 dB.
+    expect(gainNote("0", false).text).toMatch(/deaf/);
+    expect(gainNote("40", false).text).toMatch(/overloads/);
+    expect(gainNote("20", false).text).toMatch(/plateau/);
+  });
+
+  it("says a gain cannot apply on the direct path, and stays quiet once it can", () => {
+    expect(gainNote("20", false).text).toMatch(/tuner is powered down/);
+    expect(gainNote("20", true).text).not.toMatch(/powered down/);
+  });
+
+  it("never names a passband edge for a converter nobody has measured", () => {
+    // The open question the mock refuses to answer with a number it does not have.
+    const said = converterNote(125_000_000).text;
+
+    expect(said).toMatch(/passes HF only/);
+    expect(said).not.toMatch(/\b(cut-?off|edge at)\b/i);
+  });
+
+  it("promises the owner's frequency back, which is the whole risk of the feature", () => {
+    expect(converterNote(125_000_000).text).toMatch(/stays the real one/);
+    expect(converterNote(0).text).toMatch(/sees the antenna directly/);
+  });
+
+  it("works the shift for whatever offset this unit turns out to have", () => {
+    // 125 is this unit's number, not every unit's — the reason the field is editable.
+    expect(converterNote(100_000_000).text).toMatch(/107\.200/);
   });
 });

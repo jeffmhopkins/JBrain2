@@ -13,7 +13,16 @@ const WHIP = "09022796";
 const WIRE = "77192819";
 
 function radio(serial: string, over: Partial<SdrRadio> = {}): SdrRadio {
-  return { serial, name: "", description: "", role: "general", attached: true, ...over };
+  return {
+    serial,
+    name: "",
+    description: "",
+    role: "general",
+    attached: true,
+    gain: "",
+    upconverter_hz: 0,
+    ...over,
+  };
 }
 
 function radios(list: SdrRadio[], scanOk = true): SdrRadios {

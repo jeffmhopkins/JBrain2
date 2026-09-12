@@ -1,6 +1,6 @@
 # Radios in Settings — name, describe, dedicate
 
-> **Status:** Living · **Last verified:** 2026-09-04
+> **Status:** Living · **Last verified:** 2026-09-12 — the card grew two more fields (tuner gain, upconverter offset); their spec is `../radio-settings/README.md`, which extends this one rather than replacing it.
 
 The GUI round for **P0b** (`../../plans/APRS_CONTROL_PLAN.md`): telling two RTL-SDR
 dongles apart, and saying what each one is for.

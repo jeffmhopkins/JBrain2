@@ -19,7 +19,29 @@ export interface SdrRadio {
   /** `general`, or a service id this radio is reserved for. */
   role: string;
   attached: boolean;
+  /** The tuner gain pinned on this radio: `""` unset, `auto`, or a measured rung in dB.
+   *  Unset is the ABSENCE of a choice, not a zero — 0 dB is a real setting this radio
+   *  has run at, and drawing unset as 0 would tell the owner they had chosen the one
+   *  rung the measurements call deaf. */
+  gain: string;
+  /** How far a converter in front of this dongle shifts the hardware tune, in Hz. 0 is
+   *  none. It never appears in a frequency anything displays. */
+  upconverter_hz: number;
 }
+
+/** Hand the tuner back to its own loop. */
+export const GAIN_AUTO = "auto";
+
+/** The gain settings that were measured, and nothing between them, because nothing
+ *  between them was measured. At 162.550 through the fixed listen chain: 0 dB gives
+ *  20.2 dB SNR, 10/20/30 give 40.5/41.4/39.7, 40 gives 32.8 — a plateau at 10-30 with
+ *  both ends worse. A slider would imply readings nobody took. */
+export const GAIN_RUNGS: readonly string[] = ["0", "10", "20", "30", "40"];
+
+/** The Nooelec Ham It Up's nominal crystal, in MHz — the value the field starts at when
+ *  a converter is switched on. EDITABLE, and only a starting point: 125 is this unit's
+ *  number, not every unit's, and nobody has measured this one. */
+export const HAM_IT_UP_MHZ = 125;
 
 export interface SdrRadios {
   radios: SdrRadio[];
@@ -68,6 +90,19 @@ export function asRadios(value: unknown): SdrRadios | null {
       // reservation it cannot parse, while this only decides what a label says.
       role: typeof row.role === "string" && row.role !== "" ? row.role : GENERAL,
       attached: row.attached === true,
+      // Unreadable reads as UNSET for both, which is the one fallback that cannot
+      // mislead: it is what a box that never opened this screen does, and the card then
+      // says so rather than showing a gain nothing is running at.
+      gain:
+        typeof row.gain === "string" && (row.gain === GAIN_AUTO || GAIN_RUNGS.includes(row.gain))
+          ? row.gain
+          : "",
+      upconverter_hz:
+        typeof row.upconverter_hz === "number" &&
+        Number.isFinite(row.upconverter_hz) &&
+        row.upconverter_hz > 0
+          ? Math.round(row.upconverter_hz)
+          : 0,
     });
   }
   const conflicts =
@@ -175,4 +210,81 @@ export function generalOutcome(state: SdrRadios): { tone: "ok" | "warn" | "bad";
     };
   }
   return { tone: "ok", text: `Uses ${generals.map(labelFor).join(" or ")}.` };
+}
+
+/** One line under a control: what it says, and how loudly. */
+export interface Note {
+  tone: "plain" | "warn" | "off";
+  text: string;
+}
+
+/**
+ * What the gain control says about the choice showing in it.
+ *
+ * Every sentence here is a MEASUREMENT on this radio at 162.550 through the fixed
+ * listen chain, which is why the control offers rungs rather than a slider: 0 dB gives
+ * 20.2 dB SNR, 10/20/30 give 40.5/41.4/39.7, 40 gives 32.8. Both ends are worse, the
+ * bottom by ~20 dB, so 0 is not the safe end of a range — it is deaf.
+ *
+ * `converter` is whether one is inline, because it decides whether the control can
+ * apply at all below 24 MHz: direct sampling powers the tuner down, and every gain
+ * stage an R820T2 has is in the tuner. Saying so ALWAYS rather than only when a
+ * shortwave frequency happens to be tuned is deliberate — this screen has no frequency,
+ * and a caveat that appeared only sometimes would read as a fault rather than a fact.
+ */
+export function gainNote(gain: string, converter: boolean): Note {
+  const hf = converter
+    ? ""
+    : " Below 24 MHz with no converter the radio direct-samples: the tuner is powered down, so " +
+      "there is no gain stage and this cannot apply there. It is stored and applies the moment it " +
+      "can.";
+  if (gain === "") {
+    return {
+      tone: "off",
+      text: `Unset — listening keeps the radio's own loop and a waterfall pins 30 dB, which is what this box has always done.${hf}`,
+    };
+  }
+  if (gain === GAIN_AUTO) {
+    return {
+      tone: "warn",
+      text: `Auto moves the gain while you watch. On this radio that put a station at 162.35 that does not exist, and a spur comb at ±55.5/111/166/222 kHz. The waterfall's dB scale becomes relative, and it will say so.${hf}`,
+    };
+  }
+  if (gain === "0") {
+    return {
+      tone: "warn",
+      text: `0 dB is not the safe end — it is deaf. Measured 20.2 dB SNR here against 41.4 at 20 dB. The useful range is 10–30.${hf}`,
+    };
+  }
+  if (gain === "40") {
+    return {
+      tone: "warn",
+      text: `40 dB overloads. Measured 32.8 dB SNR, below the 10–30 plateau. With an amp in front, come down rather than up.${hf}`,
+    };
+  }
+  return {
+    tone: "plain",
+    text: `Measured plateau: 10/20/30 dB give 40.5/41.4/39.7 dB SNR here. With an inline amp, try 10 or 20 — the amp supplies gain the tuner then does not have to.${hf}`,
+  };
+}
+
+/**
+ * What the upconverter control says about the offset showing in it.
+ *
+ * **No passband edge is named.** Nobody has measured this unit's, so the warning is
+ * that VHF will not reach the mixer with the converter inline rather than a number the
+ * card cannot stand behind. The arithmetic is worked in the direction the owner will
+ * feel it: they ask for a frequency, the dongle is told a higher one, and everything
+ * they read stays where they asked.
+ */
+export function converterNote(upconverterHz: number): Note {
+  if (upconverterHz <= 0) {
+    return { tone: "off", text: "Off — the dongle sees the antenna directly." };
+  }
+  const mhz = upconverterHz / 1_000_000;
+  const shown = mhz.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  return {
+    tone: "warn",
+    text: `Hardware tunes ${shown} MHz above what you ask, so 7.200 MHz is heard at ${(7.2 + mhz).toFixed(3)}. Every frequency you read — waterfall, peaks, recordings, APRS — stays the real one. The converter passes HF only, so switch the unit to bypass, or turn this off, before tuning VHF.`,
+  };
 }

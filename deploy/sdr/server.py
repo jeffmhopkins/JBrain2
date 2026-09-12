@@ -67,6 +67,11 @@ from listen import AUDIO_CONTENT_TYPE, AUDIO_RATE, Tuner
 # `WBFM_SAMPLE_RATE = 171_000`, unused, against the 192_000 `listen` measured and
 # documented at length, so the dead copy contradicted the live one in the same repo.
 MIN_HZ = listen.MIN_HZ
+#: The widest converter offset this accepts — past the top of everything the radio
+#: tunes, so anything above could only ever produce a tune the dongle refuses. Mirrors
+#: `jbrain.sdr.roles.UPCONVERTER_MAX_HZ`, which the api validates against, for the same
+#: reason the tuner range is stated twice: this container imports nothing from there.
+UPCONVERTER_MAX_HZ = 2_000_000_000
 MAX_HZ = listen.MAX_HZ
 MODES = listen.MODES
 
@@ -776,6 +781,19 @@ def _channel_hz_of(body: dict[str, Any]) -> int:
         return 0
 
 
+def _upconverter_of(body: dict[str, Any]) -> int:
+    """The converter offset the api read off the owner's settings, in Hz. 0 for none.
+
+    Bounded and coerced here as well as in the api, for the reason every other field in
+    this file is: a bound that lives only in the caller is not a bound once there is a
+    second caller — and this one decides where the hardware actually tunes."""
+    raw = body.get("upconverter_hz")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 0
+    offset = int(raw)
+    return offset if 0 <= offset <= UPCONVERTER_MAX_HZ else 0
+
+
 def _range_of(body: dict[str, Any]) -> listen.Sweep:
     """The span a sweeping request is asking for, bounds and all.
 
@@ -831,14 +849,30 @@ def _peak(pcm: bytes) -> float:
 
 
 def capture(
-    freq_hz: int, seconds: float, mode: str, gain: str | None, serial: str | None
+    freq_hz: int,
+    seconds: float,
+    mode: str,
+    gain: str | None,
+    serial: str | None,
+    upconverter_hz: int = 0,
 ) -> dict[str, Any]:
     """Tune, record `seconds` of audio, return a WAV plus what was heard.
 
     Reserves the radio for the whole capture and refuses rather than queues: a caller
     waiting an unknown time on a radio someone else is using is worse than a caller
-    told plainly that it is busy."""
-    if not listen.DIRECT_MIN_HZ <= freq_hz <= MAX_HZ:
+    told plainly that it is busy.
+
+    `freq_hz` is the OWNER's frequency here and in everything this returns; the converter
+    offset is added once, on the argv, exactly as the live path does it."""
+    upconverter_hz = max(0, int(upconverter_hz))
+    tuned_hz = freq_hz + upconverter_hz
+    if upconverter_hz > 0:
+        if not MIN_HZ <= tuned_hz <= MAX_HZ:
+            raise SdrError(
+                f"{freq_hz} Hz tunes {tuned_hz} Hz through the converter, which is "
+                f"outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+            )
+    elif not listen.DIRECT_MIN_HZ <= freq_hz <= MAX_HZ:
         raise SdrError(
             f"{freq_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
@@ -847,7 +881,7 @@ def capture(
     # tuner and the request folds onto the first Nyquist zone. Shared with `listen`
     # rather than restated, for the reason `demod_args` itself is shared — the two
     # drifting apart is how a capture comes back sounding unlike the live audio.
-    aliased = listen.aliased_refusal(freq_hz)
+    aliased = listen.aliased_refusal(freq_hz, upconverter_hz)
     if aliased is not None:
         raise SdrError(aliased)
     key = mode.lower()
@@ -863,7 +897,8 @@ def capture(
         raise SdrBusy(str(busy))
     try:
         rate = NARROW_RATE
-        cmd = ["rtl_fm", "-f", str(freq_hz), "-M", MODES[key]]
+        # The ONE place this function shifts anything: what the dongle is told.
+        cmd = ["rtl_fm", "-f", str(tuned_hz), "-M", MODES[key]]
         if serial:
             # The BARE serial: librtlsdr's verbose_device_search has no key=value form,
             # so `serial=X` matches nothing and rtl_fm exits before opening the device.
@@ -871,7 +906,7 @@ def capture(
         # Shared with the live path rather than rebuilt here — see `listen.demod_args`.
         # A capture is meant to be a sample of what a session would hear, and it stops
         # being one the moment the two lists can drift apart.
-        cmd += listen.demod_args(key, gain, freq_hz)
+        cmd += listen.demod_args(key, gain, freq_hz, upconverter_hz)
         cmd += ["-"]
 
         # rtl_fm streams until stopped, so the timeout IS the recording length and the
@@ -1263,6 +1298,7 @@ class Handler(BaseHTTPRequestHandler):
                 purpose=PURPOSE_SPECTRUM,
                 sweep=sweep,
                 serial=listen.validate_serial(body.get("serial")),
+                upconverter_hz=_upconverter_of(body),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -1328,7 +1364,16 @@ class Handler(BaseHTTPRequestHandler):
                 # a width nothing computed, one layer up.
                 "bin_hz": rows.step_hz or want_bin_hz,
                 "seconds": round(time.monotonic() - started, 2),
+                # THE GAIN THE ROWS WERE MEASURED AT, not the one that was asked for.
+                # Absent means `MEASURING_GAIN_DB` rather than "no gain", so echoing the
+                # request left two surveys taken at 30 and at 10 both saying `null` —
+                # and dBFS is comparable only against the same gain, so they would be
+                # compared as if they were the same measurement.
                 "gain": body.get("gain"),
+                "gain_db": session.tuner_gain_db,
+                # ...and below 24 MHz with no converter there was no gain stage at all,
+                # which is a third answer rather than a missing one.
+                "tuner_bypassed": session.tuner_bypassed,
                 # A survey that hit the deadline still returns its rows. A partial survey
                 # is a real measurement of a shorter window, and throwing it away would
                 # cost the caller the whole run.
@@ -1528,6 +1573,7 @@ class Handler(BaseHTTPRequestHandler):
                 purpose=PURPOSE_SPECTRUM,
                 sweep=sweep,
                 serial=named,
+                upconverter_hz=_upconverter_of(body),
             )
         except SdrBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -1814,6 +1860,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Absent means the mode's default, so a client that predates the
                 # bandwidth control gets exactly what it always got.
                 bandwidth_hz=body.get("bandwidth_hz"),
+                # A converter in front of this dongle, read off the owner's settings by
+                # the api. Absent is none, which is what every box did before the
+                # setting existed.
+                upconverter_hz=_upconverter_of(body),
             )
         except ListenBusy as busy:
             self._json(409, {"detail": str(busy)})
@@ -2029,6 +2079,7 @@ class Handler(BaseHTTPRequestHandler):
                 mode=str(body.get("mode", "fm")),
                 gain=body.get("gain"),
                 serial=listen.validate_serial(body.get("serial")),
+                upconverter_hz=_upconverter_of(body),
             )
         except SdrBusy as busy:
             self._json(409, {"detail": str(busy)})

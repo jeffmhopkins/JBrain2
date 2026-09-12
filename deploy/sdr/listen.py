@@ -170,6 +170,15 @@ MAX_SWEEP_SPAN_HZ = 60_000_000
 #: overload the loud end: at 30 dB the strongest station on the FM dial reads -11.2
 #: dBFS with no clipping, which is 19 dB of headroom.
 MEASURING_GAIN_DB = 30.0
+
+#: The gain value that means "hand the tuner back to its own loop", for every purpose.
+#:
+#: It has to be a VALUE rather than an absent one, because absent already means
+#: something else and must keep meaning it: a session with no gain listens under AGC
+#: and MEASURES at `MEASURING_GAIN_DB`, which is what this box has always done. An owner
+#: who asks for automatic on a waterfall is asking for the second of those to stop, and
+#: `gain=None` cannot carry that request.
+GAIN_AUTO = "auto"
 # How long a non-session claim on a radio (a one-shot `capture`) stays good. Longer than
 # any capture the sidecar will run — server.py caps one at 120 s — plus room for device
 # open and tuner settle on a cold radio, so an expiry is always a LEAK rather than a slow
@@ -615,7 +624,7 @@ class SessionGone(RuntimeError):
     """This session was released, so it may not relaunch anything."""
 
 
-def aliased_refusal(frequency_hz: int) -> str | None:
+def aliased_refusal(frequency_hz: int, upconverter_hz: int = 0) -> str | None:
     """Why direct sampling cannot honestly tune here, or None.
 
     THE GAP BETWEEN THE TWO FLOORS. `demod_args` puts everything below `MIN_HZ` on
@@ -628,8 +637,11 @@ def aliased_refusal(frequency_hz: int) -> str | None:
     Only the sidecar can state the whole rule, because only the sidecar knows both that
     `direct2` was chosen and what clock it implies (docs/plans/SDR_IQ_SPECTRUM_PLAN.md
     §8, "a pre-existing bug this makes visible"). Above `MIN_HZ` the R820T2 is back in
-    circuit and mixes properly, so there is nothing here to refuse."""
-    if NYQUIST_HZ < frequency_hz < MIN_HZ:
+    circuit and mixes properly, so there is nothing here to refuse — and a converter
+    puts it back in circuit at any dial frequency, which is why this asks about the
+    TUNE."""
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if NYQUIST_HZ < tuned_hz < MIN_HZ:
         image = ADC_RATE_HZ - frequency_hz
         return (
             f"{frequency_hz / 1e6:.3f} MHz cannot be tuned: below "
@@ -640,17 +652,29 @@ def aliased_refusal(frequency_hz: int) -> str | None:
     return None
 
 
-def validate(frequency_hz: int, mode: str) -> str:
+def validate(frequency_hz: int, mode: str, upconverter_hz: int = 0) -> str:
     """Bound the tuning request and return rtl_fm's demodulator name.
 
     Validated here as well as in the api because this process is the one that
     actually opens the device: a bound that lives only in the caller is a bound that
-    a second caller does not have."""
-    if not DIRECT_MIN_HZ <= frequency_hz <= MAX_HZ:
+    a second caller does not have.
+
+    `upconverter_hz` moves the question onto the TUNE: with a converter inline the
+    dongle is asked for `frequency_hz + upconverter_hz`, and what has to be in range and
+    free of the direct-sampling fold is that. Zero — no converter — leaves every bound
+    exactly where it was."""
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if upconverter_hz > 0:
+        if not MIN_HZ <= tuned_hz <= MAX_HZ:
+            raise SdrError(
+                f"{frequency_hz} Hz tunes {tuned_hz} Hz through the converter, which is "
+                f"outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+            )
+    elif not DIRECT_MIN_HZ <= frequency_hz <= MAX_HZ:
         raise SdrError(
             f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
-    aliased = aliased_refusal(frequency_hz)
+    aliased = aliased_refusal(frequency_hz, upconverter_hz)
     if aliased is not None:
         raise SdrError(aliased)
     key = mode.lower()
@@ -789,7 +813,23 @@ ANY_DEVICE = radio.ANY_DEVICE
 blocking_key = radio.blocking_key
 
 
-def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
+def direct_for(frequency_hz: int, upconverter_hz: int = 0) -> bool:
+    """Whether this tuning is reached with the tuner powered down.
+
+    **A converter and direct sampling are alternatives, never companions.** With one
+    inline the dongle is asked for `frequency_hz + upconverter_hz`, which is above the
+    tuner's floor by construction, so the R820T2 is back in circuit — which is what
+    buys a gain control on HF at all. One function because four call sites were each
+    writing `frequency_hz < radio.DIRECT_MAX_HZ`, and a fifth that forgot the converter
+    would power the tuner down under a signal already mixed up to VHF: the
+    antenna feeds the ADC, the converter's output goes nowhere, and the radio is
+    silent with nothing to say about why."""
+    return frequency_hz + max(0, upconverter_hz) < radio.DIRECT_MAX_HZ
+
+
+def demod_args(
+    mode: str, gain: str | None, frequency_hz: int, upconverter_hz: int = 0
+) -> list[str]:
     """Everything after `-f` and `-d` that decides how a signal is DEMODULATED.
 
     One function because there are two callers — a live session and the one-shot
@@ -811,7 +851,8 @@ def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
     one — a discriminator's output is already centred — so this would only add a filter
     with nothing to remove."""
     args = ["-F", "9"]
-    if frequency_hz < MIN_HZ:
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if tuned_hz < MIN_HZ:
         # Below the tuner, the ADC is fed straight from the antenna. `direct2` selects
         # the Q branch, which is the one this board wires; `direct` would select I and
         # produce silence on hardware that looks otherwise healthy.
@@ -822,11 +863,16 @@ def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
         args += ["-s", str(AUDIO_RATE)]
     if MODES[mode] == "am":
         args += ["-E", "dc"]
-    if gain and frequency_hz >= MIN_HZ:
+    if gain and gain != GAIN_AUTO and tuned_hz >= MIN_HZ:
         # Deliberately dropped below the tuner's floor: `rtlsdr_set_direct_sampling`
         # calls the tuner's own `exit()`, so the R820T2 is powered down and out of the
         # signal path. `-g` there writes to a chip that is not listening, and the
-        # honest thing is to not claim a control that does nothing.
+        # honest thing is to not claim a control that does nothing. With a converter
+        # inline the tuner IS in the path at the same dial frequency, which is why the
+        # test is on the tune rather than on the request.
+        #
+        # `auto` sends nothing: rtl_fm's own default is `verbose_auto_gain`, so asking
+        # for automatic and saying nothing are the same instruction to this tool.
         args += ["-g", gain]
     return args
 
@@ -1202,6 +1248,15 @@ class Frame:
     #: matter is a wire big enough to overload it.
     headroom_db: float | None = None
     clipped_share: float = 0.0
+    #: True when this row was drawn with the TUNER POWERED DOWN — direct sampling, no
+    #: converter — and there was therefore no gain stage for `gain_db` to describe.
+    #:
+    #: It exists because `gain_db is None` already means something different and must
+    #: keep meaning it: the tuner's own loop, running and moving. "The gain is wandering"
+    #: and "there is no gain" produce opposite readings of the same dB scale — relative
+    #: in the first case, absolute in the second — so a viewer that could not tell them
+    #: apart would either hedge a sound measurement or trust a moving one.
+    tuner_bypassed: bool = False
     #: Which picture this row belongs to: the whole capture (`VIEW_BAND`) or the tuned
     #: channel (`VIEW_CHANNEL`). One session now publishes both off the same samples, so
     #: a reader holding rows across time needs the row itself to say which — the
@@ -1247,6 +1302,7 @@ class Frame:
                 "gain_db": self.gain_db,
                 "headroom_db": self.headroom_db,
                 "clipped_share": round(self.clipped_share, 6),
+                "tuner_bypassed": self.tuner_bypassed,
                 "view": self.view,
             }
             # `object.__setattr__` because the dataclass is frozen — which is also what
@@ -1276,6 +1332,13 @@ class SessionInfo:
     listeners: int
     purpose: str = PURPOSE_LISTEN
     serial: str | None = None
+    #: The converter offset this session is tuning through, in Hz. 0 is none.
+    #:
+    #: Reported for the reason `engine` is: it changes what the hardware is doing and
+    #: the owner has no terminal to look (CLAUDE.md #10). `frequency_hz` above is
+    #: unaffected by it and always will be — this is the difference between the two, not
+    #: a correction to apply to either.
+    upconverter_hz: int = 0
     #: The RANGE, for the two purposes that have one. A survey and a live spectrum are
     #: tuned to a span, and `frequency_hz` can only carry its midpoint — which reads as
     #: a tuner parked somewhere it is not, and gives a waterfall no way to label its own
@@ -1329,6 +1392,7 @@ class SessionInfo:
             "elapsed_s": round(time.time() - self.started_at, 1),
             "audio_peak": round(self.audio_peak, 4),
             "listeners": self.listeners,
+            "upconverter_hz": self.upconverter_hz,
             "sweep": self.sweep,
             "engine": self.engine,
             "overflows": self.overflows,
@@ -1354,9 +1418,15 @@ class Session:
         sweep: Sweep | None = None,
         serial: str | None = None,
         bandwidth_hz: int | None = None,
+        upconverter_hz: int = 0,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.sweep = sweep
+        #: The converter in front of THIS radio, in Hz, as the api read it off the
+        #: owner's settings. It shifts the tune and nothing else: `self.frequency_hz`,
+        #: every frame, every peak, every recording and every log line stay on the
+        #: frequency the owner asked for (`radio.Radio.upconverter_hz`).
+        self.upconverter_hz = max(0, int(upconverter_hz or 0))
         # WHICH radio this session opened. None means "whichever librtlsdr enumerates
         # first", which is the historical behaviour and is fine with one dongle plugged
         # in; with two it is how APRS silently ends up on the wrong antenna, so the api
@@ -1387,7 +1457,7 @@ class Session:
             # waterfall started from the api reported the low edge as its tuning.
             frequency_hz = self.sweep.centre_hz
         self.frequency_hz = frequency_hz
-        self.mode = validate(frequency_hz, mode)
+        self.mode = validate(frequency_hz, mode, self.upconverter_hz)
         #: The filter width in force, validated HERE rather than when the demodulator is
         #: built, so a width this box cannot serve is refused before anything opens the
         #: radio — the same order everything else in this constructor follows.
@@ -1493,9 +1563,19 @@ class Session:
     # ---- pipeline -------------------------------------------------------------
 
     def _rtl_cmd(self) -> list[str]:
-        cmd = ["rtl_fm", "-f", str(self.frequency_hz), "-M", MODES[self.mode]]
+        # `-f` is the ONE frequency in this process that carries the converter's offset,
+        # because it is the one that reaches the hardware (the I/Q engine's equivalent is
+        # `radio.Radio._apply_locked`). `self.frequency_hz` is untouched, so everything
+        # this session reports stays where the owner is listening.
+        cmd = [
+            "rtl_fm",
+            "-f",
+            str(self.frequency_hz + self.upconverter_hz),
+            "-M",
+            MODES[self.mode],
+        ]
         cmd += self._device_args()
-        cmd += demod_args(self.mode, self.gain, self.frequency_hz)
+        cmd += demod_args(self.mode, self.gain, self.frequency_hz, self.upconverter_hz)
         return [*cmd, "-"]
 
     def _enc_cmd(self) -> list[str]:
@@ -1622,10 +1702,12 @@ class Session:
         nothing running for `_start_pipeline`'s fallback to race."""
         if shutil.which("ffmpeg") is None:
             raise SdrError("ffmpeg is not installed in this image")
-        direct = self.frequency_hz < radio.DIRECT_MAX_HZ
+        direct = self.tuner_bypassed
         try:
             # No offset on the direct path: the tuner is powered down, so there is no
             # LO and no leakage spike to dodge, and the mixer would only cost work.
+            # (`offset_hz` here is the demodulator's LO dodge, in kHz — nothing to do
+            # with the upconverter, which never reaches this layer at all.)
             chain = demod.Demodulator(
                 self.mode,
                 LISTEN_CAPTURE_HZ,
@@ -1653,6 +1735,7 @@ class Session:
                 center_hz=self.frequency_hz - int(chain.offset_hz),
                 serial=self.serial,
                 direct=direct,
+                upconverter_hz=self.upconverter_hz,
                 doing=PURPOSE_LABEL[PURPOSE_LISTEN],
                 # A DEEPER RING than the spectrum path's, which is where the default was
                 # measured: see `LISTEN_QUEUE_BUFFERS`. Audio is the one output on this
@@ -1890,7 +1973,8 @@ class Session:
                 rate_hz=rate_hz,
                 center_hz=centre,
                 serial=self.serial,
-                direct=centre < radio.DIRECT_MAX_HZ,
+                direct=direct_for(centre, self.upconverter_hz),
+                upconverter_hz=self.upconverter_hz,
                 doing=PURPOSE_LABEL[PURPOSE_SPECTRUM],
             )
         except radio.RadioBusy as busy:
@@ -2062,7 +2146,15 @@ class Session:
         # The gain the row was measured at, stamped at the same seam and for the same
         # reason (C22): dBFS is comparable only against the same gain, and a row that did
         # not carry it is a row a reader has to guess the reference for.
-        if frame.gain_db is None:
+        if self.tuner_bypassed:
+            # NOT the gain we asked for. Below 24 MHz with no converter the tuner is
+            # powered down, so `set_gain` returned early and `-g` wrote to a chip that
+            # is not listening — stamping `MEASURING_GAIN_DB` here put a number on every
+            # shortwave row that reads like a measurement and is fiction, which is the
+            # failure this subsystem keeps producing. The row says there was no gain
+            # stage instead, and the picture says so too.
+            frame = dataclasses.replace(frame, gain_db=None, tuner_bypassed=True)
+        elif frame.gain_db is None:
             frame = dataclasses.replace(frame, gain_db=self.tuner_gain_db)
         # Signals found HERE rather than at the three places a frame is built: both
         # engines and the stitcher pass through this one seam, so no path can publish a
@@ -2699,10 +2791,29 @@ KISSPORT {self.kiss_port}
         symmetric spur comb at +-55.5, 111, 166 and 222 kHz — seven phantom stations,
         none of them on NOAA's 25 kHz raster, all of them reported as signals. The same
         radio at a fixed 30 dB found ONE, 27.1 dB over the floor, agreeing with a
-        spectrum session over the same span to within 1.5 dB."""
+        spectrum session over the same span to within 1.5 dB.
+
+        `GAIN_AUTO` is the owner asking for that loop ON PURPOSE, including on a
+        measuring session — the one request `gain=None` cannot express, since absent
+        already means "whatever this purpose does by default". It is worse here and the
+        picture says so rather than refusing it: the dB scale goes relative and the
+        peaks stop being published, both below."""
+        if self.gain == GAIN_AUTO:
+            return None
         if self.gain:
             return float(self.gain)
         return None if self.purpose in (PURPOSE_LISTEN, PURPOSE_APRS) else MEASURING_GAIN_DB
+
+    @property
+    def tuner_bypassed(self) -> bool:
+        """Whether this session's samples never passed through the tuner at all.
+
+        Not the same question as `tuner_gain_db is None`, and the difference is the
+        whole reason both exist: under direct sampling `rtlsdr_set_direct_sampling`
+        calls the tuner's own `exit()`, so no gain — ours, or the radio's own loop —
+        is in the path. Reporting the number we asked for would be reporting a
+        measurement nothing was measured at (`radio.Radio.set_gain`)."""
+        return direct_for(self.frequency_hz, self.upconverter_hz)
 
     @property
     def default_view(self) -> str:
@@ -2749,7 +2860,7 @@ KISSPORT {self.kiss_port}
         Order matters and is the reverse of `_restart`'s: everything that can FAIL —
         validation, then building the new demodulator — happens before the radio moves,
         so a request that cannot be served leaves a working session exactly as it was."""
-        wanted = validate(frequency_hz, mode or self.mode)
+        wanted = validate(frequency_hz, mode or self.mode, self.upconverter_hz)
         # **The width STICKS across a retune, and resets when the mode changes.** A
         # narrow filter is a decision about a crowded band, not about one station, so
         # re-picking it at every step of the dial would make it useless exactly where it
@@ -2774,7 +2885,7 @@ KISSPORT {self.kiss_port}
         with self._lock:
             if self._released:
                 raise SessionGone("that session has been released")
-        direct = frequency_hz < radio.DIRECT_MAX_HZ
+        direct = direct_for(frequency_hz, self.upconverter_hz)
         try:
             # No offset on the direct path: the tuner is powered down, so there is no LO
             # and no leakage spike to dodge (`_start_iq_listen`).
@@ -3042,6 +3153,7 @@ KISSPORT {self.kiss_port}
             listeners=listeners,
             purpose=self.purpose,
             serial=self.serial,
+            upconverter_hz=self.upconverter_hz,
             sweep=self.sweep.as_dict() if self.sweep is not None else None,
             engine=self.engine,
             overflows=self.overflows,
@@ -3182,6 +3294,7 @@ class Tuner:
         sweep: Sweep | None = None,
         serial: str | None = None,
         bandwidth_hz: int | None = None,
+        upconverter_hz: int = 0,
     ) -> SessionInfo:
         validate_purpose(purpose)
         key = serial or self.ANY
@@ -3191,7 +3304,14 @@ class Tuner:
             if busy is not None:
                 raise busy
             session = Session(
-                frequency_hz, mode, gain, purpose, sweep, serial, bandwidth_hz
+                frequency_hz,
+                mode,
+                gain,
+                purpose,
+                sweep,
+                serial,
+                bandwidth_hz,
+                upconverter_hz,
             )
             self._sessions[key] = session
             return session.info()

@@ -10,6 +10,7 @@ import {
   parseRow,
   resetSdrSpectrum,
   sameBand,
+  scaleLegend,
   sdrSpectrum,
   startSdrSpectrum,
   stopSdrSpectrum,
@@ -53,6 +54,10 @@ describe("reading a row", () => {
       passbandCentreHz: 0,
       channelHz: 0,
       gainDb: null,
+      // False unless the row says the tuner was bypassed — which is what a row from a
+      // box that predates the field is, and reading it as "no gain stage" would tell a
+      // viewer the levels were absolute when nothing said so.
+      tunerBypassed: false,
       // Band unless the row says otherwise, which is what a row from a spectrum session
       // and a row from a box that predates views both are.
       view: "band",
@@ -574,5 +579,43 @@ describe("which picture, and off which radio", () => {
 
     expect(FakeSource.last?.url).toContain("view=band");
     expect(FakeSource.last?.url).not.toContain("serial=");
+  });
+});
+
+describe("what the dB scale means", () => {
+  // SAID ON EVERY ROW, not only the suspect ones. A spectrum session pins its gain by
+  // construction — a waterfall whose gain moves has a scale that means nothing from one
+  // row to the next — and a legend that appeared only when something was wrong would
+  // train the reader to stop reading it (docs/mocks/radio-settings/README.md).
+
+  function row(over: Record<string, unknown>): SpectrumRow {
+    const parsed = parseRow(frame(over));
+    if (parsed === null || "error" in parsed) throw new Error("the fixture did not parse");
+    return parsed;
+  }
+
+  it("names the gain the picture was drawn at", () => {
+    expect(scaleLegend(row({ gain_db: 30 }))).toBe("dBFS @ 30 dB");
+  });
+
+  it("calls the scale relative when the gain is moving", () => {
+    // Under AGC the absolute level means nothing BETWEEN rows: the same radio on
+    // 162.550 grew a station at 162.35 and a spur comb at ±55.5/111/166/222 kHz.
+    expect(scaleLegend(row({ gain_db: null }))).toBe("relative — gain is moving");
+  });
+
+  it("says there was no gain stage when the tuner was bypassed", () => {
+    // Not the same claim as "the gain is moving", and the difference is the whole
+    // reason the field exists: on the direct path the levels are true dBFS and there
+    // is no gain to state, because every gain stage an R820T2 has is in a tuner that
+    // `rtlsdr_set_direct_sampling` powered down.
+    expect(scaleLegend(row({ gain_db: null, tuner_bypassed: true }))).toBe("dBFS (no gain stage)");
+  });
+
+  it("never reports a gain a bypassed tuner could not have applied", () => {
+    // The row carries what the SESSION asked for; a measuring session asks for 30 dB
+    // whatever the band. If a bypassed row ever arrives carrying one, the legend must
+    // not repeat it as a measurement.
+    expect(scaleLegend(row({ gain_db: 30, tuner_bypassed: true }))).toBe("dBFS (no gain stage)");
   });
 });

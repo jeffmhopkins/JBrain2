@@ -36,6 +36,7 @@ function row(db: number[], startHz = 144_000_000, binHz = 25_000): SpectrumRow {
     passbandCentreHz: 0,
     channelHz: 0,
     gainDb: null,
+    tunerBypassed: false,
   };
 }
 
