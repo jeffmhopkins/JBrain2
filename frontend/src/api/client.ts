@@ -2211,6 +2211,11 @@ export interface PetCommand {
   text?: string;
 }
 
+/** What Record was asked to keep. `captions` is the transcript of the same reception
+ *  and **no audio at all** — instead of the clip, not alongside it, because there is one
+ *  radio and one capture at a time. */
+export type SdrRecordKind = "audio" | "captions";
+
 /** One stored recording (docs/plans/SDR_RECORDING_PLAN.md §3). A recording is a FILE:
  *  a frequency, a mode, a bandwidth, a time, a length and a size. */
 export interface SdrRecording {
@@ -2232,13 +2237,12 @@ export interface SdrRecording {
   serial?: string | null;
   /** Which kind of recording this row is: a clip, or the closed captions of the same
    *  reception and no audio at all. Absent from an api older than the long press. */
-  kind?: "audio" | "captions";
+  kind?: SdrRecordKind;
   /** The api sends **null** on a captions row, along with `peaks` and the blob behind
    *  them: there is no file, so there is nothing measured — never 0, which would read as
-   *  an empty clip rather than as a recording that is not a clip. Still typed `number`
-   *  here because the library, the trim sheet and the deck are all written for a clip;
-   *  widening it is part of gating them on `kind`, not part of adding the kind. */
-  bytes: number;
+   *  an empty clip rather than as a recording that is not a clip. Read it through
+   *  `isSdrClip`, which is the one place that decides whether a row has audio at all. */
+  bytes: number | null;
   /** The level envelope the trim sheet draws, 0..1, computed on the box at stop and
    *  again after a trim — so the waveform can never disagree with the clip.
    *
@@ -2249,14 +2253,32 @@ export interface SdrRecording {
    *  an envelope even there; a sheet without one draws a flat picture and says so rather
    *  than inventing one. See SdrTrimSheet. */
   peaks?: number[];
-  /** R4 (deferred). The library and the trim both work without it; a row simply has no
-   *  preview yet. */
-  transcript?: { text?: string | null; words?: unknown[] } | null;
-  /** Whether the box HAS a transcript, which is all the list carries — the text itself
-   *  arrives with R4. Nothing renders it today; the field is here so a reader of this
-   *  type does not conclude a row with no `transcript` was never transcribed. */
+  /** What was said. On a captions row it is the whole artifact — there is no clip under
+   *  it — and it carries the per-word timings `AudioTranscript.tsx` tints. An audio row
+   *  has none until a clip can be transcribed after the fact, which is still unbuilt. */
+  transcript?: { text?: string | null; words?: unknown[]; duration_ms?: number | null } | null;
+  /** Whether the box HAS a transcript, which is all the LIST carries: the text itself
+   *  comes with the by-id row. The field is here so a reader of this type does not
+   *  conclude a list row with no `transcript` was never transcribed. */
   has_transcript?: boolean;
   transcribed_at?: string | null;
+}
+
+/** A recording that HAS a file behind it, with its size narrowed to a real number.
+ *
+ *  The player, the download link and the whole trim sheet are written for a clip and
+ *  cannot be given anything else. Saying so in the type is what makes that a compile
+ *  error rather than a `0 kB` printed under a recording nobody ever measured. */
+export type SdrClip = SdrRecording & { bytes: number };
+
+/** Whether a row is a clip — asked once, because the answer drives four affordances.
+ *
+ *  Play, download, trim and the size in the row's meta all hang on it, and four separate
+ *  `kind` checks is four chances for one of them to go on assuming an MP3. `bytes` is
+ *  checked as well as the kind so a row from an api that predates the swap — which has
+ *  no `kind` at all — is still refused if it somehow arrives with no size. */
+export function isSdrClip(row: SdrRecording): row is SdrClip {
+  return row.kind !== "captions" && row.bytes !== null;
 }
 
 /** What the library reads, in one document: the rows and what they cost.
@@ -3055,10 +3077,13 @@ export const api = {
   // No session id: the recorder subscribes to whichever session holds the tuner, and one
   // capture runs at a time box-wide — so naming a session here would be a parameter the
   // api has nothing to do with.
-  async sdrRecord(on: boolean): Promise<SdrRecordResult> {
-    const response = await request(`/api/sdr/record?on=${on ? "true" : "false"}`, {
-      method: "POST",
-    });
+  //
+  // `kind` is what the long press on Record swaps, and it is sent only when STARTING:
+  // a stop has nothing to choose, and naming a kind on the way out would suggest it
+  // could stop one kind and leave another running. One capture runs at a time box-wide.
+  async sdrRecord(on: boolean, kind: SdrRecordKind = "audio"): Promise<SdrRecordResult> {
+    const query = on ? `on=true&kind=${kind}` : "on=false";
+    const response = await request(`/api/sdr/record?${query}`, { method: "POST" });
     return (await response.json()) as SdrRecordResult;
   },
 

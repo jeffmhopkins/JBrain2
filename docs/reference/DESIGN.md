@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-11
+> **Status:** Living · **Last verified:** 2026-09-12
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -2517,6 +2517,80 @@ trimming has reclaimed.
 **Nothing expires.** No retention prune. A recording the owner chose to make is not the
 APRS log, which ages out because nobody chose it. The resting header line is
 *"kept until you delete them"*; trim and delete are the only things that remove audio.
+
+### Long-press Record swaps what it keeps (amends "Capture is a tape deck")
+
+**A long press on Record swaps it between keeping the audio and keeping the closed
+captions — a whisper transcript of the same reception — and the captions are kept
+*instead of* the clip, never alongside it.** There is one radio, one listen session and
+one capture box-wide, so the gesture changes what the single Record does rather than
+adding a second thing it can do at once. A captions recording writes **no blob**: no
+size, no waveform, no `.mp3`. That is the point — it is the cheap way to keep what was
+said on a channel you leave running, and the transcription has already happened live.
+
+**It toggles in place, and adds no surface.** The mode renders as a small tinted
+sub-label inside the Record button, the same `<em>` treatment the mode segment gives its
+bandwidth (`.sdr-bw`) — because kind and Record are one setting to the owner, and
+`.sdr-actions` holds exactly the two `flex: 1` buttons already in it. Shown only when
+idle: while recording, the button's interior is already the elapsed time and the running
+figure. This is an in-place change to a settled surface, which the mock gate exempts.
+
+**The swap resolves against the arming ceremony, which Record already had.** Record is
+tap-to-arm then tap-to-start, so a hold *used* to arm it. Three rules settle the
+collision, and each is a test:
+- A completed hold **swaps and does not arm** — the trailing tap is swallowed.
+- A hold on an **already-armed** button swaps and **disarms**. "Tap again" is a promise
+  about what the next tap will start; changing what that is withdraws the promise rather
+  than silently rewriting it.
+- A hold **while recording is ignored** — the kind is fixed when the stream opens, so
+  there is nothing a swap could mean — and, because the gesture never fires, the tap that
+  ends it still reaches Stop.
+
+**The running figure follows the kind.** Bytes for a clip, captions counted for the kind
+that writes no file, and null for whichever the capture is not. A `0 kB` under a captions
+capture would be a measurement of something nobody is measuring, and that figure is the
+owner's whole argument for pressing Stop (they cannot go and look at the disk).
+
+**A captions row in the library offers what it has, and nothing it does not.** No play
+control, no scissors, no size in the meta, no download — the api refuses all four with a
+sentence, and an affordance that leads to a refusal is a dead end the owner cannot debug
+from a phone. What it has is the transcript, rendered by the shared `TranscriptBody` with
+its confidence tinting (narrowband voice degrades in a patterned way; the numbers are
+both the least certain and usually the payload), plus **Copy transcript** and Delete. Its
+duration is kept — that is the wall clock the capture ran, which is true for this kind
+too — and it is marked with a `CC` chip rather than left to be inferred from the missing
+play control. **It does not move the disk meter**, matching the api's own
+`FILTER (WHERE kind = 'audio')`; the recording *count* does, because that counts the list.
+
+**Accessibility deviation, recorded deliberately.** The rules above ("Every overlay
+surface must have a visible, tappable exit; a gesture is never the only way out", and the
+swipe shortcut's "As an **enhancement only** — never the sole path") say a gesture is
+never the sole path to anything. **The long press here is the sole path to the swap**, and
+that is a knowing deviation, not an oversight: it follows the two shipped long-presses in
+this app — the omnibox's mode tabs (`Omnibox.tsx`) and the read-aloud auto-play toggle
+(`FullBrainSurface.tsx`) — which are both pointer-only, and the alternative the owner
+rejected in asking for this was any new surface to hold a second control. What the
+gesture does carry is the mitigation those precedents established: the **`aria-label`
+names it** ("Record what you are hearing — long-press to record captions instead"), so
+the affordance is announced to a screen reader even though it is not reachable by
+keyboard, and a right-click (`onContextMenu`) is the desktop analog. If the swap ever
+needs a keyboard path, it belongs in Settings as a device-local preference — not as a
+third button in `.sdr-actions`.
+
+**The choice is device-local** (`localStorage`, like the band picks and the theme),
+best-effort on every read and write: a private window or blocked site data has to end in
+a working Record button, which is the one control on this surface that must never fail to
+render.
+
+**The row's transcript is fetched when the row opens, not carried by the list.** The
+"two-line transcript preview" above is what the mock draws and is **not served today**:
+the list projection omits `transcript` on purpose, because a captions recording may hold
+four hours of speech (~200 000 characters) and five hundred rows of that is a library
+nobody could load. The row asks for its own on expand, the same way the trim sheet asks
+for the waveform the list also omits — so an unopened row shows **no preview line** rather
+than "(no speech detected)", which would be the library asserting a silence it never read.
+Restoring the mock's preview needs a truncated `preview` column on the list route, which
+is not built.
 
 ### Destructive editing of stored media — the reusable pattern
 

@@ -49,6 +49,32 @@ function row(over: Partial<SdrRecording> = {}): SdrRecording {
   };
 }
 
+/** A CAPTIONS row: the transcript of a reception, and no audio at all. `bytes` and
+ *  `peaks` are null because the box's own CHECK makes them null — a test fixture that
+ *  priced one at the MP3 bitrate would be testing a row the api cannot produce. */
+function captionsRow(over: Partial<SdrRecording> = {}): SdrRecording {
+  // `peaks` is OMITTED rather than set undefined — `exactOptionalPropertyTypes` makes
+  // those different types, and a captions row genuinely has no envelope at all.
+  const { peaks: _noEnvelope, ...base } = row();
+  return {
+    ...base,
+    id: "cc-1",
+    kind: "captions",
+    bytes: null,
+    transcript: {
+      text: "Repeater is on battery.",
+      words: [
+        { text: "Repeater", start_ms: 0, end_ms: 400, confidence: 0.91 },
+        { text: "is", start_ms: 400, end_ms: 520, confidence: 0.44 },
+        { text: "on", start_ms: 520, end_ms: 640, confidence: 0.72 },
+        { text: "battery.", start_ms: 640, end_ms: 1100, confidence: 0.88 },
+      ],
+      duration_ms: 1100,
+    },
+    ...over,
+  };
+}
+
 function page(
   over: { recordings?: SdrRecording[]; usage?: Partial<SdrRecordingsPage["usage"]> } = {},
 ): SdrRecordingsPage {
@@ -56,7 +82,8 @@ function page(
   return {
     recordings,
     usage: {
-      bytes: recordings.reduce((total, r) => total + r.bytes, 0),
+      // Audio only, like the api's own FILTER: a captions row weighs nothing.
+      bytes: recordings.reduce((total, r) => total + (r.bytes ?? 0), 0),
       count: recordings.length,
       reclaimed_bytes: 0,
       ...over.usage,
@@ -437,5 +464,97 @@ describe("the recordings library", () => {
     expect(document.querySelector(".rec-freed")?.textContent).toBe("250 kB reclaimed by trimming");
     expect(document.querySelector(".rec-chip-cut")?.textContent).toBe("trimmed");
     expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- Captions rows. A long press on Record keeps the transcript INSTEAD of the audio, so
+// the library holds two shapes and everything MP3-specific has to be gated on the kind.
+// Each case below is an affordance that would otherwise be offered against a file that is
+// not there — and the api answers every one of them with a refusal, which is exactly the
+// dead end the owner cannot debug from a phone (CLAUDE.md #10). ------------------------
+describe("a captions recording in the library", () => {
+  it("offers no play, no scissors and no size — there is no file behind any of them", async () => {
+    library(page({ recordings: [captionsRow({ frequency_hz: 146_520_000 })] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+
+    await waitFor(() => expect(document.querySelector(".rec-row")).toBeTruthy());
+    expect(document.querySelector(".rec-play")).toBeNull();
+    expect(document.querySelector(".rec-trim")).toBeNull();
+    // The duration is the wall clock the capture ran, which is true for this kind too.
+    // A size is not, and "0 kB" would read as a recording that came out empty.
+    const meta = document.querySelector(".rec-meta")?.textContent ?? "";
+    expect(meta).not.toContain("kB");
+    expect(document.querySelector(".rec-chip-cc")?.textContent).toBe("CC");
+  });
+
+  it("shows the transcript as the artifact, and offers Copy rather than Download", async () => {
+    library(page({ recordings: [captionsRow()] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+
+    await waitFor(() => expect(document.querySelector(".rec-main")).toBeTruthy());
+    fireEvent.click(document.querySelector(".rec-main") as Element);
+
+    // The real viewer, word by word — the confidence tinting is why it is reused at all.
+    expect(document.querySelectorAll(".atx-body .atx-w").length).toBe(4);
+    // ...as spans, not buttons: there is no clip under them to seek in.
+    expect(document.querySelector(".atx-body button")).toBeNull();
+    expect(screen.queryByText("tap a word to jump")).toBeNull();
+    expect(screen.queryByText(/Download/)).toBeNull();
+    expect(screen.getByRole("button", { name: /Copy transcript/ })).toBeTruthy();
+  });
+
+  it("keeps the disk meter about the disk: a captions row weighs nothing", async () => {
+    // The api filters both money columns to `kind = 'audio'`, and the row folded in after
+    // a stop has to agree with it — otherwise the header reports bytes nothing is holding,
+    // and the meter is the one number the owner deletes by.
+    library(page({ recordings: [row({ id: "clip", duration_s: 10, bytes: 80_000 })] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+    await waitFor(() => expect(document.querySelector(".rec-row")).toBeTruthy());
+    const before = document.querySelector(".rec-disk")?.textContent ?? "";
+
+    act(() => noteSdrRecordingSaved(captionsRow({ id: "cc-fresh" })));
+
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(2));
+    const after = document.querySelector(".rec-disk")?.textContent ?? "";
+    // Two recordings now, and not one byte more on the disk.
+    expect(before).toContain("1 recording");
+    expect(after).toContain("2 recordings");
+    expect(after).toContain("78 kB");
+  });
+
+  it("fetches its transcript when it opens, because the list does not carry one", async () => {
+    // The list says only WHETHER there is a transcript — a captions recording can hold
+    // four hours of speech, and five hundred of those is a library nobody could load. So
+    // the row asks for its own, the same way the trim sheet asks for its waveform.
+    const full = captionsRow();
+    const { transcript: _notInTheList, ...listed } = full;
+    library(page({ recordings: [{ ...listed, has_transcript: true }] }));
+    const byId = vi.spyOn(api, "getSdrRecording").mockResolvedValue(full);
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+    await waitFor(() => expect(document.querySelector(".rec-main")).toBeTruthy());
+
+    // ...and until it does, the row must not assert a silence it never read.
+    expect(screen.queryByText("(no speech detected)")).toBeNull();
+
+    fireEvent.click(document.querySelector(".rec-main") as Element);
+
+    await waitFor(() => expect(document.querySelectorAll(".atx-body .atx-w").length).toBe(4));
+    expect(byId).toHaveBeenCalledWith("cc-1");
+    // Asked once: `null` back would mean the box has none, and re-asking for ever is how
+    // an expanded row turns into a request loop.
+    fireEvent.click(document.querySelector(".rec-main") as Element);
+    fireEvent.click(document.querySelector(".rec-main") as Element);
+    await waitFor(() => expect(byId).toHaveBeenCalledTimes(1));
+  });
+
+  it("still plays and trims the audio rows beside it", async () => {
+    // The gating must be per-row, not a mode the whole library falls into.
+    library(page({ recordings: [captionsRow(), row({ id: "clip", frequency_hz: 5_000_000 })] }));
+    render(<SdrRecordingsTab onOpenRadios={() => {}} />);
+
+    await waitFor(() => expect(document.querySelectorAll(".rec-row").length).toBe(2));
+    expect(document.querySelectorAll(".rec-play").length).toBe(1);
+    expect(document.querySelectorAll(".rec-trim").length).toBe(1);
+    expect(screen.getByRole("button", { name: "Trim the 5.000 MHz recording" })).toBeTruthy();
   });
 });

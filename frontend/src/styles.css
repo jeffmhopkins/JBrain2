@@ -18361,6 +18361,11 @@ button.auto-sect[aria-expanded="true"] > svg {
   border-radius: 5px;
   /* No transition: the karaoke highlight snaps to the spoken word (owner choice). */
 }
+/* A transcript with no media under it (an SDR captions row) renders its words as spans:
+   nothing to seek, so nothing that looks tappable. */
+span.atx-w {
+  cursor: default;
+}
 /* box-shadow (not padding) makes the pill, so the highlight never reflows words. */
 .atx-w.now {
   background: var(--steel);
@@ -27005,6 +27010,32 @@ button.wf-sigpill {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
 }
+/* What Record will keep, under the word rather than beside it — the same stacked
+   label/sub-label the mode segment uses for its bandwidth (`.sdr-modes .seg` + `.sdr-bw`),
+   because kind and Record are one setting to the owner and `.sdr-actions` has room for
+   exactly the two `flex: 1` buttons already in it. */
+.sdr-rec-what {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.15;
+}
+.sdr-rec-kind {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* Armed inverts the whole button, so the sub-label has to come with it: --text-3 on the
+   filled rose reads as a smudge rather than as a word. */
+.sdr-act-record.armed .sdr-rec-kind {
+  color: var(--bg);
+  opacity: 0.8;
+}
 .sdr-act-record small {
   color: var(--text-3);
   font-size: var(--fs-micro);
@@ -27130,6 +27161,32 @@ button.wf-sigpill {
 .rec-chip-cut {
   border-color: color-mix(in srgb, var(--green) 45%, var(--border));
   color: var(--green);
+}
+/* A captions row, marked on the row itself rather than left to be inferred from the
+   missing play control. Steel, the app's "this is text" accent, not an alarm colour. */
+.rec-chip-cc {
+  border-color: color-mix(in srgb, var(--steel) 45%, var(--border));
+  color: var(--steel);
+}
+/* The 12px gutter the play control's own margin supplies on a clip row has to come from
+   the body when there is no play control. */
+.rec-row-cc .rec-main {
+  padding-left: 12px;
+}
+/* The transcript viewer sits in the row's body, which already has the surface and the
+   hairline above it — so the legend's own top border would be a second rule 10px under
+   the first, and its padding is the card's, not this list's. */
+.rec-body .atx-body {
+  padding: 10px 0 2px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  /* The cap is re-stated because the component's own is computed from --fs-body: left
+     alone, the smaller type here would scroll at about nine lines instead of six. */
+  max-height: calc(var(--fs-micro) * 1.55 * 6 + 12px);
+}
+.rec-body .atx-legend {
+  padding: 6px 0 10px;
+  border-top: 0;
 }
 .rec-meta {
   flex: none;

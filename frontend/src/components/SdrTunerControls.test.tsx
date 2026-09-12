@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type SdrRecording, api } from "../api/client";
 import { resetBands } from "../sdrBands";
 import { resetSdrCaptions } from "../sdrCaptions";
+import { RECORD_KIND_KEY } from "../sdrRecordKind";
 import {
   type SdrListening,
   type SdrRecordingState,
@@ -91,14 +92,53 @@ afterEach(() => {
   resetSdrSession();
   vi.restoreAllMocks();
   resetSdrCaptions();
+  // The kind is device-local and outlives a render, so it would otherwise outlive a TEST
+  // and leave the next one recording captions it never asked for.
+  localStorage.removeItem(RECORD_KIND_KEY);
 });
 
-/** The Record control, by its accessible name in each of its three states. */
+/** The Record control, by its accessible name in each of its states. The idle names
+ *  carry the long press, which is the gesture's only announcement. */
 function recordButton(): HTMLElement {
   return screen.getByRole("button", {
-    name: /^(Record what you are hearing|Tap again to start recording|Stop recording)$/,
+    name: /^(Record what you are hearing|Record the captions of what you are hearing|Tap again to start recording|Stop recording)/,
   });
 }
+
+/** Hold the Record button past the long press, and release. Fake timers required. */
+function longPress(): void {
+  const button = recordButton();
+  fireEvent.pointerDown(button, { clientX: 10, clientY: 10 });
+  act(() => vi.advanceTimersByTime(LONG_PRESS_MS));
+  fireEvent.pointerUp(button);
+  fireEvent.click(button);
+}
+
+/** A capture in flight on the poll, of either kind. */
+function capturing(over: Partial<SdrRecordingState> = {}): SdrRecordingState {
+  return {
+    started_at: "2026-09-10T19:12:00Z",
+    seconds: 12,
+    kind: "audio",
+    bytes: 96_000,
+    frequency_hz: 99_300_000,
+    mode: "wbfm",
+    bandwidth_hz: 180_000,
+    serial: null,
+    ...over,
+  };
+}
+
+/** The same capture as an api that predates the swap reports it: no `kind` field at all,
+ *  OMITTED rather than undefined, which `exactOptionalPropertyTypes` makes different. */
+function capturingWithoutKind(): SdrRecordingState {
+  const { kind: _unsaid, ...older } = capturing();
+  return older;
+}
+
+/** The hold the component uses. Kept here rather than exported: a test that reached into
+ *  the component for its own threshold would pass whatever that threshold became. */
+const LONG_PRESS_MS = 450;
 
 describe("the tuner controls", () => {
   it("shows the tuned frequency, mode and elapsed time", () => {
@@ -839,7 +879,8 @@ describe("the record control", () => {
 
     fireEvent.click(recordButton());
     fireEvent.click(recordButton());
-    await waitFor(() => expect(record).toHaveBeenCalledWith(true));
+    // The kind rides on the start call, and `audio` is what the button opens on.
+    await waitFor(() => expect(record).toHaveBeenCalledWith(true, "audio"));
   });
 
   it("draws its elapsed time and size from the poll, never from a clock of its own", async () => {
@@ -928,6 +969,18 @@ describe("the record control", () => {
     off();
   });
 
+  it("stays out of the way when the poll says nothing about the kind", async () => {
+    // An api that predates the swap answers with no `kind` and a byte count. The deck has
+    // to draw that as the clip it is, not as a captions capture with no size.
+    status(capturingWithoutKind());
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: "Stop recording" }).textContent).toContain("94 kB");
+  });
+
   it("says why when the box refuses, instead of a button that does nothing", async () => {
     // Starting with nothing listening is a 409 with a sentence; it has to reach the
     // owner, who has no terminal to go and read a log in (CLAUDE.md #10).
@@ -941,5 +994,174 @@ describe("the record control", () => {
         "nothing is listening to record",
       ),
     );
+  });
+});
+
+// --- The long press that swaps what Record keeps (DESIGN.md, "Long-press Record swaps
+// what it keeps"). The whole of this suite exists because Record was ALREADY a two-tap
+// ceremony before the gesture landed on it: hold-then-release used to arm it, so every
+// case below is a way the two could collide. ------------------------------------------
+describe("the long press on Record", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("swaps the kind and does NOT arm", () => {
+    // The collision this whole gesture had to survive. A hold that left the button armed
+    // would put "Tap again" over a kind the owner never armed, and the next tap would
+    // start a capture of the other thing.
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    expect(recordButton().textContent).toContain("audio");
+
+    longPress();
+
+    expect(recordButton().textContent).toContain("captions");
+    expect(recordButton().textContent).not.toContain("Tap again");
+    expect(recordButton().className).not.toContain("armed");
+  });
+
+  it("leaves a quick tap arming, exactly as it did before the gesture", () => {
+    // Released well before the hold: a tap, not a press. The ceremony in front of Record
+    // is the thing a swap must not have quietly eaten.
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    const button = recordButton();
+    fireEvent.pointerDown(button, { clientX: 10, clientY: 10 });
+    act(() => vi.advanceTimersByTime(100));
+    fireEvent.pointerUp(button);
+    fireEvent.click(button);
+
+    expect(recordButton().textContent).toContain("Tap again");
+    expect(recordButton().textContent).toContain("audio");
+  });
+
+  it("still records on tap-tap, with the kind the button is showing", async () => {
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    longPress();
+    fireEvent.click(recordButton());
+    fireEvent.click(recordButton());
+
+    // The kind travels on the START call — the api defaults to audio, so a swap that
+    // failed to reach it would record a clip while the button said captions.
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith(true, "captions"));
+  });
+
+  it("disarms when the hold lands on an ARMED button", () => {
+    // Swapping under a live "Tap again" is the case that decides the design: the armed
+    // window is a promise about what the next tap starts, so changing what that is has
+    // to withdraw the promise rather than silently rewrite it.
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    fireEvent.click(recordButton());
+    expect(recordButton().textContent).toContain("Tap again");
+
+    longPress();
+
+    expect(recordButton().textContent).toContain("captions");
+    expect(recordButton().textContent).toContain("Record");
+    expect(recordButton().textContent).not.toContain("Tap again");
+    // And the tap that follows re-arms rather than starting anything.
+    fireEvent.click(recordButton());
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("is ignored while recording, and the tap that ends the hold still stops it", async () => {
+    // There is one radio and one capture box-wide, and the kind is fixed when the stream
+    // opens — so a swap mid-capture has nothing to mean. The gesture being inert is also
+    // what keeps the trailing tap doing its real job: Stop.
+    status(capturing());
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+
+    longPress();
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith(false));
+    // Nothing was swapped: the preference is still what it was before the hold.
+    expect(localStorage.getItem(RECORD_KIND_KEY)).toBeNull();
+  });
+
+  it("drops a pending hold when a capture starts under the finger", async () => {
+    // The other half of "ignored while recording": the timer is armed before the poll
+    // says anything, so a capture started elsewhere mid-hold would otherwise fire a swap
+    // that means nothing AND swallow the tap that was about to stop it.
+    const record = vi.spyOn(api, "sdrRecord").mockResolvedValue({ recording: null });
+    const poll = vi.spyOn(api, "getSdrStatus");
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    // Line the hold up INSIDE a poll interval: the press has to begin late enough that
+    // the box's news arrives before the hold completes, which is the whole race.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    poll.mockResolvedValue({
+      available: true,
+      listening: null,
+      sessions: [],
+      recording: capturing(),
+    });
+    const button = recordButton();
+    fireEvent.pointerDown(button, { clientX: 10, clientY: 10 });
+    // 200 ms in, the poll lands and the capture appears...
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy();
+    // ...and the rest of the hold fires nothing.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LONG_PRESS_MS);
+    });
+    fireEvent.pointerUp(button);
+    fireEvent.click(recordButton());
+
+    expect(localStorage.getItem(RECORD_KIND_KEY)).toBeNull();
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith(false));
+  });
+
+  it("does not fire when the finger travels — a scroll is not a press", () => {
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    const button = recordButton();
+    fireEvent.pointerDown(button, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(button, { clientX: 10, clientY: 40 });
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS));
+
+    expect(recordButton().textContent).toContain("audio");
+  });
+
+  it("remembers the swap on this device, and opens on it", () => {
+    const { unmount } = render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    longPress();
+    expect(localStorage.getItem(RECORD_KIND_KEY)).toBe("captions");
+    unmount();
+
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+    expect(recordButton().textContent).toContain("captions");
+  });
+
+  it("counts captions rather than bytes while a captions capture runs", async () => {
+    // The running figure is the argument for pressing Stop, so it has to be the one the
+    // capture actually has. A size here would be the MP3 bitrate applied to no MP3.
+    status(capturing({ kind: "captions", bytes: null, captions: 7 }));
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop recording" })).toBeTruthy(),
+    );
+    const button = screen.getByRole("button", { name: "Stop recording" });
+    expect(button.textContent).toContain("7 CC");
+    expect(button.textContent).not.toContain("kB");
+  });
+
+  it("swaps on right-click too, the desktop analog the omnibox already uses", () => {
+    render(<SdrTunerControls listening={LISTENING} onReleased={() => {}} />);
+
+    fireEvent.contextMenu(recordButton());
+
+    expect(recordButton().textContent).toContain("captions");
   });
 });

@@ -12,7 +12,7 @@
 // so an app with no radio surface open costs nothing.
 
 import { useEffect, useState } from "react";
-import { ApiError, type SdrRecording, api } from "./api/client";
+import { ApiError, type SdrRecordKind, type SdrRecording, api } from "./api/client";
 import { playSdrAudio, stopSdrAudio } from "./sdrAudio";
 
 export interface SdrListening {
@@ -86,15 +86,13 @@ export interface SdrRecordingState {
   seconds: number;
   /** What Record is capturing: the clip, or the live closed captions and no audio.
    *  Absent from an api older than the long press, which could only ever mean `audio`. */
-  kind?: "audio" | "captions";
+  kind?: SdrRecordKind;
   /** What has landed in the blob so far. Reported rather than derived from the bitrate:
    *  the running size is the argument for stopping, so it has to be measured.
    *
-   *  The api sends **null** on a captions capture, which writes no blob. Still typed
-   *  `number` here because every surface that reads it is written for a clip and none of
-   *  them is gated on the kind yet; widening it is part of teaching them, not part of
-   *  this. See `kind`. */
-  bytes: number;
+   *  **Null on a captions capture**, which writes no blob — never 0, which the deck would
+   *  print as a clip that is not growing. `captions` is that capture's running figure. */
+  bytes: number | null;
   /** How many captions have landed so far, and null on an audio capture. The running
    *  figure for the kind that has no size: it is what a deck can count up. */
   captions?: number | null;

@@ -6,9 +6,10 @@
 > records, the library lists and serves, trim cuts and reclaims, and the PWA drives all
 > three. **R4's backend is built by a different route than the one specced below** — see
 > §6 R4: the `transcript` column is filled by RECORDING the live captions rather than by
-> transcribing a stored clip. Its PWA half — the long press on Record, and gating the
-> library on the kind — is not built. **Not yet run on the box** — no deploy has been
-> asked for.)
+> transcribing a stored clip, and its PWA half is now built too — the long press on
+> Record, and the library gated on the kind. What remains unbuilt under R4 is
+> transcribing a STORED clip after the fact, and the corpus/embedding enqueue.
+> **Not yet run on the box** — no deploy has been asked for.)
 
 The radio can hear but not keep. This adds the third tab of the Radio launcher: press
 Record while listening, and the clip lands in a library you can play, trim and delete.
@@ -156,16 +157,23 @@ backlog, moved out of `api/sdr.py` so both captioners share one parser),
 the repo, `usage()` filtered to audio, `remove()` handing back the row, and the
 `kind=` query on `POST /record`.
 
-Still open: the PWA half — the long press itself, and gating the library, the trim sheet
-and the tape deck on `kind` (they are all written for a clip, which is why
-`SdrRecording.bytes` is still typed `number` in `api/client.ts` where the api can now
-send null). Transcribing a stored clip after the fact, and the corpus/embedding enqueue,
-remain unbuilt and are still worth having — they are what would make an AUDIO recording
-searchable.
+Then built on the PWA side: the long press on Record (`SdrTunerControls.tsx`, the omnibox's
+own gesture lifted whole), the device-local preference behind it (`sdrRecordKind.ts`), and
+the library, trim sheet and tape deck gated on the kind. `SdrRecording.bytes` is now
+`number | null`, which is what the api actually sends, and the four affordances that need
+a file — play, download, trim, the size in the row's meta — hang on one `isSdrClip`
+guard; `SdrTrimSheet` takes an `SdrClip`, so handing it a captions row is a compile error
+rather than a `0 kB`. The settled design is in DESIGN.md under "Long-press Record swaps
+what it keeps", including the recorded accessibility deviation (the gesture is the sole
+path to the swap, following the app's two shipped long-presses).
+
+Still open: transcribing a STORED clip after the fact, and the corpus/embedding enqueue
+per `SDR_RADIO_PLAN.md` §4.3. Both remain worth having — they are what would make an
+AUDIO recording searchable, which recording the captions does not.
 
 ## 7. What the build found
 
-Six things the plan did not anticipate, all now in the code:
+Seven things the plan did not anticipate:
 
 - **A full-length "trim" re-puts identical bytes and gets the identical digest**, so
   deleting "the old blob" would delete the audio the row was just repointed at. Guarded
@@ -225,6 +233,16 @@ Six things the plan did not anticipate, all now in the code:
   when the blob volume falls below 1 GiB free, and Record is refused with a sentence when
   there is no room to start. Both bounds finalize rather than discard: an interrupted
   recording is still a recording, whether the interruption is the sidecar or us.
+
+- **The row's two-line transcript preview cannot be served from the list, and never
+  could.** `_LIST_COLUMNS` carries `(transcript IS NOT NULL) AS has_transcript` and not the
+  text, which is right — a captions recording is bounded at four hours, about 200 000
+  characters, and `RECENT_MAX` is 500 rows. The library therefore shows **no preview line**
+  on an unopened row and fetches the transcript by id when the row expands, the same shape
+  the trim sheet already uses for `peaks`. What it must not do is print "(no speech
+  detected)" there: that is the surface asserting a silence it never read, which is this
+  subsystem's recurring failure in its cheapest form. The mock's preview is restorable with
+  a truncated `left(transcript->>'text', N) AS preview` on the list route — **not built**.
 
 ## 8. Open
 
