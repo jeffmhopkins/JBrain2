@@ -52,7 +52,14 @@ from jbrain.sdr.health import session_for, shown
 from jbrain.sdr.recorder import RecorderRefused, SdrRecorder
 from jbrain.sdr.recordings import RECENT_DEFAULT, RECENT_MAX, RecordingsRepo
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
-from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
+from jbrain.sdr.roles import (
+    GAIN_CHOICES,
+    GENERAL,
+    UPCONVERTER_MAX_HZ,
+    Choice,
+    Radio,
+    conflicts,
+)
 from jbrain.sdr.stations import PROVENANCE, WINDOWS, StationsReader
 from jbrain.sdr.tuner import (
     MAX_MHZ,
@@ -234,6 +241,82 @@ def _refuse(choice: Choice) -> None:
         raise HTTPException(status_code=409, detail=detail)
 
 
+async def _tuning_for(request: Request, owner: Any, serial: str | None) -> Radio:
+    """The stored SIGNAL-PATH settings of the radio a session is about to open.
+
+    `_radio_for` answers WHICH radio; this answers what the owner has said about it —
+    the tuner gain to pin and the converter offset to tune through. Two reads rather
+    than one enriched `Choice`, because `roles.Choice` is the pure decision three doors
+    share and widening it to carry hardware settings would make every caller of the
+    rule carry the settings too.
+
+    An unknown or unnamed radio answers with the defaults, which is the behaviour of a
+    box that never opened the screen: no converter, no pinned gain. That is also the
+    right answer when the USB scan could not see (`Choice.serial is None`), because a
+    converter nobody can confirm is in front of a radio nobody can name must not be
+    allowed to shift a tune."""
+    if not serial:
+        return Radio(serial="")
+    stored = await get_settings_store(request).sdr_radios(ctx_for(owner))
+    return stored.get(serial) or Radio(serial=serial)
+
+
+def _tuner_gain(asked: str | None, radio: Radio) -> str | None:
+    """The gain a session runs at: what this call asked for, else what the radio stores.
+
+    ONE mechanism, not two. The per-session `?gain=` predates the setting and is how the
+    debug console and jerv measure the same band at two gains on purpose, so it still
+    wins — an explicit request is not a default to be overridden. Absent, the radio's
+    standing choice applies, and absent that, None reaches the sidecar and its
+    per-purpose defaults are exactly what they were before this field existed
+    (`listen.Session.tuner_gain_db`): the tuner's own loop for listening and APRS,
+    `MEASURING_GAIN_DB` for a picture or a survey."""
+    return asked if asked is not None else (radio.gain or None)
+
+
+async def _session_radio(settings: Any, session_id: str | None) -> str | None:
+    """Which radio the session being retuned is on, or None if nothing says.
+
+    A retune names a session, not a radio, so the converter offset that has to be
+    honoured belongs to whichever dongle that session opened. Read from the sidecar's
+    own health rather than guessed from settings: with two radios attached, guessing
+    would pick a converter that is in front of the other one."""
+    health = await _health(_base(settings))
+    if health is None:
+        return None
+    sessions = health.get("sessions")
+    if not isinstance(sessions, list):
+        one = health.get("listening") or {}
+        sessions = [one] if one else []
+    for entry in sessions:
+        if not isinstance(entry, dict):
+            continue
+        if session_id is None or entry.get("session_id") == session_id:
+            found = entry.get("serial")
+            return found if isinstance(found, str) and found else None
+    return None
+
+
+async def _tunable_retune(
+    request: Request,
+    settings: Any,
+    owner: Any,
+    frequency_mhz: float,
+    session_id: str | None,
+) -> None:
+    """`_tunable`, for a route that names a SESSION rather than a radio.
+
+    The extra hop is paid only by a request the plain check would refuse. Nearly every
+    retune is an ordinary frequency on a radio with no converter, and asking the sidecar
+    which dongle holds the session on every step of the tuning strip would double its
+    traffic to learn a zero. What a converter can do is ADMIT a frequency the bare radio
+    cannot reach, so a request that already passes has nothing to gain by asking."""
+    if out_of_range(frequency_mhz) is None:
+        return
+    serial = await _session_radio(settings, session_id)
+    _tunable(frequency_mhz, (await _tuning_for(request, owner, serial)).upconverter_hz)
+
+
 def _detail(resp: httpx.Response, fallback: str) -> str:
     try:
         return cast(str, resp.json().get("detail") or fallback)
@@ -294,7 +377,7 @@ async def status(request: Request, settings: SettingsDep, _owner: OwnerDep) -> S
     return await status_of(settings, recording_now(request))
 
 
-def _tunable(frequency_mhz: float) -> None:
+def _tunable(frequency_mhz: float, upconverter_hz: int = 0) -> None:
     """Refuse a frequency the radio would answer with a DIFFERENT one.
 
     `Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)` bounds the ENDS, and the reachable range
@@ -305,8 +388,14 @@ def _tunable(frequency_mhz: float) -> None:
 
     A sentence and a 400, not a 422 with a validation blob: this is the surface an
     owner with no terminal has (CLAUDE.md #10), and the fact they need is which
-    frequency they would actually have received."""
-    refusal = out_of_range(frequency_mhz)
+    frequency they would actually have received.
+
+    `upconverter_hz` is the chosen radio's stored offset, so the hole is asked about the
+    frequency the DONGLE will be given rather than the one the owner typed: with a
+    converter inline 18.1 MHz tunes 143.1 and there is nothing to refuse. Zero — no
+    converter — is every radio until someone says otherwise, and then this is the check
+    it has always been, character for character."""
+    refusal = out_of_range(frequency_mhz, upconverter_hz / 1_000_000)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
 
@@ -328,16 +417,24 @@ async def listen(
     the tuner may borrow while that service happens to be idle. Naming one is the
     launcher asking for THAT radio, and it is refused by name rather than quietly
     served from another."""
-    _tunable(frequency_mhz)
+    # WHICH RADIO FIRST, because what is tunable depends on it: a converter in front of
+    # one dongle admits frequencies the bare one cannot reach, and the refusal has to be
+    # about the radio this session will actually open.
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
+    _tunable(frequency_mhz, rig.upconverter_hz)
     return await _post(
         settings,
         "/listen/start",
         {
             "frequency_hz": int(round(frequency_mhz * 1_000_000)),
             "mode": mode,
-            "gain": gain,
+            "gain": _tuner_gain(gain, rig),
+            # The tune is the ONLY thing this shifts. `frequency_hz` above is, and stays,
+            # the owner's frequency — the sidecar adds the offset at the one call that
+            # reaches the hardware and every number it reports back is unshifted.
+            "upconverter_hz": rig.upconverter_hz,
             "serial": chosen.serial,
             # Omitted rather than sent as null, so the sidecar's own default applies and
             # this route need not know what it is.
@@ -577,6 +674,14 @@ class RadioOut(BaseModel):
     attached: bool
     """Whether the scan can see it right now. A described radio that is unplugged still
     appears — that is how its service explains what it is waiting for."""
+    gain: str
+    """The tuner gain pinned on this radio: "" for unset, `auto`, or a measured rung in
+    dB. Unset is not zero and must not be drawn as one — it is the absence of a choice,
+    and it means what this box has always done."""
+    upconverter_hz: int
+    """How far a converter in front of this dongle shifts the hardware tune, in Hz. 0 is
+    none. It NEVER appears in a frequency this api reports; it is a fact about the wire
+    between the antenna and the dongle."""
 
 
 class RadiosOut(BaseModel):
@@ -596,6 +701,12 @@ class RadioIn(BaseModel):
     # silently shortening, because a role the caller did not ask for is a wrong answer
     # where a shortened description is only a shorter one.
     role: Annotated[str, Field(max_length=40)] = GENERAL
+    # REFUSED rather than coerced, for `role`'s reason one step further: a gain the
+    # caller did not ask for would be applied to the radio and drawn on every waterfall
+    # legend as the level everything was measured at. "" is unset and is the default,
+    # so a client that predates the field saves exactly what it always saved.
+    gain: Annotated[str, Field(pattern=f"^({'|'.join(GAIN_CHOICES)})?$")] = ""
+    upconverter_hz: Annotated[int, Field(ge=0, le=UPCONVERTER_MAX_HZ)] = 0
 
 
 class ChannelOut(BaseModel):
@@ -749,6 +860,8 @@ async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> Ra
                 description=radio.description,
                 role=radio.role,
                 attached=radio.serial in attached,
+                gain=radio.gain,
+                upconverter_hz=radio.upconverter_hz,
             )
             for radio in sorted(known.values(), key=lambda r: r.serial)
         ],
@@ -780,6 +893,8 @@ async def describe_radio(
         name=body.name,
         description=body.description,
         role=body.role,
+        gain=body.gain,
+        upconverter_hz=body.upconverter_hz,
     )
     return await radios(request, settings, owner)
 
@@ -885,6 +1000,7 @@ async def aprs_logging(
     # the whole point of the setting, and invisible without this check.
     chosen = await _radio_for(request, settings, _owner, APRS_PURPOSE, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
     body = await _post(
         settings,
         "/listen/start",
@@ -892,7 +1008,12 @@ async def aprs_logging(
             "frequency_hz": int(round(frequency_mhz * 1_000_000)),
             # 1200-baud AFSK is narrowband FM; nothing else can carry it.
             "mode": "fm",
-            "gain": None,
+            # APRS gets the radio's stored gain like everything else. The owner chose
+            # that over "the logger keeps AGC": one antenna chain has one right gain,
+            # and a setting that applied to three purposes out of four would be a
+            # setting nobody could reason about. Unset is still AGC here.
+            "gain": _tuner_gain(None, rig),
+            "upconverter_hz": rig.upconverter_hz,
             "purpose": APRS_PURPOSE,
             "serial": chosen.serial,
         },
@@ -919,6 +1040,7 @@ async def _health(base: str) -> dict[str, Any] | None:
 
 @router.post("/tune")
 async def tune(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
@@ -931,7 +1053,7 @@ async def tune(
     A bandwidth with no frequency change is how the control sends a new filter width:
     the session keeps its width across a retune, so passing the current frequency back
     with a new width changes only the filter."""
-    _tunable(frequency_mhz)
+    await _tunable_retune(request, settings, _owner, frequency_mhz, session_id)
     body: dict[str, Any] = {"frequency_hz": int(round(frequency_mhz * 1_000_000))}
     if mode is not None:
         body["mode"] = mode
@@ -1002,6 +1124,7 @@ def _span(
     section: str | None,
     start_mhz: float | None,
     stop_mhz: float | None,
+    upconverter_hz: int = 0,
 ) -> tuple[int, int, int | float, tuple[int, int, int] | None]:
     """The range a live spectrum should cover, and the bin width that draws it.
 
@@ -1022,7 +1145,14 @@ def _span(
     they cannot disagree — five rows would otherwise, because a curated row may
     deliberately name a wider rate than the smallest one that covers it (`mw` takes
     2.048 MS/s to satisfy `R/2 <= fc`; the derived answer is 1.6). A range that is NOT
-    a section's edges is nobody's curated row and gets the derived answer."""
+    a section's edges is nobody's curated row and gets the derived answer.
+
+    **The edges that come back are the OWNER's; only the capture plan is chosen against
+    the tune.** Which rates are legal and whether a span can be hopped are facts about
+    what the dongle is asked for — a converted 40 m span is the R820T2 doing ordinary
+    tuner work at 132 MHz, not the ADC branch its own edges would imply — while every
+    number returned here goes on to label a picture and must stay where the owner is
+    listening."""
     if section is not None:
         found = bands.by_id(section)
         if found is None:
@@ -1037,7 +1167,8 @@ def _span(
         start_hz = int(round(start_mhz * 1_000_000))
         stop_hz = int(round(stop_mhz * 1_000_000))
         found = bands.by_edges(start_hz, stop_hz)
-    refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000)
+    upconverter_mhz = upconverter_hz / 1_000_000
+    refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000, upconverter_mhz)
     if refusal:
         # The sentence, not a validation blob: this is the surface an owner with no
         # terminal has (CLAUDE.md #10), and "this is more than one capture down there"
@@ -1046,14 +1177,16 @@ def _span(
     # The width is OURS, and the frame is exactly `rate / N` wide. The CAPTURE comes
     # back with it rather than being re-derived by the caller, because the width and the
     # engine that produces it have to be ONE decision.
-    capture = bands.capture_for(start_hz, stop_hz)
+    tuned_start_hz = start_hz + upconverter_hz
+    tuned_stop_hz = stop_hz + upconverter_hz
+    capture = bands.capture_for(tuned_start_hz, tuned_stop_hz)
     if capture is not None:
         rate_hz, fft_bins = capture
         return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), (rate_hz, fft_bins, 1)
     # F11: too wide for one capture is not the same as too wide for this engine.
     # The retune works on a live stream (F0), so a wide span is several captures
     # stitched — finer bins than rtl_power gave AND without its one-second clamp.
-    hopped = bands.hop_plan(start_hz, stop_hz)
+    hopped = bands.hop_plan(tuned_start_hz, tuned_stop_hz)
     if hopped is not None:
         rate_hz, fft_bins, _hops = hopped
         return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), hopped
@@ -1086,15 +1219,19 @@ async def spectrum_start(
     Naming none takes a GENERAL radio, like the tuner: one the owner reserved for a
     service is not one a waterfall may borrow because that service is momentarily idle.
     Naming one is the launcher asking for THAT radio."""
-    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
+    # WHICH RADIO FIRST, for `listen`'s reason: the capture plan and the refusal both
+    # depend on whether a converter sits in front of this dongle.
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz, rig.upconverter_hz)
     body: dict[str, Any] = {
         "purpose": SPECTRUM_PURPOSE,
         "start_hz": start_hz,
         "stop_hz": stop_hz,
         "bin_hz": chosen_bin,
-        "gain": gain,
+        "gain": _tuner_gain(gain, rig),
+        "upconverter_hz": rig.upconverter_hz,
         "serial": chosen.serial,
     }
     body.update(_capture_body(capture))
@@ -1115,6 +1252,7 @@ def _channel_hz(section: str | None, start_hz: int, stop_hz: int) -> int:
 
 @router.post("/spectrum/tune")
 async def spectrum_tune(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     section: Annotated[str | None, Query(max_length=48)] = None,
@@ -1127,7 +1265,11 @@ async def spectrum_tune(
     Not stop-and-start: releasing the radio between two bands is a window in which
     anything else may take it, and the owner would find their waterfall gone because
     they changed band. The session id survives, so the picture does not blink."""
-    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
+    # The converter belongs to the radio this session already holds, so the plan is
+    # chosen against that one — with two dongles attached, reading the setting off the
+    # wrong dongle would pick a capture for a band nobody is tuned to.
+    rig = await _tuning_for(request, _owner, await _session_radio(settings, session_id))
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz, rig.upconverter_hz)
     body: dict[str, Any] = {
         "start_hz": start_hz,
         "stop_hz": stop_hz,

@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Radios - gain and upconverter</title>
+<!--
+  MOCK: GAIN + UPCONVERTER IN SETTINGS (owner ask, 2026-09-11).
+
+  THE OWNER'S CORRECTION IS THE DESIGN. Three rivals were built first - an inline
+  disclosure, a full-screen page per radio carrying the gain ladder as a chart, and a
+  bottom sheet drawing antenna -> upconverter -> amp -> tuner -> ADC as a five-bead
+  signal chain - and the owner discarded all three with "needs to be simpler". They
+  were right, and the reason is worth keeping: Settings -> Radios already exists, its
+  binding spec is docs/mocks/sdr-dongles/a-named-roles.html, and its model is already
+  "the RADIO and what it is for" with fields keyed by serial. Gain and an upconverter
+  are two more answers to that same question. A new paradigm was solving a problem
+  nobody had.
+
+  So this is not a new surface. It is the subcard that ships today - Name, Description,
+  Role, one Save per card - with TWO MORE FIELDS. No new screen, no new navigation, no
+  diagram.
+
+  WHAT THE TWO FIELDS ARE FOR:
+
+    GAIN - the owner put an inline amp in front of the tuner and it drives the front
+    end too high. The fix is LESS tuner gain, not automatic gain. Measured on this
+    radio at 162.550 through the fixed listen chain: 0 dB gives 20.2 dB SNR, 10/20/30
+    give 40.5/41.4/39.7, 40 gives 32.8. So the ladder has a PLATEAU at 10-30 and both
+    ends are worse - the bottom by ~20 dB. The control offers the measured rungs and
+    nothing between them, because nothing between them was measured.
+
+    Auto is on the list because the owner asked for it, and last on the list because on
+    this hardware it is measurably worse: under AGC 162.550 grew a phantom station at
+    162.35 and a spur comb at +-55.5/111/166/222 kHz - seven signals that do not exist.
+    Picking it says so, in place, rather than in a doc.
+
+    UPCONVERTER - a Nooelec Ham It Up in front of the dongle. To hear 7.200 the
+    hardware tunes 132.200. Everything the owner reads stays at 7.200; only the tune is
+    shifted. The offset is editable because 125 MHz is this unit's number, not every
+    unit's.
+
+  WHAT THIS MOCK DELIBERATELY DOES NOT CLAIM. HF is already reachable without a
+  converter - TUNABLE_MIN_MHZ is 0.1 via direct sampling - so "unlocks HF" is not the
+  argument and is not made here. What the converter actually buys is a gain control on
+  HF at all (direct sampling powers the tuner down, so gain is a no-op there), no
+  28.8-f mirror summed into every bin, no 14.4-24 MHz hole, and hopped HF waterfalls.
+  The card says the first of those, because it is the one the owner is about to feel.
+
+  THE HARNESS IS THE ARGUMENT. Change the frequency and watch the gain field answer
+  honestly: at 7.200 with the converter OFF the radio is direct-sampling, the tuner is
+  powered down, and gain cannot apply - the control says so and stores the value
+  anyway. Turn the converter on and gain returns, because the hardware is now tuning
+  132.200 through the tuner. Nothing here is asserted in prose that a control does not
+  demonstrate.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#D2A96A; --rose:#C98A8A;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(210,169,106,.13);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:620px;margin:0 auto;padding:26px 20px 60px;}
+  header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:20px;}
+  h1{font-size:23px;font-weight:650;margin:0 0 6px;letter-spacing:-.2px;}
+  .sub{color:var(--text-2);font-size:14px;line-height:1.55;margin:0;}
+  .sub b{color:var(--text);font-weight:600;}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--steel);}
+
+  .harness{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin:18px 0 24px;
+    padding:13px 15px;background:var(--surface);border:1px dashed var(--border);border-radius:13px;}
+  .harness .cap{font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;
+    width:100%;margin-bottom:-4px;}
+  .field{display:flex;flex-direction:column;gap:7px;}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);}
+  .seg{display:flex;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface-2);}
+  .seg button{appearance:none;border:0;background:none;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:10px 13px;min-height:44px;cursor:pointer;border-right:1px solid var(--border);}
+  .seg button:last-child{border-right:0;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:15px;padding:17px 17px 15px;}
+  .card > h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);
+    margin:0 0 4px;font-weight:600;}
+  .card > .meta{color:var(--text-2);font-size:13px;line-height:1.5;margin:0 0 15px;}
+
+  .sub-card{border:1px solid var(--border);border-radius:13px;padding:14px 14px 13px;background:var(--surface-2);}
+  .sub-card h3{font-size:14.5px;margin:0 0 2px;font-weight:600;display:flex;align-items:baseline;gap:9px;}
+  .serial{font-family:var(--mono);font-size:11px;color:var(--text-3);font-weight:400;}
+  .row{display:flex;flex-direction:column;gap:6px;margin-top:13px;}
+  .row > label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);}
+  input[type=text],input[type=number]{appearance:none;background:var(--bg);border:1px solid var(--border);
+    border-radius:10px;color:var(--text);font:inherit;font-size:14px;padding:11px 12px;min-height:44px;width:100%;}
+  input:focus-visible,button:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .existing{opacity:.5;}
+
+  .rule{border:0;border-top:1px solid var(--border);margin:16px 0 2px;}
+  .new-tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--green);
+    background:var(--green-tint);border-radius:5px;padding:2px 6px;font-weight:600;}
+
+  .gain-seg{flex-wrap:wrap;}
+  .gain-seg button{flex:1;min-width:56px;}
+  .note{font-size:12.5px;line-height:1.5;color:var(--text-2);margin:9px 0 0;
+    padding:9px 11px;border-radius:9px;background:var(--bg);border:1px solid var(--border);}
+  .note.warn{border-color:rgba(210,169,106,.4);background:var(--amber-tint);color:var(--text);}
+  .note.off{border-style:dashed;color:var(--text-3);}
+  .note b{font-weight:600;}
+  .note code{font-family:var(--mono);font-size:12px;color:var(--steel);}
+
+  .conv{display:flex;align-items:center;gap:11px;margin-top:13px;}
+  .sw{appearance:none;width:46px;height:28px;border-radius:99px;background:var(--surface);
+    border:1px solid var(--border);position:relative;cursor:pointer;flex:none;transition:background .15s;}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+    background:var(--text-3);transition:transform .15s,background .15s;}
+  .sw:checked{background:var(--steel-tint);border-color:var(--steel);}
+  .sw:checked::after{transform:translateX(18px);background:var(--steel);}
+  .conv label{font-size:14px;}
+  .offset{display:flex;align-items:center;gap:9px;margin-top:11px;}
+  .offset input{width:110px;}
+  .offset .unit{font-size:13px;color:var(--text-2);}
+  .hidden{display:none;}
+
+  .save{appearance:none;margin-top:16px;background:var(--steel-tint);border:1px solid var(--steel);
+    color:var(--text);font:inherit;font-size:14px;font-weight:600;border-radius:11px;
+    padding:11px 20px;min-height:44px;cursor:pointer;}
+
+  .effect{margin-top:22px;padding:14px 15px;background:var(--surface);border:1px dashed var(--border);
+    border-radius:13px;}
+  .effect .cap{font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;
+    margin:0 0 9px;}
+  .effect dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13.5px;}
+  .effect dt{color:var(--text-3);}
+  .effect dd{margin:0;font-family:var(--mono);font-size:13px;}
+  .ok{color:var(--green);} .warnc{color:var(--amber);} .dim{color:var(--text-3);}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Radios — two more fields</h1>
+  <p class="sub">Not a new screen. The <b>Settings → Radios</b> subcard that ships today, with
+  <b>Gain</b> and <b>Upconverter</b> added beside Name, Description and Role. Same card, same
+  save, same key — the serial. Three richer rivals were built and discarded against
+  <i>“needs to be simpler.”</i></p>
+</header>
+
+<div class="harness">
+  <p class="cap">Harness — what this radio is tuned to</p>
+  <div class="field">
+    <span class="lbl">Frequency</span>
+    <div class="seg" id="freq">
+      <button data-mhz="162.550" aria-pressed="true">162.550</button>
+      <button data-mhz="7.200" aria-pressed="false">7.200</button>
+      <button data-mhz="18.100" aria-pressed="false">18.100</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Radios</h2>
+  <p class="meta">Name each dongle, say what it is plugged into, set what it is for.</p>
+
+  <div class="sub-card">
+    <h3>North window long wire <span class="serial">77192819</span></h3>
+
+    <div class="row existing">
+      <label for="nm">Name</label>
+      <input id="nm" type="text" value="North window long wire" readonly>
+    </div>
+    <div class="row existing">
+      <label for="ds">Description</label>
+      <input id="ds" type="text" value="Long wire, 9:1 unun, inline LNA" readonly>
+    </div>
+
+    <hr class="rule">
+
+    <div class="row">
+      <label for="gain">Gain <span class="new-tag">new</span></label>
+      <div class="seg gain-seg" id="gain">
+        <button data-g="0" aria-pressed="false">0 dB</button>
+        <button data-g="10" aria-pressed="false">10</button>
+        <button data-g="20" aria-pressed="false">20</button>
+        <button data-g="30" aria-pressed="true">30</button>
+        <button data-g="40" aria-pressed="false">40</button>
+        <button data-g="auto" aria-pressed="false">Auto</button>
+      </div>
+      <p class="note" id="gain-note"></p>
+    </div>
+
+    <div class="row">
+      <label>Upconverter <span class="new-tag">new</span></label>
+      <div class="conv">
+        <input class="sw" type="checkbox" id="conv" role="switch">
+        <label for="conv">Ham It Up inline</label>
+      </div>
+      <div class="offset hidden" id="offset-wrap">
+        <input id="offset" type="number" value="125" min="0" max="2000" step="0.001">
+        <span class="unit">MHz offset</span>
+      </div>
+      <p class="note" id="conv-note"></p>
+    </div>
+
+    <button class="save">Save</button>
+  </div>
+
+  <div class="effect">
+    <p class="cap">What the hardware actually does</p>
+    <dl>
+      <dt>You read</dt><dd id="e-read">162.550 MHz</dd>
+      <dt>Tuner tunes</dt><dd id="e-tune">162.550 MHz</dd>
+      <dt>Path</dt><dd id="e-path">R820T2 tuner</dd>
+      <dt>Gain</dt><dd id="e-gain">30 dB</dd>
+      <dt>Waterfall scale</dt><dd id="e-scale">dBFS @ 30 dB</dd>
+    </dl>
+  </div>
+</div>
+</div>
+
+<script>
+  var mhz = 162.550, gain = "30", conv = false;
+
+  function seg(id, fn) {
+    document.getElementById(id).addEventListener("click", function (ev) {
+      var b = ev.target.closest("button"); if (!b) return;
+      [].forEach.call(this.querySelectorAll("button"), function (x) {
+        x.setAttribute("aria-pressed", String(x === b));
+      });
+      fn(b);
+    });
+  }
+  seg("freq", function (b) { mhz = parseFloat(b.dataset.mhz); render(); });
+  seg("gain", function (b) { gain = b.dataset.g; render(); });
+
+  document.getElementById("conv").addEventListener("change", function () {
+    conv = this.checked;
+    document.getElementById("offset-wrap").classList.toggle("hidden", !conv);
+    render();
+  });
+  document.getElementById("offset").addEventListener("input", render);
+
+  function offsetMhz() {
+    var v = parseFloat(document.getElementById("offset").value);
+    return isFinite(v) && v >= 0 ? v : 0;
+  }
+
+  function render() {
+    // Direct sampling is what reaches HF with no converter, and it powers the tuner
+    // down - so gain is a no-op there. That is the one case this mock exists to make
+    // honest, because a gain that reads back as a number nobody's signal passed
+    // through is the recurring failure in this subsystem.
+    var off = conv ? offsetMhz() : 0;
+    var tuned = mhz + off;
+    var direct = tuned < 24 && !conv;
+    var auto = gain === "auto";
+
+    var gn = document.getElementById("gain-note");
+    gn.className = "note";
+    if (direct) {
+      gn.classList.add("off");
+      gn.innerHTML = "<b>Cannot apply at " + mhz.toFixed(3) + " MHz.</b> Below 24 MHz with no " +
+        "converter the radio direct-samples: the tuner is powered down, so there is no gain " +
+        "stage. Your choice is stored and applies the moment it can.";
+    } else if (auto) {
+      gn.classList.add("warn");
+      gn.innerHTML = "<b>Auto moves the gain while you watch.</b> On this radio that put a " +
+        "station at 162.35 that does not exist, and a spur comb at ±55.5/111/166/222 kHz. " +
+        "The waterfall's dB scale becomes relative — it will say so.";
+    } else if (gain === "0") {
+      gn.innerHTML = "<b>0 dB is not 'safe' — it is deaf.</b> Measured 20.2 dB SNR here against " +
+        "41.4 at 20 dB. The useful range is 10–30.";
+    } else if (gain === "40") {
+      gn.innerHTML = "<b>40 dB overloads.</b> Measured 32.8 dB SNR, below the 10–30 plateau. " +
+        "With an amp in front, come down rather than up.";
+    } else {
+      gn.innerHTML = "Measured plateau: 10/20/30 dB give 40.5/41.4/39.7 dB SNR here. " +
+        "<b>With an inline amp, try 10 or 20</b> — the amp supplies gain the tuner then " +
+        "does not have to.";
+    }
+
+    var cn = document.getElementById("conv-note");
+    cn.className = "note";
+    if (!conv) {
+      cn.classList.add("off");
+      cn.innerHTML = "Off — the dongle sees the antenna directly.";
+    } else if (mhz >= 30) {
+      cn.classList.add("warn");
+      cn.innerHTML = "<b>The converter only passes HF.</b> " + mhz.toFixed(3) + " MHz will not " +
+        "reach the mixer, whatever the dongle is told. Switch the unit to bypass for VHF, " +
+        "or turn this off.";
+    } else {
+      cn.innerHTML = "Hardware tunes <code>" + tuned.toFixed(3) + " MHz</code> so you hear " +
+        "<code>" + mhz.toFixed(3) + "</code>. Everything you read stays at the real frequency.";
+    }
+
+    document.getElementById("e-read").textContent = mhz.toFixed(3) + " MHz";
+    document.getElementById("e-tune").textContent = tuned.toFixed(3) + " MHz";
+    document.getElementById("e-path").textContent = direct
+      ? "ADC direct (tuner powered down)"
+      : conv ? "Ham It Up → R820T2 tuner" : "R820T2 tuner";
+
+    var eg = document.getElementById("e-gain");
+    eg.textContent = direct ? "not applicable" : auto ? "automatic" : gain + " dB";
+    eg.className = direct ? "dim" : auto ? "warnc" : "ok";
+
+    var es = document.getElementById("e-scale");
+    es.textContent = direct ? "dBFS (no gain stage)"
+      : auto ? "relative — gain is moving" : "dBFS @ " + gain + " dB";
+    es.className = auto ? "warnc" : direct ? "dim" : "ok";
+  }
+  render();
+</script>
+</body></html>

@@ -25,8 +25,11 @@ from jbrain.sdr.tuner import (
     MAX_MHZ,
     MAX_SPAN_MHZ,
     MIN_MHZ,
+    direct_sampling,
     nodes_in,
+    out_of_range,
     serials_in,
+    tuned_mhz,
     viewable,
 )
 
@@ -267,3 +270,59 @@ class TestFindingTheDeviceToReset:
         )
 
         assert found == {"a3": "/dev/bus/usb/001/012"}
+
+
+class TestWhatAConverterChangesAboutTheRange:
+    """An upconverter moves the whole question onto the TUNER path.
+
+    It is not "unlocking HF" — direct sampling already reaches 0.1 MHz, and the module
+    docstring above says so. What it buys is the tuner being in circuit down there: a
+    gain control at all, no `28.8 − f` image summed into every bin, and no 14.4-24 MHz
+    hole. The range check has to follow, or the api refuses a frequency the hardware
+    would tune perfectly.
+    """
+
+    UP = 125.0
+
+    def test_no_converter_leaves_every_answer_exactly_where_it_was(self) -> None:
+        """The default, and the one that must not move: a radio nobody has configured
+        meets the checks it has always met."""
+        for mhz in (0.05, 0.53, 7.2, 14.4, 18.1, 24.0, 146.52, 1766.0, 1800.0):
+            assert out_of_range(mhz, 0.0) == out_of_range(mhz), mhz
+            assert direct_sampling(mhz, 0.0) == direct_sampling(mhz), mhz
+            assert tuned_mhz(mhz) == mhz, mhz
+
+    def test_the_hole_is_gone_because_the_tuner_is_back_in_circuit(self) -> None:
+        # 18.1 bare folds onto 10.7 and is refused; through the converter it is 143.1,
+        # which is an ordinary tuning.
+        assert out_of_range(18.1) is not None
+        assert out_of_range(18.1, self.UP) is None
+        assert direct_sampling(18.1, self.UP) is False
+
+    def test_an_offset_too_small_for_the_band_is_refused_as_an_OFFSET_problem(
+        self,
+    ) -> None:
+        """Saying which is the difference between an owner correcting a setting and an
+        owner concluding the radio cannot hear a band it can."""
+        said = out_of_range(7.2, 10.0)
+
+        assert said and "offset is too small" in said
+        assert "17.2 MHz" in said and "7.2 MHz" in said
+
+    def test_a_converter_does_not_excuse_a_tune_past_the_top(self) -> None:
+        said = out_of_range(1700.0, self.UP)
+
+        assert said and "1825 MHz" in said and "1700 MHz" in said
+
+    def test_a_converted_span_is_planned_against_the_tuner_path(self) -> None:
+        """40 m through a converter is the R820T2 doing ordinary work at 132 MHz, so the
+        span is judged by the tuner's rules rather than by the ADC branch its own edges
+        would imply. Both answers are "yes" here — what matters is that the second one
+        is reached at all, since the direct-path branch refuses anything with no single
+        capture plan below 24 MHz."""
+        assert viewable(7.0, 7.3) is None
+        assert viewable(7.0, 7.3, self.UP) is None
+        # ...and the tuner path's own width limit applies to it, which the direct path's
+        # rule would have phrased entirely differently.
+        wide = viewable(7.0, 7.0 + MAX_SPAN_MHZ + 1, self.UP)
+        assert wide and "wider than the radio can sweep" in wide

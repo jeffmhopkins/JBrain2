@@ -10,11 +10,16 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import {
+  GAIN_AUTO,
+  GAIN_RUNGS,
   GENERAL,
+  HAM_IT_UP_MHZ,
   SERVICES,
   type SdrRadio,
   type SdrRadios,
   asRadios,
+  converterNote,
+  gainNote,
   generalOutcome,
   isKnownRole,
   labelFor,
@@ -22,15 +27,39 @@ import {
   roleLabel,
 } from "../sdrRadios";
 
-/** One radio's editable fields, held as typed so a half-written name is legal. */
+/** One radio's editable fields, held as typed so a half-written name is legal.
+ *
+ *  `upconverterMhz` is TEXT, not a number, because it is being typed: "125." and ""
+ *  are legal half-written states that `parseFloat` collapses, and a field that
+ *  re-rendered itself as 125 the moment the owner cleared it could not be edited. */
 interface Draft {
   name: string;
   description: string;
   role: string;
+  gain: string;
+  converter: boolean;
+  upconverterMhz: string;
 }
 
 function draftOf(radio: SdrRadio): Draft {
-  return { name: radio.name, description: radio.description, role: radio.role };
+  return {
+    name: radio.name,
+    description: radio.description,
+    role: radio.role,
+    gain: radio.gain,
+    converter: radio.upconverter_hz > 0,
+    upconverterMhz: radio.upconverter_hz > 0 ? String(radio.upconverter_hz / 1_000_000) : "",
+  };
+}
+
+/** The offset a draft would save, in Hz. Off, blank or unreadable is 0 — no shift.
+ *
+ *  Zero rather than a refusal for a half-typed number: the Save button is the only
+ *  thing that commits, and the card says what will happen beside it. */
+function offsetHzOf(draft: Draft): number {
+  if (!draft.converter) return 0;
+  const mhz = Number.parseFloat(draft.upconverterMhz);
+  return Number.isFinite(mhz) && mhz > 0 ? Math.round(mhz * 1_000_000) : 0;
 }
 
 export function SdrRadiosCard() {
@@ -88,7 +117,16 @@ export function SdrRadiosCard() {
     setSaving(serial);
     setError(null);
     try {
-      adopt(await api.describeSdrRadio(serial, draft), serial);
+      adopt(
+        await api.describeSdrRadio(serial, {
+          name: draft.name,
+          description: draft.description,
+          role: draft.role,
+          gain: draft.gain,
+          upconverter_hz: offsetHzOf(draft),
+        }),
+        serial,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save that radio.");
     } finally {
@@ -118,7 +156,9 @@ export function SdrRadiosCard() {
     return (
       draft.name !== radio.name ||
       draft.description !== radio.description ||
-      draft.role !== radio.role
+      draft.role !== radio.role ||
+      draft.gain !== radio.gain ||
+      offsetHzOf(draft) !== radio.upconverter_hz
     );
   };
 
@@ -126,9 +166,10 @@ export function SdrRadiosCard() {
     <section className="settings-card">
       <h2 className="settings-label">Radios</h2>
       <p className="settings-meta">
-        name each radio, say what it is plugged into, and set what it is for. All three are
-        remembered against the radio's serial, so they survive unplugging it or moving it to another
-        USB port. A radio dedicated to a service is not one the tuner may borrow.
+        name each radio, say what it is plugged into, set what it is for, and how it is wired —
+        tuner gain and any upconverter in front of it. All of it is remembered against the radio's
+        serial, so it survives unplugging it or moving it to another USB port. A radio dedicated to
+        a service is not one the tuner may borrow.
       </p>
 
       {!state.scan_ok && (
@@ -200,6 +241,101 @@ export function SdrRadiosCard() {
                 )}
               </select>
             </label>
+
+            {/* TWO MORE FIELDS, not a new surface. The owner discarded three richer
+                rivals — an inline disclosure, a page per radio with the gain ladder
+                charted, a five-bead signal chain — against "needs to be simpler", and
+                they were right: this card already models the radio and what it is for,
+                keyed by serial with one Save. Gain and a converter are two more answers
+                to that same question (docs/mocks/radio-settings/README.md). */}
+            <fieldset className="settings-field">
+              <legend>Gain</legend>
+              <div className="seg-row">
+                {[...GAIN_RUNGS, GAIN_AUTO].map((rung) => (
+                  <button
+                    key={rung}
+                    type="button"
+                    className={draft.gain === rung ? "seg seg-on" : "seg"}
+                    aria-pressed={draft.gain === rung}
+                    onClick={() =>
+                      setDrafts((d) => ({
+                        ...d,
+                        // Tapping the chosen rung again CLEARS it, because unset is a
+                        // real state with its own behaviour (AGC listening, 30 dB
+                        // measuring) and a control that could reach every value except
+                        // the one it started at would be a trap.
+                        [radio.serial]: { ...draft, gain: draft.gain === rung ? "" : rung },
+                      }))
+                    }
+                  >
+                    {rung === GAIN_AUTO ? "Auto" : rung === "0" ? "0 dB" : rung}
+                  </button>
+                ))}
+              </div>
+              {/* The note carries its own tone: `warn` for a choice the measurements
+                  argue against, `off` for a setting that is not doing anything. */}
+              <p className={`settings-note ${gainNote(draft.gain, draft.converter).tone}`}>
+                {gainNote(draft.gain, draft.converter).text}
+              </p>
+            </fieldset>
+
+            <fieldset className="settings-field">
+              <legend>Upconverter</legend>
+              <div className="seg-row">
+                <button
+                  type="button"
+                  className={draft.converter ? "seg" : "seg seg-on"}
+                  aria-pressed={!draft.converter}
+                  onClick={() =>
+                    setDrafts((d) => ({ ...d, [radio.serial]: { ...draft, converter: false } }))
+                  }
+                >
+                  Off
+                </button>
+                <button
+                  type="button"
+                  className={draft.converter ? "seg seg-on" : "seg"}
+                  aria-pressed={draft.converter}
+                  onClick={() =>
+                    setDrafts((d) => ({
+                      ...d,
+                      [radio.serial]: {
+                        ...draft,
+                        converter: true,
+                        // The Ham It Up's nominal crystal as a STARTING POINT only —
+                        // 125 is this unit's number, not every unit's, which is why the
+                        // field is editable at all.
+                        upconverterMhz: draft.upconverterMhz || String(HAM_IT_UP_MHZ),
+                      },
+                    }))
+                  }
+                >
+                  Inline
+                </button>
+              </div>
+              {draft.converter && (
+                <label className="settings-offset">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step={0.001}
+                    value={draft.upconverterMhz}
+                    aria-label="Upconverter offset in megahertz"
+                    onChange={(e) =>
+                      setDrafts((d) => ({
+                        ...d,
+                        [radio.serial]: { ...draft, upconverterMhz: e.target.value },
+                      }))
+                    }
+                  />
+                  MHz offset
+                </label>
+              )}
+              <p className={`settings-note ${converterNote(offsetHzOf(draft)).tone}`}>
+                {converterNote(offsetHzOf(draft)).text}
+              </p>
+            </fieldset>
 
             {conflicting && (
               <p className="settings-meta" role="alert" style={{ color: "var(--danger)" }}>

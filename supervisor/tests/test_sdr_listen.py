@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -3706,3 +3707,174 @@ def test_a_view_span_the_mode_does_not_offer_is_refused(
         assert session.view_span_hz == 0.0
     finally:
         session.stop()
+
+
+# --- the upconverter, end to end -----------------------------------------------------
+#
+# THE ONE PROPERTY WORTH PROTECTING: the offset reaches the hardware and nothing else.
+# A Ham It Up mixes the band up by its crystal, so to hear 7.200 MHz the dongle tunes
+# 132.200 — and a layer that reported the second number would produce a picture, a
+# recording and a heard log all labelled 125 MHz wrong, with nothing in any of them
+# looking unusual. These tests are written so that a regression fails LOUDLY here rather
+# than quietly on the air.
+
+UPCONVERTER_HZ = 125_000_000
+DIAL_HZ = 7_200_000
+
+
+class TestTheConverterShiftsTheTuneAndNothingElse:
+    def test_the_direct_path_and_a_converter_are_alternatives(self) -> None:
+        """Direct sampling is what reaches HF with no converter, and it powers the tuner
+        DOWN. With a converter the dongle is asked for a VHF frequency, so the R820T2 is
+        back in circuit — which is the whole reason a gain control exists on HF at all.
+        Choosing both would feed the ADC from the antenna while the converter's output
+        went nowhere: silence, with nothing to say why."""
+        assert listen.direct_for(DIAL_HZ) is True
+        assert listen.direct_for(DIAL_HZ, UPCONVERTER_HZ) is False
+        assert listen.direct_for(146_940_000) is False
+
+    def test_the_demodulator_flags_follow_the_TUNE_not_the_dial(self) -> None:
+        with_converter = listen.demod_args("am", "30", DIAL_HZ, UPCONVERTER_HZ)
+        bare = listen.demod_args("am", "30", DIAL_HZ)
+
+        # Bare: the ADC branch, and no `-g`, because there is no tuner to set.
+        assert "direct2" in bare and "-g" not in bare
+        # Through the converter: the tuner is in circuit, so neither applies.
+        assert "direct2" not in with_converter
+        assert with_converter[with_converter.index("-g") + 1] == "30"
+
+    def test_only_the_f_argument_carries_the_offset(self, tuner) -> None:
+        """The seam, on the subprocess engine. `-f` is the one number that reaches the
+        hardware; `session.frequency_hz` is the one every reader gets."""
+        info = tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            session = tuner.find(info.session_id)
+            assert session is not None
+            argv = session._rtl_cmd()
+
+            assert argv[argv.index("-f") + 1] == str(DIAL_HZ + UPCONVERTER_HZ)
+            assert session.frequency_hz == DIAL_HZ
+        finally:
+            tuner.stop()
+
+    def test_nothing_a_caller_reads_is_ever_the_shifted_frequency(self, tuner) -> None:
+        """THE REGRESSION TEST. Every frequency on the wire is checked against the dial,
+        and the shifted value is asserted absent from the whole payload — so a new field
+        that leaked it fails here even though no existing assertion names it."""
+        info = tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            body = info.as_dict()
+
+            assert body["frequency_hz"] == DIAL_HZ
+            assert body["upconverter_hz"] == UPCONVERTER_HZ
+            # The tune appears NOWHERE in what a client reads. Searched rather than
+            # asserted field by field, because the next field to carry it has not been
+            # written yet.
+            assert str(DIAL_HZ + UPCONVERTER_HZ) not in json.dumps(body)
+        finally:
+            tuner.stop()
+
+    def test_the_radio_is_opened_with_the_offset_rather_than_a_shifted_centre(
+        self, iq_tuner, monkeypatch
+    ) -> None:
+        """On the I/Q engine the shift belongs to `radio.Radio`, which applies it at
+        `setFrequency` and reports the dial back. Handing a shifted centre in here
+        instead would put it on `Buffer.center_hz`, and from there on every frame's
+        `start_hz`, every peak, and the waterfall's axis."""
+        seen: list[dict[str, Any]] = []
+        original = listen.radio.Radio.open
+
+        def _open(**kwargs: Any) -> Any:
+            seen.append(dict(kwargs))
+            return original(**kwargs)
+
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+        info = iq_tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            assert seen[0]["upconverter_hz"] == UPCONVERTER_HZ
+            # Within the demodulator's own LO dodge, which is a few hundred kHz and has
+            # nothing to do with the converter.
+            assert abs(seen[0]["center_hz"] - DIAL_HZ) < 1_000_000
+            assert seen[0]["direct"] is False
+            assert info.frequency_hz == DIAL_HZ
+        finally:
+            iq_tuner.stop()
+
+    def test_a_converter_admits_the_band_direct_sampling_folds(self) -> None:
+        """18.1 MHz is refused bare — the ADC's second Nyquist zone hands back 10.7 —
+        and is an ordinary tuning at 143.1 through a converter."""
+        with pytest.raises(listen.SdrError):
+            listen.validate(18_100_000, "usb")
+
+        assert listen.validate(18_100_000, "usb", UPCONVERTER_HZ) == "usb"
+
+    def test_a_converter_that_puts_the_tune_out_of_range_is_refused_naming_both(
+        self,
+    ) -> None:
+        with pytest.raises(listen.SdrError) as refused:
+            listen.validate(1_700_000_000, "fm", UPCONVERTER_HZ)
+
+        said = str(refused.value)
+        assert "1700000000" in said and "1825000000" in said
+
+
+class TestWhatAStoredGainDoes:
+    def test_unset_is_exactly_what_the_box_did_before_the_setting_existed(self) -> None:
+        """Bit for bit: the tuner's own loop while listening or logging APRS, and
+        `MEASURING_GAIN_DB` while drawing or surveying. A radio nobody has configured
+        must not change behaviour because a field was added to it."""
+        for purpose in (listen.PURPOSE_LISTEN, listen.PURPOSE_APRS):
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, None
+            assert session.tuner_gain_db is None, purpose
+
+        for purpose in listen.SWEEPING:
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, None
+            assert session.tuner_gain_db == listen.MEASURING_GAIN_DB, purpose
+
+    def test_a_stored_gain_reaches_every_purpose(self) -> None:
+        """The owner chose this over "spectrum stays pinned at 30": one antenna chain
+        has one right gain, and a setting that applied to three purposes out of four is
+        a setting nobody can reason about."""
+        for purpose in listen.PURPOSES:
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, "10"
+            assert session.tuner_gain_db == 10.0, purpose
+
+    def test_auto_is_the_radios_own_loop_on_every_purpose_including_a_picture(
+        self,
+    ) -> None:
+        """The one request `gain=None` cannot express: absent already means "whatever
+        this purpose does by default", and for a picture that default is 30 dB. An owner
+        asking for automatic on a waterfall is asking for exactly that to stop."""
+        session = listen.Session.__new__(listen.Session)
+        session.purpose, session.gain = listen.PURPOSE_SPECTRUM, listen.GAIN_AUTO
+
+        assert session.tuner_gain_db is None
+
+    def test_auto_sends_no_g_flag_because_that_is_what_rtl_fm_does_by_default(
+        self,
+    ) -> None:
+        assert "-g" not in listen.demod_args("fm", listen.GAIN_AUTO, 146_940_000)
+
+
+def test_a_shortwave_row_says_there_was_no_gain_stage_rather_than_naming_one() -> None:
+    """The recurring failure in this subsystem, closed on the wire.
+
+    A measuring session asks for `MEASURING_GAIN_DB` whatever the band, and below 24 MHz
+    with no converter `set_gain` returns early and `-g` writes to a chip that is not
+    listening — so stamping 30 dB on the row put a number on every shortwave picture
+    that reads like a measurement and is fiction."""
+    session = listen.Session.__new__(listen.Session)
+    session.purpose, session.gain = listen.PURPOSE_SPECTRUM, None
+    session.frequency_hz, session.upconverter_hz = 7_200_000, 0
+
+    assert session.tuner_bypassed is True
+    # ...and the gain it would otherwise have claimed is still the one it asked for, so
+    # the peak finder keeps working down there (it gates on a FIXED gain, not on a
+    # reported one).
+    assert session.tuner_gain_db == listen.MEASURING_GAIN_DB
+
+    session.upconverter_hz = UPCONVERTER_HZ
+    assert session.tuner_bypassed is False

@@ -2977,7 +2977,17 @@ export const api = {
 
   async describeSdrRadio(
     serial: string,
-    body: { name: string; description: string; role: string },
+    body: {
+      name: string;
+      description: string;
+      role: string;
+      // The tuner gain pinned on this radio ("" unset, "auto", or a measured rung in
+      // dB) and any converter in front of it, in Hz. Sent on every save because the
+      // card saves a whole radio: omitting one would be indistinguishable from
+      // clearing it.
+      gain: string;
+      upconverter_hz: number;
+    },
   ): Promise<SdrRadios> {
     const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}`, {
       method: "PUT",
