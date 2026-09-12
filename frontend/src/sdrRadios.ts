@@ -285,6 +285,6 @@ export function converterNote(upconverterHz: number): Note {
   const shown = mhz.toLocaleString(undefined, { maximumFractionDigits: 3 });
   return {
     tone: "warn",
-    text: `Hardware tunes ${shown} MHz above what you ask, so 7.200 MHz is heard at ${(7.2 + mhz).toFixed(3)}. Every frequency you read — waterfall, peaks, recordings, APRS — stays the real one. The converter passes HF only, so switch the unit to bypass, or turn this off, before tuning VHF.`,
+    text: `Hardware tunes ${shown} MHz above what you ask, so 7.200 MHz is heard at ${(7.2 + mhz).toFixed(3)}. Every frequency you read — waterfall, peaks, recordings, APRS — stays the real one. The converter passes HF only — 300 Hz to 65 MHz at its input — so switch the unit to bypass, or turn this off, before tuning VHF. Above 65 MHz with this on, the box refuses rather than tuning something you would not hear.`,
   };
 }

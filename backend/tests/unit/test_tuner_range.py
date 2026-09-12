@@ -21,6 +21,8 @@ import pytest
 from jbrain.sdr import bands
 from jbrain.sdr.bands import LIVE_MAX_BINS, MIN_LIVE_BIN_HZ
 from jbrain.sdr.tuner import (
+    CONVERTER_MAX_MHZ,
+    CONVERTER_MIN_MHZ,
     DIRECT_MIN_MHZ,
     MAX_MHZ,
     MAX_SPAN_MHZ,
@@ -310,9 +312,14 @@ class TestWhatAConverterChangesAboutTheRange:
         assert "17.2 MHz" in said and "7.2 MHz" in said
 
     def test_a_converter_does_not_excuse_a_tune_past_the_top(self) -> None:
-        said = out_of_range(1700.0, self.UP)
+        """The dial moved to 60 MHz and the offset to 1800 because the CONVERTER's own
+        input is now asked about first: 1700 MHz never reaches this branch, since a
+        Ham It Up passes nothing like it (`TestWhatTheConverterItselfPasses`). What is
+        left here is the case the offset alone creates — a dial the converter passes,
+        shifted past the dongle's ceiling."""
+        said = out_of_range(60.0, 1800.0)
 
-        assert said and "1825 MHz" in said and "1700 MHz" in said
+        assert said and "1860 MHz" in said and "60 MHz" in said
 
     def test_a_converted_span_is_planned_against_the_tuner_path(self) -> None:
         """40 m through a converter is the R820T2 doing ordinary work at 132 MHz, so the
@@ -323,6 +330,114 @@ class TestWhatAConverterChangesAboutTheRange:
         assert viewable(7.0, 7.3) is None
         assert viewable(7.0, 7.3, self.UP) is None
         # ...and the tuner path's own width limit applies to it, which the direct path's
-        # rule would have phrased entirely differently.
-        wide = viewable(7.0, 7.0 + MAX_SPAN_MHZ + 1, self.UP)
+        # rule would have phrased entirely differently. It starts at 1.0 rather than 7.0
+        # so the span stays inside the converter's own input (0.0003-65 MHz), which is
+        # asked first now: 7-68 would be refused for running past it instead.
+        wide = viewable(1.0, 1.0 + MAX_SPAN_MHZ + 1, self.UP)
         assert wide and "wider than the radio can sweep" in wide
+
+
+class TestWhatTheConverterItselfPasses:
+    """The bound that is about the ACCESSORY, not about the dongle.
+
+    Every other check in `tuner` asks what the RTL-SDR can do, and with a converter
+    inline it asks that of the tune — which is right, and was the whole answer. The
+    owner set 125 MHz inline on the long wire and swept FM broadcast: 98 + 125 is
+    223 MHz, an ordinary tuning, so the request was accepted and came back as noise.
+    Nothing had asked whether the converter's input passed 98 MHz. It does not: this
+    Ham It Up passes 300 Hz to 65 MHz, a figure the owner supplied on 2026-09-12.
+    """
+
+    UP = 125.0
+
+    def test_the_FM_band_through_a_converter_is_refused_and_says_why(self) -> None:
+        """The incident, as one assertion. Both numbers appear for the reason the rest
+        of this module names both — an owner reading about 223 MHz after asking for 98
+        has no way to connect the two — and the remedy is the one that works, since
+        88-108 is an ordinary tuning with the converter Off."""
+        said = out_of_range(98.0, self.UP)
+
+        assert said is not None
+        assert "converter" in said
+        assert "98 MHz" in said and "223 MHz" in said
+        assert f"{CONVERTER_MAX_MHZ:g} MHz" in said
+        assert "turn the converter Off" in said
+
+    def test_the_top_edge_passes_and_just_above_it_does_not(self) -> None:
+        assert out_of_range(CONVERTER_MAX_MHZ, self.UP) is None
+        assert out_of_range(CONVERTER_MAX_MHZ + 0.001, self.UP) is not None
+
+    def test_the_bottom_edge_passes_and_just_below_it_does_not(self) -> None:
+        assert out_of_range(CONVERTER_MIN_MHZ, self.UP) is None
+        assert out_of_range(CONVERTER_MIN_MHZ / 2, self.UP) is not None
+
+    def test_the_bottom_edge_is_300_Hz_and_has_not_become_zero(self) -> None:
+        """300 Hz is 0.0003 MHz, and the failure mode of a sub-kHz bound in a module
+        that speaks MHz is that it rounds to nothing — at which point the floor silently
+        stops existing and this file's other assertions all still pass."""
+        assert pytest.approx(300.0) == CONVERTER_MIN_MHZ * 1_000_000
+        assert int(CONVERTER_MIN_MHZ) == 0 and CONVERTER_MIN_MHZ > 0
+
+    def test_a_dial_the_converter_blocks_is_refused_before_the_dongles_ceiling(
+        self,
+    ) -> None:
+        """Two things are wrong with 1700 MHz through a 125 MHz converter and only one
+        of them has a fix: the tune is past 1766, and the converter passed none of it.
+        Told the first, an owner concludes the radio cannot reach 1700 — it can, with
+        the converter Off."""
+        said = out_of_range(1700.0, self.UP)
+
+        assert said and "converter passes" in said and "turn the converter Off" in said
+
+    def test_the_low_refusal_offers_no_remedy_because_there_is_none(self) -> None:
+        # Below 0.0003 MHz the converter is not what is in the way for long: with it Off
+        # the dial is under `DIRECT_MIN_MHZ` as well, so "turn it off" would be a fix
+        # that fails, and the sentence stops at the fact.
+        said = out_of_range(0.0001, self.UP)
+
+        assert said and "converter passes" in said
+        assert "turn the converter Off" not in said
+
+    def test_no_converter_is_refused_exactly_nothing_new(self) -> None:
+        """The passband must not narrow a radio with `upconverter_hz: 0` — which is
+        every radio until someone says otherwise, and both of this box's until today."""
+        for mhz in (0.0001, 0.0003, 0.1, 7.2, 65.0, 65.001, 88.0, 98.0, 108.0, 1766.0, 1800.0):
+            assert out_of_range(mhz, 0.0) == out_of_range(mhz), mhz
+        # The FM band specifically: the thing this check refuses THROUGH a converter is
+        # as tunable bare as it has always been.
+        for mhz in (88.0, 98.0, 108.0):
+            assert out_of_range(mhz) is None, mhz
+        assert viewable(88.0, 108.0) is None
+
+    def test_a_span_wholly_outside_the_converter_is_refused_as_a_span(self) -> None:
+        """The FM sweep that started this. A sentence about a range, not about one of
+        its edges, because a range is what was asked for."""
+        said = viewable(88.0, 108.0, self.UP)
+
+        assert said is not None
+        assert "88-108 MHz" in said and "converter passes" in said
+        assert "turn the converter Off" in said
+
+    def test_a_span_only_partly_inside_it_is_refused_whole_and_says_so(self) -> None:
+        """REFUSED, NOT TRIMMED, and the message has to say which: a trimmed 60-65 would
+        come back labelled 60-70, and a quiet stripe where the converter stops is
+        indistinguishable from a quiet band once it is drawn."""
+        said = viewable(60.0, 70.0, self.UP)
+
+        assert said is not None
+        assert "refused whole rather than trimmed" in said
+        assert f"60-{CONVERTER_MAX_MHZ:g} MHz" in said
+
+    def test_the_overlap_it_names_is_the_one_that_would_be_accepted(self) -> None:
+        assert viewable(60.0, CONVERTER_MAX_MHZ, self.UP) is None
+
+    def test_a_span_hanging_off_the_bottom_edge_names_that_overlap_instead(self) -> None:
+        said = viewable(0.0001, 5.0, self.UP)
+
+        assert said is not None
+        assert "refused whole rather than trimmed" in said
+        assert f"{CONVERTER_MIN_MHZ:g}-5 MHz" in said
+
+    def test_a_span_the_converter_passes_is_judged_by_the_radios_own_rules(self) -> None:
+        # The check is a gate in front of the existing ones, not a replacement for them.
+        assert viewable(7.0, 7.3, self.UP) is None

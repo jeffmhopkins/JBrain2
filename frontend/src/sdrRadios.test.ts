@@ -230,12 +230,18 @@ describe("what the two new fields promise", () => {
     expect(gainNote("20", true).text).not.toMatch(/powered down/);
   });
 
-  it("never names a passband edge for a converter nobody has measured", () => {
-    // The open question the mock refuses to answer with a number it does not have.
+  it("names the passband edge, now that the owner has given it", () => {
+    // This spent its life asserting the OPPOSITE, because nobody had measured this
+    // unit's input filter. The owner supplied 300 Hz - 65 MHz on 2026-09-12 and owns
+    // the unit — and "passes HF only" is exactly what they had read before setting it
+    // inline and sweeping 88-108 MHz through it.
     const said = converterNote(125_000_000).text;
 
     expect(said).toMatch(/passes HF only/);
-    expect(said).not.toMatch(/\b(cut-?off|edge at)\b/i);
+    expect(said).toMatch(/300 Hz to 65 MHz/);
+    // 300 Hz, not "0 MHz": the low edge is the one that rounds away to nothing when a
+    // sub-kHz figure is carried in a sentence that otherwise speaks MHz.
+    expect(said).not.toMatch(/\b0 MHz/);
   });
 
   it("promises the owner's frequency back, which is the whole risk of the feature", () => {

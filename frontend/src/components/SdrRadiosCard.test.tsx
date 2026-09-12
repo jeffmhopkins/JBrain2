@@ -158,12 +158,12 @@ describe("the upconverter", () => {
     expect(screen.getByText(/stays the real one/)).toBeInTheDocument();
   });
 
-  it("warns about VHF without naming a passband edge nobody has measured", async () => {
+  it("warns about VHF and names the edge the owner gave for it", async () => {
     await shown({ upconverter_hz: 125_000_000 });
 
     const note = screen.getByText(/passes HF only/);
     expect(note).toBeInTheDocument();
-    expect(note.textContent).not.toMatch(/\b\d+ MHz edge|cut-?off/i);
+    expect(note.textContent).toMatch(/300 Hz to 65 MHz/);
   });
 
   it("takes the direct-sampling caveat off the gain note once a converter is inline", async () => {
