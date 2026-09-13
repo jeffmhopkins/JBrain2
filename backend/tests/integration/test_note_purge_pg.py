@@ -24,9 +24,11 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import scoped_session
 from jbrain.notes.repo import SqlNotesRepo
 from tests.conftest import docker_available
+from tests.integration.test_note_conversation_rls import owner_ctx
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -106,6 +108,7 @@ async def seed_fact(
     object_entity_id: str | None = None,
     temporal_token_id: str | None = None,
     derived_from_fact_id: str | None = None,
+    pinned: bool = False,
 ) -> str:
     fid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as s:
@@ -113,10 +116,11 @@ async def seed_fact(
             text(
                 "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, assertion,"
                 " valid_from, valid_to, reported_at, status, superseded_by, note_id,"
-                " object_entity_id, temporal_token_id, derived_from_fact_id, extractor,"
+                " object_entity_id, temporal_token_id, derived_from_fact_id, pinned, extractor,"
                 " prompt_version, domain_code)"
                 " VALUES (:id, :eid, :pred, 'state', 'seed statement', 'asserted', :vf, :vt,"
-                " now(), :status, :sup, :nid, :oid, :tok, :derived, 'fake-model', 'v1', 'general')"
+                " now(), :status, :sup, :nid, :oid, :tok, :derived, :pinned, 'fake-model', 'v1',"
+                " 'general')"
             ),
             {
                 "id": fid,
@@ -130,6 +134,7 @@ async def seed_fact(
                 "oid": object_entity_id,
                 "tok": temporal_token_id,
                 "derived": derived_from_fact_id,
+                "pinned": pinned,
             },
         )
     return fid
@@ -212,6 +217,92 @@ async def seed_item(
             },
         )
     return iid
+
+
+async def seed_conversation(maker: async_sessionmaker[AsyncSession], note_id: str) -> str:
+    """A note ingest conversation (migration 0191) with one ledger row, on a real owner
+    principal (`agent_sessions.principal_id` is a FK). Returns its session id."""
+    owner = await owner_ctx(maker)
+    sid = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_sessions (id, principal_id, agent, domain_scopes)"
+                " VALUES (:sid, :pid, 'curator', '{general}')"
+            ),
+            {"sid": sid, "pid": owner.principal_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_turns (id, session_id, role, content)"
+                " VALUES (gen_random_uuid(), :sid, 'assistant',"
+                " 'the note said she saw Dr Patel')"
+            ),
+            {"sid": sid},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.note_conversations (session_id, note_id, state, note_body_sha)"
+                " VALUES (:sid, :nid, 'waiting_on_owner', 'sha')"
+            ),
+            {"sid": sid, "nid": note_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.note_conversation_tool_calls (session_id, name, ok, domains)"
+                " VALUES (:sid, 'assert_fact', true, ARRAY['general'])"
+            ),
+            {"sid": sid},
+        )
+    return sid
+
+
+async def test_delete_purges_the_note_conversation_whole(
+    maker: async_sessionmaker[AsyncSession], repo: SqlNotesRepo
+) -> None:
+    """The privacy promise reaches the thread, and reaches it WHOLE: the transcript holds
+    the note's body and the owner's answers about it, so the `agent_sessions` row goes,
+    not just the side row. `app.notes` soft-deletes, so the note FK's cascade never fires
+    — the purge deletes the session explicitly."""
+    note = await seed_note(maker)
+    sid = await seed_conversation(maker, note)
+
+    assert await repo.delete_note(OWNER, note)
+
+    for table in ("note_conversations", "note_conversation_tool_calls"):
+        assert (
+            await count(maker, f"SELECT count(*) FROM app.{table} WHERE session_id = :id", id=sid)
+            == 0
+        )
+    assert await count(maker, "SELECT count(*) FROM app.agent_sessions WHERE id = :id", id=sid) == 0
+    assert (
+        await count(maker, "SELECT count(*) FROM app.agent_turns WHERE session_id = :id", id=sid)
+        == 0
+    )  # noqa: E501
+
+
+async def test_a_rebuild_keeps_the_note_conversation(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """`keep_pinned=True` is the corpus rebuild, not a deletion promise. A thread holds
+    the OWNER'S answers, which no re-derive from the notes can reconstruct — destroying
+    one because the graph is being re-derived would throw away the human half of the
+    ingest and orphan a question still waiting in the notes inbox."""
+    note = await seed_note(maker)
+    entity = await seed_entity(maker, "Rebuild Subject", status="confirmed")
+    await seed_fact(maker, note, entity)
+    sid = await seed_conversation(maker, note)
+
+    async with scoped_session(maker, OWNER) as s:
+        await purge_note_artifacts(s, uuid.UUID(note), keep_pinned=True)
+
+    assert (
+        await count(
+            maker, "SELECT count(*) FROM app.note_conversations WHERE session_id = :id", id=sid
+        )
+        == 1
+    )
+    assert await count(maker, "SELECT count(*) FROM app.agent_sessions WHERE id = :id", id=sid) == 1
 
 
 async def test_delete_purges_all_derived_artifacts(
@@ -488,4 +579,73 @@ async def test_backfill_sweeps_preexisting_orphans(
     # Provisional entity with no surviving references goes too.
     assert await count(maker, "SELECT count(*) FROM app.entities WHERE id = :id", id=entity) == 0
     # Idempotent: the swept note no longer matches any candidate predicate.
+    assert await backfill_deleted_note_artifacts(maker) == 0
+
+
+async def test_backfill_sees_a_note_stranded_with_only_a_conversation(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The privacy backstop's candidate predicate enumerated the artifacts it knew about,
+    and the two `purge_note_artifacts` deletes WHOLE — the ingest conversation and the
+    agent episode — were not among them. A note whose only surviving artifact is a thread
+    full of its own body therefore matched nothing and was never swept, while the
+    docstring claimed idempotence on the grounds that a purged note matches no predicate.
+    """
+    from jbrain.analysis.purge import backfill_deleted_note_artifacts
+
+    note = await seed_note(maker)
+    sid = await seed_conversation(maker, note)
+    # A pre-cascade deletion: the note row soft-deletes and nothing else runs.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": note}
+        )
+
+    assert await backfill_deleted_note_artifacts(maker) == 1
+
+    assert await count(maker, "SELECT count(*) FROM app.agent_sessions WHERE id = :id", id=sid) == 0
+    assert (
+        await count(
+            maker, "SELECT count(*) FROM app.note_conversations WHERE session_id = :id", id=sid
+        )
+        == 0
+    )
+    assert await backfill_deleted_note_artifacts(maker) == 0
+
+
+async def test_backfill_sees_a_note_stranded_with_only_an_episode(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The identical pre-existing hole, one line away in the same predicate: an episode
+    is a memory row holding text derived from the note, and `_purge_episodes` deletes it
+    whole — but nothing led the sweep to the note that owns it."""
+    from jbrain.analysis.purge import backfill_deleted_note_artifacts
+
+    note = await seed_note(maker)
+    episode = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episodes (id, body, domain_scopes)"
+                " VALUES (:id, 'she saw Dr Patel', ARRAY['general'])"
+            ),
+            {"id": episode},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.agent_episode_refs (id, episode_id, note_id)"
+                " VALUES (gen_random_uuid(), :eid, :nid)"
+            ),
+            {"eid": episode, "nid": note},
+        )
+        await s.execute(
+            text("UPDATE app.notes SET deleted_at = now() WHERE id = :id"), {"id": note}
+        )
+
+    assert await backfill_deleted_note_artifacts(maker) == 1
+
+    assert (
+        await count(maker, "SELECT count(*) FROM app.agent_episodes WHERE id = :id", id=episode)
+        == 0
+    )
     assert await backfill_deleted_note_artifacts(maker) == 0

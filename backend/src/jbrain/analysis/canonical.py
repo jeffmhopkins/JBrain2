@@ -10,7 +10,7 @@ owner "Me" keeps its explicit override (the graph's deliberate center).
 Promotion confirms a provisional entity once enough distinct notes corroborate
 it — the "implicitly confirmed later" ANALYSIS describes. `promote_if_corroborated`
 implements it (≥ CORROBORATION_THRESHOLD distinct same-domain notes; a contested
-identity routes to a confirm_entity review card instead of auto-confirming). It is
+identity is left provisional instead of auto-confirming). It is
 gated by the `entity_promotion` setting (default OFF) and called eager in the
 apply path; see docs/reference/entity.md "Entity lifecycle".
 """
@@ -172,7 +172,8 @@ CORROBORATION_THRESHOLD = 3
 class PromotionOutcome:
     """What a promotion pass decided for one entity. `action` is `confirmed`
     (auto-promoted in place), `propose` (corroborated but identity contested — the
-    caller files a confirm_entity card), or `none` (below threshold / ineligible).
+    caller leaves it provisional — R1b: bookkeeping the owner has no opinion about), or
+    `none` (below threshold / ineligible).
     The name/kind/domain ride along so the caller can build the card without a
     second read."""
 
@@ -234,8 +235,8 @@ async def promote_if_corroborated(session: AsyncSession, entity_id: uuid.UUID) -
     """Confirm a provisional entity once >= CORROBORATION_THRESHOLD distinct
     same-domain notes corroborate it. Auto-confirms in place (idempotent: a
     guarded UPDATE only ever flips provisional -> confirmed); but when identity is
-    contested (a live namesake) it returns `propose` so the caller files a
-    confirm_entity card instead of cementing a possibly-wrong identity. The owner
+    contested (a live namesake) it returns `propose` so the caller leaves it PROVISIONAL
+    rather than cement a possibly-wrong identity. The owner
     (subject-linked) and already-confirmed/merged entities are no-ops."""
     row = (
         await session.execute(

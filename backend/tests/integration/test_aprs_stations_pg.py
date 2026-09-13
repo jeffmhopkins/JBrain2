@@ -207,6 +207,108 @@ async def test_a_station_reports_how_it_reached_us_MOST_RECENTLY(
     assert (station["gated"], station["relay"]) == (False, None)
 
 
+async def test_a_provenance_chip_asks_about_the_WHOLE_range_not_the_last_frame(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The interesting case, and the only one where the two readings differ.
+
+    N1MPR-C was gated this morning and heard direct this afternoon — ONE station, two
+    provenances. It answers to both chips, its `heard` names both, and the line it draws
+    still describes the newest frame. A filter reading that newest flag instead would
+    drop a station the owner had genuinely heard direct."""
+    now = datetime.now(UTC)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            _INSERT,
+            {"heard_at": now - timedelta(hours=5), "src": "N4TDX", "info": GATED_POSITION},
+        )
+        await s.execute(
+            _INSERT,
+            {"heard_at": now - timedelta(minutes=6), "src": "N1MPR-C", "info": DIRECT_POSITION},
+        )
+        await s.commit()
+    await AprsLog(maker=maker, base_url="").backfill()
+    reader = StationsReader(maker)
+
+    direct = await reader.roster(OWNER, window="1d", provenance=["direct"])
+    gated = await reader.roster(OWNER, window="1d", provenance=["gated"])
+
+    assert [s["call"] for s in direct["stations"]] == ["N1MPR-C"]
+    assert [s["call"] for s in gated["stations"]] == ["N1MPR-C"]
+    assert direct["stations"][0]["heard"] == ["direct", "gated"]
+    # The row still says how it reached us MOST RECENTLY, which is a different fact.
+    assert direct["stations"][0]["direct"] is True
+    assert direct["stations"][0]["gated"] is False
+
+
+async def test_a_digipeated_frame_is_rf_rather_than_direct(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """Why there are three states and not two. This frame came off the air — it is not
+    gated — but a digipeater repeated it, so the box never heard the station itself.
+    Folding it into `direct` would tell the owner they have a path to a station they
+    cannot actually reach, which on this band is most of the roster."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.aprs_packets (heard_at, frequency_hz, source, destination,"
+                " path, info, raw) VALUES (now(), 144390000, 'N1KSC-1', 'APRS',"
+                " ARRAY['WIDE1-1*'], :info, '')"
+            ),
+            {"info": DIRECT_POSITION},
+        )
+        await s.commit()
+    await AprsLog(maker=maker, base_url="").backfill()
+    reader = StationsReader(maker)
+
+    assert [s["call"] for s in (await reader.roster(OWNER, provenance=["rf"]))["stations"]] == [
+        "N1KSC-1"
+    ]
+    assert (await reader.roster(OWNER, provenance=["direct"]))["stations"] == []
+    assert (await reader.roster(OWNER, provenance=["gated"]))["stations"] == []
+
+
+async def test_the_provenance_counts_are_stations_and_do_not_move_when_a_chip_is_pressed(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """The same rule the kind counts follow: a chip has to say what it would show BEFORE
+    you press it. These OVERLAP where a station arrived more than one way, so they are
+    not a partition of the total and the screen must not draw them as one."""
+    await _seed(maker, _CAPTURE)
+    reader = StationsReader(maker)
+
+    plain = await reader.roster(OWNER, window="1d")
+    filtered = await reader.roster(OWNER, window="1d", provenance=["gated"])
+
+    # Two gated senders behind the IGate, one station heard directly.
+    assert plain["provenance_stations"] == {"direct": 1, "gated": 2, "rf": 0}
+    assert filtered["provenance_stations"] == plain["provenance_stations"]
+    # A state with nothing in the range reports ZERO rather than going missing: on a box
+    # with no terminal, "matched nothing" and "never reached the server" are the same
+    # blank list otherwise (CLAUDE.md rule 10).
+    assert "rf" in filtered["provenance_stations"]
+
+
+async def test_the_two_chip_rows_narrow_each_other_while_one_row_widens(
+    maker: async_sessionmaker, clean: None
+) -> None:
+    """OR within a row, AND between them. Direct and gated are exclusive per packet, so
+    an AND inside the row would return nothing at all; an OR between the rows would let
+    the provenance chips ADD stations the kind chips had excluded."""
+    await _seed(maker, _CAPTURE)
+    reader = StationsReader(maker)
+
+    both = await reader.roster(OWNER, window="1d", provenance=["direct", "gated"])
+    crossed = await reader.roster(OWNER, window="1d", kinds=["Weather"], provenance=["direct"])
+
+    assert sorted(s["call"] for s in both["stations"]) == ["KD4WLE", "N1KSC-1", "N1MPR-C"]
+    # KD4WLE sends the only weather in the range and arrives gated, so asking for weather
+    # heard direct is a real, empty answer rather than a widened one.
+    assert crossed["stations"] == []
+    # ...and the header can still say what it narrowed from.
+    assert crossed["stations_total"] == 3
+
+
 async def test_a_station_lists_the_kinds_it_actually_sends(
     maker: async_sessionmaker, clean: None
 ) -> None:

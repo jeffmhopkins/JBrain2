@@ -2,6 +2,8 @@
 chunks/notes policies already hide other-domain rows, so the optional domain
 parameter only narrows within what the principal can see anyway."""
 
+import json
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Row, text
@@ -9,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import vector_literal
+from jbrain.models.notes import NoteClarification
+from jbrain.notes.compose import compose_body
 from jbrain.search.service import ChunkHit, WikiHit
 
 # Both legs join notes for deletion filtering + result metadata; the
@@ -16,10 +20,22 @@ from jbrain.search.service import ChunkHit, WikiHit
 _SELECT = """
     SELECT c.id AS chunk_id, c.note_id, c.text, c.source_kind, c.source_anchor,
            c.domain_code, n.destination, n.created_at, n.body,
+           -- The note's TEXT is body + its D6 clarification blocks, and a hit can be
+           -- INSIDE a block — so the preview has to be composed too, or it would omit
+           -- the very sentence that matched. Carried as rows rather than assembled in
+           -- SQL: `jbrain.notes.compose` owns the block format, and a second copy of it
+           -- here is exactly the drift 0193's argument is about.
+           COALESCE(cl.blocks, '[]'::json)::text AS clarifications,
            (SELECT count(*) FROM app.attachments a WHERE a.note_id = n.id)
                AS attachment_count{extra}
     FROM app.chunks c
     JOIN app.notes n ON n.id = c.note_id
+    LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+                   'question', k.question, 'answer', k.answer, 'created_at', k.created_at
+               ) ORDER BY k.seq) AS blocks
+        FROM app.note_clarifications k WHERE k.note_id = n.id
+    ) cl ON true
     WHERE n.deleted_at IS NULL
       -- Derived chunks are per-domain citation backing (analysis "Mixed-domain
       -- notes"), not primary sources: skip them so the same text a note already
@@ -105,6 +121,22 @@ def _wiki_hit(row: Row[Any], headline: str | None = None) -> WikiHit:
     )
 
 
+def _blocks(raw: str) -> tuple[NoteClarification, ...]:
+    """Detached rows for the composer — never added to a session, never flushed.
+
+    Carried as `json::text` and decoded here because the driver's json handling is a
+    dialect detail these raw-SQL legs do not otherwise depend on.
+    """
+    return tuple(
+        NoteClarification(
+            question=b["question"],
+            answer=b["answer"],
+            created_at=datetime.fromisoformat(b["created_at"]),
+        )
+        for b in json.loads(raw)
+    )
+
+
 def _hit(row: Row[Any], headline: str | None = None) -> ChunkHit:
     return ChunkHit(
         chunk_id=str(row.chunk_id),
@@ -115,7 +147,7 @@ def _hit(row: Row[Any], headline: str | None = None) -> ChunkHit:
         domain=row.domain_code,
         destination=row.destination,
         created_at=row.created_at,
-        body=row.body,
+        body=compose_body(row.body, _blocks(row.clarifications)),
         attachment_count=row.attachment_count,
         headline=headline,
     )

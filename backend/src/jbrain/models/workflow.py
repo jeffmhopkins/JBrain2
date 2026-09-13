@@ -17,7 +17,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
-    PrimaryKeyConstraint,
     Text,
     func,
 )
@@ -118,46 +117,3 @@ class Event(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class ResolutionPin(Base):
-    """Persists the pure analysis.pins.ResolutionPin. PK includes chunk_id because
-    occurrence_index is chunk-relative (the pins.py A8 warning); cascades with the
-    note (N15). Exactly one of entity_id / normalized_predicate per decision_kind.
-    Domain-firewalled by the note's domain."""
-
-    __tablename__ = "resolution_pin"
-    __table_args__ = (
-        PrimaryKeyConstraint(
-            "note_id",
-            "chunk_id",
-            "occurrence_index",
-            "decision_kind",
-            name="resolution_pin_pkey",
-        ),
-        CheckConstraint(
-            "(decision_kind = 'identity'"
-            " AND entity_id IS NOT NULL AND normalized_predicate IS NULL)"
-            " OR (decision_kind = 'predicate_key'"
-            " AND normalized_predicate IS NOT NULL AND entity_id IS NULL)",
-            name="resolution_pin_one_decision",
-        ),
-        {"schema": "app"},
-    )
-
-    note_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.notes.id", ondelete="CASCADE")
-    )
-    chunk_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.chunks.id", ondelete="CASCADE")
-    )
-    occurrence_index: Mapped[int] = mapped_column(Integer)
-    decision_kind: Mapped[str] = mapped_column(Text)  # identity | predicate_key
-    surface: Mapped[str] = mapped_column(Text)
-    span_text_hash: Mapped[str] = mapped_column(Text)
-    entity_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.entities.id", ondelete="CASCADE"), nullable=True
-    )
-    normalized_predicate: Mapped[str | None] = mapped_column(Text, nullable=True)
-    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -15,39 +15,51 @@ here as well as in the sidecar, and the sidecar's base URL is pinned in settings
 That is what keeps `stream.py`'s SSRF guard untouched rather than widened
 (docs/plans/SDR_RADIO_PLAN.md §4.4).
 
-This module touches no LLM (rule 1 n/a), no storage, and no database — the radio is
-process state in the sidecar, not a row — so there is no RLS surface to scope. The
-recordings library, which does have one, is a later wave.
+This module touches no LLM (rule 1 n/a). It does touch storage and the database, but
+only through the recordings library at the bottom of the file: everything about the live
+radio is process state in the sidecar rather than a row, and only a RECORDING becomes
+one. Those routes go through `BlobStore` for the audio (rule 2) and an RLS-scoped
+session for the row (rule 3) — `app.sdr_recordings` is owner-only, and a recording's
+blob is resolved from the row the caller could read, never from a sha in a URL.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
 import json
-import wave
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.api.llm_settings import get_settings_store
-from jbrain.api.notes import SessionMakerDep, ctx_for
+from jbrain.api.notes import BlobStoreDep, SessionMakerDep, ctx_for
 from jbrain.db.session import scoped_session
 from jbrain.sdr import bands
 from jbrain.sdr.aprslog import AprsReader
+from jbrain.sdr.audio import cut_clip
+from jbrain.sdr.captions import Backlog, segments
 from jbrain.sdr.classify import looks_like_station
 from jbrain.sdr.command import MAX_FAILURES
 from jbrain.sdr.health import session_for, shown
+from jbrain.sdr.recorder import RecorderRefused, SdrRecorder
+from jbrain.sdr.recordings import RECENT_DEFAULT, RECENT_MAX, RecordingsRepo
 from jbrain.sdr.resolve import attached_serials, for_purpose, refusal
-from jbrain.sdr.roles import GENERAL, Choice, Radio, conflicts
-from jbrain.sdr.stations import WINDOWS, StationsReader
+from jbrain.sdr.roles import (
+    GAIN_CHOICES,
+    GENERAL,
+    UPCONVERTER_MAX_HZ,
+    Choice,
+    Radio,
+    conflicts,
+)
+from jbrain.sdr.stations import PROVENANCE, WINDOWS, StationsReader
 from jbrain.sdr.tuner import (
     MAX_MHZ,
     MIN_MHZ,
@@ -65,6 +77,14 @@ router = APIRouter(prefix="/sdr", tags=["sdr"])
 # to sit beside this, is now `jbrain.sdr.tuner` rather than a third copy of itself.
 MODES = ("fm", "nfm", "wbfm", "am", "usb", "lsb")
 
+#: The widest and narrowest filter the sidecar will accept, in Hz. Only a BOUND, not the
+#: ladder: the ladder is per-mode and lives in `deploy/sdr/demod.py`, and duplicating it
+#: here would be a second place to forget a rung. This exists so an absurd value is
+#: refused as a 422 by the schema rather than travelling to the sidecar to come back a
+#: 400 — the sidecar remains the authority on which exact widths are real.
+MIN_BANDWIDTH_HZ = 1_000
+MAX_BANDWIDTH_HZ = 200_000
+
 # The lease purpose a logging session holds, and where APRS lives in North America
 # when the owner does not say otherwise (APRS_CONTROL_PLAN.md §7 holds the private
 # command frequency open).
@@ -74,11 +94,6 @@ APRS_PURPOSE = "aprs"
 #: parameter takes, and converting at the boundary is better than a second constant.
 APRS_DEFAULT_MHZ = bands.APRS_HZ / 1_000_000
 
-# How far back a single caption may reach. Segments that pile up behind a busy whisper
-# are transcribed TOGETHER rather than one at a time (see _Backlog), and this bounds how
-# much audio one merged clip may carry: past it the oldest is given up, because a caption
-# for something said half a minute ago is not a live caption any more.
-CAPTION_BACKLOG_S = 24.0
 # How long the caption stream waits with nothing to say before sending a comment to hold
 # the socket open. Proxies close an idle event stream, and a quiet band is normal.
 CAPTION_IDLE_S = 15.0
@@ -120,6 +135,11 @@ class SdrStatusOut(BaseModel):
     available: bool
     listening: dict[str, Any] | None
     sessions: list[dict[str, Any]] = []
+    #: The recording in progress, or None. Here rather than on a route of its own so the
+    #: tape deck draws its elapsed time and running size off the 1 Hz poll the rest of
+    #: the radio already uses — a second timer in the client would keep counting through
+    #: a stop it had not heard about yet (SDR_RECORDING_PLAN.md §4).
+    recording: dict[str, Any] | None = None
 
 
 def _base(settings: Any) -> str:
@@ -215,6 +235,82 @@ def _refuse(choice: Choice) -> None:
         raise HTTPException(status_code=409, detail=detail)
 
 
+async def _tuning_for(request: Request, owner: Any, serial: str | None) -> Radio:
+    """The stored SIGNAL-PATH settings of the radio a session is about to open.
+
+    `_radio_for` answers WHICH radio; this answers what the owner has said about it —
+    the tuner gain to pin and the converter offset to tune through. Two reads rather
+    than one enriched `Choice`, because `roles.Choice` is the pure decision three doors
+    share and widening it to carry hardware settings would make every caller of the
+    rule carry the settings too.
+
+    An unknown or unnamed radio answers with the defaults, which is the behaviour of a
+    box that never opened the screen: no converter, no pinned gain. That is also the
+    right answer when the USB scan could not see (`Choice.serial is None`), because a
+    converter nobody can confirm is in front of a radio nobody can name must not be
+    allowed to shift a tune."""
+    if not serial:
+        return Radio(serial="")
+    stored = await get_settings_store(request).sdr_radios(ctx_for(owner))
+    return stored.get(serial) or Radio(serial=serial)
+
+
+def _tuner_gain(asked: str | None, radio: Radio) -> str | None:
+    """The gain a session runs at: what this call asked for, else what the radio stores.
+
+    ONE mechanism, not two. The per-session `?gain=` predates the setting and is how the
+    debug console and jerv measure the same band at two gains on purpose, so it still
+    wins — an explicit request is not a default to be overridden. Absent, the radio's
+    standing choice applies, and absent that, None reaches the sidecar and its
+    per-purpose defaults are exactly what they were before this field existed
+    (`listen.Session.tuner_gain_db`): the tuner's own loop for listening and APRS,
+    `MEASURING_GAIN_DB` for a picture or a survey."""
+    return asked if asked is not None else (radio.gain or None)
+
+
+async def _session_radio(settings: Any, session_id: str | None) -> str | None:
+    """Which radio the session being retuned is on, or None if nothing says.
+
+    A retune names a session, not a radio, so the converter offset that has to be
+    honoured belongs to whichever dongle that session opened. Read from the sidecar's
+    own health rather than guessed from settings: with two radios attached, guessing
+    would pick a converter that is in front of the other one."""
+    health = await _health(_base(settings))
+    if health is None:
+        return None
+    sessions = health.get("sessions")
+    if not isinstance(sessions, list):
+        one = health.get("listening") or {}
+        sessions = [one] if one else []
+    for entry in sessions:
+        if not isinstance(entry, dict):
+            continue
+        if session_id is None or entry.get("session_id") == session_id:
+            found = entry.get("serial")
+            return found if isinstance(found, str) and found else None
+    return None
+
+
+async def _tunable_retune(
+    request: Request,
+    settings: Any,
+    owner: Any,
+    frequency_mhz: float,
+    session_id: str | None,
+) -> None:
+    """`_tunable`, for a route that names a SESSION rather than a radio.
+
+    The extra hop is paid only by a request the plain check would refuse. Nearly every
+    retune is an ordinary frequency on a radio with no converter, and asking the sidecar
+    which dongle holds the session on every step of the tuning strip would double its
+    traffic to learn a zero. What a converter can do is ADMIT a frequency the bare radio
+    cannot reach, so a request that already passes has nothing to gain by asking."""
+    if out_of_range(frequency_mhz) is None:
+        return
+    serial = await _session_radio(settings, session_id)
+    _tunable(frequency_mhz, (await _tuning_for(request, owner, serial)).upconverter_hz)
+
+
 def _detail(resp: httpx.Response, fallback: str) -> str:
     try:
         return cast(str, resp.json().get("detail") or fallback)
@@ -222,16 +318,20 @@ def _detail(resp: httpx.Response, fallback: str) -> str:
         return fallback
 
 
-async def status_of(settings: Any) -> SdrStatusOut:
+async def status_of(settings: Any, recording: dict[str, Any] | None = None) -> SdrStatusOut:
     """What the radio is doing, read from the sidecar's `/healthz`.
 
     Split out of the route so the owner debug console can be shown EXACTLY what the
     composer icon is showing, rather than a second answer to the same question. B7 moved
     that decision here to have one of them; a debug twin that re-derived it would put
     two back (CLAUDE.md #10 — the owner has no terminal, and a console that disagrees
-    with their screen is worse than no console)."""
+    with their screen is worse than no console).
+
+    `recording` is passed IN rather than read here, because the recorder lives on the
+    app rather than in the sidecar and this function is deliberately reachable without
+    one (the debug twin, and every test that has only a fake sidecar)."""
     if not settings.sdr_url:
-        return SdrStatusOut(available=False, listening=None)
+        return SdrStatusOut(available=False, listening=None, recording=recording)
     try:
         async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=5.0) as client:
             resp = await client.get("/healthz")
@@ -239,7 +339,9 @@ async def status_of(settings: Any) -> SdrStatusOut:
     except (httpx.HTTPError, ValueError):
         # The sidecar is configured but unreachable (starting, crashed). Idle is the
         # honest answer — the icon stays dark rather than lit over a dead radio.
-        return SdrStatusOut(available=False, listening=None)
+        # A recording in progress is still reported: the recorder is the api's own state,
+        # and hiding it would leave the tape deck running with nothing to stop.
+        return SdrStatusOut(available=False, listening=None, recording=recording)
     live = health.get("sessions")
     one = health.get("listening")
     # An OLDER sidecar sends no `sessions`; it can hold only one thing, so `listening` IS
@@ -258,17 +360,18 @@ async def status_of(settings: Any) -> SdrStatusOut:
         # session — and reaches this line only through the old-build fallback above.
         listening=shown(sessions),
         sessions=sessions,
+        recording=recording,
     )
 
 
 @router.get("/status")
-async def status(settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
+async def status(request: Request, settings: SettingsDep, _owner: OwnerDep) -> SdrStatusOut:
     """What the radio is doing. Answers `available: false` on a box with no radio
     rather than erroring, so the composer can simply never show the icon."""
-    return await status_of(settings)
+    return await status_of(settings, recording_now(request))
 
 
-def _tunable(frequency_mhz: float) -> None:
+def _tunable(frequency_mhz: float, upconverter_hz: int = 0) -> None:
     """Refuse a frequency the radio would answer with a DIFFERENT one.
 
     `Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)` bounds the ENDS, and the reachable range
@@ -279,8 +382,14 @@ def _tunable(frequency_mhz: float) -> None:
 
     A sentence and a 400, not a 422 with a validation blob: this is the surface an
     owner with no terminal has (CLAUDE.md #10), and the fact they need is which
-    frequency they would actually have received."""
-    refusal = out_of_range(frequency_mhz)
+    frequency they would actually have received.
+
+    `upconverter_hz` is the chosen radio's stored offset, so the hole is asked about the
+    frequency the DONGLE will be given rather than the one the owner typed: with a
+    converter inline 18.1 MHz tunes 143.1 and there is nothing to refuse. Zero — no
+    converter — is every radio until someone says otherwise, and then this is the check
+    it has always been, character for character."""
+    refusal = out_of_range(frequency_mhz, upconverter_hz / 1_000_000)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
 
@@ -294,6 +403,7 @@ async def listen(
     mode: Annotated[str, Query(pattern=f"^({'|'.join(MODES)})$")] = "wbfm",
     gain: Annotated[str | None, Query(max_length=16)] = None,
     serial: SerialQuery = None,
+    bandwidth_hz: Annotated[int | None, Query(ge=MIN_BANDWIDTH_HZ, le=MAX_BANDWIDTH_HZ)] = None,
 ) -> dict[str, Any]:
     """Take a radio and start listening. 409 when it is already held.
 
@@ -301,17 +411,28 @@ async def listen(
     the tuner may borrow while that service happens to be idle. Naming one is the
     launcher asking for THAT radio, and it is refused by name rather than quietly
     served from another."""
-    _tunable(frequency_mhz)
+    # WHICH RADIO FIRST, because what is tunable depends on it: a converter in front of
+    # one dongle admits frequencies the bare one cannot reach, and the refusal has to be
+    # about the radio this session will actually open.
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
+    _tunable(frequency_mhz, rig.upconverter_hz)
     return await _post(
         settings,
         "/listen/start",
         {
             "frequency_hz": int(round(frequency_mhz * 1_000_000)),
             "mode": mode,
-            "gain": gain,
+            "gain": _tuner_gain(gain, rig),
+            # The tune is the ONLY thing this shifts. `frequency_hz` above is, and stays,
+            # the owner's frequency — the sidecar adds the offset at the one call that
+            # reaches the hardware and every number it reports back is unshifted.
+            "upconverter_hz": rig.upconverter_hz,
             "serial": chosen.serial,
+            # Omitted rather than sent as null, so the sidecar's own default applies and
+            # this route need not know what it is.
+            **({"bandwidth_hz": bandwidth_hz} if bandwidth_hz is not None else {}),
         },
     )
 
@@ -464,12 +585,25 @@ def _kinds(raw: str | None) -> list[str]:
     return [k for k in (part.strip() for part in raw.split(",")) if k in KINDS]
 
 
+def _provenance(raw: str | None) -> list[str]:
+    """The gated/direct chips, on exactly the same terms as `_kinds`.
+
+    Whitelisted against the three states `stations.PROVENANCE` defines — and here it is
+    not only hygiene: these ids become SQL fragments rather than a bound parameter, so
+    the key check IS the guard (`StationsReader.roster` repeats it for the same reason).
+    An unknown one is dropped, so a stale PWA gets the unfiltered roster."""
+    if not raw:
+        return []
+    return [p for p in (part.strip() for part in raw.split(",")) if p in PROVENANCE]
+
+
 @router.get("/stations")
 async def stations(
     owner: OwnerDep,
     maker: SessionMakerDep,
     window: Annotated[str, Query(pattern=f"^({_WINDOW_IDS})$")] = "1d",
     kinds: Annotated[str | None, Query(max_length=120)] = None,
+    provenance: Annotated[str | None, Query(max_length=60)] = None,
     mine: Annotated[str | None, Query(max_length=16)] = None,
 ) -> dict[str, Any]:
     """Who has been heard, most recently heard first (`docs/mocks/aprs/e-stations.html`).
@@ -481,12 +615,21 @@ async def stations(
     packets. `kind_stations` therefore counts stations, because a chip reading 27 beside
     a list of three stations would be lying about what pressing it does.
 
+    `provenance` narrows it the same way, on how the frames ARRIVED: `direct`, `gated`
+    and `rf` are exclusive per packet but not per station, so a chip means "sent at least
+    one frame that arrived this way" and a station heard both ways answers to both. Its
+    counts (`provenance_stations`) therefore overlap and may sum past the total.
+
     `mine` pins the owner's own stations to the top BEFORE the list is capped. The client
     knows the callsign already (it is in Settings), so it travels as a parameter rather
     than costing a settings read on every poll — and it is a sort key on the owner's own
     request, not a permission."""
     return await StationsReader(maker).roster(
-        ctx_for(owner), window=window, kinds=_kinds(kinds), mine=mine
+        ctx_for(owner),
+        window=window,
+        kinds=_kinds(kinds),
+        provenance=_provenance(provenance),
+        mine=mine,
     )
 
 
@@ -525,6 +668,14 @@ class RadioOut(BaseModel):
     attached: bool
     """Whether the scan can see it right now. A described radio that is unplugged still
     appears — that is how its service explains what it is waiting for."""
+    gain: str
+    """The tuner gain pinned on this radio: "" for unset, `auto`, or a measured rung in
+    dB. Unset is not zero and must not be drawn as one — it is the absence of a choice,
+    and it means what this box has always done."""
+    upconverter_hz: int
+    """How far a converter in front of this dongle shifts the hardware tune, in Hz. 0 is
+    none. It NEVER appears in a frequency this api reports; it is a fact about the wire
+    between the antenna and the dongle."""
 
 
 class RadiosOut(BaseModel):
@@ -544,6 +695,12 @@ class RadioIn(BaseModel):
     # silently shortening, because a role the caller did not ask for is a wrong answer
     # where a shortened description is only a shorter one.
     role: Annotated[str, Field(max_length=40)] = GENERAL
+    # REFUSED rather than coerced, for `role`'s reason one step further: a gain the
+    # caller did not ask for would be applied to the radio and drawn on every waterfall
+    # legend as the level everything was measured at. "" is unset and is the default,
+    # so a client that predates the field saves exactly what it always saved.
+    gain: Annotated[str, Field(pattern=f"^({'|'.join(GAIN_CHOICES)})?$")] = ""
+    upconverter_hz: Annotated[int, Field(ge=0, le=UPCONVERTER_MAX_HZ)] = 0
 
 
 class ChannelOut(BaseModel):
@@ -697,6 +854,8 @@ async def radios(request: Request, settings: SettingsDep, owner: OwnerDep) -> Ra
                 description=radio.description,
                 role=radio.role,
                 attached=radio.serial in attached,
+                gain=radio.gain,
+                upconverter_hz=radio.upconverter_hz,
             )
             for radio in sorted(known.values(), key=lambda r: r.serial)
         ],
@@ -728,6 +887,8 @@ async def describe_radio(
         name=body.name,
         description=body.description,
         role=body.role,
+        gain=body.gain,
+        upconverter_hz=body.upconverter_hz,
     )
     return await radios(request, settings, owner)
 
@@ -833,6 +994,7 @@ async def aprs_logging(
     # the whole point of the setting, and invisible without this check.
     chosen = await _radio_for(request, settings, _owner, APRS_PURPOSE, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
     body = await _post(
         settings,
         "/listen/start",
@@ -840,7 +1002,12 @@ async def aprs_logging(
             "frequency_hz": int(round(frequency_mhz * 1_000_000)),
             # 1200-baud AFSK is narrowband FM; nothing else can carry it.
             "mode": "fm",
-            "gain": None,
+            # APRS gets the radio's stored gain like everything else. The owner chose
+            # that over "the logger keeps AGC": one antenna chain has one right gain,
+            # and a setting that applied to three purposes out of four would be a
+            # setting nobody could reason about. Unset is still AGC here.
+            "gain": _tuner_gain(None, rig),
+            "upconverter_hz": rig.upconverter_hz,
             "purpose": APRS_PURPOSE,
             "serial": chosen.serial,
         },
@@ -867,20 +1034,54 @@ async def _health(base: str) -> dict[str, Any] | None:
 
 @router.post("/tune")
 async def tune(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     frequency_mhz: Annotated[float, Query(ge=TUNABLE_MIN_MHZ, le=MAX_MHZ)],
     mode: Annotated[str | None, Query(pattern=f"^({'|'.join(MODES)})$")] = None,
     session_id: Annotated[str | None, Query(max_length=32)] = None,
+    bandwidth_hz: Annotated[int | None, Query(ge=MIN_BANDWIDTH_HZ, le=MAX_BANDWIDTH_HZ)] = None,
 ) -> dict[str, Any]:
-    """Retune the live session. The session id survives, so the icon does not blink."""
-    _tunable(frequency_mhz)
+    """Retune the live session. The session id survives, so the icon does not blink.
+
+    A bandwidth with no frequency change is how the control sends a new filter width:
+    the session keeps its width across a retune, so passing the current frequency back
+    with a new width changes only the filter."""
+    await _tunable_retune(request, settings, _owner, frequency_mhz, session_id)
     body: dict[str, Any] = {"frequency_hz": int(round(frequency_mhz * 1_000_000))}
     if mode is not None:
         body["mode"] = mode
     if session_id is not None:
         body["session_id"] = session_id
+    if bandwidth_hz is not None:
+        body["bandwidth_hz"] = bandwidth_hz
     return await _post(settings, "/listen/tune", body)
+
+
+#: Bounds for the picture width, as `MIN_BANDWIDTH_HZ` is for the filter: loose enough
+#: for every ladder the sidecar offers (6 kHz to 360 kHz today), tight enough that
+#: nonsense is a 422 here rather than a round trip. Which exact widths are real stays the
+#: sidecar's to say — it owns the ladders and what its chain can actually supply.
+MIN_VIEW_SPAN_HZ = 1_000
+MAX_VIEW_SPAN_HZ = 2_000_000
+
+
+@router.post("/view")
+async def view_span(
+    settings: SettingsDep,
+    _owner: OwnerDep,
+    span_hz: Annotated[int, Query(ge=MIN_VIEW_SPAN_HZ, le=MAX_VIEW_SPAN_HZ)],
+    session_id: Annotated[str | None, Query(max_length=32)] = None,
+) -> dict[str, Any]:
+    """Set how wide the tuning picture is drawn. **Not a retune.**
+
+    Its own route rather than a `/tune` parameter because it is not a retune: `/tune`
+    rebuilds the demodulator, which is right for a filter change and wrong for a zoom —
+    it would click the audio every time the owner changed magnification."""
+    body: dict[str, Any] = {"span_hz": span_hz}
+    if session_id is not None:
+        body["session_id"] = session_id
+    return await _post(settings, "/listen/view", body)
 
 
 @router.post("/stop")
@@ -917,6 +1118,7 @@ def _span(
     section: str | None,
     start_mhz: float | None,
     stop_mhz: float | None,
+    upconverter_hz: int = 0,
 ) -> tuple[int, int, int | float, tuple[int, int, int] | None]:
     """The range a live spectrum should cover, and the bin width that draws it.
 
@@ -937,7 +1139,14 @@ def _span(
     they cannot disagree — five rows would otherwise, because a curated row may
     deliberately name a wider rate than the smallest one that covers it (`mw` takes
     2.048 MS/s to satisfy `R/2 <= fc`; the derived answer is 1.6). A range that is NOT
-    a section's edges is nobody's curated row and gets the derived answer."""
+    a section's edges is nobody's curated row and gets the derived answer.
+
+    **The edges that come back are the OWNER's; only the capture plan is chosen against
+    the tune.** Which rates are legal and whether a span can be hopped are facts about
+    what the dongle is asked for — a converted 40 m span is the R820T2 doing ordinary
+    tuner work at 132 MHz, not the ADC branch its own edges would imply — while every
+    number returned here goes on to label a picture and must stay where the owner is
+    listening."""
     if section is not None:
         found = bands.by_id(section)
         if found is None:
@@ -952,7 +1161,8 @@ def _span(
         start_hz = int(round(start_mhz * 1_000_000))
         stop_hz = int(round(stop_mhz * 1_000_000))
         found = bands.by_edges(start_hz, stop_hz)
-    refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000)
+    upconverter_mhz = upconverter_hz / 1_000_000
+    refusal = viewable(start_hz / 1_000_000, stop_hz / 1_000_000, upconverter_mhz)
     if refusal:
         # The sentence, not a validation blob: this is the surface an owner with no
         # terminal has (CLAUDE.md #10), and "this is more than one capture down there"
@@ -961,14 +1171,16 @@ def _span(
     # The width is OURS, and the frame is exactly `rate / N` wide. The CAPTURE comes
     # back with it rather than being re-derived by the caller, because the width and the
     # engine that produces it have to be ONE decision.
-    capture = bands.capture_for(start_hz, stop_hz)
+    tuned_start_hz = start_hz + upconverter_hz
+    tuned_stop_hz = stop_hz + upconverter_hz
+    capture = bands.capture_for(tuned_start_hz, tuned_stop_hz)
     if capture is not None:
         rate_hz, fft_bins = capture
         return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), (rate_hz, fft_bins, 1)
     # F11: too wide for one capture is not the same as too wide for this engine.
     # The retune works on a live stream (F0), so a wide span is several captures
     # stitched — finer bins than rtl_power gave AND without its one-second clamp.
-    hopped = bands.hop_plan(start_hz, stop_hz)
+    hopped = bands.hop_plan(tuned_start_hz, tuned_stop_hz)
     if hopped is not None:
         rate_hz, fft_bins, _hops = hopped
         return start_hz, stop_hz, bands.bin_width_hz(rate_hz, fft_bins), hopped
@@ -1001,15 +1213,19 @@ async def spectrum_start(
     Naming none takes a GENERAL radio, like the tuner: one the owner reserved for a
     service is not one a waterfall may borrow because that service is momentarily idle.
     Naming one is the launcher asking for THAT radio."""
-    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
+    # WHICH RADIO FIRST, for `listen`'s reason: the capture plan and the refusal both
+    # depend on whether a converter sits in front of this dongle.
     chosen = await _radio_for(request, settings, _owner, GENERAL, serial)
     _refuse(chosen)
+    rig = await _tuning_for(request, _owner, chosen.serial)
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz, rig.upconverter_hz)
     body: dict[str, Any] = {
         "purpose": SPECTRUM_PURPOSE,
         "start_hz": start_hz,
         "stop_hz": stop_hz,
         "bin_hz": chosen_bin,
-        "gain": gain,
+        "gain": _tuner_gain(gain, rig),
+        "upconverter_hz": rig.upconverter_hz,
         "serial": chosen.serial,
     }
     body.update(_capture_body(capture))
@@ -1030,6 +1246,7 @@ def _channel_hz(section: str | None, start_hz: int, stop_hz: int) -> int:
 
 @router.post("/spectrum/tune")
 async def spectrum_tune(
+    request: Request,
     settings: SettingsDep,
     _owner: OwnerDep,
     section: Annotated[str | None, Query(max_length=48)] = None,
@@ -1042,7 +1259,11 @@ async def spectrum_tune(
     Not stop-and-start: releasing the radio between two bands is a window in which
     anything else may take it, and the owner would find their waterfall gone because
     they changed band. The session id survives, so the picture does not blink."""
-    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz)
+    # The converter belongs to the radio this session already holds, so the plan is
+    # chosen against that one — with two dongles attached, reading the setting off the
+    # wrong dongle would pick a capture for a band nobody is tuned to.
+    rig = await _tuning_for(request, _owner, await _session_radio(settings, session_id))
+    start_hz, stop_hz, chosen_bin, capture = _span(section, start_mhz, stop_mhz, rig.upconverter_hz)
     body: dict[str, Any] = {
         "start_hz": start_hz,
         "stop_hz": stop_hz,
@@ -1182,7 +1403,7 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     **Reading and transcribing run apart.** The reader drains the sidecar as fast as it
     sends; whatever is waiting when whisper comes free is transcribed as ONE merged clip
-    (`_Backlog`). Done in step instead, each whisper call stalls the reader, the
+    (`Backlog`). Done in step instead, each whisper call stalls the reader, the
     sidecar's queue fills behind it, and the captioner settles permanently a backlog
     behind the live edge — which the client cannot correct for, because a caption that
     arrives after its audio was heard can only be shown late.
@@ -1194,7 +1415,7 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
     that mistake. The rule survives being right for a different reason: unloading would
     add the load back on top of the 9.8 s, and the capture route pays exactly that
     because it unloads when it finishes. The cost is flat because whisper.cpp pads every
-    clip to a 30 s window, which is also what makes merging a backlog free (`_Backlog`).
+    clip to a 30 s window, which is also what makes merging a backlog free (`Backlog`).
     It is why captions are an explicit toggle rather than always-on, too, since a
     resident whisper shares the GPU with the chat model.
 
@@ -1213,14 +1434,14 @@ async def captions(request: Request, settings: SettingsDep, _owner: OwnerDep) ->
 
     async def pump():
         client = httpx.AsyncClient(base_url=base, timeout=None)
-        backlog = _Backlog()
+        backlog = Backlog()
         arrived = asyncio.Event()
         ended = asyncio.Event()
 
         async def read(upstream: httpx.Response) -> None:
             """Drain the sidecar as fast as it sends, whatever whisper is doing."""
             try:
-                async for started, wav in _segments(upstream):
+                async for started, wav in segments(upstream):
                     if wav is None:
                         continue  # a keep-alive; the loop below sends its own
                     backlog.add(started, wav)
@@ -1288,107 +1509,437 @@ def _event(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def _segments(upstream: httpx.Response):
-    """Split the sidecar's newline-framed stream into (started_at, wav) pairs.
+# --- Recordings ---------------------------------------------------------------------
+#
+# docs/plans/SDR_RECORDING_PLAN.md R1/R2. Everything above this line is process state in
+# the sidecar; everything below is a row and a blob, and therefore the only part of this
+# file with an RLS scope and a firewall to keep.
 
-    The frame is a JSON header line then exactly `bytes` of WAV. Framing rather than a
-    request per segment because the gap between requests always lands mid-sentence."""
-    buffer = b""
-    async for block in upstream.aiter_bytes():
-        buffer += block
-        while True:
-            newline = buffer.find(b"\n")
-            if newline < 0:
-                break
-            try:
-                head = json.loads(buffer[:newline] or b"{}")
-            except json.JSONDecodeError:
-                buffer = buffer[newline + 1 :]
-                continue
-            if head.get("keepalive"):
-                buffer = buffer[newline + 1 :]
-                yield 0.0, None
-                continue
-            size = int(head.get("bytes", 0))
-            if size <= 0:
-                # Not a segment frame — a blank line, or a header that lost its size.
-                # Yielding it would hand whisper zero bytes of audio to describe.
-                buffer = buffer[newline + 1 :]
-                continue
-            if len(buffer) < newline + 1 + size:
-                break  # the WAV has not all arrived yet
-            wav = buffer[newline + 1 : newline + 1 + size]
-            buffer = buffer[newline + 1 + size :]
-            yield float(head.get("started_at", 0.0)), wav
+#: The lease purpose the tuner holds. Recording subscribes to THAT session's audio —
+#: `/listen/audio` serves the listening session specifically, so an APRS lease on another
+#: dongle is neither what gets recorded nor what makes Record available.
+LISTEN_PURPOSE = "listen"
+
+#: A recording id as it may appear in a path. `app.sdr_recordings.id` is a uuid, and an
+#: id that is not one reaches Postgres as a cast error — a 500 for what is really a
+#: malformed request. Bounded here so it is a 422 before any query runs.
+_UUID_RE = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+RecordingId = Annotated[str, Path(pattern=_UUID_RE)]
+
+#: The shortest clip a trim may leave. An MP3 frame at the sidecar's 16 kHz is 72 ms, so
+#: anything under this is asking for a handful of frames — and a cut that lands on a
+#: frame boundary could otherwise round a very short selection down to nothing at all.
+MIN_TRIM_S = 0.2
 
 
-def _clip_seconds(wav: bytes) -> float:
-    """How much audio a WAV clip holds, without reading its samples."""
-    try:
-        with wave.open(io.BytesIO(wav), "rb") as src:
-            return src.getnframes() / (src.getframerate() or 1)
-    except (wave.Error, EOFError, OSError):
-        return 0.0
+def get_recordings_repo(maker: SessionMakerDep) -> RecordingsRepo:
+    return RecordingsRepo(maker)
 
 
-def _merge(clips: list[bytes]) -> bytes:
-    """Join consecutive WAV clips into one.
-
-    The clips are contiguous slices of the same live capture, so concatenating their
-    frames reproduces the audio exactly as it was on the air — there is no crossfade or
-    resample to get wrong."""
-    frames: list[bytes] = []
-    rate = 0
-    for clip in clips:
-        try:
-            with wave.open(io.BytesIO(clip), "rb") as src:
-                frames.append(src.readframes(src.getnframes()))
-                rate = src.getframerate() or rate
-        except (wave.Error, EOFError, OSError):
-            continue  # a truncated clip is dropped, not allowed to poison the batch
-    if not frames or not rate:
-        return clips[0] if clips else b""
-    out = io.BytesIO()
-    with wave.open(out, "wb") as dst:
-        dst.setnchannels(1)
-        dst.setsampwidth(2)
-        dst.setframerate(rate)
-        dst.writeframes(b"".join(frames))
-    return out.getvalue()
+RecordingsDep = Annotated[RecordingsRepo, Depends(get_recordings_repo)]
 
 
-class _Backlog:
-    """Segments waiting for whisper, so that READING never waits on TRANSCRIBING.
+def get_recorder(request: Request) -> SdrRecorder:
+    """The box's one recorder, made on first use and kept on the app.
 
-    Read in step with transcription — the shape this route had first — the reader stalls
-    for the whole of every whisper call, the sidecar's queue fills behind it, and the
-    captioner ends up working through audio that was on the air a minute ago. Because it
-    never catches up, that lag is permanent: captions arrive long after the listener has
-    heard the words, which is the one failure the client cannot correct for.
-
-    What waits here is transcribed TOGETHER rather than one clip at a time. Whisper's
-    cost on this box is flat in clip length (~10.7 s for 4 s of audio and for 11 s
-    alike), so a merged clip costs what a single one does and loses no words — where
-    taking only the newest would silently drop whole sentences. The cap is what keeps a
-    merge from reaching back further than a live caption sensibly can.
+    One instance is the enforcement of "at most one recording at a time" — a per-request
+    recorder would let two Record presses open two streams and write two rows over one
+    content-addressed blob, so that deleting either would take the other's audio.
     """
+    state = request.app.state
+    recorder = getattr(state, "sdr_recorder", None)
+    if recorder is None:
+        recorder = SdrRecorder(state.blob_store, RecordingsRepo(state.session_maker))
+        state.sdr_recorder = recorder
+    return cast(SdrRecorder, recorder)
 
-    def __init__(self, max_seconds: float = CAPTION_BACKLOG_S) -> None:
-        self._max = max_seconds
-        self._held: list[tuple[float, bytes, float]] = []
 
-    def add(self, started: float, wav: bytes) -> None:
-        self._held.append((started, wav, _clip_seconds(wav)))
-        # Give up the OLDEST past the cap. Dropping the newest instead would leave the
-        # captioner reading history while the live edge went by unseen.
-        while len(self._held) > 1 and sum(c[2] for c in self._held) > self._max:
-            self._held.pop(0)
+RecorderDep = Annotated[SdrRecorder, Depends(get_recorder)]
 
-    def take(self) -> tuple[float, bytes] | None:
-        """Everything waiting, as one clip stamped with the first segment's start."""
-        if not self._held:
-            return None
-        held, self._held = self._held, []
-        if len(held) == 1:
-            return held[0][0], held[0][1]
-        return held[0][0], _merge([wav for _, wav, _ in held])
+
+def recording_now(request: Request) -> dict[str, Any] | None:
+    """What the recorder is doing, for `status_of` — tolerant of there being none yet.
+
+    Deliberately does NOT create a recorder: `GET /sdr/status` is polled once a second by
+    every open tab, and "is anything recording" on a box that has never recorded is None
+    without touching the app at all.
+    """
+    recorder = getattr(request.app.state, "sdr_recorder", None)
+    return cast("dict[str, Any] | None", recorder.state()) if recorder is not None else None
+
+
+def _recording_out(row: dict[str, Any]) -> dict[str, Any]:
+    """A row as the PWA sees it — everything except where the bytes live.
+
+    `blob_sha256` is dropped rather than merely unused: a client that had it would
+    eventually ask for a blob BY it, and that request cannot be scoped to the row the
+    caller was allowed to read. The audio route resolves the sha itself, from the row.
+    """
+    return {k: v for k, v in row.items() if k != "blob_sha256"}
+
+
+#: What `POST /record` may be asked to capture. Bounded here as a query type so an
+#: unknown kind is a 422 before any socket is opened — the sidecar would otherwise be
+#: asked for a stream that does not exist and answer with a 404 dressed as a 502.
+RecordKind = Literal["audio", "captions"]
+
+
+def _captions_transcriber(settings: Any) -> WhisperCppClient:
+    """The model a captions recording feeds, or a 503 saying why there isn't one.
+
+    The same refusal `GET /sdr/captions` gives, deliberately: a box with no whisper
+    gateway cannot caption live and cannot record captions either, and one sentence for
+    both is one thing for the owner to fix. Named as a function so the route reads as
+    "this is what captions needs", rather than a settings lookup buried in an argument.
+    """
+    if not settings.whisper_url:
+        raise HTTPException(
+            status_code=503,
+            detail="There is no whisper gateway on this box, so captions cannot be "
+            "recorded. Record audio instead.",
+        )
+    return WhisperCppClient(
+        settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+    )
+
+
+def _refused_recording(refused: RecorderRefused) -> HTTPException:
+    """The sidecar's refusal, mapped the way `_post` maps every other one.
+
+    409 is the owner-fixable case and keeps the sidecar's own sentence ("nothing is
+    listening"): telling them the box is broken when the fix is to press Listen is the
+    failure this mapping exists to avoid. 503 is the recorder's own — a box with no
+    whisper gateway — and travels for the same reason: "captions cannot be recorded
+    here" is a fact about the box, not a fault in the radio.
+    """
+    if refused.status in (400, 409, 503):
+        return HTTPException(status_code=refused.status, detail=refused.detail)
+    return HTTPException(status_code=502, detail=f"sdr sidecar: {refused.detail}")
+
+
+@router.post("/record")
+async def record(
+    settings: SettingsDep,
+    owner: OwnerDep,
+    recorder: RecorderDep,
+    on: Annotated[bool, Query()],
+    kind: Annotated[RecordKind, Query()] = "audio",
+) -> dict[str, Any]:
+    """Start or stop recording the live session. Idempotent both ways, like `/sdr/aprs`.
+
+    Recording is one more subscriber on the audio the browser is already playing, so it
+    neither interrupts listening nor needs the radio to be re-tuned. What it stores is
+    the settings in force when Record was pressed — a retune does not restart the
+    pipeline, so a clip may span a frequency change, and the row keeps where it began.
+
+    `kind` is what the long press on Record swaps: `audio` keeps the clip, `captions`
+    keeps the live closed captions and **no audio**. It defaults to `audio` so that a
+    client that has never heard of the swap — every version of the PWA before this one —
+    keeps recording what it always did.
+
+    The settings on the row are read the same way for both, off the live listen session.
+    A transcript with no frequency under it is a page of words about nothing; where it
+    was heard is half of what makes it worth keeping.
+
+    **Captions do not need CC to be on first.** The recorder opens its own segment
+    subscription on the sidecar, so pressing Record starts captioning whether or not the
+    owner has the live caption stream open — "turn CC on, then press Record" is a
+    terminal-shaped answer given to someone who has no terminal (CLAUDE.md #10). It also
+    does not turn CC off, or on, at the end: it never touched it.
+
+    Turning it on with nothing listening is a **409 with a sentence** rather than a
+    silent no-op: there is no audio to record — and nothing to caption either — and the
+    owner's next move is to press Listen (CLAUDE.md #10 — the sentence is the whole
+    interface they have).
+    """
+    if not on:
+        # No health check on the way out: stopping must work when the sidecar has already
+        # gone, which is precisely when there is a half-finished blob worth keeping.
+        saved = await recorder.stop()
+        return {"recording": None, "saved": _recording_out(saved) if saved else None}
+
+    base = _base(settings)
+    health = await _health(base)
+    if health is None:
+        raise HTTPException(status_code=502, detail="sdr sidecar: the radio isn't reachable")
+    session = session_for(health, LISTEN_PURPOSE)
+    if not session:
+        raise HTTPException(
+            status_code=409,
+            detail="Nothing is listening, so there is no audio to record. "
+            "Start the radio first, then press Record.",
+        )
+    try:
+        state = await recorder.start(
+            ctx_for(owner),
+            base_url=base,
+            kind=kind,
+            transcriber=_captions_transcriber(settings) if kind == "captions" else None,
+            frequency_hz=int(session.get("frequency_hz") or 0),
+            mode=str(session.get("mode") or ""),
+            # The sidecar reports 0 for "this session has no channel filter"; None is the
+            # honest column value for that, and keeps the library from printing "0 Hz
+            # wide" under a recording.
+            bandwidth_hz=int(session.get("bandwidth_hz") or 0) or None,
+            gain=session.get("gain"),
+            serial=session.get("serial"),
+        )
+    except RecorderRefused as refused:
+        raise _refused_recording(refused) from refused
+    except httpx.TimeoutException as slow:
+        raise HTTPException(
+            status_code=504, detail="The radio hasn't answered yet. Nothing is recording."
+        ) from slow
+    except httpx.HTTPError as broken:
+        raise HTTPException(status_code=502, detail=f"sdr sidecar: {broken}") from broken
+    return {"recording": state}
+
+
+@router.get("/recordings")
+async def recordings(
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    limit: Annotated[int, Query(ge=1, le=RECENT_MAX)] = RECENT_DEFAULT,
+) -> dict[str, Any]:
+    """The library, newest first, with the disk line beside it.
+
+    `usage` travels with the list because the two are read together and the meter is the
+    argument for trimming — a library that reports its size only on a second request is
+    a library whose size the owner never sees.
+    """
+    ctx = ctx_for(owner)
+    return {
+        "recordings": [_recording_out(row) for row in await repo.recent(ctx, limit=limit)],
+        "usage": await repo.usage(ctx),
+    }
+
+
+@router.get("/recordings/{recording_id}")
+async def recording(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+) -> dict[str, Any]:
+    """One recording, with the waveform the trim sheet draws.
+
+    Separate from the list on purpose. `peaks` is 400 floats, which is worth its bytes
+    for the ONE clip a sheet is open on and would dwarf a hundred-row library — so the
+    list omits it and the sheet asks for it here, once, when it opens.
+
+    Without this the sheet has handles over an empty picture, which is the shape's whole
+    argument missing: a trim is placeable because the silence at each end is visible.
+    """
+    row = await repo.get(ctx_for(owner), recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    return _recording_out(row)
+
+
+@router.get("/recordings/{recording_id}/audio")
+async def recording_audio(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> FileResponse:
+    """The clip itself, as a file Starlette can serve byte ranges out of.
+
+    `FileResponse` is what makes Preview and scrubbing work at all: it answers Range
+    requests natively, so the trim sheet can seek without downloading the clip and
+    without a line of range code here.
+
+    **The sha comes from the row, never from the URL.** Every blob on this box lives in
+    one content-addressed store — attachments, notes, images — so a route that served
+    `path_for(sha)` from a path segment would hand out any of them to anyone who could
+    guess a digest, going around the firewall rather than through it. Resolving it from a
+    row the caller could read under their own scope is what keeps this owner-only.
+    """
+    row = await repo.get(ctx_for(owner), recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    if row["blob_sha256"] is None:
+        # A captions recording, which is a transcript and nothing else. Said plainly
+        # rather than as a bare 404: the row IS there and the library drew it, so "no
+        # such recording" would read as the box having lost it.
+        raise HTTPException(
+            status_code=404,
+            detail="That recording is captions, not audio — there is no clip to play.",
+        )
+    sha = cast(str, row["blob_sha256"])
+    if not await blobs.exists(sha):
+        # The row outlived its audio — a restore of the database without the blob volume.
+        # A 404 with a sentence, rather than the 500 a missing file would become inside
+        # the response.
+        raise HTTPException(status_code=404, detail="That recording's audio is missing.")
+    return FileResponse(blobs.path_for(sha), media_type="audio/mpeg")
+
+
+class TrimIn(BaseModel):
+    """Where to cut, in seconds from the start of the clip as it stands now."""
+
+    start_s: Annotated[float, Field(ge=0)]
+    end_s: Annotated[float, Field(gt=0)]
+
+
+@router.post("/recordings/{recording_id}/trim")
+async def trim_recording(
+    recording_id: RecordingId,
+    body: TrimIn,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> dict[str, Any]:
+    """Cut a recording down to what is worth keeping, and **discard the original**.
+
+    `ffmpeg -c copy` copies the MP3 frames rather than re-encoding: lossless and instant,
+    at the price of landing on a frame boundary within 72 ms of the handle. So the server
+    answers with what it ACTUALLY cut, measured from the result, rather than echoing what
+    was asked for — the client asks in seconds and the truth comes back from here.
+
+    Deleting the old blob is the point of the feature (the plan's §5): a trim that kept
+    the original would add a blob and free nothing. `captured_s` is deliberately left
+    where it was, because `duration_s < captured_s` is what makes a row "trimmed" and
+    prices what trimming has given back.
+
+    **The original goes only once the replacement has been PROVEN to contain audio.**
+    `ffmpeg -c copy` exits 0 for a seek past the last frame and writes a header with no
+    frames under it, so "the cut ran" is not "there is a clip". `cut_clip` measures its
+    own output before this route stores any of it; an unmeasurable cut is refused here,
+    with the row and its blob untouched and nothing left on disk to collect.
+    """
+    ctx = ctx_for(owner)
+    row = await repo.get(ctx, recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    if row["blob_sha256"] is None:
+        # Checked BEFORE `_check_trim`, because a captions row has a real `duration_s`
+        # (the wall clock it ran for) and would sail through every bound below on its
+        # way to `path_for(None)`. There is no file, and the reason there is no file is
+        # worth a sentence.
+        raise HTTPException(
+            status_code=400,
+            detail="That recording is captions, not audio, so there is nothing to trim.",
+        )
+    duration_s = float(row["duration_s"] or 0.0)
+    _check_trim(body, duration_s)
+
+    old_sha = cast(str, row["blob_sha256"])
+    cut = await cut_clip(blobs.path_for(old_sha), body.start_s, body.end_s)
+    if not cut.data:
+        # The recording is untouched: nothing has been repointed and no blob deleted.
+        raise HTTPException(
+            status_code=500,
+            detail="The trim did not run, so the recording is unchanged. Try again.",
+        )
+    if cut.duration_s is None:
+        # The cut ran and produced a file with no audio in it — the selection landed past
+        # the last frame. A 400 rather than a 500 because it IS the owner's selection that
+        # is wrong, and the sheet is where they can fix it (CLAUDE.md #10). Refused BEFORE
+        # anything is stored, so the recording still plays and no blob is orphaned.
+        raise HTTPException(
+            status_code=400,
+            detail="That selection came back with no audio in it, so the recording is "
+            "unchanged. Move the start of the trim back and try again.",
+        )
+    # Never `body.end_s - body.start_s`. A length taken from what was ASKED for is a row
+    # over-stating its own audio, and the next trim then places its handles — and its
+    # bounds check — against seconds the file does not have.
+    kept_s = cut.duration_s
+    new_sha = await blobs.put(cut.data)
+    updated = await repo.retrim(
+        ctx,
+        recording_id,
+        duration_s=kept_s,
+        blob_sha256=new_sha,
+        bytes_=len(cut.data),
+        peaks=cut.peaks,
+    )
+    if updated is None:
+        # Deleted from under us between the read and the write. The new blob would
+        # otherwise sit on disk for ever with nothing pointing at it.
+        if not await repo.blob_in_use(ctx, new_sha):
+            await blobs.delete(new_sha)
+        raise HTTPException(status_code=404, detail="No such recording.")
+    # `new_sha == old_sha` is REACHABLE, not paranoia: trimming a clip to its full extent
+    # produces identical bytes and therefore the identical digest, and deleting "the old
+    # blob" there would delete the audio this row was just repointed at.
+    if new_sha != old_sha and not await repo.blob_in_use(ctx, old_sha):
+        await blobs.delete(old_sha)
+    return {
+        "recording": _recording_out(updated),
+        # What was really cut. The start lands on the frame at or before what was asked
+        # for, and the end follows from the measured length of the result.
+        "cut": {"start_s": body.start_s, "end_s": body.start_s + kept_s},
+        "usage": await repo.usage(ctx),
+    }
+
+
+def _check_trim(body: TrimIn, duration_s: float) -> None:
+    """Refuse a cut that cannot mean anything, with a sentence rather than a 422 blob.
+
+    The numbers arrive from a sheet with two draggable handles, so every refusal here is
+    something the owner can see and correct on that sheet — which is why each one says
+    what is wrong instead of naming a field.
+
+    These bounds are a courtesy, NOT the safety net. The sheet is one of several callers
+    (the owner debug API is another), and `duration_s` is only ever as true as the last
+    measurement — so what actually protects the audio is that a cut must be proven to
+    play before the original is deleted, in `trim_recording`. This just means the common
+    mistake gets a sentence instead of a decode."""
+    if body.end_s <= body.start_s:
+        raise HTTPException(
+            status_code=400, detail="The end of the trim has to come after the start."
+        )
+    if body.end_s - body.start_s < MIN_TRIM_S:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A trim has to keep at least {MIN_TRIM_S:g} seconds of audio.",
+        )
+    if duration_s <= 0:
+        raise HTTPException(status_code=400, detail="That recording has no audio to trim.")
+    # `duration_s - MIN_TRIM_S`, not `duration_s`: a start inside the last fraction of a
+    # second cannot leave a clip, and the copy-cut's answer to it is a header with no
+    # frames under it — the shape that used to pass validation and then delete the audio.
+    if body.start_s > duration_s - MIN_TRIM_S:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That recording is only {duration_s:.1f} seconds long, so the trim "
+            "would start after the end of it.",
+        )
+    if body.end_s > duration_s + MIN_TRIM_S:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That recording is only {duration_s:.1f} seconds long.",
+        )
+
+
+@router.delete("/recordings/{recording_id}")
+async def delete_recording(
+    recording_id: RecordingId,
+    owner: OwnerDep,
+    repo: RecordingsDep,
+    blobs: BlobStoreDep,
+) -> dict[str, Any]:
+    """Forget a recording: the row, and then the audio it held.
+
+    The row goes first, under the caller's scope, and its blob is freed only if no other
+    row still points at it — content-addressed storage means two identical clips are one
+    file, and unlinking on the first delete would silently empty the second. A captions
+    row has no blob at all, which is why `remove` hands back the ROW rather than a bare
+    digest: read as a sha, "nothing to free" and "no such recording" are the same answer,
+    and the owner would be shown a 404 for a delete that had just happened.
+
+    Returns the new `usage` so the disk meter moves with the list rather than a poll
+    later.
+    """
+    ctx = ctx_for(owner)
+    removed = await repo.remove(ctx, recording_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="No such recording.")
+    sha = removed["blob_sha256"]
+    # A captions row holds no file, so there is nothing to free — and asking the
+    # reference check about a NULL digest would be asking the wrong question, since
+    # "nothing points at it" is trivially true of a blob that does not exist.
+    if sha is not None and not await repo.blob_in_use(ctx, sha):
+        await blobs.delete(sha)
+    return {"deleted": True, "usage": await repo.usage(ctx)}

@@ -40,6 +40,7 @@ import {
   type SpectrumRow,
   type SpectrumState,
   sameBand,
+  scaleLegend,
   sdrSpectrum,
   subscribeSdrSpectrum,
 } from "../sdrSpectrum";
@@ -551,8 +552,13 @@ export function SdrWaterfall({
           // readable: how wide a column is, and how often a row lands. The rate is left
           // off until the rows have shown one rather than guessed at, because which
           // engine is behind the stream is exactly what it would be guessing.
+          // ...and WHAT THE COLOURS MEAN, which is the third term of the same
+          // sentence: a dBFS reading is comparable only against the same bin width and
+          // the same gain, and the width was being stated while the gain was not. On
+          // this radio that is the difference between one station and the seven a
+          // moving gain invented (`listen.Session.tuner_gain_db`).
           <>
-            {bins} bins of {khz(band.binHz)} kHz
+            {bins} bins of {khz(band.binHz)} kHz · {scaleLegend(band)}
             {fps === null ? null : ` · ${rateNote(fps)}`}
           </>
         ) : (

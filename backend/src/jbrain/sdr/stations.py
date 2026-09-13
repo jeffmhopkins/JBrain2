@@ -51,6 +51,31 @@ DEFAULT_WINDOW = "1d"
 # reading the archive — see the counts query.
 _BOUNDED_WINDOWS = ("1d", "3d", "1w")
 
+# HOW A FRAME REACHED THE BOX. Three states, not two, and mutually exclusive PER PACKET
+# by construction in `classify`: `gated` requires a third-party wrapper carrying TCPIP,
+# `direct` requires no wrapper and no digipeated hop, so `rf` is the remainder — heard on
+# the air, but repeated by a digipeater rather than received from the sender itself. The
+# packet row already draws exactly these three as its badge, and a filter that offered
+# two would not be able to name what a row says.
+#
+# ON A STATION they are NOT exclusive. A roster row covers a window, and a station heard
+# both ways in it has packets of two provenances — so a chip here means "sent at least
+# one frame that arrived this way", the same `bool_or` reading the kind chips already
+# have ("who is putting out weather" returns the station, whole). Two chips are a union.
+# The counts therefore can sum past the station total, which is the honest answer: a
+# station heard both direct and gated is genuinely in both.
+#
+# A dict of fixed SQL fragments, like WINDOWS: the id is validated by being a key, so
+# nothing from a query string reaches the statement. Each is parenthesised because they
+# are OR'd together and `bool_or(...)`-wrapped. `COALESCE` because the derived columns
+# are nullable — a row the classifier has not reached has no provenance, and `rf` must
+# not silently claim it (those rows are counted as `unclassified` and reported).
+PROVENANCE: dict[str, str] = {
+    "direct": "(COALESCE(heard_direct, false))",
+    "gated": "(COALESCE(gated, false))",
+    "rf": "(NOT COALESCE(gated, false) AND NOT COALESCE(heard_direct, false))",
+}
+
 # Both lists are bounded. The roster's ceiling is generous because a station list IS the
 # answer and truncating it silently would hide a station; the packet list's is not,
 # because a screen showing a thousand frames is a screen nobody reads.
@@ -179,12 +204,16 @@ class StationsReader:
         *,
         window: str | None = DEFAULT_WINDOW,
         kinds: list[str] | None = None,
+        provenance: list[str] | None = None,
         mine: str | None = None,
         limit: int = MAX_STATIONS,
     ) -> dict[str, Any]:
         """Who has been heard in the window, most recently heard first."""
         chosen, predicate = _window(window)
         wanted = [k for k in (kinds or []) if k]
+        # Whitelisted HERE and not only at the route, because unlike `kinds` these become
+        # SQL rather than a bound parameter — the same rule `_window` follows.
+        arrived = [p for p in (provenance or []) if p in PROVENANCE]
         bounded = max(1, min(int(limit), MAX_STATIONS))
         # The owner's own callsign, bare. Pinning happens HERE rather than only in the
         # client because the list is capped: over a year's archive the owner's station can
@@ -242,10 +271,40 @@ class StationsReader:
                 .all()
             )
 
-            # The roster itself. `gated`/`source` are taken from each station's NEWEST
-            # frame: how it reached us can change between packets, and the line reads
-            # "heard on RF" or "gated via X" about the station as it is now.
-            having = " HAVING bool_or(kind = ANY(:kinds))" if wanted else ""
+            # Station counts per PROVENANCE, on the same terms as the kinds above: over
+            # the window, unfiltered by the selection, so a chip keeps saying what it
+            # would show while another one is pressed. A second aggregate over the window
+            # rather than a column on the query above, because that one groups by kind
+            # and these have to count distinct stations across all of them.
+            per_arrival = (
+                (
+                    await s.execute(
+                        text(
+                            "SELECT "
+                            + ", ".join(
+                                f"count(DISTINCT origin_call) FILTER (WHERE {sql}) AS p_{pid}"
+                                for pid, sql in PROVENANCE.items()
+                            )
+                            + f" FROM app.aprs_packets WHERE {_CLASSIFIED} AND {predicate}"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+            # The roster itself. `gated`/`direct`/`source` are taken from each station's
+            # NEWEST frame: how it reached us can change between packets, and the line
+            # reads "heard on RF" or "gated via X" about the station as it is now — while
+            # `any_*` below covers the WHOLE window, which is what the chips filter on.
+            wants = [f"bool_or({PROVENANCE[p]})" for p in arrived]
+            having_on = ["bool_or(kind = ANY(:kinds))"] if wanted else []
+            # AND between the two chip rows, OR within one: "who sends weather" and "who
+            # arrived direct or gated" are two questions, and pressing a chip in the
+            # second row must narrow the first row's answer rather than widen it.
+            if wants:
+                having_on.append(f"({' OR '.join(wants)})")
+            having = f" HAVING {' AND '.join(having_on)}" if having_on else ""
             # `split_part` rather than a LIKE prefix: an owner who saved `KE8XYZ` means
             # every SSID of it and nothing else, and `KE8XYZZ` is a different station.
             pin = " split_part(origin_call, '-', 1) = :mine DESC," if owner else ""
@@ -259,11 +318,15 @@ class StationsReader:
                             " max(heard_at) AS last_heard_at,"
                             " array_agg(DISTINCT kind) AS kinds,"
                             " (array_agg(gated ORDER BY heard_at DESC))[1] AS gated,"
-                            " (array_agg(source ORDER BY heard_at DESC))[1] AS via"
-                            f" FROM app.aprs_packets WHERE {_CLASSIFIED} AND {predicate}"
-                            f" GROUP BY origin_call{having}"
-                            f" ORDER BY{pin} max(heard_at) DESC LIMIT :limit"
-                            ") g"
+                            " (array_agg(heard_direct ORDER BY heard_at DESC))[1] AS direct,"
+                            " (array_agg(source ORDER BY heard_at DESC))[1] AS via,"
+                            + ",".join(
+                                f" bool_or({sql}) AS any_{pid}" for pid, sql in PROVENANCE.items()
+                            )
+                            + f" FROM app.aprs_packets WHERE {_CLASSIFIED} AND {predicate}"
+                            + f" GROUP BY origin_call{having}"
+                            + f" ORDER BY{pin} max(heard_at) DESC LIMIT :limit"
+                            + ") g"
                             # The newest frame per station, for what the roster row SAYS.
                             # A LATERAL rather than another `array_agg(...)[1]`: that
                             # idiom materialises every value in the group before taking
@@ -301,6 +364,11 @@ class StationsReader:
             # the screen is expected to say so rather than quietly showing fewer stations.
             "unclassified": counts["unclassified"],
             "kind_stations": {r["kind"]: r["stations"] for r in per_kind if r["kind"]},
+            # Stations per provenance, over the same unfiltered window. These OVERLAP by
+            # design — a station heard both direct and gated is counted under both — so
+            # they can sum past `stations_total`, and the screen must not present them as
+            # a partition of it.
+            "provenance_stations": {pid: per_arrival[f"p_{pid}"] for pid in PROVENANCE},
             # Stations in the window BEFORE the chips narrow it, so the header can read
             # "4 of 15" honestly.
             "stations_total": counts["stations"],
@@ -315,7 +383,13 @@ class StationsReader:
                     "last_heard_at": r["last_heard_at"].isoformat(),
                     "kinds": sorted(k for k in (r["kinds"] or []) if k),
                     "gated": bool(r["gated"]),
+                    "direct": bool(r["direct"]),
                     "relay": _relay(r["via"], r["call"]),
+                    # EVERY way this station arrived over the window, not just its newest
+                    # frame's. Without it a row filtered in by the Gated chip could read
+                    # "heard on RF" — true of the last packet, and a flat contradiction
+                    # of the chip the owner just pressed.
+                    "heard": [pid for pid in PROVENANCE if r[f"any_{pid}"]],
                     # What this station last SAID, decoded. The roster answered who and
                     # how many but never what — so a screen full of weather stations
                     # showed four callsigns and no weather, with the readings one tap

@@ -62,10 +62,18 @@ def vector_literal(vec: Sequence[float]) -> str:
 class NoteEmbedder:
     """The embed_note job handler: fill NULL chunk embeddings for one note.
 
-    Loads unembedded chunks at run time (chunk ids are not stable across
-    re-ingestion, so the payload carries only the note id), and the UPDATE
-    re-checks `embedding IS NULL` per chunk so a concurrent re-ingest can at
-    worst no-op a row, never clobber a fresher chunk.
+    Loads unembedded chunks at run time — the payload carries only the note id,
+    because the enqueuer cannot name chunks a re-ingest has not built yet, and a
+    re-ingest may replace any of them. Since `jbrain.ingest.carryover`, chunk ids
+    ARE stable for the chunks that come back byte-identical (that is the point:
+    `wiki_citations` and `entity_mentions` cascade off `chunks.id`), but the ids
+    that change are still unknowable in advance, so the note id stays the payload.
+
+    The UPDATE re-checks `embedding IS NULL` per chunk so a concurrent re-ingest can
+    at worst no-op a row, never clobber a fresher chunk. That same NULL filter means
+    this handler NEVER re-embeds a carried-over chunk: it keeps its vector and its
+    `embedding_model`, however old. Re-embedding after a model change is not this
+    job's — `reembed_stale`'s `chunks` target owns it.
     """
 
     def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):

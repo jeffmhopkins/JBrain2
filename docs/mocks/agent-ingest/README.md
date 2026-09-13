@@ -1,7 +1,22 @@
 # Note conversations — where a note's agent thread lives
 
-> **Status:** GUI gate open — three variants for the owner to choose from. Companion
-> dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Nothing is built.
+> **Status:** GUI gate **settled on C**, `c-unified-conversations.html` — but read how.
+> Choosing C was a **delegated** call made inside this round, **not an owner gate
+> outcome**, and no ratified decision names a variant letter. What the owner ratified is
+> `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation
+> type: a note conversation is the same agent, loop and memory as chat"*, which in the
+> owner's own words at the gate meant a note conversation and a chat should be literally
+> the same thing, and **not a hidden path**. D1 ratifies C *in substance*: one
+> `AgentSession`, reached from the conversations surface rather than the note screen.
+> **Cite D1 for that, never "the owner chose C".** A and B are retained as the record.
+> **One part of C is superseded**: its `Asking` bucket is replaced by the **two-tab
+> inbox** (**D4**), with questions findable from the notes tab (**D5**) — so the mock's
+> segmented `Today · Older · Asking` picker is no longer the queue answer.
+> Companion dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. A follow-on round asked
+> what the *note screen* becomes under this model; it was **scrapped before its gate** —
+> the note screen does not change, and the writes render inside the conversation
+> (`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Nothing is built.
+> **Last verified:** 2026-09-08.
 
 ## The change these mocks are for
 

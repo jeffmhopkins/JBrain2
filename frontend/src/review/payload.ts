@@ -150,6 +150,13 @@ export interface Parsed {
   // source, so the card is decidable in place. Null for every other kind and for
   // pre-enrichment cards (the block self-gates).
   contradiction: Contradiction | null;
+  // False when the card must NOT offer the footer's "correct it" composer. That
+  // composer files an owner_correction note in the CARD'S OWN domain, pinned at
+  // full weight — which is wrong for a card whose whole point is that a value was
+  // deliberately kept out of that domain (the EMR location firewall's
+  // `firewall_address`). Defaults true: only a payload saying `correctable: false`
+  // drops it.
+  correctable: boolean;
 }
 
 /** Parse a weighted-suggestion list ([{name, score}]) read defensively off the
@@ -224,6 +231,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
     subject: str(payload.subject),
     value: str(payload.value),
     contradiction: parseContradiction(payload.entities, payload.sources),
+    correctable: payload.correctable !== false,
   };
 }
 

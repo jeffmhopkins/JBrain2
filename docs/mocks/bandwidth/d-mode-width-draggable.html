@@ -1,0 +1,266 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>D — The mode button carries the width, and the picture is draggable</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.phone { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; max-width: 390px; margin: 0 auto; width: 100%; position: relative; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 5; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; overflow: hidden; position: relative; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.wf { margin: 0 16px; height: 150px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; touch-action: none; }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .55; }
+.wf .bin.nb { background: var(--amber); }
+.wf .pass { position: absolute; top: 0; bottom: 0; background: rgba(127,167,201,.16); }
+.wf .pass.snapping { transition: left .16s ease, width .16s ease; }
+.wf .edge { position: absolute; top: 0; bottom: 0; width: 26px; margin-left: -13px; cursor: ew-resize; touch-action: none; }
+.wf .edge::before { content: ""; position: absolute; left: 12px; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.wf .edge::after { content: ""; position: absolute; left: 7px; top: 50%; margin-top: -14px; width: 12px; height: 28px;
+  border-radius: 4px; background: var(--accent); opacity: .92; }
+.wf .edge.on::after { opacity: 1; box-shadow: 0 0 0 4px var(--steel-tint); }
+.wf .dial { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text); opacity: .5; }
+.wf .tag { position: absolute; top: 6px; font-size: 9px; color: var(--text-3); letter-spacing: .04em; transform: translateX(-50%); }
+.wf .snap { position: absolute; bottom: 0; width: 1px; height: 7px; background: var(--text-3); opacity: .75; }
+.wf .live { position: absolute; left: 50%; transform: translateX(-50%); bottom: 9px; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--text); background: rgba(14,15,17,.75); padding: 2px 9px; border-radius: 6px; }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.readout { padding: 6px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 34px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 6px 16px 5px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.seg { display: flex; gap: 6px; padding: 0 16px 12px; }
+.seg button { flex: 1; min-height: 48px; padding: 5px 3px; border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.seg button em { font-style: normal; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.seg button[aria-pressed=true] em { color: var(--accent); }
+.rej { margin: 0 16px 12px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2); font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.rej b { font-variant-numeric: tabular-nums; font-weight: 600; }
+.rej.good b { color: var(--ok); } .rej.bad b { color: var(--warn); }
+.hint { padding: 0 16px 16px; font-size: 12px; color: var(--text-3); }
+.scrim { position: absolute; inset: 0; background: var(--scrim); display: none; }
+.scrim.open { display: block; }
+.pop { position: absolute; left: 16px; right: 16px; bottom: 16px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px 10px; display: none; }
+.pop.open { display: block; }
+.pop h3 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
+.pop p { margin: 0 0 12px; font-size: 12px; color: var(--text-3); }
+.pop .row { display: flex; gap: 6px; }
+.pop .row button { flex: 1; min-height: 48px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.pop .row button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pop .row button em { font-style: normal; font-size: 9px; color: var(--text-3); }
+button:focus-visible, .edge:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .wf .pass.snapping { transition: none; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>D &mdash; C's shape, and the picture is draggable too.</b> The mode button carries its width, and a second tap on the mode you are already on opens the ladder &mdash; so the sheet stays short and every width is still one tap away.<br><br><b>And the shaded box is a control.</b> Drag either handle on the picture and the filter follows, snapping to the same rungs (the ticks along the bottom). Two ways into one value: the popover when you know the number you want, the drag when what you actually want is <em>&ldquo;narrower than that amber station&rdquo;</em>. Both write the same setting, so the button relabels as you drag.</div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="title">Listen</div>
+    <div class="wf" id="wf"></div>
+    <div class="axis"><span>&minus;12 kHz</span><span>drag either edge</span><span>+12 kHz</span></div>
+    <div class="readout">5.000<small>MHz</small></div>
+    <div class="lbl">Mode &amp; bandwidth</div>
+    <div class="seg" id="modes"></div>
+    <div class="rej" id="rej"></div>
+    <p class="hint">Wide FM shows &ldquo;180k&rdquo;, its handles are fixed and a second tap does nothing: narrowing a broadcast FM filter clips the deviation and distorts rather than cleans.</p>
+    <div class="scrim" id="scrim"></div>
+    <div class="pop" id="pop" role="dialog" aria-label="Bandwidth">
+      <h3 id="poph">AM bandwidth</h3>
+      <p id="popp">How much either side of 5.000 MHz the radio listens to.</p>
+      <div class="row" id="poprow"></div>
+    </div>
+  </div>
+</div>
+<script>
+const MODES = ["wbfm", "fm", "am", "usb", "lsb"];
+const LADDER = { am: [8000, 6000, 4000, 3000], fm: [16000, 12500, 8000], usb: [3100, 2400, 1800], lsb: [3100, 2400, 1800], wbfm: [180000] };
+// What each width is FOR, so the ladder is not a column of bare numbers.
+const WHY = {
+  8000: "full audio", 6000: "shortwave", 4000: "crowded", 3000: "very crowded",
+  16000: "25 kHz", 12500: "12.5 kHz", 3100: "wide", 2400: "voice", 1800: "DX", 180000: "fixed",
+};
+// MEASURED on the real chain, AM only: two equal AM carriers 5 kHz apart, the wanted one
+// modulated at 1 kHz and the neighbour at 1.7 kHz, reading how far the neighbour's tone
+// lands below the wanted one in the audio. 16 kHz is what the box shipped with.
+const REJECT = { 16000: 0.0, 8000: 14.8, 6000: 85.2, 4000: 110.0, 3000: 103.1 };
+// Chosen width per mode, remembered so switching mode and back does not lose it.
+const chosen = { am: 8000, fm: 16000, usb: 3100, lsb: 3100, wbfm: 180000 };
+let mode = "am", dragging = null;
+const SPAN = 24000;
+const wf = document.getElementById("wf");
+const px = (hz) => ((hz + SPAN / 2) / SPAN) * (wf.clientWidth || 358);
+const hzAt = (clientX) => {
+  const r = wf.getBoundingClientRect();
+  return ((clientX - r.left) / r.width) * SPAN - SPAN / 2;
+};
+const fmt = (w) => (w >= 100000 ? "180k" : (w / 1000).toFixed(w % 1000 ? 1 : 0) + "k");
+
+function edges(bw = chosen[mode]) {
+  if (mode === "usb") return [300, 300 + bw];
+  if (mode === "lsb") return [-300 - bw, -300];
+  return [-bw / 2, bw / 2];
+}
+function bins() {
+  wf.innerHTML = "";
+  for (let hz = -11800; hz <= 11800; hz += 200) {
+    const d0 = Math.abs(hz), d1 = Math.abs(hz - 5000);
+    let h = 4 + Math.random() * 5;
+    if (d0 < 4200) h = Math.max(h, 92 * Math.exp(-d0 / 2600) + Math.random() * 7);
+    if (d0 < 260) h = 130;
+    let nb = false;
+    if (d1 < 4200) { const g = 78 * Math.exp(-d1 / 2600) + Math.random() * 7; if (g > h) { h = g; nb = true; } }
+    if (d1 < 260) { h = 112; nb = true; }
+    const b = document.createElement("div");
+    b.className = "bin" + (nb ? " nb" : "");
+    b.style.left = px(hz) + "px"; b.style.height = Math.min(h, 142) + "px";
+    wf.appendChild(b);
+  }
+  const dial = document.createElement("div"); dial.className = "dial"; dial.style.left = px(0) + "px"; wf.appendChild(dial);
+  const pass = document.createElement("div"); pass.className = "pass snapping"; pass.id = "pass"; wf.appendChild(pass);
+  for (const side of ["lo", "hi"]) {
+    const e = document.createElement("div");
+    e.className = "edge"; e.id = "e-" + side; e.dataset.side = side;
+    e.setAttribute("role", "slider"); e.tabIndex = 0;
+    e.setAttribute("aria-label", side === "lo" ? "Lower filter edge" : "Upper filter edge");
+    // Arrow keys walk the same rungs the drag snaps to, so the control is not
+    // mouse-only — the ladder is the value in both cases.
+    e.onkeydown = (ev) => {
+      const l = LADDER[mode], i = l.indexOf(chosen[mode]);
+      const inward = side === "hi" ? "ArrowLeft" : "ArrowRight";
+      const outward = side === "hi" ? "ArrowRight" : "ArrowLeft";
+      if (ev.key === inward && i < l.length - 1) { chosen[mode] = l[i + 1]; draw(); ev.preventDefault(); }
+      if (ev.key === outward && i > 0) { chosen[mode] = l[i - 1]; draw(); ev.preventDefault(); }
+    };
+    wf.appendChild(e);
+  }
+  const t = document.createElement("div"); t.className = "tag"; t.style.left = px(5000) + "px"; t.textContent = "+5 kHz"; wf.appendChild(t);
+  const live = document.createElement("div"); live.className = "live"; live.id = "live"; wf.appendChild(live);
+  for (const w of LADDER[mode]) {
+    for (const s of edges(w)) {
+      const m = document.createElement("div"); m.className = "snap"; m.style.left = px(s) + "px"; wf.appendChild(m);
+    }
+  }
+  place();
+}
+function place() {
+  const [lo, hi] = edges();
+  const p = document.getElementById("pass");
+  const l = Math.max(lo, -SPAN / 2), h = Math.min(hi, SPAN / 2);
+  p.style.left = px(l) + "px"; p.style.width = (px(h) - px(l)) + "px";
+  document.getElementById("e-lo").style.left = px(l) + "px";
+  document.getElementById("e-hi").style.left = px(h) + "px";
+  document.getElementById("live").textContent = fmt(chosen[mode]).replace("k", " kHz");
+}
+function nearest(want) {
+  const l = LADDER[mode];
+  return l.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a), l[0]);
+}
+wf.addEventListener("pointerdown", (e) => {
+  const edge = e.target.closest(".edge");
+  if (!edge || mode === "wbfm") return;
+  dragging = edge.dataset.side;
+  edge.classList.add("on");
+  edge.setPointerCapture(e.pointerId);
+  // No animation while a finger is down: the box must track the finger, and easing
+  // toward each rung reads as lag rather than as snapping.
+  document.getElementById("pass").classList.remove("snapping");
+  e.preventDefault();
+});
+wf.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const hz = hzAt(e.clientX);
+  const want = mode === "usb" || mode === "lsb" ? Math.abs(hz) - 300 : Math.abs(hz) * 2;
+  const next = nearest(want);
+  if (next !== chosen[mode]) { chosen[mode] = next; draw(); }
+});
+for (const end of ["pointerup", "pointercancel"]) {
+  wf.addEventListener(end, () => {
+    dragging = null;
+    for (const e of wf.querySelectorAll(".edge")) e.classList.remove("on");
+    document.getElementById("pass").classList.add("snapping");
+  });
+}
+function closePop() {
+  document.getElementById("pop").classList.remove("open");
+  document.getElementById("scrim").classList.remove("open");
+}
+function openPop() {
+  if (mode === "wbfm") return;
+  const row = document.getElementById("poprow"); row.innerHTML = "";
+  document.getElementById("poph").textContent = mode.toUpperCase() + " bandwidth";
+  document.getElementById("popp").textContent = mode === "usb" || mode === "lsb"
+    ? "How wide a slice of the sideband the radio listens to."
+    : "How much either side of 5.000 MHz the radio listens to.";
+  LADDER[mode].forEach((w) => {
+    const b = document.createElement("button"); b.type = "button";
+    b.innerHTML = fmt(w) + "<em>" + (WHY[w] || "") + "</em>";
+    b.setAttribute("aria-pressed", String(w === chosen[mode]));
+    b.onclick = () => { chosen[mode] = w; closePop(); draw(); };
+    row.appendChild(b);
+  });
+  document.getElementById("pop").classList.add("open");
+  document.getElementById("scrim").classList.add("open");
+}
+function draw() {
+  const seg = document.getElementById("modes"); seg.innerHTML = "";
+  MODES.forEach((m) => {
+    const b = document.createElement("button"); b.type = "button";
+    const on = m === mode;
+    b.innerHTML = m.toUpperCase() + "<em>" + fmt(chosen[m]) + "</em>";
+    b.setAttribute("aria-pressed", String(on));
+    if (on && m !== "wbfm") b.setAttribute("aria-haspopup", "dialog");
+    b.onclick = () => { if (on) { openPop(); } else { mode = m; bins(); draw(); } };
+    seg.appendChild(b);
+  });
+  // Only AM has been measured, so only AM gets a number. The others say nothing rather
+  // than guessing, which is the whole point of putting it on screen.
+  const r = document.getElementById("rej"), db = mode === "am" ? REJECT[chosen[mode]] : undefined;
+  if (db === undefined) {
+    r.className = "rej"; r.innerHTML = "<span>Neighbour at +5 kHz</span><b>—</b>";
+  } else {
+    r.className = "rej " + (db >= 40 ? "good" : "bad");
+    r.innerHTML = "<span>Neighbour at +5 kHz</span><b>" +
+      (db < 1 ? "as loud as the station" : "−" + db.toFixed(0) + " dB") + "</b>";
+  }
+  place();
+}
+document.getElementById("scrim").onclick = closePop;
+document.getElementById("theme").onclick = (e) => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  e.target.textContent = light ? "Light" : "Dark";
+  bins();
+};
+bins(); draw();
+addEventListener("resize", () => { bins(); draw(); });
+</script>

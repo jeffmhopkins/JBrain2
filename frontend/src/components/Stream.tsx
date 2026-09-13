@@ -9,6 +9,7 @@ import { groupByDay, isWithinLastDays, relativeTime } from "../notes/grouping";
 import { type LifecycleSource, lifecycleChip } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_LABEL } from "../notes/modes";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import type { NoteThread, NoteThreads } from "../notes/useNoteThreads";
 import type { StreamItem } from "../notes/useNotes";
 import { ClipIcon, EyeOffIcon, PencilIcon, TrashIcon } from "./icons";
 
@@ -32,6 +33,29 @@ export function IngestChip({ item }: { item: LifecycleSource }) {
   return <span className={`chip chip-${chip.tone}`}>{chip.label}</span>;
 }
 
+/** The waiting-thread chip (AGENT_INGEST_REWRITE §3b I1): a note whose conversation is
+ * parked on an answer carries `N questions` and NOTHING ELSE — no answer control, no
+ * candidate, no verb. The row is a redirect, which is the same ruling `NotesInboxEntry`
+ * enforces on the wire one surface over.
+ *
+ * Amber, not the mock's rose: rose is the MEDICAL domain in this palette (it is the hue
+ * of this very row's own dot), so a rose chip says the same thing twice on a medical note
+ * and something false on a financial one. Amber is the open-ask register the pending
+ * lifecycle chips and the inbox's ask chip already use — and the colour is not the only
+ * carrier, the words are.
+ *
+ * It is also the TAP TARGET that opens the thread (I2, decided (ii)): the row's own tap
+ * keeps the note screen, which is the only no-terminal route to the Analysis tab, the
+ * attachments, the edit path, the clarification eraser and the re-run button. */
+function AskChip({ thread, onOpen }: { thread: NoteThread; onOpen: () => void }) {
+  const n = thread.questions;
+  return (
+    <button type="button" className="chip chip-pending chip-ask" onClick={onOpen}>
+      {n === 0 ? "waiting on you" : `${n} question${n === 1 ? "" : "s"}`}
+    </button>
+  );
+}
+
 interface NoteRowProps {
   item: StreamItem;
   railOpen: boolean;
@@ -40,9 +64,23 @@ interface NoteRowProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
+  /** This note's conversation, when it is waiting on an answer. */
+  thread?: NoteThread | undefined;
+  /** Open that conversation — the chip's tap, never the row's. */
+  onOpenThread?: ((thread: NoteThread) => void) | undefined;
 }
 
-function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHide }: NoteRowProps) {
+function NoteRow({
+  item,
+  railOpen,
+  onRailChange,
+  onOpen,
+  onEdit,
+  onDelete,
+  onHide,
+  thread,
+  onOpenThread,
+}: NoteRowProps) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [confirming, setConfirming] = useState(false);
   const dragged = useRef(false);
@@ -61,6 +99,8 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
 
   // Outbox-only rows have no server id yet — nothing to PATCH or DELETE.
   const canSwipe = item.id !== null;
+  // The chip only appears where there is somewhere for it to go.
+  const askable = onOpenThread !== undefined ? thread : undefined;
   const dragging = drag !== null && drag.axis === "h";
   const offset = dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
 
@@ -181,7 +221,10 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
           </span>
           {clamped && <span className="note-more">more</span>}
         </button>
-        {(item.attachments.length > 0 || item.pending || lifecycleChip(item) !== null) && (
+        {(item.attachments.length > 0 ||
+          item.pending ||
+          askable !== undefined ||
+          lifecycleChip(item) !== null) && (
           <div className="note-chips">
             {item.attachments.map((att) =>
               att.id ? (
@@ -201,7 +244,17 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
               ),
             )}
             {item.pending && <span className="chip chip-pending">pending sync</span>}
-            {!item.pending && <IngestChip item={item} />}
+            {/* A waiting thread outranks the lifecycle chip: the pass that asked has
+                stopped, so "analyzing…" is no longer what is happening, and two chips on
+                one row would be the loudest thing in the stream. A SETTLED note wears no
+                chip at all — `lifecycle.ts` makes "analyzed" the quiet end state, and only
+                the waiting state earns one. */}
+            {!item.pending &&
+              (askable !== undefined ? (
+                <AskChip thread={askable} onOpen={() => onOpenThread?.(askable)} />
+              ) : (
+                <IngestChip item={item} />
+              ))}
           </div>
         )}
       </div>
@@ -216,9 +269,22 @@ interface StreamProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
+  /** Note conversations parked on an answer, by note id — the chip's state (§3b I1). */
+  threads?: NoteThreads | undefined;
+  /** Open one of those conversations. Absent = no chip is offered. */
+  onOpenThread?: ((thread: NoteThread) => void) | undefined;
 }
 
-export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onDelete, onHide }: StreamProps) {
+export function Stream({
+  items,
+  onOpenSearch,
+  onOpenNote,
+  onEdit,
+  onDelete,
+  onHide,
+  threads,
+  onOpenThread,
+}: StreamProps) {
   const scrollerRef = useRef<HTMLElement>(null);
   // One rail open at a time, like every messaging app.
   const [openRailKey, setOpenRailKey] = useState<string | null>(null);
@@ -262,6 +328,8 @@ export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onDelete, onHi
                   onEdit={onEdit}
                   onDelete={onDelete}
                   onHide={onHide}
+                  thread={item.id === null ? undefined : threads?.get(item.id)}
+                  onOpenThread={onOpenThread}
                 />
               ))}
             </div>

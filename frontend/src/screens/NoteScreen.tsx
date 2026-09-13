@@ -8,6 +8,7 @@ import { Markdown } from "../agent/markdown";
 import type { SearchResult } from "../api/client";
 import { attachmentUrl } from "../api/client";
 import { AnalysisTab } from "../components/AnalysisTab";
+import { Clarifications } from "../components/Clarifications";
 import { fmtBytes } from "../components/ImageExtracts";
 import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
@@ -422,6 +423,11 @@ export function NoteScreen({
           <>
             <BodyParagraphs body={view.body} />
             {view.partial && <p className="note-view-loading">loading the full note…</p>}
+            {/* The D6 eraser. The body above already renders the blocks as prose —
+                D6 changes no screen — but the block IDS exist nowhere the owner can
+                reach, and an id you cannot name is a block you cannot redact. Renders
+                nothing at all for a note that was never asked about, which is most. */}
+            <Clarifications noteId={noteId} onErased={(body) => setView((v) => ({ ...v, body }))} />
           </>
         )}
         {tab === "attachments" && (

@@ -1,6 +1,24 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-09-09 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+>
+> **The import now settles a note ONCE** (W4/D9 of `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md`).
+> `integrate.py` drove one `apply_intent` per parsed SOURCE, and `apply_intent` ends in the
+> whole-note `settle_note` — so on a decrypted archive, which attaches many PDFs to one note,
+> each PDF's settle retracted the PDFs before it and only the last source's readings stayed
+> live. `EmrNoteCommit` now commits each source through `AnalysisPipeline.commit_intent` (the
+> half of `apply_intent` that does everything except the settle), unions the
+> `touched`/`projected`/`mention_ids` sets, and settles once. The note's §6.6 per-source
+> transaction isolation is unchanged; what a crash now costs is the settle, not the earlier
+> attachments. `integrate_parse_result` survives as the single-source wrapper.
+>
+> **And an EMR note's conversation holds no graph-write verb.** `fhir_status` (§3.5) is not
+> expressible as a model tool field, so a lab value written by the note conversation is one
+> `_lab_status_transition` can never supersede; `ingest/emr/ownership.emr_owned` mirrors 0122's
+> own trigger filter and `agents.narrow_for_emr` subtracts the write verbs on both the
+> unattended pass and the owner's reply turn, with the worker's per-note registry declining to
+> bind them as the second lock. **Layer 2 (§3.6) is untouched** and stays a hard non-commit:
+> the guard runs inside `lower_parse_result`, before an intent exists.
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Waves
 W0–W3 are complete (W0 gates + fixtures; W1 storage bedrock — schema defs, the
@@ -464,8 +482,27 @@ stripping is never a single point of failure:
   `{address, geo}` and the floor dict `{geocoordinates, latitude, longitude, gpscoordinates}`** —
   **when its subject entity kind is a health EMR entity** (`Observation`/`encounter`/`Person`/
   `Organization`/`MedicalCondition`). Because such a fact should never exist on this path, the guard
-  routes it to a `low_confidence` review card (`subkind=firewall_address`) anchored to the chunk and
-  **never commits it**. Building the set as that explicit union closes the earlier draft's gap (a
+  routes it to a `low_confidence` review card (`subkind=firewall_address`) and **never commits it**.
+  That card is filed by `integrate.file_firewall_cards` from the catches the
+  importer returns, deduped per (attachment, page anchor, entity kind, predicate) **across all
+  statuses** so a dismissed card never nags again. It names *what* was held, *where* (attachment +
+  page anchor — durable across a re-ingest, which re-mints chunk rows) and *how many* times (the
+  anchor is page-granular and a page carries several encounters, so identical catches collapse into
+  one card carrying its `count` rather than under-reporting the guard as having fired once), and
+  deliberately **not the caught value** — the card sits in the very
+  health domain the value was kept out of, so parking the value in its payload would re-plant the
+  leak (no `snippet`/`statement`/`value_json`; a §9 test pins the payload's whole key set, since a
+  substring probe would pass on real page text that happened to omit the fixture's address). Its
+  one verb is **`dismiss`**, since the sanctioned way to
+  record a facility address is the deliberate `Place` sidecar below — advertised as an explicit
+  `choices` entry, because a card carrying none renders in the inbox with *no buttons at all*, and
+  paired with `correctable: false`, which suppresses the detail footer's *correct it* composer: that
+  composer files an `owner_correction` note in the card's own domain, force-superseding and pinned
+  at full weight, so on this card it would prompt the owner to type the held address straight back
+  into health. That flag is enforced on **both** sides — `POST /api/review/{id}/correction` reads
+  the target card and 409s an explicit `correctable: false` — since a client-only guard leaves the
+  endpoint offering to re-plant the leak to any caller that is not the shipped UI. Building the set as that
+  explicit union closes the earlier draft's gap (a
   stray `geo` fact, whose predicate is *not* in the floor dict, would otherwise have slipped the
   guard). A single parser miss thus cannot silently plant location-domain whereabouts in the health
   domain — the guard catches it, and (should a facility address ever legitimately be needed) it is
@@ -1596,13 +1633,17 @@ and unit-tested (`backend/src/jbrain/ingest/emr/`):
   the shipped arbiter consumes, with the per-draw fan + analyte-constant facts, `fhir_status` on
   `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, and the
   **Layer-2 firewall guard** run on every prospective fact. All intents `validate_intent`-clean.
-- **`integrate.py`** — the deterministic integration driver: `integrate_parse_result` lowers a
-  parse result and commits each fact through `plan_intent → apply_intent` on an RLS session, no LLM.
+- **`integrate.py`** — the deterministic integration driver: `EmrNoteCommit` lowers each parsed
+  source and commits its facts through `plan_intent → AnalysisPipeline.commit_intent` on an RLS
+  session, no LLM, then settles the note ONCE over every source's union.
   The `value` measurement carries `valid_from = collected_at` (§3.3 — the address the §3.5 transition
-  keys on); the parser emits UTC-aware datetimes. **One intent per NOTE** (not per grouping unit): the
-  shipped `_apply` reconciles the whole note via its touched-set retract sweep, so a second per-unit
-  apply on the same note would retract the first unit's facts — the §6.6 per-unit transaction
-  isolation is a follow-on needing incremental note commits. An end-to-end integration test on real
+  keys on); the parser emits UTC-aware datetimes. **One intent per PARSED SOURCE, one settle per
+  NOTE.** `lower_parse_result` still returns one intent per parse result (a facility transfer's
+  segments share it so `partOfEncounter` resolves intra-intent), and the whole-note retract sweep
+  is what forced the second half: it retracts every non-pinned fact of the note it is not told
+  about, so a settle per source retracted the sources before it — which is what a decrypted
+  archive's several PDFs actually hit. `integrate_parse_result` is the single-source wrapper over
+  the same object, kept for the callers that have exactly one. An end-to-end integration test on real
   Postgres proves the Epic fixture mints the health entities, final readings commit active, and the
   corrected-without-original platelet is held `pending_review` (proving `fhir_status` reaches
   `decide`).
@@ -1693,7 +1734,8 @@ import:
   OCR read **adopts the precise draw's timestamp + specimen** (identical minted qualifier → idempotent,
   dual-cited) and the higher-`fidelity` precise draw is authoritative. A read matching **nothing** —
   including a readable-but-WRONG timestamp — **parks** in `pending_review` behind a `low_confidence`/
-  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent), never a spurious
+  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent **across all
+  statuses**, so a dismissal is a decision and not a snooze), never a spurious
   point. The four red-team scenarios are unit-tested (divergent-rendering dedup, readable-but-wrong
   parks, two-specimen-less draws both persist, matching by canonical LOINC not label) + a real-Postgres
   e2e proves the ARIA reprint corroborates the 2021 OneContent draws (one graph draw, not two) while
@@ -1714,7 +1756,10 @@ import:
 - **`import_handler.py` (`EmrImportPipeline.parse`)** — the DB **job handler** (`emr_parse`) that ties
   it together on a note's decrypted PDF attachments: extract each PDF's page text (+ word geometry for
   OneContent) off the event loop → `parse_corpus` → integrate each precise parse through the shipped
-  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file. Each
+  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file (one per
+  (note, attachment), deduped **across all statuses** like its two sibling cards — `emr_parse` re-runs
+  on every re-ingest, so an unprobed insert multiplies rows and an open-only probe would re-file a
+  card the owner dismissed). Each
   precise source integrates against **its own attachment chunks** so a fact's citation lands on the
   source document (the arbiter anchors an EMR fact to the head of its chunk set; per-page honoring of
   the intent's attested span is a follow-on). Writes run on a **health-scoped owner session** (§3.6).

@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Note body · A · the living document</title>
+    <style>
+      /* Design tokens — copied from frontend/src/styles/tokens.css (docs/reference/DESIGN.md).
+         --font-scale is the app default (75%); the demo bar offers 100% for comparison. */
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --amber: #c9a36a; --amber-tint: rgba(201, 163, 106, 0.13);
+        --rose: #cf8a8f; --rose-tint: rgba(207, 138, 143, 0.13);
+        --violet: #a493c9; --violet-tint: rgba(164, 147, 201, 0.13);
+        --teal: #6fb6b1; --orchid: #c98ab4; --slate: #9aa0a8;
+        --font-scale: 0.75;
+        --fs-micro: calc(12px * var(--font-scale));
+        --fs-secondary: calc(14px * var(--font-scale));
+        --fs-note: calc(15px * var(--font-scale));
+        --fs-body: calc(16px * var(--font-scale));
+        --fs-title: calc(18px * var(--font-scale));
+        --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --page: #ecece9; --bg: #f7f7f5; --surface: #ffffff; --surface-2: #f0f0ee;
+        --border: #e2e2df; --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024;
+        --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --shadow-card: none;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+      body {
+        background: var(--page); color: var(--text); padding: 26px 14px 64px; min-height: 100vh;
+        font: 400 var(--fs-body) / 1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+      }
+      svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      button { font: inherit; cursor: pointer; }
+      /* tap-highlight is off, so a visible focus ring is the only affordance left */
+      :focus-visible { outline: 2px solid var(--steel); outline-offset: 2px; border-radius: 6px; }
+
+      .demo-bar { width: 100%; max-width: 1180px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .demo-title { font-size: 14px; color: var(--text-2); }
+      .demo-title b { color: var(--text); }
+      .seg-theme { display: flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; }
+      .seg-theme:first-of-type { margin-left: auto; }
+      .seg-theme button { appearance: none; border: none; background: var(--surface); color: var(--text-2); font-size: 12px; padding: 9px 14px; min-height: 36px; }
+      .seg-theme button[aria-pressed="true"] { background: var(--steel-tint); color: var(--steel); }
+      .caption { width: 100%; max-width: 1180px; font-size: 14px; color: var(--text-2); line-height: 1.55; }
+      .caption b { color: var(--text); font-weight: 600; }
+      .caption .k { color: var(--amber); }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--violet-tint); color: var(--violet); margin-bottom: 7px; }
+
+      .row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+      .frame { display: flex; flex-direction: column; gap: 8px; width: 372px; max-width: 94vw; }
+      .frame-lab { font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 4px; }
+      .frame-lab b { color: var(--text-2); font-weight: 500; text-transform: none; letter-spacing: 0; }
+      .phone {
+        width: 100%; height: 812px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 30px; overflow: hidden; position: relative; display: flex; flex-direction: column;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .bar { height: 54px; flex: none; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+      .bar .back { background: none; border: none; color: var(--text-2); display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-left: -12px; }
+      .bar .ttl { font-size: var(--fs-body); font-weight: 500; }
+      .bar .sub { font-size: var(--fs-micro); color: var(--text-3); }
+      .bar .vit { margin-left: auto; display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+      .bar .vit span { width: 2px; background: var(--text-3); border-radius: 1px; opacity: 0.55; }
+
+      .screen { flex: 1; overflow-y: auto; padding: 14px 16px 26px; display: flex; flex-direction: column; gap: 14px; }
+
+      .nhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .dpill { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-micro); padding: 4px 10px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); }
+      .dpill .dot { width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--steel); }
+      .ndate { font-size: var(--fs-secondary); color: var(--text-2); }
+      .nmore { margin-left: auto; min-width: 44px; min-height: 44px; margin-right: -10px; display: flex; align-items: center; justify-content: flex-end; background: none; border: none; color: var(--text-3); }
+      .ntitle { font-size: var(--fs-title); font-weight: 500; line-height: 1.35; }
+
+      .tabs { display: flex; border: 1px solid var(--border); border-radius: var(--r-input); overflow: hidden; }
+      .tabs button { flex: 1; appearance: none; border: none; background: var(--surface-2); color: var(--text-2); font-size: var(--fs-secondary); padding: 9px 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 5px; }
+      .tabs button + button { border-left: 1px solid var(--border); }
+      .tabs button[aria-selected="true"] { background: var(--steel-tint); color: var(--steel); font-weight: 500; }
+      .tabs .cnt { font-size: var(--fs-micro); padding: 1px 6px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-3); }
+      .tabs button[aria-selected="true"] .cnt { background: var(--bg); color: var(--steel); }
+
+      .seal { display: flex; align-items: center; gap: 7px; font-size: var(--fs-micro); color: var(--text-3); letter-spacing: 0.04em; }
+      .seal svg { width: 12px; height: 12px; flex: none; }
+      .seal::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+      /* ================= THE DOCUMENT ================= */
+      .doc p { font-size: var(--fs-body); line-height: 1.55; margin: 0 0 10px; }
+      /* a write anchored to the sentence that caused it — an indented elbow row */
+      .anchor { display: flex; align-items: flex-start; gap: 7px; margin: -2px 0 12px 2px; }
+      .anchor .elbow { width: 11px; height: 15px; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); border-bottom-left-radius: 5px; flex: none; margin-top: 6px; }
+      .anchor .chips { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+
+      /* ---- the "entity modified" chip (D3) ---- */
+      .wchip { border: 1px solid var(--border); border-radius: 11px; background: var(--surface); overflow: hidden; box-shadow: var(--shadow-card); }
+      .wchip.bad { border-color: color-mix(in srgb, var(--rose) 45%, var(--border)); }
+      .wchip-row { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 44px; padding: 7px 10px; background: none; border: none; color: inherit; text-align: left; }
+      .wchip-row .dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: none; }
+      .wchip-lab { font-size: var(--fs-secondary); font-weight: 500; white-space: nowrap; }
+      .wchip-arg { font-size: var(--fs-micro); color: var(--text-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* the outcome word — never a colour on its own (DESIGN.md: status colour is always paired with text) */
+      .wstate { font-size: var(--fs-micro); border-radius: var(--r-pill); padding: 2px 8px; flex: none; white-space: nowrap; background: var(--surface-2); color: var(--text-2); }
+      .wstate.ok { background: var(--green-tint); color: var(--green); }
+      .wstate.sup { background: var(--amber-tint); color: var(--amber); }
+      .wstate.held { background: var(--amber-tint); color: var(--amber); }
+      .wstate.err { background: var(--rose-tint); color: var(--rose); }
+      .wstate.att { background: var(--steel-tint); color: var(--steel); }
+      .wstate.live { background: var(--steel-tint); color: var(--steel); }
+      .wchip-caret { width: 14px; height: 14px; color: var(--text-3); flex: none; transition: transform 0.14s ease-out; }
+      .wchip[data-open="true"] .wchip-caret { transform: rotate(90deg); }
+      .wchip-det { display: none; border-top: 1px solid var(--border); background: var(--bg); padding: 10px; flex-direction: column; gap: 11px; }
+      .wchip[data-open="true"] .wchip-det { display: flex; }
+
+      .wrow { display: flex; flex-direction: column; gap: 5px; }
+      .wrow + .wrow { border-top: 1px solid var(--border); padding-top: 10px; }
+      .edge-line { font-family: var(--font-mono); font-size: var(--fs-secondary); color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; line-height: 1.5; }
+      .edge-line .subj { color: var(--text); }
+      .edge-line .arr { color: var(--text-3); }
+      .edge-line .val { color: var(--text); background: var(--surface-2); border-radius: 6px; padding: 1px 6px; }
+      .edge-line .val.dead { text-decoration: line-through; color: var(--text-3); }
+      .wmeta { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.5; }
+      .wmeta .ok { color: var(--green); }
+      .wmeta .sup { color: var(--amber); }
+      .wmeta .err { color: var(--rose); }
+      /* the domain a write LANDED in — words, not just the dot (non-negotiable #3) */
+      .dom { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-micro); border-radius: var(--r-pill); padding: 2px 8px; background: var(--surface-2); color: var(--text-2); }
+      .dom .d { width: 6px; height: 6px; border-radius: var(--r-pill); }
+      .dom.health { background: var(--rose-tint); color: var(--rose); }
+      .dom.health .d { background: var(--rose); }
+      .dom.general { background: var(--steel-tint); color: var(--steel); }
+      .dom.general .d { background: var(--steel); }
+      .quote { background: var(--surface-2); border-left: 2px solid var(--steel); border-radius: 0 8px 8px 0; padding: 6px 9px; font-size: var(--fs-micro); color: var(--text-2); line-height: 1.5; }
+      .quote mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      /* before → after — ADAPTED from frontend/src/review/blocks/ClaimDiff.tsx: same
+         two-rows-and-an-arrow shape, relabelled was/now, because nothing here is
+         "proposed" — it is already committed. */
+      .rdiff { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+      .rdiff-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; }
+      .rdiff-lbl { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); width: 34px; flex: none; }
+      .rdiff-val { font-size: var(--fs-secondary); }
+      .rdiff-before .rdiff-val s { color: var(--text-3); }
+      .rdiff-after .rdiff-val ins { text-decoration: none; color: var(--text); }
+      .rdiff-arrow { font-size: var(--fs-micro); color: var(--amber); background: var(--amber-tint); padding: 4px 9px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+
+      .att { display: flex; gap: 9px; align-items: flex-start; }
+      .att .thumb { width: 46px; height: 46px; border-radius: 8px; border: 1px solid var(--border); background: linear-gradient(150deg, var(--surface-2), var(--surface)); display: grid; place-items: center; color: var(--text-3); flex: none; }
+      .att .thumb svg { width: 18px; height: 18px; }
+      .att .side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+      .attbadge { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-micro); padding: 2px 8px; border-radius: var(--r-pill); background: var(--steel-tint); color: var(--steel); align-self: flex-start; }
+      .attbadge svg { width: 10px; height: 10px; flex: none; }
+      .ocr { font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 1.6; color: var(--text-2); background: var(--surface-2); border-radius: 8px; padding: 7px 9px; }
+      .ocr mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+
+      /* in-flight: the wait plan risk 4 says the owner actually sits through */
+      .stages { display: flex; flex-direction: column; gap: 5px; }
+      .stage { display: flex; align-items: center; gap: 7px; font-size: var(--fs-micro); color: var(--text-3); }
+      .stage .m { width: 12px; text-align: center; flex: none; }
+      .stage.done { color: var(--text-2); }
+      .stage.done .m { color: var(--green); }
+      .stage.now { color: var(--steel); }
+      .pulse { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--steel); flex: none; animation: breathe 1.7s ease-in-out infinite; }
+      @keyframes breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+      /* ---- appended clarification blocks (D6) ---- */
+      .appended-rule { display: flex; align-items: center; gap: 8px; font-size: var(--fs-micro); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+      .appended-rule::before, .appended-rule::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+      .clar { border-left: 2px solid var(--steel); padding: 2px 0 2px 11px; display: flex; flex-direction: column; gap: 6px; }
+      .clar-head { font-size: var(--fs-micro); color: var(--steel); }
+      .clar-head .ask { color: var(--text-3); }
+      .clar p { font-size: var(--fs-body); line-height: 1.55; margin: 0; }
+      .fresh { animation: land 0.42s ease-out; }
+      @keyframes land { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+      /* ---- the open question ---- */
+      .qcard { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 11px; background: var(--surface); padding: 11px 12px; display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow-card); }
+      .qtop { display: flex; align-items: center; gap: 6px; font-size: var(--fs-micro); letter-spacing: 0.06em; text-transform: uppercase; color: var(--amber); }
+      .qtop svg { width: 12px; height: 12px; flex: none; }
+      .qtxt { font-size: var(--fs-secondary); line-height: 1.5; color: var(--text); }
+      .answers { display: flex; flex-wrap: wrap; gap: 6px; }
+      .ans { font-size: var(--fs-secondary); padding: 8px 14px; min-height: 44px; display: inline-flex; align-items: center; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+      .ans.other { color: var(--text-2); border-style: dashed; }
+      .qhint { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.5; }
+      .qcard.done { border-left-color: var(--green); }
+      .qcard.done .answers, .qcard.done .qhint { display: none; }
+      .settled { display: none; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--green); }
+      .qcard.done .settled { display: flex; }
+      .settled svg { width: 13px; height: 13px; flex: none; }
+      .qcard.done .qtop { color: var(--text-3); }
+
+      /* the conversation's own home — identical in all three variants */
+      .talk { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 44px; padding: 10px 13px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); color: var(--text-2); font-size: var(--fs-secondary); text-align: left; box-shadow: var(--shadow-card); }
+      .talk svg { width: 16px; height: 16px; color: var(--steel); flex: none; }
+      .talk .chev { margin-left: auto; color: var(--text-3); }
+
+      .loose { border: 1px dashed var(--border); border-radius: 11px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .loose-lab { font-size: var(--fs-micro); color: var(--text-3); }
+
+      .footnote { font-size: var(--fs-micro); color: var(--text-3); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 10px; }
+      .footnote b { color: var(--text-2); font-weight: 500; }
+      .lede { font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.55; }
+      .lede b { color: var(--text); font-weight: 500; }
+
+      .toast { position: absolute; left: 50%; bottom: 30px; transform: translate(-50%, 6px); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: var(--fs-micro); padding: 10px 15px; border-radius: var(--r-pill); opacity: 0; pointer-events: none; transition: opacity 0.16s, transform 0.16s; z-index: 5; max-width: 88%; text-align: center; }
+      .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+      @media (prefers-reduced-motion: reduce) {
+        .fresh { animation: none; }
+        .pulse { animation: none; opacity: 0.85; }
+        .wchip-caret, .toast { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar">
+      <div class="demo-title"><b>Note body + write chips.</b> A · the living document</div>
+      <div class="seg-theme" role="group" aria-label="theme">
+        <button id="t-dark" aria-pressed="true">dark</button>
+        <button id="t-light" aria-pressed="false">light</button>
+      </div>
+      <div class="seg-theme" role="group" aria-label="text size">
+        <button id="s-75" aria-pressed="true">75% text</button>
+        <button id="s-100" aria-pressed="false">100%</button>
+      </div>
+    </div>
+
+    <div class="caption">
+      <span class="tag">A · clarifications are prose · writes are anchored to the sentence that caused them</span><br />
+      <b>Settled and shared by all three variants:</b> the conversation itself lives on the <b>conversations surface</b> — a note
+      thread and a Full Brain chat are one <b>AgentSession</b> (plan D1). None of these variants puts the transcript on the note
+      screen; each carries the same <b>open the conversation →</b> row. What varies is <b>how a clarification reads inside the
+      note</b> and <b>where the writes are surfaced</b>.<br /><br />
+      A keeps the Note tab a <b>document</b>: the frozen body under a <b>captured 07:14 · your words, unchanged</b> seal, then
+      dated clarification blocks appended as <b>prose in flow</b>, so the note reads as one piece of writing that grew. Each
+      <b class="k">entity modified</b> chip is anchored <b>under the sentence it came from</b>. The tab bar is
+      <b>unchanged</b> — Note · Attachments · Analysis all stay as shipped. Answer the open question in frame 1 to see the
+      write actually land; frame 2 is every chip state; frame 3 is what A costs.
+    </div>
+
+    <div class="row">
+      <!-- ============ 1 · THE NOTE ============ -->
+      <div class="frame">
+        <div class="frame-lab">1 · the note tab <b>— body, anchored chips, appended prose</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button" aria-label="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Note</span> <span class="sub">· general</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:7px"></span><span style="height:11px"></span><span style="height:6px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:5px"></span><span style="height:12px"></span><span style="height:8px"></span></span>
+          </div>
+
+          <div class="screen">
+            <div class="nhead">
+              <span class="dpill"><span class="dot"></span> general</span>
+              <span class="ndate">Sep 8 · 07:14</span>
+              <button class="nmore" type="button" aria-label="note actions"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg></button>
+            </div>
+            <div class="ntitle">Cardiology follow-up — Okonjo</div>
+
+            <div class="tabs" role="tablist">
+              <button type="button" role="tab" aria-selected="true">Note</button>
+              <button type="button" role="tab" aria-selected="false" data-toast="the settled attachments manifest — unchanged by this design">Attachments <span class="cnt">1</span></button>
+              <button type="button" role="tab" aria-selected="false" data-toast="the settled Analysis tab — title, tags, facts, entity chips, resolved dates, Sources card — unchanged">Analysis</button>
+            </div>
+
+            <div class="seal">
+              <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+              captured 07:14 · your words, unchanged
+            </div>
+
+            <div class="doc">
+              <p>Cardiology follow-up with Dr. Okonjo. BP 128/82 sitting, better than March. Office scale said 178.</p>
+              <div class="anchor">
+                <span class="elbow" aria-hidden="true"></span>
+                <div class="chips">
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Me</span>
+                      <span class="wchip-arg">blood pressure · health</span>
+                      <span class="wstate ok">written</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">me</span><span>.blood_pressure</span><span class="arr">→</span><span class="val">128/82 mmHg</span></span>
+                        <span class="wmeta"><span class="ok">written</span> · sitting · measured Sep 8 · 07:16</span>
+                        <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span> — above this note's own <span class="dom general"><span class="d"></span>general</span>. The predicate's floor decides that, not me; I can only ever ask for <i>more</i> protection, never less. The citation points at a health-side copy of this passage.</span>
+                        <div class="quote">…<mark>BP 128/82 sitting</mark>, better than March…</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Me</span>
+                      <span class="wchip-arg">weight · health</span>
+                      <span class="wstate held">held</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">me</span><span>.weight</span><span class="arr">→</span><span class="val">178 lb</span></span>
+                        <span class="wmeta"><span class="sup">held</span> — clashes with <b style="color: var(--text-2); font-weight: 400">182 lb</b> at the same time, from this morning's home scale. <b style="color: var(--text-2); font-weight: 400">Recorded but not live</b>: it will not be read as your current weight until one of you settles it.</span>
+                        <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span> · I've asked about it in the conversation.</span>
+                        <div class="quote">…<mark>Office scale said 178</mark>…</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p>She's taking me off the amlodipine and starting losartan 50 mg in the mornings — the ankle swelling should settle in a couple of weeks.</p>
+              <div class="anchor">
+                <span class="elbow" aria-hidden="true"></span>
+                <div class="chips">
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Me</span>
+                      <span class="wchip-arg">medication · health</span>
+                      <span class="wstate sup">replaced</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">me</span><span>.medication</span><span class="arr">→</span><span class="val">losartan 50 mg</span></span>
+                        <div class="rdiff" aria-label="before and after">
+                          <div class="rdiff-row rdiff-before"><span class="rdiff-lbl">was</span><span class="rdiff-val"><s>amlodipine 10 mg</s></span></div>
+                          <div class="rdiff-arrow">↓ replaced today · kept as history</div>
+                          <div class="rdiff-row rdiff-after"><span class="rdiff-lbl">now</span><span class="rdiff-val"><ins>losartan 50 mg</ins></span></div>
+                        </div>
+                        <span class="wmeta">the amlodipine keeps its interval on Me's history rail — nothing was deleted.</span>
+                        <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span></span>
+                        <div class="quote">…taking me off the <mark>amlodipine</mark> and starting <mark>losartan 50 mg</mark>…</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Losartan</span>
+                      <span class="wchip-arg">new entity · Drug · health</span>
+                      <span class="wstate ok">written</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">losartan</span><span>.taken_at</span><span class="arr">→</span><span class="val">morning</span></span>
+                        <span class="wmeta"><span class="ok">written</span> · new entity, minted here · Drug</span>
+                        <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span></span>
+                        <div class="quote">…starting losartan 50 mg <mark>in the mornings</mark>…</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p>Bloods again before the next visit. Photo of the new script.</p>
+              <div class="anchor">
+                <span class="elbow" aria-hidden="true"></span>
+                <div class="chips">
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Losartan</span>
+                      <span class="wchip-arg">from the script photo</span>
+                      <span class="wstate att">2 · photo</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="att">
+                        <span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                        <div class="side">
+                          <span class="attbadge"><svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg> read from an attachment · IMG_2274 · ocr</span>
+                          <div class="ocr">LOSARTAN POTASSIUM 50 MG<br />TAKE 1 TABLET BY MOUTH EVERY MORNING<br />QTY <mark>90</mark> · <mark>3 REFILLS</mark> · A. OKONJO MD</div>
+                        </div>
+                      </div>
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">losartan</span><span>.quantity</span><span class="arr">→</span><span class="val">90 tablets</span></span>
+                        <span class="wmeta"><span class="ok">written</span> · <b style="color: var(--steel); font-weight: 400">not in your note</b> — only on the label · <span class="dom health"><span class="d"></span>health</span></span>
+                      </div>
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">losartan</span><span>.refills</span><span class="arr">→</span><span class="val">3</span></span>
+                        <span class="wmeta"><span class="ok">written</span> · <b style="color: var(--steel); font-weight: 400">not in your note</b> — only on the label · <span class="dom health"><span class="d"></span>health</span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="appended-rule">added since</div>
+
+            <div class="clar">
+              <div class="clar-head">added 08:05 <span class="ask">· answering “which ankle, and since when?”</span></div>
+              <p>Both ankles, worse on the right. Started maybe three weeks after the amlodipine went up to 10 mg.</p>
+              <div class="anchor" style="margin-left: 0">
+                <span class="elbow" aria-hidden="true"></span>
+                <div class="chips">
+                  <div class="wchip" data-open="false">
+                    <button class="wchip-row" type="button" aria-expanded="false">
+                      <span class="dot" style="background: var(--rose)"></span>
+                      <span class="wchip-lab">Me</span>
+                      <span class="wchip-arg">symptom · health</span>
+                      <span class="wstate ok">written</span>
+                      <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                    <div class="wchip-det">
+                      <div class="wrow">
+                        <span class="edge-line"><span class="subj">me</span><span>.symptom</span><span class="arr">→</span><span class="val">ankle oedema, bilateral</span></span>
+                        <span class="wmeta"><span class="ok">written</span> · an ordinary assertion, sourced to your clarification block of 08:05 — <b style="color: var(--text-2); font-weight: 400">nothing is pinned</b>. Answering a question isn't disagreeing; telling me the note is <i>wrong</i> is a different verb, and that one force-supersedes and pins.</span>
+                        <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="landing"></div>
+
+            <div class="qcard" id="q1">
+              <div class="qtop"><svg viewBox="0 0 24 24"><path d="M12 17h.01" /><path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.1-1.3 2" /></svg> still asking · since 07:16</div>
+              <div class="qtxt">“Bloods again before the next visit” — <b>which panel?</b> March was a lipid panel and a CMP; I'd rather not guess this one.</div>
+              <div class="answers">
+                <button class="ans" type="button" data-answer="both">lipid panel + CMP</button>
+                <button class="ans" type="button" data-answer="cmp">just a CMP</button>
+                <button class="ans other" type="button" data-answer="type">type…</button>
+              </div>
+              <div class="qhint">answering appends a dated block above and re-reads the whole note. no reminder will come.</div>
+              <div class="settled"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7" /></svg><span id="q1settled">answered</span></div>
+            </div>
+
+            <!-- what has no sentence to hang off — A's honest weak spot -->
+            <div class="loose">
+              <div class="loose-lab">belongs to the note, not to any sentence</div>
+              <div class="wchip bad" data-open="true">
+                <button class="wchip-row" type="button" aria-expanded="true">
+                  <span class="dot" style="background: var(--steel)"></span>
+                  <span class="wchip-lab">Dr. Okonjo</span>
+                  <span class="wchip-arg">general · one call failed</span>
+                  <span class="wstate err">failed</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="edge-line"><span class="subj">okonjo</span><span>.specialty</span><span class="arr">→</span><span class="val dead">cardiology</span></span>
+                    <span class="wmeta"><span class="err">failed</span> — <span style="font-family: var(--font-mono)">object “e9”: no such handle. resolve_entity first.</span> Retried on the next turn and written; it landed in <span class="dom general"><span class="d"></span>general</span>, not health — who someone is professionally isn't your medical data.</span>
+                    <span class="wmeta">a failed step opens itself, the way every other tool step in this app does.</span>
+                  </div>
+                </div>
+              </div>
+              <div class="wchip" data-open="false">
+                <button class="wchip-row" type="button" aria-expanded="false">
+                  <span class="dot" style="background: var(--amber)"></span>
+                  <span class="wchip-lab">the 07:16 pass</span>
+                  <span class="wchip-arg">stopped early</span>
+                  <span class="wstate held">truncated</span>
+                  <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+                </button>
+                <div class="wchip-det">
+                  <div class="wrow">
+                    <span class="wmeta">The first pass hit its step limit before it finished. What it wrote stands; what it hadn't reached yet was <b style="color: var(--text-2); font-weight: 400">not swept away</b> — a pass that ended partway never retracts, because it only got through part of the note. It resumed at 07:31.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button class="talk" type="button" data-toast="opens this note's thread on the conversations surface — the same AgentSession as any chat">
+              <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.4 7.2L3 21l1.8-6.6A8 8 0 1 1 21 12Z" /></svg>
+              open the conversation · 6 turns
+              <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+            </button>
+
+            <p class="footnote">
+              Everything above <b>added since</b> is immutable. Everything below it is a chunk of this same note — searchable,
+              re-read on every re-analysis, citable — so the graph still re-derives from notes alone. The chips are a
+              <b>render of what was persisted</b>, not a queue: there is no approve button, because a clear fact commits and
+              disagreement is a reply in the conversation.
+            </p>
+          </div>
+          <output class="toast"></output>
+        </div>
+      </div>
+
+      <!-- ============ 2 · CHIP ANATOMY ============ -->
+      <div class="frame">
+        <div class="frame-lab">2 · every state a chip has <b>— identical fixture in all three variants</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button" aria-label="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Note</span> <span class="sub">· general</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:9px"></span><span style="height:6px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:14px"></span><span style="height:7px"></span><span style="height:10px"></span><span style="height:6px"></span></span>
+          </div>
+          <div class="screen">
+            <p class="lede">
+              Six outcomes, one row shape. The row is the monospace
+              <span style="font-family: var(--font-mono)">subject.predicate → value</span> the Analysis tab and the entity page
+              already draw; the chip adds <b>what kind of write this was</b>, <b>which domain it landed in</b> — in words, never
+              only a dot — and <b>where it came from</b>.
+            </p>
+
+            <div class="wchip" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                <span class="wchip-arg">blood pressure · health</span><span class="wstate ok">written</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="wrow">
+                  <span class="edge-line"><span class="subj">me</span><span>.blood_pressure</span><span class="arr">→</span><span class="val">128/82 mmHg</span></span>
+                  <span class="wmeta"><span class="ok">written</span> · a new value, nothing displaced</span>
+                  <span class="wmeta">landed in <span class="dom health"><span class="d"></span>health</span> — <b style="color: var(--text-2); font-weight: 400">above this note's own</b> <span class="dom general"><span class="d"></span>general</span></span>
+                  <div class="quote">…<mark>BP 128/82 sitting</mark>…</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="wchip" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                <span class="wchip-arg">medication · health</span><span class="wstate sup">replaced</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="wrow">
+                  <span class="edge-line"><span class="subj">me</span><span>.medication</span><span class="arr">→</span><span class="val">losartan 50 mg</span></span>
+                  <div class="rdiff" aria-label="before and after">
+                    <div class="rdiff-row rdiff-before"><span class="rdiff-lbl">was</span><span class="rdiff-val"><s>amlodipine 10 mg</s></span></div>
+                    <div class="rdiff-arrow">↓ replaced today · kept as history</div>
+                    <div class="rdiff-row rdiff-after"><span class="rdiff-lbl">now</span><span class="rdiff-val"><ins>losartan 50 mg</ins></span></div>
+                  </div>
+                  <span class="wmeta">the old value is <b style="color: var(--text-2); font-weight: 400">closed, not deleted</b> — it keeps its interval on the entity's history rail.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="wchip" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Me</span>
+                <span class="wchip-arg">weight · health</span><span class="wstate held">held</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="wrow">
+                  <span class="edge-line"><span class="subj">me</span><span>.weight</span><span class="arr">→</span><span class="val">178 lb</span></span>
+                  <span class="wmeta"><span class="sup">held</span> — clashes with 182 lb at the same time. <b style="color: var(--text-2); font-weight: 400">Recorded but not live.</b> Held is not a confidence judgment — it is the one case the writer itself cannot settle, and it is also how a preliminary lab reading waits for its final report.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="wchip" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--rose)"></span><span class="wchip-lab">Losartan</span>
+                <span class="wchip-arg">from the script photo</span><span class="wstate att">2 · photo</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="att">
+                  <span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m21 16-5-5L5 20" /></svg></span>
+                  <div class="side">
+                    <span class="attbadge"><svg viewBox="0 0 24 24"><path d="M21.4 11.1 12.9 2.6a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v7.5c0 .5.2 1 .6 1.4l8.5 8.5a2 2 0 0 0 2.8 0l7.5-7.5a2 2 0 0 0 0-2.8Z" /></svg> read from an attachment · IMG_2274 · ocr</span>
+                    <div class="ocr">LOSARTAN POTASSIUM 50 MG<br />QTY <mark>90</mark> · <mark>3 REFILLS</mark></div>
+                  </div>
+                </div>
+                <div class="wrow">
+                  <span class="edge-line"><span class="subj">losartan</span><span>.refills</span><span class="arr">→</span><span class="val">3</span></span>
+                  <span class="wmeta"><span class="ok">written</span> · an attachment-sourced value carries <b style="color: var(--steel); font-weight: 400">the label it was read off</b>, not a note citation — the thing you'd check it against is the photo.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="wchip bad" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--steel)"></span><span class="wchip-lab">Dr. Okonjo</span>
+                <span class="wchip-arg">general</span><span class="wstate err">failed</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="wrow">
+                  <span class="edge-line"><span class="subj">okonjo</span><span>.specialty</span><span class="arr">→</span><span class="val dead">cardiology</span></span>
+                  <span class="wmeta"><span class="err">failed</span> · <span style="font-family: var(--font-mono)">object “e9”: no such handle. resolve_entity first.</span> Retried and written on the next turn, into <span class="dom general"><span class="d"></span>general</span>.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="wchip" data-open="true">
+              <button class="wchip-row" type="button" aria-expanded="true">
+                <span class="dot" style="background: var(--steel)"></span><span class="wchip-lab">Nov follow-up</span>
+                <span class="wchip-arg">lab orders</span><span class="wstate live">writing…</span>
+                <svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+              <div class="wchip-det">
+                <div class="stages">
+                  <div class="stage done"><span class="m">✓</span> appended to the note</div>
+                  <div class="stage done"><span class="m">✓</span> re-chunked · re-embedded</div>
+                  <div class="stage now"><span class="pulse" aria-hidden="true"></span> re-reading the whole note</div>
+                  <div class="stage"><span class="m">·</span> 2 articles to rebuild</div>
+                </div>
+                <span class="wmeta">on-box and serial — an answered question costs a full re-read of the note and one article rebuild per entity it mentions. This is the wait, shown rather than hidden.</span>
+              </div>
+            </div>
+
+            <p class="footnote">
+              Colour is never the only signal: every state carries its word — <b>written · replaced · held · failed ·
+              truncated · writing…</b> — and every domain is spelled out beside its dot.
+            </p>
+          </div>
+          <output class="toast"></output>
+        </div>
+      </div>
+
+      <!-- ============ 3 · THE COST ============ -->
+      <div class="frame">
+        <div class="frame-lab">3 · six clarifications later <b>— what A costs</b></div>
+        <div class="phone">
+          <div class="bar">
+            <button class="back" type="button" aria-label="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+            <span><span class="ttl">Note</span> <span class="sub">· general</span></span>
+            <span class="vit" aria-hidden="true"><span style="height:11px"></span><span style="height:7px"></span><span style="height:13px"></span><span style="height:9px"></span><span style="height:6px"></span><span style="height:12px"></span><span style="height:8px"></span><span style="height:10px"></span></span>
+          </div>
+          <div class="screen">
+            <p class="lede">
+              A month on, the document has grown six blocks and eleven chips. There is no fold and no summary — that is the
+              deal A makes: <b>one continuous piece of writing</b>, read top to bottom, at whatever length it has reached.
+            </p>
+
+            <div class="seal"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg> captured Sep 8 · your words, unchanged</div>
+            <div class="doc"><p style="color: var(--text-2)">Cardiology follow-up with Dr. Okonjo. BP 128/82 sitting, better than March. Office scale said 178.</p></div>
+            <div class="appended-rule">added since</div>
+
+            <div class="clar"><div class="clar-head">08:05 <span class="ask">· “which ankle, and since when?”</span></div><p>Both ankles, worse on the right.</p></div>
+            <div class="clar"><div class="clar-head">09:26 <span class="ask">· “which panel?”</span></div><p>Lipid panel and a CMP, same as March.</p></div>
+            <div class="clar"><div class="clar-head">Sep 12 <span class="ask">· “182 or 178 — which is your weight?”</span></div><p>The office scale. Mine at home reads about four pounds heavy.</p></div>
+            <div class="clar"><div class="clar-head">Sep 21 <span class="ask">· “has the swelling settled?”</span></div><p>Gone by the second week. No cough either.</p></div>
+            <div class="clar"><div class="clar-head">Sep 29 <span class="ask">· “did the bloods come back?”</span></div><p>Potassium 4.9, she said fine.</p></div>
+            <div class="clar"><div class="clar-head">Oct 2 <span class="ask">· “is Summit the same practice as March?”</span></div><p>Same practice, different building.</p></div>
+
+            <p class="footnote">
+              Two things to weigh. <b>The good:</b> a year later this reads as one account of an episode — your words and your
+              answers in the order they happened, with the writes still attached to the sentences that caused them. <b>The
+              cost:</b> the opening line is now a screen and a half up with nothing to fold it away, and anything that has no
+              sentence to hang off — a failed call, a truncated pass, a value read only off a photo — has to be gathered into a
+              loose tail at the bottom, which is the one place A's organising idea stops working.
+            </p>
+
+            <button class="talk" type="button" data-toast="opens this note's thread on the conversations surface — the same AgentSession as any chat">
+              <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.4 7.2L3 21l1.8-6.6A8 8 0 1 1 21 12Z" /></svg>
+              open the conversation · 14 turns
+              <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>
+            </button>
+          </div>
+          <output class="toast"></output>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const scrollOpts = () => ({ behavior: REDUCED.matches ? "auto" : "smooth", block: "center" });
+
+      const dark = document.getElementById("t-dark");
+      const light = document.getElementById("t-light");
+      function setTheme(t) {
+        document.documentElement.setAttribute("data-theme", t);
+        dark.setAttribute("aria-pressed", String(t === "dark"));
+        light.setAttribute("aria-pressed", String(t === "light"));
+      }
+      dark.onclick = () => setTheme("dark");
+      light.onclick = () => setTheme("light");
+      setTheme(window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+
+      const s75 = document.getElementById("s-75");
+      const s100 = document.getElementById("s-100");
+      function setScale(v) {
+        document.documentElement.style.setProperty("--font-scale", String(v));
+        s75.setAttribute("aria-pressed", String(v === 0.75));
+        s100.setAttribute("aria-pressed", String(v === 1));
+      }
+      s75.onclick = () => setScale(0.75);
+      s100.onclick = () => setScale(1);
+
+      function wireChip(row) {
+        row.onclick = () => {
+          const chip = row.closest(".wchip");
+          const open = chip.dataset.open !== "true";
+          chip.dataset.open = String(open);
+          row.setAttribute("aria-expanded", String(open));
+        };
+      }
+      for (const row of document.querySelectorAll(".wchip-row")) wireChip(row);
+
+      // one toast, shown in every frame, so no control fires off-screen
+      const toasts = [...document.querySelectorAll(".toast")];
+      let tt = null;
+      function toast(msg) {
+        for (const t of toasts) {
+          t.textContent = msg;
+          t.classList.add("on");
+        }
+        if (tt) clearTimeout(tt);
+        tt = setTimeout(() => { for (const t of toasts) t.classList.remove("on"); }, 2800);
+      }
+      for (const b of document.querySelectorAll("[data-toast]")) b.onclick = () => toast(b.dataset.toast);
+
+      const ANSWERS = {
+        both: {
+          said: "lipid panel + CMP",
+          text: "Lipid panel and a CMP, same as March.",
+          edges: [["appt:okonjo-nov", ".lab_orders", "lipid panel, CMP", "health"]],
+        },
+        cmp: {
+          said: "just a CMP",
+          text: "Just a CMP this time — she only wants the potassium watched on the losartan.",
+          edges: [
+            ["appt:okonjo-nov", ".lab_orders", "CMP", "health"],
+            ["losartan", ".monitored_by", "serum potassium", "health"],
+          ],
+        },
+      };
+
+      // the floor is a property of the predicate, not of the note — so the row reads it off the edge
+      function domLine(dom) {
+        const chip = '<span class="dom ' + dom + '"><span class="d"></span>' + dom + "</span>";
+        return dom === "general"
+          ? '<span class="wmeta">landed in ' + chip + " — the same floor as this note</span>"
+          : '<span class="wmeta">landed in ' + chip + ' — above this note\'s <span class="dom general"><span class="d"></span>general</span></span>';
+      }
+
+      function edgeRows(edges) {
+        return edges
+          .map(
+            (e) =>
+              '<div class="wrow"><span class="edge-line"><span class="subj">' + e[0] + "</span><span>" + e[1] +
+              '</span><span class="arr">→</span><span class="val">' + e[2] +
+              '</span></span><span class="wmeta"><span class="ok">written</span> · an ordinary assertion, sourced to your ' +
+              'clarification block — <b style="color: var(--text-2); font-weight: 400">nothing is pinned</b>.</span>' +
+              domLine(e[3]) + "</div>",
+          )
+          .join("");
+      }
+
+      for (const btn of document.querySelectorAll("#q1 .ans")) {
+        btn.onclick = () => {
+          const key = btn.dataset.answer;
+          if (key === "type") {
+            toast("free text lands in the same place — a dated block, appended");
+            return;
+          }
+          const a = ANSWERS[key];
+          const card = document.getElementById("q1");
+          card.classList.add("done");
+          document.getElementById("q1settled").textContent = "you answered · " + a.said;
+
+          const block = document.createElement("div");
+          block.className = "clar fresh";
+          block.innerHTML =
+            '<div class="clar-head">added just now <span class="ask">· answering “which panel?”</span></div>' +
+            "<p>" + a.text + "</p>" +
+            '<div class="anchor" style="margin-left:0"><span class="elbow" aria-hidden="true"></span><div class="chips">' +
+            '<div class="wchip" data-open="true"><button class="wchip-row" type="button" aria-expanded="true">' +
+            '<span class="dot" style="background: var(--steel)"></span><span class="wchip-lab">Nov follow-up</span>' +
+            '<span class="wchip-arg">lab orders</span><span class="wstate live">writing…</span>' +
+            '<svg class="wchip-caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>' +
+            '<div class="wchip-det"><div class="stages">' +
+            '<div class="stage done"><span class="m">✓</span> appended to the note</div>' +
+            '<div class="stage now"><span class="pulse" aria-hidden="true"></span> re-chunking · re-embedding</div>' +
+            '<div class="stage"><span class="m">·</span> re-read the note</div>' +
+            '<div class="stage"><span class="m">·</span> 2 articles to rebuild</div>' +
+            '</div><span class="wmeta">on-box and serial — this is the wait, not a spinner for show.</span>' +
+            "</div></div></div></div>";
+
+          const landing = document.getElementById("landing");
+          landing.parentNode.insertBefore(block, landing);
+          wireChip(block.querySelector(".wchip-row"));
+          block.scrollIntoView(scrollOpts());
+
+          const chip = block.querySelector(".wchip");
+          setTimeout(() => {
+            const st = chip.querySelectorAll(".stage");
+            st[1].className = "stage done";
+            st[1].innerHTML = '<span class="m">✓</span> re-chunked · re-embedded';
+            st[2].className = "stage now";
+            st[2].innerHTML = '<span class="pulse" aria-hidden="true"></span> re-reading the whole note';
+          }, 1400);
+          setTimeout(() => {
+            chip.querySelector(".wstate").className = "wstate ok";
+            chip.querySelector(".wstate").textContent = a.edges.length === 1 ? "written" : a.edges.length + " written";
+            chip.querySelector(".wchip-det").innerHTML = edgeRows(a.edges);
+            toast("written · the whole note was re-read, and 2 articles rebuilt");
+          }, 2900);
+        };
+      }
+    </script>
+  </body>
+</html>

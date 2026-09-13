@@ -328,9 +328,9 @@ class Settings(BaseSettings):
     # OFF by default — when false the debug router is not mounted and minting is
     # refused, so the feature adds zero surface unless the owner turns it on.
     debug_access_enabled: bool = False
-    # Per-note pipeline flow trace (jbrain.analysis.flow_trace): integrate_note
-    # emits one structured INFO event per seam — extract → integrate → recover →
-    # plan → per-fact commit decision — each keyed by note_id, so an operator
+    # Per-note pipeline flow trace (jbrain.analysis.flow_trace): the write path
+    # emits one structured INFO event per seam — the attachment's vision read, then
+    # each per-fact commit decision — each keyed by note_id, so an operator
     # tailing the worker logs can watch a single note's facts flow end to end and
     # see exactly where an edge is dropped, refreshed, or superseded. Pure
     # observability: it changes no disposition. AUTO-ARMS when debug_access_enabled

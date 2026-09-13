@@ -6,15 +6,28 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.auth.service import PrincipalInfo
-from jbrain.db.session import SessionContext
-from jbrain.notes.service import NoteInfo, NotesRepo, NoteUpdate, UnknownDomain
+from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import WAITING_ON_OWNER, NoteConversationRepo
+from jbrain.notes.service import (
+    ClarificationsAltered,
+    NoteInfo,
+    NotesRepo,
+    NoteUpdate,
+    UnknownDomain,
+)
 from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
 from jbrain.workflow import events as wf_events
 
 router = APIRouter()
+
+NOTE_CONVERSE_KIND = "note_converse"
+"""The job kind the note's graph producer runs as. Spelled here rather than imported
+from `analysis/converse.py`, which drags the whole turn runner (and through it the LLM
+stack) into the API process for the sake of one string — the same trade
+`clarify.NOTE_CONVERSE_AGENT` makes one module over."""
 
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 
@@ -59,6 +72,17 @@ class AttachmentOut(BaseModel):
     has_description: bool = False
 
 
+class ClarificationOut(BaseModel):
+    """One appended D6 block, named so it can be erased. The text is returned as it is
+    already composed into the note's body — this adds no exposure, it adds an id."""
+
+    id: str
+    seq: int
+    question: str
+    answer: str
+    created_at: datetime
+
+
 class NoteOut(BaseModel):
     id: str
     client_id: str
@@ -70,8 +94,9 @@ class NoteOut(BaseModel):
     ingest_state: str
     # Hidden from the home stream (still searchable); see POST /notes/{id}/hide.
     hidden: bool
-    # True once the integrate_note job has written the note_analysis row —
-    # the client's lifecycle chip disappears on it.
+    # True once a settle has written the note_analysis row — the analyzer's, the EMR
+    # importer's, or (R3) the note conversation's, off its closing reading. The client's
+    # lifecycle chip disappears on it.
     analyzed: bool
     # 'human' or 'agent' — the stream tags agent-authored (Proposal-enacted)
     # notes without polluting the body with attribution prose (ASSISTANT.md #7).
@@ -237,6 +262,15 @@ async def update_note(
         note = await repo.update_note(ctx, note_id, changes)
     except UnknownDomain:
         raise HTTPException(status_code=400, detail="unknown domain") from None
+    except ClarificationsAltered:
+        # The editor is served the composed text (body + D6 clarification blocks) and
+        # PATCHes it whole, so an intact save always ends in exactly those blocks. This
+        # one did not, and there is no safe reading: storing the string doubles the
+        # blocks, cutting at the marker would delete body text that merely looks like
+        # one. Refuse loudly rather than guess — nothing is written.
+        raise HTTPException(
+            status_code=409, detail="clarification blocks are not editable"
+        ) from None
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
     # Re-chunk under the (possibly new) domain — chunks always derive domain
@@ -249,6 +283,55 @@ async def update_note(
 async def delete_note(note_id: str, principal: PrincipalDep, repo: NotesRepoDep) -> None:
     if not await repo.delete_note(ctx_for(principal), note_id):
         raise HTTPException(status_code=404, detail="note not found")
+
+
+# The D6 clarification blocks, listed and erasable one at a time. An answer is free text
+# the owner typed into a thread, so it can carry a password, a diagnosis or a name they
+# meant to keep out — and once appended it IS the note's text: chunked, embedded,
+# searchable, citable. Without these two routes the only removal is deleting the whole
+# note, losing the body and the graph with it, on a box with no terminal (CLAUDE.md #10).
+# The listing exists because the note view renders blocks as text (D6 changes no screen),
+# so their ids are otherwise unreachable — an id you cannot name is a block you cannot
+# redact.
+#
+# BOTH are `OwnerDep`, explicitly, for the reason the plan recorded before either
+# existed: `append_clarification` enqueues its own `ingest_note`, and `app.jobs` is
+# `is_owner()` RLS, so a capability-token caller gets a raw `ProgrammingError` from the
+# job insert rather than a refusal — "fail-closed and correct, but a driver error rather
+# than a refusal, so W3 must not offer this behind a token-authenticated surface". Under
+# `PrincipalDep` the DELETE was fail-closed only by accident, as a 500 instead of a 403,
+# and the GET had no backstop at all: an intake-link principal could enumerate Jeff's
+# question-and-answer pairs for any note in its scope. The sibling notes-tab route says
+# the same thing in the same words (`api/analysis.py` `notes_inbox`).
+@router.get("/notes/{note_id}/clarifications")
+async def list_clarifications(
+    note_id: str, principal: OwnerDep, repo: NotesRepoDep
+) -> list[ClarificationOut]:
+    blocks = await repo.list_clarifications(ctx_for(principal), note_id)
+    if blocks is None:
+        raise HTTPException(status_code=404, detail="note not found")
+    return [
+        ClarificationOut(
+            id=b.id,
+            seq=b.seq,
+            question=b.question,
+            answer=b.answer,
+            created_at=b.created_at,
+        )
+        for b in blocks
+    ]
+
+
+@router.delete("/notes/{note_id}/clarifications/{clarification_id}")
+async def delete_clarification(
+    note_id: str, clarification_id: str, principal: OwnerDep, repo: NotesRepoDep
+) -> NoteOut:
+    """Erase one block. Returns the note as it now reads, so a caller sees the redaction
+    landed rather than having to re-fetch and compare."""
+    note = await repo.delete_clarification(ctx_for(principal), note_id, clarification_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="clarification not found")
+    return note_out(note, include_location=principal.kind == "owner")
 
 
 # Hide/unhide only flip home-stream visibility — no re-ingest, so unlike a
@@ -363,24 +446,70 @@ async def attachment_extracts(
     )
 
 
+async def _live_conversation(
+    maker: "async_sessionmaker[AsyncSession]", ctx: SessionContext, note_id: str
+) -> str | None:
+    """The STATE of this note's live thread — `running` for a pass in flight,
+    `waiting_on_owner` for one parked on a question — or None when there is none. Named
+    rather than inlined so the re-run route's refusals can be exercised apart: a queued
+    twin is the job queue's answer, this is the conversation table's, and only one of
+    them needs a database.
+
+    The state and not a bool, because the two live states are two different sentences to
+    the owner: one of them is the machine working and the other is the machine waiting on
+    HIM, and telling him "already queued or running" about the second is untrue in the
+    one direction that leaves him tapping a button (CLAUDE.md #10).
+
+    `live_for_note` RECLAIMS a stale `running` row on its way past, so a thread stranded
+    by a killed worker does not make the re-run button refuse forever."""
+    async with scoped_session(maker, ctx) as session:
+        live = await NoteConversationRepo().live_for_note(session, note_id)
+    return None if live is None else live.state
+
+
 @router.post("/notes/{note_id}/analyze", status_code=202)
 async def analyze_note(
     note_id: str,
     principal: PrincipalDep,
     repo: NotesRepoDep,
     jobs: JobQueueDep,
+    maker: SessionMakerDep,
 ) -> dict[str, str]:
-    """On-demand re-analysis of one note: the integrate_note pipeline, the same
-    incremental upsert + retraction sweep an edit triggers — no special re-run
-    job kind. Refused while the pipeline would run it anyway (ingest pending
-    or OCR outstanding): the ingest gate owns that sequencing."""
+    """On-demand re-analysis of one note: the note CONVERSATION, the same producer an
+    edit's re-ingest opens and the same whole-note reading + sweep it performs — no
+    special re-run job kind. Refused while that pass would run anyway (ingest pending or
+    OCR outstanding): the ingest gate owns that sequencing.
+
+    It enqueues `note_converse` since R3, with `integration_state`: the flip is the
+    conversation's, and since R4 there is no other producer to enqueue (CLAUDE.md #10 —
+    this button is the owner's only no-terminal re-analysis lever).
+
+    The 409s are what keep it honest, and the live-conversation one is new with the kind.
+    A queued twin would double-process; a LIVE conversation would make the handler decline
+    the job outright (`already_live`), so without the check the owner taps re-run, gets a
+    202 and a job id, and nothing whatever happens. That one splits in two by the thread's
+    state: a pass in flight is "already running", and a thread parked on a question is
+    waiting on HIM — the same refusal, but the only one of the two he can do anything
+    about, so it says so."""
     ctx = ctx_for(principal)
     note = await repo.get_note(ctx, note_id)
     if note is None:
         raise HTTPException(status_code=404, detail="note not found")
-    # A 409 if integration is already in flight, so the note can't be raced
-    # into double-processing.
-    if await jobs.has_active_analysis(ctx, note_id):
+    # A 409 if a pass is already in flight, so the note can't be raced into
+    # double-processing. `has_active` names the kind at the call site rather than
+    # inheriting `has_active_analysis`'s, which since R4 is the same `note_converse`.
+    if await jobs.has_active(ctx, NOTE_CONVERSE_KIND, payload_field="note_id", value=note_id):
+        raise HTTPException(status_code=409, detail="analysis already queued or running")
+    live = await _live_conversation(maker, ctx, note_id)
+    if live == WAITING_ON_OWNER:
+        # Its own sentence, because the generic one is FALSE here: nothing is running and
+        # nothing is queued — the pass read the note and is waiting on an answer in the
+        # note's own thread, which is where the owner has to go.
+        raise HTTPException(
+            status_code=409,
+            detail="this note's analysis is waiting on your answer in its conversation",
+        )
+    if live is not None:
         raise HTTPException(status_code=409, detail="analysis already queued or running")
     if note.ingest_state in ("pending", "processing") or await jobs.has_active_ocr_for_note(
         ctx, note_id
@@ -389,7 +518,7 @@ async def analyze_note(
             status_code=409,
             detail="note is still being processed; analysis will run automatically",
         )
-    job_id = await jobs.enqueue(ctx, "integrate_note", {"note_id": note_id})
+    job_id = await jobs.enqueue(ctx, NOTE_CONVERSE_KIND, {"note_id": note_id})
     return {"job_id": job_id}
 
 

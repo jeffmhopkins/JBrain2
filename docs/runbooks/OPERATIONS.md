@@ -1,6 +1,6 @@
 # JBrain360 operations runbook
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-09-10
 
 Operating the family-location surface (Phase 7) safely: the controls the owner
 runs, and the deploy-time invariants the in-app security rests on. The in-database
@@ -76,6 +76,20 @@ restore:
   from a surface it authenticates — but per CLAUDE.md #10 the host-access
   dependency is an acknowledged, inherent gap, not a workflow to point the owner
   at casually.)
+- **A rotation mints a NEW owner principal** — the superseded row stays, with
+  `revoked_at` set. Owner-only tables are gated on `app.is_owner()` (the role), so
+  nothing becomes unreadable, but anything *keyed* by principal id addresses the old
+  row after a rotation and reads as if it were empty. Two rules follow, and both were
+  learned the hard way when the archivist reported a cleared memory and the hourly
+  triage sweep silently stopped honouring the owner's corrections: resolving "the
+  owner principal" means `WHERE kind = 'owner' AND revoked_at IS NULL`, and a store
+  keyed by principal id carries its document forward when the current principal has
+  none (`ArchivistMemoryRepo.read`). Rotation is still not data loss — but only
+  because the readers account for it. The carry-forward cannot repair a box where the
+  new principal already wrote a row (there is nothing left to fall back from), so
+  migration `0199` is the one-time fold of any already-stranded document onto the
+  active owner; it runs on the next **Ops → Update** and touches nothing on a box that
+  never rotated.
 - Pairing codes are **one-time and short-lived**; never reuse or store a redeemed
   code.
 

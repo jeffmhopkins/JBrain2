@@ -183,6 +183,14 @@ describe("agentStatus", () => {
     });
   });
 
+  it("reads an open question as waiting, neither an error nor an answer", () => {
+    // `ask_owner` ends the turn deliberately: the note conversation has a question and
+    // the next move is the owner's. Falling through to "Answered" would tell them the
+    // agent was finished with them.
+    const s = agentStatus([USER, asst({ streaming: false, stopReason: "awaiting_owner" })]);
+    expect(s).toEqual({ kind: "waiting", label: "Waiting on your answer", turnKey: "#1" });
+  });
+
   it("reads a user-initiated Stop as calm (a done register), not an error", () => {
     const s = agentStatus([USER, asst({ streaming: false, stopReason: "stopped" })]);
     expect(s).toEqual({ kind: "done", label: "Stopped", turnKey: "#1" });

@@ -178,6 +178,26 @@ async def test_fts_relevance_headline_and_degraded_mode(
     assert top.source_kind == "note"
 
 
+async def test_the_preview_is_the_note_s_text_including_its_clarifications(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """`body_preview` is the note's TEXT, so it has to be composed like every other
+    reader of it (D6). Without this a hit INSIDE a clarification block came back with a
+    preview that did not contain the sentence that matched — the fourth reader of
+    `notes.body` that 0193's own argument names and the composition list missed."""
+    note_id = await make_indexed_note(maker, tmp_path, domain="general", body="Ran a 10k.")
+    await SqlNotesRepo(maker).append_clarification(
+        OWNER, note_id, question="Which route?", answer="The towpath by the weir."
+    )
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+
+    resp = await search_as(maker, OWNER, "towpath weir", fail_embed=True)
+    top = next(r for r in _notes(resp) if r.note_id == note_id)
+    assert "<mark>towpath</mark>" in top.snippet
+    assert "The towpath by the weir." in top.body_preview
+    assert top.body_preview.startswith("Ran a 10k.")
+
+
 async def test_chunk_in_both_legs_is_labeled_both(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:

@@ -14,9 +14,10 @@ from jbrain.workflow.registry import build_registry
 
 def test_api_registry_carries_every_ops_fireable_sweep() -> None:
     names = {spec.name for spec in API_ACTION_SPECS}
-    # Each has a migration-seeded manual trigger (0048/0064/0066/0096), so each MUST
-    # resolve in the API registry or its "Run now" raises.
+    # Each has a migration-seeded manual trigger (0048/0064/0066/0096/0189), so each
+    # MUST resolve in the API registry or its "Run now" raises.
     required = {
+        "graph_rebuild",
         "purge_deleted_artifacts",
         "reconcile_pending_notes",
         "reconcile_pending_integration",

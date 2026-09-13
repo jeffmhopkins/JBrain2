@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_type_hints
 
 import httpx
 import pytest
@@ -209,21 +209,34 @@ def test_a_waterfall_with_no_range_at_all_is_refused() -> None:
 # --- starting and moving --------------------------------------------------------
 
 
-def _posts(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+def _posts(
+    monkeypatch: pytest.MonkeyPatch, stored: Radio | None = None
+) -> list[tuple[str, dict[str, Any]]]:
     seen: list[tuple[str, dict[str, Any]]] = []
+    radio = stored or Radio(serial="77192819")
 
     async def post(_settings: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
         seen.append((path, body))
         return {"session_id": "s1", "purpose": "spectrum"}
 
     async def radio_for(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(
-            serial="77192819", radio=Radio(serial="77192819"), conflict=None, refusal=None
-        )
+        return SimpleNamespace(serial="77192819", radio=radio, conflict=None, refusal=None)
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Radio]:
+            return {radio.serial: radio}
+
+    async def session_radio(*_a: Any, **_k: Any) -> str:
+        return radio.serial
 
     monkeypatch.setattr(sdr_api, "_post", post)
     monkeypatch.setattr(sdr_api, "_radio_for", radio_for)
     monkeypatch.setattr(sdr_api, "_refuse", lambda _c: None)
+    monkeypatch.setattr(sdr_api, "get_settings_store", lambda _r: _Store())
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _o: object())
+    # Which dongle holds the session being retuned. Read off the sidecar's health in
+    # production; here the fake answers with the one radio these tests have.
+    monkeypatch.setattr(sdr_api, "_session_radio", session_radio)
     return seen
 
 
@@ -257,6 +270,7 @@ async def test_moving_the_picture_never_releases_the_radio(
     seen = _posts(monkeypatch)
 
     await sdr_api.spectrum_tune(
+        _request(),
         _settings(),
         OWNER,
         section="air-tower",
@@ -534,3 +548,169 @@ def test_every_hopped_section_still_declares_the_width_it_will_produce() -> None
             continue
         rate_hz, fft_bins, _hops = capture
         assert bin_hz == bands.bin_width_hz(rate_hz, fft_bins), section.id
+
+
+# --- filter bandwidth -------------------------------------------------------------
+
+
+async def test_a_bandwidth_is_forwarded_and_absence_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted rather than sent as null when the caller says nothing.
+
+    A `"bandwidth_hz": None` on the wire would make this route the place that decides
+    the default, and it is not: the ladder and its widest rung live in the demodulator,
+    and a second opinion here is a second thing to keep in step."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=5.0, mode="am")
+    _path, body = seen[-1]
+    assert "bandwidth_hz" not in body
+
+    await sdr_api.listen(
+        _request(), _settings(), OWNER, frequency_mhz=5.0, mode="am", bandwidth_hz=6_000
+    )
+    _path, body = seen[-1]
+    assert body["bandwidth_hz"] == 6_000
+
+
+async def test_retuning_can_change_only_the_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """How the control sends a new width: the same frequency back with a new bandwidth.
+
+    The session keeps its width across a retune, so this is the whole mechanism — there
+    is no separate "set bandwidth" route to get out of step with `/tune`."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.tune(
+        _request(), _settings(), OWNER, frequency_mhz=5.0, session_id="s1", bandwidth_hz=4_000
+    )
+
+    path, body = seen[-1]
+    assert path == "/listen/tune"
+    assert body == {
+        "frequency_hz": 5_000_000,
+        "session_id": "s1",
+        "bandwidth_hz": 4_000,
+    }
+    # No mode: sending one would reset the width to that mode's default on the sidecar,
+    # which is exactly what a filter-only change must not do.
+    assert "mode" not in body
+
+
+@pytest.mark.parametrize("route", [sdr_api.tune, sdr_api.listen])
+def test_the_bandwidth_is_bounded_by_the_schema(route: Any) -> None:
+    """Bounded so nonsense is a 422 here rather than a 400 from a round trip.
+
+    This pins the BOUND, not a request: the sidecar stays the authority on which exact
+    widths are real, and these limits only refuse values no ladder could ever hold. Both
+    routes are checked because they are separate signatures that must not drift.
+
+    Read through `get_type_hints` because `from __future__ import annotations` leaves
+    every annotation in this module a string — reading `__annotations__` directly finds
+    the source text and asserts nothing."""
+    query = get_type_hints(route, include_extras=True)["bandwidth_hz"].__metadata__[0]
+    # FastAPI keeps the constraints as annotated-types markers on the Query rather than
+    # as attributes of it, so `query.ge` does not exist and reading it would only raise.
+    limits = {type(m).__name__: m for m in query.metadata}
+    low, high = limits["Ge"].ge, limits["Le"].le
+
+    assert (low, high) == (sdr_api.MIN_BANDWIDTH_HZ, sdr_api.MAX_BANDWIDTH_HZ)
+    # Wide enough for every real rung — the narrowest is SSB's 1.8 kHz and the widest is
+    # wide FM's 180 kHz — and tight enough to catch the likely units mistake, which is
+    # kHz sent as Hz or Hz sent as kHz.
+    assert low <= 1_800 and high >= 180_000
+    for absurd in (0, 6, 500, 500_000):
+        assert not (low <= absurd <= high), absurd
+
+
+# --- what the radio's own settings do to a start ------------------------------------
+#
+# Gain and an upconverter are stored per radio, on the same `sdr_radios` entry as the
+# name and the role (docs/mocks/radio-settings/README.md). What the api owes them is to
+# read them off the radio it just chose and put them on the body — every purpose, with
+# the frequency left alone.
+
+CONVERTED = Radio(serial="77192819", gain="20", upconverter_hz=125_000_000)
+
+
+async def test_the_radios_stored_gain_and_offset_reach_a_waterfall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """40 m rather than FM broadcast, and that is the point of the converter: a band the
+    dongle reaches badly on its own, drawn through the tuner. This test used to ask for
+    `fm-broadcast` THROUGH the converter, which the api accepted — 88 + 125 is an
+    ordinary tuning — and the radio then heard nothing, because the converter's input
+    passes 300 Hz to 65 MHz (`tuner.CONVERTER_MAX_MHZ`). It is a 400 now."""
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="40m")
+
+    _path, body = seen[0]
+    assert body["gain"] == "20"
+    assert body["upconverter_hz"] == 125_000_000
+    # The EDGES are the owner's, not the tune. They label the axis.
+    assert body["start_hz"] == 7_125_000
+
+
+async def test_a_band_the_converter_cannot_pass_is_refused_rather_than_drawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The incident, at the route. The owner set Inline / 125 MHz on the long wire and
+    swept 88-108: every bound here is about the TUNE, 88 + 125 = 213 MHz is inside all
+    of them, and the waterfall came back as noise. The refusal has to name the converter
+    and the way out, because Settings is where the fix is."""
+    _posts(monkeypatch, CONVERTED)
+
+    with pytest.raises(HTTPException) as refused:
+        await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+
+    assert refused.value.status_code == 400
+    assert "converter passes" in refused.value.detail
+    assert "turn the converter Off" in refused.value.detail
+
+
+async def test_a_gain_asked_for_by_this_call_beats_the_radios_standing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ONE mechanism, not two. The per-session `?gain=` predates the setting and is how
+    the debug console and jerv measure the same band at two gains on purpose, so an
+    explicit request is not a default to be overridden."""
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="40m", gain="0")
+
+    assert seen[0][1]["gain"] == "0"
+
+
+async def test_an_unconfigured_radio_sends_what_it_always_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A radio nobody has opened this screen for must behave bit-for-bit as it did: no
+    gain named, so the sidecar's per-purpose default applies, and no offset."""
+    seen = _posts(monkeypatch)
+
+    await sdr_api.spectrum_start(_request(), _settings(), OWNER, section="fm-broadcast")
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=146.52)
+
+    for _path, body in seen:
+        assert body["gain"] is None
+        assert body["upconverter_hz"] == 0
+
+
+async def test_the_frequency_on_the_wire_is_never_the_shifted_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression this feature is most likely to cause, guarded at the api door as
+    well as in the sidecar: 7.200 MHz through a 125 MHz converter is a request for
+    7.200, plus an offset the RADIO applies. A `frequency_hz` of 132_200_000 here would
+    label a session, its recording and its heard log 125 MHz wrong."""
+    seen = _posts(monkeypatch, CONVERTED)
+
+    await sdr_api.listen(_request(), _settings(), OWNER, frequency_mhz=7.2, mode="usb")
+
+    _path, body = seen[0]
+    assert body["frequency_hz"] == 7_200_000
+    assert body["upconverter_hz"] == 125_000_000
+    assert "132200000" not in json.dumps(body)

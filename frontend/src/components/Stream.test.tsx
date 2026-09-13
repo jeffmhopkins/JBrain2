@@ -41,15 +41,19 @@ function daysAgo(days: number): Date {
   return d;
 }
 
-function renderStream(items: StreamItem[]) {
+function renderStream(
+  items: StreamItem[],
+  threads?: Map<string, { sessionId: string; agent: string; questions: number }>,
+) {
   const handlers = {
     onOpenSearch: vi.fn(),
     onOpenNote: vi.fn(),
     onEdit: vi.fn(),
     onDelete: vi.fn(),
     onHide: vi.fn(),
+    onOpenThread: vi.fn(),
   };
-  render(<Stream items={items} {...handlers} />);
+  render(<Stream items={items} {...handlers} threads={threads} />);
   return handlers;
 }
 
@@ -174,5 +178,46 @@ describe("Stream", () => {
     renderStream([note]);
     swipeLeft(screen.getByRole("button", { name: /still local/ }));
     expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
+  });
+});
+
+// The stream's half of AGENT_INGEST_REWRITE §3b I1/I2.
+describe("a note whose thread is waiting on an answer", () => {
+  const thread = { sessionId: "s7", agent: "note_ingest", questions: 3 };
+  const waiting = (id: string) => new Map([[id, thread]]) as Map<string, typeof thread>;
+
+  it("carries a chip with the count, and no verb", () => {
+    const note = item({ analyzed: false });
+    renderStream([note], waiting(note.id as string));
+    const chip = screen.getByRole("button", { name: "3 questions" });
+    expect(chip).toHaveClass("chip-pending"); // amber — rose is the medical domain here
+    // A redirect and nothing else: no answer control, no candidate, no verb.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("outranks the lifecycle chip — the pass that asked has stopped", () => {
+    const note = item({ analyzed: false, ingestState: "indexed" });
+    renderStream([note], waiting(note.id as string));
+    expect(screen.queryByText("analyzing…")).not.toBeInTheDocument();
+  });
+
+  // I2, decided (ii): the CHIP opens the thread; the row keeps the note screen, which is
+  // the only no-terminal way to the Analysis tab, the attachments and the answer eraser.
+  it("opens the thread from the chip and the NOTE from the row", () => {
+    const note = item({ analyzed: false });
+    const h = renderStream([note], waiting(note.id as string));
+
+    fireEvent.click(screen.getByRole("button", { name: "3 questions" }));
+    expect(h.onOpenThread).toHaveBeenCalledWith(thread);
+    expect(h.onOpenNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText(note.body));
+    expect(h.onOpenNote).toHaveBeenCalledWith(note);
+  });
+
+  it("leaves a settled note with no chip at all", () => {
+    const note = item({ analyzed: true });
+    renderStream([note], new Map());
+    expect(screen.queryByRole("button", { name: /question/ })).not.toBeInTheDocument();
   });
 });

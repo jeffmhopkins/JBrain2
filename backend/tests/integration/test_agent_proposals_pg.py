@@ -11,17 +11,22 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.prefstools import PREFS_KIND
 from jbrain.agent.proposals import (
+    INSTRUCTION_PROPOSAL_KINDS,
+    LeafRefused,
     NodeRow,
     NodeSpec,
     ProposalRepo,
     ProposalRow,
     ProposalSpec,
+    enact_outcome_summary,
 )
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -281,3 +286,190 @@ async def test_list_open_scopes_to_session_plus_session_less(maker: async_sessio
     chat_a = {s.title for s in await repo.list_open(OWNER, sid_a)}
     assert "from chat A" in chat_a and "from nightly" in chat_a
     assert "from chat B" not in chat_a
+
+
+async def test_list_waiting_approvals_is_the_notes_tabs_half(maker: async_sessionmaker) -> None:
+    """D4/D17: anything staged inside a NOTE CONVERSATION waits on the review inbox's
+    notes tab. An ordinary chat's proposal does not (it keeps that chat's inline
+    approvals) and neither does a background one — it has no thread to redirect to.
+
+    The KIND arm (`INSTRUCTION_PROPOSAL_KINDS`) is exercised too, at the bottom. It was
+    declined here on a premise that had already expired — "`owner_prefs` is not yet in
+    `proposals_kind_check`" — when 0195 is on this branch and admits `owner-prefs`. The
+    set meanwhile held the UNDERSCORE spelling and so matched nothing that could ever be
+    staged, which is what an untested arm buys: the union exists precisely so a standing
+    -instruction change is findable when it is staged OUTSIDE a note thread, and that is
+    the one case the conversation arm cannot carry."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    sessions = AgentSessionRepo(maker)
+    chat = await sessions.create(owner, domain_scopes=["general"], title="chat")
+    thread = await sessions.create(owner, domain_scopes=["general"], title="note thread")
+
+    # A note conversation over that second session, so the "staged inside a note
+    # conversation" arm has something to match.
+    note_id = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (CAST(:id AS uuid), :cid, 'general', 'seed')"
+            ),
+            {"id": note_id, "cid": f"prop-inbox-{note_id[:12]}"},
+        )
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().start(s, session_id=thread.id, note_id=note_id, body_sha="sha")
+
+    def one(kind: str, title: str, session_id: str | None) -> ProposalSpec:
+        return ProposalSpec(
+            kind=kind,
+            domain="general",
+            title=title,
+            nodes=[NodeSpec(str(uuid.uuid4()), "leaf", op="add_note", label=title)],
+            session_id=session_id,
+        )
+
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "in a thread", thread.id))
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "an ordinary chat", chat.id))
+    await repo.stage(OWNER, principal_id=pid, spec=one("correction", "from nightly", None))
+
+    waiting = {w.title: w for w in await repo.list_waiting_approvals(OWNER)}
+    assert "in a thread" in waiting
+    assert "an ordinary chat" not in waiting
+    assert "from nightly" not in waiting
+    # What a redirect needs: the session to open and the persona hosting it.
+    assert waiting["in a thread"].session_id == thread.id
+    assert waiting["in a thread"].agent == "curator"
+
+    # And an APPROVED proposal drops out: it is waiting on the enact, not on a decision.
+    _, nodes = await repo.load(OWNER, next(iter(waiting.values())).id)
+    await repo.decide(OWNER, nodes[0].id, approve=True)
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.proposals SET status = 'approved' WHERE title = 'in a thread'")
+        )
+    assert "in a thread" not in {w.title for w in await repo.list_waiting_approvals(OWNER)}
+
+    # The kind arm, standing on its own: an `owner-prefs` proposal staged from an
+    # ORDINARY chat — no note conversation to match on — still waits on the notes tab.
+    # This is the scenario the union was written for, and the only one that fails if the
+    # spelling drifts from `prefstools.PREFS_KIND` again.
+    assert PREFS_KIND in INSTRUCTION_PROPOSAL_KINDS
+    await repo.stage(OWNER, principal_id=pid, spec=one(PREFS_KIND, "a standing rule", chat.id))
+    by_title = {w.title: w for w in await repo.list_waiting_approvals(OWNER)}
+    assert "a standing rule" in by_title
+    assert by_title["a standing rule"].session_id == chat.id
+
+
+async def test_a_leaf_the_executor_refuses_is_held_and_the_proposal_is_not_enacted(
+    maker: async_sessionmaker,
+) -> None:
+    """The owner is never told a change landed that did not.
+
+    `enact` marked every `plan.enactable` leaf `enacted` regardless of what the executor
+    did, and `owner_prefs_executor` returned silently on both its refusals (a stale
+    `prev`, an over-cap edit). Staging a `replace`, moving the rules underneath it and
+    then approving produced: content unchanged (correct — the stale `prev` was refused),
+    proposal `enacted`, node `enacted`, `held` empty. The only trace was a structlog line
+    on a box the owner reads through a debug token (CLAUDE.md #10).
+
+    The refusal is `LeafRefused` now, caught per leaf so it cannot roll back a sibling —
+    the objection that kept it swallowed, and one that never applied to `owner-prefs`
+    anyway, which stages exactly one leaf per proposal."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    leaf = str(uuid.uuid4())
+    prop_id = await repo.stage(
+        OWNER,
+        principal_id=pid,
+        spec=ProposalSpec(
+            kind=PREFS_KIND,
+            domain="general",
+            title="Change standing instruction: stop splitting ingredients",
+            nodes=[NodeSpec(leaf, "leaf", op="refuse_me", label="stop splitting ingredients")],
+        ),
+    )
+    await repo.decide(OWNER, leaf, approve=True)
+
+    async def refusing(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        raise LeafRefused("rule 2 has changed since this edit was staged")
+
+    plan = await repo.enact(OWNER, prop_id, refusing)
+
+    assert plan.enactable == ()
+    assert plan.held == (leaf,)
+    proposal, nodes = await repo.load(OWNER, prop_id)
+    assert [n.status for n in nodes if n.type == "leaf"] == ["held"]
+    assert proposal.status != "enacted"
+    # And the server-authored summary the owner reads says so, rather than counting a
+    # refusal as an approval.
+    summary = enact_outcome_summary(proposal, nodes, plan)
+    assert "Enacted nothing" in summary
+    assert "1 held, not run" in summary
+
+
+async def test_a_refusal_does_not_roll_back_the_sibling_leaves_that_ran(
+    maker: async_sessionmaker,
+) -> None:
+    """The catch is PER LEAF. This is the property the swallowing was defending, kept
+    without the lie: the leaf that ran is `enacted`, the one that refused is `held`, and
+    the proposal is enacted because something really did land."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    good, bad = str(uuid.uuid4()), str(uuid.uuid4())
+    prop_id = await repo.stage(
+        OWNER,
+        principal_id=pid,
+        spec=ProposalSpec(
+            kind="knowledge",
+            domain="general",
+            title="two edits",
+            nodes=[
+                NodeSpec(good, "leaf", op="add_note", label="lands"),
+                NodeSpec(bad, "leaf", op="add_note", label="refuses"),
+            ],
+        ),
+    )
+    await repo.decide(OWNER, good, approve=True)
+    await repo.decide(OWNER, bad, approve=True)
+
+    ran: list[str] = []
+
+    async def executor(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        if node.id == bad:
+            raise LeafRefused("no longer applies")
+        ran.append(node.label)
+
+    plan = await repo.enact(OWNER, prop_id, executor)
+
+    assert ran == ["lands"]
+    assert plan.enactable == (good,) and plan.held == (bad,)
+    proposal, nodes = await repo.load(OWNER, prop_id)
+    assert {n.id: n.status for n in nodes if n.type == "leaf"} == {good: "enacted", bad: "held"}
+    assert proposal.status == "enacted"
+
+
+async def test_an_executor_bug_still_propagates(maker: async_sessionmaker) -> None:
+    """`LeafRefused` is a DECISION. Any other exception is a bug, and swallowing it here
+    would turn a broken executor into a silently held leaf nobody investigates."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    leaf = str(uuid.uuid4())
+    prop_id = await repo.stage(
+        OWNER,
+        principal_id=pid,
+        spec=ProposalSpec(
+            kind="knowledge",
+            domain="general",
+            title="boom",
+            nodes=[NodeSpec(leaf, "leaf", op="add_note", label="boom")],
+        ),
+    )
+    await repo.decide(OWNER, leaf, approve=True)
+
+    async def broken(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        raise RuntimeError("the executor is broken")
+
+    with pytest.raises(RuntimeError):
+        await repo.enact(OWNER, prop_id, broken)

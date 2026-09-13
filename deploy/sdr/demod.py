@@ -91,43 +91,127 @@ AUDIO_CUTOFF_HZ: dict[str, float] = {
     "wbfm": 7_000.0,
 }
 
-#: Where an SSB passband sits relative to the suppressed carrier. 300–3400 Hz is the
-#: telephony band every SSB radio is built around; the filter is designed as a
-#: low-pass of half that width and shifted to the middle of it.
+#: Where an SSB passband STARTS, relative to the suppressed carrier. The telephony band
+#: every SSB radio is built around begins at 300 Hz; where it ends is the bandwidth.
 SSB_LOW_HZ = 300.0
-SSB_HIGH_HZ = 3_400.0
 
-#: WHERE each mode's passband sits, as (low, high) offsets from the tuned frequency —
-#: what the demodulator actually hears, and therefore what the tuning view shades.
+#: WHY THESE NUMBERS, and it is one measurement.
 #:
-#: **SSB is one-sided, and the strip drew it symmetric** (C14). `CHANNEL_HALF_HZ` is a
-#: HALF-WIDTH, so usb and lsb both shaded ±3400 Hz while the demodulator heard
-#: +300..+3400 (usb) or -3400..-300 (lsb) — half the shaded box was the sideband the
-#: back end rejects. Someone centring a signal in that box put half of it where nothing
-#: can hear it, which is the one mistake SSB tuning most invites.
+#: **AM's widest preset is 8 kHz, and its ceiling used to be 16.** MEASURED 2026-09-08 on the real
+#: chain: two equal AM carriers 5 kHz apart, and at 16 kHz the neighbour arrives in the
+#: audio at 0.0 dB — exactly as loud as the station that was tuned. At 8 kHz it is
+#: 14.8 dB down, at 6 kHz 85.2, at 4 kHz 110.0. The 16 kHz filter was not a wider,
+#: better-sounding option that the owner might want on a quiet band: AM's audio is
+#: low-passed at 4 kHz downstream, so RF beyond ±4 kHz cannot carry any wanted audio,
+#: and the same measurement shows 16 kHz and 8 kHz giving IDENTICAL response at every
+#: audio tone out to 3.5 kHz. It was 8 kHz of pure interference intake, and dropping it
+#: costs nothing that can be measured or heard.
 #:
-#: A filter half-width cannot say this, which is why it is its own table rather than a
-#: sign on the old one.
-PASSBAND_HZ: dict[str, tuple[float, float]] = {
-    "fm": (-8_000.0, 8_000.0),
-    "nfm": (-8_000.0, 8_000.0),
-    "am": (-8_000.0, 8_000.0),
-    "usb": (SSB_LOW_HZ, SSB_HIGH_HZ),
-    "lsb": (-SSB_HIGH_HZ, -SSB_LOW_HZ),
-    "wbfm": (-90_000.0, 90_000.0),
+#: **Why narrowing works at all is the ORDER.** This filter runs before the envelope
+#: detector, and detection is non-linear: two carriers inside the passband beat against
+#: each other and their products land in the audio band, where no downstream filter can
+#: separate them from the wanted audio again. Rejection has to happen while the
+#: interferer is still a separate signal, which is here.
+
+#: The step a width must land on, and the smallest transition any filter here is asked
+#: to build. 100 Hz rather than 1 kHz because the named presets are not whole kilohertz —
+#: SSB's 2.4 and NFM's 12.5 both are 100 Hz multiples and neither is a 1 kHz one — so a
+#: 1 kHz grid would make the classic filters unreachable by the very control meant to
+#: offer them. The PWA's drag snaps to whole kilohertz; this is what the box will accept.
+BANDWIDTH_STEP_HZ = 100
+
+#: The widest and narrowest filter each mode will build, as full channel widths.
+#:
+#: A RANGE rather than only the presets below, because the owner drags the passband edge
+#: on the picture and wants it to land where they put it — "narrower than that station"
+#: is a position, not a menu choice. The presets stay as the quick picks the ladder
+#: shows; the range is what the box accepts.
+#:
+#: **Each ceiling is its mode's widest preset, deliberately.** On AM that is the whole
+#: point: 8 kHz is the widest filter that costs no audio, and anything above it is the
+#: pure interference intake the 16 kHz default was — so the range must not reopen a door
+#: this wave measured shut. It also keeps the tuning picture exactly the width it already
+#: is, since `crop_reach_hz` is taken from this ceiling.
+#:
+#: The floors are where a filter stops being one: `_build_channel` asks for a stopband
+#: `max(0.5 * kept, 2000)` above the edge, so a narrower filter than these would need a
+#: transition band wider than its own passband.
+BANDWIDTH_RANGE_HZ: dict[str, tuple[int, int]] = {
+    "fm": (5_000, 16_000),
+    "nfm": (5_000, 16_000),
+    "am": (2_000, 8_000),
+    "usb": (1_000, 3_100),
+    "lsb": (1_000, 3_100),
+    "wbfm": (180_000, 180_000),
 }
 
-#: The channel a narrow mode keeps out of the IF, as a half-width — the FILTER, not the
-#: passband. Symmetric for every mode including SSB, where the IF-rate channel filter
-#: runs before the back end picks a sideband; `PASSBAND_HZ` is what the owner is shown.
-CHANNEL_HALF_HZ: dict[str, float] = {
-    "fm": 8_000.0,
-    "nfm": 8_000.0,
-    "am": 8_000.0,
-    "usb": 3_400.0,
-    "lsb": 3_400.0,
-    "wbfm": 90_000.0,
+#: The quick picks the ladder offers, widest first. **The first entry is the mode's
+#: default.** No longer the whole contract — `BANDWIDTH_RANGE_HZ` is — but still the
+#: widths worth naming, and each one a filter a test measures.
+BANDWIDTH_HZ: dict[str, tuple[int, ...]] = {
+    # 25 kHz and 12.5 kHz are the two channel rasters land mobile actually uses; 8 kHz
+    # is for sitting on top of one of a pair when both are busy.
+    "fm": (16_000, 12_500, 8_000),
+    "nfm": (16_000, 12_500, 8_000),
+    # 8 kHz is everything the audio path can use; 6 kHz is the shortwave broadcast
+    # raster (5 kHz spacing); 4 and 3 are for a channel with a neighbour on top of it.
+    "am": (8_000, 6_000, 4_000, 3_000),
+    # 3.1 kHz is the telephony band SSB was built around, 2.4 kHz is what most modern
+    # radios call "voice", 1.8 kHz is for digging one signal out of a pile-up.
+    "usb": (3_100, 2_400, 1_800),
+    "lsb": (3_100, 2_400, 1_800),
+    # Not adjustable, and the single entry is how that is said. A broadcast FM station
+    # occupies ~180 kHz; a narrower filter clips the deviation, and clipped deviation
+    # is distortion, not selectivity — it makes the station sound worse, not cleaner.
+    "wbfm": (180_000,),
 }
+
+
+def passband_for(mode: str, bandwidth_hz: float) -> tuple[float, float]:
+    """WHERE a mode's passband sits, as (low, high) offsets from the tuned frequency —
+    what the demodulator actually hears, and therefore what the tuning view shades.
+
+    **SSB is one-sided, and the strip drew it symmetric** (C14). A half-width cannot say
+    this: usb and lsb both shaded ±3400 Hz while the demodulator heard +300..+3400 (usb)
+    or -3400..-300 (lsb) — half the shaded box was the sideband the back end rejects,
+    and someone centring a signal in it put half the signal where nothing can hear it,
+    which is the one mistake SSB tuning most invites.
+
+    So the bandwidth means the same thing to a reader in every mode — how wide a slice
+    of spectrum is heard — while WHERE that slice sits is the mode's business."""
+    if mode == "usb":
+        return (SSB_LOW_HZ, SSB_LOW_HZ + bandwidth_hz)
+    if mode == "lsb":
+        return (-(SSB_LOW_HZ + bandwidth_hz), -SSB_LOW_HZ)
+    return (-bandwidth_hz / 2.0, bandwidth_hz / 2.0)
+
+
+#: The picture widths the owner can choose between, per mode, in Hz — widest last so a
+#: zoom control reads left-to-right as it looks. Every entry must fit inside the mode's
+#: `max_span_hz`, which `test_every_view_span_fits_the_picture_it_crops` is what holds.
+#:
+#: **A span is a CROP, never a rebuild.** It changes how much of the row `_tuning_frame`
+#: keeps and nothing else — no filter is redesigned, no chain is replaced, and the audio
+#: does not stop. That is why these are bounded by what the existing chain already
+#: supplies rather than by what a wider one could: a zoom that clicked the audio would be
+#: a zoom nobody uses twice.
+VIEW_SPAN_HZ: dict[str, tuple[int, ...]] = {
+    "fm": (8_000, 16_000, 32_000),
+    "nfm": (8_000, 16_000, 32_000),
+    "am": (8_000, 16_000, 32_000),
+    "usb": (6_000, 12_000, 24_000),
+    "lsb": (6_000, 12_000, 24_000),
+    "wbfm": (120_000, 240_000, 360_000),
+}
+
+
+def channel_half_for(mode: str, bandwidth_hz: float) -> float:
+    """The channel filter's half-width — the FILTER, not the passband.
+
+    Symmetric for every mode including SSB, where this runs at the IF rate before the
+    back end picks a sideband, so it must reach the far edge of the one that is kept."""
+    low, high = passband_for(mode, bandwidth_hz)
+    return max(abs(low), abs(high))
 
 #: How much of the IF the FRONT END keeps flat, as a share of the IF rate — 80% of
 #: Nyquist, so the picture has honest spectrum either side of the channel.
@@ -621,10 +705,28 @@ class Demodulator:
         *,
         audio_rate_hz: int = AUDIO_RATE,
         offset_hz: float = 0.0,
+        bandwidth_hz: int | None = None,
     ) -> None:
         key = mode.lower()
         if key not in IF_RATE_HZ:
             raise DemodError(f"unknown mode {mode!r}")
+        ladder = BANDWIDTH_HZ[key]
+        low, high = BANDWIDTH_RANGE_HZ[key]
+        if bandwidth_hz is None:
+            bandwidth_hz = ladder[0]
+        elif not low <= bandwidth_hz <= high:
+            # Bounded rather than clamped: a clamped width would leave the radio
+            # listening at something other than the number on screen, which is the one
+            # failure this whole control exists to end. Naming the bounds makes the
+            # refusal actionable for a caller with no terminal.
+            raise DemodError(
+                f"{key} filters run {low}-{high} Hz wide, not {bandwidth_hz}"
+            )
+        elif bandwidth_hz % BANDWIDTH_STEP_HZ:
+            raise DemodError(
+                f"a filter width must be a multiple of {BANDWIDTH_STEP_HZ} Hz, "
+                f"and {bandwidth_hz} is not"
+            )
         if_rate = IF_RATE_HZ[key]
         if capture_rate_hz % if_rate:
             raise DemodError(
@@ -639,11 +741,26 @@ class Demodulator:
         self.capture_rate_hz = int(capture_rate_hz)
         self.if_rate_hz = if_rate
         self.audio_rate_hz = int(audio_rate_hz)
-        self.channel_half_hz = CHANNEL_HALF_HZ[key]
+        #: The width the owner chose, as a FULL channel width — the number the control
+        #: shows and the one every other field here is derived from.
+        self.bandwidth_hz = int(bandwidth_hz)
+        self.channel_half_hz = channel_half_for(key, self.bandwidth_hz)
         #: (low, high) offsets from the tuned frequency of what this mode actually
         #: hears — one-sided on SSB (C14). `channel_half_hz` above is the FILTER's
         #: half-width and cannot say it.
-        self.passband_hz: tuple[float, float] = PASSBAND_HZ[key]
+        self.passband_hz: tuple[float, float] = passband_for(key, self.bandwidth_hz)
+        #: How far from the dial the TUNING PICTURE has to reach, from the mode's
+        #: WIDEST filter rather than the one in force.
+        #:
+        #: **This is what keeps the point of the control visible.** `listen._tuning_frame`
+        #: crops the strip to four times the reach it is given, so deriving it from the
+        #: current passband would zoom the picture in every time the owner narrowed the
+        #: filter — hiding the interfering station at the exact moment they narrowed the
+        #: filter to reject it, and leaving the shaded box the same fraction of the
+        #: picture at every setting, which makes the control look like it did nothing.
+        #: Pinning it to the widest rung holds the picture still and lets the shaded box
+        #: shrink inside it, which is the whole visual argument.
+        self.crop_reach_hz = channel_half_for(key, high)
         #: The same thing as the two numbers a viewer needs: how wide to shade, and how
         #: far off the tuned frequency to centre the shading. Zero centre on every
         #: symmetric mode, which is why a client that ignores it draws what it always
@@ -666,6 +783,19 @@ class Demodulator:
             self.view_rate_hz *= 2
         #: ...and how much of it the front end keeps flat.
         self.view_half_hz = max(self.channel_half_hz, VIEW_SHARE * self.view_rate_hz)
+        #: How wide a picture this chain can be cropped to, at most — everything the
+        #: front end keeps flat. Past it the picture would be drawn out of the anti-alias
+        #: filter's own skirt, which is a station that is not there.
+        self.max_span_hz = 2.0 * self.view_half_hz
+        #: The picture's DEFAULT width: four times the widest filter, which is where it
+        #: has always sat — snapped to the nearest rung of this mode's ladder so the zoom
+        #: control opens with something selected rather than with the owner's current
+        #: width sitting between two of its buttons. On SSB that moves the default from
+        #: 13.6 to 12 kHz, which is the only mode where the two disagree.
+        want = min(4.0 * self.crop_reach_hz, self.max_span_hz)
+        self.view_span_hz = float(
+            min(VIEW_SPAN_HZ[key], key=lambda span: abs(span - want))
+        )
         deviation = FM_DEVIATION_HZ.get(key)
         self._gain = FM_HEADROOM * if_rate / (2.0 * deviation) if deviation else 1.0
 
@@ -825,8 +955,13 @@ class Demodulator:
             # apart, which is the whole point of single sideband. A low-pass of half
             # the passband's width, shifted to its centre, is a complex bandpass that
             # keeps one side and rejects the other.
-            centre = (SSB_LOW_HZ + SSB_HIGH_HZ) / 2.0
-            half = (SSB_HIGH_HZ - SSB_LOW_HZ) / 2.0
+            # Derived from the chosen width, not from a fixed pair of edges: narrowing
+            # SSB moves the OUTER edge in and leaves the inner one at `SSB_LOW_HZ`,
+            # because the low edge is set by where the suppressed carrier sits and has
+            # nothing to do with how much bandwidth the owner wants.
+            low, high = sorted(map(abs, self.passband_hz))
+            centre = (low + high) / 2.0
+            half = (high - low) / 2.0
             # The transition is `SSB_LOW_HZ` wide, which is what puts the lower skirt on
             # the carrier rather than through it.
             base = lowpass(half, half + SSB_LOW_HZ, STOPBAND_DB, float(self.if_rate_hz))

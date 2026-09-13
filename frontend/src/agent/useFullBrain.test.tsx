@@ -595,3 +595,60 @@ describe("useFullBrain — live plan-continuation discovery", () => {
     expect(sessionLiveRun).not.toHaveBeenCalled();
   });
 });
+
+// W2 of AGENT_INGEST_CONVERSATION_PLAN.md: an ingested note opens its own agent
+// thread under the `note_ingest` persona. The wave's whole deliverable is that the
+// owner can LOOK at it, so the Full Brain chat list has to carry it — while the tab
+// itself must still land on the Curator, or every captured note hijacks the surface.
+describe("useFullBrain — the note conversation is visible without taking the tab", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const withNoteThread = () =>
+    deps({
+      listSessions: vi.fn(async () => [
+        session({
+          id: "N",
+          title: "milk, eggs, call the vet",
+          agent: "note_ingest",
+          domain_scopes: [],
+          last_active_at: "2026-06-09T00:00:00Z",
+        }),
+        session({ id: "A", title: "A", last_active_at: "2026-06-02T00:00:00Z" }),
+      ]),
+    });
+
+  it("lists the note thread on the Full Brain tab", async () => {
+    const { result } = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(result.current.sessions.map((s) => s.id)).toContain("N");
+  });
+
+  it("does not list it on Research", async () => {
+    const { result } = renderHook(() => useFullBrain("research", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThanOrEqual(0));
+    expect(result.current.sessions.map((s) => s.id)).not.toContain("N");
+  });
+
+  it("lands the tab on the Curator even when a note thread is the newest session", async () => {
+    const { result } = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(result.current.active?.id).toBe("A");
+  });
+
+  it("opens the note thread when it is picked from the list", async () => {
+    const { result } = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    const thread = result.current.sessions.find((s) => s.id === "N");
+    expect(thread).toBeDefined();
+    act(() => {
+      if (thread) result.current.open(thread);
+    });
+    await waitFor(() => expect(result.current.active?.id).toBe("N"));
+  });
+
+  it("never offers it in the new-chat picker — the engine opens it, never a person", async () => {
+    const { result } = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(result.current.agentOptions).not.toContain("note_ingest");
+  });
+});

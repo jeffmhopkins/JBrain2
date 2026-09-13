@@ -53,6 +53,23 @@ const TOOL_LABELS: Record<string, { label: string; emphasis?: string }> = {
   memory_edit: { label: "Updating", emphasis: "its scratchpad" },
   remember: { label: "Staging", emphasis: "a memory change" },
   propose_correction: { label: "Staging", emphasis: "a proposal" },
+  // The note conversation's own verbs. Without these a live note pass reads "Using
+  // resolve_entity" — the raw tool name, in the one place the owner watches the agent
+  // work on his own note (AGENT_INGEST_REWRITE §3b I4). The three sets of §3 are the
+  // ROSTER this map is gated against (`backend/tests/unit/test_live_phase_labels.py`):
+  // every verb a note conversation can run has a line here, on the unattended pass and
+  // on the owner's reply turn alike, because the reply turn is the one he is watching
+  // hardest. The gate is deliberately scoped to those sets rather than to all 124 tool
+  // sidecars — a whole-roster assertion would demand ~114 labels nobody has written and
+  // land red, and a gate that lands red is a gate that gets skipped.
+  resolve_entity: { label: "Working out", emphasis: "who the note means" },
+  close_reading: { label: "Recording", emphasis: "what the note says" },
+  ask_owner: { label: "Asking", emphasis: "you a question" },
+  current_time: { label: "Checking", emphasis: "the date" },
+  assert_fact: { label: "Recording", emphasis: "one more thing" },
+  correct_fact: { label: "Correcting", emphasis: "a fact" },
+  merge_entities: { label: "Staging", emphasis: "a merge" },
+  prefs_write: { label: "Updating", emphasis: "your standing instructions" },
 };
 
 function toolStatus(name: string): AgentStatus {
@@ -95,6 +112,10 @@ function phaseStatus(last: TranscriptMessage): AgentStatus {
   // A user-initiated Stop is calm (a "done" register), not the red error the
   // guardrail/error reasons get.
   if (stop === "stopped") return { kind: "done", label: "Stopped" };
+  // `ask_owner` ended the turn on purpose (a note conversation with an open question).
+  // Neither an error nor a finished answer — the turn is over and the next move is the
+  // owner's, which is exactly what "waiting" says.
+  if (stop === "awaiting_owner") return { kind: "waiting", label: "Waiting on your answer" };
   if (stop && STOP_LABELS[stop]) return { kind: "error", label: STOP_LABELS[stop] };
   // Clean finish — a quiet confirmation with how many tools it used.
   const used = last.tools.filter((t) => t.name !== "queued").length;

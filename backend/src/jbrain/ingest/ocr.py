@@ -105,11 +105,11 @@ async def enqueue_analysis_fallback(
 
     Shared by the exhausted ocr_attachment and transcribe_attachment paths (both
     feed the same analysis gate). The failed job row stays the durable record;
-    analysis must not wait on text that will never arrive. Enqueues integrate_note
+    analysis must not wait on text that will never arrive. Enqueues `note_converse`
     DIRECTLY — a re-ingest would re-enqueue the still-cache-less attachment and
     loop. Skipped while another ocr_attachment OR transcribe_attachment job for the
     note is still active (that job's own completion or exhaustion triggers
-    analysis) or an integrate_note job is already queued/running. Returns the job
+    analysis) or a note_converse job is already queued/running. Returns the job
     id, or None when nothing was enqueued.
     """
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -125,7 +125,7 @@ async def enqueue_analysis_fallback(
         return None
     if await queue.has_active_analysis(maker, SYSTEM_CTX, nid):
         return None
-    job_id = await queue.enqueue(maker, SYSTEM_CTX, "integrate_note", {"note_id": nid})
+    job_id = await queue.enqueue(maker, SYSTEM_CTX, "note_converse", {"note_id": nid})
     log.warning("ocr.analysis_fallback", attachment_id=attachment_id, note_id=nid, job_id=job_id)
     return job_id
 

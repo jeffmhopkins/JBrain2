@@ -1,0 +1,310 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A — The tape deck: record is a button, a recording is a file</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f; --violet: #a493c9;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18); --rose-tint: rgba(207,138,143,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 9; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; flex: 1; flex-direction: column; }
+.pane.on { display: flex; }
+
+/* ---- Listen sheet ---- */
+#listen { justify-content: flex-end; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; }
+.wf { margin: 0 16px; height: 108px; border: 1px solid var(--border); border-radius: 10px;
+      background: #0a0c10; position: relative; overflow: hidden; }
+:root[data-theme=light] .wf { background: #0e1218; }
+.wf .bin { position: absolute; bottom: 0; width: 2px; background: var(--steel); opacity: .55; }
+.wf .pass { position: absolute; top: 0; bottom: 0; background: rgba(127,167,201,.16); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+.wf .dial { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text); opacity: .5; }
+.readout { padding: 8px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 32px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 8px 16px 5px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.seg { display: flex; gap: 6px; padding: 0 16px 10px; }
+.seg button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.seg button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+
+/* the transport — where record lives */
+.transport { display: flex; align-items: center; gap: 10px; padding: 2px 16px 12px; }
+.rec { flex: 1; min-height: 52px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 15px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 9px; }
+.rec .dot { width: 13px; height: 13px; border-radius: 999px; background: var(--danger); flex: none; }
+.rec[data-on=true] { border-color: var(--danger); background: var(--rose-tint); }
+.rec[data-armed=true] { border-color: var(--danger); background: var(--danger); color: var(--bg); font-weight: 500; }
+.rec[data-armed=true] .dot { background: var(--bg); }
+.rec[data-on=true] .dot { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.rec .el { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 14px; }
+.rec small { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.lib { min-height: 52px; padding: 0 15px; border-radius: 12px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.hint { padding: 0 16px 18px; font-size: 12px; color: var(--text-3); }
+.toast { margin: 0 16px 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--green-tint); color: var(--text); font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 10px; }
+.toast.on { display: flex; }
+.toast button { min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+
+/* ---- Recordings library ---- */
+.hdr { padding: 14px 16px 6px; font-size: 22px; font-weight: 600; }
+.disk { margin: 0 16px 4px; font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; gap: 10px; }
+.bar { margin: 6px 16px 14px; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.day { padding: 12px 16px 6px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.row { margin: 0 16px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.row > .top { display: flex; align-items: center; gap: 11px; padding: 11px 12px; width: 100%;
+  background: transparent; border: 0; color: var(--text); font: inherit; text-align: left; min-height: 56px; }
+.play { width: 38px; height: 38px; flex: none; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); display: grid; place-items: center; font-size: 13px; }
+.row[data-play=true] .play { border-color: var(--accent); background: var(--steel-tint); color: var(--accent); }
+.who { flex: 1; min-width: 0; }
+.who b { display: block; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+/* Scoped to a class, not `.who span`: an element+class selector outranks `.chip`,
+   which quietly turned the mode badge and the MHz unit into full-width blocks. */
+.who .prev { font-size: 12px; color: var(--text-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.who .unit { font-size: 11px; color: var(--text-3); }
+.meta { text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+.chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; vertical-align: 1px; }
+.prog { height: 3px; background: var(--surface-2); display: none; }
+.row[data-play=true] .prog { display: block; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+.body { display: none; padding: 0 12px 12px; border-top: 1px solid var(--border); }
+.row[data-open=true] .body { display: block; }
+.tx { margin: 10px 0 12px; font-size: 13px; line-height: 1.55; color: var(--text-2); }
+.tx mark { background: var(--steel-tint); color: var(--text); border-radius: 3px; padding: 0 2px; }
+.acts { display: flex; gap: 6px; }
+.acts button { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.acts button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.empty { margin: 24px 16px; padding: 22px 16px; border: 1px dashed var(--border); border-radius: 12px;
+  text-align: center; color: var(--text-3); font-size: 13px; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .rec[data-on=true] .dot { animation: none; } .prog i { transition: none; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>A &mdash; The tape deck.</b> Recording is a <b>button on the transport</b>, next to the radio it records. Press it and the box starts writing what you are already hearing; press it again and the clip lands in the library. A recording is a <b>file</b>: a frequency, a time, a length, a size.<br><br>This is the shape the plan already assumes, and the one nobody has to be taught. Its weakness is that it only captures what you decided to keep <em>before</em> it happened &mdash; on shortwave the interesting thing is usually already over by the time your thumb arrives.</div>
+  <div class="swap" role="tablist">
+    <button id="t-listen" role="tab" aria-pressed="true" type="button">Listen</button>
+    <button id="t-lib" role="tab" aria-pressed="false" type="button">Recordings</button>
+  </div>
+
+  <div class="pane on" id="listen">
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="title">Listen</div>
+      <div class="wf" id="wf"></div>
+      <div class="readout">5.000<small>MHz &middot; WWV</small></div>
+      <div class="lbl">Mode &amp; bandwidth</div>
+      <div class="seg">
+        <button type="button">WBFM<br><em style="font-style:normal;font-size:10px;color:var(--text-3)">180k</em></button>
+        <button type="button">NFM<br><em style="font-style:normal;font-size:10px;color:var(--text-3)">16k</em></button>
+        <button type="button" aria-pressed="true">AM<br><em style="font-style:normal;font-size:10px;color:var(--accent)">6k</em></button>
+        <button type="button">USB<br><em style="font-style:normal;font-size:10px;color:var(--text-3)">3.1k</em></button>
+        <button type="button">LSB<br><em style="font-style:normal;font-size:10px;color:var(--text-3)">3.1k</em></button>
+      </div>
+      <div class="lbl">Recording</div>
+      <div class="transport">
+        <button class="rec" id="rec" type="button" data-on="false" aria-pressed="false">
+          <span class="dot"></span><span id="recLabel">Record</span>
+        </button>
+        <button class="lib" id="goLib" type="button">Library<br><small id="libCount" style="color:var(--text-3);font-size:11px">7 clips</small></button>
+      </div>
+      <div class="toast" id="toast"><span id="toastText">Saved &mdash; 0:42, 336&nbsp;kB</span><button type="button" id="toastGo">Open</button></div>
+      <p class="hint">The clip carries the frequency, mode and bandwidth it was made at, so a recording of 5&nbsp;MHz at 6&nbsp;kHz is still legible as that a year later. Retuning mid-recording is allowed and noted in the clip.</p>
+    </div>
+  </div>
+
+  <div class="pane" id="lib">
+    <div class="hdr">Recordings</div>
+    <div class="disk"><span>1.9 GB of 8 GB</span><span id="keep">oldest kept 90 days</span></div>
+    <div class="bar"><i style="width:24%"></i></div>
+    <div id="list"></div>
+  </div>
+</div>
+<script>
+// 64 kbps mono MP3 is what the sidecar already produces (listen.py AUDIO_BITRATE_BPS),
+// so every size here is real arithmetic: 8 kB/s, 480 kB/min, 28.8 MB/hour.
+const BPS = 8000;
+const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1) + " MB" : Math.round(b/1024) + " kB";
+const fmtDur = s => Math.floor(s/60) + ":" + String(Math.floor(s%60)).padStart(2, "0");
+
+const CLIPS = [
+  { day: "Today", f: "5.000", mhz: "MHz", mode: "AM", bw: "6k", at: "23:45", secs: 42,
+    tx: "At the tone, twenty-three hours forty-five minutes Coordinated Universal Time. <mark>Beep.</mark> …geophysical alert, solar flux one thirty-two, A index six." },
+  { day: "Today", f: "162.550", mhz: "MHz", mode: "NFM", bw: "16k", at: "19:12", secs: 186,
+    tx: "…a coastal flood advisory remains in effect until two AM Eastern time. Winds south fifteen to twenty knots, becoming west after midnight. Seas three to five feet." },
+  { day: "Today", f: "146.940", mhz: "MHz", mode: "NFM", bw: "12.5k", at: "18:03", secs: 27,
+    tx: "…that's a good copy, you're full quieting into the repeater. Seventy-three." },
+  { day: "Yesterday", f: "7.200", mhz: "MHz", mode: "LSB", bw: "2.4k", at: "21:40", secs: 415,
+    tx: "…net control is standing by for check-ins, any station with traffic or announcements please come now." },
+  { day: "Yesterday", f: "10.000", mhz: "MHz", mode: "AM", bw: "4k", at: "06:00", secs: 63,
+    tx: "…Coordinated Universal Time. <mark>Beep.</mark>" },
+  { day: "7 Sep", f: "121.500", mhz: "MHz", mode: "AM", bw: "8k", at: "14:22", secs: 19, tx: "(no speech detected)" },
+  { day: "7 Sep", f: "4.625", mhz: "MHz", mode: "USB", bw: "3.1k", at: "02:11", secs: 240,
+    tx: "…buzzer. Repeating tone, approximately twenty-five per minute. No voice." },
+];
+
+// --- waterfall: a station with two neighbours, so the passband means something ---
+const wf = document.getElementById("wf");
+let bins = "";
+for (let i = 0; i < 92; i++) {
+  const x = (i - 46) / 46;
+  const wanted = Math.exp(-((x) ** 2) / 0.004) * 74;
+  const nb = Math.exp(-((x - 0.42) ** 2) / 0.003) * 44 + Math.exp(-((x + 0.5) ** 2) / 0.003) * 38;
+  const h = Math.max(4, wanted + nb + 6 + Math.random() * 7);
+  bins += `<div class="bin" style="left:${i * 4 + 2}px;height:${h}px"></div>`;
+}
+wf.innerHTML = bins + '<div class="pass" style="left:40%;width:20%"></div><div class="dial" style="left:50%"></div>';
+
+// --- the record button ---
+// Arm-then-confirm, inherited from the tuner's binding spec
+// (docs/mocks/sdr-tuner/a-tuner-sheet.html: "Record is ARM-THEN-CONFIRM … 2.6s window").
+// Whether STARTING a recording deserves that ceremony is a question for the README.
+let on = false, armed = false, t0 = 0, timer = null, armT = null;
+const rec = document.getElementById("rec"), label = document.getElementById("recLabel");
+const toast = document.getElementById("toast"), toastText = document.getElementById("toastText");
+
+function tick() {
+  const secs = (Date.now() - t0) / 1000;
+  label.innerHTML = `<span class="el">${fmtDur(secs)}</span> <small>${fmtSize(secs * BPS)}</small>`;
+}
+function disarm() {
+  clearTimeout(armT); armed = false; rec.dataset.armed = "false"; label.textContent = "Record";
+}
+rec.addEventListener("click", () => {
+  if (on) {
+    clearInterval(timer);
+    on = false; rec.dataset.on = "false"; rec.setAttribute("aria-pressed", "false");
+    const secs = Math.max(1, (Date.now() - t0) / 1000);
+    label.textContent = "Record";
+    toastText.textContent = `Saved — ${fmtDur(secs)}, ${fmtSize(secs * BPS)}`;
+    toast.classList.add("on");
+    CLIPS.unshift({ day: "Today", f: "5.000", mhz: "MHz", mode: "AM", bw: "6k",
+      at: new Date().toTimeString().slice(0, 5), secs: Math.round(secs), tx: "Transcribing…" });
+    draw();
+    document.getElementById("libCount").textContent = CLIPS.length + " clips";
+    return;
+  }
+  if (!armed) {
+    armed = true; rec.dataset.armed = "true"; label.textContent = "Tap again to record";
+    armT = setTimeout(disarm, 2600);
+    return;
+  }
+  disarm();
+  on = true; rec.dataset.on = "true"; rec.setAttribute("aria-pressed", "true");
+  t0 = Date.now(); tick(); timer = setInterval(tick, 200); toast.classList.remove("on");
+});
+
+// --- the library ---
+const list = document.getElementById("list");
+function draw() {
+  let html = "", day = "";
+  CLIPS.forEach((c, i) => {
+    if (c.day !== day) { day = c.day; html += `<div class="day">${day}</div>`; }
+    html += `<div class="row" data-i="${i}" data-open="false" data-play="false">
+      <button class="top" type="button" aria-expanded="false">
+        <span class="play" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/></svg></span>
+        <span class="who"><b>${c.f} <span class="unit">${c.mhz}</span><span class="chip">${c.mode} ${c.bw}</span></b>
+        <span class="prev">${c.tx.replace(/<[^>]+>/g, "")}</span></span>
+        <span class="meta">${c.at}<br>${fmtDur(c.secs)} &middot; ${fmtSize(c.secs * BPS)}</span>
+      </button>
+      <div class="prog"><i></i></div>
+      <div class="body">
+        <p class="tx">${c.tx}</p>
+        <div class="acts">
+          <button type="button">Download</button>
+          <button type="button">Send to chat</button>
+          <button type="button" class="danger">Delete</button>
+        </div>
+      </div></div>`;
+  });
+  list.innerHTML = html || '<div class="empty">Nothing recorded yet.<br>Press Record while listening.</div>';
+}
+draw();
+
+let playing = null, playTimer = null;
+list.addEventListener("click", e => {
+  const row = e.target.closest(".row"); if (!row) return;
+  const hitPlay = e.target.closest(".play");
+  if (hitPlay) {
+    clearInterval(playTimer);
+    if (playing === row) { playing.dataset.play = "false"; playing = null; return; }
+    if (playing) playing.dataset.play = "false";
+    playing = row; row.dataset.play = "true";
+    const fill = row.querySelector(".prog i"); let p = 0;
+    playTimer = setInterval(() => {
+      p += 2; fill.style.width = p + "%";
+      if (p >= 100) { clearInterval(playTimer); row.dataset.play = "false"; fill.style.width = "0"; playing = null; }
+    }, 60);
+    return;
+  }
+  const del = e.target.closest(".danger");
+  if (del) {
+    if (!del.dataset.armed) {
+      del.dataset.armed = "1"; del.textContent = "Tap again";
+      del.style.background = "var(--danger)"; del.style.color = "var(--bg)";
+      setTimeout(() => {
+        delete del.dataset.armed; del.textContent = "Delete";
+        del.style.background = ""; del.style.color = "";
+      }, 2600);
+      return;
+    }
+    CLIPS.splice(Number(row.dataset.i), 1); draw();
+    document.getElementById("libCount").textContent = CLIPS.length + " clips";
+    return;
+  }
+  if (e.target.closest(".acts")) return;
+  const open = row.dataset.open !== "true";
+  row.dataset.open = String(open);
+  row.querySelector(".top").setAttribute("aria-expanded", String(open));
+});
+
+// --- panes + theme ---
+const panes = { listen: document.getElementById("listen"), lib: document.getElementById("lib") };
+const tabs = { listen: document.getElementById("t-listen"), lib: document.getElementById("t-lib") };
+function show(which) {
+  for (const k in panes) { panes[k].classList.toggle("on", k === which); tabs[k].setAttribute("aria-pressed", String(k === which)); }
+}
+tabs.listen.addEventListener("click", () => show("listen"));
+tabs.lib.addEventListener("click", () => show("lib"));
+document.getElementById("goLib").addEventListener("click", () => show("lib"));
+document.getElementById("toastGo").addEventListener("click", () => show("lib"));
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+</script>

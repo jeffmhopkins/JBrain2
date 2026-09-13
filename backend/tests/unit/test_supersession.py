@@ -891,3 +891,119 @@ def test_correction_supersedes_all_active_heads() -> None:
     )
     assert d.insert and d.insert_pinned is True
     assert set(d.supersede_ids) == {"h1", "h2"}
+
+
+# --- settled review decisions survive a rebuild ---------------------------
+# The rebuild sweep (analysis/rebuild.py) spares the facts a settled review card names,
+# INCLUDING the retracted loser, which no supersession walk can reach (resolving a card
+# writes no chain edge — analysis/repo.py). Sparing keeps the card servable; these tests
+# pin the other half: re-deriving the loser's value from the unchanged note text must
+# refresh that retracted row, NOT insert a fresh active twin beside the pinned winner
+# and re-flag it. Without this, one rebuild files one collision card per settled
+# decision, corpus-wide — the flood the exemption exists to prevent.
+
+
+def test_rederived_value_of_a_retracted_loser_refreshes_it_not_reflags_the_pin() -> None:
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1980-01-01", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.refresh_id == "loser"
+    assert d.review_kind is None
+    assert not d.insert
+
+
+def test_retracted_twin_match_requires_the_same_validity() -> None:
+    """A retracted value re-asserted with NEW validity is a genuine transition (the
+    owner moved back), not a re-extraction of the same reading — it must NOT be
+    swallowed as a refresh of the retracted row."""
+    winner = view(id="winner", kind="state", statement="lives at 99 Pine Ave", pinned=True)
+    loser = view(id="loser", kind="state", statement="lives at 12 Oak St", status="retracted")
+    d = decide(
+        cand(kind="state", statement="lives at 12 Oak St", valid_from=T2, reported_at=T2),
+        [winner, loser],
+    )
+    assert d.refresh_id is None
+
+
+def test_a_retracted_row_still_never_satisfies_a_live_read() -> None:
+    """The guard must not resurrect retracted rows into the live set: a candidate with a
+    DIFFERENT value still collides with the pinned head exactly as before."""
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1999-09-09", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.review_kind == "attribute_collision"
+    assert d.conflicting_id == "winner"
+
+
+def test_a_rejected_inference_does_not_come_back_without_a_pinned_head() -> None:
+    """A `low_confidence_inference` REJECT retracts the held row and pins NOTHING
+    (analysis/repo.py), so the pinned-head arm cannot fire for it. Re-deriving the same
+    value from the unchanged note then mints a fresh ACTIVE row beside the row the owner
+    rejected, with no card filed — the value comes back and nobody is told. The
+    resolution's own `{"action": "retracted"}` effect is the evidence that this
+    retraction was a decision (analysis/purge.py `decision_retracted_fact_ids`)."""
+    rejected = view(
+        id="rejected",
+        kind="attribute",
+        statement="headquarters is Portland",
+        status="retracted",
+        decision_retracted=True,
+    )
+    d = decide(
+        cand(
+            kind="attribute",
+            statement="headquarters is Portland",
+            valid_from=T0,
+            reported_at=T0,
+        ),
+        [rejected],
+    )
+    assert d.refresh_id == "rejected"
+    assert not d.insert and d.review_kind is None
+
+
+def test_a_machine_retracted_row_still_resurrects() -> None:
+    """The other side of the same discriminator: a row retracted because a re-extraction
+    dropped its key carries no decision, so the value coming back MUST go live again
+    (`test_retracted_rows_are_ignored`). Identical shape to the case above but for the
+    one flag, so the flag is doing the work and not the retracted status."""
+    dropped = view(
+        id="dropped",
+        kind="attribute",
+        statement="headquarters is Portland",
+        status="retracted",
+    )
+    d = decide(
+        cand(
+            kind="attribute",
+            statement="headquarters is Portland",
+            valid_from=T0,
+            reported_at=T0,
+        ),
+        [dropped],
+    )
+    assert d.refresh_id is None
+    assert d.insert
+
+
+def test_a_decision_retracted_row_still_needs_the_same_value_and_validity() -> None:
+    """`decision_retracted` widens WHICH retracted rows can absorb a re-derived twin, not
+    WHAT counts as one: a different value, or the same value at a new validity, still
+    falls through to the ordinary path."""
+    rejected = view(
+        id="rejected",
+        kind="state",
+        statement="lives at 12 Oak St",
+        status="retracted",
+        decision_retracted=True,
+    )
+    moved_back = cand(kind="state", statement="lives at 12 Oak St", valid_from=T2, reported_at=T2)
+    assert decide(moved_back, [rejected]).refresh_id is None
+    other = cand(kind="state", statement="lives at 99 Pine Ave", valid_from=T0, reported_at=T0)
+    assert decide(other, [rejected]).refresh_id is None

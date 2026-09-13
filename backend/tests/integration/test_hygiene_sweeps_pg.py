@@ -314,6 +314,112 @@ async def test_reembed_is_domain_firewalled(maker: async_sessionmaker) -> None:
     assert await _entity_model(maker, finance) == "old"  # out of scope → untouched
 
 
+# --- reembed_stale: app.chunks --------------------------------------------
+#
+# The target that closed the hole `jbrain.ingest.carryover` opened: a byte-identical chunk
+# keeps its ROW across a re-ingest, so it keeps a vector stamped with whatever model was
+# current when it was written, and `embed_note` (WHERE embedding IS NULL) never revisits it.
+# This sweep is the only thing that re-embeds it after a model change.
+
+
+async def _chunk(
+    maker: async_sessionmaker,
+    *,
+    model: str | None,
+    embedded: bool = True,
+    domain: str = "general",
+) -> str:
+    """One chunk of a fresh note, optionally already embedded under `model`."""
+    note = await _note(maker, domain=domain)
+    cid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.chunks"
+                " (id, note_id, domain_code, granularity, seq, text, embedding, embedding_model)"
+                " VALUES (:id, :n, :d, 'paragraph', 0, 'chunk body',"
+                "  CASE WHEN cast(:emb AS boolean) THEN cast(:vec AS vector) END, :m)"
+            ),
+            {
+                "id": cid,
+                "n": note,
+                "d": domain,
+                "emb": embedded,
+                "vec": "[" + ",".join(["0.1"] * 384) + "]",
+                "m": model,
+            },
+        )
+    return cid
+
+
+async def _chunk_state(maker: async_sessionmaker, cid: str) -> tuple[str | None, bool]:
+    """(embedding_model, is_embedded) — enough to tell a restamp from an untouched row."""
+    async with scoped_session(maker, OWNER) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT embedding_model, embedding IS NOT NULL AS embedded"
+                    " FROM app.chunks WHERE id = cast(:c AS uuid)"
+                ),
+                {"c": cid},
+            )
+        ).one()
+    return row.embedding_model, row.embedded
+
+
+async def test_reembed_restamps_a_chunk_left_on_an_old_model_by_carry_over(
+    maker: async_sessionmaker,
+) -> None:
+    """The finding: a carried-over chunk keeps an old-model vector forever, and this is
+    now the only path that clears it."""
+    stale = await _chunk(maker, model="old-model")
+    current = await _chunk(maker, model="test-model")
+    await reembed_handler(maker, embedder=FakeEmbed(), embedding_model="test-model")({})
+    assert await _chunk_state(maker, stale) == ("test-model", True)
+    assert await _chunk_state(maker, current) == ("test-model", True)
+
+
+async def test_reembed_leaves_an_unembedded_chunk_to_the_embed_job(
+    maker: async_sessionmaker,
+) -> None:
+    """NULL embeddings are NOT this sweep's job: `reconcile_unembedded_notes` re-enqueues
+    `embed_note` for them every 300s, so sweeping them nightly would only race it."""
+    unembedded = await _chunk(maker, model=None, embedded=False)
+    await reembed_handler(maker, embedder=FakeEmbed(), embedding_model="test-model")({})
+    assert await _chunk_state(maker, unembedded) == (None, False)
+
+
+async def test_reembed_drains_chunks_faster_than_the_one_pass_targets(
+    maker: async_sessionmaker,
+) -> None:
+    """`passes` in one run: chunks is the largest embedded table, so a single batch a night
+    would take months to drain a model swap. Three stale chunks clear in ONE run at batch=1,
+    where three stale entities take three (the convergence test above)."""
+    chunks = [await _chunk(maker, model="old-model") for _ in range(3)]
+    entities = [await _stale_entity(maker, model="old-model") for _ in range(3)]
+    action = ReembedAction(maker, embedder=FakeEmbed(), embedding_model="test-model", batch=1)
+    await action.run({})
+    assert [(await _chunk_state(maker, c))[0] for c in chunks] == ["test-model"] * 3
+    assert [await _entity_model(maker, e) for e in entities].count("test-model") == 1
+
+
+async def test_reembed_of_chunks_is_domain_firewalled(maker: async_sessionmaker) -> None:
+    """RLS on the new target (CLAUDE.md #3): a health-narrowed sweep cannot see, let alone
+    restamp, a finance note's chunk. The nightly run is SYSTEM_CTX and sees both."""
+    pid = await _owner_principal(maker)
+    health = await _chunk(maker, model="old-model", domain="health")
+    finance = await _chunk(maker, model="old-model", domain="finance")
+    action = ReembedAction(
+        maker,
+        embedder=FakeEmbed(),
+        embedding_model="test-model",
+        ctx=read_context(pid, ("health",)),
+    )
+    await action.run({})
+    assert (await _chunk_state(maker, health))[0] == "test-model"
+    assert (await _chunk_state(maker, finance))[0] == "old-model"  # out of scope → untouched
+
+
 # --- tag_consolidate ------------------------------------------------------
 
 

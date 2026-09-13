@@ -9,8 +9,9 @@
 // Release is a first-class action because it is what hands this session's radio back — and
 // what makes the omnibox icon disappear, since the icon IS the lease.
 
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { api } from "../api/client";
+import { type SdrRecordKind, api } from "../api/client";
 import { mhz } from "../mhz";
 import {
   AUDIO_LATE_S,
@@ -20,6 +21,7 @@ import {
   toggleSdrAudio,
 } from "../sdrAudio";
 import { type BandSection, loadBands } from "../sdrBands";
+import { bandwidthAdjustable, bandwidthLabel, bandwidthSpoken } from "../sdrBandwidth";
 import {
   sdrCaptions,
   startSdrCaptions,
@@ -27,12 +29,20 @@ import {
   subscribeSdrCaptions,
 } from "../sdrCaptions";
 import { channelIndex, channelLabel, namedByFrequency, planAt, stepChannel } from "../sdrChannels";
-import type { SdrListening } from "../sdrSession";
+import { loadRecordKind, saveRecordKind } from "../sdrRecordKind";
+import {
+  type SdrListening,
+  liveRecording,
+  noteSdrRecordingSaved,
+  useSdrSession,
+} from "../sdrSession";
 import { startSdrSpectrum, stopSdrSpectrum } from "../sdrSpectrum";
+import { formatSize } from "../sdrTrim";
+import { whyNotTunable } from "../sdrTunable";
 import { confidenceColor } from "./AudioTranscript";
 import { SdrTape } from "./SdrTape";
 import { SdrTuningView } from "./SdrTuningView";
-import { PauseIcon, PlayIcon } from "./icons";
+import { PauseIcon, PlayIcon, RecordIcon } from "./icons";
 
 // Every demodulator the back end has, in the order a dial usually offers them —
 // widest first, then the two sidebands. `nfm` is NOT a sixth button: the sidecar maps
@@ -80,47 +90,6 @@ function stepLabel(hz: number): string {
   return hz >= 1_000 ? `${hz / 1000} kHz` : `${hz} Hz`;
 }
 
-// What the RADIO reaches, mirrored from the api and the sidecar so a typo is caught
-// under the owner's thumb rather than as a round trip that comes back an error.
-//
-// 0.1, not 24. This said 24 — the R820T2 TUNER's floor — and refused with "This radio
-// tunes 24-1766 MHz" for everything below it, while `rtl_fm -E direct2` has been
-// listening down to 100 kHz the whole time and every route behind it bounds on
-// `TUNABLE_MIN_MHZ`. A duplicated tuner floor refusing what the box can do is the exact
-// bug class `jbrain/sdr/tuner.py` exists to end, reappearing one layer up.
-const MIN_MHZ = 0.1;
-const MAX_MHZ = 1766;
-// ...and the hole that lowering the floor opened. Below 24 MHz the R820T2 is powered
-// down and the RTL2832U's ADC is fed straight from the antenna at 28.8 MHz, so the
-// honest range down there stops at half of that. 14.4-24 MHz is the SECOND Nyquist
-// zone: ask for 18.1 and the radio hands back 10.7, mirrored, while reporting a healthy
-// session at the frequency you typed. Refused rather than warned, because there is
-// nothing in the audio to tell the owner they are somewhere else.
-const NYQUIST_MHZ = 14.4;
-const TUNER_MIN_MHZ = 24;
-const ADC_RATE_MHZ = 28.8;
-
-/** Why the radio cannot honestly be tuned there, or null.
- *
- *  Mirrored from `listen.aliased_refusal`, which is where it is enforced — this is the
- *  reading that catches it under the owner's thumb rather than as a round trip. Both
- *  the steppers and the typed field ask it: stepping up from 14.35 MHz walks into the
- *  same zone as typing 18.1, and a guard on only one of them is a guard on neither. */
-function whyNotTunable(mhzValue: number): string | null {
-  if (mhzValue < MIN_MHZ || mhzValue > MAX_MHZ) {
-    return `This radio tunes ${MIN_MHZ}-${MAX_MHZ} MHz.`;
-  }
-  if (mhzValue > NYQUIST_MHZ && mhzValue < TUNER_MIN_MHZ) {
-    const image = (ADC_RATE_MHZ - mhzValue).toFixed(3);
-    return (
-      `Nothing between ${NYQUIST_MHZ} and ${TUNER_MIN_MHZ} MHz: down here the radio ` +
-      `bypasses its tuner and samples at ${ADC_RATE_MHZ} MHz, so you would hear ` +
-      `${image} MHz instead.`
-    );
-  }
-  return null;
-}
-
 interface ControlsProps {
   listening: SdrListening;
   /** Called after Release succeeds. Both mounts simply fall back to their idle state:
@@ -151,17 +120,119 @@ export function liveTag(behindS: number | null): string {
  *  reason (`SdrSpectrumJob.BACKFILL_ROWS`). */
 const BACKFILL_ROWS = 120;
 
+/** How long an armed Record stays armed. From the tuner's binding spec, and the same
+ *  2.6 s the delete confirmations elsewhere use. */
+const ARM_MS = 2600;
+
+/** The long press that swaps what Record keeps — the app's shipped gesture, lifted whole
+ *  from the omnibox's mode tabs (`Omnibox.tsx`) rather than tuned again here: the same
+ *  hold, the same travel budget past which a scroll is a scroll and not a press. */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP_PX = 10;
+
 export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Record is arm-then-confirm per DESIGN.md's destructive-action doctrine; the
-  // recording lane itself is a later wave, so the control states that plainly
-  // rather than pretending to work.
+  // Record is arm-then-confirm (docs/mocks/sdr-tuner/a-tuner-sheet.html: tap, "Tap
+  // again", a 2.6 s window). The arming is the only piece of this that is local state —
+  // it is ceremony in front of the tap, not a claim about the box. WHETHER a capture is
+  // running, how long it has been running and how big it is all come off the 1 Hz status
+  // poll, so the button can never go on counting through a capture the box has dropped.
+  const [armed, setArmed] = useState(false);
   // Null until the owner picks one, so the mode's default can keep applying as they
   // switch bands; an explicit choice then sticks for the rest of the session.
   const [pickedStep, setPickedStep] = useState<number | null>(null);
   const [stepOpen, setStepOpen] = useState(false);
+  const [bwOpen, setBwOpen] = useState(false);
   const stepHz = pickedStep ?? DEFAULT_STEP_HZ[listening.mode] ?? FALLBACK_STEP_HZ;
+
+  // The capture in flight, off the SHARED 1 Hz poll rather than a timer of this
+  // component's own — the same store the omnibox and the Radios tab read, so the
+  // elapsed time on this button and the row that lands in the library cannot disagree.
+  const sdr = useSdrSession();
+  const recording = liveRecording(sdr);
+  // The armed state disarms itself, so a tap the owner walked away from cannot start a
+  // recording minutes later. Keyed on `armed` alone: re-arming restarts the window,
+  // which is what a second deliberate tap on an already-armed button means.
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
+  // What Record will keep, remembered on this device (sdrRecordKind.ts). Local like the
+  // arming is: the box has no opinion until a capture is asked for, and the api takes the
+  // kind on the START call, so there is nothing to poll.
+  const [kind, setKind] = useState<SdrRecordKind>(loadRecordKind);
+  // The long press that swaps it, in the omnibox's own shape: a timer armed on
+  // pointerdown, cleared by up/leave/cancel and by travel past the slop, and a `longFired`
+  // ref the click reads so the release tap is swallowed rather than counted.
+  const pressTimer = useRef<number | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null);
+  const longFired = useRef(false);
+  useEffect(() => () => window.clearTimeout(pressTimer.current ?? undefined), []);
+
+  /** Swap what Record keeps, and DISARM.
+   *
+   *  Disarming is the whole answer to the collision between the two gestures. This button
+   *  is already arm-then-confirm, and a hold that ends with the button armed would leave
+   *  "Tap again" over a kind the owner never armed — the next tap would start a capture
+   *  of the other thing. Re-arming costs one tap and says out loud what it is about to
+   *  record, which is the state this ceremony exists to create. */
+  const swapKind = () => {
+    setArmed(false);
+    // Written through `saveRecordKind` rather than in a state updater: the updater would
+    // be a side effect inside React's own re-entrant call, and nothing can swap between
+    // the pointerdown that armed the timer and the hold that fires it.
+    setKind(saveRecordKind(kind === "captions" ? "audio" : "captions"));
+  };
+
+  // Ignored WHILE RECORDING, deliberately: the kind is fixed when the stream opens — the
+  // recorder is already spooling one or captioning the other — so there is nothing a swap
+  // could mean beyond stopping and starting again. The timer is never armed, which also
+  // leaves `longFired` false so the tap that ends the hold still reaches Stop.
+  const swappable = recording === null;
+  // ...and a capture that STARTS under a finger already holding the button — a second
+  // device pressed Record, or the box did — drops the pending swap. Otherwise the hold
+  // would fire into a state where it means nothing and would swallow the tap that was
+  // about to stop the capture. `swappable` is only read at pointerdown, so this is the
+  // half of that rule the timer cannot see.
+  useEffect(() => {
+    if (recording === null) return;
+    window.clearTimeout(pressTimer.current ?? undefined);
+    pressTimer.current = null;
+    pressOrigin.current = null;
+  }, [recording]);
+
+  function clearPress() {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressOrigin.current = null;
+  }
+
+  function startPress(event: ReactPointerEvent) {
+    if (!swappable) return;
+    longFired.current = false;
+    pressOrigin.current = { x: event.clientX, y: event.clientY };
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      longFired.current = true;
+      swapKind();
+    }, LONG_PRESS_MS);
+  }
+
+  function movePress(event: ReactPointerEvent) {
+    const origin = pressOrigin.current;
+    if (!origin) return;
+    if (
+      Math.abs(event.clientX - origin.x) > LONG_PRESS_SLOP_PX ||
+      Math.abs(event.clientY - origin.y) > LONG_PRESS_SLOP_PX
+    ) {
+      clearPress();
+    }
+  }
 
   // The band table, for the one question this control asks of it: does a complete
   // channel plan cover where the radio is? Best-effort — a table that fails to load
@@ -250,6 +321,13 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
     if (editing) freqInput.current?.select();
   }, [editing]);
 
+  // The filter width, and the rungs this mode offers. Both come from the SESSION rather
+  // than a table here: the ladder is the demodulator's (deploy/sdr/demod.py), and a copy
+  // in the PWA would go on offering widths a redeployed box had stopped accepting.
+  const ladder = listening.bandwidths_hz ?? [];
+  const width = listening.bandwidth_hz ?? 0;
+  const adjustable = bandwidthAdjustable(listening);
+
   const act = async (run: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -261,6 +339,14 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       setBusy(false);
     }
   };
+
+  /** Send a new filter width, and nothing else.
+   *
+   *  The frequency goes back unchanged and NO mode is named: a session keeps its width
+   *  across a retune, but naming a mode resets it to that mode's default, so sending one
+   *  here would silently undo the very change being made. */
+  const setWidth = (hz: number) =>
+    act(() => api.sdrTune(listening.frequency_hz / 1_000_000, undefined, listening.session_id, hz));
 
   const tune = (mhzValue: number) => {
     // Checked here too, not only in the typed field: a 100 kHz step held down from
@@ -479,26 +565,70 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
 
       {/* A fieldset with its legend, not a div wearing role="group": the grouping is
           real, so the element that means it is the one to use. */}
-      <fieldset className="seg-set" aria-label="Demodulation mode">
-        <legend className="sdr-label">Mode</legend>
+      {/* A fieldset with its legend, not a div wearing role="group": the grouping is
+          real, so the element that means it is the one to use.
+
+          **The mode button carries its width** (docs/mocks/bandwidth, shape D). Tapping
+          a mode you are not on switches mode; tapping the one you ARE on opens its
+          filter ladder. That keeps a second row off a sheet already holding a
+          waterfall, a readout, a transport and captions — and the draggable handles on
+          the tuning view are what stop the second level being undiscoverable. */}
+      <fieldset
+        className="seg-set"
+        aria-label={adjustable ? "Demodulation mode and bandwidth" : "Demodulation mode"}
+      >
+        <legend className="sdr-label">{adjustable ? "Mode & bandwidth" : "Mode"}</legend>
         <div className="seg-row sdr-modes">
-          {MODES.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`seg${mode === listening.mode ? " seg-on" : ""}`}
-              aria-pressed={mode === listening.mode}
-              disabled={busy}
-              onClick={() =>
-                void act(() =>
-                  api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
-                )
-              }
-            >
-              {mode.toUpperCase()}
-            </button>
-          ))}
+          {MODES.map((mode) => {
+            const on = mode === listening.mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                className={`seg${on ? " seg-on" : ""}`}
+                aria-pressed={on}
+                aria-haspopup={on && adjustable ? "dialog" : undefined}
+                aria-expanded={on && adjustable ? bwOpen : undefined}
+                disabled={busy}
+                onClick={() => {
+                  if (on) {
+                    if (adjustable) setBwOpen((was) => !was);
+                    return;
+                  }
+                  setBwOpen(false);
+                  // No width sent: the sidecar resets to the new mode's default, because
+                  // the ladders differ per mode and carrying a width across would refuse
+                  // an ordinary mode press (deploy/sdr/listen.py `Session.tune`).
+                  void act(() =>
+                    api.sdrTune(listening.frequency_hz / 1_000_000, mode, listening.session_id),
+                  );
+                }}
+              >
+                {mode.toUpperCase()}
+                {on && width > 0 && <em className="sdr-bw">{bandwidthLabel(width)}</em>}
+              </button>
+            );
+          })}
         </div>
+        {bwOpen && adjustable && (
+          <div className="sdr-steps" aria-label={`${listening.mode.toUpperCase()} bandwidth`}>
+            {ladder.map((hz) => (
+              <button
+                key={hz}
+                type="button"
+                aria-pressed={hz === width}
+                className={`sdr-stepopt${hz === width ? " sdr-stepopt-on" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  setBwOpen(false);
+                  void setWidth(hz);
+                }}
+              >
+                {bandwidthSpoken(hz)}
+              </button>
+            ))}
+          </div>
+        )}
       </fieldset>
 
       {listening.engine !== undefined && listening.engine !== "iq" && (
@@ -517,6 +647,18 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
           onTune={(hz) =>
             void act(() => api.sdrTune(hz / 1_000_000, undefined, listening.session_id))
           }
+          demodMode={listening.mode}
+          bandwidthHz={width}
+          minHz={listening.bandwidth_min_hz ?? 0}
+          maxHz={listening.bandwidth_max_hz ?? 0}
+          viewSpanHz={listening.view_span_hz ?? 0}
+          viewSpans={listening.view_spans_hz ?? []}
+          // Its own call, not `act`: a zoom is a crop on the box rather than a retune,
+          // so it must not put the whole sheet in the busy state a rebuild deserves.
+          onViewSpan={(hz) => void act(() => api.sdrViewSpan(hz, listening.session_id))}
+          // Absent where there is nothing to choose, which is what makes the handles
+          // disappear on wide FM rather than appear and refuse.
+          onBandwidth={adjustable ? (hz) => void setWidth(hz) : undefined}
         />
       )}
 
@@ -592,8 +734,93 @@ export function SdrTunerControls({ listening, onReleased }: ControlsProps) {
       {error && <p className="sdr-error">{error}</p>}
 
       <div className="sdr-actions">
-        <button type="button" className="sdr-act sdr-act-ghost" disabled title="Coming next">
-          Record
+        <button
+          type="button"
+          className={`sdr-act sdr-act-record${armed ? " armed" : ""}`}
+          aria-pressed={recording !== null}
+          // The gesture is NAMED, following the read-aloud control's label
+          // (`FullBrainSurface.tsx`): a long press nothing says out loud is a long press
+          // nobody finds. It is also the one path to the swap — see DESIGN.md's
+          // "Long-press Record swaps what it keeps", which records that deviation from
+          // the gesture-is-never-the-only-way rule rather than leaving it as an oversight.
+          aria-label={
+            recording
+              ? "Stop recording"
+              : armed
+                ? `Tap again to start recording ${kind}`
+                : kind === "captions"
+                  ? "Record the captions of what you are hearing — long-press to record audio instead"
+                  : "Record what you are hearing — long-press to record captions instead"
+          }
+          disabled={busy}
+          onPointerDown={startPress}
+          onPointerMove={movePress}
+          onPointerUp={clearPress}
+          onPointerLeave={clearPress}
+          onPointerCancel={clearPress}
+          onContextMenu={(event) => {
+            // Desktop analog of the hold, the same one the omnibox's tabs take.
+            if (!swappable) return;
+            event.preventDefault();
+            swapKind();
+          }}
+          onClick={() => {
+            // Swallow the tap that trails a completed hold — it has already swapped the
+            // kind, and this button's first tap ARMS, so letting it through would leave
+            // the swap sitting under a "Tap again" the owner never asked for.
+            if (longFired.current) {
+              longFired.current = false;
+              return;
+            }
+            if (recording) {
+              // No confirmation on the way OUT: stopping destroys nothing, and the clip
+              // it lands is the thing the owner asked for.
+              setArmed(false);
+              void act(async () => {
+                // The answer carries the row that just landed, and it is the ONLY
+                // reliable news of it: the recorder stops reporting a capture when the
+                // stream ends, which is before the waveform is computed and the row
+                // written, so a library reloading off the poll can read a list without
+                // it. Announced rather than returned because the library is a different
+                // tab (sdrSession.ts).
+                const result = await api.sdrRecord(false);
+                if (result.saved) noteSdrRecordingSaved(result.saved);
+              });
+              return;
+            }
+            if (!armed) {
+              setArmed(true);
+              return;
+            }
+            setArmed(false);
+            void act(() => api.sdrRecord(true, kind));
+          }}
+        >
+          <RecordIcon size={16} />
+          {recording ? (
+            // Elapsed and the running figure, both read off the poll. That figure is what
+            // argues for stopping — the owner runs this box remotely and cannot go and
+            // look at the disk (CLAUDE.md #10) — so it is the one the capture actually
+            // has: bytes for a clip, captions counted for the kind that writes no file.
+            <>
+              <span className="sdr-rec-el">{elapsed(recording.seconds)}</span>
+              {recording.bytes !== null ? (
+                <small>{formatSize(recording.bytes)}</small>
+              ) : (
+                <small>{recording.captions ?? 0} CC</small>
+              )}
+            </>
+          ) : (
+            // The kind rides UNDER the word, the `<em className="sdr-bw">` treatment the
+            // mode segment gives its bandwidth: what Record keeps is one setting with
+            // Record, and `.sdr-actions` is two `flex: 1` buttons that a third would
+            // squeeze. Idle only — the interior is already elapsed + figure while
+            // recording, which is also the one state the swap does nothing in.
+            <span className="sdr-rec-what">
+              {armed ? "Tap again" : "Record"}
+              <em className="sdr-rec-kind">{kind === "captions" ? "captions" : "audio"}</em>
+            </span>
+          )}
         </button>
         <button
           type="button"

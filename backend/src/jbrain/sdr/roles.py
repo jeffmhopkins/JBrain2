@@ -39,6 +39,32 @@ GENERAL = "general"
 #: crash on it or, worse, call it general use.
 JOB_LABEL = {GENERAL: "general use", "aprs": "APRS logging"}
 
+#: Hand the tuner back to its own AGC. Offered because the owner asked for it, and LAST
+#: on the list because on this hardware it is measurably worse: under AGC 162.550 grew a
+#: station at 162.35 that is not there and a spur comb at +-55.5/111/166/222 kHz — seven
+#: signals that do not exist (`listen.Session.tuner_gain_db`).
+GAIN_AUTO = "auto"
+
+#: The gain settings that were MEASURED, and nothing between them, because nothing
+#: between them was measured. On this radio at 162.550 through the fixed listen chain:
+#: 0 dB gives 20.2 dB SNR, 10/20/30 give 40.5/41.4/39.7, 40 gives 32.8 — a plateau at
+#: 10-30 with both ends worse, the bottom by ~20 dB. A continuous slider would imply
+#: readings nobody took, and would make 0 look like the safe end of a range when it is
+#: simply deaf.
+GAIN_RUNGS = ("0", "10", "20", "30", "40")
+
+#: Everything the owner may store. "" — unset — is not in here on purpose: it is the
+#: ABSENCE of a choice, and it must keep meaning what a box that never opened this
+#: screen does (AGC while listening, `MEASURING_GAIN_DB` while measuring), decided by
+#: the sidecar rather than named here.
+GAIN_CHOICES = (*GAIN_RUNGS, GAIN_AUTO)
+
+#: The widest upconverter offset that is a converter rather than a typo. A Ham It Up is
+#: nominally 125 MHz and its siblings run to a few hundred; 2 GHz is past the top of
+#: everything this radio tunes, so anything above it could only ever produce a tune the
+#: dongle refuses.
+UPCONVERTER_MAX_HZ = 2_000_000_000
+
 
 def job_label(job: str) -> str:
     return JOB_LABEL.get(job, job)
@@ -56,6 +82,26 @@ class Radio:
     name: str = ""
     description: str = ""
     role: str = GENERAL
+    #: The tuner gain this radio is pinned at: "" for unset, `GAIN_AUTO`, or one of
+    #: `GAIN_RUNGS` in dB. Unset is not a value and must not be treated as one — it is
+    #: what every box has meant since before this field existed, and the per-purpose
+    #: defaults the sidecar applies to it are bit-for-bit what they were.
+    gain: str = ""
+    #: How far a converter in front of this dongle shifts the hardware tune, in Hz. 0 is
+    #: no converter, which is every radio until someone says otherwise.
+    #:
+    #: It shifts the TUNE and nothing else: to hear 7.200 MHz the dongle tunes 132.200,
+    #: and every frequency any layer reports back — bin axis, peaks, tuning strip,
+    #: recordings, APRS, logs — stays 7.200. One place that forgot to take it off again
+    #: would produce a picture labelled 125 MHz wrong, so exactly one place puts it on:
+    #: `deploy/sdr/radio.Radio._apply_locked`, at the `setFrequency` call, plus the one
+    #: `-f` argv the subprocess engine builds.
+    #:
+    #: **A converter and direct sampling are alternatives, never companions**: with one
+    #: inline the dongle tunes above the R820T2's floor even on shortwave, so the tuner
+    #: is back in circuit and a gain control exists down there at all. The sidecar's
+    #: `listen.direct_for` is the one place that decides which of the two applies.
+    upconverter_hz: int = 0
 
     @property
     def label(self) -> str:

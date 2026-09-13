@@ -27,7 +27,7 @@ from jbrain.db.session import scoped_session
 from jbrain.embed import PredicateEmbedder
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_extraction_pg import make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import make_note, maker  # noqa: F401
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [

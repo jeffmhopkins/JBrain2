@@ -444,3 +444,59 @@ async def test_llm_local_settings_are_owner_only(
     assert await store.llm_local_unavailable(UNSCOPED) == []
     assert await store.llm_local_provision_requested(UNSCOPED) == []
     assert await store.llm_local_remove_requested(UNSCOPED) == []
+
+
+async def test_sdr_radio_gain_and_upconverter_round_trip_and_sanitize(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The two per-radio tuning fields, through real jsonb.
+
+    They live on the EXISTING `sdr_radios` entry beside name/description/role — no new
+    table, no migration — so what this proves is that the whole entry survives a write
+    and comes back sanitized, including a value an OLDER build wrote before the fields
+    were bounded."""
+    from jbrain.sdr.roles import GENERAL, Radio
+    from jbrain.settings_store import SDR_RADIOS_KEY
+
+    wire = "77192819"
+    store = SqlSettingsStore(maker)
+    assert await store.sdr_radios(OWNER) == {}
+
+    await store.set_sdr_radio(
+        OWNER,
+        wire,
+        name="Long wire",
+        description="9:1 unun, inline LNA",
+        role=GENERAL,
+        gain="20",
+        upconverter_hz=125_000_000,
+    )
+    stored = await store.sdr_radios(OWNER)
+    assert stored[wire] == Radio(
+        wire, "Long wire", "9:1 unun, inline LNA", GENERAL, "20", 125_000_000
+    )
+
+    # Written straight past the setter, as a build that did not know these fields would
+    # have left them. A junk gain reads as UNSET rather than reaching `-g`, and a junk
+    # offset as NO converter rather than mis-tuning the radio — while the name, the
+    # description and the role are untouched by either.
+    await store.upsert(
+        OWNER,
+        SDR_RADIOS_KEY,
+        {
+            wire: {
+                "name": "Long wire",
+                "description": "9:1 unun, inline LNA",
+                "role": GENERAL,
+                "gain": "25",
+                "upconverter_hz": "125000000",
+            }
+        },
+    )
+    degraded = await store.sdr_radios(OWNER)
+    assert degraded[wire] == Radio(wire, "Long wire", "9:1 unun, inline LNA", GENERAL, "", 0)
+
+    # And clearing them is a real edit, not an absence: saving the card with the
+    # converter switched off has to put the radio back on its antenna.
+    await store.set_sdr_radio(OWNER, wire, name="Long wire", description="", role=GENERAL)
+    assert await store.sdr_radios(OWNER) == {wire: Radio(wire, "Long wire", "", GENERAL)}

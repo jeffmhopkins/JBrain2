@@ -694,7 +694,13 @@ caret/selection; the thumb bar holds live `words · chars` (+ amber
 `· unsaved`) and a 44px **done** button — surface-2 until savable, then
 green-tint per the green=save rule — riding above the keyboard; dirty ✕
 arms an inline rose "discard edits?" that auto-disarms in 3s or on typing;
-saving PATCHes the body and re-triggers ingestion; the editor also owns
+saving PATCHes the body and re-triggers ingestion (a note that has gained
+clarification blocks loads them in the editor like any other text, and the
+PATCH removes exactly those blocks again before storing — they are rows, not
+body, so an edit cannot destroy them and cannot duplicate them. An edit that
+also changed the appended blocks is refused whole, 409, with the note
+untouched and the text still in the editor: the blocks are a record of what
+was said, not a field); the editor also owns
 **attachment management** — a paperclip in the thumb bar adds files, chips
 above the bar list them with a tap-again rose remove; adds/removals apply
 immediately to the note, independent of the text's done/cancel). **Delete**
@@ -738,7 +744,18 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes.
+  outbox notes. Below the body, and **only when the note has any**, a
+  collapsed **"Answers you gave"** disclosure with a count pill: the note's
+  D6 clarification blocks, each with a rose tap-again **erase**. This is
+  not a second rendering of the blocks — they are already in the body as
+  prose, which is the whole of D6's storage-only treatment — it is the
+  ERASER, and the only place a block's id is reachable at all, since the
+  body is one composed string. An answer becomes the note's own searchable,
+  citable text, so a password or a diagnosis typed into one has to be
+  removable without deleting the whole note; on a box with no terminal
+  (CLAUDE.md #10) that is not a limit the owner can work around. Absent
+  entirely on a note that was never asked about, which is nearly every
+  note — so the note screen is unchanged for it, as D6 requires.
 - *Attachments tab* — the **canonical attachment manager** (the editor
   keeps its quick paperclip for capture-time adds). The tab label carries a
   count pill. Layout is a **manifest**: a one-line summary
@@ -896,11 +913,43 @@ supersedes the other); the rail lists them without implying a sequence. A closed
 relationship has **no derived inverse** (so a former `worksFor → X` never shows
 `X employs Me`).
 
-**Review inbox** (resettled in review — the **split inbox** won over the
-original one-at-a-time triage: you couldn't move between items, and a
-proposal that was only *reject*-able was a dead end): a segmented filter
-**pending · deferred · decided** with live count pills splits the screen
-into three lanes, and the list is **browsable** — every item in a lane is
+**Review inbox — two tabs** (resettled twice. First the **split inbox** won over the
+original one-at-a-time triage: you couldn't move between items, and a proposal that was
+only *reject*-able was a dead end. Then the agent-conversation ingestion change replaced
+the lanes with two tabs — binding mock `docs/mocks/agent-ingest-inbox/a-inbox-holds.html`,
+variant A; build plan `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` D4/D5). The
+segmented filter carries **notes · wiki** with live count pills, and the two are
+deliberately **asymmetric — notes redirects, wiki decides**. That asymmetry *is* the
+ruling: the conversation is the only place note ingestion is settled, or the inbox
+becomes a second surface where it happens.
+
+- **notes** — the ingestion questions and staged approvals waiting on you, **oldest
+  first** so the list drains from the top. A row carries the note it came from, what is
+  being asked, how long it has waited, how much the agent already committed, and a kind
+  chip (`question` / `approval`). Tapping it **opens the conversation**; there are no
+  answer controls, and the wire agrees — `GET /api/review/notes` returns no item id and
+  there is no endpoint an inbox row could answer through. Answer chips on the row were
+  briefly this variant's headline feature and were removed by the ruling. A conversation
+  still on its first pass is listed but **uncounted** — it is not waiting on you. Empty,
+  it reads as one calm sentence: no push, no nagging badge, no zero to clear.
+- **wiki** — the findings that never start from a note (`wiki_contradiction`,
+  `wiki_stale_claim`, the EMR importer's failures, the location firewall's catch), and
+  where deciding happens: the browsable list → detail described below.
+
+An **empty tab carries no count pill.** The shipped screen rendered a `0`; only the
+launcher tile badge gated on `> 0`. Both do now.
+
+**The launcher's Review tile badge is the only signal**, and it sums both tabs (the wiki
+findings plus the notes rows actually waiting). It polls only while the launcher is on
+screen. Nothing counts on home, in the top bar, or as a push.
+
+*The decided log is reached from inside the wiki tab* — a quiet `N decided` line under
+the list, toggling that tab between the open findings and the decision log. Variant A
+dropped `decided` from the segment track without saying what becomes of **reopen**
+(below: a shipped, binding full unwind), so it lives one level down rather than being
+deleted or promoted to a third tab.
+
+Within the wiki tab, the list is **browsable** — every item in the lane is
 listed (kind badge, domain dot, one-line summary, confidence badge,
 when), not metered out one card at a time. A **select** toggle turns rows
 into checkboxes with a contextual bulk bar (**defer all · approve all**),
@@ -928,30 +977,29 @@ replaced by the inline edit). Or a what-happens panel for the rest;
 then a one-line rationale, a
 confidence badge, the **cited evidence** snippet (provenance), and the
 **proposals to choose among** as stacked buttons (destructive ones —
-splits, `distinct_from` — keep the armed tap-again). Two universal escape
-hatches sit in the footer — **defer** (park for later) and **talk it
-over** (hand to the assistant) — so *reject is never the only way out*:
-the ambiguous-mention case that used to advertise only reject now always
-offers defer and talk-it-over beside it. Every decision raises an **undo
+splits, `distinct_from` — keep the armed tap-again). One universal escape hatch sits in
+the footer: **correct it**, which files the owner's fix as a correction note (the #7
+channel). *(Earlier drafts described **defer** and **talk it over** as two footer
+hatches. Neither shipped — `Footer.tsx` renders `rfoot-correct` alone, and the deferred
+lane is gone — so the doc was what was stale, not the screen.)* Every decision raises an **undo
 snackbar** (undo is the server's own unwind — clean for a parked item, a
 reopened tombstone for a real decision). Item kinds unchanged: fact
 conflicts, attribute collisions, merge proposals, ambiguous mentions,
 domain promotions, low-confidence extractions, splits.
 
-**Deferred & decided lanes** (**reopen = full unwind** [decided]): the
-**deferred** lane lists parked items (a *defer* or a *talk-it-over*, the
-latter tagged **with assistant**); its detail offers **resume**, a clean
-re-queue to pending with no tombstone — parking is not a decision. The
-**decided** lane is the reverse-chronological log: each row carries **what
-was decided in plain language** (the chosen option's own copy), dismissed
+**The decided log** (**reopen = full unwind**), reached from the quiet `N decided` line
+under the wiki tab's list. *(A **deferred** lane was once specified here — parked items
+with a **resume** — and never shipped: `defer` and `talk it over` have no producer and no
+footer button. It is described nowhere now.)* The log is reverse-chronological: each row
+carries **what was decided in plain language** (the chosen option's own copy), dismissed
 rows muted. Its detail shows the cited evidence, the **proposals that were
 offered with the chosen one marked**, and an amber **reopen** (armed
 tap-again) whose consequence text **names the unwind** per kind. Reopening
 returns the item to pending (count pills update) and reverses the
 resolution's recorded graph effects; the decided row stays behind as a
 **struck-through "reopened" tombstone**. The one permanent exception is a
-rejected merge: the `distinct_from` edge survives by doctrine. Empty lanes
-read as one calm `--text-2` sentence each.
+rejected merge: the `distinct_from` edge survives by doctrine. An empty tab, and an
+empty log, read as one calm `--text-2` sentence.
 
 *Edit model:* "approve with edits" has two shapes, neither of which writes
 the graph by hand (honoring non-negotiable #7 — facts aren't edited
@@ -973,7 +1021,18 @@ the note (it's the human's own). The note is filed with
 like the wiki path), so its facts *force-supersede + pin* what they correct;
 filing it as a plain `human` note instead let a same-value correction of a
 prose-valued attribute read as a fresh conflict and spawn another collision
-card — the correction spawned reviews rather than resolving one. The planned third mode, **talk it over
+card — the correction spawned reviews rather than resolving one. Because that
+note lands *pinned, in the card's own domain*, a card may declare itself
+**uncorrectable** (`correctable: false` on its payload) and drop the footer
+affordance: the EMR location firewall's `firewall_address` card exists precisely
+because a value was held OUT of the domain the card sits in, so *correct it*
+there would offer re-planting the leak as the way out. The flag is a gate, not only
+a render hint: the endpoint loads the target card on the caller's own scoped session
+and **409s** a payload that says `correctable: false`, because it is reachable by
+anything that is not the shipped UI. Absence keeps meaning *correctable* (server and
+client both read it as `correctable !== false`). Such a card MUST advertise
+its own verb in `choices` (the firewall's is `dismiss`) — a card with neither
+renders with no controls at all. The planned third mode, **talk it over
 with the assistant**, is the conversational version of the same — the
 assistant drafts that correction-note body from your intent; until that
 handoff is wired the footer affordance parks the item for the assistant.
@@ -1061,6 +1120,28 @@ unreachable — retrying…"*. Never blame the user; never exclamation marks.
 
 - Text contrast ≥ 4.5:1 against its surface in both themes (the muted accents
   are for chrome/tints; body text is always `--text`/`--text-2`).
+- **Never dim a TEXT container with `opacity`.** It multiplies every colour beneath
+  it, a descendant cannot undo it, and the figures above are token-to-token: one
+  `opacity: 0.72` on a block took four of its lines under the floor, `--text-2`
+  included, and each had to be bought back by hand. Dim by token — give up the
+  fill, the accent border, the inviting head colour — so the words keep the
+  contrast their tokens certify. (Gated for the question block by
+  `backend/tests/unit/test_block_contrast.py`.)
+  - **Scope, and the sweep this does not pretend to have done.** It binds a
+    container whose own words have to stay readable — a card, a row, a block. It
+    says nothing about `opacity` on a chip's fill, an icon, a divider, a bar, a
+    disabled control's whole affordance, or a transition, and `styles.css` uses it
+    that way about a hundred times. The rule arrived here (R3f, fourth review) as a
+    categorical ban with no scope clause, which the shipped app broke in more than a
+    dozen places the day it was written — `.auto-card.off` (0.62, **on the owner's
+    own Ops screen**), `.task-card.off` (0.60), `.loc-card-revoked`,
+    `.imgsteps.locked` and `.graph-filter.is-off` (0.55), `.cal-wev.cancelled`
+    (0.50), `.vitals[data-sync="unreachable"]` (0.42). Those are not this wave's to
+    fix and are not filed as its debt: they belong to the muted-token contrast
+    audit, which is where a sweep of dimmed text across every screen is tracked. A
+    binding rule the code contradicts on the Ops screen is worse than no rule, so
+    the scope is the part that binds today and the audit is the part that closes the
+    rest.
 - Visible focus rings on `:focus-visible`; full keyboard operability on
   desktop layouts.
 - Status conveyed by dot color is always paired with text.
@@ -1382,6 +1463,140 @@ See `docs/archive/IMAGE_LAUNCHER_PLAN.md`.
   primary action; longer flows are full screens.
 - Dialogs are for confirmation only: one sentence of consequence, two
   buttons max (destructive variant on the right), no scrolling content.
+
+### The "entities modified" step rung (build plan `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` D3)
+
+A tool call that WRITES the owner's graph is **expandable to what it changed**, inside
+the step that made it. Not a surface of its own and not a note-screen change: the same
+`StepRow` disclosure the Worked block already uses, one more rung above the arguments.
+
+- The collapsed row carries a one-line phrase in the count-chip slot naming the call's
+  state — **`written · replaced · held · from a photo · failed · truncated · writing…`**
+  — with the counts and **the domain in words**. A health write is legible as a health
+  write without a tap.
+- **A domain is named, never colour alone.** The dot stays; the word beside it is what
+  carries the meaning. This is an accessibility rule *and* a firewall rule — a boundary
+  the owner cannot read is not a boundary they can check — so one helper turns a domain
+  code into text and every renderer goes through it (an unrecognised code says so).
+- Each write renders in the shipped **`predicate → value`** edge form (the entity page's
+  and the review row's), falling back to the whole statement when the edge parts are
+  absent. A **supersession** renders through the app's ONE before→after diff renderer
+  (`ClaimDiffView`), labelled as a write that already landed, never as one still proposed.
+- **A write tool that wrote nothing says so.** An absent rung would read as "not a write".
+- **There is no edit affordance.** Correction is conversational: the owner disagrees by
+  replying in the thread. A control that fixed a value in place would make the transcript
+  a second decision surface, which is the thing the two-tab inbox exists to delete.
+- It renders from the **persisted turn** — the writes ride the tool result and are stored
+  on the turn — so a conversation reopened days later says exactly what it said live,
+  with no second fetch and no second source of truth.
+
+### The note's own thread (build plan `docs/plans/AGENT_INGEST_REWRITE.md` §3b — binding mock: `docs/mocks/agent-ingest-thread/note-thread.html`)
+
+Every interaction about a note happens inside that note's conversation, and that
+conversation is **the ordinary agent transcript** — the violet Thought chip, the steel
+Worked chip, the step rows and their write rungs, the live status line above the composer.
+There is no bespoke ingest view and no second idiom for the same information.
+
+- **The stream row is a redirect.** A note whose thread is parked on an answer carries one
+  chip — `3 questions` — and nothing else: no answer control, no candidate, no verb. It is
+  **amber**, the open-ask register, never rose: rose is the MEDICAL domain and the row
+  already wears its domain as a dot. A settled note wears no chip at all; "analyzed" is the
+  quiet end state, and only the waiting state earns one.
+- **The chip is the door; the row is not.** Tapping the row opens the NOTE SCREEN, which is
+  the only no-terminal route to the Analysis tab, the attachments, the edit path, the answer
+  eraser and the re-run button. Tapping the chip opens the thread. The note screen itself
+  does not change and gains no tab. The chip is a full **44px box** rather than a small
+  drawing with a bleeding hit area: it shares a **wrapping** row with the attachment links,
+  and an out-of-flow target that reaches a wrapped neighbour takes that neighbour's tap —
+  the same reason the question block's candidates grow their boxes. A near-miss here does
+  not no-op, so the row it costs height is the right trade.
+- **Turn 0 is the note, frozen** — ruled in the note's own domain colour, labelled as THE
+  NOTE rather than as something the owner said, and with its injection fence stripped **for
+  display only**. The frame is a security property the model must keep seeing whole; the
+  renderer strips a matched nonce pair and leaves anything unmatched visible.
+- **The question block is INERT.** When a pass ends on a question set, the answer bubble is
+  followed by one row per question carrying what it blocks, the question in plain words, and
+  its answer affordance — tappable candidates where the resolver had them, a field where it
+  did not, and on a candidate row BOTH: **"Something else"** reveals the same field, so a
+  candidate the model's own prose lost is still answerable in words. It renders under the
+  turn and across the full column, OUTSIDE the bubble — the same placement the sub-agent
+  fan takes, and for the same reason: it is its own object rather than part of the answer's
+  prose, and a ruled block inside the bubble's own border is a frame in a frame. (Not for
+  room: an AI bubble is already full width; the 80% cap is on the owner's own bubble.)
+  **Selecting or typing is local state.** Nothing posts, nothing enqueues, nothing
+  flips a conversation state, and a chosen candidate unpicks on a second tap. This is a
+  deliberate exception to the inline-component rule below, where `InlineProposal` posts its
+  own outcome: there the enact IS the event, here three answers that each posted would cost
+  three turns and three re-reads of the note.
+- **The omnibox send is the one submit**, inside a thread as everywhere else. A carry strip
+  above the input reads `2 of 3 answered — rides with your next send`, and at zero
+  `0 of 3 answered — answer above, or just reply` (the 0-state names both affordances,
+  because at that point neither has been used) — the same shape as the calendar handoff's
+  appointment pill. One send is **one user turn** carrying every answer, structured and
+  paired to its question, beside whatever free text is in the box; the turn's own text
+  carries **both halves**, the `Q:`/`A:` pairs and then the typed words, so the transcript
+  is a complete record of what the owner did. The destination row gives way inside a
+  conversation mode; **the mode row does not**, since it is the app's primary navigation and
+  the only way back to capture.
+- **Typed words beside a tap are NOT filed as an answer.** Free text sent alone answers the
+  oldest open question — with nothing else in the send there is only one thing it could be
+  answering. Beside any tapped answer it is an aside: it rides the turn for the agent to
+  read and reaches no note, and the agent is told so. Pairing it with whichever question the
+  taps left open would put a sentence into the owner's own note under a question it does not
+  answer, and a mispaired answer is a wrong sentence in his corpus, not a cosmetic slip.
+- **Sent is spent, and a frozen block claims only what the reply actually did.** The block
+  goes quiet and its controls go inert the moment the send goes; a settled thread reopened
+  later replays the same transcript with the block frozen in its answered state, no live line
+  and no carry strip. Each row then reads back out of the reply turn's own text: the words that
+  were paired to it, or — where the reply was prose alone, which answers the oldest open
+  question and nothing else — that it was answered in the reply, or that it is **still
+  open**. The header counts what landed rather than the size of the set. A block that says
+  "answered" over a question the send left open is the worst thing on this screen: the
+  agent was told the truth and re-asks exactly those questions on its next turn, so the
+  screen and the assistant contradict each other in front of the one person who cannot
+  check either.
+- **"Spent" is dimmed by TOKEN, never by `opacity`.** An ancestor's opacity multiplies every
+  colour beneath it and no descendant can undo it, so a dimmed block silently re-prices every
+  line inside it: R3f shipped `opacity: 0.72` on the frozen block and put four lines under the
+  4.5:1 floor above — the "still open" line at 1.81:1 in light, and `--text-2`, which this
+  document certifies as body text, at 3.41:1. A spent object recedes by giving up the things
+  that read as controls (a raised chip fill, an accent border, an inviting head colour), which
+  is a statement about the controls; opacity is a statement about the words.
+- **A block that cannot be answered says so, and offers nothing to tap.** The one state
+  where the questions are real but their ids are not — a thread left waiting across the
+  deploy that gave the question set its ids — renders read-only: every question visible, no
+  candidates, no field, no carry strip, and a line saying to answer in the composer (free
+  text alone answers the oldest open question, so the owner is never stuck). Disabled
+  controls would be the wrong shape: a greyed candidate invites a tap that cannot work, and
+  the reason nothing is offered is that nothing tapped here could be filed.
+- **A send that reaches the server not at all is UN-SENT, and Stop is how the owner says
+  so.** While the turn counts as in flight the composer's send IS the Stop button (the same
+  control, swapped), wired to this surface's own stop, so recovery is one tap and a few
+  seconds; left alone, the same thing happens when the reconnect window closes, which is the
+  ceiling on being patient rather than the cost of recovering. What comes back is the whole
+  send: the answers to the block, the typed words to the composer, and the optimistic turn
+  itself is dropped — so the block re-arms live, holding them, over a thread the server still
+  holds `waiting_on_owner`. For the length of the window the frozen block does read
+  *"2 answered"* about a send that never left the device; that is the cost of showing the
+  owner his turn immediately, and it ends when the window does rather than lasting until the
+  thread is reopened. **Only when the server provably has nothing — and the buffer is the
+  weaker half of that test.** Two things must both hold: no `X-Run-Id` ever reached the
+  client, AND the optimistic bubble took no frame. The run id is the load-bearing one:
+  `record_owner_reply` files the answers onto the note BEFORE `runlog.start` mints it
+  (`api/agent.py`), so a run id is proof the note already has them — while a stream that
+  opened and died before its first token is indistinguishable, on the buffer alone, from one
+  that never left. An earlier revision of this rule tested the buffer only; that un-sent a
+  committed turn, re-armed the block over a set `claim_waiting` had already consumed, and the
+  owner's second send was discarded in silence while the block said it landed. Both Stop
+  paths ride the one predicate now, so where the tap lands no longer decides the outcome. A
+  turn that delivered even one token, or that minted a run id, keeps its errored bubble with
+  the owner's words still on screen.
+- **The chip is not permanent, and the thread does not expire.** The stream shows the last
+  two days, so a note parked longer than that scrolls off it and loses its chip — the ask
+  itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review
+  inbox's notes tab and the Chats panel still list the waiting thread. The stream is the
+  recent view, not the backlog; a door that never closes belongs to the two surfaces that
+  are a list of open things.
 
 ## Agent tool views (registered components, never bespoke markup)
 
@@ -2302,6 +2517,141 @@ Binding decisions from this round, reusable by any future character surface:
   cooldowns, and a repetition penalty. Suppress recency *within* a gag, never the gag itself.
 - **A recording indicator is mandatory** (ICO Children's Code), and on a pre-literate surface it
   must be a whole-panel state, not a caption.
+## SDR recordings — capture, library, trim (settled in a two-round GUI review; binding mocks `docs/mocks/recording/a-tape-deck.html` for capture and `docs/mocks/recording/d-trim-sheet.html` for trim; rivals "rolling buffer" / "the log" / "trim on the scrub bar" / "trim by transcript" retained in `docs/mocks/recording/README.md`)
+
+The Radio launcher's third tab. Build plan: `docs/plans/SDR_RECORDING_PLAN.md`.
+
+**Capture is a tape deck.** `Record` sits in the tuner's `.sdr-actions` row beside
+`Release`, arm-then-confirm (inherited from `docs/mocks/sdr-tuner/a-tuner-sheet.html`),
+and while recording it carries its own elapsed time and running size. A recording is a
+file: a frequency, a mode, a bandwidth, a time, a length, a size.
+
+**The library is a list grouped by day**, newest first, each row a play control, the
+frequency with its mode/bandwidth chip, a two-line transcript preview, and a right-hand
+column of time / duration / size. A trailing 44px action column carries the scissors,
+divided from the tappable body by a hairline — the same anatomy as `.rl-card` +
+`.rl-kebab` in the Research Library, with the action glyph specific to the one thing
+this surface does.
+
+**The row expands; the scissors does not.** Tapping the row body opens an inline
+expansion carrying the transcript and the row's own actions (Download, Delete —
+arm-then-confirm, `.rl-action-del` styling). Tapping the scissors goes straight to the
+trim sheet. The two binding mocks are split by subject — `a-tape-deck.html` specifies
+capture and the library, `d-trim-sheet.html` specifies only the trim — and D draws its
+rows without the expansion for focus, which does not repeal it.
+
+**Delete lives on the row, never in the trim sheet.** A destructive action inside a sheet
+whose purpose is a *different* destructive action is muddy: it would put "discard
+everything" inches from "discard the parts you did not select". One sheet, one
+irreversible thing.
+
+**Sizes are always visible.** The owner runs this box remotely; a library that quietly
+fills a disk is a support call they cannot answer from a phone. The header carries a
+usage meter, and once anything has been trimmed its right-hand line reports how much
+trimming has reclaimed.
+
+**Nothing expires.** No retention prune. A recording the owner chose to make is not the
+APRS log, which ages out because nobody chose it. The resting header line is
+*"kept until you delete them"*; trim and delete are the only things that remove audio.
+
+### Long-press Record swaps what it keeps (amends "Capture is a tape deck")
+
+**A long press on Record swaps it between keeping the audio and keeping the closed
+captions — a whisper transcript of the same reception — and the captions are kept
+*instead of* the clip, never alongside it.** There is one radio, one listen session and
+one capture box-wide, so the gesture changes what the single Record does rather than
+adding a second thing it can do at once. A captions recording writes **no blob**: no
+size, no waveform, no `.mp3`. That is the point — it is the cheap way to keep what was
+said on a channel you leave running, and the transcription has already happened live.
+
+**It toggles in place, and adds no surface.** The mode renders as a small tinted
+sub-label inside the Record button, the same `<em>` treatment the mode segment gives its
+bandwidth (`.sdr-bw`) — because kind and Record are one setting to the owner, and
+`.sdr-actions` holds exactly the two `flex: 1` buttons already in it. Shown only when
+idle: while recording, the button's interior is already the elapsed time and the running
+figure. This is an in-place change to a settled surface, which the mock gate exempts.
+
+**The swap resolves against the arming ceremony, which Record already had.** Record is
+tap-to-arm then tap-to-start, so a hold *used* to arm it. Three rules settle the
+collision, and each is a test:
+- A completed hold **swaps and does not arm** — the trailing tap is swallowed.
+- A hold on an **already-armed** button swaps and **disarms**. "Tap again" is a promise
+  about what the next tap will start; changing what that is withdraws the promise rather
+  than silently rewriting it.
+- A hold **while recording is ignored** — the kind is fixed when the stream opens, so
+  there is nothing a swap could mean — and, because the gesture never fires, the tap that
+  ends it still reaches Stop.
+
+**The running figure follows the kind.** Bytes for a clip, captions counted for the kind
+that writes no file, and null for whichever the capture is not. A `0 kB` under a captions
+capture would be a measurement of something nobody is measuring, and that figure is the
+owner's whole argument for pressing Stop (they cannot go and look at the disk).
+
+**A captions row in the library offers what it has, and nothing it does not.** No play
+control, no scissors, no size in the meta, no download — the api refuses all four with a
+sentence, and an affordance that leads to a refusal is a dead end the owner cannot debug
+from a phone. What it has is the transcript, rendered by the shared `TranscriptBody` with
+its confidence tinting (narrowband voice degrades in a patterned way; the numbers are
+both the least certain and usually the payload), plus **Copy transcript** and Delete. Its
+duration is kept — that is the wall clock the capture ran, which is true for this kind
+too — and it is marked with a `CC` chip rather than left to be inferred from the missing
+play control. **It does not move the disk meter**, matching the api's own
+`FILTER (WHERE kind = 'audio')`; the recording *count* does, because that counts the list.
+
+**Accessibility deviation, recorded deliberately.** The rules above ("Every overlay
+surface must have a visible, tappable exit; a gesture is never the only way out", and the
+swipe shortcut's "As an **enhancement only** — never the sole path") say a gesture is
+never the sole path to anything. **The long press here is the sole path to the swap**, and
+that is a knowing deviation, not an oversight: it follows the two shipped long-presses in
+this app — the omnibox's mode tabs (`Omnibox.tsx`) and the read-aloud auto-play toggle
+(`FullBrainSurface.tsx`) — which are both pointer-only, and the alternative the owner
+rejected in asking for this was any new surface to hold a second control. What the
+gesture does carry is the mitigation those precedents established: the **`aria-label`
+names it** ("Record what you are hearing — long-press to record captions instead"), so
+the affordance is announced to a screen reader even though it is not reachable by
+keyboard, and a right-click (`onContextMenu`) is the desktop analog. If the swap ever
+needs a keyboard path, it belongs in Settings as a device-local preference — not as a
+third button in `.sdr-actions`.
+
+**The choice is device-local** (`localStorage`, like the band picks and the theme),
+best-effort on every read and write: a private window or blocked site data has to end in
+a working Record button, which is the one control on this surface that must never fail to
+render.
+
+**The row's transcript is fetched when the row opens, not carried by the list.** The
+"two-line transcript preview" above is what the mock draws and is **not served today**:
+the list projection omits `transcript` on purpose, because a captions recording may hold
+four hours of speech (~200 000 characters) and five hundred rows of that is a library
+nobody could load. The row asks for its own on expand, the same way the trim sheet asks
+for the waveform the list also omits — so an unopened row shows **no preview line** rather
+than "(no speech detected)", which would be the library asserting a silence it never read.
+Restoring the mock's preview needs a truncated `preview` column on the list route, which
+is not built.
+
+### Destructive editing of stored media — the reusable pattern
+
+Settled here, and the first surface in the app to edit stored content in place rather
+than only create or delete it:
+
+1. **An irreversible edit gets its own sheet, never an inline control.** The edit is
+   entered deliberately (a distinct action glyph on the row), and the sheet is the one
+   place the user is being careful. Trimming from the row's own scrub bar was mocked
+   (`e-trim-inline.html`) and rejected for this reason: a control you can brush past
+   should not be able to destroy anything.
+2. **Preview before commit is mandatory when the original will not survive.** If the
+   edit discards data, the sheet must be able to play/show exactly what will remain
+   before the confirm is pressed. This is what makes the sheet worth its cost.
+3. **The confirm names the loss** — "Trim & discard rest", not "Save". Arm-then-confirm
+   is for actions with no preview; a sheet with a preview has already done that work,
+   and doubling it reads as nagging.
+4. **A selection over a continuous medium is drawn, not typed.** Two `role="slider"`
+   handles on a rendered waveform, draggable, arrow-key operable (Shift for a coarse
+   step), plus explicit nudge buttons at the medium's own smallest honest unit — for
+   MP3 that is one frame, 72 ms at 16 kHz, and the UI must not imply finer precision
+   than the format can deliver.
+5. **The saving is stated, not implied.** "Discards 1:05 of dead air — frees 509 kB",
+   computed and shown live as the handles move, because the whole reason the feature
+   exists is disk.
 
 ## Implementation rules
 

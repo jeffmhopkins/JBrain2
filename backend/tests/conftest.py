@@ -1,8 +1,7 @@
 import os
 import shutil
 import subprocess
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 # Off for the WHOLE suite, before any Settings is constructed. The vitals sampler writes a
 # reading into the ring once a second for the life of the process, so any test that seeds
@@ -11,64 +10,9 @@ from typing import TYPE_CHECKING, Any
 # as an env var because that is what Settings reads.
 os.environ.setdefault("JBRAIN_VITALS_SAMPLER_ENABLED", "false")
 
-from jbrain.llm.fake import FakeLlmClient  # noqa: E402
-from jbrain.llm.types import (
-    DEFAULT_MAX_TOKENS,
-    LlmImage,
-    LlmResult,
-    LlmUsage,
-    Sampling,
-    parse_json_payload,
-)
 
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
-
-
-class SchemaRoutedLlmClient(FakeLlmClient):
-    """A FakeLlmClient that answers by request SCHEMA, not call order.
-
-    integrate_note now makes one note.extract call PER SOURCE (the note body plus
-    each attachment — per-source extraction, so a rich attachment can't crowd the
-    body's own facts out of a shared budget), so the note.extract call COUNT varies
-    per note and a positional script desyncs. This keys on the schema instead: an
-    intent-schema call (integrate.note) gets `intent`; every other call (note.extract,
-    for however many source groups the note has) gets `extraction`. Order- and
-    count-independent, so a test need not know how many sources a note carries."""
-
-    def __init__(self, extraction: str, intent: str) -> None:
-        super().__init__([extraction])
-        self._extraction = extraction
-        self._intent = intent
-
-    async def complete(
-        self,
-        *,
-        model: str,
-        system: str,
-        user_text: str,
-        images: Sequence[LlmImage] = (),
-        json_schema: dict[str, Any] | None = None,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        reasoning_effort: str | None = None,
-        sampling: Sampling | None = None,
-    ) -> LlmResult:
-        self.calls.append(
-            {
-                "model": model,
-                "system": system,
-                "user_text": user_text,
-                "images": list(images),
-                "json_schema": json_schema,
-                "max_tokens": max_tokens,
-                "reasoning_effort": reasoning_effort,
-                "sampling": sampling,
-            }
-        )
-        props = (json_schema or {}).get("properties", {})
-        text = self._intent if "resolutions" in props else self._extraction
-        parsed = parse_json_payload(text) if json_schema is not None else None
-        return LlmResult(text=text, parsed=parsed, usage=LlmUsage(1, 1))
 
 
 def docker_available() -> bool:

@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.sdr.roles import GENERAL, Radio
+from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
 ImageAnalysisMode = Literal["full", "ocr"]
 IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
@@ -407,7 +407,8 @@ WIKI_LINT_SPEND_PREFIX = "wiki_lint_spend:"
 # Provisional -> confirmed entity promotion (docs/reference/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
 # same-domain notes is auto-confirmed; if its identity is contested (a live
-# namesake), a `confirm_entity` review card is filed instead of auto-confirming.
+# namesake), it is left provisional instead of auto-confirming (AGENT_INGEST_REWRITE
+# R1b: the card that used to ask was bookkeeping the owner had no opinion about).
 # DB-backed; flip live. Default OFF until the goldens are migrated to expect
 # confirmation (the rule deliberately changes entity status across notes).
 ENTITY_PROMOTION_KEY = "entity_promotion"
@@ -426,18 +427,6 @@ ENTITY_PROMOTION_DEFAULT = False
 # live (a settings upsert) with no redeploy.
 REFLEXION_BUFFER_RETRY_KEY = "reflexion_buffer_retry"
 REFLEXION_BUFFER_RETRY_DEFAULT = False
-
-# Integration run + resolution-pin persistence (docs/archive/WORKFLOW_ENGINE_PLAN.md §E7b,
-# Wave 1 Track A): when on, integrate_note writes an `app.runs` row
-# (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
-# decisions into `app.resolution_pin` (the pure analysis.pins). Net-new (the loop
-# logged to structlog only before), so it ships behind this flag and is validated by
-# convergence, not diff-against-old. DB-backed; flip off live (a settings upsert) to
-# disable the writes without a redeploy. Default ON: the writes are purely additive
-# (a separate run row + pins, no change to the committed graph) and idempotent, so
-# enabling them cannot corrupt existing data — only the persisted audit/pin trail.
-INTEGRATION_PERSIST_KEY = "integration_persist"
-INTEGRATION_PERSIST_DEFAULT = True
 
 # The dispatcher's enqueue mode (docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Wave 2, §E7a):
 # "shadow" computes the would-be enqueue + diffs it but never enqueues; "live"
@@ -482,6 +471,27 @@ def _dedup_str_list(raw: object) -> list[str]:
             seen.add(item)
             out.append(item)
     return out
+
+
+def _sdr_gain(raw: object) -> str:
+    """One radio's stored tuner gain, or "" for unset. Never raises.
+
+    Only the MEASURED rungs and `auto` survive, so a stored value this build does not
+    recognise reads as no choice at all rather than reaching `rtl_fm -g` or
+    `setGain` as a number nobody measured."""
+    return raw if isinstance(raw, str) and raw in GAIN_CHOICES else ""
+
+
+def _sdr_upconverter_hz(raw: object) -> int:
+    """One radio's stored converter offset in Hz, or 0 for none. Never raises.
+
+    Bounded at both ends, and `bool` excluded because `True` is an `int` in Python and
+    a radio tuned 1 Hz high is a radio nobody can debug. Out of range reads as NO
+    converter, which is the one fallback that cannot mis-tune: it is what the box did
+    before this field existed."""
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    return raw if 0 <= raw <= UPCONVERTER_MAX_HZ else 0
 
 
 class SqlSettingsStore:
@@ -806,11 +816,6 @@ class SqlSettingsStore:
         current = await self.wiki_lint_spent_today(ctx, day=day)
         await self.upsert(ctx, WIKI_LINT_SPEND_PREFIX + day, current + max(tokens, 0))
 
-    async def integration_persist(self, ctx: SessionContext) -> bool:
-        """Whether the Integrator persists its run + resolution pins (§E7b).
-        Defaults ON; an explicit `false` (or any non-true value) disables it."""
-        return await self.get(ctx, INTEGRATION_PERSIST_KEY, INTEGRATION_PERSIST_DEFAULT) is True
-
     async def workflow_dispatch_mode(self, ctx: SessionContext) -> WorkflowDispatchMode:
         """The dispatcher's enqueue mode: "live" (the default since the Wave-2 cutover
         — actually enqueue, the engine owns the path), "shadow" (diff only, never
@@ -876,23 +881,50 @@ class SqlSettingsStore:
                 # the tuner is the silent-substitution failure this whole feature exists
                 # to stop. It stays reserved and unusable until the owner says otherwise.
                 role=role[:SDR_RADIO_ROLE_MAX] if isinstance(role, str) and role else GENERAL,
+                # UNSET is the fallback for both, and it is the opposite decision to the
+                # role above — deliberately. An unreadable role could be a reservation a
+                # newer build understands, so keeping it costs a radio nobody needed; an
+                # unreadable gain or offset is a claim about the SIGNAL PATH, and a
+                # half-read one would have the radio tune somewhere nobody asked for or
+                # pin a gain nobody chose. Unset is the behaviour of a box that never
+                # opened this screen, which is the safe place to fail to.
+                gain=_sdr_gain(entry.get("gain")),
+                upconverter_hz=_sdr_upconverter_hz(entry.get("upconverter_hz")),
             )
         return clean
 
     async def set_sdr_radio(
-        self, ctx: SessionContext, serial: str, *, name: str, description: str, role: str
+        self,
+        ctx: SessionContext,
+        serial: str,
+        *,
+        name: str,
+        description: str,
+        role: str,
+        gain: str = "",
+        upconverter_hz: int = 0,
     ) -> dict[str, Radio]:
         """Describe one radio, leaving the others alone. Returns the whole map.
 
         Read-modify-write on one jsonb key, which is safe here because the only writer
         is the owner editing a settings screen — there is no concurrent updater to lose
-        an entry to."""
+        an entry to.
+
+        The two tuning fields default to UNSET rather than to whatever is stored, because
+        the card saves all of a radio at once: a caller that sent four fields and meant
+        to leave the fifth alone would be a caller that could not clear it."""
         current = await self.get(ctx, SDR_RADIOS_KEY, {})
         entries = dict(current) if isinstance(current, dict) else {}
         entries[serial] = {
             "name": name.strip()[:SDR_RADIO_NAME_MAX],
             "description": description.strip()[:SDR_RADIO_DESC_MAX],
             "role": role.strip()[:SDR_RADIO_ROLE_MAX] or GENERAL,
+            # Sanitized on the way IN as well as on the way out. The read is the guard
+            # that matters — it is what a value written by an older build meets — but
+            # storing junk here would leave the settings blob saying something the radio
+            # never did, and the debug console reads the blob.
+            "gain": _sdr_gain(gain),
+            "upconverter_hz": _sdr_upconverter_hz(upconverter_hz),
         }
         await self.upsert(ctx, SDR_RADIOS_KEY, entries)
         return await self.sdr_radios(ctx)

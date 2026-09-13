@@ -3,7 +3,7 @@ it with the same scorers CI uses — the calibration track of docs/archive/CALIB
 
   cd backend && JBRAIN_DEBUG_TOKEN=<payload> uv run python -m evals.box.run_layer <layer>
 
-<layer> ∈ {extract, integrate, disambiguate}. `--samples N` repeats each case N
+<layer> ∈ {disambiguate}. `--samples N` repeats each case N
 times (the model is non-deterministic; reports a per-case pass RATE). Owner-run
 only — this is the ONLY eval path that calls the box, and it requires the minted
 token in the environment. Never wired into CI.
@@ -20,21 +20,11 @@ from jbrain.evals.disambiguate_runner import (
     load_disambiguate_cases,
     score_disambiguate_cases,
 )
-from jbrain.evals.integrate_runner import (
-    eval_run_from_integrate,
-    load_integrate_cases,
-    score_integrate_cases,
-)
-from jbrain.evals.runner import eval_run_from_cases, load_cases, score_cases
 
+# R4 deleted the `extract` and `integrate` layers with the prompts they scored
+# (`note.extract`, `integrate.note`). The reading that replaced them has no committed
+# corpus yet — that is R5's, beside the wipe (AGENT_INGEST_REWRITE.md §7).
 _LAYERS = {
-    "extract": (load_cases, score_cases, eval_run_from_cases, "note-extract"),
-    "integrate": (
-        load_integrate_cases,
-        score_integrate_cases,
-        eval_run_from_integrate,
-        "integrate",
-    ),
     "disambiguate": (
         load_disambiguate_cases,
         score_disambiguate_cases,

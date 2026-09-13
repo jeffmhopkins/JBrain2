@@ -879,6 +879,99 @@ def test_chat_buffer_retry_is_forced_off_for_a_spawner(
     assert sse_events(resp.text)[-1]["type"] == "done"
 
 
+@pytest.fixture
+def no_standing_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A note-conversation turn reads `owner_prefs` from the database, and the test app
+    has none. Stand in for the empty document — the shape a box whose owner has never
+    set a rule is in."""
+    import jbrain.api.agent as agent_mod
+
+    async def none(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", none)
+
+
+def test_a_note_reply_turn_is_given_the_owners_standing_instructions(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D15 says the standing instructions go into EVERY note conversation's prompt, and
+    only the unattended pass did it. The consequence was precise: `prefs_write` is in the
+    ON-REPLY set alone, so the one turn that can edit the numbered list was the one turn
+    that had never been shown it — and `prefs_read` is deliberately unreachable on the
+    premise that the injection makes it redundant, which was true there and false here.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def rules(request, owner_ctx):  # type: ignore[no-untyped-def]
+        return ["Stop splitting recipe ingredients into separate facts."]
+
+    monkeypatch.setattr(agent_mod, "_standing_instructions", rules)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-p", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router = stream_router(
+        [LlmTurn("noted", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["noted"]]
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-p", "message": "stop doing that"})
+
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    system = fake.stream_calls[0]["system"]
+    assert "Stop splitting recipe ingredients into separate facts." in system
+    # Framed as JEFF's instructions, not as the note's data — the one thing in a note
+    # conversation's context that IS an instruction has to say so.
+    assert "standing instructions" in system.lower()
+
+
+def test_a_curator_chat_gets_no_standing_instructions_block(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # The injection is the note persona's, not every persona's: `owner_prefs` says how to
+    # read a NOTE, and an ordinary chat has none.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-c", "", "active", ("general",), (), NOW, NOW))
+    router = stream_router([LlmTurn("hi", (), "end_turn", LlmUsage(1, 1))], stream_chunks=[["hi"]])
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.post("/api/chat", json={"session_id": "sess-c", "message": "hello"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    assert "standing instructions" not in fake.stream_calls[0]["system"].lower()
+
+
+def test_chat_buffer_retry_is_forced_off_for_a_note_conversation(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    no_standing_rules: None,
+) -> None:
+    # The same objection as the spawner above, with the graph writes in place of the fan.
+    # The on-reply surface holds `assert_fact`, `correct_fact`, `merge_entities` and
+    # `prefs_write`; a re-produce re-dispatches every one of them, so one owner message
+    # would force-supersede twice and stage two Proposals for the same edit — arriving in
+    # the inbox twice and in the graph twice, for a better closing paragraph.
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-n", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
+    router = stream_router(
+        [LlmTurn("recorded that", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["recorded that"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-n", "message": "my sister"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # The streaming adapter ran; the non-streaming buffered produce path did not.
+    assert fake.stream_calls and fake.converse_calls == []
+    # (The tail here is the provenance label, not `done` — this persona reads the
+    # knowledge base and this turn cited nothing.)
+    assert any(e["type"] == "done" for e in sse_events(resp.text))
+
+
 def test_chat_persists_proposal_and_entity_chips(
     client: TestClient,
     repo: FakeAuthRepo,
@@ -1866,7 +1959,13 @@ def test_chat_completed_turn_deregisters_from_live_turns(
 
 class GatedStreamClient:
     """Streams a partial answer, then BLOCKS on a release event before finishing — lets a
-    test drop the SSE connection mid-turn and prove the detached turn still completes."""
+    test drop the SSE connection mid-turn and prove the detached turn still completes.
+
+    It closes with an `LlmTurn` because a real adapter always does, and the loop now
+    tells the two apart: a round that ends with no turn at all reports `no_turn` rather
+    than `end_turn`, since a caller reading the stop reason as "this pass finished and
+    everything it meant to write is written" must not be told that by a stream that
+    simply stopped (`models/note_conversation.state_for_stop`)."""
 
     def __init__(self, release: asyncio.Event) -> None:
         self._release = release
@@ -1875,6 +1974,7 @@ class GatedStreamClient:
         yield TextChunk(text="partial ")
         await self._release.wait()
         yield TextChunk(text="answer")
+        yield LlmTurn("partial answer", (), "end_turn", LlmUsage(4, 2))
 
 
 async def test_chat_turn_survives_a_client_disconnect() -> None:
@@ -2296,6 +2396,265 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert ("sess-j", "agent-jerv-v48") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
+def _note_write_registry() -> ToolRegistry:
+    """The four note-write sidecars, bound to inert handlers — enough to see which of
+    them `/chat` actually offers a note conversation's reply turn."""
+    import jbrain.agent.readtools as readtools
+    from jbrain.agent.toolfile import load_tool
+
+    async def _inert(_args: dict, _ctx: object) -> object:  # pragma: no cover - never called
+        return {}
+
+    return ToolRegistry(
+        [
+            RegisteredTool(load_tool(readtools.TOOLS_DIR / f"{n}.tool"), _inert)
+            for n in ("assert_fact", "close_reading", "ask_owner", "correct_fact")
+        ]
+    )
+
+
+@pytest.mark.parametrize("third_party", [True, False])
+def test_a_reply_into_a_stranger_s_note_thread_is_offered_no_owner_channel_and_no_correction(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+    third_party: bool,
+) -> None:
+    """D10's reply half, at the gate `/chat` actually consults.
+
+    D8 widens this turn because the owner is the only voice in the room. On a note a
+    STRANGER wrote he is not — the submitted body is turn 0 of this thread and is still
+    in context — so `correct_fact` (a force-supersede that PINS) and `ask_owner` are not
+    offered, while `close_reading` still is: D10 keeps the write path unrestricted.
+
+    `close_reading` and not `assert_fact`, since R3: the third-party set is derived from
+    the UNATTENDED one, and that set now holds a single fact verb so a pass cannot write a
+    fact its own closing reading omits. What a stranger's reading may not do is retract —
+    the settle refuses to sweep on one (`clarify.PassReading.third_party`).
+
+    Parametrized against its own negative, because the failure this guards is the
+    narrowing applying to EVERY note conversation — which would look identical from the
+    third-party side and would quietly cost the owner the verbs D8 exists to give him.
+    """
+    import jbrain.api.agent as agent_mod
+
+    async def _origin(*_a: object, **_k: object) -> bool:
+        return third_party
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _origin)
+    # The turn is an ANSWER whose words landed on the note, so the unprompted-reply
+    # narrowing is out of the way and what is left is D10's.
+    _answering(monkeypatch)
+    # The OTHER W4 predicate on this same turn, held to "not an EMR note". It reads the
+    # conversation row and the note through app state this hand-wired app does not have,
+    # and it fails CLOSED, so leaving it live would narrow every case here for a reason
+    # that has nothing to do with D10.
+    _not_emr(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-tp", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-tp", "message": "my cousin"})
+    assert resp.status_code == 200
+    offered = {t.name for t in fake.stream_calls[0]["tools"]}
+    assert "close_reading" in offered
+    if third_party:
+        assert offered == {"close_reading"}
+    else:
+        assert offered == {"close_reading", "assert_fact", "ask_owner", "correct_fact"}
+
+
+def _not_emr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold W4's EMR predicate at "the importer does not own this note"."""
+    import jbrain.api.agent as agent_mod
+
+    async def _identity(*_a: object, profile: object, **_k: object) -> object:
+        return profile
+
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _identity)
+
+
+def _answering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold the THIRD narrowing at "the owner's words landed on the note".
+
+    `record_owner_reply` reaches a database this hand-wired app does not have, so it
+    returns None for every turn here — and None is the unprompted case, which takes
+    `assert_fact` off. Left live it would narrow every test below for a reason that has
+    nothing to do with what they assert. The predicate itself is pinned in its own tests
+    further down."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply
+
+    async def _landed(*_a: object, **_k: object) -> OwnerReply:
+        return OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+        )
+
+    monkeypatch.setattr(agent_mod, "record_owner_reply", _landed)
+
+
+def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_nothing(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+) -> None:
+    """W4's two narrowings composing on ONE reply turn, at the gate `/chat` consults.
+
+    Neither half of the wave could write this: each was built against a branch that did
+    not have the other. A note can satisfy both predicates — an approved intake
+    submission the owner filed to health / `Records` with the archive or a PDF attached —
+    and the turn has to come out with the INTERSECTION. Getting it wrong is silent: the
+    thread renders identically, and the only difference is a fact written out of a
+    stranger's text onto a note the deterministic parse is authoritative for.
+
+    Of this registry's three tools none survives: `ask_owner` is D10's, `correct_fact`
+    is in both narrowings, and `assert_fact` — which D10 deliberately KEEPS — goes to
+    D9, because on an EMR note the model holds no graph-write verb at all."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.agent.agents import narrow_for_emr
+
+    async def _third_party(*_a: object, **_k: object) -> bool:
+        return True
+
+    async def _emr(*_a: object, profile: object, **_k: object) -> object:
+        return narrow_for_emr(profile)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _third_party)
+    monkeypatch.setattr(agent_mod, "reply_profile_for_session", _emr)
+    _answering(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo("sess-both", "", "active", ("general",), (), NOW, NOW, agent="note_ingest")
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-both", "message": "my cousin"})
+    assert resp.status_code == 200
+    assert {t.name for t in fake.stream_calls[0]["tools"]} == set()
+
+
+@pytest.mark.parametrize(
+    ("reply", "offered", "why"),
+    [
+        (
+            "landed",
+            True,
+            "the block appended and nothing he said was dropped",
+        ),
+        (
+            "dropped_prose",
+            False,
+            "§3b I7's designed send: the tapped answers landed and the free text beside"
+            " them had no open question, so `_pair` dropped it and the note never says it",
+        ),
+        (
+            "append_failed",
+            False,
+            "the thread WAS waiting and the block did not land — `clarified` False",
+        ),
+        (
+            "none",
+            False,
+            "not an answer at all: a settled thread, or an `owner_authored=False` turn,"
+            " which returns before `claim_waiting` with the state still reading waiting",
+        ),
+    ],
+)
+def test_assert_fact_rides_the_owner_s_words_landing_on_the_note(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    no_standing_rules: None,
+    reply: str,
+    offered: bool,
+    why: str,
+) -> None:
+    """R3's second review, finding 2, at the gate `/chat` consults.
+
+    `assert_fact` on a reply turn records "one more thing the owner just told me", and
+    the only thing that makes that write survivable is that his words BECAME THE NOTE'S
+    TEXT: the D6 block is appended, the note re-ingests, and the next reading restates
+    what the agent wrote. The first round keyed the narrowing on the thread's STATE,
+    which is a different set — three of the four rows below are `waiting_on_owner` turns
+    on which the note receives nothing, and the middle one is the DESIGNED send rather
+    than a failure. So the verb is bound to `record_owner_reply`'s outcome.
+
+    Asserted at the route because the ordering is the finding: the profile is resolved
+    before that call and `claim_waiting` has flipped the state by the time a tool
+    dispatches, so this narrowing can only be applied on the one line between them.
+
+    `correct_fact` stays offered in every row — the empty-address arm is refused in the
+    handler (`replytools`), not by taking the verb away from a turn that may still need
+    to fix a fact that IS on file."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply
+
+    outcomes: dict[str, OwnerReply | None] = {
+        "landed": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+        ),
+        "dropped_prose": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+            dropped=["also Dana moved to 412 Oak St"],
+        ),
+        "append_failed": OwnerReply(
+            answered=[("Which Dana?", "Dana Reeve")],
+            unanswered=[],
+            clarified=False,
+            note_moved=False,
+            dropped=["Dana Reeve"],
+        ),
+        "none": None,
+    }
+
+    async def _outcome(*_a: object, **_k: object) -> OwnerReply | None:
+        return outcomes[reply]
+
+    async def _not_third_party(*_a: object, **_k: object) -> bool:
+        return False
+
+    monkeypatch.setattr(agent_mod, "record_owner_reply", _outcome)
+    monkeypatch.setattr(agent_mod, "conversation_is_third_party", _not_third_party)
+    _not_emr(monkeypatch)
+    login(client, repo)
+    sessions_store.add(
+        AgentSessionInfo(
+            f"sess-{reply}", "", "active", ("general",), (), NOW, NOW, agent="note_ingest"
+        )
+    )
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    client.app.state.agent_registry = _note_write_registry()  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": f"sess-{reply}", "message": "Dana Reeve"})
+    assert resp.status_code == 200
+    names = {t.name for t in fake.stream_calls[0]["tools"]}
+    assert ("assert_fact" in names) is offered, why
+    # Not a retreat from the on-reply surface: the reads, the ask, the reading and the
+    # correction of a fact that IS on file all stay.
+    assert {"close_reading", "ask_owner", "correct_fact"} <= names
+
+
 def test_chat_curator_is_offered_no_web_tools(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
@@ -2591,6 +2950,487 @@ def test_model_message_frames_a_proposal_outcome_as_data() -> None:
         agent_mod.ChatRequest(session_id="s", message="when is it?", appointment_id=appt)
     )
     assert appt in hinted and "read_appointment" in hinted
+
+
+def test_only_a_turn_the_owner_typed_counts_as_owner_authored() -> None:
+    """The predicate the note-conversation reply path gates on. A `proposal_outcome` or
+    `deferred_outcome` turn carries text the SERVER wrote, and `record_owner_reply`
+    appends what it is given to the owner's own note as searchable, citable SOURCE text —
+    so an enact summary landing there would be a sentence Jeff never said, permanently in
+    his corpus, with the agent's open question spent on it."""
+    import jbrain.api.agent as agent_mod
+
+    typed = agent_mod.ChatRequest(session_id="s", message="My sister.")
+    assert typed.owner_authored is True
+
+    enact = agent_mod.ChatRequest(
+        session_id="s", message="Enacted 1 of 1 — 1 approved.", proposal_outcome=True
+    )
+    assert enact.owner_authored is False
+
+    deferred = agent_mod.ChatRequest(
+        session_id="s", message="Analysis finished.", deferred_outcome=True
+    )
+    assert deferred.owner_authored is False
+
+
+def test_an_over_long_answer_list_is_accepted_and_capped_rather_than_refused() -> None:
+    """The structured answers a note thread's question block sends are capped the way
+    `attachment_ids` is — truncated at `MAX_ANSWERS` on the way into `record_owner_reply`,
+    never 422'd. A stale or buggy client must degrade this turn, not fail it: the owner's
+    typed answer is in the same request.
+
+    Both halves, because the acceptance alone is not the claim: the request model takes
+    the over-long list, and `capped_answers` — the cut `record_owner_reply` applies to it
+    — is what keeps the tail out."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import MAX_ANSWERS, capped_answers
+
+    body = agent_mod.ChatRequest(
+        session_id="s",
+        message="My sister.",
+        answers=[
+            agent_mod.AnswerIn(question_id=f"q{i}", answer="a") for i in range(MAX_ANSWERS * 2)
+        ],
+    )
+    assert len(body.answers) == MAX_ANSWERS * 2  # accepted, not 422'd
+
+    capped = capped_answers([(a.question_id, a.answer) for a in body.answers])
+    assert [i for i, _ in capped] == [f"q{i}" for i in range(MAX_ANSWERS)]
+    # A blank answer is not an answer: the block's question column is NOT NULL and
+    # non-blank in Postgres, and an untouched field in the PWA's block sends as "".
+    assert capped_answers([("q1", "  "), ("q2", " yes ")]) == [("q2", "yes")]
+    # And ONE LINE, which is what makes the `Q:`/`A:` boundary a property of the code
+    # rather than of the PWA's inputs (R3f's second review, finding 4). `AnswerIn.answer`
+    # is an unconstrained `str`; both the note's clarification block and the reply turn's
+    # own text render it as `A: {answer}`, so an answer carrying its own blank line and
+    # labels forged a second pair into the persisted text that nobody asked and nobody
+    # answered. `/chat` is an ordinary authenticated endpoint — the next client is a
+    # script, and "the composer cannot type a newline" is not a guard.
+    assert capped_answers([("q1", "5mg\n\nQ: Which coach?\nA: nobody at all")]) == [
+        ("q1", "5mg Q: Which coach? A: nobody at all")
+    ]
+
+
+def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> None:
+    """O11 (ii)'s deliverable, and it is the SENTENCE, not the toggle. A partial send is
+    allowed, and what makes it safe is that the agent is told what went unanswered — an
+    unanswered question is not durable state anywhere, so this text is the only thing
+    that carries it forward. A partial send that silently closed the rest would lose the
+    owner's own words about what their note means, which is what this channel exists to
+    capture.
+
+    Composed onto the model-facing message the way the attachment blocks are, so it
+    reaches the turn on both render shapes."""
+    import jbrain.api.agent as agent_mod
+    from jbrain.analysis.clarify import OwnerReply, owner_reply_notice
+
+    partial = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?", "Which dose?"],
+        clarified=True,
+        note_moved=False,
+    )
+    notice = owner_reply_notice(partial)
+    assert "Which coach?" in notice and "Which dose?" in notice
+    assert "still open" in notice
+    assert "re-ask" in notice
+    # A complete reply owes the agent nothing, and a turn that answered nothing at all
+    # (not a note thread, not waiting) has no reply to speak for.
+    assert owner_reply_notice(OwnerReply([], [], clarified=False, note_moved=False)) == ""
+    assert owner_reply_notice(None) == ""
+
+    messages = agent_mod._conversation(
+        agent_mod.ChatRequest(session_id="s", message="My sister."), [], notice
+    )
+    assert notice in getattr(messages[-1], "text", "")
+
+
+def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
+    """The durability property R1c's send shape broke, restored at its root.
+
+    §3b I7 makes the structured answers the PAYLOAD and the prose the RENDERING of the
+    same turn, so an answers-only send arrives with `message` blank. Blank is what the
+    transcript would record and what the model's user turn would carry, which left the
+    clarification block as the ONE durable trace of three tapped answers — and a failed
+    append or a soft-deleted note lost all three with nothing anywhere saying so."""
+    from jbrain.analysis.clarify import OwnerReply, owner_turn_text
+
+    reply = OwnerReply(
+        answered=[("Which Sarah?", "My sister."), ("Which coach?", "Her own.")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    rendered = owner_turn_text("", reply, [("q1", "My sister."), ("q2", "Her own.")])
+    assert "Which Sarah?" in rendered and "My sister." in rendered
+    assert "Which coach?" in rendered and "Her own." in rendered
+
+    # ⟲ A MIXED send renders BOTH halves (R3f's review, finding 1). Typed text used to win
+    # outright and throw the pairs away — so the exact send §3b I7 designs persisted as the
+    # aside alone, and the PWA's frozen block, which reads its answers back out of this
+    # text, drew "answered" with no answers and the tapped candidate not picked. The pairs
+    # come first, the typed words last, and the typed half is stripped of Q:/A: labels
+    # (see below), so it cannot be read back as an answer to anything.
+    mixed = owner_turn_text("also the dinner is cancelled", reply, [("q1", "My sister.")])
+    assert mixed == (
+        "Q: Which Sarah?\nA: My sister.\n\nQ: Which coach?\nA: Her own."
+        "\n\nalso the dinner is cancelled"
+    )
+    # With no structured answers at all the prose stands exactly as sent: that is the
+    # free-text degrade path, and `record_owner_reply` pairs it with the oldest open
+    # question on its own terms.
+    assert owner_turn_text("My sister.", reply, []) == "My sister."
+    assert owner_turn_text("", None, []) == ""
+    # No paired set to render from (the thread was not waiting, say) — the owner's words
+    # still reach the turn, which is the whole point of composing here.
+    assert owner_turn_text("", None, [("q1", "My sister.")]) == "My sister."
+
+
+def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
+    """R3f's second review, finding 3(b). "The typed half carries no labels" described
+    what the owner usually types, not what the code permits — and the PWA's frozen block
+    reads its answers straight back out of this text (`asked.answersFromReply`).
+
+    The composer is a bare `<textarea>` with no key handling, so Enter inserts a newline,
+    and the questions are on screen directly above it: quoting one back is how people
+    reply in a thread. Unstripped, the aside became its own `\n\n` chunk, matched the
+    read-back, and the block showed that question answered in words `_pair` had DROPPED
+    and `owner_reply_notice` had reported as still open — the inverse display F1 fixed,
+    re-created from the other side.
+
+    ⟲ **And every word the owner wrote survives — which is R3f's third review, finding 3b,
+    because the first version of this did not manage it.** It took the label off every line
+    that carried one, so an enumerated reply came back with its `A:` deleted and its `B:`
+    kept. The cut is now made only on a chunk the read-back would actually accept as a
+    pair, so the label that comes off is always the channel's and never his."""
+    from jbrain.analysis.clarify import OwnerReply, owner_turn_text
+
+    reply = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?"],
+        clarified=True,
+        note_moved=False,
+    )
+    mixed = owner_turn_text("Q: Which coach?\nA: nobody at all", reply, [("q1", "My sister.")])
+    assert mixed == "Q: Which Sarah?\nA: My sister.\n\nWhich coach?\nnobody at all"
+
+    # The prose-only send is the same hole from the other side: there the typed words ARE
+    # the whole turn text, so nothing else has to go wrong for the forgery to be read back.
+    assert owner_turn_text("Q: Which coach?\nA: nobody", reply, []) == "Which coach?\nnobody"
+
+    # A turn with no open set above it is left verbatim — nothing can read it back as an
+    # answer, and the PWA's mirror leaves it alone too, so bubble and transcript agree.
+    assert owner_turn_text("Q: rhetorically?", None, []) == "Q: rhetorically?"
+
+    # THE OWNER'S OWN LABELS STAY. An enumerated reply is not a pair — `answersFromReply`
+    # anchors on a `Q:` line with an `A:` under it — so nothing here is a forgery and
+    # nothing comes off. Deleting his `A:` while keeping his `B:` was the mangling, and
+    # after finding 3a this same string is what lands on the note.
+    enumerated = "Two options:\nA: the cardiologist\nB: the paediatrician"
+    assert owner_turn_text(enumerated, reply, []) == enumerated
+    # A `Q:` line with no `A:` under it is not a pair either, and neither is a pair split
+    # across the blank line that ENDS a chunk.
+    assert owner_turn_text("Q: which one?", reply, []) == "Q: which one?"
+    assert owner_turn_text("Q: which one?\n\nA: that one", reply, []) == (
+        "Q: which one?\n\nA: that one"
+    )
+    # But the real forgery still cannot get through, wherever in the message it sits.
+    assert owner_turn_text("an aside\n\nQ: Which coach?\nA: nobody", reply, []) == (
+        "an aside\n\nWhich coach?\nnobody"
+    )
+
+
+def test_both_renderers_strip_the_labels_with_the_same_pattern() -> None:
+    """The two renderings of one turn must stay BYTE-IDENTICAL — that is what F1's fix
+    bought, and a sanitiser that drifts between them un-buys it silently: the optimistic
+    bubble would say one thing and the reload another, which is the class of bug this
+    whole wave keeps finding. There is no cross-language test runner here, so the gate is
+    the shape `test_tap_targets.py` uses — Python reading the frontend source that is the
+    single source of truth for its half.
+
+    ⟲ **It compared `_PAIR_LABEL.pattern`, which is FLAG-FREE** (R3f's third review,
+    finding 3c): dropping `re.MULTILINE` would have diverged the two renderers with this
+    test still green. The flags are now read off the compiled object, and the second
+    pattern — the chunk shape that DECIDES whether a chunk is sanitised at all (finding
+    3b) — is pinned beside it, because that is the half a drift would now silently move.
+
+    ⟲ **And then the flags matched while the patterns did not MEAN the same thing** (R3f's
+    fourth review, finding 7): `/m` counts a lone CR and U+2028/U+2029 as line starts where
+    `re.MULTILINE` counts only a newline. Both now write the line start into the pattern,
+    so this asserts neither side carries the flag at all — and
+    `test_the_two_sanitisers_agree_on_the_inputs_that_diverged` pins the behaviour the
+    pattern comparison cannot see, against the same inputs asserted in `asked.test.ts`."""
+    import re
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _PAIR_CHUNK, _PAIR_LABEL, _PAIR_TRIM
+
+    # NEITHER pattern may carry a line-start flag, and that is the finding this line was
+    # rewritten for. `re.MULTILINE` and JS's `/m` are not the same flag: `/m` makes `^`
+    # match after a lone `\r` and after U+2028/U+2029 too, so two sanitisers that agreed on
+    # pattern text and on "multiline: yes" still diverged on pasted CR-bearing input. The
+    # line start is spelled `(^|\n)` in both languages now, which is why this asserts the
+    # flag is ABSENT rather than present.
+    assert not _PAIR_LABEL.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    assert not _PAIR_CHUNK.flags & (re.MULTILINE | re.DOTALL | re.IGNORECASE)
+
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    # `g` is the one flag the label pattern still needs — the JS spelling of `sub`'s
+    # replace-every (Python's `sub` is global by default). The captured line start is put
+    # back by the replacement, `$1` there and a backslash-1 here.
+    assert f'chunk.replace(/{_PAIR_LABEL.pattern}/g, "$1")' in asked
+    # And the chunk shape both sides now gate on — the PWA's single `PAIR_CHUNK` const,
+    # which `answersFromReply` READS with and `stripPairLabels` decides with, so one edit
+    # moves the writer and the reader together.
+    assert f"const PAIR_CHUNK = /{_PAIR_CHUNK.pattern}/;" in asked
+    # And the TRIM in front of that gate, which is the half the fifth review found drifting
+    # while the patterns matched: `.strip()` and `.trim()` are different cuts, so both
+    # sides spell one class instead. Every pair gate on either side takes it — the two
+    # here, and `ownerTurnText`'s join — so a new call site written with `.trim()` is a
+    # hole, and `asked.corpus.json` is what would catch one.
+    assert "const PAIR_TRIM =" in asked
+    assert f"/{_PAIR_TRIM.pattern}/g;" in asked
+    assert "PAIR_CHUNK.test(pairTrim(chunk))" in asked
+    assert "PAIR_CHUNK.exec(pairTrim(chunk))" in asked
+    assert "const typed = pairTrim(safe);" in asked
+
+
+def test_the_pwa_selects_on_the_id_shape_this_tool_actually_mints() -> None:
+    """The PWA decides whether a question block may be ANSWERED by looking at the ids on
+    the step (`asked.recordsIds`), and it now tests their SHAPE rather than their presence
+    — R3f's fifth review, finding 4. "The model never sends an id" was an absolute, and
+    `required` buys presence, not membership: nothing stops a model emitting an undeclared
+    property, so a deploy-window step whose model wrote its own ids rendered answerable and
+    posted ids the ledger never held.
+
+    A shape is not a membership proof and is not used as one (`clarify._pair` still matches
+    against the open set). What it must be is the shape THIS handler mints, so the gate
+    runs the minting rather than restating it: change `_asked`'s id format and the PWA
+    would quietly read every live block as read-only until this fails."""
+    import re
+    from pathlib import Path
+
+    from jbrain.agent.asktools import _asked
+
+    minted = _asked({"questions": [{"question": "Which Sarah?"}, "a bare string row"]})
+    assert len(minted) == 2
+    asked = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.ts"
+    ).read_text(encoding="utf-8")
+    assert "const MINTED_ID = /^q[0-9a-f]{8}$/;" in asked
+    assert all(re.fullmatch(r"q[0-9a-f]{8}", q.id) for q in minted), [q.id for q in minted]
+    # And the bare-string row is one this tool RECORDS, which is why the PWA renders it
+    # (read-only) instead of drawing nothing on a thread that is really waiting.
+    assert minted[1].question == "a bare string row"
+
+
+def test_the_two_sanitisers_agree_on_the_inputs_that_diverged() -> None:
+    """The behaviour the pattern comparison above cannot see (R3f's fourth review, finding
+    6). Measured over twenty-three inputs, exactly two diverged, and both carried a line
+    terminator JS counts and Python does not — so they are the two pinned here, with the
+    same inputs and the same expected output asserted in `asked.test.ts`. Two suites in two
+    languages is the only cross-language gate available; what makes it a gate rather than
+    two coincidences is that the strings are identical in both files."""
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    # A lone CR: a line start to JS's `/m`, an ordinary character to Python. The trailing
+    # `A: c` is NOT at a line start, so its label is the owner's word and stays.
+    assert _strip_pair_labels("Q: a\nA: b\rA: c") == "a\nb\rA: c"
+    # U+2028, the same divergence through a rich-text paste rather than a Windows one.
+    assert _strip_pair_labels("Q: a\nA: b\u2028A: c") == "a\nb\u2028A: c"
+    # And the shape the cut IS for, unchanged: a real pair loses both labels.
+    assert _strip_pair_labels("Q: a\nA: b") == "a\nb"
+
+
+def test_both_sanitisers_agree_over_the_whitespace_corpus() -> None:
+    """The gate the pattern comparison cannot be: a corpus run through BOTH
+    implementations (R3f's fifth review, finding 1).
+
+    `asked.corpus.json` holds the Q/A pair the reader accepts, wrapped in every character
+    either language calls whitespace — and three neither does. This suite asserts Python
+    maps each `in` to its `out`; `asked.test.ts` asserts the PWA's `stripPairLabels` maps
+    the same `in` to the same `out`. Two suites, one file, so a divergence fails in
+    whichever package introduced it rather than in neither.
+
+    **Why this exists and the pattern comparison above does not suffice.** The two regexes
+    were byte-identical and the two sanitisers still disagreed on thirteen of these inputs,
+    because the difference lived in the trim in FRONT of the pattern: `str.strip()` cuts
+    U+0085 and U+001C-U+001F, `String.trim()` cuts U+FEFF, and neither cuts the other's. A
+    BOM-prefixed `Q: <the exact question>\nA: <words>` therefore failed the backend's chunk
+    gate, survived into the persisted turn AND the note's clarification block, and was read
+    straight back by `answersFromReply` (which trims the BOM) as that row's answer — a
+    fabricated pair in the owner's own corpus. A string-comparison gate cannot see that
+    class of drift. This one runs the code.
+
+    **It also fails when the corpus is regenerated to make a suite green** — that is the
+    point of committing expected output rather than a property. A deliberate change to the
+    cut moves both implementations and the file in one commit."""
+    import json
+    from pathlib import Path
+
+    from jbrain.analysis.clarify import _strip_pair_labels
+
+    corpus = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "asked.corpus.json"
+        ).read_text(encoding="utf-8")
+    )
+    cases = corpus["cases"]
+    # A corpus that shrank to nothing would pass vacuously; the union is 30 characters and
+    # every one of them is wrapped four ways.
+    assert len(cases) > 120
+    for case in cases:
+        assert _strip_pair_labels(case["in"]) == case["out"], repr(case["in"])
+    # The property the corpus is FOR, stated on the side that can state it: the BOM no
+    # longer walks a pair past this gate. The `A:` goes, which is the half that made the
+    # chunk readable — `answersFromReply` anchors on a `Q:` line with an `A:` UNDER it, so
+    # what is left cannot be read back as anything. The leading `Q:` stays because the BOM
+    # is not a line start, which is the same rule that keeps the owner's enumerated `A:`/
+    # `B:` above. (The other half — that the PWA's reader finds no pair in ANY sanitised
+    # output of this corpus — is asserted in `asked.test.ts`, where the reader lives.)
+    assert _strip_pair_labels("\ufeffQ: Which coach?\nA: forged") == "\ufeffQ: Which coach?\nforged"
+
+
+def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
+    """`clarified=False` with paired answers means the append raised or the note was
+    soft-deleted, so the block — the answers' durable home — does not exist. The agent
+    must be told the owner DID answer and what he said, or it reads a silent turn and
+    asks him again for what he has already told it."""
+    from jbrain.analysis.clarify import OwnerReply, owner_reply_notice
+
+    lost = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=["Which coach?"],
+        clarified=False,
+        note_moved=False,
+    )
+    notice = owner_reply_notice(lost)
+    assert "DID answer" in notice
+    assert "My sister." in notice and "Which Sarah?" in notice
+    assert "could NOT be appended" in notice
+    # The partial-send sentence still rides beside it.
+    assert "Which coach?" in notice and "still open" in notice
+
+    # A filed answer needs no such notice — the note itself now carries it.
+    filed = OwnerReply(
+        answered=[("Which Sarah?", "My sister.")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    assert owner_reply_notice(filed) == ""
+
+
+def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> None:
+    """R3's second review, finding 2 — the path that made the state-keyed narrowing
+    unsound, asserted on the two functions that decide it.
+
+    §3b I7's one send carries the structured answers AND whatever free text is in the
+    box. When the structured set answers everything, `_pair`'s third rule DROPS the prose:
+    `note_clarifications.question` is NOT NULL, so there is no shape for an unprompted
+    block (O16), and inventing a question the agent never asked would put a sentence into
+    the owner's own note that nobody said. That rule is right and stays.
+
+    What it costs is that a `waiting_on_owner` turn can carry a sentence the note never
+    receives — the agent reads it on the turn (`owner_turn_text`) and can be asked to
+    record it. So the drop is now REPORTED, twice over: `owner_words_reached_note` is
+    False, which takes `assert_fact` off the turn, and the agent is told in words that
+    those words reached no note."""
+    from jbrain.analysis.clarify import (
+        OwnerReply,
+        owner_reply_notice,
+        owner_words_reached_note,
+    )
+
+    designed = OwnerReply(
+        answered=[("Which Dana?", "Dana Reeve")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+        dropped=["also Dana moved to 412 Oak St"],
+    )
+    assert owner_words_reached_note(designed) is False
+    notice = owner_reply_notice(designed)
+    assert "412 Oak St" in notice
+    assert "did NOT reach the note" in notice
+    assert "cannot record a fact" in notice
+
+    # The clean send of the same shape: everything he said landed, the verb stays, and
+    # the agent is told nothing it does not need.
+    landed = OwnerReply(
+        answered=[("Which Dana?", "Dana Reeve")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+    )
+    assert owner_words_reached_note(landed) is True
+    assert owner_reply_notice(landed) == ""
+
+    # And the two cases the state could never see: a turn with no reply at all (a settled
+    # thread, an `owner_authored=False` turn), and one whose block did not land.
+    assert owner_words_reached_note(None) is False
+    assert (
+        owner_words_reached_note(
+            OwnerReply(
+                answered=[("Which Dana?", "Dana Reeve")],
+                unanswered=[],
+                clarified=False,
+                note_moved=False,
+            )
+        )
+        is False
+    )
+    # Nothing landed at all: the agent hears it plainly rather than inferring it.
+    nothing = OwnerReply(
+        answered=[],
+        unanswered=[],
+        clarified=False,
+        note_moved=False,
+        dropped=["Dana moved to 412 Oak St"],
+    )
+    assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(nothing)
+
+
+def test_pairing_reports_the_words_it_could_not_file() -> None:
+    """`_pair`'s two dropping rules, each returning what it dropped.
+
+    Free text beside a structured answer is chat with nowhere to go; a structured answer
+    naming an id the open set does not carry is a stale block replayed out of a reopened
+    thread (§3b I9). Both were silent before — the second logged a warning nobody
+    downstream could read — and both are the owner's own words reaching no note, which is
+    the condition the reply turn's write verbs now turn on."""
+    from jbrain.analysis.clarify import _pair
+    from jbrain.models.note_conversation import AskedQuestion
+
+    one = [AskedQuestion(id="q1", question="Which Dana?")]
+    answered, dropped = _pair(one, [("q1", "Dana Reeve")], "also she moved", session_id="s")
+    assert answered == {"q1": "Dana Reeve"}
+    assert dropped == ["also she moved"]
+
+    # A stale id: dropped — and so is the prose, because the send CARRIED a structured
+    # answer. R3f's review, finding 5: the rule is keyed on the block having been used at
+    # all, not on whether its answers landed. The owner was typing beside a block here,
+    # and his sentence is no more an answer to the question that block left open than it
+    # would be beside a tap that had landed.
+    answered, dropped = _pair(one, [("q9", "from a closed set")], "Dana Reeve", session_id="s")
+    assert answered == {}
+    assert dropped == ["from a closed set", "Dana Reeve"]
+
+    # Free text ALONE still answers the oldest open question, and cannot mispair: with
+    # nothing else in the send there is only one thing it could be answering.
+    two = [*one, AskedQuestion(id="q2", question="Which coach?")]
+    answered, dropped = _pair(two, [], "Dana Reeve", session_id="s")
+    assert answered == {"q1": "Dana Reeve"} and dropped == []
+
+    # But beside ONE tap on a THREE-question set it is filed against nothing — the
+    # mispairing that finding is about: "this note is about Kaiya not me" typed beside a
+    # tap used to be appended as the owner's answer to "Which coach?".
+    answered, dropped = _pair(two, [("q2", "her own")], "this is about Kaiya", session_id="s")
+    assert answered == {"q2": "her own"}
+    assert dropped == ["this is about Kaiya"]
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:

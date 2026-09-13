@@ -26,8 +26,7 @@ from jbrain.ingest.emr.reconcile import reconcile
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
-from tests.integration.test_apply_intent_pg import _load_chunks
-from tests.integration.test_extraction_pg import ingest, make_note, maker  # noqa: F401
+from tests.integration.pg_fixtures import _load_chunks, ingest, make_note, maker  # noqa: F401
 from tests.integration.test_rls import database_url  # noqa: F401
 
 pytestmark = [
@@ -125,6 +124,24 @@ async def test_aria_reprint_reconciles_and_parks(maker, tmp_path):  # noqa: F811
         maker, SYSTEM_CTX, note_id=uuid.UUID(note_id), note_domain="health", parked=rec.parked
     )
     assert again == 0
+
+    # ...and dismissing it is a decision, not a snooze: the probe spans ALL statuses,
+    # so the next `emr_parse` run does not re-file the card the owner already closed.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "UPDATE app.review_items SET status = 'dismissed'"
+                " WHERE kind = 'low_confidence' AND payload->>'subkind' = 'ocr_unreconciled'"
+                " AND payload->>'note_id' = :nid"
+            ),
+            {"nid": note_id},
+        )
+    assert (
+        await file_parked_cards(
+            maker, SYSTEM_CTX, note_id=uuid.UUID(note_id), note_domain="health", parked=rec.parked
+        )
+        == 0
+    )
 
     async with scoped_session(maker, SYSTEM_CTX) as s:
         # One platelet row for the 2021 draw — the ARIA reprint corroborated, not duplicated.
