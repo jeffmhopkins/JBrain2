@@ -33,6 +33,28 @@ describe("Launcher tile navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("ops");
   });
 
+  // The pet-face endpoint preview is its OWN button, distinct from "Pet" (which is the
+  // phone remote for the wall). They were briefly adjacent under Knowledge sharing one icon,
+  // which made them read as one feature with two names.
+  it("routes the Pet face card to the endpoint preview", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
+    expect(onNavigate).toHaveBeenCalledWith("petface");
+  });
+
+  it("keeps Pet and Pet face as two separate buttons", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pet" }));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
+    expect(onNavigate).toHaveBeenCalledWith("petface");
+    expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
   it("routes the Data card to its launcher screen", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
