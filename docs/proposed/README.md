@@ -67,33 +67,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   re-exporting the moved private helpers from `deep_research` so the tests' imports still
   resolve. Its own PR, done in a git-push-capable session. Follows from the scratchpad work
   (PR #1049).
-- `DITOO_PLAN.md` — feasibility + build sketch for driving the owner's **Divoom Ditoo**
-  (16x16 pixel Bluetooth speaker) from the box. Verdict: the display half is integrable and
-  fits the SDR-shaped hardware pattern; the audio half is not (the box has no audio stack at
-  all, and A2DP needs host packages the no-terminal update path cannot install). Three hard
-  parts: Bluetooth sockets only work in the **initial network namespace**, so the sidecar
-  needs `network_mode: host` and forfeits the `internal: true` egress lock that `radio`/
-  `render` rely on; the sidecar therefore **ships its own BlueZ** rather than asking the
-  owner to apt-install one (CLAUDE.md #10); and pairing is driven over BlueZ's D-Bus API
-  from the PWA. Gated on a **free blocking probe (D0)** — the shipped supervisor `/usb`
-  inventory already answers "does this box have a Bluetooth radio at all?", exactly as SDR
-  S0a answered it for the dongle. Records why the obvious escape hatch is closed (§1.1):
-  the USB-C port is **power only**, Divoom ships no desktop app, and every reverse-engineered
-  implementation is RFCOMM-only — so there is no wired route that would collapse this into
-  the SDR pattern. **§5 corrects an earlier draft that scoped audio out**: `bluez-alsa` needs
-  no host sound server, so the one sidecar carries display (SPP), voice out (A2DP) and voice
-  in (HFP/mSBC at 16 kHz — whisper's native rate), and the §4 cost is paid once for the whole
-  device. §0.2 surveys the alternatives against the owner's real spec — pixel art + wireless +
-  speaker + mic in one small object — and finds nothing shipping that hits all four with an
-  open API. Payoff waves are **JPet on the panel** (one more `PetBroadcaster` subscriber) and
-  **D6/D7**, a voice endpoint in the room off the shipped Kokoro + whisper services.
-  **§4.5 is the recommended shape:** an **ESP32 bridge** beside the speaker holds the
-  Bluetooth link, so the box talks Wi-Fi/MQTT (on the broker already in the compose) and
-  §4.1-§4.4 all evaporate — no BlueZ, no host-netns sidecar, no host modules, no pairing UI,
-  no range limit. The display half is off-the-shelf (`esp32-divoom`, browser-flashed, Ditoo
-  listed, classic ESP32 only — S3/C3/C6 are BLE-only); the audio half is net-new firmware
-  whose Wi-Fi/BT coexistence must be measured. Best mod: put an I2S mic on the bridge rather
-  than use the Ditoo's, for wideband capture and a clean AEC reference.
 - `ROOM_ENDPOINT_PLAN.md` — **supersedes `DITOO_PLAN.md`**, and the hardware is ordered
   (2 × Waveshare ESP32-S3-Touch-AMOLED-1.8): a small AMOLED satellite that is the box's face
   and ears in a room. **No Bluetooth anywhere**, so the whole §4 of the Ditoo plan evaporates;
@@ -107,7 +80,9 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `Principal(kind='device_key')`, the substrate MQTT already reuses. Net-new: firmware, one
   protocol, renderers, an audio round-trip. Two units by design: one bench, one deployed, and
   **OTA is a W1 feature** because rule 10 forbids a USB cable being the update path.
-_(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
+_(`DITOO_PLAN.md` was superseded by `ROOM_ENDPOINT_PLAN.md` when the owner dropped the Ditoo
+for two Wi-Fi AMOLED endpoints, and now lives in `../archive/`.
+The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `DEEP_RESEARCH_TOOL_PLAN.md`, and

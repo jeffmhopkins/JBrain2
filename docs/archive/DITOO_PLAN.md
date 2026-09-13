@@ -1,18 +1,24 @@
-# Divoom Ditoo on the box — feasibility + build sketch (proposed)
+# Divoom Ditoo on the box — feasibility + build sketch
 
-> **Status:** Proposed (icebox — **superseded**) · **Last verified:** 2026-09-13
+> **Status:** Superseded 2026-09 · **Superseded-by:** `../proposed/ROOM_ENDPOINT_PLAN.md`
 
-> **Superseded by `ROOM_ENDPOINT_PLAN.md`.** The owner's goal (§0.2 — pixel art, wireless,
-> speaker, mic in one object) is now being met by two Waveshare ESP32-S3-Touch-AMOLED-1.8
-> endpoints, which carry no Bluetooth at all and so delete §4 entirely. This doc is kept for
-> its findings — the netns constraint (§4.2), the no-terminal host-mutation limits (§4.3),
-> the `bluez-alsa` correction (§5) and the hardware survey (§0.2) all outlive the design.
+> **The device is out of the picture entirely** — the owner cancelled it rather than keep it
+> as a Bluetooth speaker, so nothing here is pending. The goal it chased (§0.2 — pixel art,
+> wireless, speaker and microphone in one small object) is met instead by two Waveshare
+> ESP32-S3-Touch-AMOLED-1.8 endpoints, which carry no Bluetooth at all and so delete §4
+> outright, along with the range limit, the one-link-at-a-time contention with the owner's
+> phone, the reverse-engineered protocol and the vendor-OTA risk.
+>
+> Archived for its findings rather than its design. Four outlive it:
+> **§1.1** the USB question, closed with evidence; **§4.2** Bluetooth sockets work only in the
+> initial network namespace, so a BT sidecar cannot use the `internal: true` egress lock that
+> `radio`/`render` rely on; **§4.3** what `update-inner.sh` can and cannot do to the host from
+> the PWA path (it writes files, loads/unloads modules and unbinds drivers — it cannot `apt`);
+> and **§5** the correction that `bluez-alsa` needs no host sound server, which is the general
+> fact, not a Ditoo one. **§0.2** also holds the 2026-09 survey of small pixel/voice hardware.
 
-**Status: proposed / icebox.** Nothing built, no roadmap slot. Written to answer one
-owner question — *"I've ordered a Divoom Ditoo; can we integrate it on the server, and
-how?"* — with a real answer rather than a shrug. When picked up, reconcile with the
-`CLAUDE.md` non-negotiables, get a `docs/ROADMAP.md` slot, and promote out of
-`proposed/` (per `docs/proposed/README.md`).
+This doc records the design as it stood when the device was dropped; it is not maintained.
+Section numbers referenced above are unchanged from the final revision.
 
 ## 0. The verdict
 

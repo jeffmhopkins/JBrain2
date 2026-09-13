@@ -4,8 +4,9 @@
 
 **Status: proposed / icebox.** Nothing built, no roadmap slot — but unlike most of this
 folder, **the hardware is ordered** (two units), so this is a plan against a real device
-rather than a thought experiment. Supersedes `DITOO_PLAN.md`, which chased the same goal
-through Bluetooth and paid for it (that doc is kept for its findings, not its design). When
+rather than a thought experiment. Supersedes `../archive/DITOO_PLAN.md`, which chased the same
+goal through Bluetooth and paid for it; **the Ditoo itself is out of the picture** — cancelled,
+not retained as a speaker — and that doc is archived for its findings, not its design. When
 picked up, reconcile with the `CLAUDE.md` non-negotiables, get a `docs/ROADMAP.md` slot, and
 promote out of `proposed/`.
 
@@ -37,7 +38,7 @@ Three properties of this specific board carry the design:
 
 ## 2. Why this deletes most of the Ditoo plan
 
-The entire §4 of `DITOO_PLAN.md` — the BT-radio presence gate, the network-namespace
+The entire §4 of `../archive/DITOO_PLAN.md` — the BT-radio presence gate, the network-namespace
 constraint, a containerised BlueZ, host module loads, a D-Bus pairing UI — existed because
 the *box* had to speak Bluetooth. **There is no Bluetooth anywhere in this design.** The
 endpoint is the endpoint; it talks Wi-Fi to the api like any other client.
