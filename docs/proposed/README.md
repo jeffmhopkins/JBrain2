@@ -87,6 +87,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   speaker + mic in one small object — and finds nothing shipping that hits all four with an
   open API. Payoff waves are **JPet on the panel** (one more `PetBroadcaster` subscriber) and
   **D6/D7**, a voice endpoint in the room off the shipped Kokoro + whisper services.
+  **§4.5 is the recommended shape:** an **ESP32 bridge** beside the speaker holds the
+  Bluetooth link, so the box talks Wi-Fi/MQTT (on the broker already in the compose) and
+  §4.1-§4.4 all evaporate — no BlueZ, no host-netns sidecar, no host modules, no pairing UI,
+  no range limit. The display half is off-the-shelf (`esp32-divoom`, browser-flashed, Ditoo
+  listed, classic ESP32 only — S3/C3/C6 are BLE-only); the audio half is net-new firmware
+  whose Wi-Fi/BT coexistence must be measured. Best mod: put an I2S mic on the bridge rather
+  than use the Ditoo's, for wideband capture and a clean AEC reference.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,

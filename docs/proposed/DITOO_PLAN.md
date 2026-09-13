@@ -286,6 +286,65 @@ The status report should follow the SDR probe's discipline of distinguishing *ab
 *present-but-not-usable*: **no radio / radio but nothing paired / paired but not connected
 (likely the phone holds it) / connected**.
 
+### 4.5 The ESP32 bridge — the variant that deletes §4.1 through §4.4
+
+Put a **classic ESP32** next to the Ditoo, let *it* hold the Bluetooth link, and talk to it
+from the box over Wi-Fi. Every hard part above is a consequence of the box owning the
+Bluetooth radio; hand that job to a $8 board and they all evaporate:
+
+| Hard part | With the ESP32 bridge |
+|---|---|
+| §4.1 Does the box have a BT radio? | **Moot** — the bridge has one. The D0 gate disappears. |
+| §4.2 Bluetooth sockets can't cross a netns | **Gone** — the box speaks HTTP/MQTT over Wi-Fi. No `network_mode: host`, no lost `internal: true`. |
+| §4.3 Who ships BlueZ / host modules | **Gone** — no BlueZ, no `btusb`, no `host_module_load`, nothing on the host. |
+| §4.4 Pairing with no terminal | **Gone** — pairing lives in the bridge's NVS config, set from its web flasher. |
+| ~10 m range (§6) | **Gone** — the bridge sits beside the speaker; only Wi-Fi has to reach the box. |
+| The privileged sidecar itself | **Gone** — a pinned-URL client like `sdr_url`, or MQTT. |
+
+**The display half is largely off the shelf.** `d03n3rfr1tz3/esp32-divoom` is exactly this
+bridge: it lists **Ditoo** among supported devices, accepts commands over **Serial, TCP and
+MQTT**, and ships a **browser-based web flasher** that writes config to NVS with no
+toolchain — which is precisely the right shape for an owner with no terminal (rule 10). Note
+its own constraint: *"Bluetooth Classic only exists on the classic ESP32"*, so this must be
+an original ESP32 (`esp32dev`), **not** an S3, C3, C6 or H2 — those are BLE-only and cannot
+speak SPP, A2DP or HFP at all, whatever a search result may tell you.
+
+Better still, MQTT means it can ride the **Mosquitto broker this repo already ships** behind
+the `mqtt` profile: the api publishes a frame to a topic and the bridge relays it. No new
+container, no new transport.
+
+**The audio half is net-new firmware.** esp32-divoom is display-only. ESP-IDF does expose
+A2DP **source** and HFP **AG** on the classic ESP32, so it is possible — but the classic
+ESP32 shares **one 2.4 GHz radio between Wi-Fi and Bluetooth**, and receiving an audio
+stream over Wi-Fi while re-transmitting it over BT on that same radio is exactly where
+coexistence bites. Treat throughput and dropouts as something to **measure on the bench**,
+not assume.
+
+**The mod that makes it good: put the microphone on the bridge, not the Ditoo.** An I2S MEMS
+mic (INMP441, ~$3) soldered to the ESP32 beats the Ditoo's own mic on every axis:
+
+- **wideband 16 kHz** instead of HFP's narrowband, straight into the shipped whisper;
+- **no A2DP↔HFP switching**, so playback stays at music quality while listening (§5 limit 2
+  disappears);
+- **one less Bluetooth profile** to juggle on a tight radio — drop HFP AG entirely;
+- **placement is yours**, unlike a mic buried in a speaker enclosure;
+- and it gives server-side echo cancellation **a known reference signal** — the box knows
+  exactly what it sent to the speaker — which is far more tractable than the blind AEC that
+  §5 limit 1 otherwise forces.
+
+The Ditoo then becomes a pure *output* device (pixels + speaker) and the bridge is the ears.
+
+**What does NOT get better:** the Ditoo still accepts one Bluetooth link at a time, so the
+owner's phone still steals it (§6); the protocol is still reverse-engineered; and custom
+firmware is a new maintenance surface — an OTA that bricks the bridge needs physical access,
+which is the one thing this owner does not have. The web flasher softens that, but it is
+still a trip to the device.
+
+**Do not open the Ditoo.** Tapping the panel internally means reverse-engineering an unknown
+internal bus to replace a link that already works over the air, plus re-wiring the amp and
+mic, irreversibly. The only internal mod worth considering is cosmetic: steal 5 V from the
+USB-C input so the bridge hides inside the case and it stays one object.
+
 ## 5. Audio: in scope after all — and the earlier "no audio stack" objection was wrong
 
 An earlier draft of this doc scoped audio out on the grounds that the box has no userspace
@@ -363,6 +422,16 @@ Waves, in the repo's usual shape (`docs/reference/PROCESS.md`). D0 is a hard gat
 | **D6** | **Voice out.** Add `bluealsad` to the D1 sidecar, A2DP playback, and a `/speak` endpoint the api feeds from the shipped Kokoro TTS. | No host audio (§5). Independent of D3-D5. |
 | **D7** | **Voice in.** HFP capture negotiating **mSBC** (16 kHz — whisper's native rate), into the whisper.cpp already in `tts-stt`. Start **half-duplex** (mic gated while speaking); full-duplex barge-in needs `webrtc-audio-processing` in the sidecar and is its own wave. | The quality ceiling of the whole plan (§5). |
 
+**Or, on the ESP32-bridge variant (§4.5) — the recommended shape.** D0, D1, D6 and D7 are all
+replaced; D2-D5 survive unchanged because they sit above the transport:
+
+| Wave | What | Notes |
+|---|---|---|
+| **E1** | Flash `esp32-divoom` to a **classic ESP32** from its web flasher, point it at the `mqtt`-profile broker, publish a test frame from the api. | Mostly config. No box-side C, no new container, no host changes. |
+| **E2** | D2-D5 as written (client/settings, renderers, JPet, workflow action) against the MQTT topic instead of a sidecar URL. | Unchanged above the transport. |
+| **E3** | **Audio-out spike.** A2DP source on the bridge, fed Kokoro audio over Wi-Fi. **Measure Wi-Fi/BT coexistence before committing** (§4.5). | The one place the hardware gets a vote. |
+| **E4** | **Ears on the bridge.** I2S MEMS mic → Wi-Fi → the shipped whisper, with server-side AEC using the TTS as reference. | Beats the Ditoo's HFP mic on every axis (§4.5). |
+
 Explicitly out of scope: keyboard/button input (§6 — the community work is write-only, so
 treat device→box input as unproven).
 
@@ -381,7 +450,11 @@ hardware gets a vote.
 
 **Keep the device** if the owner wants one small object that does pixel art, sound and
 listening (§0.2) — nothing else on the market does, and the §4 cost is paid once for all
-three. Reach for a Wi-Fi panel only if the pixels alone matter (§0.1), and for a DIY ESP32
+three. **Prefer the ESP32 bridge (§4.5)** over teaching the box Bluetooth: it deletes §4.1
+through §4.4 outright, the display half is a browser-flashed off-the-shelf firmware, and it
+rides the MQTT broker already in the compose. The trade is an embedded-firmware maintenance
+surface, and an audio path that must be measured for Wi-Fi/BT coexistence before it is
+trusted. Reach for a Wi-Fi panel only if the pixels alone matter (§0.1), and for a DIY ESP32
 build only if audio quality outranks having a finished object.
 
 If the box has no radio, the decision is the owner's: a USB Bluetooth dongle solves
