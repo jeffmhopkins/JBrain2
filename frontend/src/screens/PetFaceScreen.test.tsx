@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PetState } from "../api/client";
+import { drawScene } from "../pet/draw";
+import { speak } from "./speech";
+
+// jsdom has no speechSynthesis; the pet's voice is mocked so the reply can be asserted.
+vi.mock("./speech", () => ({ speak: vi.fn(), ttsAvailable: () => true }));
 import { type PetFaceDeps, PetFaceScreen } from "./PetFaceScreen";
 
 // Canvas is jsdom-untestable, so the renderer is mocked and `getContext` stubbed — the
@@ -204,6 +209,121 @@ describe("PetFaceScreen", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // THE BUG THIS SURFACE SHIPPED WITH. A command reached the box and the box answered with a
+  // script, and the panel played none of it — it read only `script[0].emotion` for the face.
+  // Typing "dance" did nothing visible, which is what "commands don't work" looked like.
+  //
+  // The observable is what reaches the RENDERER, not the DOM: the caption and the pose live on
+  // the canvas, so asserting on `drawScene`'s scene is asserting on what the panel actually
+  // draws. (An earlier version of this test looked for the text "dance" in the document and
+  // passed for the wrong reason — it was finding the quick button of the same name.)
+  describe("plays the script the box returns", () => {
+    const danceScript: PetState["script"] = [
+      { action: "dance", duration_ms: 5000, emotion: "excited" },
+      { action: "sit", duration_ms: 5000 },
+    ];
+    const captions = () =>
+      vi
+        .mocked(drawScene)
+        .mock.calls.map(([, scene]) => scene.caption)
+        .filter(Boolean);
+
+    beforeEach(() => vi.mocked(drawScene).mockClear());
+
+    it("performs a script that arrives in a command response", async () => {
+      const sendPetCommand = vi.fn(async () => petState({ script: danceScript }));
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand,
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      fireEvent.change(screen.getByLabelText("Say to the pet"), { target: { value: "dance" } });
+      fireEvent.click(screen.getByText("Say"));
+      await waitFor(() => expect(captions()).toContain("dance"));
+    });
+
+    it("performs a script that arrives on the stream, not only one it asked for", async () => {
+      // Another surface — the phone Control screen, the wall, an automation — commanded the pet.
+      async function* oneFrame(): AsyncGenerator<PetState> {
+        yield petState({ script: danceScript });
+      }
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => oneFrame(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(captions()).toContain("dance"));
+    });
+
+    // A snapshot carries whatever script was last run. Performing it on open would make the pet
+    // do something nobody just asked for, every single time the screen is opened.
+    it("does not perform the snapshot's existing script on open", async () => {
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState({ script: danceScript })),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(screen.getByText(/2 step/)).toBeTruthy());
+      await waitFor(() => expect(vi.mocked(drawScene).mock.calls.length).toBeGreaterThan(1));
+      expect(captions()).not.toContain("dance");
+    });
+  });
+
+  // "tell me a joke" is not a keyword, so the box takes the LLM path and answers with SPEECH
+  // plus a small emote. The joke is the reply — and the audience cannot read, so a reply that
+  // is neither spoken nor shown has not been delivered. This screen said nothing at all.
+  describe("the pet's reply", () => {
+    beforeEach(() => vi.mocked(speak).mockClear());
+
+    it("speaks what the box says", async () => {
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand: vi.fn(async () =>
+          petState({ speech: "Why did the robot cross the road?" }),
+        ),
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      fireEvent.change(screen.getByLabelText("Say to the pet"), {
+        target: { value: "tell me a joke" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Say" }));
+      await waitFor(() => expect(speak).toHaveBeenCalledWith("Why did the robot cross the road?"));
+    });
+
+    // A reply rides every subsequent stream frame. Re-speaking it each time would make the pet
+    // repeat itself indefinitely.
+    it("says a given line once, however many frames carry it", async () => {
+      async function* twice(): AsyncGenerator<PetState> {
+        yield petState({ speech: "Beep boop!" });
+        yield petState({ speech: "Beep boop!" });
+      }
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => twice(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
+    });
+
+    // The snapshot carries the last thing the pet ever said. Speaking it on open would have the
+    // pet greet you with a joke from last Tuesday every time the screen is opened.
+    it("does not speak the snapshot's old reply on open", async () => {
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState({ speech: "an old line" })),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(screen.getByText(/emotion/)).toBeTruthy());
+      expect(speak).not.toHaveBeenCalled();
+    });
   });
 
   it("closes", () => {
