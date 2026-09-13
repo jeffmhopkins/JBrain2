@@ -10,6 +10,12 @@ not retained as a speaker — and that doc is archived for its findings, not its
 picked up, reconcile with the `CLAUDE.md` non-negotiables, get a `docs/ROADMAP.md` slot, and
 promote out of `proposed/`.
 
+> **Split, 2026-09-13.** The device-independent half — the face, the touch model, the voice
+> round-trip, the anti-boredom engine — moved to `../plans/PET_ENDPOINT_PWA_PLAN.md` and is being
+> built as a **PWA surface first**, so the product is in use before the panels arrive. What stays
+> here is firmware, I2S audio, OTA and the enclosure. That plan's P5 live trial **gates W6**: if a
+> wake word cannot hear a four-year-old on a phone's microphone, it will not hear him on this panel.
+
 ## 1. The hardware, as ordered
 
 **2 × Waveshare ESP32-S3-Touch-AMOLED-1.8**
