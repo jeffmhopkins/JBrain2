@@ -53,6 +53,59 @@ shrug. The Ulanzi/AWTRIX route is the only one on that table with no cloud in it
 None of this is device-specific above the renderer layer, so the panel can be swapped later
 without touching D3-D5.
 
+### 0.2 If the goal is a VOICE endpoint, this is the wrong plan entirely
+
+The owner's actual want turned out to be **a speaker *and* a microphone in the room** — the
+box's mouth and ears — with the pixel panel a bonus. That inverts everything above, because
+a Bluetooth speaker is a poor voice endpoint even after §4 is solved:
+
+- **Playback (A2DP)** needs a host userspace audio stack the box does not have and the
+  no-terminal update path cannot install (§5).
+- **Capture is worse.** A Bluetooth speaker exposes its mic only over **HSP/HFP**, which is
+  narrowband mono (8/16 kHz — telephone quality), and opening it *forces the speaker out of
+  A2DP* into that same low-quality mode for the duration. Full-duplex wideband voice over
+  Bluetooth Classic to a speaker is not a thing. (Whether the base Ditoo advertises
+  hands-free at all is unverified; it is not marketed as a speakerphone.)
+- **One link at a time** (§6) means the room endpoint and the owner's phone are exclusive.
+
+And note that swapping to a Wi-Fi *panel* (§0.1) makes this strictly worse: a Pixoo has
+neither speaker nor microphone.
+
+**What the box already has.** The voice loop is largely built, and its endpoint is a
+**browser**: `deploy/wall/pet.html` opens the room mic with `getUserMedia`, runs continuous
+wake-word listening, and does echo-cancelled **barge-in** detection (it subtracts the pet's
+own TTS and cuts it off when a child talks over it); read-aloud audio is served by the
+`tts-stt` container (Kokoro) and fetched same-origin by the kiosk; whisper.cpp for STT sits
+in that same container. One honest gap: the wake word and recognition run on the
+**browser's** Web Speech API (`frontend/src/screens/speech.ts`), which in Chrome is Google's
+cloud — on a box built for privacy that wants replacing with the on-box whisper the stack
+already ships.
+
+**The wired route that answers the original "why not USB?" question (§1.1) properly.** A
+**USB speakerphone** — a UAC device with a beamforming mic array and hardware echo
+cancellation — plugged into the box is the closest analogue to the SDR pattern we have:
+
+- `devices: - /dev/snd:/dev/snd` into a profiled sidecar, exactly like `/dev/bus/usb`;
+- **no host packages** — the kernel's `snd-usb-audio` autoloads and creates the device
+  nodes; ALSA userspace (`ffmpeg`, `alsa-utils`) ships *inside* the image, so PulseAudio /
+  PipeWire never enter the picture and rule 10 is satisfied;
+- **no netns constraint** (§4.2 is a Bluetooth problem, not an audio one), so the sidecar
+  can sit on `internal` behind the usual locks;
+- full-duplex wideband audio, no pairing, no range limit, no contention with a phone.
+
+Its one requirement is physical: the box must be within cable reach of the room (~5 m of
+USB, ~15 m with an active extension). If the box lives in a closet, the answer is instead a
+**browser in the room** — a cheap tablet in kiosk mode, which also gives the Wall and JPet a
+screen — or a **purpose-built network voice satellite** (HA Voice PE and similar: ESP32-S3,
+XMOS DSP, dual-mic array, on-device wake word, ~$59). The satellite is the best microphone
+of the three, but its firmware is Home-Assistant-shaped, so it needs a protocol bridge
+server-side, and that ecosystem is mid-transition between the Wyoming and ESPHome
+transports — verify before buying.
+
+**Recommendation: none of this plan.** Voice wants its own doc, built on `/dev/snd`
+passthrough and the shipped whisper + Kokoro services. Keep the Ditoo work here only if the
+pixel panel is wanted for its own sake.
+
 ---
 
 ## 1. What the hardware actually is
