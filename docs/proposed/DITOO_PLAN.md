@@ -24,6 +24,35 @@ If the first gate fails, everything below is dead until a ~$10 USB Bluetooth don
 plugged in — which is fine, but it is a physical act, and the owner runs this box
 remotely (`CLAUDE.md` #10).
 
+### 0.1 The hardware choice is the biggest lever in this plan
+
+Worth stating before anyone builds §7: **almost all of the cost here is the wireless
+link, not the pixels.** A small **Wi-Fi** panel with a local HTTP API on the LAN deletes,
+in one stroke, the sidecar container, BlueZ, the network-namespace constraint (§4.2), the
+host module loads (§4.3), the pairing UI (§4.4), the ~10 m range limit and the
+one-link-at-a-time contention with the owner's phone (§6). What survives is a pinned-URL
+client next to `sdr_url` and the renderers — **D2-D5 without D0 or D1**, and no wave where
+the hardware gets a vote.
+
+Concretely, if the device is being chosen rather than already owned:
+
+| Device | Canvas | Link | What it costs us |
+|---|---|---|---|
+| **Divoom Pixoo 16** | 16×16 | 2.4 GHz Wi-Fi, local HTTP API | A client + renderers. No sidecar at all. |
+| **Divoom Pixoo-Max** | 32×32 | Wi-Fi + BT | Same, with a roomier canvas. |
+| **Ulanzi TC001** + AWTRIX 3 | 32×8 | Wi-Fi, HTTP **and MQTT**, open firmware | Same, and it can ride the **`mqtt` profile broker this repo already ships**. Wrong aspect ratio for JPet. |
+| **Divoom Ditoo** (this plan) | 16×16 | Bluetooth Classic SPP only | Everything in §4. |
+
+Two caveats that cut the other way. Divoom's local API is officially documented only for
+the Pixoo-64 line — support on the 16/32 is **community-verified**, so confirm the unit is
+a Wi-Fi revision (it gets a LAN IP the app will show you) before relying on it. And any
+Divoom device is a **cloud-attached appliance on the LAN**: it talks to Divoom's servers,
+which on a box built around domain firewalls deserves a firewall rule or an IoT VLAN, not a
+shrug. The Ulanzi/AWTRIX route is the only one on that table with no cloud in it at all.
+
+None of this is device-specific above the renderer layer, so the panel can be swapped later
+without touching D3-D5.
+
 ---
 
 ## 1. What the hardware actually is
