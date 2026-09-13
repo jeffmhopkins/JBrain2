@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Room endpoint — four shapes on the real panel</title>
+<!--
+  MOCK: THE ROOM ENDPOINT, ROUND 1 (docs/proposed/ROOM_ENDPOINT_PLAN.md W3 - the GUI gate).
+
+  THE ASK, from the owner: "I think we need to create some interactive mock-up HTML files
+  that simulate the device / And then we can see about making little jpets on them / And how
+  the touch interface works."
+
+  THE DEVICE IS SIMULATED AT ITS REAL GEOMETRY. 2 x Waveshare ESP32-S3-Touch-AMOLED-1.8,
+  368x448, SH8601 driver, FT3168 capacitive touch. Everything below is drawn to a 368x448
+  canvas - the same framebuffer the firmware would hand to the panel - so nothing here is
+  achievable in the mock but not on the device.
+
+  THE MEASURED FACT THAT DECIDES THIS ROUND, and it is not what the plan assumed:
+
+      1.8" diagonal at 368x448  ->  29.0 mm x 35.3 mm, 322 ppi.
+
+  That is a SMARTWATCH PANEL. Roughly a postage stamp. Consequences the four shapes have to
+  answer to, not decorate around:
+    - A 16x16 pet at 23 px/cell fills the full 368 px width == 29 mm. The whole creature is
+      the size of a thumbnail. That is charming up close and invisible across a room.
+    - The 368x80 "caption strip" the plan cheerfully specified is 6.3 mm tall. It holds ONE
+      short line at a legible size. It is not a status bar and never will be.
+    - 12 px type is 0.95 mm tall. Unreadable. Nothing on this panel should be below ~28 px
+      (2.2 mm) and anything that matters wants 40 px+.
+    - Therefore: ONE THING AT A TIME, LARGE. Every shape here obeys that; they disagree about
+      WHICH one thing, and about what touch is FOR.
+  Hit "True physical size" in the panel before judging any of them. At 1:1 device pixels on a
+  desktop monitor the screen looks like a phone, and every one of these shapes looks better
+  than it is.
+
+  FOUR SHAPES, ONE STATE MODEL, ONE FILE. Flipping the switcher does not reset anything: the
+  same pet, in the same mood, mid-way through the same interaction, drawn four ways. That is
+  the only comparison worth having.
+
+    A  MATRIX      The panel pretends to be a 16x16 LED matrix. True black, 23 px cells, hard
+                   edges, one caption line. The Ditoo aesthetic, kept - on a screen that can
+                   actually do true black. Touch: the pet is the only target.
+    B  PORTHOLE    The panel is a window onto a creature drawn at full 368x448 resolution -
+                   smooth, big-eyed, tracking your finger. No grid, no chrome; UI appears only
+                   while touched. Touch: drag to pet it, and it follows.
+    C  FACE        Not a pet surface. One enormous state-driven face: the clock, or the
+                   listening ring, or one notification, or the pet - whichever the box most
+                   needs to say right now. Touch: tap advances, swipe dismisses.
+    D  ROOM        A 2D side-on room echoing the Wall's 3D one (bed, toybox, TV, synth), with
+                   the pet living in it. Touch: tap an object, the pet goes and does it - so
+                   the shipped command vocabulary becomes the interface.
+
+  WHAT IS SETTLED and appears identically in all four:
+    - THE STATE MACHINE is the endpoint's, not the pet's: idle / listening / thinking /
+      speaking / notify / muted. It comes from the box, and every shape must render all six.
+      Watch the same sequence in each shape before choosing.
+    - MUTED IS NOT A UI STATE, IT IS A PROMISE (ROOM_ENDPOINT_PLAN.md S5). When the mic is
+      muted the panel says so unmistakably and never stops saying so. When it is LISTENING it
+      says that just as loudly. There is no ambiguous middle, and no shape is allowed to make
+      the indicator pretty at the cost of making it obvious.
+    - NOTHING FIREWALLED RENDERS HERE. The notification carries a count and a category, never
+      a body. "3 things need you" is fine; the sentence is not. This panel sits in a room.
+    - THE PET IS THE BOX'S, NOT THE PANEL'S. jpet/ is server-authoritative and PetBroadcaster
+      already fans state to the Wall and the phone; an endpoint is one more subscriber. These
+      shapes render pet state, they never invent it. Forms match the Wall's: robot (default),
+      dog, cat, dragon.
+
+  WHAT THE OWNER DECIDES: which shape, and with it what the panel is FOR - a creature you keep
+  (A/B), a thing the box talks through (C), or a place the pet lives (D). Touch follows from
+  that answer; it is not a separate question.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:400 14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px 64px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:22px;font-weight:500;margin:0 0 4px}
+  .lede{color:var(--text-2);max-width:70ch;margin:0 0 4px}
+  .fact{color:var(--amber);max-width:70ch;margin:8px 0 20px;font-size:13px}
+  .fact b{color:var(--text)}
+
+  .switch{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}
+  .switch button{background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);
+    border-radius:12px;padding:9px 14px;font:500 14px system-ui;cursor:pointer;min-height:44px}
+  .switch button[aria-pressed="true"]{background:color-mix(in srgb,var(--steel) 13%,transparent);
+    color:var(--text);border-color:var(--steel)}
+  .switch button small{display:block;font-weight:400;font-size:12px;color:var(--text-3)}
+
+  .stage{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+
+  /* ---- the device ---- */
+  .device{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .bezel{background:#000;border-radius:14px;padding:9px;box-shadow:0 0 0 1px #303338, 0 10px 30px rgba(0,0,0,.6);
+    width:max-content;margin:0 auto}
+  canvas{display:block;border-radius:6px;background:#000;touch-action:none;cursor:pointer}
+  .devfoot{color:var(--text-3);font-size:12px;text-align:center;margin-top:10px}
+  .devfoot b{color:var(--text-2);font-weight:400}
+
+  /* ---- control panel ---- */
+  .panel{flex:1;min-width:290px;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .card h2{font:500 12px/1.4 system-ui;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);margin:0 0 12px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row button{flex:1 1 auto;min-height:44px;background:var(--surface-2);color:var(--text);
+    border:1px solid var(--border);border-radius:12px;padding:8px 12px;font:400 14px system-ui;cursor:pointer}
+  .row button:hover{border-color:var(--text-3)}
+  .row button.on{background:color-mix(in srgb,var(--green) 13%,transparent);border-color:var(--green)}
+  .row button.danger.on{background:color-mix(in srgb,var(--rose) 13%,transparent);border-color:var(--rose)}
+  label.chk{display:flex;align-items:center;gap:10px;min-height:44px;cursor:pointer;color:var(--text-2)}
+  label.chk input{width:18px;height:18px;accent-color:var(--steel)}
+  .state{font:500 14px system-ui;color:var(--text-2)}
+  .state b{color:var(--text)}
+  .touchdoc{color:var(--text-2);font-size:13px;margin:0}
+  .touchdoc li{margin:0 0 6px}
+  .touchdoc code{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;
+    padding:1px 5px;font-size:12px;color:var(--text)}
+  .log{font:400 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-3);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;
+    height:104px;overflow:auto}
+  .log b{color:var(--green);font-weight:400}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Room endpoint — four shapes on the real panel</h1>
+  <p class="lede">Waveshare ESP32-S3-Touch-AMOLED-1.8 · 368×448 · drawn to the same framebuffer the
+     firmware would hand the panel. One state model, four shapes; the switcher never resets it.</p>
+  <p class="fact"><b>1.8″ at 368×448 = 29.0 × 35.3 mm, 322 ppi.</b> This is a smartwatch panel, about
+     a postage stamp. A 16×16 pet at 23 px/cell is 29 mm across, the “caption strip” is 6.3 mm tall,
+     and 12 px type is 0.95 mm. One thing at a time, large. <b>Turn on “True physical size” before
+     judging any of these</b> — at 1:1 desktop pixels they all flatter themselves.</p>
+
+  <div class="switch" id="switch"></div>
+
+  <div class="stage">
+    <div class="device">
+      <div class="bezel"><canvas id="screen" width="368" height="448"></canvas></div>
+      <div class="devfoot" id="devfoot"></div>
+    </div>
+
+    <div class="panel">
+      <div class="card">
+        <h2>From the box</h2>
+        <div class="row" style="margin-bottom:8px">
+          <button id="b-wake">Wake word</button>
+          <button id="b-speak">Speak (TTS)</button>
+          <button id="b-notify">Notify</button>
+        </div>
+        <div class="row">
+          <button id="b-mute" class="danger">Mute mic</button>
+          <button id="b-idle">Back to idle</button>
+        </div>
+        <p class="state" style="margin:12px 0 0">State: <b id="statelbl">idle</b></p>
+      </div>
+
+      <div class="card">
+        <h2>The pet <span style="text-transform:none;letter-spacing:0">(server-authoritative)</span></h2>
+        <div class="row" style="margin-bottom:8px" id="forms"></div>
+        <div class="row" id="moods"></div>
+      </div>
+
+      <div class="card">
+        <h2>Panel</h2>
+        <label class="chk"><input type="checkbox" id="c-true"> True physical size (29 × 35 mm)</label>
+        <label class="chk"><input type="checkbox" id="c-grid"> Show the 23 px cell grid</label>
+        <label class="chk"><input type="checkbox" id="c-burn"> AMOLED burn-in guard (drift)</label>
+      </div>
+
+      <div class="card">
+        <h2>Touch, in this shape</h2>
+        <ul class="touchdoc" id="touchdoc"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Event log</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ───────────────────────────────────────────────────────────────────────────────
+// ONE STATE MODEL. Every shape reads this and only this; none of them own state.
+// It mirrors what the box would actually push: endpoint state + pet state.
+// ───────────────────────────────────────────────────────────────────────────────
+const S = {
+  shape: "A",
+  ep: "idle",              // idle | listening | thinking | speaking | notify | muted
+  muted: false,
+  heard: "",               // last transcript (shown, never stored)
+  says: "",                // what the box is saying
+  notif: null,             // {count, kind} — NEVER a body (S5: nothing firewalled renders here)
+  pet: { form:"robot", mood:"happy", x:0.5, y:0.5, action:"idle", tx:0.5, hop:0 },
+  touch: { down:false, x:0, y:0, t0:0, moved:false },
+  ripple: null,
+  t: 0,
+};
+const log = (m) => {
+  const el = document.getElementById("log");
+  const now = new Date().toLocaleTimeString([], {hour12:false});
+  el.insertAdjacentHTML("afterbegin", `<div><b>${now}</b> ${m}</div>`);
+};
+
+// ───────────────────────────────────────────────────────────────────────────────
+// PET SPRITES — 16×16, hand-authored, matching the Wall's creature set.
+// D outline · W body · C eye · A accent. Rendered at 23 px/cell = the full 368 width.
+// ───────────────────────────────────────────────────────────────────────────────
+const SPRITES = {
+  robot: [
+    "......DD........","......DC........","...DDDDDDDDDD...","..DWWWWWWWWWWD..",
+    "..DWCCWWWWCCWD..","..DWCCWWWWCCWD..","..DWWWWWWWWWWD..","..DWWWDDDDWWWD..",
+    "..DWWWWWWWWWWD..","...DDDDDDDDDD...","....DWWWWWWD....","..DDDWWWWWWDDD..",
+    "..DWDWWAAWWDWD..","..DWDWWWWWWDWD..","..DDDDWWWWDDDD..","....DD....DD...."],
+  dog: [
+    "................","..DD........DD..",".DWWD......DWWD.",".DWWDDDDDDDDWWD.",
+    ".DWWWWWWWWWWWWD.",".DWWCWWWWWWCWWD.",".DWWWWWWWWWWWWD.",".DWWWWWDDWWWWWD.",
+    ".DWWWWWWWWWWWWD.","..DDDWWWWWWDDD..","....DWWWWWWD....","...DWWWWWWWWD...",
+    "...DWWWWWWWWD...","...DWWWWWWWWD.D.","...DDWWWWWWDD...","....DD....DD...."],
+  cat: [
+    "..D..........D..",".DWD........DWD.",".DWWD......DWWD.",".DWWWDDDDDDWWWD.",
+    ".DWWWWWWWWWWWWD.",".DWCWWWWWWWWCWD.",".DWWWWWWWWWWWWD.",".DWWWWDWWDWWWWD.",
+    ".DWWWWWDDWWWWWD.","..DDWWWWWWWWDD..","....DWWWWWWD....","...DWWWWWWWWD..D",
+    "...DWWWWWWWWD.D.","...DWWWWWWWWDD..","...DDWWWWWWDD...","....DD....DD...."],
+  dragon: [
+    "...DD.......DD..","..DWWD.....DWWD.","..DWWDDDDDDDWWD.","..DWWWWWWWWWWWD.",
+    "..DWAAWWWWAAWWD.","..DWWWWWWWWWWWD.","..DWWWDDDDWWWWD.","..DWWWWWWWWWWWD.",
+    "...DDWWWWWWWDD..","....DWWWWWWD....","...DWWWWWWWWD...","..DWWWWWWWWWWD..",
+    "..DWWWWWWWWWWD..","..DDWWWWWWWWDD..","...DD......DD...","...DD......DD..."],
+};
+const PAL = {
+  robot:  {D:"#1b2530", W:"#7FA7C9", C:"#7BE0E8", A:"#C9A36A"},
+  dog:    {D:"#2a1f14", W:"#C9A36A", C:"#2a1f14", A:"#CF8A8F"},
+  cat:    {D:"#22242a", W:"#9AA0A8", C:"#8FBC9A", A:"#CF8A8F"},
+  dragon: {D:"#14251a", W:"#8FBC9A", C:"#C9A36A", A:"#C9A36A"},
+};
+// Blink: swap the eye rows for closed lids. Row indices differ per creature.
+const EYEROWS = { robot:[4,5], dog:[5], cat:[5], dragon:[4] };
+
+const cv = document.getElementById("screen");
+const ctx = cv.getContext("2d");
+const W = 368, H = 448, CELL = 23;   // 368/16 = 23 exactly — no scaling, no fractional pixels
+
+// ── shared drawing helpers ────────────────────────────────────────────────────
+const clear = (c="#000") => { ctx.fillStyle = c; ctx.fillRect(0,0,W,H); };
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect(x,y,w,h,r); }
+function text(s,x,y,{size=32,col="#E6E7E9",weight=500,align="center",font="system-ui"}={}){
+  ctx.fillStyle=col; ctx.textAlign=align; ctx.textBaseline="middle";
+  ctx.font=`${weight} ${size}px ${font},sans-serif`; ctx.fillText(s,x,y);
+}
+function clock(){ return new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",hour12:false}); }
+
+/** Draw the 16×16 sprite, pixel-exact. Shapes A, C and D share it; B does not use it. */
+function drawPet(cx, cy, cell, {blink=false, squash=0}={}){
+  const sp = SPRITES[S.pet.form], pal = PAL[S.pet.form];
+  const lids = EYEROWS[S.pet.form];
+  const sx = cx - cell*8, sy = cy - cell*8 + squash*cell*0.5;
+  ctx.save();
+  for (let r=0;r<16;r++){
+    const shut = blink && lids.includes(r);      // closed lid, not a deleted eye
+    const row = sp[r];
+    for (let c=0;c<16;c++){
+      const ch = row[c]; if (ch === ".") continue;
+      let col = (shut && ch === "C") ? pal.D : (pal[ch] || pal.W);
+      // mood tints the eyes without touching the palette elsewhere
+      if (ch==="C" && S.pet.mood==="sad")   col = "#7FA7C9";
+      if (ch==="C" && S.pet.mood==="excited") col = "#8FBC9A";
+      ctx.fillStyle = col;
+      // Integer row bounds, not fillRect(+0.5): a fractional squash leaves hairline seams
+      // across the sprite, and on a true-black AMOLED a seam reads as a dead LED row.
+      const h  = cell * (1 - squash*0.18);
+      const y0 = Math.round(sy + r*h), y1 = Math.round(sy + (r+1)*h);
+      const x0 = Math.round(sx + c*cell), x1 = Math.round(sx + (c+1)*cell);
+      ctx.fillRect(x0, y0, x1-x0, y1-y0);
+    }
+  }
+  ctx.restore();
+}
+
+/** The mute / listening promise (S5). Loud in both directions, never ambiguous. */
+function micBadge(y=18){
+  if (S.muted){
+    ctx.fillStyle="rgba(207,138,143,.16)"; roundRect(W/2-92,y,184,46,23); ctx.fill();
+    ctx.strokeStyle="#CF8A8F"; ctx.lineWidth=2; ctx.stroke();
+    text("MIC OFF", W/2, y+23, {size:26, col:"#CF8A8F", weight:700});
+  } else if (S.ep==="listening"){
+    const p = 0.5+0.5*Math.sin(S.t/220);
+    ctx.fillStyle=`rgba(143,188,154,${0.14+0.14*p})`; roundRect(W/2-104,y,208,46,23); ctx.fill();
+    ctx.strokeStyle="#8FBC9A"; ctx.lineWidth=2; ctx.stroke();
+    text("LISTENING", W/2, y+23, {size:26, col:"#8FBC9A", weight:700});
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHAPE A — MATRIX. The panel pretends to be a 16×16 LED matrix.
+// True black, hard cells, one caption line. Touch: the pet is the only target.
+// ═══════════════════════════════════════════════════════════════════════════════
+function shapeA(){
+  clear("#000");
+  const blink = (S.t % 4200) < 160;
+  const hop = S.pet.hop > 0 ? Math.sin(S.pet.hop*Math.PI)*CELL*1.1 : 0;
+  drawPet(W/2, 184 - hop, CELL, {blink, squash: S.pet.hop>0 ? 0 : 0.04*Math.sin(S.t/700)});
+
+  // the 368×80 strip: 6.3 mm. One line. Nothing else fits and nothing else should try.
+  ctx.fillStyle="#0b0c0e"; ctx.fillRect(0,368,W,80);
+  ctx.fillStyle="#26282C"; ctx.fillRect(0,368,W,1);
+  const line = S.ep==="listening" ? "listening…"
+             : S.ep==="thinking"  ? "thinking…"
+             : S.ep==="speaking"  ? (S.says||"…")
+             : S.ep==="notify"    ? `${S.notif.count} ${S.notif.kind}`
+             : S.muted            ? "mic off"
+             : clock();
+  const col = S.ep==="notify" ? "#C9A36A" : S.muted ? "#CF8A8F"
+            : S.ep==="listening" ? "#8FBC9A" : "#E6E7E9";
+  text(line, W/2, 408, {size: line.length>14 ? 30 : 44, col});
+  if (S.ep!=="idle" || S.muted) micBadge(6);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHAPE B — PORTHOLE. Full-resolution creature, no grid, no chrome.
+// The eyes track your finger; UI exists only while you touch it.
+// ═══════════════════════════════════════════════════════════════════════════════
+function shapeB(){
+  // ambient field, tinted by state — the whole panel is the mood ring
+  const tint = S.ep==="listening" ? [143,188,154] : S.ep==="speaking" ? [127,167,201]
+             : S.ep==="notify" ? [201,163,106] : S.muted ? [207,138,143] : [40,44,52];
+  const a = 0.30 + 0.10*Math.sin(S.t/900);
+  clear("#000");
+  const g = ctx.createRadialGradient(W/2,H*0.42,20,W/2,H*0.42,H*0.7);
+  g.addColorStop(0,`rgba(${tint[0]},${tint[1]},${tint[2]},${a})`);
+  g.addColorStop(1,"rgba(0,0,0,1)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  // NOT the 16×16 sprite. This shape exists to answer "what if we spend the 322 ppi on
+  // curves instead of pretending to be a matrix?", so the creature is drawn as vectors at
+  // full resolution — that is the whole comparison against A.
+  const pal = PAL[S.pet.form];
+  const breathe = Math.sin(S.t/1100)*0.02 + 1;
+  const cx = W*S.pet.x, cy = H*0.40 + Math.sin(S.t/620)*7;
+  const hw = 150*breathe, hh = 128*breathe;           // head half-extents
+  const round = S.pet.form==="robot" ? 42 : 78;
+
+  ctx.save(); ctx.shadowColor = pal.W; ctx.shadowBlur = 34;
+
+  // ears / horns / antenna — the silhouette is what tells the forms apart at a glance
+  ctx.fillStyle = pal.W;
+  if (S.pet.form==="robot"){
+    ctx.fillRect(cx-4, cy-hh-30, 8, 30);
+    ctx.beginPath(); ctx.arc(cx, cy-hh-36, 11, 0, 7); ctx.fill();
+  } else if (S.pet.form==="dog"){
+    for (const sx2 of [-1,1]){ roundRect(cx+sx2*hw-28*(sx2>0?1:0)-(sx2<0?0:0)-(sx2<0?26:2), cy-hh+6, 28, 92, 16); ctx.fill(); }
+  } else if (S.pet.form==="cat"){
+    for (const sx2 of [-1,1]){
+      ctx.beginPath();
+      ctx.moveTo(cx+sx2*72, cy-hh+18); ctx.lineTo(cx+sx2*104, cy-hh-52); ctx.lineTo(cx+sx2*126, cy-hh+26);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (S.pet.form==="dragon"){
+    for (const sx2 of [-1,1]){
+      ctx.beginPath();
+      ctx.moveTo(cx+sx2*96, cy-hh+22); ctx.lineTo(cx+sx2*122, cy-hh-46); ctx.lineTo(cx+sx2*136, cy-hh+34);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // head
+  ctx.fillStyle = pal.W;
+  roundRect(cx-hw, cy-hh, hw*2, hh*2, round); ctx.fill();
+  ctx.restore();
+
+  // eyes — big, and they track your finger. This is the shape's entire pitch.
+  const blink = (S.t % 3800) < 150;
+  const tx = S.touch.down ? S.touch.x : W/2, ty = S.touch.down ? S.touch.y : cy - 120;
+  const gx = Math.max(-16,Math.min(16,(tx-cx)/6)), gy = Math.max(-12,Math.min(12,(ty-cy)/8));
+  for (const ex of [-1,1]){
+    const exx = cx + ex*62, eyy = cy - 18;
+    if (blink){
+      ctx.strokeStyle = pal.D; ctx.lineWidth = 9; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(exx-28, eyy); ctx.lineTo(exx+28, eyy); ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = "#f4f7fa";
+    ctx.beginPath(); ctx.ellipse(exx, eyy, 34, S.pet.mood==="excited"?38:34, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = pal.D;
+    ctx.beginPath(); ctx.arc(exx+gx, eyy+gy, 17, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.85)";                     // catchlight — cheap, huge effect
+    ctx.beginPath(); ctx.arc(exx+gx-6, eyy+gy-7, 5, 0, 7); ctx.fill();
+  }
+
+  // mouth follows mood, and opens while the box is speaking through this endpoint
+  ctx.strokeStyle = pal.D; ctx.lineWidth = 9; ctx.lineCap = "round"; ctx.beginPath();
+  const my = cy + 62;
+  if (S.ep==="speaking"){
+    const open = 12 + Math.abs(Math.sin(S.t/150))*22;
+    ctx.fillStyle = pal.D; ctx.beginPath();
+    ctx.ellipse(cx, my, 30, open, 0, 0, 7); ctx.fill();
+  } else if (S.pet.mood==="sad"){
+    ctx.arc(cx, my+26, 30, Math.PI*1.15, Math.PI*1.85); ctx.stroke();
+  } else {
+    ctx.arc(cx, my-14, 30, Math.PI*0.15, Math.PI*0.85); ctx.stroke();
+  }
+
+  if (S.touch.down){
+    ctx.fillStyle="rgba(255,255,255,.10)";
+    ctx.beginPath(); ctx.arc(S.touch.x,S.touch.y,34,0,7); ctx.fill();
+  }
+  // chrome only while touched, or when the box needs the room to know something
+  if (S.touch.down || S.ep!=="idle" || S.muted){
+    micBadge(14);
+    const line = S.ep==="speaking" ? S.says : S.ep==="notify" ? `${S.notif.count} ${S.notif.kind}`
+               : S.ep==="thinking" ? "thinking…" : S.heard || clock();
+    text(line, W/2, H-40, {size: line.length>16?26:34, col:"#E6E7E9"});
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHAPE C — FACE. One enormous state-driven thing. The pet is a guest, not the host.
+// ═══════════════════════════════════════════════════════════════════════════════
+function shapeC(){
+  clear("#000");
+  if (S.muted && S.ep==="idle"){
+    ctx.fillStyle="rgba(207,138,143,.12)"; ctx.fillRect(0,0,W,H);
+    text("MIC", W/2, H/2-34, {size:76, col:"#CF8A8F", weight:700});
+    text("OFF", W/2, H/2+40, {size:76, col:"#CF8A8F", weight:700});
+    text("tap to unmute", W/2, H-44, {size:26, col:"#9A9DA3", weight:400});
+    return;
+  }
+  switch (S.ep){
+    case "listening": {
+      const p = 0.5+0.5*Math.sin(S.t/300);
+      for (let i=3;i>=1;i--){
+        ctx.strokeStyle=`rgba(143,188,154,${0.10*i*(0.6+0.4*p)})`; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(W/2,H*0.40, 56+i*26+p*10, 0, 7); ctx.stroke();
+      }
+      ctx.fillStyle="#8FBC9A"; ctx.beginPath(); ctx.arc(W/2,H*0.40,52+p*5,0,7); ctx.fill();
+      text("LISTENING", W/2, H-92, {size:34, col:"#8FBC9A", weight:700});
+      text(S.heard||"…", W/2, H-46, {size:26, col:"#9A9DA3", weight:400});
+      break;
+    }
+    case "thinking": {
+      for (let i=0;i<3;i++){
+        const p = 0.5+0.5*Math.sin(S.t/260 - i*0.9);
+        ctx.fillStyle=`rgba(127,167,201,${0.35+0.5*p})`;
+        ctx.beginPath(); ctx.arc(W/2+(i-1)*46, H*0.42, 15+p*6, 0, 7); ctx.fill();
+      }
+      text("thinking", W/2, H-60, {size:30, col:"#9A9DA3", weight:400});
+      break;
+    }
+    case "speaking": {
+      const bars = 9;
+      for (let i=0;i<bars;i++){
+        const h = 26 + Math.abs(Math.sin(S.t/170 + i*0.8))*84;
+        ctx.fillStyle="#7FA7C9";
+        roundRect(W/2-(bars*30)/2 + i*30 + 5, H*0.36-h/2, 20, h, 10); ctx.fill();
+      }
+      text(S.says, W/2, H-72, {size:28, col:"#E6E7E9", weight:400});
+      text("tap to stop", W/2, H-34, {size:22, col:"#5C5F66", weight:400});
+      break;
+    }
+    case "notify": {
+      ctx.fillStyle="rgba(201,163,106,.12)"; ctx.fillRect(0,0,W,H);
+      text(String(S.notif.count), W/2, H*0.36, {size:150, col:"#C9A36A", weight:700});
+      text(S.notif.kind, W/2, H*0.62, {size:34, col:"#E6E7E9"});
+      text("swipe to dismiss", W/2, H-44, {size:24, col:"#9A9DA3", weight:400});
+      break;
+    }
+    default: {  // idle — the clock is the face, the pet is a 16 px guest in the corner
+      text(clock(), W/2, H*0.38, {size:104, col:"#E6E7E9", weight:500});
+      text(new Date().toLocaleDateString([], {weekday:"long"}).toLowerCase(),
+           W/2, H*0.38+78, {size:28, col:"#5C5F66", weight:400});
+      drawPet(W/2, H-84, 8, {blink:(S.t%4000)<150});
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHAPE D — ROOM. A 2D side-on echo of the Wall's 3D room. Tapping an object issues
+// the shipped command (jpet/service.py vocabulary): the room IS the interface.
+// ═══════════════════════════════════════════════════════════════════════════════
+const OBJECTS = [
+  {id:"bed",    cmd:"sleep",      x:0.14, label:"bed"},
+  {id:"synth",  cmd:"play_music", x:0.38, label:"synth"},
+  {id:"tv",     cmd:"watch",      x:0.62, label:"tv"},
+  {id:"toybox", cmd:"jump",       x:0.86, label:"toys"},
+];
+function shapeD(){
+  clear("#07080a");
+  // wall / floor
+  const floorY = 300;
+  const g = ctx.createLinearGradient(0,60,0,floorY);
+  g.addColorStop(0,"#121722"); g.addColorStop(1,"#0b0e14");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,floorY);
+  ctx.fillStyle="#161a20"; ctx.fillRect(0,floorY,W,H-floorY);
+  ctx.fillStyle="#26282C"; ctx.fillRect(0,floorY,W,2);
+
+  // objects, drawn as chunky pixel furniture
+  for (const o of OBJECTS){
+    const x = W*o.x, lit = S.pet.action===o.cmd;
+    ctx.save();
+    if (lit){ ctx.shadowColor="#C9A36A"; ctx.shadowBlur=18; }
+    ctx.fillStyle = lit ? "#C9A36A" : "#3a4250";
+    if (o.id==="bed")    { ctx.fillRect(x-34,floorY-30,68,30); ctx.fillRect(x-34,floorY-46,20,16); }
+    if (o.id==="synth")  { ctx.fillRect(x-30,floorY-24,60,24);
+                           ctx.fillStyle= lit?"#fff":"#5C5F66";
+                           for(let i=0;i<5;i++) ctx.fillRect(x-26+i*11,floorY-20,7,10); }
+    if (o.id==="tv")     { ctx.fillRect(x-32,floorY-64,64,46);
+                           ctx.fillStyle= lit?"#7BE0E8":"#11161d"; ctx.fillRect(x-26,floorY-58,52,34);
+                           ctx.fillStyle= lit?"#C9A36A":"#3a4250"; ctx.fillRect(x-6,floorY-18,12,18); }
+    if (o.id==="toybox") { ctx.fillRect(x-30,floorY-32,60,32);
+                           ctx.fillStyle= lit?"#fff":"#8FBC9A"; ctx.fillRect(x-24,floorY-26,14,14);
+                           ctx.fillStyle= lit?"#fff":"#CF8A8F"; ctx.fillRect(x+2,floorY-26,14,14); }
+    ctx.restore();
+    text(o.label, x, floorY+22, {size:20, col: lit?"#C9A36A":"#5C5F66", weight:400});
+  }
+
+  // the pet walks toward its target and hops on arrival
+  const px = W*S.pet.x, walking = Math.abs(S.pet.tx - S.pet.x) > 0.005;
+  const bob = walking ? Math.abs(Math.sin(S.t/110))*7 : Math.sin(S.t/700)*3;
+  drawPet(px, floorY - 46 - bob, 6, {blink:(S.t%4200)<150});
+  // shadow grounds it — without this the pet floats and the room reads as wallpaper
+  ctx.fillStyle="rgba(0,0,0,.45)";
+  ctx.beginPath(); ctx.ellipse(px, floorY+2, 30, 6, 0, 0, 7); ctx.fill();
+
+  // one status line above, in the ceiling space
+  micBadge(10);
+  if (!S.muted && S.ep==="idle"){
+    text(clock(), W/2, 40, {size:38, col:"#5C5F66", weight:400});
+  } else if (S.ep==="notify"){
+    ctx.fillStyle="rgba(201,163,106,.14)"; roundRect(W/2-110,66,220,44,22); ctx.fill();
+    text(`${S.notif.count} ${S.notif.kind}`, W/2, 88, {size:26, col:"#C9A36A"});
+  } else if (S.ep==="speaking"){
+    text(S.says, W/2, 88, {size:26, col:"#7FA7C9", weight:400});
+  }
+  if (S.ripple){
+    const age = (S.t - S.ripple.t)/420;
+    if (age < 1){ ctx.strokeStyle=`rgba(201,163,106,${1-age})`; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(S.ripple.x,S.ripple.y,10+age*44,0,7); ctx.stroke(); }
+    else S.ripple = null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOUCH — per shape, because the interaction model IS the difference between them.
+// ═══════════════════════════════════════════════════════════════════════════════
+const TOUCH_DOC = {
+  A: ["<code>tap the pet</code> poke it — it hops and the caption says what it did",
+      "<code>swipe ←→</code> cycle creature form",
+      "<code>long-press</code> toggle the mic",
+      "<b>Cost:</b> the pet is the whole UI, so anything that is not the pet has nowhere to go."],
+  B: ["<code>drag</code> the pet follows your finger; the eyes track it even when you don't",
+      "<code>tap</code> reveal the chrome for 3 s, then it fades again",
+      "<code>long-press</code> toggle the mic",
+      "<b>Cost:</b> no persistent affordances. Lovely, and undiscoverable by anyone but you."],
+  C: ["<code>tap</code> acknowledge / advance the current face (stop speech, open the count)",
+      "<code>swipe ↑</code> dismiss a notification",
+      "<code>long-press</code> toggle the mic",
+      "<b>Cost:</b> the pet is a guest at 8 px/cell. If the pet is the point, this isn't it."],
+  D: ["<code>tap an object</code> the pet walks there and performs the shipped command",
+      "<code>tap the pet</code> poke it where it stands",
+      "<code>long-press</code> toggle the mic",
+      "<b>Cost:</b> four 60 px targets on a 29 mm panel ≈ 4.7 mm each — at the edge of tappable.",
+      "<b>Cost:</b> even at 6 px/cell the pet is 96 px wide and <i>occludes the prop beside it</i>. Four objects do not fit on 29 mm; this shape wants three, or a room that pans."],
+};
+function petHitA(x,y){ return Math.abs(x-W/2)<CELL*8 && Math.abs(y-184)<CELL*8; }
+
+function onTap(x,y){
+  if (S.shape==="A"){
+    if (petHitA(x,y)){ poke(); } else log("tap missed the pet — nothing else is a target here");
+  } else if (S.shape==="B"){
+    poke();
+  } else if (S.shape==="C"){
+    if (S.muted && S.ep==="idle"){ setMute(false); return; }
+    if (S.ep==="speaking"){ setEp("idle"); log("speech stopped by touch"); return; }
+    if (S.ep==="notify"){ log("notification opened → the BODY stays on the phone (S5)"); return; }
+    poke();
+  } else {
+    const hit = OBJECTS.find(o => Math.abs(x - W*o.x) < 40 && y > 220 && y < 330);
+    S.ripple = {x,y,t:S.t};
+    // stand beside the object, not on it — at 29 mm the pet completely covers a 60 px prop
+    if (hit){ S.pet.tx = hit.x + (hit.x > 0.5 ? -0.15 : 0.15); S.pet.action = hit.cmd;
+              log(`tap <b>${hit.label}</b> → pet.command("${hit.cmd}") → the box decides`); }
+    else if (Math.abs(x - W*S.pet.x) < 60 && y > 200 && y < 310) poke();
+  }
+}
+function poke(){
+  S.pet.hop = 1;
+  S.pet.mood = "excited";
+  log(`poke → pet.command("wiggle") — the BOX owns the reaction, the panel just renders it`);
+  setTimeout(()=>{ S.pet.mood = "happy"; }, 2200);
+}
+function onSwipe(dx,dy){
+  if (S.shape==="A" && Math.abs(dx)>Math.abs(dy)){
+    const forms = Object.keys(SPRITES);
+    const i = (forms.indexOf(S.pet.form) + (dx>0?1:forms.length-1)) % forms.length;
+    S.pet.form = forms[i]; syncForms(); log(`swipe → form = ${S.pet.form}`);
+  } else if (S.shape==="C" && dy < -30 && S.ep==="notify"){
+    setEp("idle"); log("swipe ↑ → notification dismissed");
+  } else log("swipe — no meaning in this shape");
+}
+
+cv.addEventListener("pointerdown", e => {
+  const r = cv.getBoundingClientRect();
+  S.touch = { down:true, x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height),
+              t0:performance.now(), moved:false, sx:0, sy:0 };
+  S.touch.sx = S.touch.x; S.touch.sy = S.touch.y;
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener("pointermove", e => {
+  if (!S.touch.down) return;
+  const r = cv.getBoundingClientRect();
+  S.touch.x = (e.clientX-r.left)*(W/r.width); S.touch.y = (e.clientY-r.top)*(H/r.height);
+  if (Math.hypot(S.touch.x-S.touch.sx, S.touch.y-S.touch.sy) > 14) S.touch.moved = true;
+  if (S.shape==="B" && S.touch.moved) S.pet.x = Math.max(0.18, Math.min(0.82, S.touch.x/W));
+});
+cv.addEventListener("pointerup", () => {
+  if (!S.touch.down) return;
+  const held = performance.now() - S.touch.t0;
+  if (held > 550 && !S.touch.moved){ setMute(!S.muted); log(`long-press → mic ${S.muted?"MUTED":"live"}`); }
+  else if (S.touch.moved) onSwipe(S.touch.x-S.touch.sx, S.touch.y-S.touch.sy);
+  else onTap(S.touch.x, S.touch.y);
+  S.touch.down = false;
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PANEL WIRING
+// ═══════════════════════════════════════════════════════════════════════════════
+const SHAPES = [
+  ["A","Matrix","a 16×16 LED panel"],
+  ["B","Porthole","a creature, full-res"],
+  ["C","Face","one big state"],
+  ["D","Room","a place it lives"],
+];
+const swEl = document.getElementById("switch");
+swEl.innerHTML = SHAPES.map(([k,n,d]) =>
+  `<button data-shape="${k}" aria-pressed="${k==='A'}">${k} · ${n}<small>${d}</small></button>`).join("");
+swEl.onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.shape = b.dataset.shape;
+  [...swEl.children].forEach(x => x.setAttribute("aria-pressed", x===b));
+  document.getElementById("touchdoc").innerHTML = TOUCH_DOC[S.shape].map(l=>`<li>${l}</li>`).join("");
+  log(`shape → ${S.shape} (state carried over, nothing reset)`);
+};
+
+function setEp(v){ S.ep = v; document.getElementById("statelbl").textContent = S.muted && v==="idle" ? "idle · muted" : v; }
+function setMute(v){
+  S.muted = v;
+  document.getElementById("b-mute").classList.toggle("on", v);
+  document.getElementById("b-mute").textContent = v ? "Mic is OFF" : "Mute mic";
+  if (v && (S.ep==="listening")) setEp("idle"); else setEp(S.ep);
+}
+document.getElementById("b-wake").onclick = () => {
+  if (S.muted){ log("wake word ignored — the mic is muted, and muted means muted"); return; }
+  setEp("listening"); S.heard = "";
+  setTimeout(()=>{ S.heard = "what's the weather"; }, 1100);
+  setTimeout(()=>{ if(S.ep==="listening") setEp("thinking"); }, 2000);
+  setTimeout(()=>{ if(S.ep==="thinking"){ S.says="18° and clearing"; setEp("speaking"); } }, 3400);
+  setTimeout(()=>{ if(S.ep==="speaking") setEp("idle"); }, 7000);
+  log("wake word fired on-device (ESP-SR) → audio starts streaming to whisper");
+};
+document.getElementById("b-speak").onclick = () => {
+  S.says = "the backup finished"; setEp("speaking");
+  setTimeout(()=>{ if(S.ep==="speaking") setEp("idle"); }, 4200);
+  log("Kokoro TTS → endpoint; AEC reference is the same buffer we sent");
+};
+document.getElementById("b-notify").onclick = () => {
+  S.notif = { count: 1 + Math.floor(Math.random()*4), kind: ["proposals","runs","messages"][Math.floor(Math.random()*3)] };
+  setEp("notify");
+  log(`notify: count + category only — the body never leaves the phone (plan §5)`);
+};
+document.getElementById("b-mute").onclick = () => { setMute(!S.muted); log(`mic ${S.muted?"MUTED":"live"}`); };
+document.getElementById("b-idle").onclick = () => { setEp("idle"); log("back to idle"); };
+
+const FORMS = Object.keys(SPRITES), MOODS = ["happy","sad","excited"];
+document.getElementById("forms").innerHTML = FORMS.map(f=>`<button data-form="${f}">${f}</button>`).join("");
+document.getElementById("moods").innerHTML = MOODS.map(m=>`<button data-mood="${m}">${m}</button>`).join("");
+function syncForms(){
+  [...document.querySelectorAll("[data-form]")].forEach(b=>b.classList.toggle("on", b.dataset.form===S.pet.form));
+  [...document.querySelectorAll("[data-mood]")].forEach(b=>b.classList.toggle("on", b.dataset.mood===S.pet.mood));
+}
+document.getElementById("forms").onclick = e => { const b=e.target.closest("button"); if(!b)return;
+  S.pet.form=b.dataset.form; syncForms(); log(`form → ${S.pet.form}`); };
+document.getElementById("moods").onclick = e => { const b=e.target.closest("button"); if(!b)return;
+  S.pet.mood=b.dataset.mood; syncForms(); log(`mood → ${S.pet.mood}`); };
+
+const cTrue = document.getElementById("c-true"), cGrid = document.getElementById("c-grid"),
+      cBurn = document.getElementById("c-burn"), foot = document.getElementById("devfoot");
+function applyScale(){
+  // 1.8" diagonal at 368×448 → 29.02 × 35.33 mm. CSS mm is the honest way to show it.
+  cv.style.width  = cTrue.checked ? "29.02mm" : "368px";
+  cv.style.height = cTrue.checked ? "35.33mm" : "448px";
+  foot.innerHTML = cTrue.checked
+    ? `<b>true physical size</b> · 29.0 × 35.3 mm · 322 ppi · one 23 px cell = 1.81 mm`
+    : `<b>1:1 device pixels</b> · 368 × 448 · the real panel is 29.0 × 35.3 mm — tick the box`;
+}
+cTrue.onchange = applyScale; applyScale();
+
+// ── frame loop ────────────────────────────────────────────────────────────────
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(64, now - last); last = now; S.t += dt;
+  if (S.pet.hop > 0) S.pet.hop = Math.max(0, S.pet.hop - dt/420);
+  if (S.shape==="D"){                                  // walk toward the tapped object
+    const d = S.pet.tx - S.pet.x;
+    if (Math.abs(d) > 0.005) S.pet.x += Math.sign(d) * Math.min(Math.abs(d), dt/2600);
+  }
+  ctx.save();
+  // AMOLED burn-in guard: real firmware would drift the frame a pixel or two per minute.
+  if (cBurn.checked) ctx.translate(Math.round(Math.sin(S.t/9000)*3), Math.round(Math.cos(S.t/11000)*3));
+  ({A:shapeA,B:shapeB,C:shapeC,D:shapeD})[S.shape]();
+  ctx.restore();
+  if (cGrid.checked){
+    ctx.strokeStyle="rgba(127,167,201,.22)"; ctx.lineWidth=1;
+    for(let i=0;i<=16;i++){ const p=i*CELL+.5;
+      ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,368); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(W,p); ctx.stroke(); }
+    ctx.strokeStyle="rgba(201,163,106,.5)";
+    ctx.beginPath(); ctx.moveTo(0,368.5); ctx.lineTo(W,368.5); ctx.stroke();
+  }
+  requestAnimationFrame(frame);
+}
+document.getElementById("touchdoc").innerHTML = TOUCH_DOC.A.map(l=>`<li>${l}</li>`).join("");
+syncForms(); setEp("idle");
+log("368×448 canvas ready — the same framebuffer the firmware hands the panel");
+requestAnimationFrame(frame);
+</script>
+</body></html>

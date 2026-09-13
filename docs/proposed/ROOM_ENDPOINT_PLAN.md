@@ -150,7 +150,7 @@ some of its content must not leak sideways. Non-negotiables:
 |---|---|---|
 | **W1** | **Bench bring-up + decisions.** Flash Waveshare's sample, confirm display/mic/speaker, settle §4.1 transport, §4.3 toolchain, and get **OTA** working. | The wave where the hardware votes. Bench unit only. |
 | **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, `endpoint_url`/broker config defaulting to empty so the feature is simply absent when unset (the `sdr_url` pattern), Settings → Endpoints. | No new auth model. |
-| **W3** | **Display path.** Frame/scene protocol, the 23 px grid renderer, clock + box-vitals + notification cards. Needs a `docs/mocks/` artboard first, per `DESIGN.md`. | 368×80 caption strip is part of the design language. |
+| **W3** | **Display path.** Frame/scene protocol, renderers, notification cards. **GUI round 1 is drawn**: `../mocks/room-endpoint/device.html` — four shapes on one state model, awaiting the owner's pick. | See §8: the mock measured the panel and moved the goalposts. |
 | **W4** | **JPet on the endpoint.** One more `PetBroadcaster` subscriber + a sprite renderer. | The payoff. |
 | **W5** | **Voice out.** Kokoro → endpoint over the audio channel, with a `speak` action. | |
 | **W6** | **Voice in.** ESP-SR wake word on-device → stream to whisper → the agent loop. Half-duplex first; enable AEC barge-in once the loop is honest. | |
@@ -171,3 +171,31 @@ it; 1 h screen-on is not a product), and music playback.
 - **A no-name listing risk that did not materialise:** this is Waveshare, with a wiki,
   schematics and sample code. Keep it that way — do not substitute an unbranded clone for
   unit three.
+
+## 8. What the mock round changed (2026-09-13)
+
+`../mocks/room-endpoint/device.html` simulates the ordered panel at its real geometry, and the
+first thing it produced was a correction to this plan:
+
+> **1.8″ at 368×448 = 29.0 × 35.3 mm, 322 ppi** — a smartwatch panel, about a postage stamp.
+
+Three things written above are wrong in light of it, and are superseded by this section:
+
+1. **The "368×80 caption strip" is 6.3 mm tall.** It holds one short line at a legible size. §1
+   called it a place for "a caption, clock or status line"; it is not a status bar and cannot
+   become one.
+2. **"The box's face and ears in a room" overstates the display.** At 322 ppi the panel is
+   unreadable beyond arm's length. The *ears* are a room device; the *face* is a desk object.
+   That may mean the two units want different shapes, or that the display's job is presence
+   and state rather than information.
+3. **Type has a floor.** 12 px is 0.95 mm. Nothing below ~28 px (2.2 mm); anything that matters
+   wants 40 px+. One thing at a time, large.
+
+The round offers four shapes — **A Matrix** (a 16×16 LED panel), **B Porthole** (a full-res
+creature that tracks your finger), **C Face** (one enormous state-driven thing), **D Room** (a
+2D echo of the Wall's room, where tapping a prop issues the shipped command). They differ in
+what the panel is *for* and what touch *means*; each states its own cost. See
+`../mocks/room-endpoint/README.md` for the open questions the owner is being asked to settle.
+
+W3 is blocked on that pick, and W4 (JPet) inherits it — the shape decides whether the pet is
+the host, a guest, or a resident.
