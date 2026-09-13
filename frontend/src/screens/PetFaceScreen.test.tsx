@@ -170,6 +170,42 @@ describe("PetFaceScreen", () => {
     }
   });
 
+  // REGRESSION. The effects poll used to be created inside the async block, after the first
+  // `getPet()` awaited — so unmounting before that resolved ran the cleanup while the timer
+  // handle was still undefined, and the continuation then started an interval nothing could
+  // clear. It leaked a 1 Hz request for the life of the page, and it hung CI: eleven orphaned
+  // intervals kept the test runner's event loop alive for 50 minutes.
+  it("leaves no polling interval behind when unmounted before the first fetch resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      let settle: (s: PetState) => void = () => {};
+      const getPet = vi.fn(
+        () =>
+          new Promise<PetState>((r) => {
+            settle = r;
+          }),
+      );
+      const { unmount } = render(
+        <PetFaceScreen
+          onClose={vi.fn()}
+          deps={{
+            getPet,
+            sendPetCommand: vi.fn(async () => petState()),
+            petStream: () => noFrames(),
+          }}
+        />,
+      );
+      unmount(); // back out before the snapshot lands
+      settle(petState()); // ...then let it resolve
+      await Promise.resolve();
+      const afterUnmount = getPet.mock.calls.length;
+      vi.advanceTimersByTime(10_000);
+      expect(getPet.mock.calls.length).toBe(afterUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes", () => {
     const { deps } = makeDeps();
     const onClose = vi.fn();

@@ -122,37 +122,43 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
   // ── the real API surface: snapshot, then the live stream, plus the effects poll ──────────
   useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setInterval> | undefined;
+    // The interval is created SYNCHRONOUSLY, not inside the async block below. It used to be
+    // assigned after `await deps.getPet()`, so unmounting before that settled ran the cleanup
+    // while `timer` was still undefined — clearing nothing — and the continuation then started
+    // a poll nothing could ever stop. That leaks a 1 Hz request for the life of the page on a
+    // quick back-out, and under a slow test runner it keeps the event loop alive indefinitely.
+    const timer = setInterval(() => {
+      if (controller.signal.aborted) return;
+      deps.getPet().then(
+        (s) => {
+          // Effects only. The stream owns everything else, so a slow poll cannot stutter
+          // the animation by overwriting a fresher frame.
+          const prev = petRef.current;
+          if (!prev) return;
+          if (s.pet_form !== prev.pet_form || s.color !== prev.color) {
+            // `exactOptionalPropertyTypes` forbids writing an explicit undefined, and the
+            // distinction is real here: "the server sent no form" must not overwrite a form
+            // we already know with a hole.
+            const merged: PetState =
+              s.pet_form === undefined
+                ? { ...prev, color: s.color }
+                : { ...prev, pet_form: s.pet_form, color: s.color };
+            petRef.current = merged;
+            setPet(merged);
+          }
+        },
+        () => undefined,
+      );
+    }, EFFECT_POLL_MS);
     (async () => {
       try {
         const first = await deps.getPet();
+        if (controller.signal.aborted) return;
         setPet(first);
         petRef.current = first;
       } catch {
         // the stream still delivers a snapshot
       }
-      timer = setInterval(() => {
-        deps.getPet().then(
-          (s) => {
-            // Effects only. The stream owns everything else, so a slow poll cannot stutter
-            // the animation by overwriting a fresher frame.
-            const prev = petRef.current;
-            if (!prev) return;
-            if (s.pet_form !== prev.pet_form || s.color !== prev.color) {
-              // `exactOptionalPropertyTypes` forbids writing an explicit undefined, and the
-              // distinction is real here: "the server sent no form" must not overwrite a form
-              // we already know with a hole.
-              const merged: PetState =
-                s.pet_form === undefined
-                  ? { ...prev, color: s.color }
-                  : { ...prev, pet_form: s.pet_form, color: s.color };
-              petRef.current = merged;
-              setPet(merged);
-            }
-          },
-          () => undefined,
-        );
-      }, EFFECT_POLL_MS);
       try {
         for await (const state of deps.petStream(controller.signal)) {
           // Carry the last known form across stream frames, which never include it.
@@ -167,7 +173,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     })();
     return () => {
       controller.abort();
-      if (timer) clearInterval(timer);
+      clearInterval(timer);
     };
   }, [deps]);
 
