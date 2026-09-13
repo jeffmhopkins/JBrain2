@@ -80,7 +80,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   S0a answered it for the dongle. Records why the obvious escape hatch is closed (§1.1):
   the USB-C port is **power only**, Divoom ships no desktop app, and every reverse-engineered
   implementation is RFCOMM-only — so there is no wired route that would collapse this into
-  the SDR pattern. Payoff wave is **JPet on the panel** (one more `PetBroadcaster` subscriber).
+  the SDR pattern. **§5 corrects an earlier draft that scoped audio out**: `bluez-alsa` needs
+  no host sound server, so the one sidecar carries display (SPP), voice out (A2DP) and voice
+  in (HFP/mSBC at 16 kHz — whisper's native rate), and the §4 cost is paid once for the whole
+  device. §0.2 surveys the alternatives against the owner's real spec — pixel art + wireless +
+  speaker + mic in one small object — and finds nothing shipping that hits all four with an
+  open API. Payoff waves are **JPet on the panel** (one more `PetBroadcaster` subscriber) and
+  **D6/D7**, a voice endpoint in the room off the shipped Kokoro + whisper services.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,

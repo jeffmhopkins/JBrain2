@@ -10,9 +10,10 @@ how?"* — with a real answer rather than a shrug. When picked up, reconcile wit
 
 ## 0. The verdict
 
-**Yes — the 16×16 display is genuinely integrable, and it fits the shape this box already
-uses for hardware.** It is *not* a drop-in like the SDR was, and the audio half of the
-device is a much bigger project than the pixel half. Three things gate it:
+**Yes — and not just the panel: display, speaker and microphone all come off one sidecar.**
+It is *not* a drop-in like the SDR was — §4 is real work — but that work is bought once and
+buys the whole device (§5 corrects an earlier draft that scoped audio out). Three things
+gate it:
 
 | Gate | Status | How we find out |
 |---|---|---|
@@ -41,7 +42,7 @@ Concretely, if the device is being chosen rather than already owned:
 | **Divoom Pixoo 16** | 16×16 | 2.4 GHz Wi-Fi, local HTTP API | A client + renderers. No sidecar at all. |
 | **Divoom Pixoo-Max** | 32×32 | Wi-Fi + BT | Same, with a roomier canvas. |
 | **Ulanzi TC001** + AWTRIX 3 | 32×8 | Wi-Fi, HTTP **and MQTT**, open firmware | Same, and it can ride the **`mqtt` profile broker this repo already ships**. Wrong aspect ratio for JPet. |
-| **Divoom Ditoo** (this plan) | 16×16 | Bluetooth Classic SPP only | Everything in §4. |
+| **Divoom Ditoo** (this plan) | 16×16 | Bluetooth Classic SPP only | Everything in §4 — but it is the **only** row with a speaker *and* a mic (§0.2). |
 
 Two caveats that cut the other way. Divoom's local API is officially documented only for
 the Pixoo-64 line — support on the 16/32 is **community-verified**, so confirm the unit is
@@ -53,58 +54,44 @@ shrug. The Ulanzi/AWTRIX route is the only one on that table with no cloud in it
 None of this is device-specific above the renderer layer, so the panel can be swapped later
 without touching D3-D5.
 
-### 0.2 If the goal is a VOICE endpoint, this is the wrong plan entirely
+### 0.2 The owner's real spec: pixel art + wireless + speaker + mic, in one small object
 
-The owner's actual want turned out to be **a speaker *and* a microphone in the room** — the
-box's mouth and ears — with the pixel panel a bonus. That inverts everything above, because
-a Bluetooth speaker is a poor voice endpoint even after §4 is solved:
+That is four requirements at once, and it narrows the field to almost nothing. Surveyed
+2026-09-13:
 
-- **Playback (A2DP)** needs a host userspace audio stack the box does not have and the
-  no-terminal update path cannot install (§5).
-- **Capture is worse.** A Bluetooth speaker exposes its mic only over **HSP/HFP**, which is
-  narrowband mono (8/16 kHz — telephone quality), and opening it *forces the speaker out of
-  A2DP* into that same low-quality mode for the duration. Full-duplex wideband voice over
-  Bluetooth Classic to a speaker is not a thing. (Whether the base Ditoo advertises
-  hands-free at all is unverified; it is not marketed as a speakerphone.)
-- **One link at a time** (§6) means the room endpoint and the owner's phone are exclusive.
+| Candidate | Pixels | Wireless | Speaker | Mic | Open/local control |
+|---|---|---|---|---|---|
+| **Divoom Ditoo** | 16×16 | BT Classic | 15 W | yes (HFP) | reverse-engineered SPP |
+| Divoom Pixoo 16 / Pixoo-Max | 16×16 / 32×32 | **Wi-Fi** | — | — | local HTTP API |
+| Ulanzi TC001 + AWTRIX 3 | 32×8 | **Wi-Fi** | buzzer only | — | HTTP + MQTT, open firmware |
+| HA Voice PE & voice satellites | LED ring | **Wi-Fi** | yes | mic array + AEC | open, but HA-shaped |
+| Meterbit Pixlpal | 128×64 | **Wi-Fi** | line-out | MEMS mic | fully open — but ~11″ and crowdfunding |
+| DIY ESP32-S3 + WS2812 + I2S | any | **Wi-Fi** | I2S amp | I2S wideband | totally yours |
 
-And note that swapping to a Wi-Fi *panel* (§0.1) makes this strictly worse: a Pixoo has
-neither speaker nor microphone.
+**No shipping, small, off-the-shelf product hits all four with an open API.** The Ditoo is
+the closest thing that exists — which is presumably why it got bought — and its price is
+that control is Bluetooth and unofficial. Every Wi-Fi panel in that table *loses the speaker
+and mic entirely*, so §0.1's advice to swap for a Pixoo does **not** serve this goal and is
+withdrawn for it.
 
-**What the box already has.** The voice loop is largely built, and its endpoint is a
+The relevant point, corrected in §5: one sidecar covers **all three** of display, playback
+and capture, because `bluez-alsa` needs no host sound server. So the §4 plumbing — built once
+— buys the whole device, not just the panel. That is a much better trade than it looked.
+
+**What the box already has.** The voice loop is largely built, and today its endpoint is a
 **browser**: `deploy/wall/pet.html` opens the room mic with `getUserMedia`, runs continuous
-wake-word listening, and does echo-cancelled **barge-in** detection (it subtracts the pet's
-own TTS and cuts it off when a child talks over it); read-aloud audio is served by the
-`tts-stt` container (Kokoro) and fetched same-origin by the kiosk; whisper.cpp for STT sits
-in that same container. One honest gap: the wake word and recognition run on the
-**browser's** Web Speech API (`frontend/src/screens/speech.ts`), which in Chrome is Google's
-cloud — on a box built for privacy that wants replacing with the on-box whisper the stack
-already ships.
+wake-word listening, and does echo-cancelled **barge-in** (it subtracts the pet's own TTS and
+cuts it off when a child talks over it); read-aloud is served by `tts-stt` (Kokoro) and
+fetched same-origin by the kiosk; whisper.cpp for STT sits in that same container. One honest
+gap regardless of hardware: the wake word and recognition run on the **browser's** Web Speech
+API (`frontend/src/screens/speech.ts`), i.e. Google's cloud in Chrome — on a box built for
+privacy that wants replacing with the on-box whisper the stack already ships.
 
-**The wired route that answers the original "why not USB?" question (§1.1) properly.** A
-**USB speakerphone** — a UAC device with a beamforming mic array and hardware echo
-cancellation — plugged into the box is the closest analogue to the SDR pattern we have:
-
-- `devices: - /dev/snd:/dev/snd` into a profiled sidecar, exactly like `/dev/bus/usb`;
-- **no host packages** — the kernel's `snd-usb-audio` autoloads and creates the device
-  nodes; ALSA userspace (`ffmpeg`, `alsa-utils`) ships *inside* the image, so PulseAudio /
-  PipeWire never enter the picture and rule 10 is satisfied;
-- **no netns constraint** (§4.2 is a Bluetooth problem, not an audio one), so the sidecar
-  can sit on `internal` behind the usual locks;
-- full-duplex wideband audio, no pairing, no range limit, no contention with a phone.
-
-Its one requirement is physical: the box must be within cable reach of the room (~5 m of
-USB, ~15 m with an active extension). If the box lives in a closet, the answer is instead a
-**browser in the room** — a cheap tablet in kiosk mode, which also gives the Wall and JPet a
-screen — or a **purpose-built network voice satellite** (HA Voice PE and similar: ESP32-S3,
-XMOS DSP, dual-mic array, on-device wake word, ~$59). The satellite is the best microphone
-of the three, but its firmware is Home-Assistant-shaped, so it needs a protocol bridge
-server-side, and that ecosystem is mid-transition between the Wyoming and ESPHome
-transports — verify before buying.
-
-**Recommendation: none of this plan.** Voice wants its own doc, built on `/dev/snd`
-passthrough and the shipped whisper + Kokoro services. Keep the Ditoo work here only if the
-pixel panel is wanted for its own sake.
+**The one thing the Ditoo cannot be talked into** is a good full-duplex endpoint: no hardware
+AEC, and HFP capture drops playback to narrowband while the mic is open (§5). If audio
+*quality* outranks having one cute object, a DIY ESP32-S3 build (wideband I2S mic, I2S amp,
+WS2812 matrix, Wi-Fi, no link contention, no range limit) is the only route that hits all
+four *and* integrates cleanly — at the cost of building it.
 
 ---
 
@@ -197,7 +184,9 @@ Worth deciding before building, because the ranking changes the design:
    shared room is a physical side-effect surface. If it lands at all it should be
    owner-scope only, rate-limited, and content-fenced (§6).
 
-**Audio is deliberately *not* on this list.** See §5.
+**Audio belongs on this list too**, and near the top when the goal is a room endpoint: the
+same sidecar gives the box a voice and ears in that room (§5). It is listed separately only
+because it is a different kind of feature from a renderer.
 
 ## 4. The four hard parts
 
@@ -297,23 +286,47 @@ The status report should follow the SDR probe's discipline of distinguishing *ab
 *present-but-not-usable*: **no radio / radio but nothing paired / paired but not connected
 (likely the phone holds it) / connected**.
 
-## 5. Audio: out of scope, and why
+## 5. Audio: in scope after all — and the earlier "no audio stack" objection was wrong
 
-It is tempting — the box has a TTS service (`tts-stt`, Kokoro read-aloud) and this is a
-15 W speaker, so "give the box a voice in the room" writes itself. Don't, not in v1:
+An earlier draft of this doc scoped audio out on the grounds that the box has no userspace
+sound server (no `/dev/snd`, no PulseAudio, no PipeWire anywhere in `deploy/`), that A2DP
+needs one, and that installing one is the apt gap of §4.3. **That reasoning does not hold**,
+and the correction matters because it is what makes the Ditoo a complete device rather than
+a display:
 
-- **The box has no audio stack whatsoever.** There is no `/dev/snd`, no PulseAudio, no
-  PipeWire, no ALSA anywhere in `deploy/docker-compose.yml` or the deploy scripts. Today's
-  read-aloud is *browser-side* — the Wall kiosk fetches audio and the browser plays it.
-- A2DP to a Bluetooth sink means a real userspace sound server on the host (PipeWire, or
-  `bluez-alsa`), i.e. host packages, i.e. the apt gap of §4.3 — the one thing the
-  no-terminal path cannot close.
-- There is no wired shortcut on this model: the base Ditoo's USB-C is **power only**
-  (USB-C audio is a Ditoo *Pro* feature, and even there it is audio, not pixels — §1.1).
+- **`bluealsad` (bluez-alsa) needs no sound server.** It talks to BlueZ directly and handles
+  A2DP, HFP and HSP itself, exposing them as ALSA PCMs. It exists precisely so a system can
+  do Bluetooth audio without PulseAudio or PipeWire, which is why it is the standard answer
+  on headless and containerised boxes.
+- **No physical sound card is involved**, so no `/dev/snd` and no host audio at all. Audio to
+  a Bluetooth sink is encoded in userspace and written to the BT link; the box's own (absent)
+  speakers never enter the path.
+- Therefore it ships **inside the same sidecar that already ships BlueZ** (§4.3). Zero host
+  packages, so rule 10 stays satisfied. The apt gap simply is not on this path.
 
-The pixel panel needs none of that: SPP is a serial socket, and BlueZ alone is enough.
-Revisit audio only if the owner actually wants the box to speak aloud in that room, and
-treat it as its own plan with a host-setup wave.
+**Capture works too, at a usable rate.** A Bluetooth speaker exposes its mic over HSP/HFP,
+and `bluealsad` implements HFP natively (oFono optional). With **mSBC** that is **16 kHz
+mono — exactly whisper's native input rate**, so the existing whisper.cpp in `tts-stt` can
+consume it without resampling. The 8 kHz CVSD fallback would be poor; mSBC is the one to
+negotiate. And the Ditoo does answer calls through its own mic, so HFP is present on the
+device (reviewers describe call audio as muffled, which is the profile, not the hardware).
+
+Four honest limits on the audio, none of them blocking:
+
+1. **No hardware echo cancellation.** The Ditoo is a speaker with a mic, not a speakerphone
+   with an AEC DSP, so the box hears its own TTS. The Wall gets this free from the browser
+   (`getUserMedia({echoCancellation:true})` in `pet.html`); a raw ALSA path does not. Either
+   gate the mic while speaking (half-duplex, simple, no barge-in) or run
+   `webrtc-audio-processing`/`speexdsp` in the sidecar (full-duplex, real work).
+2. **A2DP and HFP are exclusive.** Opening the mic drops the speaker to HFP's narrowband for
+   the duration. Fine for an assistant turn; it means you cannot have hi-fi music and an open
+   mic at once.
+3. **One link at a time** (§6) — the room endpoint and the owner's phone are exclusive.
+4. **~10 m of range** (§6).
+
+So the sidecar of §7 D1 does all three jobs — display over SPP, playback over A2DP, capture
+over HFP — from one container, on one Bluetooth link, with no host dependency beyond the
+kernel modules of §4.3.
 
 ## 6. Constraints to accept before building
 
@@ -347,8 +360,11 @@ Waves, in the repo's usual shape (`docs/reference/PROCESS.md`). D0 is a hard gat
 | **D3** | **Renderers.** Clock, box-vitals face, notification card. 16×16 is a *design* problem — needs a `docs/mocks/` artboard per `docs/reference/DESIGN.md` before code. | |
 | **D4** | **JPet on the panel.** One more `PetBroadcaster` subscriber + a 16×16 sprite renderer. | The payoff wave. |
 | **D5** | **Workflow action** (`ditoo_display` in `ACTION_SPECS`) and, if wanted, one owner-scope agent tool with the §6 content fence. | |
+| **D6** | **Voice out.** Add `bluealsad` to the D1 sidecar, A2DP playback, and a `/speak` endpoint the api feeds from the shipped Kokoro TTS. | No host audio (§5). Independent of D3-D5. |
+| **D7** | **Voice in.** HFP capture negotiating **mSBC** (16 kHz — whisper's native rate), into the whisper.cpp already in `tts-stt`. Start **half-duplex** (mic gated while speaking); full-duplex barge-in needs `webrtc-audio-processing` in the sidecar and is its own wave. | The quality ceiling of the whole plan (§5). |
 
-Explicitly out of scope: A2DP audio (§5), keyboard/button input, the mic.
+Explicitly out of scope: keyboard/button input (§6 — the community work is write-only, so
+treat device→box input as unproven).
 
 New tables: **none** — the panel is a display, and its state is transient. If a "what's on
 the panel" history is ever wanted, that is a new owner-only table and an RLS isolation test
@@ -362,6 +378,11 @@ the whole question from speculation to a yes/no.** If the box has a Bluetooth ra
 as a *spike* against the physical device before committing to the rest: everything
 downstream is ordinary work on well-trodden seams, but D1 is the only part where the
 hardware gets a vote.
+
+**Keep the device** if the owner wants one small object that does pixel art, sound and
+listening (§0.2) — nothing else on the market does, and the §4 cost is paid once for all
+three. Reach for a Wi-Fi panel only if the pixels alone matter (§0.1), and for a DIY ESP32
+build only if audio quality outranks having a finished object.
 
 If the box has no radio, the decision is the owner's: a USB Bluetooth dongle solves
 presence (though not §4.2 — the netns constraint is unchanged), and the Ditoo remains a
