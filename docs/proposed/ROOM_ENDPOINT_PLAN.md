@@ -199,3 +199,75 @@ what the panel is *for* and what touch *means*; each states its own cost. See
 
 W3 is blocked on that pick, and W4 (JPet) inherits it — the shape decides whether the pet is
 the host, a guest, or a resident.
+
+## 9. Round 2 — the pet is for a four-year-old (2026-09-13)
+
+The owner narrowed the brief: no needs or hunger system, just a robot pet that has clear
+emotions, changes colour and animal form on request, does funny things, and answers his
+four-year-old. Three research passes (JPet contract, preschool interaction, character-expression
+prior art) settled most of it. Mock: `../mocks/room-endpoint/pet-face.html`; the round's findings
+and the one open question are in `../mocks/room-endpoint/README.md`.
+
+**Nothing needs simplifying — JPet v3 already deleted the drive meters** for exactly the owner's
+reason, and already ships 19 keyword-routed actions, 24 canned scripts, 12 colours plus a
+rainbow, 7 creature forms, and an LLM-free intent router with canned replies and a babble
+fallback. What the concept actually asks for is **one thing that does not exist**:
+
+> **Clear emotions.** The Wall renders each of the six `EMOTIONS` as a chest-badge colour plus
+> the width of one horizontal mouth bar. `curious` and `sleepy` are pixel-identical apart from
+> hue; in any animal form emotion is invisible entirely; and `PetOut.emotion` is never read.
+
+So emotion is net-new work, and this endpoint is its first surface. It is carried by lid
+geometry, whole-face motion and timing — the channels that survive on a tiny panel.
+
+### Interaction, settled
+
+**One target, one gesture, no thresholds.** A 20 mm child touch target is 69% × 57% of this
+panel, so the whole screen is the only target; and 4-5 year olds produce ordinary taps lasting up
+to **4.2 seconds**, so long-press is not a gesture that exists at this age (round 1's 550 ms
+mute long-press would have muted the robot on every tap). Touch means *"I'm paying attention to
+you"* — a sub-100 ms flinch toward the finger, mic open while held; release acts on what he said,
+or pokes him if he said nothing. **Press-to-talk is therefore free**, which matters because:
+
+**The wake word will miss him.** Whisper is ~32% WER on child speech against ~3% for adults, and
+~1% of output is hallucinated on silence and half-speech. A hallucinated command the robot *acts
+on* is worse than a miss. No wake-word false-reject rate has ever been published for ages 3-5 —
+**the largest measurable unknown in this plan, and cheap to close with a handful of children.**
+W6 must treat "robot" as the convenience layer over the deterministic one, never the only way in.
+
+### Waves, revised
+
+- **W4 (JPet)** is now the emotion work, not a port: a procedural face of ~17 tweened floats, the
+  six emotions as lid geometry, asymmetry for curious/silly, and the gag structure (the hold on a
+  **bewildered** face is the joke — 4-5 year olds read a pratfall as funny only when the character
+  looks bewildered rather than pained or smug).
+- **W4b, new — the anti-boredom engine.** Weighted-random variant pools, per-variant cooldowns,
+  and a repetition penalty. Loona ships 700-1000 expressions and still gets shelved; procedural
+  recombination beats hand-authored volume. Suppress recency *within* a gag, never the gag itself.
+- **W6 (voice in)** gains press-to-talk as the primary path, repetition-count-aware fallback
+  (children repeat 79% of the time and persist through failure >75%), partial-understanding
+  prompts rather than "sorry, I didn't get that", and **never ending on silence**.
+
+### Three shipped-code defects this surfaced
+
+1. `fire`, `lay`, `cleanup`, `cleanup_bed` are in `CANNED_SCRIPTS` but missing from
+   `CommandAction`, so `POST /pet/command {"action":"fire"}` is a 422 — they are reachable only
+   through `say`. A dragon-fire button cannot be built today.
+2. `GET /pet/stream` frames omit every ephemeral effect (form, colour overrides, scale, scene),
+   which is why the Wall polls at 1 Hz instead of subscribing. An endpoint must poll too, or the
+   SSE payload needs fixing — **fix it rather than inherit the workaround**.
+3. `hide` renders identically to `sit` — it walks to a corner and squats, with nothing occluding
+   it. For a four-year-old playing peekaboo that is a dud, and peekaboo is squarely on-target for
+   the age.
+
+### Safety, with numbers
+
+- **65 dB(A)** close-to-ear cap (ASTM F963 / EN 71-1); WHO-ITU H.870 wants a parent-lockable max.
+- **One hour of bright light before bed suppressed melatonin ~88% in 4-year-olds, persisting 50
+  minutes after lights out.** Quiet hours must cut **luminance**, not just volume, and end well
+  before bedtime. An AMOLED that can go truly black should.
+- **The ICO Children's Code requires a recording indicator** (its own example is a light that
+  turns on when recording), so §5's "muted is a promise" is a compliance requirement.
+- **COPPA:** command audio deleted promptly is a narrow carve-out. Retaining his voice to
+  fine-tune — which roughly halves child ASR error, the highest-leverage fix available — needs
+  verifiable parental consent. That is a fork to decide deliberately, not to drift into.

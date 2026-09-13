@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Robot pet — the face, for a four-year-old</title>
+<!--
+  MOCK: THE ROBOT PET FOR A 4-YEAR-OLD, ROUND 2 (supersedes device.html's shape question).
+  docs/proposed/ROOM_ENDPOINT_PLAN.md · three research passes, 2026-09-13.
+
+  THE ASK, from the owner: "no complicated hunger or like system ... it just needs to be
+  entertaining for a 4-year-old and respond to the touches ... they really like being able to
+  tell it to change colors and into different animals and telling it to burp or fart or to
+  say a story or a joke ... a robot pet that has clear emotions and can change colors and
+  animal types and do some simple actions."
+
+  ROUND 1 ASKED "WHAT IS THE PANEL FOR". THE RESEARCH ANSWERED IT, so this round does not
+  re-ask. Three of round 1's four shapes are eliminated on evidence, not taste:
+    D Room      DEAD. A 20 mm child touch target (NN/g) is 69% x 57% of a 29 mm panel. Two do
+                not fit in either axis. Four tappable props is ergonomically impossible, not
+                merely cramped. (Vatavu et al. 2015, n=89 children.)
+    C Face      DEAD as drawn. It leans on text; a 4-year-old is pre-literate, and icons do not
+                rescue it (abstract symbols are learned from device experience he lacks).
+    A Matrix    DEAD for this child. 16x16 has too few pixels to carry an expression, and its
+                only other input was swipe — direction discrimination on a screen NARROWER THAN
+                HIS FINGER is untested by anyone. Kept in device.html as the aesthetic record.
+    B Porthole  SURVIVES, and this file is its renovation.
+
+  THE THREE FINDINGS THAT REBUILT IT
+
+  1. EMOTION DOES NOT CURRENTLY EXIST. The shipped pet has all six emotions in EMOTIONS
+     (service.py:52) but the Wall renders each as a chest-badge colour plus the width of one
+     horizontal mouth bar: happy 0.24 / excited 0.30 / curious 0.20 / sleepy 0.20 / silly 0.28
+     / scared 0.14. `curious` and `sleepy` are pixel-identical apart from hue; `happy` and
+     `excited` differ by 0.06 of a bar. In dog/cat/dragon/cow/pig/chicken form emotion is
+     INVISIBLE — drawAnimal draws no badge and no mouth. And PetOut.emotion is never read at
+     all; emotion only arrives inside script[].emotion.
+     => "Clear emotions" is not a simplification of what exists. It is the net-new work, and
+        this panel is the first surface where emotion is a first-class channel.
+
+  2. THE WHOLE SCREEN IS THE ONLY TOUCH TARGET, AND LONG-PRESS DOES NOT EXIST AT FOUR.
+     Children aged 4-5 produce ORDINARY TAPS LASTING UP TO 4.2 SECONDS (adults average 53 ms).
+     Round 1 used a 550 ms long-press to mute the mic in every shape — for this child every tap
+     would have muted the robot. Multi-touch completes 54% of the time and is out.
+     => One target: the panel. One gesture: contact. No thresholds anywhere.
+
+  3. THE WAKE WORD WILL MISS HIM OFTEN. Whisper on child speech is ~32% WER against ~3% for
+     adults, and worse on the small models an ESP32-class pipeline wants; ~1% of output is
+     hallucinated, triggered by silence and half-speech — and a hallucinated command the robot
+     ACTS ON is worse than a miss, because it reads as the toy being broken. No wake-word
+     false-reject rate has ever been published for 3-5 year olds.
+     => Press-to-talk must be the deterministic path, "robot" the convenience layer.
+
+  THE CONFLICT THAT DESIGN RESOLVES, and the reason this file exists.
+  Findings 2 and 3 collide: if tap = poke and hold = talk, then a 4-year-old whose ordinary tap
+  runs to 4.2 s triggers "talk" by accident, every time. Adding a threshold cannot fix it —
+  his tap and his hold are the same gesture.
+  So there is NO gesture discrimination at all:
+
+      TOUCH   = "I am paying attention to you."  The pet flinches toward the finger in under
+                100 ms (Shiomi et al. 2017: the sub-0.5 s micro-reaction, not the latency of
+                the real response, is what drives perceived aliveness, eta2 = .407) and the mic
+                opens for as long as he holds.
+      RELEASE = if he said something, do it. If he did not, be silly.
+
+  One target, one gesture, no thresholds, and press-to-talk arrives for free because the touch
+  budget was already spent. Hold anywhere, say "turn red" — or hold, say nothing, and get poked.
+
+  HOW THE FACE IS BUILT (all cited in the research, mechanisms not invented here)
+    - A procedural face of ~17 floats, after Cozmo/Vector's 43-float ProceduralFace: whole-face
+      {x, y, scaleX, scaleY, angle} plus per-eye {scaleX, scaleY, upperLidY, upperLidAngle,
+      lowerLidY, lowerLidBend}. Ekman's set is reachable from lid Y and lid ANGLE alone.
+    - ASYMMETRY between the two eyes is the entire signal for curious and silly. Free.
+    - Tween by halving: cur = (cur + target) / 2 every frame. ~90% in 66 ms at 50 fps, natural
+      ease-out, one add and one shift. This is what makes RoboEyes look smooth on an Arduino.
+    - Never fully at rest: a breathing sine always runs under everything. "When robots stop
+      moving they look dead."
+    - Blink 167 ms per half and the eye WIDENS as it closes (squash-and-stretch on a blink).
+      Saccades 200 ms, 0-2 s apart, blink on 1 cycle in 5.
+    - Gags hold the BEWILDERED face. 4-5 year olds find a pratfall funny when the character
+      looks bewildered and NOT funny when it looks pained or smug (EEG, 2025). The long hold
+      after the fart IS the joke; the fart is only the setup.
+    - Colour is NOT an emotion channel. Vector deliberately made eye colour a user preference,
+      and Nabaztag carried state in LED *pattern*, not hue. Here colour is identity and play —
+      which is exactly what the child uses it for.
+
+  ANTI-BOREDOM IS AN ENGINE, NOT A CONTENT PILE. Loona ships 700-1000 expressions and reviewers
+  still describe it being shelved. Vector layers five independent systems; three of them are
+  cheap and are implemented here for real, with a live read-out so the mechanism is visible:
+    - weighted random selection within a variant pool per action,
+    - per-variant cooldown (recency suppression),
+    - a repetition penalty, so the tenth identical poke lands softer than the first.
+  Watch the debug panel while you poke it repeatedly. That decay is the feature.
+
+  WHAT IS STILL OPEN, and what the three face variants are for: whether the face is eyes-only
+  (Vector's answer), eyes + mouth (the HRI literature says the mouth is necessary and
+  sufficient for happiness, and an eyes-only face measurably loses accuracy), or a whole small
+  body that can dance and fall over. The gags need a body; the emotions do not. Switch between
+  them with the same pet in the same mood and pick.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:400 14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px 64px}
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:22px;font-weight:500;margin:0 0 4px}
+  .lede{color:var(--text-2);max-width:74ch;margin:0 0 6px}
+  .fact{color:var(--amber);max-width:74ch;margin:8px 0 20px;font-size:13px}
+  .fact b{color:var(--text)}
+  .stage{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .device{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .bezel{background:#000;border-radius:14px;padding:9px;width:max-content;margin:0 auto;
+    box-shadow:0 0 0 1px #303338,0 10px 30px rgba(0,0,0,.6)}
+  canvas{display:block;border-radius:6px;background:#000;touch-action:none;cursor:pointer;
+    user-select:none;-webkit-user-select:none}
+  .devfoot{color:var(--text-3);font-size:12px;text-align:center;margin-top:10px}
+  .devfoot b{color:var(--text-2);font-weight:400}
+  .hint{color:var(--steel);font-size:13px;text-align:center;margin-top:8px}
+  .panel{flex:1;min-width:300px;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+  .card h2{font:500 12px/1.4 system-ui;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);margin:0 0 12px}
+  .card h2 span{text-transform:none;letter-spacing:0;color:var(--text-3)}
+  .row{display:flex;gap:6px;flex-wrap:wrap}
+  .row button{flex:1 1 auto;min-height:40px;background:var(--surface-2);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;padding:7px 11px;font:400 13px system-ui;cursor:pointer}
+  .row button:hover{border-color:var(--text-3)}
+  .row button.on{background:color-mix(in srgb,var(--green) 15%,transparent);border-color:var(--green)}
+  label.chk{display:flex;align-items:center;gap:10px;min-height:40px;cursor:pointer;color:var(--text-2)}
+  label.chk input{width:18px;height:18px;accent-color:var(--steel)}
+  .say{display:flex;gap:8px}
+  .say input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    color:var(--text);padding:10px 12px;font:400 14px system-ui;min-height:44px}
+  .say button{background:color-mix(in srgb,var(--steel) 15%,transparent);border:1px solid var(--steel);
+    color:var(--text);border-radius:10px;padding:0 16px;font:500 14px system-ui;cursor:pointer;min-height:44px}
+  .dbg{font:400 12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-3);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+  .dbg b{color:var(--green);font-weight:400}
+  .dbg .cool{color:var(--rose)}
+  .dbg .pen{color:var(--amber)}
+  .log{font:400 12px/1.5 ui-monospace,Menlo,monospace;color:var(--text-3);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:12px;padding:10px 12px;height:110px;overflow:auto}
+  .log b{color:var(--steel);font-weight:400}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Robot pet — the face, for a four-year-old</h1>
+  <p class="lede">Waveshare ESP32-S3-Touch-AMOLED-1.8 · 368×448 · one whole-screen target, one gesture,
+    no thresholds. Emotion is carried by lid geometry, whole-face motion and timing — the channels the
+    prior art says survive on a tiny panel.</p>
+  <p class="fact"><b>Hold anywhere on the screen and speak</b> (type it in “Say to the pet”). Hold and say
+    nothing, and he gets poked instead. There is no long-press gesture, because a four-year-old’s ordinary
+    tap runs to <b>4.2 seconds</b> — his tap and his hold are the same thing.</p>
+
+  <div class="stage">
+    <div class="device">
+      <div class="bezel"><canvas id="screen" width="368" height="448"></canvas></div>
+      <div class="devfoot" id="devfoot"></div>
+      <div class="hint" id="hint">press and hold the screen →</div>
+    </div>
+
+    <div class="panel">
+      <div class="card">
+        <h2>Say to the pet <span>— mirrors intents.py, first match wins, no LLM</span></h2>
+        <div class="say">
+          <input id="txt" placeholder='"turn red" · "be a dragon" · "dance" · "fart" · "tell me a joke"' />
+          <button id="send">Say</button>
+        </div>
+        <div class="row" style="margin-top:10px" id="quick"></div>
+      </div>
+
+      <div class="card">
+        <h2>Emotion <span>— the six in EMOTIONS, finally visible</span></h2>
+        <div class="row" id="emos"></div>
+      </div>
+
+      <div class="card">
+        <h2>Form &amp; colour <span>— identity and play, never emotion</span></h2>
+        <div class="row" style="margin-bottom:6px" id="forms"></div>
+        <div class="row" id="cols"></div>
+      </div>
+
+      <div class="card">
+        <h2>Face variant <span>— the one open question</span></h2>
+        <div class="row" id="variants"></div>
+      </div>
+
+      <div class="card">
+        <h2>Anti-boredom engine <span>— live</span></h2>
+        <div class="dbg" id="dbg">poke it a few times and watch this</div>
+      </div>
+
+      <div class="card">
+        <h2>Panel</h2>
+        <label class="chk"><input type="checkbox" id="c-true"> True physical size (29 × 35 mm)</label>
+        <label class="chk"><input type="checkbox" id="c-slow"> Slow motion (¼ speed — see the gag structure)</label>
+      </div>
+
+      <div class="card"><h2>Log</h2><div class="log" id="log"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const W=368, H=448, cv=document.getElementById("screen"), ctx=cv.getContext("2d");
+const log=m=>{const e=document.getElementById("log");
+  e.insertAdjacentHTML("afterbegin",`<div><b>${new Date().toLocaleTimeString([],{hour12:false})}</b> ${m}</div>`);};
+
+// ── The 12 shipped colours (intents.py PET_COLORS → pet.html NAMED) ───────────────────────
+const NAMED={cyan:"#3bf0ff",magenta:"#ff4fd8",gold:"#ffd23f",orange:"#ffb03a",blue:"#6a7bff",
+  red:"#ff477e",green:"#49f08a",pink:"#ff8ad0",purple:"#b06aff",white:"#ffffff"};
+const COLORS=[...Object.keys(NAMED),"rainbow","default"];
+// The 7 shipped forms. Silhouette is what tells them apart — the face underneath is identical,
+// which is exactly why grayscale-plus-hue works: one face, seven hats.
+const FORMS=["robot","dog","cat","dragon","cow","pig","chicken"];
+
+// ── EMOTION: lid geometry, after pycozmo's shipped Expressive Eyes values ─────────────────
+// Ekman's set is reachable from upper/lower lid Y and ANGLE. Asymmetry (l !== r) is the whole
+// signal for curious and silly. `rate` scales every transition — the SAME shape at a different
+// speed reads as a different feeling, which is the cheapest expressive channel there is.
+const EMO={
+  happy:   {l:{uy:0,ua:0,ly:.40,lb:.40,sx:1,sy:1}, r:"mirror", face:{sy:1.00,ang:0},  rate:1.0, mouth:"smile"},
+  excited: {l:{uy:0,ua:0,ly:.30,lb:.20,sx:1.1,sy:1.15}, r:"mirror", face:{sy:1.05,ang:0}, rate:1.7, mouth:"open"},
+  curious: {l:{uy:.30,ua:-10,ly:.20,lb:.20,sx:1,sy:1},                       // asymmetric on purpose
+            r:{uy:.05,ua:12,ly:0,lb:0,sx:1.08,sy:1.08}, face:{sy:1,ang:-7},  rate:0.8, mouth:"small"},
+  sleepy:  {l:{uy:.48,ua:4,ly:.45,lb:0,sx:1,sy:.9}, r:"mirror", face:{sy:.95,ang:0}, rate:0.35, mouth:"flat"},
+  silly:   {l:{uy:.10,ua:0,ly:.10,lb:.30,sx:1.25,sy:1.25},                   // one eye huge, one squint
+            r:{uy:.42,ua:-14,ly:.05,lb:0,sx:.8,sy:.75}, face:{sy:1,ang:9},   rate:1.5, mouth:"tongue"},
+  scared:  {l:{uy:0,ua:26,ly:.35,lb:.10,sx:1.2,sy:1.3}, r:"mirror", face:{sy:1.02,ang:0}, rate:1.9, mouth:"o"},
+  // Not in EMOTIONS — the gag face. 4-5 year olds read a pratfall as funny only when the
+  // character looks BEWILDERED, and as not-funny when it looks pained or smug (EEG, 2025).
+  bewildered:{l:{uy:.05,ua:-16,ly:0,lb:0,sx:1.3,sy:1.35},
+              r:{uy:.30,ua:18,ly:.15,lb:.15,sx:.95,sy:1.1}, face:{sy:1,ang:-11}, rate:1.4, mouth:"o"},
+};
+const EMOS=["happy","excited","curious","sleepy","silly","scared"];
+
+// ── STATE ─────────────────────────────────────────────────────────────────────────────────
+const S={
+  emo:"happy", form:"robot", color:"default", variant:"eyes-mouth",
+  cur:{}, tgt:{},                       // tweened face params
+  gaze:{x:0,y:0,tx:0,ty:0}, blink:0, nextBlink:1200, nextSaccade:900,
+  touch:{down:false,x:0,y:0,t0:0},
+  act:null,                             // {name, t, dur, variant}
+  listening:false, heard:"",
+  pokes:0, lastPoke:0,
+  t:0, slow:false,
+};
+
+// ── ANTI-BOREDOM ENGINE (Vector's three cheap layers, for real) ───────────────────────────
+// 1. weighted random within a pool · 2. per-variant cooldown · 3. repetition penalty.
+const POOLS={
+  poke:[{v:"wiggle",w:3,cd:2500},{v:"giggle",w:3,cd:2500},{v:"boing",w:2,cd:4000},
+        {v:"blush",w:1,cd:9000},{v:"sneeze",w:1,cd:20000},{v:"hiccup",w:0.4,cd:45000}],
+  fart:[{v:"squeak",w:3,cd:3000},{v:"trumpet",w:2,cd:5000},{v:"rumble",w:2,cd:5000},{v:"tiny",w:1,cd:8000}],
+  burp:[{v:"short",w:3,cd:3000},{v:"long",w:2,cd:6000},{v:"squeaky",w:1,cd:9000}],
+  dance:[{v:"bop",w:3,cd:2000},{v:"shimmy",w:2,cd:4000},{v:"spin-dance",w:1,cd:7000}],
+};
+const lastPlayed={}, lastFired={};
+function pick(pool){
+  const now=S.t, opts=POOLS[pool]||[];
+  const live=opts.filter(o=>now-(lastPlayed[pool+o.v]||-1e9) > o.cd);
+  const from=live.length?live:opts;                      // never fail — fall back to the full pool
+  let r=Math.random()*from.reduce((a,o)=>a+o.w,0);
+  for(const o of from){ if((r-=o.w)<=0){ lastPlayed[pool+o.v]=now; return o.v; } }
+  return from[0].v;
+}
+/** The tenth identical poke lands softer than the first (Vector's repetitionPenalty). */
+function penalty(pool){
+  const gap=S.t-(lastFired[pool]||-1e9); lastFired[pool]=S.t;
+  if(gap>12000) { S.pokes=0; return 1; }
+  S.pokes++; return Math.max(0.35, Math.pow(0.82, S.pokes));
+}
+
+// ── ACTIONS. Every one is get-in → act → HOLD → settle, as data, not per-action code. ─────
+const ACTS={
+  wiggle:{dur:1100,emo:"happy"}, giggle:{dur:1300,emo:"happy"}, boing:{dur:900,emo:"excited"},
+  blush:{dur:1600,emo:"happy"}, sneeze:{dur:1200,emo:"bewildered"}, hiccup:{dur:900,emo:"bewildered"},
+  dance:{dur:2600,emo:"excited"}, spin:{dur:1400,emo:"excited"}, jump:{dur:900,emo:"excited"},
+  wave:{dur:1400,emo:"happy"}, nod:{dur:900,emo:"happy"}, beep:{dur:800,emo:"silly"},
+  sing:{dur:2400,emo:"happy"}, hide:{dur:1600,emo:"scared"},
+  fart:{dur:1500,emo:"bewildered",gag:true}, burp:{dur:1400,emo:"bewildered",gag:true},
+  sleep:{dur:2000,emo:"sleepy"},
+};
+function doAct(name,variant){
+  const a=ACTS[name]; if(!a) return;
+  S.act={name,variant,t:0,dur:a.dur,gag:!!a.gag,mag:1};
+  if(a.emo){ S.emo=a.emo; holdBlink(); }
+}
+
+// ── FACE RENDERING ────────────────────────────────────────────────────────────────────────
+function resolveEmo(){
+  const e=EMO[S.emo]||EMO.happy;
+  const l={...e.l}, r = e.r==="mirror" ? {...e.l, ua:-e.l.ua} : {...e.r};
+  return {l,r,face:e.face,rate:e.rate,mouth:e.mouth};
+}
+/** Tween by halving — cur = (cur+tgt)/2 each frame. ~90% in 66ms at 50fps, ease-out for free. */
+function tween(rate){
+  const k=Math.min(1, 0.5*rate*(S.slow?0.35:1));
+  for(const key in S.tgt){ const c=S.cur[key]??S.tgt[key]; S.cur[key]=c+(S.tgt[key]-c)*k; }
+}
+function bodyColor(){
+  if(S.color==="rainbow") return `hsl(${(S.t*0.05)%360} 85% 62%)`;
+  if(S.color==="default") return S.form==="robot" ? "#7FA7C9"
+    : {dog:"#c68a4a",cat:"#9aa0b0",dragon:"#49f08a",cow:"#f2f2fa",pig:"#ff9ad8",chicken:"#fff09e"}[S.form];
+  return NAMED[S.color];
+}
+const shade=(hex,f)=>{ // grayscale-asset trick: one silhouette, tinted at draw time
+  if(hex.startsWith("hsl")) return hex;
+  const n=parseInt(hex.slice(1),16);
+  const r=Math.round(((n>>16)&255)*f), g=Math.round(((n>>8)&255)*f), b=Math.round((n&255)*f);
+  return `rgb(${r},${g},${b})`;
+};
+
+function drawEye(cx,cy,p,col,dark,gx,gy,blink){
+  const w=52*p.sx, h=(blink? 0.06 : 1)*62*p.sy, bw=blink? w*1.35 : w; // widens as it closes
+  ctx.save();
+  ctx.fillStyle="#f6f9fc";
+  ctx.beginPath(); ctx.roundRect(cx-bw/2, cy-h/2, bw, h, Math.min(bw,h)*0.38); ctx.fill();
+  if(!blink){
+    ctx.save(); ctx.beginPath(); ctx.roundRect(cx-bw/2,cy-h/2,bw,h,Math.min(bw,h)*0.38); ctx.clip();
+    ctx.fillStyle=dark;                                     // pupil, gaze-linked
+    ctx.beginPath(); ctx.arc(cx+gx, cy+gy, 17, 0, 7); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,.9)";                   // catchlight
+    ctx.beginPath(); ctx.arc(cx+gx-6, cy+gy-7, 5, 0, 7); ctx.fill();
+    // UPPER LID — subtractive, rotated. Lid Y + angle is the whole Ekman set.
+    if(p.uy>0.01){ ctx.save(); ctx.translate(cx,cy-h/2); ctx.rotate(p.ua*Math.PI/180);
+      ctx.fillStyle="#000"; ctx.fillRect(-bw, 0, bw*2, h*p.uy); ctx.restore(); }
+    // LOWER LID / CHEEK — the Duchenne arc. This is what makes "happy" read without a mouth.
+    if(p.ly>0.01){ ctx.fillStyle="#000"; ctx.beginPath();
+      const ly=cy+h/2-h*p.ly, bend=h*p.lb;
+      ctx.moveTo(cx-bw,cy+h/2+2); ctx.lineTo(cx-bw,ly);
+      ctx.quadraticCurveTo(cx, ly-bend, cx+bw, ly);
+      ctx.lineTo(cx+bw,cy+h/2+2); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawMouth(cx,cy,kind,col,dark){
+  ctx.strokeStyle=dark; ctx.lineWidth=9; ctx.lineCap="round"; ctx.beginPath();
+  if(kind==="smile"){ ctx.arc(cx,cy-16,30,Math.PI*.15,Math.PI*.85); ctx.stroke(); }
+  else if(kind==="open"||kind==="o"){ ctx.fillStyle=dark; ctx.beginPath();
+    ctx.ellipse(cx,cy,kind==="o"?20:28,kind==="o"?26:20,0,0,7); ctx.fill(); }
+  else if(kind==="small"){ ctx.arc(cx,cy-8,14,Math.PI*.15,Math.PI*.85); ctx.stroke(); }
+  else if(kind==="flat"){ ctx.moveTo(cx-22,cy); ctx.lineTo(cx+22,cy); ctx.stroke(); }
+  else if(kind==="tongue"){ ctx.arc(cx,cy-14,26,Math.PI*.1,Math.PI*.9); ctx.stroke();
+    ctx.fillStyle="#ff8ad0"; ctx.beginPath(); ctx.roundRect(cx-12,cy+2,24,26,11); ctx.fill(); }
+}
+/** Silhouette per form — ears, horns, beak. The face beneath is identical for all seven. */
+function drawSilhouette(cx,cy,hw,hh,col,dark){
+  ctx.fillStyle=col;
+  const f=S.form;
+  if(f==="robot"){ ctx.fillRect(cx-4,cy-hh-30,8,30); ctx.beginPath(); ctx.arc(cx,cy-hh-36,11,0,7); ctx.fill(); }
+  if(f==="dog"){ for(const s of[-1,1]){ ctx.beginPath();
+    ctx.roundRect(cx+s*hw-(s<0?26:2), cy-hh+8, 28, 96, 16); ctx.fill(); } }
+  if(f==="cat"){ for(const s of[-1,1]){ ctx.beginPath();
+    ctx.moveTo(cx+s*70,cy-hh+16); ctx.lineTo(cx+s*104,cy-hh-56); ctx.lineTo(cx+s*126,cy-hh+24);
+    ctx.closePath(); ctx.fill(); } }
+  if(f==="dragon"||f==="cow"){ ctx.fillStyle = f==="cow" ? "#f7f7fb" : col;
+    for(const s of[-1,1]){ ctx.beginPath();
+      ctx.moveTo(cx+s*78,cy-hh+14); ctx.lineTo(cx+s*116,cy-hh-50); ctx.lineTo(cx+s*100,cy-hh+22);
+      ctx.closePath(); ctx.fill(); } }
+  if(f==="pig"){ ctx.fillStyle=shade(col,.85);
+    ctx.beginPath(); ctx.ellipse(cx,cy+58,30,22,0,0,7); ctx.fill();
+    ctx.fillStyle=dark; for(const s of[-1,1]){ ctx.beginPath(); ctx.arc(cx+s*11,cy+58,5,0,7); ctx.fill(); } }
+  if(f==="chicken"){ ctx.fillStyle="#ff5a4e";                 // comb
+    for(let i=-1;i<2;i++){ ctx.beginPath(); ctx.arc(cx+i*22,cy-hh-14,15,0,7); ctx.fill(); }
+    ctx.fillStyle="#ffb03a"; ctx.beginPath();                 // beak
+    ctx.moveTo(cx-20,cy+52); ctx.lineTo(cx+20,cy+52); ctx.lineTo(cx,cy+82); ctx.closePath(); ctx.fill(); }
+  if(f==="cow"){ ctx.fillStyle=shade(col,.72);                // spots
+    ctx.beginPath(); ctx.ellipse(cx-72,cy+40,26,20,.4,0,7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+80,cy-46,20,16,-.3,0,7); ctx.fill(); }
+}
+
+function render(){
+  const e=resolveEmo();
+  const col=bodyColor(), dark=shade(col,0.22);
+
+  // ── whole-face transform: breathing + emotion + the current action ──────────────────────
+  const breathe=Math.sin(S.t/1400)*0.018+1;   // never fully at rest
+  let ox=0, oy=0, sx=1, sy=1, ang=e.face.ang, extra="";
+  const a=S.act;
+  if(a){
+    const p=a.t/a.dur;                        // get-in → act → HOLD → settle, as one curve
+    const mag=a.mag;
+    if(a.name==="wiggle") ang+=Math.sin(p*Math.PI*8)*14*mag;
+    if(a.name==="giggle"){ oy+=Math.abs(Math.sin(p*Math.PI*7))*-16*mag; ang+=Math.sin(p*Math.PI*9)*7*mag; }
+    if(a.name==="boing"){ const q=Math.sin(p*Math.PI*3); sy+=q*.22*mag; sx-=q*.14*mag; oy-=Math.abs(q)*22*mag; }
+    if(a.name==="blush") extra="blush";
+    if(a.name==="dance"){ ox+=Math.sin(p*Math.PI*6)*26*mag; ang+=Math.sin(p*Math.PI*6)*11*mag; }
+    if(a.name==="spin"||a.name==="spin-dance") ang+=p*720;
+    if(a.name==="jump") oy-=Math.abs(Math.sin(p*Math.PI))*70*mag;
+    if(a.name==="wave") ang+=Math.sin(p*Math.PI*5)*12*mag;
+    if(a.name==="nod") oy+=Math.sin(p*Math.PI*5)*14*mag;
+    if(a.name==="sneeze"||a.name==="hiccup"){ if(p<.35){sx+=.06;sy-=.05;} else if(p<.5){sx-=.2;sy+=.25;oy-=14;} }
+    if(a.name==="hide"){ sy-=Math.min(.5,p*1.4); oy+=Math.min(70,p*180); }
+    if(a.name==="sleep"){ sy-=Math.min(.12,p*.3); oy+=Math.min(18,p*40); }
+    if(a.gag){
+      // THE GAG SKELETON. anticipation → 2-4 frames of act → LONG HOLD of the bewildered
+      // face (this is the punchline) → settle. Sound would land on frame 1 of the act, never early.
+      if(p<0.12){ sx+=.05; sy-=.04; }                                  // anticipation, contra-motion
+      else if(p<0.22){ sx-=.26*mag; sy+=.30*mag; oy-=10; extra="puff"; } // the act
+      else if(p<0.72){ extra="puff"; }                                  // HOLD — bewildered, ~500ms
+    }
+  }
+  sx*=breathe; sy*=(2-breathe);
+
+  ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
+  // listening ring — the ICO Children's Code wants an unambiguous recording indicator, and
+  // a 4-year-old cannot read one, so it is a colour the whole panel wears.
+  if(S.listening){
+    const p=.5+.5*Math.sin(S.t/240);
+    ctx.strokeStyle=`rgba(143,188,154,${.35+.35*p})`; ctx.lineWidth=10;
+    ctx.strokeRect(5,5,W-10,H-10);
+  }
+  ctx.save();
+  ctx.translate(W/2+ox, H*0.46+oy);
+  ctx.rotate(ang*Math.PI/180);
+  ctx.scale(sx,sy);
+
+  const hw=150, hh=132;
+  drawSilhouette(0,0,hw,hh,col,dark);
+  ctx.fillStyle=col;
+  ctx.beginPath(); ctx.roundRect(-hw,-hh,hw*2,hh*2, S.form==="robot"?44:80); ctx.fill();
+  if(extra==="blush"){ ctx.fillStyle="rgba(255,120,160,.5)";
+    for(const s of[-1,1]){ ctx.beginPath(); ctx.ellipse(s*104,44,26,16,0,0,7); ctx.fill(); } }
+
+  const blink = S.blink>0;
+  const eyeY = S.variant==="eyes-only" ? 0 : -22;
+  drawEye(-64,eyeY,e.l,col,dark,S.gaze.x,S.gaze.y,blink);
+  drawEye( 64,eyeY,e.r,col,dark,S.gaze.x,S.gaze.y,blink);
+  if(S.variant!=="eyes-only") drawMouth(0, 74, e.mouth, col, dark);
+  ctx.restore();
+
+  if(S.variant==="body"){                       // a small body under the head — gags need one
+    ctx.save(); ctx.translate(W/2+ox*0.6, H*0.46+oy*0.4);
+    ctx.fillStyle=shade(col,.82);
+    ctx.beginPath(); ctx.roundRect(-72,132,144,116,34); ctx.fill();
+    ctx.fillStyle=shade(col,.7);
+    for(const s of[-1,1]){ ctx.beginPath();
+      ctx.roundRect(s*86-22,150,44,84,20); ctx.fill(); }        // arms
+    ctx.restore();
+  }
+  if(extra==="puff"){                            // the visible half of the joke
+    const n=6, pr=(S.act.t/S.act.dur);
+    for(let i=0;i<n;i++){
+      const q=(pr*1.6+i/n)%1;
+      ctx.fillStyle=`rgba(140,200,150,${(1-q)*0.5})`;
+      ctx.beginPath(); ctx.arc(W/2+70+i*16, H*0.46+150-q*70, 8+q*18, 0, 7); ctx.fill();
+    }
+  }
+  if(S.heard){                                   // debug only — he cannot read this
+    ctx.fillStyle="rgba(230,231,233,.35)"; ctx.textAlign="center"; ctx.font="400 20px system-ui";
+    ctx.fillText(S.heard, W/2, H-22);
+  }
+}
+
+// ── TOUCH: one target, one gesture, no thresholds ─────────────────────────────────────────
+cv.addEventListener("pointerdown", e=>{
+  const r=cv.getBoundingClientRect();
+  S.touch={down:true, x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height), t0:S.t};
+  // Stage 1, under 100 ms: flinch toward the finger. Shiomi et al. — this, not the latency of
+  // the real response, is what drives perceived aliveness (eta2 = .407).
+  S.gaze.tx=Math.max(-18,Math.min(18,(S.touch.x-W/2)/6));
+  S.gaze.ty=Math.max(-14,Math.min(14,(S.touch.y-H*0.46)/8));
+  S.listening=true; S.heard=""; document.getElementById("hint").textContent="listening… say something";
+  cv.setPointerCapture(e.pointerId);
+  log("touch → micro-flinch &lt;100ms, mic open (press-to-talk)");
+});
+cv.addEventListener("pointerup", ()=>{
+  if(!S.touch.down) return;
+  S.touch.down=false; S.listening=false;
+  document.getElementById("hint").textContent="press and hold the screen →";
+  const said=document.getElementById("txt").value.trim();
+  if(said){ document.getElementById("txt").value=""; handleSay(said); }
+  else {                                    // held and said nothing → be silly
+    const mag=penalty("poke"), v=pick("poke");
+    doAct(v); if(S.act) S.act.mag=mag;
+    log(`release, nothing heard → poke → <b>${v}</b> (magnitude ${mag.toFixed(2)})`);
+    refreshDbg(v,mag);
+  }
+});
+
+// ── A JS MIRROR OF intents.py — first match wins, no LLM, always a visible action ─────────
+const KEYWORDS=[["fart",["fart","toot","poot","stinky"]],["burp",["burp","belch"]],
+  ["dance",["dance","boogie","dancing"]],["spin",["spin","twirl","circles"]],
+  ["jump",["jump","hop","bounce","leap"]],["wave",["wave","hi","hello","hiya"]],
+  ["wiggle",["wiggle","shake","giggle"]],["beep",["silly","beep","boop","funny","noise"]],
+  ["sing",["sing","song","la la"]],["hide",["hide","peekaboo","peek a boo"]],
+  ["sleep",["sleep","nap","bedtime","night night","tired"]],["nod",["yes","good boy","good job","thank you"]]];
+const CHAT=[["joke",["joke","funny story"]],["story",["story","tell me a story"]]];
+function handleSay(raw){
+  const t=" "+raw.toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ")+" ";
+  const has=w=>t.includes(" "+w+" ")||t.includes(" "+w);
+  S.heard=raw;
+  // 1. form  2. colour  3. keyword action  4. chat  — the shipped precedence order
+  const form=FORMS.find(f=>has(f)) || (has("puppy")||has("doggy")?"dog":null) || (has("kitty")?"cat":null)
+           || (has("dino")||has("dinosaur")?"dragon":null) || (has("piggy")?"pig":null);
+  if(form && /\b(be|become|turn into|change into|are|a)\b/.test(t)){
+    S.form=form; sync(); doAct("boing"); log(`"${raw}" → <b>form = ${form}</b> (intents.py FORMS)`); return; }
+  const col=COLORS.find(c=>has(c)) || (has("yellow")?"gold":null) || (has("aqua")||has("teal")?"cyan":null);
+  if(col){ S.color=col; sync(); doAct("wiggle"); log(`"${raw}" → <b>colour = ${col}</b>`); return; }
+  for(const [act,keys] of KEYWORDS){ if(keys.some(has)){
+    const pool=POOLS[act]?act:null;
+    const mag=pool?penalty(pool):1, v=pool?pick(pool):act;
+    doAct(ACTS[v]?v:act); if(S.act) S.act.mag=mag;
+    log(`"${raw}" → <b>${act}</b>${pool?` → variant <b>${v}</b> (mag ${mag.toFixed(2)})`:""}`);
+    if(pool) refreshDbg(v,mag);
+    return; } }
+  for(const [kind,keys] of CHAT){ if(keys.some(has)){
+    doAct("beep"); S.emo="silly";
+    log(`"${raw}" → canned ${kind} reply + emote (no LLM needed)`); return; } }
+  doAct(pick("poke")); S.emo="curious";
+  log(`"${raw}" → no keyword match → <b>partial understanding</b>, not "sorry I didn't get that"`);
+}
+
+// ── panel ─────────────────────────────────────────────────────────────────────────────────
+const mk=(id,items,get,set)=>{ const el=document.getElementById(id);
+  el.innerHTML=items.map(i=>`<button data-v="${i}">${i}</button>`).join("");
+  el.onclick=ev=>{const b=ev.target.closest("button"); if(!b)return; set(b.dataset.v); sync();};
+  return ()=>[...el.children].forEach(b=>b.classList.toggle("on", b.dataset.v===get()));
+};
+const syncEmos=mk("emos",EMOS,()=>S.emo,v=>{S.emo=v; holdBlink(); log(`emotion → <b>${v}</b>`);});
+// Don't blink through a change of expression — you don't blink at the instant your face
+// changes, and in a mock it hides the very thing being compared.
+function holdBlink(){ S.blink=0; S.nextBlink=Math.max(S.nextBlink, 900); }
+const syncForms=mk("forms",FORMS,()=>S.form,v=>{S.form=v;});
+const syncCols=mk("cols",COLORS,()=>S.color,v=>{S.color=v;});
+const syncVars=mk("variants",["eyes-only","eyes-mouth","body"],()=>S.variant,v=>{S.variant=v;});
+const QUICK=["dance","jump","wave","spin","sing","fart","burp","hide","sleep"];
+document.getElementById("quick").innerHTML=QUICK.map(q=>`<button data-q="${q}">${q}</button>`).join("");
+document.getElementById("quick").onclick=e=>{const b=e.target.closest("button"); if(!b)return;
+  handleSay(b.dataset.q);};
+document.getElementById("send").onclick=()=>{const i=document.getElementById("txt");
+  if(i.value.trim()){ handleSay(i.value.trim()); i.value=""; }};
+document.getElementById("txt").addEventListener("keydown",e=>{ if(e.key==="Enter")
+  document.getElementById("send").click(); });
+function sync(){ syncEmos(); syncForms(); syncCols(); syncVars(); }
+
+function refreshDbg(chosen,mag){
+  const now=S.t;
+  const rows=Object.entries(POOLS).map(([pool,opts])=>{
+    const cells=opts.map(o=>{
+      const left=Math.max(0,(o.cd-(now-(lastPlayed[pool+o.v]||-1e9)))/1000);
+      const hot=(pool+o.v)===(("poke")+chosen)||o.v===chosen;
+      return left>0 ? `<span class="cool">${o.v}·${left.toFixed(1)}s</span>`
+                    : `${hot?"<b>":""}${o.v}·w${o.w}${hot?"</b>":""}`;
+    }).join("  ");
+    return `${pool.padEnd(6)} ${cells}`;
+  }).join("<br>");
+  document.getElementById("dbg").innerHTML =
+    rows + `<br><span class="pen">repetition penalty: ×${(mag??1).toFixed(2)} after ${S.pokes} rapid repeats `
+    + `(resets after 12 s idle)</span>`;
+}
+
+const cTrue=document.getElementById("c-true"), cSlow=document.getElementById("c-slow"),
+      foot=document.getElementById("devfoot");
+function applyScale(){
+  cv.style.width  = cTrue.checked ? "29.02mm" : "368px";
+  cv.style.height = cTrue.checked ? "35.33mm" : "448px";
+  foot.innerHTML = cTrue.checked
+    ? "<b>true physical size</b> · 29.0 × 35.3 mm · Vector's whole face was 23 × 12 mm"
+    : "<b>1:1 device pixels</b> · 368 × 448 — tick the box for the real thing";
+}
+cTrue.onchange=applyScale; applyScale();
+cSlow.onchange=()=>{S.slow=cSlow.checked;};
+
+// ── frame loop, 50 fps behaviour on rAF ───────────────────────────────────────────────────
+let last=performance.now();
+function frame(now){
+  let dt=Math.min(64, now-last); last=now; if(S.slow) dt*=0.25; S.t+=dt;
+  const e=resolveEmo();
+  // blink: 167 ms per half, ~1 in 5 cycles, and the eye widens as it closes
+  S.nextBlink-=dt;
+  if(S.nextBlink<=0){ S.blink=334; S.nextBlink=1000+Math.random()*4000; }
+  if(S.blink>0) S.blink-=dt;
+  // saccades: 200 ms shift, 0-2 s apart. Without this it reads as dead.
+  S.nextSaccade-=dt;
+  if(S.nextSaccade<=0 && !S.touch.down){
+    S.gaze.tx=(Math.random()*2-1)*16; S.gaze.ty=(Math.random()*2-1)*10;
+    S.nextSaccade=600+Math.random()*2000;
+  }
+  S.gaze.x+=(S.gaze.tx-S.gaze.x)*0.28; S.gaze.y+=(S.gaze.ty-S.gaze.y)*0.28;
+  if(S.act){ S.act.t+=dt; if(S.act.t>=S.act.dur){ S.act=null; S.emo="happy"; } }
+  tween(e.rate);
+  render();
+  requestAnimationFrame(frame);
+}
+sync(); refreshDbg(null,1);
+log("face ready — 17 tweened floats, lid geometry carries the emotion");
+requestAnimationFrame(frame);
+</script>
+</body></html>

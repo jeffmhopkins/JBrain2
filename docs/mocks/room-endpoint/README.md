@@ -1,76 +1,112 @@
-# Room endpoint — GUI round 1
+# Room endpoint — GUI rounds
 
-Interactive mock: **`device.html`** (one file, four shapes, one state model).
 Plan: `../../proposed/ROOM_ENDPOINT_PLAN.md` · Design system: `../../reference/DESIGN.md`
 
-Per `DESIGN.md` "UI development process": a new surface gets **3–4 distinct variants**
-before implementation, and there is no reuse exemption. These four differ in *what the panel
-is for* and *what touch means* — not in colour.
+| Round | Mock | Question | Status |
+|---|---|---|---|
+| 1 | `device.html` | What is the panel *for*? Four shapes. | **Answered by research, not by review** — see below |
+| 2 | `pet-face.html` | How does a robot pet read to a **four-year-old** on 29 mm? | **Open** — one question left, three face variants |
 
-## The finding that should decide this round
-
-The plan was written before anyone worked out the panel's physical size.
+## The measurement that governs both rounds
 
 > **1.8″ diagonal at 368×448 = 29.0 × 35.3 mm, 322 ppi.**
 
-That is a **smartwatch panel, about a postage stamp**, and it invalidates three things the
-plan cheerfully assumed:
+A smartwatch panel, about a postage stamp. Tick **“True physical size”** in either mock before
+judging anything; at 1:1 desktop pixels every design flatters itself.
 
-| Plan said | Actually |
+For scale: **Vector's entire face — the best-executed robot emotion display ever shipped — is
+184 × 96 px on 23 × 12 mm.** We have ~9× the pixels in ~3.6× the area. Pixel count is not the
+constraint. Timing, variety and motion are.
+
+## Round 1 closed on evidence
+
+Three of the four shapes are eliminated by measurement rather than taste:
+
+| Shape | Verdict |
 |---|---|
-| "a 368×80 caption strip" | 6.3 mm tall — **one** short line, not a status bar |
-| "the box's face in a room" | unreadable beyond arm's length; this is a **desk** object |
-| 16×16 at 23 px/cell | the whole creature is **29 mm** — a thumbnail |
+| **D Room** | **Dead.** A 20 mm child touch target (NN/g) is 69% × 57% of this panel. Two do not fit in either axis. Four tappable props is ergonomically impossible. |
+| **C Face** | **Dead as drawn.** It leans on text; he is pre-literate, and icons don't rescue it — abstract symbols are learned from device experience he doesn't have. |
+| **A Matrix** | **Dead for this child.** 16×16 has too few pixels for an expression, and its only other input was swipe — direction discrimination on a screen *narrower than his finger* is untested by anyone. Kept in `device.html` as the aesthetic record. |
+| **B Porthole** | **Survives.** `pet-face.html` is its renovation. |
 
-12 px type is 0.95 mm. Nothing on this panel should sit below ~28 px (2.2 mm), and anything
-that matters wants 40 px+. **One thing at a time, large.** All four shapes obey that; they
-disagree about which one thing.
+## Round 2 — three findings rebuilt the thing
 
-**Tick "True physical size" in the mock before judging anything.** At 1:1 device pixels on a
-desktop monitor the panel looks like a phone screen and every shape flatters itself.
+**1. Emotion does not currently exist.** The shipped pet has all six emotions, but the Wall
+renders each as a chest-badge colour plus the width of one horizontal mouth bar — `curious` and
+`sleepy` are pixel-identical apart from hue, `happy` and `excited` differ by 0.06 of a bar, and
+in **any animal form emotion is invisible entirely** (the creature renderer draws no badge and
+no mouth). `PetOut.emotion` is never read at all. So "clear emotions" is not a simplification of
+what exists — it is the net-new work, and this panel is the first surface to carry it.
 
-## The four shapes
+**2. The whole screen is the only touch target, and long-press does not exist at four.**
+Children aged 4-5 produce **ordinary taps lasting up to 4.2 seconds** (adults: 53 ms). Round 1
+used a 550 ms long-press to mute the mic — for him, every tap would have muted the robot.
+Multi-touch completes 54% of the time and is out.
 
-| | Shape | The panel is… | Touch is… | What it costs |
-|---|---|---|---|---|
-| **A** | **Matrix** | a 16×16 LED matrix, true black, hard cells, one caption line | the pet, and nothing else | the pet is the whole UI, so anything that isn't the pet has nowhere to go |
-| **B** | **Porthole** | a window onto a creature drawn at full 368×448 — smooth, big-eyed, tracking your finger | drag to pet it; chrome appears only while touched | no persistent affordances — lovely, and undiscoverable by anyone but the owner |
-| **C** | **Face** | one enormous state: the clock, the listening ring, one notification, or the pet | tap advances, swipe dismisses | the pet is a guest at 8 px/cell — if the pet is the point, this isn't it |
-| **D** | **Room** | a 2D side-on echo of the Wall's 3D room; the pet lives in it | tap an object, the pet goes and does the shipped command | four props don't fit on 29 mm — the pet occludes its neighbour even at 6 px/cell |
+**3. The wake word will miss him often.** Whisper on child speech is ~32% WER against ~3% for
+adults, worse on small models; ~1% of output is hallucinated, triggered by silence and
+half-speech — and **a hallucinated command the robot acts on is worse than a miss**, because it
+reads as the toy being broken. No wake-word false-reject rate has ever been published for
+3-5 year olds; that is the biggest open risk in the whole plan and is cheap to measure.
 
-A and B are "a creature you keep". C is "a thing the box talks through". D is "a place the pet
-lives", and is the only one that reuses the Wall's vocabulary as its interface.
+### The conflict, and the design that resolves it
 
-## Settled, and identical in all four
+Findings 2 and 3 collide: if tap = poke and hold = talk, a child whose ordinary tap runs to
+4.2 s triggers "talk" by accident every time. No threshold fixes it — **his tap and his hold are
+the same gesture.** So there is no gesture discrimination at all:
 
-- **The state machine is the endpoint's, not the pet's** — idle / listening / thinking /
-  speaking / notify / muted. It comes from the box. Run the same sequence in each shape
-  (Wake word → Speak → Notify) before choosing; a shape that only looks good idle is not a
-  shape.
-- **Muted is a promise, not a UI state** (plan §5). Muted says so unmistakably and never stops
-  saying so; listening says it just as loudly. No ambiguous middle, and no shape may trade the
-  indicator's obviousness for prettiness.
-- **Nothing firewalled renders here.** The notification carries a count and a category, never a
-  body. "3 proposals" is fine; the sentence is not. This panel sits in a room.
-- **The pet belongs to the box.** `jpet/` is server-authoritative and `PetBroadcaster` already
-  fans state to the Wall and the phone — an endpoint is one more subscriber. These shapes
-  render pet state; they never invent it. Forms match the Wall's: robot, dog, cat, dragon.
+- **Touch** = *"I'm paying attention to you."* The pet flinches toward the finger in under
+  100 ms and the mic opens for as long as he holds.
+- **Release** = if he said something, do it. If he didn't, be silly.
 
-## What the mock also demonstrates
+One target, one gesture, no thresholds — and press-to-talk arrives free, because the touch
+budget was already spent. The sub-0.5 s micro-reaction, *not* the latency of the real response,
+is what drives perceived aliveness (η² = .407).
 
-- **True physical size** toggle (CSS mm) — the whole point.
-- **23 px cell grid** overlay, showing 368 ÷ 16 = 23 exactly, with the caption-strip line at 368.
-- **AMOLED burn-in drift** — a static face on an OLED for months is a real hazard; firmware
-  would drift the frame, and the mock shows what that looks like.
-- **Long-press to mute** works in every shape, because the mic control must never depend on
-  which screen you happen to be on.
+## How the face works (all borrowed, none invented)
 
-## Open questions for the review
+- **~17 tweened floats**, after Cozmo/Vector's 43-float `ProceduralFace`: whole-face
+  `{x, y, scaleX, scaleY, angle}` + per-eye `{scaleX, scaleY, upperLidY, upperLidAngle,
+  lowerLidY, lowerLidBend}`. Ekman's set is reachable from lid **Y** and **angle** alone.
+- **Asymmetry is the entire signal** for curious and silly. Free.
+- **Tween by halving** — `cur = (cur+target)/2` per frame. ~90% in 66 ms, ease-out for nothing.
+- **Never fully at rest** — a breathing sine always runs underneath. "When robots stop moving
+  they look dead."
+- **Blink 167 ms per half, and the eye widens as it closes.** Saccades 200 ms, 0-2 s apart.
+- **Gags hold the bewildered face.** 4-5 year olds read a pratfall as funny when the character
+  looks *bewildered*, and as not-funny when it looks pained or smug. The long hold after the
+  fart **is** the joke; the fart is the setup. Tick "Slow motion" to see the structure.
+- **Colour is not an emotion channel.** Vector deliberately made eye colour a user preference;
+  Nabaztag carried state in LED *pattern*, not hue. Here colour is identity and play — which is
+  exactly what the child uses it for.
 
-1. **Which shape** — and with it, what this device is *for*.
-2. Does the postage-stamp size change the **deployment story**? A desk object at arm's length
-   is a different product from the "room endpoint" the plan named, and two units might want to
-   be two different shapes.
-3. If **D**, does the room drop to three props or learn to pan?
-4. If **A**, is a 16×16 pet on a 322 ppi panel a deliberate aesthetic or a waste of the screen?
-   B exists to make that question concrete.
+## Anti-boredom is an engine, not a content pile
+
+Loona ships 700-1000 expressions and reviewers still describe it being shelved. Three of
+Vector's five layers are cheap and are **implemented for real** in the mock, with a live
+read-out so you can watch them work:
+
+- weighted-random selection within a per-action variant pool,
+- per-variant cooldown (recency suppression),
+- a **repetition penalty** — poke it ten times fast and the tenth lands at ×0.35.
+
+Note the tension with age: preschoolers *love* repetition. So suppress recency **within** a gag,
+never the gag itself — let him get the burp a hundred times, and make the burp different each time.
+
+## The one question left
+
+Whether the face is **eyes-only** (Vector's answer), **eyes + mouth** (the HRI literature says
+the mouth is necessary and sufficient for happiness, and eyes-only measurably loses accuracy),
+or a **small body** that can dance and fall over. The gags want a body; the emotions don't.
+Switch variants with the same pet in the same mood and pick.
+
+## Carried into the plan, not the mock
+
+- **65 dB(A)** close-to-ear cap (ASTM F963 / EN 71-1) — he *will* hold a 29 mm toy to his ear.
+- **One hour of bright light before bed suppressed melatonin ~88% in 4-year-olds, persisting
+  50 minutes.** Quiet hours must cut luminance, not just volume, and end well before bedtime.
+- **ICO Children's Code requires a recording indicator** — so "muted is a promise" is a
+  compliance requirement, not only a design principle.
+- **COPPA:** command audio deleted promptly is a narrow carve-out; keeping his voice to
+  fine-tune the model needs verifiable parental consent — and fine-tuning roughly halves child
+  ASR error, so this is a real fork.
