@@ -1,6 +1,6 @@
 # Pet endpoint — the PWA build, ahead of the hardware
 
-> **Status:** Scheduled · **Last verified:** 2026-09-13 · **Waves:** P0◻️ P1◻️ P2◻️ P3◻️ P4◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-09-13 · **Waves:** P1✅ P4✅ P2🟡 P0◻️ P3◻️ P5◻️
 
 Build the **room endpoint as a PWA surface first** — a full-screen pet the child talks to and
 touches, running on any phone or spare tablet — so the whole product exists and is being used
@@ -58,15 +58,49 @@ once, revocable, one per device. Its entire scope:
 Nothing else. Per non-negotiable #3 the new scope gets an **RLS isolation test** proving a
 `pet_endpoint` principal cannot read notes, wiki, health, finance or location rows.
 
+## 3a. What shipped first, and the scope change that made it smaller
+
+The owner's instruction was narrower than §3 assumed: **an owner-only surface in their own PWA,
+for troubleshooting interaction and visuals**. That removes the plan's hardest wave from the
+critical path — a screen the owner reaches behind their own session needs **no `pet_endpoint`
+principal at all**. P0's auth work stays in the plan because the moment this runs on a tablet in
+the child's room it is required again; it is descoped from *this* surface, not cancelled.
+
+Landed (`frontend/src/pet/`, `frontend/src/screens/PetFaceScreen.tsx`):
+
+- **P1 ✅ the face.** `pet/face.ts` (the ~17-float procedural face, six emotions as lid geometry,
+  asymmetry for curious and silly), `pet/rig.ts` (the limb rig and figure transform),
+  `pet/draw.ts` (the canvas renderer at the panel's native 368×448). Framework-free on purpose:
+  these are the reference implementation the ESP32 port transcribes.
+- **P4 ✅ the anti-boredom engine.** `pet/variants.ts` — weighted pools, per-variant cooldowns,
+  repetition penalty, with the boundary enforced: the *action* is the server's, only the
+  *variant* is local.
+- **P2 🟡 the touch model.** One whole-screen target, one gesture, no thresholds, with the
+  immediate flinch on contact. Still missing for a real endpoint: full-screen kiosk, wake lock,
+  and no way out of the screen.
+- **44 unit tests**, the first of which asserts the thing this whole surface exists to fix —
+  that no two emotions resolve to the same parameters.
+
+It speaks only the APIs the hardware will speak: `GET /api/pet`, `GET /api/pet/stream`,
+`POST /api/pet/command`. Two findings from wiring it for real:
+
+1. **`PetState` in the typed client was missing every ephemeral effect** (`pet_form`,
+   `pet_scale`, `pet_scene`, `object_colors`, `object_scales`). They are on the wire for
+   `GET /api/pet`; the interface simply never declared them, so no PWA surface could see the
+   creature form. Now declared, with the SSE gap documented on the type itself.
+2. **The stream/poll split is a workaround, not a design.** Because `/api/pet/stream` drops
+   those effects, the screen polls `GET /api/pet` at 1 Hz purely to notice a form change —
+   exactly the workaround the wall carries. P0 should delete both.
+
 ## 4. Waves
 
 | Wave | What | Done when |
 |---|---|---|
 | **P0** | **The seam.** `pet_endpoint` principal + scoped link mint/revoke in Settings, the four-verb scope, RLS isolation test. **Also fix `GET /pet/stream` to carry ephemeral effects** (form/colour/scale/scene are dropped today, which is why the Wall polls at 1 Hz) so the endpoint can subscribe instead of poll. | A minted link renders the pet and can reach nothing else; the Wall can drop its poll. |
-| **P1** | **The face.** Port the mock into a React component: the ~17-float procedural face, six emotions as lid geometry, the limb rig, tween-by-halving, blink/saccade/breathing, the gag structure with the bewildered hold. The pure parts — emotion resolution, rig poses, variant selection — are plain functions and get unit tests with no DOM. | The six emotions are distinguishable in a test that asserts on resolved parameters, not pixels. |
-| **P2** | **Endpoint mode.** A full-screen route with no app chrome, wake lock, no navigation away, and the settled touch model: **one whole-screen target, one gesture, no thresholds** — contact opens the mic and flinches toward the finger inside 100 ms; release acts on speech, or pokes. | A child can use it without leaving it, and cannot reach the rest of the app. |
+| **P1 ✅** | **The face.** Port the mock into a React component: the ~17-float procedural face, six emotions as lid geometry, the limb rig, tween-by-halving, blink/saccade/breathing, the gag structure with the bewildered hold. The pure parts — emotion resolution, rig poses, variant selection — are plain functions and get unit tests with no DOM. | The six emotions are distinguishable in a test that asserts on resolved parameters, not pixels. |
+| **P2 🟡** | **Endpoint mode.** A full-screen route with no app chrome, wake lock, no navigation away, and the settled touch model: **one whole-screen target, one gesture, no thresholds** — contact opens the mic and flinches toward the finger inside 100 ms; release acts on speech, or pokes. | A child can use it without leaving it, and cannot reach the rest of the app. |
 | **P3** | **Voice.** Mic → the box's own whisper, replacing the browser Web Speech path (`screens/speech.ts` ships his voice to Google in Chrome). Kokoro out. Repetition-aware fallback, **partial understanding** ("Turn what colour?") rather than "sorry, I didn't get that", and **never end on silence**. | He can say "turn red" and "be a dragon" and it works, or fails in-character. |
-| **P4** | **The anti-boredom engine.** Weighted-random variant pools, per-variant cooldowns, repetition penalty. **Boundary:** the *action* stays server-authoritative; only the *variant* is chosen client-side, because it is presentation. Recency is suppressed **within** a gag, never the gag itself — preschoolers love repetition. | The tenth rapid poke differs from the first, and the log shows why. |
+| **P4 ✅** | **The anti-boredom engine.** Weighted-random variant pools, per-variant cooldowns, repetition penalty. **Boundary:** the *action* stays server-authoritative; only the *variant* is chosen client-side, because it is presentation. Recency is suppressed **within** a gag, never the gag itself — preschoolers love repetition. | The tenth rapid poke differs from the first, and the log shows why. |
 | **P5** | **Live trial + safety.** Put it in front of the child. Count wake-word hits and misses, ASR accuracy, and what he actually does for a week. Ship the safety controls with it: volume cap, quiet hours cutting **luminance** not just volume, and an unmistakable recording indicator. | We have a number for the thing nobody has published, and a parent-facing control that enforces it. |
 
 P5 is a **gate on the hardware plan**, not a postscript: if the wake word cannot hear him on a

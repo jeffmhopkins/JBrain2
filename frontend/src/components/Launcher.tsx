@@ -50,6 +50,7 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "petcontrol"
+  | "petface"
   | "jcode"
   | "jlaunch"
   | "jmolt";
@@ -80,6 +81,7 @@ const SECTIONS: Section[] = [
       { title: "Map", icon: <GraphIcon size={24} />, target: "graph" },
       { title: "Location", icon: <PinIcon size={24} />, target: "location" },
       { title: "Pet", icon: <BotIcon size={24} />, target: "petcontrol" },
+      { title: "Pet face", icon: <BotIcon size={24} />, target: "petface" },
     ],
   },
   {

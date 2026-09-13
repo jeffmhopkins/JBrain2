@@ -228,7 +228,8 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
-- **Pet endpoint (PWA first)** — Scheduled (`plans/PET_ENDPOINT_PWA_PLAN.md`) — a full-screen
+- **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
+  rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen
   pet surface on any phone or spare tablet: the same server-authoritative `jpet/`, rendered as a
   procedural face with the six `EMOTIONS` finally visible (today the Wall draws each as a chest
   colour plus one mouth-bar width, and none at all in animal form). One whole-screen touch target,
