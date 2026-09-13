@@ -93,12 +93,25 @@ read-out so you can watch them work:
 Note the tension with age: preschoolers *love* repetition. So suppress recency **within** a gag,
 never the gag itself — let him get the burp a hundred times, and make the burp different each time.
 
-## The one question left
+## Settled: small body (owner, 2026-09-13)
 
-Whether the face is **eyes-only** (Vector's answer), **eyes + mouth** (the HRI literature says
-the mouth is necessary and sufficient for happiness, and eyes-only measurably loses accuracy),
-or a **small body** that can dance and fall over. The gags want a body; the emotions don't.
-Switch variants with the same pet in the same mood and pick.
+Chosen over *eyes-only* and *eyes + mouth*, both retained in the variant switcher as the record.
+Recorded in `../../reference/DESIGN.md`.
+
+The emotions never needed a body — lid geometry carries them. **The gags did.** So the limbs are
+a real rig (two arms, two legs, per-action poses) inside the same transform as the head, and
+`hide` finally means something: **the hands come up over the eyes.** That fixes a shipped dud —
+today `hide` renders identically to `sit`, walking to a corner and squatting with nothing
+occluding it — and peekaboo is squarely on-target for a four-year-old.
+
+Three defects were found and fixed by measuring rather than looking, and each is a trap worth
+remembering:
+
+| Symptom | Cause | Test that caught it |
+|---|---|---|
+| “hide” played the **wave** animation | the intent mirror matched substrings, so `hide` matched the keyword `hi` — `intents.py:407` uses **word-boundary regex** for exactly this reason | a 14-case routing table |
+| the figure clipped off the top | jump lift was applied *outside* the figure scale, and cat ears are the tallest silhouette | a pixel scan of the drawn extent across all 7 forms, idle and mid-jump |
+| peekaboo read as “arms up beside the head” | the hand knob is 29 px and the widest eye is 43 — the arm reached the eye, the hand just couldn’t cover it | counting eye-white pixels with the hands up (must be zero) |
 
 ## Carried into the plan, not the mock
 

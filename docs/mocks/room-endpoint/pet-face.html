@@ -241,7 +241,7 @@ const EMOS=["happy","excited","curious","sleepy","silly","scared"];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────────────────
 const S={
-  emo:"happy", form:"robot", color:"default", variant:"eyes-mouth",
+  emo:"happy", form:"robot", color:"default", variant:"body",
   cur:{}, tgt:{},                       // tweened face params
   gaze:{x:0,y:0,tx:0,ty:0}, blink:0, nextBlink:1200, nextSaccade:900,
   touch:{down:false,x:0,y:0,t0:0},
@@ -282,7 +282,7 @@ const ACTS={
   blush:{dur:1600,emo:"happy"}, sneeze:{dur:1200,emo:"bewildered"}, hiccup:{dur:900,emo:"bewildered"},
   dance:{dur:2600,emo:"excited"}, spin:{dur:1400,emo:"excited"}, jump:{dur:900,emo:"excited"},
   wave:{dur:1400,emo:"happy"}, nod:{dur:900,emo:"happy"}, beep:{dur:800,emo:"silly"},
-  sing:{dur:2400,emo:"happy"}, hide:{dur:1600,emo:"scared"},
+  sing:{dur:2400,emo:"happy"}, hide:{dur:2400,emo:"silly"},
   fart:{dur:1500,emo:"bewildered",gag:true}, burp:{dur:1400,emo:"bewildered",gag:true},
   sleep:{dur:2000,emo:"sleepy"},
 };
@@ -376,86 +376,154 @@ function drawSilhouette(cx,cy,hw,hh,col,dark){
     ctx.beginPath(); ctx.ellipse(cx+80,cy-46,20,16,-.3,0,7); ctx.fill(); }
 }
 
+// ── THE RIG (owner chose "small body", 2026-09-13) ────────────────────────────────────────
+// A body is only worth its pixels if the gags use it, so the limbs are a real rig driven per
+// action, and the whole figure lives inside ONE transform — squash, stretch and tilt reach the
+// legs as well as the eyes. Proportions are set by the panel, not by taste: at 368x448 the
+// head is 216x176 and the whole figure spans y=40..380, leaving margin at both ends.
+const HEAD_Y=-96, HW=108, HH=88;              // head centre offset and half-extents
+const SHOULDER_Y=6, HIP_Y=98, ARM_L=74, LEG_L=54;
+
+function drawLimb(x,y,ang,len,w,col,hand){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(ang*Math.PI/180);
+  ctx.fillStyle=col; ctx.beginPath(); ctx.roundRect(-w/2,0,w,len,w/2); ctx.fill();
+  if(hand){ ctx.beginPath(); ctx.arc(0,len,w*0.62,0,7); ctx.fill(); }
+  ctx.restore();
+}
+
+/** Per-action limb pose. 0deg = hanging straight down; negative swings forward/up. */
+function rig(){
+  const r={armL:12,armR:-12,legL:4,legR:-4,lean:0,handsUp:0};
+  const idle=Math.sin(S.t/1400)*4;            // never fully at rest, limbs included
+  r.armL+=idle; r.armR-=idle;
+  const a=S.act; if(!a) return r;
+  const p=a.t/a.dur, m=a.mag, n=a.name;
+  if(n==="wave"){ r.armR=-150+Math.sin(p*Math.PI*6)*26*m; }
+  else if(n==="dance"||n==="bop"||n==="shimmy"){ const q=Math.sin(p*Math.PI*6)*m;
+    r.armL=40+q*55; r.armR=-40+q*55; r.legL=10+q*10; r.legR=-10+q*10; }
+  else if(n==="jump"||n==="boing"){ const q=Math.sin(p*Math.PI); r.armL=120*q; r.armR=-120*q;
+    r.legL=30*q; r.legR=-30*q; }
+  else if(n==="wiggle"||n==="giggle"){ const q=Math.sin(p*Math.PI*9)*m;
+    r.armL=25+q*30; r.armR=-25+q*30; }
+  else if(n==="sing"){ r.armL=70; r.armR=-70; }
+  else if(n==="sleep"){ r.armL=6; r.armR=-6; r.legL=2; r.legR=-2; }
+  else if(n==="fart"){ if(p>0.12&&p<0.72){ r.armL=95; r.armR=-95; r.lean=8*m; r.legL=26; } }
+  else if(n==="burp"){ if(p>0.12&&p<0.6){ r.armR=-160; r.lean=-6*m; } }   // hand to the mouth
+  else if(n==="sneeze"||n==="hiccup"){ if(p>0.35&&p<0.6){ r.armL=140; r.armR=-140; } }
+  else if(n==="hide"){
+    // PEEKABOO, and the fix for a shipped dud: `hide` currently renders identically to `sit`
+    // (walks to a corner, squats, nothing occludes it). With hands, hide can actually hide —
+    // and peekaboo is squarely on-target for a four-year-old.
+    r.handsUp = p<0.18 ? p/0.18 : p<0.72 ? 1 : Math.max(0,(1-(p-0.72)/0.28));
+    r.armL=168; r.armR=-168;
+  }
+  return r;
+}
+
 function render(){
   const e=resolveEmo();
-  const col=bodyColor(), dark=shade(col,0.22);
+  const col=bodyColor(), dark=shade(col,0.22), limb=shade(col,0.78), torso=shade(col,0.88);
+  const R=rig();
 
-  // ── whole-face transform: breathing + emotion + the current action ──────────────────────
-  const breathe=Math.sin(S.t/1400)*0.018+1;   // never fully at rest
-  let ox=0, oy=0, sx=1, sy=1, ang=e.face.ang, extra="";
+  const breathe=Math.sin(S.t/1400)*0.018+1;
+  let ox=0, oy=0, sx=1, sy=1, ang=e.face.ang+R.lean, extra="";
   const a=S.act;
   if(a){
-    const p=a.t/a.dur;                        // get-in → act → HOLD → settle, as one curve
-    const mag=a.mag;
-    if(a.name==="wiggle") ang+=Math.sin(p*Math.PI*8)*14*mag;
-    if(a.name==="giggle"){ oy+=Math.abs(Math.sin(p*Math.PI*7))*-16*mag; ang+=Math.sin(p*Math.PI*9)*7*mag; }
-    if(a.name==="boing"){ const q=Math.sin(p*Math.PI*3); sy+=q*.22*mag; sx-=q*.14*mag; oy-=Math.abs(q)*22*mag; }
-    if(a.name==="blush") extra="blush";
-    if(a.name==="dance"){ ox+=Math.sin(p*Math.PI*6)*26*mag; ang+=Math.sin(p*Math.PI*6)*11*mag; }
-    if(a.name==="spin"||a.name==="spin-dance") ang+=p*720;
-    if(a.name==="jump") oy-=Math.abs(Math.sin(p*Math.PI))*70*mag;
-    if(a.name==="wave") ang+=Math.sin(p*Math.PI*5)*12*mag;
-    if(a.name==="nod") oy+=Math.sin(p*Math.PI*5)*14*mag;
-    if(a.name==="sneeze"||a.name==="hiccup"){ if(p<.35){sx+=.06;sy-=.05;} else if(p<.5){sx-=.2;sy+=.25;oy-=14;} }
-    if(a.name==="hide"){ sy-=Math.min(.5,p*1.4); oy+=Math.min(70,p*180); }
-    if(a.name==="sleep"){ sy-=Math.min(.12,p*.3); oy+=Math.min(18,p*40); }
-    if(a.gag){
-      // THE GAG SKELETON. anticipation → 2-4 frames of act → LONG HOLD of the bewildered
-      // face (this is the punchline) → settle. Sound would land on frame 1 of the act, never early.
-      if(p<0.12){ sx+=.05; sy-=.04; }                                  // anticipation, contra-motion
-      else if(p<0.22){ sx-=.26*mag; sy+=.30*mag; oy-=10; extra="puff"; } // the act
-      else if(p<0.72){ extra="puff"; }                                  // HOLD — bewildered, ~500ms
+    const p=a.t/a.dur, mag=a.mag, n=a.name;
+    if(n==="wiggle") ang+=Math.sin(p*Math.PI*8)*11*mag;
+    if(n==="giggle"){ oy+=Math.abs(Math.sin(p*Math.PI*7))*-13*mag; ang+=Math.sin(p*Math.PI*9)*6*mag; }
+    if(n==="boing"){ const q=Math.sin(p*Math.PI*3); sy+=q*.18*mag; sx-=q*.11*mag; oy-=Math.abs(q)*18*mag; }
+    if(n==="blush") extra="blush";
+    if(n==="dance"||n==="bop"||n==="shimmy"){ ox+=Math.sin(p*Math.PI*6)*22*mag; ang+=Math.sin(p*Math.PI*6)*9*mag; }
+    if(n==="spin"||n==="spin-dance") ang+=p*720;
+    if(n==="jump") oy-=Math.abs(Math.sin(p*Math.PI))*32*mag;   // lift is UNSCALED, so keep it modest
+    if(n==="nod") oy+=Math.sin(p*Math.PI*5)*12*mag;
+    if(n==="sneeze"||n==="hiccup"){ if(p<.35){sx+=.05;sy-=.04;} else if(p<.5){sx-=.17;sy+=.21;oy-=12;} }
+    if(n==="hide"){ sy-=Math.min(.16,p*.4); oy+=Math.min(26,p*70); }
+    if(n==="sleep"){ sy-=Math.min(.10,p*.26); oy+=Math.min(16,p*36); }
+    if(a.gag){                                  // anticipation -> act -> LONG HOLD -> settle
+      if(p<0.12){ sx+=.05; sy-=.04; }
+      else if(p<0.22){ sx-=.22*mag; sy+=.26*mag; oy-=9; extra="puff"; }
+      else if(p<0.72){ extra="puff"; }          // the hold IS the punchline
     }
   }
   sx*=breathe; sy*=(2-breathe);
 
   ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
-  // listening ring — the ICO Children's Code wants an unambiguous recording indicator, and
-  // a 4-year-old cannot read one, so it is a colour the whole panel wears.
-  if(S.listening){
-    const p=.5+.5*Math.sin(S.t/240);
-    ctx.strokeStyle=`rgba(143,188,154,${.35+.35*p})`; ctx.lineWidth=10;
+  if(S.listening){                              // ICO wants an unambiguous recording indicator,
+    const q=.5+.5*Math.sin(S.t/240);            // and he cannot read one — so the panel wears it
+    ctx.strokeStyle=`rgba(143,188,154,${.35+.35*q})`; ctx.lineWidth=10;
     ctx.strokeRect(5,5,W-10,H-10);
   }
+
+  const body = S.variant==="body";
   ctx.save();
-  ctx.translate(W/2+ox, H*0.46+oy);
+  ctx.translate(W/2+ox, (body? H*0.545 : H*0.46)+oy);
   ctx.rotate(ang*Math.PI/180);
   ctx.scale(sx,sy);
+  // One figure scale, so the rig's numbers stay readable and the WHOLE creature fits the panel
+  // in its worst case: cat ears (the tallest silhouette) at the top of a jump. Measured, not
+  // guessed — see the fit check in the mock's verification.
+  if(body) ctx.scale(0.84,0.84);
 
-  const hw=150, hh=132;
+  if(body){
+    for(const [s2,al] of [[-1,R.legL],[1,R.legR]])       // legs, behind everything
+      drawLimb(s2*34, HIP_Y, al, LEG_L, 30, limb, true);
+    if(!R.handsUp)                                        // arms behind the torso when down
+      for(const [s2,al] of [[-1,R.armL],[1,R.armR]])
+        drawLimb(s2*66, SHOULDER_Y, al, ARM_L, 28, limb, true);
+    ctx.fillStyle=torso;                                  // torso
+    ctx.beginPath(); ctx.roundRect(-72,-26,144,132,40); ctx.fill();
+    if(S.form==="robot"){ ctx.fillStyle=shade(col,.55);   // a chest plate, robot only
+      ctx.beginPath(); ctx.roundRect(-26,10,52,40,12); ctx.fill(); }
+  }
+
+  ctx.save(); ctx.translate(0, body? HEAD_Y : 0);         // ── the head group ──
+  const hw = body? HW : 150, hh = body? HH : 132;
   drawSilhouette(0,0,hw,hh,col,dark);
   ctx.fillStyle=col;
-  ctx.beginPath(); ctx.roundRect(-hw,-hh,hw*2,hh*2, S.form==="robot"?44:80); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(-hw,-hh,hw*2,hh*2, S.form==="robot"?40:74); ctx.fill();
   if(extra==="blush"){ ctx.fillStyle="rgba(255,120,160,.5)";
-    for(const s of[-1,1]){ ctx.beginPath(); ctx.ellipse(s*104,44,26,16,0,0,7); ctx.fill(); } }
-
-  const blink = S.blink>0;
-  const eyeY = S.variant==="eyes-only" ? 0 : -22;
-  drawEye(-64,eyeY,e.l,col,dark,S.gaze.x,S.gaze.y,blink);
-  drawEye( 64,eyeY,e.r,col,dark,S.gaze.x,S.gaze.y,blink);
-  if(S.variant!=="eyes-only") drawMouth(0, 74, e.mouth, col, dark);
+    for(const s2 of[-1,1]){ ctx.beginPath(); ctx.ellipse(s2*(hw*.7),hh*.34,22,14,0,0,7); ctx.fill(); } }
+  const blink=S.blink>0, eyeY = S.variant==="eyes-only" ? 0 : -hh*0.17, eyeX = hw*0.43;
+  const scale = body? 0.78 : 1;                           // the eyes shrink with the head
+  ctx.save(); ctx.translate(0,eyeY); ctx.scale(scale,scale);
+  drawEye(-eyeX/scale,0,e.l,col,dark,S.gaze.x,S.gaze.y,blink);
+  drawEye( eyeX/scale,0,e.r,col,dark,S.gaze.x,S.gaze.y,blink);
+  ctx.restore();
+  if(S.variant!=="eyes-only") drawMouth(0, hh*0.52, e.mouth, col, dark);
   ctx.restore();
 
-  if(S.variant==="body"){                       // a small body under the head — gags need one
-    ctx.save(); ctx.translate(W/2+ox*0.6, H*0.46+oy*0.4);
-    ctx.fillStyle=shade(col,.82);
-    ctx.beginPath(); ctx.roundRect(-72,132,144,116,34); ctx.fill();
-    ctx.fillStyle=shade(col,.7);
-    for(const s of[-1,1]){ ctx.beginPath();
-      ctx.roundRect(s*86-22,150,44,84,20); ctx.fill(); }        // arms
-    ctx.restore();
+  if(body && R.handsUp){
+    // PEEKABOO. Don't guess an angle — SOLVE for the eye. A fixed 168° with a fixed-length arm
+    // leaves the hand ~11 px short, which reads as "arms up beside the head", not as hiding.
+    // Aim each hand at its own eye and give the limb exactly the reach it needs.
+    const lift=R.handsUp, ex=HW*0.43, ey=HEAD_Y-HH*0.17;
+    for(const s2 of [-1,1]){
+      const sxp=s2*66, dx=s2*ex-sxp, dy=ey-SHOULDER_Y;
+      const aim=Math.atan2(dx,dy)*180/Math.PI, reach=Math.hypot(dx,dy);
+      const rest=s2*-12;
+      drawLimb(sxp, SHOULDER_Y, rest+(aim-rest)*lift, ARM_L+(reach-ARM_L)*lift, 28, limb, false);
+      // A PALM, not the limb's little hand knob. Measured: the knob is 29 px across and the
+      // widest eye (silly, scale 1.25) is 43 — the eye stayed visible around it, so the gag
+      // read as "arms up beside the head". The palm is sized to beat the largest eye.
+      ctx.save(); ctx.globalAlpha=lift; ctx.fillStyle=limb;
+      ctx.beginPath(); ctx.arc(s2*ex, ey, 38, 0, 7); ctx.fill(); ctx.restore();
+    }
   }
-  if(extra==="puff"){                            // the visible half of the joke
+  ctx.restore();
+
+  if(extra==="puff"){
     const n=6, pr=(S.act.t/S.act.dur);
     for(let i=0;i<n;i++){
       const q=(pr*1.6+i/n)%1;
       ctx.fillStyle=`rgba(140,200,150,${(1-q)*0.5})`;
-      ctx.beginPath(); ctx.arc(W/2+70+i*16, H*0.46+150-q*70, 8+q*18, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(W/2+62+i*15, H*0.545+104-q*58, 7+q*16, 0, 7); ctx.fill();
     }
   }
-  if(S.heard){                                   // debug only — he cannot read this
-    ctx.fillStyle="rgba(230,231,233,.35)"; ctx.textAlign="center"; ctx.font="400 20px system-ui";
-    ctx.fillText(S.heard, W/2, H-22);
+  if(S.heard){                                            // debug only — he cannot read this
+    ctx.fillStyle="rgba(230,231,233,.32)"; ctx.textAlign="center"; ctx.font="400 19px system-ui";
+    ctx.fillText(S.heard, W/2, H-18);
   }
 }
 
@@ -495,7 +563,9 @@ const KEYWORDS=[["fart",["fart","toot","poot","stinky"]],["burp",["burp","belch"
 const CHAT=[["joke",["joke","funny story"]],["story",["story","tell me a story"]]];
 function handleSay(raw){
   const t=" "+raw.toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ")+" ";
-  const has=w=>t.includes(" "+w+" ")||t.includes(" "+w);
+  // WORD BOUNDARIES, not substrings — intents.py:407 matches on \b for exactly this reason.
+  // A substring test makes "hide" match the keyword "hi" and route to wave, forever.
+  const has=w=>new RegExp("\\b"+w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b").test(t);
   S.heard=raw;
   // 1. form  2. colour  3. keyword action  4. chat  — the shipped precedence order
   const form=FORMS.find(f=>has(f)) || (has("puppy")||has("doggy")?"dog":null) || (has("kitty")?"cat":null)
@@ -530,7 +600,8 @@ const syncEmos=mk("emos",EMOS,()=>S.emo,v=>{S.emo=v; holdBlink(); log(`emotion �
 function holdBlink(){ S.blink=0; S.nextBlink=Math.max(S.nextBlink, 900); }
 const syncForms=mk("forms",FORMS,()=>S.form,v=>{S.form=v;});
 const syncCols=mk("cols",COLORS,()=>S.color,v=>{S.color=v;});
-const syncVars=mk("variants",["eyes-only","eyes-mouth","body"],()=>S.variant,v=>{S.variant=v;});
+const syncVars=mk("variants",["eyes-only","eyes-mouth","body ✓"],
+  ()=>S.variant==="body"?"body ✓":S.variant, v=>{S.variant=v.startsWith("body")?"body":v;});
 const QUICK=["dance","jump","wave","spin","sing","fart","burp","hide","sleep"];
 document.getElementById("quick").innerHTML=QUICK.map(q=>`<button data-q="${q}">${q}</button>`).join("");
 document.getElementById("quick").onclick=e=>{const b=e.target.closest("button"); if(!b)return;

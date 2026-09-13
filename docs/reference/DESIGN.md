@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-29
+> **Status:** Living · **Last verified:** 2026-09-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -2265,6 +2265,43 @@ lifted** — `activeTurn` becomes a session-keyed **set for the row glyphs only*
 does **not** gate sends; the parent turn stays the single gated turn, and the
 in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
 child session rows — see the build plan's "Execution model").
+
+## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/proposed/ROOM_ENDPOINT_PLAN.md`)
+
+The pet on a **368×448 AMOLED room endpoint** (physically **29.0 × 35.3 mm**, 322 ppi), for a
+**four-year-old**. Chosen **"small body"** over the rivals *eyes-only* (Vector's answer) and
+*eyes + mouth*; both are retained in the mock's variant switcher as the record.
+
+**Why a body wins here:** the emotions do not need one — lid geometry carries them — but the
+*gags* do. Dance, wave, jump, guitar and above all **peekaboo** need arms. A body is only worth
+its pixels if the actions use it, so the limbs are a **real rig** (two arms, two legs, per-action
+poses) living inside the same transform as the head, so squash, stretch and tilt reach the feet.
+
+Binding decisions from this round, reusable by any future character surface:
+
+- **One whole-screen touch target, one gesture, no thresholds.** A 20 mm child target (NN/g) is
+  69% × 57% of this panel — two do not fit in either axis. And 4–5 year olds produce **ordinary
+  taps lasting up to 4.2 s**, so long-press does not exist at this age: any contact from 50 ms to
+  ~5 s is one tap. **Never ship a long-press to a preschool surface.**
+- **Touch = "I'm paying attention to you"; release = act.** Contact opens the mic and triggers a
+  **sub-100 ms flinch toward the finger** (the micro-reaction, not the latency of the real
+  response, is what drives perceived aliveness); release acts on what was said, or pokes if
+  nothing was. This makes **press-to-talk free**, which the child-ASR evidence requires.
+- **Emotion is lid geometry, whole-face motion and timing — never colour.** ~17 tweened floats:
+  face `{x, y, scaleX, scaleY, angle}` + per-eye `{scaleX, scaleY, upperLidY, upperLidAngle,
+  lowerLidY, lowerLidBend}`. Ekman's set comes from lid **Y** and **angle**; **asymmetry** carries
+  curious and silly. Colour is identity and play, and is a *user choice*, not a state signal.
+- **Tween by halving** (`cur = (cur+target)/2` per frame) and **never fully at rest** (a breathing
+  sine always running). Blink 167 ms per half with the eye widening as it closes; saccades 200 ms,
+  0–2 s apart.
+- **Gags hold a bewildered face.** 4–5 year olds read a pratfall as funny when the character looks
+  bewildered, and as *not* funny when it looks pained or smug. The hold is the punchline.
+- **Text is a debug channel.** Pre-literate audience: every state, prompt and error must be
+  expressible in animation, non-speech audio, or speech. Icons only if concrete and depictive.
+- **Anti-boredom is an engine, not a content pile** — weighted-random variant pools, per-variant
+  cooldowns, and a repetition penalty. Suppress recency *within* a gag, never the gag itself.
+- **A recording indicator is mandatory** (ICO Children's Code), and on a pre-literate surface it
+  must be a whole-panel state, not a caption.
 
 ## Implementation rules
 
