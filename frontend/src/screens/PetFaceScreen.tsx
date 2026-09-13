@@ -34,6 +34,7 @@ import { COLOR_NAMES, FORMS, PANEL_H, PANEL_W, type Scene, drawScene } from "../
 import { type FaceKey, approach, isFaceKey, resolveFace } from "../pet/face";
 import { ACTIONS, actionForServerStep, figureFor, rigFor } from "../pet/rig";
 import { type PoolMemory, newMemory, pickVariant, repetitionPenalty } from "../pet/variants";
+import { speak } from "./speech";
 import "./petface.css";
 
 export interface PetFaceDeps {
@@ -91,6 +92,11 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     scriptKey: null as string | null,
     /** The emotion of the step currently playing, if it named one. */
     stepFace: null as string | null,
+    /** The last thing the pet said, so a reply riding every stream frame is spoken once. */
+    lastSpeech: null as string | null,
+    /** A `say` is in flight. The box answers a keyword instantly but takes the LLM path for
+     *  anything else, which is seconds — and a pet that sits idle through it reads as deaf. */
+    thinking: false,
     listening: false,
     caption: "",
     mem: newMemory() as PoolMemory,
@@ -99,6 +105,12 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
   const petRef = useRef<PetState | null>(null);
   const overrides = useRef({ form: null as string | null, face: null as FaceKey | null });
   overrides.current = { form: formOverride, face: faceOverride };
+
+  const note = useCallback((line: string) => {
+    setLog((prev) =>
+      [`${new Date().toLocaleTimeString([], { hour12: false })} ${line}`, ...prev].slice(0, 60),
+    );
+  }, []);
 
   /** Play a server step. `duration_ms` is the box's call, not ours — it is what the wall
    *  honours — with the action's own length as the fallback when a step omits it. */
@@ -133,17 +145,22 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
           if (first) playStep(first);
         }
       }
+      // THE PET'S REPLY IS AUDIO, not text. The audience cannot read, so a joke rendered as a
+      // caption has not been told. Spoken once per new line: a reply rides every subsequent
+      // stream frame, and the snapshot on open carries the last thing it ever said.
+      const line = state.speech ?? null;
+      if (line !== a.lastSpeech) {
+        a.lastSpeech = line;
+        if (replay && line) {
+          speak(line);
+          note(`pet says: "${line}"`);
+        }
+      }
       petRef.current = state;
       setPet(state);
     },
-    [playStep],
+    [note, playStep],
   );
-
-  const note = useCallback((line: string) => {
-    setLog((prev) =>
-      [`${new Date().toLocaleTimeString([], { hour12: false })} ${line}`, ...prev].slice(0, 60),
-    );
-  }, []);
 
   /** Play a reaction locally RIGHT NOW, then tell the server. The immediate local play is not a
    *  shortcut: a reaction that waits for a round trip reads as the toy ignoring the child, and
@@ -273,6 +290,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       const serverFace = a.stepFace ?? p?.emotion;
       const key: FaceKey =
         overrides.current.face ??
+        (a.thinking && !playing ? "curious" : null) ??
         (playing && isFaceKey(ACTIONS[playing.name]?.face)
           ? (ACTIONS[playing.name]?.face as FaceKey)
           : isFaceKey(serverFace)
@@ -360,9 +378,18 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     if (!text) return;
     setSay("");
     note(`say → "${text}" (server routes it: intents.py first, LLM only if nothing matches)`);
+    // A keyword comes back instantly; anything else goes to the LLM and takes seconds. Without
+    // this the pet sits idle through the wait and reads as not having heard.
+    anim.current.thinking = true;
     deps.sendPetCommand({ action: "say", text }).then(
-      (s) => adopt(s, true),
-      () => note("say failed"),
+      (s) => {
+        anim.current.thinking = false;
+        adopt(s, true);
+      },
+      () => {
+        anim.current.thinking = false;
+        note("say failed");
+      },
     );
   }, [adopt, deps, note, say]);
 

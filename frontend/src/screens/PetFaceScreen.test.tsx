@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PetState } from "../api/client";
 import { drawScene } from "../pet/draw";
+import { speak } from "./speech";
+
+// jsdom has no speechSynthesis; the pet's voice is mocked so the reply can be asserted.
+vi.mock("./speech", () => ({ speak: vi.fn(), ttsAvailable: () => true }));
 import { type PetFaceDeps, PetFaceScreen } from "./PetFaceScreen";
 
 // Canvas is jsdom-untestable, so the renderer is mocked and `getContext` stubbed — the
@@ -267,6 +271,58 @@ describe("PetFaceScreen", () => {
       await waitFor(() => expect(screen.getByText(/2 step/)).toBeTruthy());
       await waitFor(() => expect(vi.mocked(drawScene).mock.calls.length).toBeGreaterThan(1));
       expect(captions()).not.toContain("dance");
+    });
+  });
+
+  // "tell me a joke" is not a keyword, so the box takes the LLM path and answers with SPEECH
+  // plus a small emote. The joke is the reply — and the audience cannot read, so a reply that
+  // is neither spoken nor shown has not been delivered. This screen said nothing at all.
+  describe("the pet's reply", () => {
+    beforeEach(() => vi.mocked(speak).mockClear());
+
+    it("speaks what the box says", async () => {
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand: vi.fn(async () =>
+          petState({ speech: "Why did the robot cross the road?" }),
+        ),
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      fireEvent.change(screen.getByLabelText("Say to the pet"), {
+        target: { value: "tell me a joke" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Say" }));
+      await waitFor(() => expect(speak).toHaveBeenCalledWith("Why did the robot cross the road?"));
+    });
+
+    // A reply rides every subsequent stream frame. Re-speaking it each time would make the pet
+    // repeat itself indefinitely.
+    it("says a given line once, however many frames carry it", async () => {
+      async function* twice(): AsyncGenerator<PetState> {
+        yield petState({ speech: "Beep boop!" });
+        yield petState({ speech: "Beep boop!" });
+      }
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState()),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => twice(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
+    });
+
+    // The snapshot carries the last thing the pet ever said. Speaking it on open would have the
+    // pet greet you with a joke from last Tuesday every time the screen is opened.
+    it("does not speak the snapshot's old reply on open", async () => {
+      const deps: PetFaceDeps = {
+        getPet: vi.fn(async () => petState({ speech: "an old line" })),
+        sendPetCommand: vi.fn(async () => petState()),
+        petStream: () => noFrames(),
+      };
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      await waitFor(() => expect(screen.getByText(/emotion/)).toBeTruthy());
+      expect(speak).not.toHaveBeenCalled();
     });
   });
 

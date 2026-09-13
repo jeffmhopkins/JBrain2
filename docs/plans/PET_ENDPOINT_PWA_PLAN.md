@@ -1,6 +1,6 @@
 # Pet endpoint — the PWA build, ahead of the hardware
 
-> **Status:** In progress · **Last verified:** 2026-09-13 · **Waves:** P1✅ P1a✅ P4✅ P2🟡 P0◻️ P3◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-09-13 · **Waves:** P1✅ P1a✅ P1b✅ P4✅ P2🟡 P0◻️ P3◻️ P5◻️
 
 Build the **room endpoint as a PWA surface first** — a full-screen pet the child talks to and
 touches, running on any phone or spare tablet — so the whole product exists and is being used
@@ -84,6 +84,13 @@ Landed (`frontend/src/pet/`, `frontend/src/screens/PetFaceScreen.tsx`):
   no room, so `rig.ts:actionForServerStep` maps it deliberately and falls back to a visible
   acknowledgement — never to silence, because on a panel a child is holding, "nothing happened"
   is indistinguishable from "it's broken".
+- **P1b ✅ the pet's voice**, found the same way: "tell me a joke" is not a keyword, so the box
+  takes the LLM path and answers with **speech** plus a small emote. The screen rendered neither.
+  The reply is now **spoken** (`screens/speech.ts:speak`, the same pet-ish voice the phone
+  Control screen uses) — because the audience cannot read, so a joke shown as a caption has not
+  been told — once per new line, and never for the snapshot's stale line on open. A `say` in
+  flight now wears a thinking face, since the LLM path takes seconds and a pet that sits idle
+  through it reads as not having heard.
 - **P2 🟡 the touch model.** One whole-screen target, one gesture, no thresholds, with the
   immediate flinch on contact. Still missing for a real endpoint: full-screen kiosk, wake lock,
   and no way out of the screen.
