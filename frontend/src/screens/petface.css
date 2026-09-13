@@ -1,0 +1,140 @@
+/* The pet-face troubleshooting surface. Owner-only, and deliberately two-part: the PANEL is
+   pixel-exact to the hardware (368x448, no app chrome, nothing the device cannot draw), and
+   everything around it is scaffolding that will not exist on the device. */
+.pf-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.pf-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.pf-bar h1 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0;
+  flex: 1;
+}
+.pf-bar button {
+  min-height: 44px;
+  min-width: 44px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 14px;
+  font: 400 14px system-ui;
+}
+.pf-body {
+  display: flex;
+  gap: 20px;
+  padding: 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.pf-stage {
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 9px;
+  align-self: flex-start;
+}
+.pf-stage canvas {
+  display: block;
+  border-radius: 6px;
+  background: #000;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  width: 368px;
+  height: 448px;
+}
+.pf-stage.pf-true canvas {
+  width: 29.02mm;
+  height: 35.33mm;
+}
+.pf-note {
+  color: var(--text-3);
+  font-size: 12px;
+  text-align: center;
+  margin-top: 8px;
+}
+.pf-panel {
+  flex: 1;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pf-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+}
+.pf-card h2 {
+  font: 500 12px system-ui;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 10px;
+}
+.pf-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pf-row button {
+  flex: 1 1 auto;
+  min-height: 40px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 7px 11px;
+  font: 400 13px system-ui;
+}
+.pf-row button[aria-pressed="true"] {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+}
+.pf-say {
+  display: flex;
+  gap: 8px;
+}
+.pf-say input {
+  flex: 1;
+  min-height: 44px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  font: 400 14px system-ui;
+}
+.pf-log {
+  font: 400 12px / 1.5 ui-monospace, Menlo, monospace;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  height: 120px;
+  overflow: auto;
+}
+.pf-log b {
+  color: var(--steel);
+  font-weight: 400;
+}

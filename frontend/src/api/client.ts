@@ -2173,6 +2173,15 @@ export interface PetState {
   lights_on: boolean;
   /** Room props the pet can target/carry: {kind: [x, z]} in normalized floor coords. */
   objects: Record<string, [number, number]>;
+  /** Ephemeral effects. Present on `GET /api/pet`, but **dropped from `/api/pet/stream`
+   *  frames** (`api/pet.py` builds SSE payloads with no effects argument) — which is why the
+   *  wall polls at 1 Hz instead of subscribing, and why any surface that needs the creature
+   *  form has to poll too. Optional so a stream frame type-checks. */
+  pet_form?: string;
+  pet_scale?: number;
+  pet_scene?: string;
+  object_colors?: Record<string, string>;
+  object_scales?: Record<string, number>;
 }
 
 /** A kid play-button (each expands to a canned script), `say` (freeform → talk brain),

@@ -245,6 +245,15 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
+- **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
+  rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen
+  pet surface on any phone or spare tablet: the same server-authoritative `jpet/`, rendered as a
+  procedural face with the six `EMOTIONS` finally visible (today the Wall draws each as a chest
+  colour plus one mouth-bar width, and none at all in animal form). One whole-screen touch target,
+  press-to-talk into the box's own whisper, and a non-owner `pet_endpoint` principal so a child's
+  tablet never holds an owner session. Built ahead of, and gating, the ESP32-S3 panels in
+  `proposed/ROOM_ENDPOINT_PLAN.md`; binding mock `mocks/room-endpoint/pet-face.html`.
+
 - **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2,
   `archive/JPET_V3_PLAN.md` v3)
   — a Tron/synthwave **3D** wireframe robot the kids make *do things* and talk to. One

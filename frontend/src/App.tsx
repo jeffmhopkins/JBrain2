@@ -34,6 +34,7 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { PetFaceScreen } from "./screens/PetFaceScreen";
 import { RadioScreen } from "./screens/RadioScreen";
 import { ResearchDetailScreen } from "./screens/ResearchDetailScreen";
 import { type ResearchKind, ResearchScreen } from "./screens/ResearchScreen";
@@ -73,6 +74,7 @@ type Card =
   | "radio"
   | "intake"
   | "petcontrol"
+  | "petface"
   | "jcode"
   | "jlaunch"
   | "jmolt"
@@ -82,7 +84,10 @@ type Card =
 // back bar + slide-in), so they render outside the shared subscreen TopBar wrapper —
 // hence no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol">,
+  Exclude<
+    Card,
+    "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol" | "petface"
+  >,
   string
 > = {
   ops: "Ops",
@@ -475,6 +480,7 @@ export function App() {
     if (card === "jcode") return setCard(null);
     if (card === "jlaunch") return setCard(null);
     if (card === "petcontrol") return setCard(null);
+    if (card === "petface") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -544,6 +550,7 @@ export function App() {
         card !== "image" &&
         card !== "radio" &&
         card !== "petcontrol" &&
+        card !== "petface" &&
         card !== "jcode" &&
         card !== "jlaunch" && (
           <div
@@ -659,6 +666,7 @@ export function App() {
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
       {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
+      {card === "petface" && <PetFaceScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

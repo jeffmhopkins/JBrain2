@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
 import {
+  AnimalIcon,
   BookIcon,
   BotIcon,
   CalendarIcon,
@@ -50,6 +51,7 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "petcontrol"
+  | "petface"
   | "jcode"
   | "jlaunch"
   | "jmolt";
@@ -99,6 +101,11 @@ const SECTIONS: Section[] = [
     header: "System",
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
+      // The endpoint display preview. It sits in System rather than beside "Pet" because it
+      // is a validation surface for the room-endpoint hardware, not a second way to play with
+      // the pet — and it carries AnimalIcon rather than BotIcon so it cannot be mistaken for
+      // one (BotIcon is already doing duty for both "Pet" and "LLM").
+      { title: "Pet face", icon: <AnimalIcon size={24} />, target: "petface" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
