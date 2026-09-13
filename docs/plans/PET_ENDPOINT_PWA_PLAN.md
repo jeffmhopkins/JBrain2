@@ -1,6 +1,6 @@
 # Pet endpoint — the PWA build, ahead of the hardware
 
-> **Status:** In progress · **Last verified:** 2026-09-13 · **Waves:** P1✅ P4✅ P2🟡 P0◻️ P3◻️ P5◻️
+> **Status:** In progress · **Last verified:** 2026-09-13 · **Waves:** P1✅ P1a✅ P4✅ P2🟡 P0◻️ P3◻️ P5◻️
 
 Build the **room endpoint as a PWA surface first** — a full-screen pet the child talks to and
 touches, running on any phone or spare tablet — so the whole product exists and is being used
@@ -75,6 +75,15 @@ Landed (`frontend/src/pet/`, `frontend/src/screens/PetFaceScreen.tsx`):
 - **P4 ✅ the anti-boredom engine.** `pet/variants.ts` — weighted pools, per-variant cooldowns,
   repetition penalty, with the boundary enforced: the *action* is the server's, only the
   *variant* is local.
+- **P1a ✅ the script player**, added after the first deploy: commands reached the box and the
+  box answered, but the panel played none of it — it read only `script[0].emotion` for the face,
+  so typing "dance" changed nothing visible. The box's script is now performed step by step,
+  honouring each step's `duration_ms` and wearing the emotion of the step ACTUALLY playing. A
+  script arriving on the *stream* plays too, so a command from the phone Control screen or an
+  automation is visible here. `jpet/` speaks a room's vocabulary and this endpoint is a face with
+  no room, so `rig.ts:actionForServerStep` maps it deliberately and falls back to a visible
+  acknowledgement — never to silence, because on a panel a child is holding, "nothing happened"
+  is indistinguishable from "it's broken".
 - **P2 🟡 the touch model.** One whole-screen target, one gesture, no thresholds, with the
   immediate flinch on contact. Still missing for a real endpoint: full-screen kiosk, wake lock,
   and no way out of the screen.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIONS, figureFor, rigFor } from "./rig";
+import { ACTIONS, actionForServerStep, figureFor, rigFor } from "./rig";
 
 describe("idle", () => {
   // "When robots stop moving, they look dead." A perfectly still frame is a regression.
@@ -80,5 +80,73 @@ describe("figure transform", () => {
   it("ignores an action it does not know instead of throwing", () => {
     expect(() => figureFor("teleport", 0.5, 1, 0, 0, 0)).not.toThrow();
     expect(rigFor("teleport", 0.5, 1, 0).handsUp).toBe(0);
+  });
+});
+
+describe("the server's vocabulary maps onto this panel", () => {
+  it("draws the actions it can draw as themselves", () => {
+    for (const a of ["dance", "spin", "jump", "wave", "wiggle", "sing", "hide", "fart", "burp"]) {
+      expect(actionForServerStep(a)).toBe(a);
+    }
+  });
+
+  it("rests only for the steps that genuinely mean rest", () => {
+    expect(actionForServerStep("idle")).toBe("");
+    expect(actionForServerStep("sit")).toBe("");
+  });
+
+  // On a panel a child is holding, "nothing happened" is indistinguishable from "it's broken",
+  // so a room action with no room here still has to produce something visible.
+  it("never goes silent on a room action it cannot draw", () => {
+    for (const a of ["go_to", "chase", "carry_to", "pick_up", "walk", "come_here", "eat"]) {
+      expect(actionForServerStep(a)).not.toBe("");
+    }
+  });
+
+  it("acknowledges an action it has never heard of rather than stalling", () => {
+    expect(actionForServerStep("teleport")).toBe("nod");
+    expect(actionForServerStep("")).toBe("nod");
+  });
+
+  it("only ever names an action the rig can pose", () => {
+    const vocabulary = [
+      "dance",
+      "spin",
+      "jump",
+      "wave",
+      "wiggle",
+      "nod",
+      "beep",
+      "hide",
+      "jumprope",
+      "play_music",
+      "play_guitar",
+      "sing",
+      "fart",
+      "burp",
+      "fire",
+      "lay",
+      "cleanup",
+      "idle",
+      "sit",
+      "sleep",
+      "wake",
+      "go_to",
+      "come_here",
+      "chase",
+      "look_at",
+      "pick_up",
+      "put_down",
+      "carry_to",
+      "walk",
+      "eat",
+      "lights",
+      "music",
+      "guitar",
+    ];
+    for (const a of vocabulary) {
+      const mapped = actionForServerStep(a);
+      if (mapped !== "") expect(ACTIONS[mapped], `${a} → ${mapped}`).toBeDefined();
+    }
   });
 });

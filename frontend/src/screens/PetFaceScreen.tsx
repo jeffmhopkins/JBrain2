@@ -8,8 +8,11 @@
 // **It speaks only the APIs the hardware will speak** — `GET /api/pet`, `GET /api/pet/stream`,
 // `POST /api/pet/command` — so what is validated here is the real contract, not a mock of it.
 // Two consequences worth knowing before editing:
-//   - The pet is SERVER-AUTHORITATIVE. This screen renders `script` and never invents pet state.
-//     The only thing chosen locally is which *variant* of a reaction plays, which is presentation.
+//   - The pet is SERVER-AUTHORITATIVE. A command goes to the box, the box decides, and the
+//     `script` it returns is PLAYED here — that round trip is the thing this surface exists to
+//     validate, because it is the one the firmware will make. A touch also plays a local
+//     reaction immediately, as a prelude: the server's script supersedes it the moment it
+//     lands. The only thing invented locally is which *variant* of that prelude plays.
 //   - `/api/pet/stream` frames DROP every ephemeral effect (creature form, scale, scene), so the
 //     creature form can only arrive by polling `GET /api/pet`. That is a shipped defect, not a
 //     design; the poll below exists solely because of it and should be deleted when it is fixed.
@@ -26,10 +29,10 @@ import {
   useRef,
   useState,
 } from "react";
-import { type PetCommand, type PetState, api } from "../api/client";
+import { type PetCommand, type PetState, type PetStep, api } from "../api/client";
 import { COLOR_NAMES, FORMS, PANEL_H, PANEL_W, type Scene, drawScene } from "../pet/draw";
 import { type FaceKey, approach, isFaceKey, resolveFace } from "../pet/face";
-import { ACTIONS, figureFor, rigFor } from "../pet/rig";
+import { ACTIONS, actionForServerStep, figureFor, rigFor } from "../pet/rig";
 import { type PoolMemory, newMemory, pickVariant, repetitionPenalty } from "../pet/variants";
 import "./petface.css";
 
@@ -81,6 +84,13 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     nextSaccade: 900,
     gaze: { x: 0, y: 0, tx: 0, ty: 0 },
     act: null as Playing | null,
+    // The remaining steps of the server script being played, and the identity of the script
+    // they came from. Keyed by JSON like the wall does (pet.html), so re-receiving the same
+    // script — every stream frame carries it — does not restart the performance.
+    queue: [] as PetStep[],
+    scriptKey: null as string | null,
+    /** The emotion of the step currently playing, if it named one. */
+    stepFace: null as string | null,
     listening: false,
     caption: "",
     mem: newMemory() as PoolMemory,
@@ -89,6 +99,45 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
   const petRef = useRef<PetState | null>(null);
   const overrides = useRef({ form: null as string | null, face: null as FaceKey | null });
   overrides.current = { form: formOverride, face: faceOverride };
+
+  /** Play a server step. `duration_ms` is the box's call, not ours — it is what the wall
+   *  honours — with the action's own length as the fallback when a step omits it. */
+  const playStep = useCallback((step: PetStep) => {
+    const a = anim.current;
+    const name = actionForServerStep(step.action);
+    if (!name) {
+      a.act = null;
+      a.caption = "";
+      a.stepFace = step.emotion ?? null;
+      return;
+    }
+    const spec = ACTIONS[name];
+    a.act = { name, t: 0, dur: step.duration_ms ?? spec?.dur ?? 1200, mag: 1 };
+    a.caption = step.action;
+    a.stepFace = step.emotion ?? null;
+  }, []);
+
+  /** Adopt a pet state, playing its script if it is one we have not played. The first state
+   *  seen only records the key: a snapshot carries whatever script was last run, and replaying
+   *  it on mount would make the pet perform something nobody just asked for. */
+  const adopt = useCallback(
+    (state: PetState, replay: boolean) => {
+      const a = anim.current;
+      const key = JSON.stringify(state.script ?? []);
+      if (key !== a.scriptKey) {
+        a.scriptKey = key;
+        const steps = [...(state.script ?? [])];
+        if (replay && steps.length > 0) {
+          const first = steps.shift();
+          a.queue = steps;
+          if (first) playStep(first);
+        }
+      }
+      petRef.current = state;
+      setPet(state);
+    },
+    [playStep],
+  );
 
   const note = useCallback((line: string) => {
     setLog((prev) =>
@@ -111,12 +160,12 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       note(`${pool} → ${variant} ×${mag.toFixed(2)}`);
       if (command) {
         deps.sendPetCommand(command).then(
-          (s) => setPet(s),
+          (s) => adopt(s, true),
           () => note("command failed — the stream will reconcile"),
         );
       }
     },
-    [deps, note],
+    [adopt, deps, note],
   );
 
   // ── the real API surface: snapshot, then the live stream, plus the effects poll ──────────
@@ -154,8 +203,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       try {
         const first = await deps.getPet();
         if (controller.signal.aborted) return;
-        setPet(first);
-        petRef.current = first;
+        adopt(first, false);
       } catch {
         // the stream still delivers a snapshot
       }
@@ -164,8 +212,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
           // Carry the last known form across stream frames, which never include it.
           const form = state.pet_form ?? petRef.current?.pet_form;
           const merged: PetState = form === undefined ? state : { ...state, pet_form: form };
-          petRef.current = merged;
-          setPet(merged);
+          adopt(merged, true);
         }
       } catch {
         // aborted on unmount, or the connection dropped
@@ -175,7 +222,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       controller.abort();
       clearInterval(timer);
     };
-  }, [deps]);
+  }, [adopt, deps]);
 
   // ── the frame loop ───────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -206,8 +253,13 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       if (a.act) {
         a.act.t += dt;
         if (a.act.t >= a.act.dur) {
-          a.act = null;
-          a.caption = "";
+          const next = a.queue.shift();
+          if (next) playStep(next);
+          else {
+            a.act = null;
+            a.caption = "";
+            a.stepFace = null;
+          }
         }
       }
 
@@ -216,7 +268,9 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       // Emotion precedence: a local override (validation only) → the action's own face → the
       // step the server is playing → the pet's top-level `emotion`. That last one is the field
       // the wall never reads, and reading it here is part of what this surface validates.
-      const serverFace = p?.script?.[0]?.emotion ?? p?.emotion;
+      // The emotion of the step ACTUALLY playing, not of the script's first step — a six-step
+      // script that starts happy and ends sleepy should not wear "happy" throughout.
+      const serverFace = a.stepFace ?? p?.emotion;
       const key: FaceKey =
         overrides.current.face ??
         (playing && isFaceKey(ACTIONS[playing.name]?.face)
@@ -262,7 +316,8 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+    // `playStep` is a stable callback; listed so the loop is never rebuilt around a stale one.
+  }, [playStep]);
 
   // ── touch: one target, one gesture, no thresholds ────────────────────────────────────────
   const onDown = useCallback((e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -306,10 +361,10 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
     setSay("");
     note(`say → "${text}" (server routes it: intents.py first, LLM only if nothing matches)`);
     deps.sendPetCommand({ action: "say", text }).then(
-      (s) => setPet(s),
+      (s) => adopt(s, true),
       () => note("say failed"),
     );
-  }, [deps, note, say]);
+  }, [adopt, deps, note, say]);
 
   const quick = (action: PetCommand["action"], pool?: string) => {
     if (pool) react(pool, { action });
@@ -319,7 +374,7 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
       anim.current.caption = action;
       note(`${action} → POST /api/pet/command`);
       deps.sendPetCommand({ action }).then(
-        (s) => setPet(s),
+        (s) => adopt(s, true),
         () => note("command failed"),
       );
     }

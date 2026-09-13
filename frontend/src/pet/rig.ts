@@ -239,3 +239,62 @@ export function figureFor(
   f.sy *= 2 - breathe;
   return f;
 }
+
+/** The server's action vocabulary → what this panel plays for it.
+ *
+ * `jpet/` speaks a ROOM's vocabulary — walk to the toybox, chase the ball, carry it there — and
+ * this endpoint is a face with no room. So the mapping is deliberate rather than mechanical: a
+ * step that cannot be drawn here still has to produce something, because on a panel a child is
+ * holding, "nothing happened" is indistinguishable from "it's broken". Unmapped steps fall back
+ * to a visible acknowledgement (`nod`), never to silence.
+ */
+const SERVER_ACTIONS: Record<string, string> = {
+  // Drawn as themselves.
+  dance: "dance",
+  spin: "spin",
+  jump: "jump",
+  wave: "wave",
+  wiggle: "wiggle",
+  nod: "nod",
+  beep: "beep",
+  sing: "sing",
+  hide: "hide",
+  fart: "fart",
+  burp: "burp",
+  sleep: "sleep",
+  // Close enough to read as the same idea without a room or a prop.
+  jumprope: "jump",
+  play_music: "sing",
+  music: "sing",
+  play_guitar: "sing",
+  guitar: "sing",
+  eat: "nod",
+  wake: "boing",
+  come: "boing",
+  come_here: "boing",
+  chase: "boing",
+  lay: "boing",
+  // Creature tricks the wall only draws for the matching form; here they are a sound and a
+  // shrug rather than a flame jet or an egg.
+  fire: "beep",
+  lights: "beep",
+  cleanup: "nod",
+  // Movement with nowhere to move to.
+  walk: "nod",
+  go_to: "nod",
+  look_at: "nod",
+  carry_to: "nod",
+  pick_up: "nod",
+  put_down: "nod",
+  // Genuinely at rest — the only steps that draw no action at all.
+  idle: "",
+  sit: "",
+};
+
+/** What to play for one step of a server script. `""` means "rest"; anything unrecognised
+ *  acknowledges rather than stalling. */
+export function actionForServerStep(action: string): string {
+  const mapped = SERVER_ACTIONS[action];
+  if (mapped !== undefined) return mapped;
+  return "nod";
+}
