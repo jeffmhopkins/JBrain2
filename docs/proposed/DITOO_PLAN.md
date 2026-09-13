@@ -1,6 +1,12 @@
 # Divoom Ditoo on the box — feasibility + build sketch (proposed)
 
-> **Status:** Proposed (icebox) · **Last verified:** 2026-09-12
+> **Status:** Proposed (icebox — **superseded**) · **Last verified:** 2026-09-13
+
+> **Superseded by `ROOM_ENDPOINT_PLAN.md`.** The owner's goal (§0.2 — pixel art, wireless,
+> speaker, mic in one object) is now being met by two Waveshare ESP32-S3-Touch-AMOLED-1.8
+> endpoints, which carry no Bluetooth at all and so delete §4 entirely. This doc is kept for
+> its findings — the netns constraint (§4.2), the no-terminal host-mutation limits (§4.3),
+> the `bluez-alsa` correction (§5) and the hardware survey (§0.2) all outlive the design.
 
 **Status: proposed / icebox.** Nothing built, no roadmap slot. Written to answer one
 owner question — *"I've ordered a Divoom Ditoo; can we integrate it on the server, and

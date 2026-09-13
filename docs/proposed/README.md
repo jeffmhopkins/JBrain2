@@ -94,6 +94,19 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   listed, classic ESP32 only — S3/C3/C6 are BLE-only); the audio half is net-new firmware
   whose Wi-Fi/BT coexistence must be measured. Best mod: put an I2S mic on the bridge rather
   than use the Ditoo's, for wideband capture and a clean AEC reference.
+- `ROOM_ENDPOINT_PLAN.md` — **supersedes `DITOO_PLAN.md`**, and the hardware is ordered
+  (2 × Waveshare ESP32-S3-Touch-AMOLED-1.8): a small AMOLED satellite that is the box's face
+  and ears in a room. **No Bluetooth anywhere**, so the whole §4 of the Ditoo plan evaporates;
+  the endpoint is a Wi-Fi client like any other. 368x448 AMOLED gives true blacks (pixel art
+  reads as *emitting*, not photographed) and **368/16 = 23 px per cell exactly**, leaving a
+  368x80 caption strip. 8 MB PSRAM leaves room for framebuffers, audio and an on-device
+  wake-word model, and **ESP-SR brings wake word + acoustic echo cancellation** — so
+  full-duplex barge-in, which the Ditoo could never do, is reachable. Server half is largely
+  shipped (Kokoro, whisper.cpp, `PetBroadcaster`, `notify/bus.py`, `ACTION_SPECS`) and the
+  endpoints need **no new auth model** — they are `Subject(kind='device')` +
+  `Principal(kind='device_key')`, the substrate MQTT already reuses. Net-new: firmware, one
+  protocol, renderers, an audio round-trip. Two units by design: one bench, one deployed, and
+  **OTA is a W1 feature** because rule 10 forbids a USB cable being the update path.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
