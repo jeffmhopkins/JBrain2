@@ -77,8 +77,10 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   owner to apt-install one (CLAUDE.md #10); and pairing is driven over BlueZ's D-Bus API
   from the PWA. Gated on a **free blocking probe (D0)** — the shipped supervisor `/usb`
   inventory already answers "does this box have a Bluetooth radio at all?", exactly as SDR
-  S0a answered it for the dongle. Payoff wave is **JPet on the panel** (one more
-  `PetBroadcaster` subscriber).
+  S0a answered it for the dongle. Records why the obvious escape hatch is closed (§1.1):
+  the USB-C port is **power only**, Divoom ships no desktop app, and every reverse-engineered
+  implementation is RFCOMM-only — so there is no wired route that would collapse this into
+  the SDR pattern. Payoff wave is **JPet on the panel** (one more `PetBroadcaster` subscriber).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,

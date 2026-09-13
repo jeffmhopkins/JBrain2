@@ -44,6 +44,41 @@ remotely (`CLAUDE.md` #10).
 So the integration is: *"drive a serial device that happens to be attached over Bluetooth
 Classic, from a box that currently has no Bluetooth stack at all."*
 
+### 1.1 "Can't we just use the USB port?" — no, and it's worth knowing why
+
+This is the first question anyone asks, because a wired USB device would collapse this
+whole plan into the SDR pattern: `/dev/bus/usb` passthrough, an ordinary bridge-network
+container, the `internal: true` egress lock intact, no BlueZ, no pairing, no range limit,
+no contention with the phone. Every hard part in §4 exists *only* because the link is
+wireless. So it is the right instinct — it just isn't available on this device.
+
+Three independent lines of evidence, and they agree:
+
+1. **Divoom says so.** Their own FAQ states they offer no Windows/Mac desktop application
+   at all — the app is phones and tablets only — and describes the Ditoo's USB-C solely as
+   the charging port. A PC can use the Ditoo as an ordinary Bluetooth *speaker* through the
+   OS; anything touching the panel goes through the phone app.
+2. **Every reverse-engineered implementation is Bluetooth-only.** `hass-divoom`,
+   `go-divoom` ("native RFCOMM everywhere"), `divoom-ditoo-pro-controller`,
+   `node-divoom-timebox-evo` — all RFCOMM/SPP, none with a USB transport. The strongest
+   evidence is `esp32-divoom` itself: a whole second microcontroller built to bridge Wi-Fi
+   to Bluetooth. Nobody builds that if a USB cable works.
+3. **Even the Pro's USB-C wouldn't help.** The Ditoo *Pro* does advertise USB-C to a
+   laptop or desktop — but as an **audio** path ("more ways to play music"), i.e. USB
+   Audio Class. The pixel protocol is defined over SPP regardless of model, so USB on the
+   Pro buys sound, not pixels. Ours is the base model, where USB-C is power only.
+
+Treat SEO content claiming the Ditoo "connects to your computer via Bluetooth or USB cable"
+as the marketing mush it is: it is conflating charging, and using the speaker as a BT audio
+sink, with control of the display.
+
+**What USB *can* usefully do here** is supply the box's end of the link: a ~$10 USB
+Bluetooth Classic dongle closes the §4.1 presence gate if the box's combo card turns out to
+have no usable BT side, and a USB extension cable is the cheapest way to move the radio a
+few metres closer to the speaker. Neither changes the netns constraint in §4.2 — the
+dongle still speaks Bluetooth — but both are real answers to *"no radio"* and *"out of
+range"*.
+
 ## 2. Why this is harder than the SDR was
 
 The SDR (`docs/plans/SDR_RADIO_PLAN.md`, `deploy/sdr/`) is the box's only existing
@@ -192,7 +227,7 @@ It is tempting — the box has a TTS service (`tts-stt`, Kokoro read-aloud) and 
   `bluez-alsa`), i.e. host packages, i.e. the apt gap of §4.3 — the one thing the
   no-terminal path cannot close.
 - There is no wired shortcut on this model: the base Ditoo's USB-C is **power only**
-  (USB-C audio is a Ditoo *Pro* feature).
+  (USB-C audio is a Ditoo *Pro* feature, and even there it is audio, not pixels — §1.1).
 
 The pixel panel needs none of that: SPP is a serial socket, and BlueZ alone is enough.
 Revisit audio only if the owner actually wants the box to speak aloud in that room, and
