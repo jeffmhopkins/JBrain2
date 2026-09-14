@@ -328,6 +328,17 @@ async def list_clarifications(
     ]
 
 
+async def _note_thread(
+    maker: "async_sessionmaker[AsyncSession]", ctx: SessionContext, note_id: str
+) -> NoteThread | None:
+    """This note's most recent conversation, or None when it has never been read. Named
+    rather than inlined for the reason `_live_conversation` is: it is the one part of the
+    route that needs a database, so the route's other half — the 404 for a note this
+    principal cannot see — can be exercised without one."""
+    async with scoped_session(maker, ctx) as session:
+        return await NoteConversationRepo().thread_for_note(session, note_id)
+
+
 class NoteThreadOut(BaseModel):
     """The note's conversation, so the note screen can open it."""
 
@@ -358,14 +369,13 @@ async def note_thread(
     a session id that `/chat` will write the owner's own graph through, across every
     domain including health.
     """
-    if await repo.get_note(ctx_for(principal), note_id) is None:
+    ctx = ctx_for(principal)
+    if await repo.get_note(ctx, note_id) is None:
         # Through the notes repo, so a note outside this principal's domain scopes is a
         # 404 here exactly as it is everywhere else — `note_conversations` carries no
         # domain of its own to narrow by.
         raise HTTPException(status_code=404, detail="note not found")
-    ctx = ctx_for(principal)
-    async with scoped_session(maker, ctx) as session:
-        thread: NoteThread | None = await NoteConversationRepo().thread_for_note(session, note_id)
+    thread = await _note_thread(maker, ctx, note_id)
     if thread is None:
         return None
     return NoteThreadOut(session_id=thread.session_id, agent=thread.agent, state=thread.state)

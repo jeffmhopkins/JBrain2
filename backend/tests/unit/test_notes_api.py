@@ -820,6 +820,53 @@ def test_analyze_note_409_when_analysis_in_flight(
     assert jobs.enqueued == []
 
 
+def test_the_thread_route_hands_back_the_notes_conversation_whatever_state(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The note screen's door into a thread nobody is waiting on (O16).
+
+    Deliberately NOT the live-thread lookup beside it: the thread the owner needs when he
+    has something to add is the SETTLED one — the pass finished, it recorded a pile of
+    facts, one is wrong, and nothing is asking him anything — and that is exactly the
+    thread `live_for_note` answers None for. Until this route the only door was a stream
+    row's ask chip, which appears only while a thread WAITS, so the moment he most wants to
+    speak was the moment there was nowhere to speak (CLAUDE.md #10)."""
+    import jbrain.api.notes as notes_api
+    from jbrain.models.note_conversation import NoteThread
+
+    c, repo, _ = client
+    note_id = _indexed_note(c, repo)
+
+    async def _settled(*_a: object, **_k: object) -> NoteThread:
+        return NoteThread(session_id="sess-note", agent="note_ingest", state="settled")
+
+    monkeypatch.setattr(notes_api, "_note_thread", _settled)
+    body = c.get(f"/api/notes/{note_id}/thread").json()
+    assert body == {"session_id": "sess-note", "agent": "note_ingest", "state": "settled"}
+
+
+def test_the_thread_route_is_null_for_a_note_with_no_conversation(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Null, not 404: "this note has no thread" is an ordinary state of an ordinary note
+    (captured seconds ago, ingest still pending), and the screen hides the affordance
+    rather than showing an error. A note that does not exist — or one outside this
+    principal's scopes, which reads the same through the notes repo — is still a 404."""
+    import jbrain.api.notes as notes_api
+
+    c, repo, _ = client
+    note_id = _indexed_note(c, repo)
+
+    async def _none(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr(notes_api, "_note_thread", _none)
+    assert c.get(f"/api/notes/{note_id}/thread").json() is None
+    assert c.get(f"/api/notes/{uuid.uuid4()}/thread").status_code == 404
+
+
 def test_analyze_note_409_when_the_notes_thread_is_already_live(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
     monkeypatch: pytest.MonkeyPatch,
