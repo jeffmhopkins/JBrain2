@@ -17,6 +17,34 @@ import type { StreamItem } from "../notes/useNotes";
 import { stubFullBrainDeps } from "../test/agentStubs";
 import { NoteScreen, noteViewFromItem } from "./NoteScreen";
 
+// `ProposalTree` takes `getProposal` as an injectable prop but defaults it to the real
+// client, and nothing between here and it forwards one — so the proposal test below would
+// reach `fetch` with a relative URL, which jsdom rejects as an invalid URL. The rejection
+// lands AFTER the assertion (the panel opens before the fetch settles), so vitest reports
+// it as an unhandled error and `npm run test` exits 1 with every test still passing. CI
+// runs that command as a step, so a green-looking suite would have turned the job red.
+vi.mock("../api/client", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../api/client")>();
+  return {
+    ...real,
+    // `ProposalTree` reads `api.getProposal` off the exported OBJECT, so overriding a
+    // top-level named export does nothing — the method on `api` is what has to move.
+    api: {
+      ...real.api,
+      // RESOLVES, deliberately. Rejecting here reproduces the same unhandled rejection by a
+      // different route: the panel is asserted open before the load settles either way.
+      getProposal: vi.fn(async () => ({
+        id: "prop-1",
+        kind: "owner-prefs" as const,
+        status: "staged",
+        domain: "general",
+        title: "Standing instructions",
+        nodes: [],
+      })),
+    },
+  };
+});
+
 const NONCE = "a1b2c3d4e5f60718";
 const NOTE = "Kaiya started the new med Dr. Chen put her on — 5 mg, once at night.";
 
