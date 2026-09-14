@@ -2850,7 +2850,12 @@ class AnalysisPipeline:
     ) -> None:
         for old_id in decision.supersede_ids:
             values: dict[str, Any] = {"status": "superseded", "superseded_by": new_fact_id}
-            if valid_from is not None:
+            # An ATTRIBUTE has no interval to close: its `valid_from` is a restatement of
+            # the VALUE (a birthDate's validity is the date it states), so dating the old
+            # row's end from the new one's would write "born 1990-03-03 until 1985-11-12"
+            # onto the history the O15 supersession now creates. The chain link is the
+            # record there; SCD-2 is for the kinds that really do occupy an interval.
+            if valid_from is not None and fact.kind != "attribute":
                 # SCD-2 close: the old fact stays true about its interval; an
                 # interval already closed by better information is kept.
                 values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)

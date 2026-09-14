@@ -717,11 +717,14 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
             # (a corpus rebuild re-ingests notes in no guaranteed order) lands as history
             # instead of flipping the live value, which is what makes the outcome
             # independent of the order the notes happen to be processed in.
+            # No borrowed `valid_to` (the single-head path's `current.valid_from`): an
+            # attribute's validity is not an interval start, so dating this row's "end"
+            # from the other value's would read as "born 1990 until 1985".
             return Decision(
                 insert=True,
                 insert_status="superseded",
                 insert_superseded_by=current.id,
-                insert_valid_to=candidate.valid_to or current.valid_from,
+                insert_valid_to=candidate.valid_to,
             )
         # NEWEST WINS, by rule. Two birthdays is still a bug rather than news — but the
         # owner's ruling (AGENT_INGEST_REWRITE §8 O15) is that parking BOTH sides is the
