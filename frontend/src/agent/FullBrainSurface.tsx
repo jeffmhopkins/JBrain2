@@ -452,31 +452,49 @@ export function FullBrainSurface({
         />
       </aside>
 
-      <aside
-        className={`panel right${panel === "proposals" ? " open" : ""}`}
-        aria-hidden={panel !== "proposals"}
-      >
-        {fb.openProposal === null ? (
-          <ProposalsPanel
-            proposals={fb.proposals}
-            onOpen={(p) => fb.setOpenProposal(p.id)}
-            onClose={() => setPanel("none")}
-          />
-        ) : (
-          <ProposalTree
-            proposalId={fb.openProposal}
-            onClose={() => fb.setOpenProposal(null)}
-            onEnacted={() => {
-              // Refresh the dependent views (the stream) AND the staged-proposals
-              // list, so an enacted/minted proposal stops showing as still-staged
-              // (an intake-link mints to `enacted` and must drop from the panel).
-              onProposalEnacted?.();
-              fb.reloadProposals();
-            }}
-          />
-        )}
-      </aside>
+      <ProposalsAside fb={fb} onProposalEnacted={onProposalEnacted} />
     </div>
+  );
+}
+
+/** The right-hand Proposals panel, and the open proposal's tree above it. Split out
+ * beside `AgentTranscript` because the transcript's navigational "Review proposal" chip
+ * opens this and nothing else — and a note thread stages one of those (`prefs_write` is
+ * on the `note_ingest` on-reply allowlist and `owner-prefs` is not an `INLINE_KINDS`),
+ * so a host that mounted the transcript without this would draw a chip whose tap did
+ * nothing. It pins to the nearest `.fb-shell`, which is the host's own. */
+export function ProposalsAside({
+  fb,
+  onProposalEnacted,
+}: {
+  fb: FullBrain;
+  onProposalEnacted?: (() => void) | undefined;
+}): ReactNode {
+  return (
+    <aside
+      className={`panel right${fb.panel === "proposals" ? " open" : ""}`}
+      aria-hidden={fb.panel !== "proposals"}
+    >
+      {fb.openProposal === null ? (
+        <ProposalsPanel
+          proposals={fb.proposals}
+          onOpen={(p) => fb.setOpenProposal(p.id)}
+          onClose={() => fb.setPanel("none")}
+        />
+      ) : (
+        <ProposalTree
+          proposalId={fb.openProposal}
+          onClose={() => fb.setOpenProposal(null)}
+          onEnacted={() => {
+            // Refresh the dependent views (the stream) AND the staged-proposals
+            // list, so an enacted/minted proposal stops showing as still-staged
+            // (an intake-link mints to `enacted` and must drop from the panel).
+            onProposalEnacted?.();
+            fb.reloadProposals();
+          }}
+        />
+      )}
+    </aside>
   );
 }
 

@@ -19,8 +19,9 @@
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type NoteThreadOut, api } from "../api/client";
+import { useBackLayer } from "../backLayers";
 import { SendIcon, StopIcon } from "../components/icons";
-import { AgentTranscript } from "./FullBrainSurface";
+import { AgentTranscript, ProposalsAside } from "./FullBrainSurface";
 import { answeredCount } from "./asked";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
@@ -124,6 +125,15 @@ export function NoteThread({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  // A note thread stages proposals: `prefs_write` is on the `note_ingest` on-reply
+  // allowlist and its kind (`owner-prefs`) is NOT in `INLINE_KINDS`, so its turn draws
+  // the NAVIGATIONAL "Review proposal" chip — which opens this panel and nothing else.
+  // Without it that chip would be a dead tap, which is the kind of affordance this wave
+  // exists to remove. (`merge_entities` stages one too, but `merge` renders inline.)
+  // The panel pins to this component's own `.fb-shell`. Registered as a back layer while
+  // it is open so the platform Back gesture closes the PANEL, not the note under it.
+  const proposalOpen = fb.panel === "proposals";
+
   const questions = fb.openQuestions;
   const answered = answeredCount(questions, fb.answers);
   const asking = questions.length;
@@ -161,6 +171,18 @@ export function NoteThread({
         }
         emptyText="Say something about this note — it reads the note with you."
       />
+
+      <ProposalsAside fb={fb} />
+      {proposalOpen && (
+        <BackLayer
+          onClose={() => {
+            // Climb the panel's own layers first — an open proposal sits atop the list —
+            // the same order HomeScreen gives the gesture on the home surface.
+            if (fb.openProposal !== null) fb.setOpenProposal(null);
+            else fb.setPanel("none");
+          }}
+        />
+      )}
 
       {/* The composer, inline. A follow-up goes into THIS thread; there is no handoff to
           home's conversation surface, which is the whole of what the owner reversed. */}
@@ -226,4 +248,14 @@ export function NoteThread({
       )}
     </div>
   );
+}
+
+/** `useBackLayer` registers for as long as it is MOUNTED, and App pops the top of that
+ * stack before it descends into the screen stack — so a layer that registered while
+ * closed would swallow the gesture and close nothing. Hence a component: it mounts only
+ * while the panel is open, which is exactly the window the registration should cover.
+ * The same shape the shared `<Sheet>` uses. */
+function BackLayer({ onClose }: { onClose: () => void }): null {
+  useBackLayer(onClose);
+  return null;
 }

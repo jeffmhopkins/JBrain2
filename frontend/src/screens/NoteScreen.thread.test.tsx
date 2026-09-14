@@ -245,6 +245,38 @@ describe("a follow-up", () => {
   });
 });
 
+describe("a proposal staged in a note thread", () => {
+  // `prefs_write` is on the `note_ingest` on-reply allowlist and its kind, `owner-prefs`,
+  // is not an INLINE_KIND — so the turn draws the NAVIGATIONAL "Review proposal" chip,
+  // which opens the Proposals panel and nothing else. A note screen that mounted the
+  // transcript without that panel would draw a chip whose tap did nothing.
+  it("opens the Proposals panel from the chip, on the note screen", async () => {
+    const withProposal: TranscriptTurn[] = [
+      { role: "user", content: TURN_0, tools: [] },
+      {
+        role: "assistant",
+        content: "Noted — I've staged a change to your standing instructions.",
+        tools: [
+          {
+            id: "p1",
+            name: "prefs_write",
+            ok: true,
+            args: {},
+            sources: [],
+            proposal: { proposal_id: "prop-1", kind: "owner-prefs" },
+          },
+        ],
+      },
+    ];
+    openNote({ fbDeps: threadDeps({ getTranscript: vi.fn(async () => withProposal) }) });
+
+    const chip = await screen.findByRole("button", { name: /Review proposal/ });
+    expect(document.querySelector(".panel.right.open")).toBeNull();
+    fireEvent.click(chip);
+    await waitFor(() => expect(document.querySelector(".panel.right.open")).toBeInTheDocument());
+  });
+});
+
 describe("a note the box has not read yet", () => {
   it("says so on Thread instead of offering a conversation that isn't there", async () => {
     openNote({ thread: null });
