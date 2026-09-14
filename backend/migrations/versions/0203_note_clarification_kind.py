@@ -52,8 +52,7 @@ def upgrade() -> None:
     # CHECK is the answer shape, and the new constraint states it for the rows it is true
     # of instead of for every row.
     op.execute(
-        "ALTER TABLE app.note_clarifications"
-        " DROP CONSTRAINT note_clarifications_question_nonblank"
+        "ALTER TABLE app.note_clarifications DROP CONSTRAINT note_clarifications_question_nonblank"
     )
     op.execute(
         """
