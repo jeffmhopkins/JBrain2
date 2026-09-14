@@ -996,15 +996,18 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # that has never said it and retracts it, silently.
         #
         # The first round keyed this on the thread's STATE, read before `claim_waiting`
-        # could flip it. That is a proxy, and it is a different set: the designed send of
-        # §3b I7 carries the tapped answers AND free text, and `_pair` drops the prose
-        # beside any structured answer (`note_clarifications.question` is NOT NULL, and
-        # pairing it with a question the owner was not answering with it is the worse
-        # failure — the O16 gap); an append can fail; an `owner_authored=False` turn returns
-        # before the claim with the state still reading `waiting_on_owner`. Each of those
-        # is a `waiting_on_owner` turn on which the agent could record something the note
-        # never receives. So the verb is bound to the OUTCOME, which is why this call
-        # cannot happen any earlier than this line.
+        # could flip it. That is a proxy, and it is a different set: an append can fail,
+        # and an `owner_authored=False` turn returns before the claim with the state still
+        # reading `waiting_on_owner`. Either is a `waiting_on_owner` turn on which the
+        # agent could record something the note never receives. So the verb is bound to
+        # the OUTCOME, which is why this call cannot happen any earlier than this line.
+        #
+        # ⟲ There used to be a third and commoner member of that set, and O16 removed it:
+        # free text beside a structured answer, which `_pair` dropped because
+        # `note_clarifications.question` was NOT NULL and pairing prose with a question the
+        # owner was not answering is the worse failure. Since 0203 that prose is an
+        # `addition` block and it LANDS, so the designed send of §3b I7 — tapped answers
+        # AND free text — now reaches the note in full and keeps the verb.
         if not owner_words_reached_note(owner_reply):
             profile = narrow_for_unlanded_reply(profile)
 

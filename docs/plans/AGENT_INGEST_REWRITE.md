@@ -3337,9 +3337,20 @@ unprompted text into the CORRECTION path.*
    an ordinary `/chat` turn in the note's own thread, so there is no "does this look like a
    correction?" classifier to get wrong and no second machine: the same reply turn, the
    same `correct_fact` / `merge_entities` / `close_reading`, the same notice channel. The
-   cost is one reply turn plus the re-ingest the append enqueues — an addition is typed by
-   hand, so the volume is a handful a week, and the re-ingest is one per turn because the
-   answers and the addition go in ONE `append_clarifications` call.
+   cost is THREE things, not two, and the third is the expensive one. (i) The reply turn
+   itself. (ii) The re-ingest the append enqueues — one per turn, not one per block,
+   because the answers and the addition go in ONE `append_clarifications` call. (iii) **A
+   full unattended `note_converse` pass**, because an addition on a settled thread leaves
+   `claimed` False, so `close_owner_reply` returns None and the state stays `settled` —
+   and `dispatcher` suppresses a pass only on a queued twin or a LIVE conversation, where
+   live means `running` / `waiting_on_owner`. `settled` is neither, so the re-ingest's
+   `note.ingested` opens a pass and the local model re-reads the whole note.
+
+   That third item is load-bearing where the feature is *for*: his correction only reaches
+   the graph because the note is read again. It is pure waste for "thanks!", and it is a
+   whole GPU pass on a one-GPU box — the eraser can remove the text, nothing refunds the
+   pass. An addition is typed by hand so the volume is a handful a week, but budget it as
+   a pass apiece rather than as a turn apiece.
 3. **The PWA is IN, not deferred** (CLAUDE.md #10). A note conversation was reachable only
    from a stream row's ask chip, which appears only while the thread WAITS — so the moment
    this feature exists for (the pass finished, it recorded a pile of facts, one is wrong,
