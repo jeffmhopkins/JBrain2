@@ -1139,17 +1139,32 @@ export interface NoteOut {
   accuracy_m: number | null;
 }
 
-/** One appended D6 clarification block: a question the agent asked while reading the
- * note, and the answer Jeff typed back. Once appended it IS the note's text — chunked,
- * embedded, searchable, citable — so an answer that carried a password or a diagnosis
- * has to be identifiable before it can be removed. The note screen renders blocks as
- * prose (D6 changes no screen), which is why the ids only exist here. */
+/** One appended D6 clarification block. Two shapes, and `kind` says which: an `answer`
+ * pairs a question the agent asked with what Jeff typed back, an `addition` is something
+ * he said unprompted, with no question at all (backend migration 0203).
+ *
+ * Either way it IS the note's text once appended — chunked, embedded, searchable,
+ * citable — so a block that carried a password or a diagnosis has to be identifiable
+ * before it can be removed. The note screen renders blocks as prose (D6 changes no
+ * screen), which is why the ids only exist here. */
 export interface ClarificationOut {
   id: string;
   seq: number;
-  question: string;
+  kind: "answer" | "addition";
+  /** null on an `addition` — nobody asked. Switch on `kind`, not on this. */
+  question: string | null;
   answer: string;
   created_at: string;
+}
+
+/** A note's conversation, so the note screen can open it (backend `GET
+ * /notes/{id}/thread`). null when the note has never been read — a note captured seconds
+ * ago, or one whose ingest is still pending. */
+export interface NoteThreadOut {
+  session_id: string;
+  /** The persona hosting it, so the handoff lands on the tab that shows it. */
+  agent: string;
+  state: string;
 }
 
 export interface NotesPage {
@@ -2627,6 +2642,15 @@ export const api = {
   async listClarifications(noteId: string): Promise<ClarificationOut[]> {
     const response = await request(`/api/notes/${encodeURIComponent(noteId)}/clarifications`);
     return (await response.json()) as ClarificationOut[];
+  },
+
+  // The note's conversation, whatever state it is in — the note screen's door into it.
+  // Deliberately not the notes-inbox route beside it: that one lists LIVE threads, and
+  // the thread Jeff wants when he has something to add is the settled one nobody is
+  // asking him about (O16).
+  async noteThread(noteId: string): Promise<NoteThreadOut | null> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/thread`);
+    return (await response.json()) as NoteThreadOut | null;
   },
 
   // Erasing one re-drives ingestion, so the returned note is the note as it now reads —

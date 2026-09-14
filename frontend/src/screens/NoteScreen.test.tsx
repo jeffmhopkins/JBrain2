@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NoteAnalysis, SearchResult } from "../api/client";
 import type { StreamItem } from "../notes/useNotes";
@@ -65,6 +65,10 @@ const INDEXED: StreamItem = {
 function setup(
   source = noteViewFromItem(ITEM),
   resolve: (id: string) => Promise<StreamItem | null> = vi.fn(async () => null),
+  // The thread door is opt-in the way the stream's ask chip is (no handler, no
+  // affordance), so the tests that are not about it render exactly the screen they
+  // always did — and never reach for `/thread`.
+  onOpenThread?: (sessionId: string, agent: string) => void,
 ) {
   const handlers = {
     onClose: vi.fn(),
@@ -82,7 +86,15 @@ function setup(
     onRemoveAttachment: vi.fn(async () => {}),
     onOpenEntity: vi.fn(),
   };
-  render(<NoteScreen source={source} resolve={resolve} syncStatus="synced" {...handlers} />);
+  render(
+    <NoteScreen
+      source={source}
+      resolve={resolve}
+      syncStatus="synced"
+      {...handlers}
+      onOpenThread={onOpenThread}
+    />,
+  );
   return handlers;
 }
 
@@ -409,6 +421,70 @@ describe("NoteScreen", () => {
       screen.getByText("analysis waits here — runs automatically when every source is in."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "re-run analysis" })).toBeDisabled();
+  });
+
+  it("'add a thought' opens the note's own thread, settled or not", async () => {
+    // O16. The stream's ask chip is the only other door into a note conversation and it
+    // exists only while the thread WAITS — so the moment the owner most wants to speak
+    // (the pass finished, it recorded a pile of facts, one is wrong, nothing is prompting
+    // him) had no door at all. What he types behind this one is appended to the note.
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (String(input) === "/api/notes/n1/thread") {
+        return jsonResponse({ session_id: "sess-note", agent: "note_ingest", state: "settled" });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onOpenThread = vi.fn();
+    setup(
+      noteViewFromItem(ITEM),
+      vi.fn(async () => null),
+      onOpenThread,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Add a thought/ }));
+    expect(onOpenThread).toHaveBeenCalledWith("sess-note", "note_ingest");
+  });
+
+  it("says the thread is waiting when it is, and shows nothing when there is none", async () => {
+    // The same door, two states. A waiting thread is asking him something — the composer
+    // will carry the question block — so the label says so rather than inviting a
+    // thought he has not been asked for.
+    const waiting = vi.fn<typeof fetch>(async (input) => {
+      if (String(input) === "/api/notes/n1/thread") {
+        return jsonResponse({
+          session_id: "sess-note",
+          agent: "note_ingest",
+          state: "waiting_on_owner",
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", waiting);
+    setup(
+      noteViewFromItem(ITEM),
+      vi.fn(async () => null),
+      vi.fn(),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
+    expect(await screen.findByRole("button", { name: /Answer what it asked/ })).toBeInTheDocument();
+
+    cleanup();
+    // A note the box has not read yet has no thread, and a door that leads nowhere is
+    // worse than no door: the screen reads exactly as it did before.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => jsonResponse(null)),
+    );
+    setup(
+      noteViewFromItem(ITEM),
+      vi.fn(async () => null),
+      vi.fn(),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
+    await waitFor(() => expect(screen.getByText("first paragraph")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Add a thought/ })).toBeNull();
   });
 
   it("the top-right ⋯ sheet drives edit / move / delete, with a tap-again delete", () => {

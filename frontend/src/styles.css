@@ -5188,9 +5188,35 @@ button.small {
   margin: 0;
 }
 
-/* "Answers you gave": the D6 clarification eraser, at the foot of the Note tab
+/* "Add a thought": the note screen's door into the note's own conversation (O16 of
+   AGENT_INGEST_REWRITE). Quiet and full-width under the body — it is not a primary
+   action competing with the tabs, it is the answer to "the AI got this wrong and nothing
+   is asking me". Hidden entirely for a note with no thread, so an un-analysed note reads
+   exactly as before. */
+.note-thought {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  text-align: left;
+}
+
+.note-thought-hint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* "What you've added": the D6 clarification eraser, at the foot of the Note tab
    (AGENT_INGEST_CONVERSATION_PLAN D6 — W2's "the wave that ships the writer ships the
-   eraser"). Quiet by construction: collapsed, and absent for a note with no blocks,
+   eraser"). It lists BOTH block shapes since 0203 — answers he gave, and what he added
+   unprompted — because either can carry something he wants out again. Quiet by construction: collapsed, and absent for a note with no blocks,
    which is nearly every note. The blocks themselves still render as prose in the body
    above — D6 changes no screen — this is only where their ids become reachable. */
 

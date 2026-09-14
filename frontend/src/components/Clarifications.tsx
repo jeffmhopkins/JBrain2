@@ -1,4 +1,4 @@
-// "Answers you gave" — the D6 clarification blocks of one note, each erasable.
+// "What you've added" — the D6 clarification blocks of one note, each erasable.
 //
 // D6 is a STORAGE decision and says the note screen does not change, so this is not a
 // rendering of the blocks: the body above already shows them as prose, composed in, and
@@ -18,6 +18,12 @@
 //
 // Collapsed by default and absent entirely when the note has none, so the ordinary note
 // — which is every note that was never asked about — reads exactly as before.
+//
+// TWO shapes since backend migration 0203 (O16): an `answer`, which is a question the
+// agent asked with what Jeff replied, and an `addition`, which is something he typed into
+// the thread that answered nothing. The row switches on `kind` rather than on a null
+// question, because a renderer that reads the null as "no question yet" prints `null` into
+// a list of the owner's own sentences.
 
 import { useCallback, useEffect, useState } from "react";
 import { type ClarificationOut, api } from "../api/client";
@@ -45,7 +51,13 @@ function Block({
   return (
     <li className="clar-row">
       <div className="clar-qa">
-        <span className="clar-q">{block.question}</span>
+        {block.kind === "addition" ? (
+          // No question to show, so the label says where the words came from instead —
+          // otherwise an addition reads as an answer to whatever is above it in the list.
+          <span className="clar-q">you added</span>
+        ) : (
+          <span className="clar-q">{block.question}</span>
+        )}
         <span className="clar-a">{block.answer}</span>
       </div>
       <div className="clar-foot">
@@ -68,7 +80,7 @@ function Block({
             }
           }}
         >
-          {armed ? "tap again — erases this answer from the note" : "erase"}
+          {armed ? "tap again — erases this from the note" : "erase"}
         </button>
       </div>
     </li>
@@ -113,14 +125,14 @@ export function Clarifications({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        Answers you gave
+        What you've added
         <span className="clar-count">{blocks.length}</span>
       </button>
       {open && (
         <>
           <p className="clar-hint">
-            These are part of the note — searchable and quotable, like the rest of it. Erase one to
-            take it out for good.
+            Answers you gave and anything you added later. These are part of the note — searchable
+            and quotable, like the rest of it. Erase one to take it out for good.
           </p>
           <ul className="clar-list">
             {blocks.map((b) => (
