@@ -121,6 +121,14 @@ export function resolveSelectionClamp(
   return target ? { kind: "clamp", bubble: target } : { kind: "reset" };
 }
 
+interface TranscriptProps extends Props {
+  /** What the column says when no session is open yet. On the note screen that is a
+   * note whose first pass has not started, which is a different sentence entirely. */
+  noSessionText?: string;
+  /** What it says when a session is open but has no turns. */
+  emptyText?: string;
+}
+
 interface Props {
   fb: FullBrain;
   /** Open a source note by id (from a Worked-block card). */
@@ -165,7 +173,17 @@ interface Props {
   modelLoad?: ModelLoad | null | undefined;
 }
 
-export function FullBrainSurface({
+/** The transcript itself — the scrolling column of turns plus the live status line
+ * beneath it. Split out of `FullBrainSurface` so the note screen's Thread tab renders
+ * the SAME agent transcript the home conversation surface does (the violet Thought chip,
+ * the steel Worked chip, the step rows, the question block) instead of a second ingest
+ * rendering of the same turns. `FullBrainSurface` is now this plus the two lateral
+ * panels; a host that has no panels (the note screen) mounts this alone.
+ *
+ * It must be rendered inside a `.fb-shell` — every transcript rule in `styles.css` is
+ * scoped under it, deliberately, so that generic class names cannot collide with the
+ * rest of the app. */
+export function AgentTranscript({
   fb,
   onOpenNote,
   onOpenEntity,
@@ -173,9 +191,10 @@ export function FullBrainSurface({
   readAloud,
   planWaiting,
   modelLoad,
-}: Props): ReactNode {
+  noSessionText = "Choose a session to start asking about your brain.",
+  emptyText = "Talk it out below — full tool access.",
+}: TranscriptProps): ReactNode {
   const chatRef = useRef<HTMLElement | null>(null);
-  const { panel, setPanel } = fb;
 
   // Follow the stream only while the reader is already at the foot — scrolling
   // up to read back stops the view being yanked down by every new token, and
@@ -312,85 +331,106 @@ export function FullBrainSurface({
       )
     : null;
 
+  return (
+    <div className="fullbrain">
+      {fb.active ? (
+        <main
+          className="fb-chat"
+          aria-label="Conversation"
+          ref={attachChat}
+          onScroll={onChatScroll}
+        >
+          {fb.messages.map((m, i) => (
+            <Bubble
+              // Transcript is append-only; the positional key is stable.
+              // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
+              key={i}
+              message={m}
+              // A turn that ended on `ask_owner` carries its question block. It is LIVE
+              // only while it is the last turn — a reply after it is what settles the
+              // set, live and on reopen alike (§3b I8/I9) — and a settled block reads
+              // its answers back out of that reply's own Q/A rendering, so nothing the
+              // owner answered lives only in a component.
+              ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
+              noteDomainCode={threadDomain}
+              onOpenNote={onOpenNote}
+              onOpenEntity={onOpenEntity}
+              onOpenProposal={(id) => {
+                fb.setOpenProposal(id);
+                fb.setPanel("proposals");
+              }}
+              onProposalEnacted={onProposalEnacted}
+              onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
+              onDeferredComplete={(msg) => {
+                void fb.send(msg, { deferredOutcome: true });
+              }}
+              onPlanChanged={fb.reloadSessions}
+              chatBusy={fb.busy}
+              onStop={fb.stop}
+              onOpenSession={fb.requestOpen}
+              // The positional key doubles as the read-aloud turn key (append-only,
+              // so it stays put for the turn's lifetime).
+              audio={
+                readAloud
+                  ? {
+                      playing: readAloud.playing === String(i),
+                      autoPlay: readAloud.autoPlay,
+                      onToggle: () => readAloud.onToggle(String(i), m.text),
+                      onToggleAuto: readAloud.onToggleAuto,
+                    }
+                  : undefined
+              }
+              // The raw keyed capability (not the turn-bound `audio`) so a card inside the
+              // turn — the deep-research report — can play its own text under its own key.
+              readAloud={
+                readAloud ? { playing: readAloud.playing, onToggle: readAloud.onToggle } : undefined
+              }
+            />
+          ))}
+          {fb.messages.length === 0 && <p className="fb-empty">{emptyText}</p>}
+        </main>
+      ) : (
+        <div className="fb-empty">{noSessionText}</div>
+      )}
+
+      {/* The live status sits at the surface's bottom edge, just above the
+          composer — replacing the old in-bubble "…". A live turn (thinking / a
+          tool / answering) always wins; only when the turn has settled does an armed plan
+          continuation take the line over as the interruptible next-step countdown. */}
+      <AgentStatusLine
+        status={loadStatus ?? liveStatus ?? idleStatus}
+        onInterrupt={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onStop}
+        onContinueNow={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onContinue}
+      />
+    </div>
+  );
+}
+
+/** The whole home conversation surface: the transcript plus the two lateral panels
+ * (Sessions right, Proposals left) the omnibox's swipe shuttles. */
+export function FullBrainSurface({
+  fb,
+  onOpenNote,
+  onOpenEntity,
+  onProposalEnacted,
+  readAloud,
+  planWaiting,
+  modelLoad,
+}: Props): ReactNode {
+  const { panel, setPanel } = fb;
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
   // a swipe away on the omnibox — right for Sessions, left for Proposals.
   return (
     <div className="fb-shell">
-      <div className="fullbrain">
-        {fb.active ? (
-          <main
-            className="fb-chat"
-            aria-label="Conversation"
-            ref={attachChat}
-            onScroll={onChatScroll}
-          >
-            {fb.messages.map((m, i) => (
-              <Bubble
-                // Transcript is append-only; the positional key is stable.
-                // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
-                key={i}
-                message={m}
-                // A turn that ended on `ask_owner` carries its question block. It is LIVE
-                // only while it is the last turn — a reply after it is what settles the
-                // set, live and on reopen alike (§3b I8/I9) — and a settled block reads
-                // its answers back out of that reply's own Q/A rendering, so nothing the
-                // owner answered lives only in a component.
-                ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
-                noteDomainCode={threadDomain}
-                onOpenNote={onOpenNote}
-                onOpenEntity={onOpenEntity}
-                onOpenProposal={(id) => {
-                  fb.setOpenProposal(id);
-                  fb.setPanel("proposals");
-                }}
-                onProposalEnacted={onProposalEnacted}
-                onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
-                onDeferredComplete={(msg) => {
-                  void fb.send(msg, { deferredOutcome: true });
-                }}
-                onPlanChanged={fb.reloadSessions}
-                chatBusy={fb.busy}
-                onStop={fb.stop}
-                onOpenSession={fb.requestOpen}
-                // The positional key doubles as the read-aloud turn key (append-only,
-                // so it stays put for the turn's lifetime).
-                audio={
-                  readAloud
-                    ? {
-                        playing: readAloud.playing === String(i),
-                        autoPlay: readAloud.autoPlay,
-                        onToggle: () => readAloud.onToggle(String(i), m.text),
-                        onToggleAuto: readAloud.onToggleAuto,
-                      }
-                    : undefined
-                }
-                // The raw keyed capability (not the turn-bound `audio`) so a card inside the
-                // turn — the deep-research report — can play its own text under its own key.
-                readAloud={
-                  readAloud
-                    ? { playing: readAloud.playing, onToggle: readAloud.onToggle }
-                    : undefined
-                }
-              />
-            ))}
-            {fb.messages.length === 0 && (
-              <p className="fb-empty">Talk it out below — full tool access.</p>
-            )}
-          </main>
-        ) : (
-          <div className="fb-empty">Choose a session to start asking about your brain.</div>
-        )}
-
-        {/* The live status sits at the surface's bottom edge, just above the
-            omnibox composer — replacing the old in-bubble "…". A live turn (thinking / a
-            tool / answering) always wins; only when the turn has settled does an armed plan
-            continuation take the line over as the interruptible next-step countdown. */}
-        <AgentStatusLine
-          status={loadStatus ?? liveStatus ?? idleStatus}
-          onInterrupt={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onStop}
-          onContinueNow={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onContinue}
-        />
-      </div>
+      <AgentTranscript
+        fb={fb}
+        onOpenNote={onOpenNote}
+        onOpenEntity={onOpenEntity}
+        onProposalEnacted={onProposalEnacted}
+        readAloud={readAloud}
+        planWaiting={planWaiting}
+        modelLoad={modelLoad}
+      />
 
       <aside
         className={`panel left${panel === "sessions" ? " open" : ""}`}
@@ -412,31 +452,49 @@ export function FullBrainSurface({
         />
       </aside>
 
-      <aside
-        className={`panel right${panel === "proposals" ? " open" : ""}`}
-        aria-hidden={panel !== "proposals"}
-      >
-        {fb.openProposal === null ? (
-          <ProposalsPanel
-            proposals={fb.proposals}
-            onOpen={(p) => fb.setOpenProposal(p.id)}
-            onClose={() => setPanel("none")}
-          />
-        ) : (
-          <ProposalTree
-            proposalId={fb.openProposal}
-            onClose={() => fb.setOpenProposal(null)}
-            onEnacted={() => {
-              // Refresh the dependent views (the stream) AND the staged-proposals
-              // list, so an enacted/minted proposal stops showing as still-staged
-              // (an intake-link mints to `enacted` and must drop from the panel).
-              onProposalEnacted?.();
-              fb.reloadProposals();
-            }}
-          />
-        )}
-      </aside>
+      <ProposalsAside fb={fb} onProposalEnacted={onProposalEnacted} />
     </div>
+  );
+}
+
+/** The right-hand Proposals panel, and the open proposal's tree above it. Split out
+ * beside `AgentTranscript` because the transcript's navigational "Review proposal" chip
+ * opens this and nothing else — and a note thread stages one of those (`prefs_write` is
+ * on the `note_ingest` on-reply allowlist and `owner-prefs` is not an `INLINE_KINDS`),
+ * so a host that mounted the transcript without this would draw a chip whose tap did
+ * nothing. It pins to the nearest `.fb-shell`, which is the host's own. */
+export function ProposalsAside({
+  fb,
+  onProposalEnacted,
+}: {
+  fb: FullBrain;
+  onProposalEnacted?: (() => void) | undefined;
+}): ReactNode {
+  return (
+    <aside
+      className={`panel right${fb.panel === "proposals" ? " open" : ""}`}
+      aria-hidden={fb.panel !== "proposals"}
+    >
+      {fb.openProposal === null ? (
+        <ProposalsPanel
+          proposals={fb.proposals}
+          onOpen={(p) => fb.setOpenProposal(p.id)}
+          onClose={() => fb.setPanel("none")}
+        />
+      ) : (
+        <ProposalTree
+          proposalId={fb.openProposal}
+          onClose={() => fb.setOpenProposal(null)}
+          onEnacted={() => {
+            // Refresh the dependent views (the stream) AND the staged-proposals
+            // list, so an enacted/minted proposal stops showing as still-staged
+            // (an intake-link mints to `enacted` and must drop from the panel).
+            onProposalEnacted?.();
+            fb.reloadProposals();
+          }}
+        />
+      )}
+    </aside>
   );
 }
 

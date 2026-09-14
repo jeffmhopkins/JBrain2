@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { NotesInboxRow } from "../api/client";
 import { NotesTab } from "./NotesTab";
@@ -34,7 +34,7 @@ describe("the notes tab row", () => {
           row({ kind: "approval", domain: "general", session_id: "s-g", captured_at: null }),
         ]}
         loadError={false}
-        onOpenConversation={vi.fn()}
+        onOpenRow={vi.fn()}
       />,
     );
 
@@ -53,7 +53,7 @@ describe("the notes tab row", () => {
       <NotesTab
         rows={[row({ asks: ["Which Sarah?", "Which coach?", "Which dose?"] })]}
         loadError={false}
-        onOpenConversation={vi.fn()}
+        onOpenRow={vi.fn()}
       />,
     );
 
@@ -62,10 +62,29 @@ describe("the notes tab row", () => {
     expect(screen.queryByText(/Which dose\?/)).not.toBeInTheDocument();
   });
 
-  it("says so when a domain code is not one it knows, rather than degrading to a dot", () => {
+  // ⟲ A notes row used to hand off to home's conversation surface. The owner reversed
+  // that on 2026-09-14 — "it shouldn't open in the brain chat. It should open up right
+  // there in the note entry chat" — and his ruling is about every door into a note
+  // conversation, not only the stream's chip. A row about NO note is the exception, and
+  // it is the only one.
+  it("hands back the row, note and all, so a note row can open its note", () => {
+    const onOpenRow = vi.fn();
     render(
-      <NotesTab rows={[row({ domain: "wat" })]} loadError={false} onOpenConversation={vi.fn()} />,
+      <NotesTab
+        rows={[row(), row({ kind: "approval", note_id: null, session_id: "s2" })]}
+        loadError={false}
+        onOpenRow={onOpenRow}
+      />,
     );
+    const rows = screen.getAllByRole("button");
+    fireEvent.click(rows[0] as HTMLElement);
+    expect(onOpenRow.mock.calls[0]?.[0]).toMatchObject({ note_id: "n1" });
+    fireEvent.click(rows[1] as HTMLElement);
+    expect(onOpenRow.mock.calls[1]?.[0]).toMatchObject({ note_id: null, session_id: "s2" });
+  });
+
+  it("says so when a domain code is not one it knows, rather than degrading to a dot", () => {
+    render(<NotesTab rows={[row({ domain: "wat" })]} loadError={false} onOpenRow={vi.fn()} />);
     expect(screen.getByText(/unknown domain/)).toBeInTheDocument();
   });
 });

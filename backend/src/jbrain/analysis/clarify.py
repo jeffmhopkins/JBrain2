@@ -1373,7 +1373,7 @@ async def settle_conversation(
     and `waiting_on_owner` included. §2 of the plan states the rule and it is load-bearing
     rather than cosmetic: NOT stamping leaves no `note_analysis` row at all, which is
     `Note.analyzed` false (`models/notes.py`), a permanent amber "analyzing…" chip on the
-    note in the home stream, "nothing here yet" on an Analysis tab over a note whose graph
+    note in the home stream, "nothing here yet" in the note screen's record over a note whose graph
     IS written, and a re-run button polling an `analyzed_at` that never moves — the PWA's
     only no-terminal re-analysis lever, spinning (CLAUDE.md #10).
 

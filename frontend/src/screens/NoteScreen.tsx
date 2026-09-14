@@ -1,12 +1,16 @@
-// Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level over
-// home or search with Note / Attachments / Analysis tabs. Attachments is the
-// canonical manager (manifest rows + per-file sheet); pre-Phase-3 the header
-// is domain + date only (no title), and Analysis shows phased placeholders.
+// Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level over home
+// or search with **Thread / Note / Files** tabs, opening on Thread — the note IS its
+// conversation (mock `docs/mocks/agent-ingest/a-note-thread.html`, variant A; the owner
+// reversed the variant-C gate on 2026-09-14, see `NoteThreadTab.tsx`). Files is the canonical
+// attachment manager (manifest rows + per-file sheet); Note carries the body, the
+// clarification eraser and everything the Analysis tab used to show on its own.
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
+import { NoteThreadTab } from "../agent/NoteThreadTab";
 import { Markdown } from "../agent/markdown";
+import type { FullBrainDeps } from "../agent/useFullBrain";
 import type { NoteThreadOut, SearchResult } from "../api/client";
-import { api, attachmentUrl } from "../api/client";
+import { attachmentUrl } from "../api/client";
 import { AnalysisTab } from "../components/AnalysisTab";
 import { Clarifications } from "../components/Clarifications";
 import { fmtBytes } from "../components/ImageExtracts";
@@ -85,66 +89,6 @@ function BodyParagraphs({ body }: { body: string }) {
   );
 }
 
-/** "Add a thought" — the door from a note into its own conversation (O16 of
- * `docs/plans/AGENT_INGEST_REWRITE.md`).
- *
- * The owner has no terminal and, until this, no way to say anything about a note unless
- * the agent happened to be ASKING: a thread was reachable only from a stream row's ask
- * chip, which appears only while the thread waits. The moment he most wants to speak —
- * the pass has finished, it recorded a pile of facts, one of them is wrong, and nothing
- * is prompting him — was the one moment the thread had no door. This is the door, and
- * what he types behind it is appended to the note as his own words and read again with
- * it (backend migration 0203).
- *
- * Absent when the note has no conversation (captured seconds ago, ingest still pending)
- * and when the lookup fails: an affordance that leads nowhere is worse than none, and
- * the note screen must read exactly as before for a note the box has not got to yet.
- *
- * The label follows the thread's state, because the two are genuinely different errands:
- * a waiting thread is asking him something and the composer will show the question block
- * above it. */
-function AddThoughtButton({
-  noteId,
-  onOpenThread,
-}: {
-  noteId: string | null;
-  onOpenThread: (sessionId: string, agent: string) => void;
-}) {
-  const [thread, setThread] = useState<NoteThreadOut | null>(null);
-
-  useEffect(() => {
-    if (noteId === null) return;
-    let stale = false;
-    void api
-      .noteThread(noteId)
-      .then((found) => {
-        if (!stale) setThread(found);
-      })
-      .catch(() => {
-        // Silent: a note with no thread is the ordinary case this returns null for, and
-        // a failure is indistinguishable from it as far as the screen is concerned.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [noteId]);
-
-  if (thread === null) return null;
-  const waiting = thread.state === "waiting_on_owner";
-  return (
-    <button
-      type="button"
-      className="note-thought"
-      onClick={() => onOpenThread(thread.session_id, thread.agent)}
-    >
-      {waiting ? "Answer what it asked" : "Add a thought"}
-      <span className="note-thought-hint">
-        {waiting ? "it's waiting on you" : "corrections and second thoughts — it goes on the note"}
-      </span>
-    </button>
-  );
-}
-
 const SWIPE_DOWN_PX = 112;
 
 /** Pipeline status, derived client-side: PDFs/text are searchable once the
@@ -171,8 +115,8 @@ interface AttachmentsTabProps {
 }
 
 // The canonical attachment manager is a pure manifest (settled twice: the
-// manifest review, then the Sources-card review moved extract viewing to
-// the Analysis tab): inert rows with status chips + the per-file ⋯ sheet.
+// manifest review, then the Sources-card review moved extract viewing to the Sources
+// card): inert rows with status chips + the per-file ⋯ sheet.
 function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
   const [sheetFor, setSheetFor] = useState<StreamAttachment | null>(null);
   const [removeArmed, setRemoveArmed] = useState(false);
@@ -336,11 +280,13 @@ interface NoteScreenProps {
   onDelete: (id: string) => void;
   onAddAttachment: (noteId: string, file: File) => Promise<StreamAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
-  /** Analysis-tab entity chips open the entity layer above this one. */
+  /** Fact-table and transcript entity chips open the entity layer above this one. */
   onOpenEntity: (entityId: string) => void;
-  /** Open this note's conversation — the "add a thought" door (O16). Optional the way
-   * the stream's ask chip is: no handler, no affordance. */
-  onOpenThread?: ((sessionId: string, agent: string) => void) | undefined;
+  /** A Worked-block source card in the thread opens the cited note. */
+  onOpenNoteById?: ((noteId: string) => void) | undefined;
+  /** Injected in tests; the Thread tab's conversation controller and thread lookup. */
+  fbDeps?: FullBrainDeps | undefined;
+  lookupThread?: ((noteId: string) => Promise<NoteThreadOut | null>) | undefined;
 }
 
 export function NoteScreen({
@@ -354,12 +300,19 @@ export function NoteScreen({
   onAddAttachment,
   onRemoveAttachment,
   onOpenEntity,
-  onOpenThread,
+  onOpenNoteById,
+  fbDeps,
+  lookupThread,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
-  // Analysis is the most useful surface once a note exists, so it opens first;
-  // the Note body is one tap away.
-  const [tab, setTab] = useState<"note" | "attachments" | "analysis">("analysis");
+  // Tapping a note opens its conversation. Everything the owner wants to say about a
+  // note — a correction, an answer, a second thought — is a turn in it, so the thread is
+  // the screen and the note's own text is one tap away, not the other way round.
+  const [tab, setTab] = useState<"thread" | "note" | "attachments">("thread");
+  // How many questions the thread is parked on, reported up by the Thread tab — the
+  // count the tab row wears (the mock draws it on `Thread`), which is the only thing
+  // that says "it is asking you something" while the owner is reading the other two.
+  const [asking, setAsking] = useState(0);
 
   // Keep the local view in step when App refreshes the source (saved edits,
   // attachment changes from the editor layer).
@@ -382,9 +335,12 @@ export function NoteScreen({
     };
   }, [source, resolve]);
 
-  // Swipe-down at scroll-top climbs back, same as every card layer.
+  // Swipe-down at scroll-top climbs back, same as every card layer — except on Thread,
+  // where the transcript is its own scroller inside a pinned composer. There a downward
+  // drag IS reading back through the conversation, and dismissing the note under it would
+  // be the app taking a scroll away from him; the back arrow is the way out.
   function onTouchStart(event: TouchEvent) {
-    if ((scrollerRef.current?.scrollTop ?? 0) > 4) {
+    if (tab === "thread" || (scrollerRef.current?.scrollTop ?? 0) > 4) {
       swipeStart.current = null;
       return;
     }
@@ -409,7 +365,12 @@ export function NoteScreen({
   return (
     <div className="subscreen subscreen-note" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
       <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} />
-      <div className="screen-body note-view" ref={scrollerRef}>
+      {/* Head + tabs sit OUTSIDE the scroller: the Thread tab pins a composer to the
+          bottom edge and gives the transcript its own scroll box, so the screen's chrome
+          can no longer be part of a single scrolling column. The tab row staying put is
+          the point on a chat surface — the way back to the note's own text must not be
+          something you scroll a conversation to find. */}
+      <div className="note-view-chrome">
         <div className="note-view-head">
           <span
             className="domain-pill"
@@ -460,6 +421,16 @@ export function NoteScreen({
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "thread"}
+            className={`seg${tab === "thread" ? " seg-on" : ""}`}
+            onClick={() => setTab("thread")}
+          >
+            Thread
+            {asking > 0 && <span className="tab-count tab-count-ask">{asking}</span>}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "note"}
             className={`seg${tab === "note" ? " seg-on" : ""}`}
             onClick={() => setTab("note")}
@@ -473,22 +444,29 @@ export function NoteScreen({
             className={`seg${tab === "attachments" ? " seg-on" : ""}`}
             onClick={() => setTab("attachments")}
           >
-            Attachments
+            Files
             {(view.attachments?.length ?? view.attachmentCount) > 0 && (
               <span className="tab-count">{view.attachments?.length ?? view.attachmentCount}</span>
             )}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "analysis"}
-            className={`seg${tab === "analysis" ? " seg-on" : ""}`}
-            onClick={() => setTab("analysis")}
-          >
-            Analysis
-          </button>
         </div>
+      </div>
 
+      {/* Mounted whatever tab is on screen, and hidden rather than unmounted: a first
+          pass on the box's own GPU runs for minutes, and dropping the live stream every
+          time the owner glanced at the body would be the surface losing the turn he is
+          waiting for. */}
+      <NoteThreadTab
+        noteId={noteId}
+        hidden={tab !== "thread"}
+        onOpenNote={onOpenNoteById}
+        onOpenEntity={onOpenEntity}
+        fbDeps={fbDeps}
+        lookupThread={lookupThread}
+        onAskCount={setAsking}
+      />
+
+      <div className="screen-body note-view" ref={scrollerRef} hidden={tab === "thread"}>
         {tab === "note" && (
           <>
             <BodyParagraphs body={view.body} />
@@ -498,6 +476,25 @@ export function NoteScreen({
                 reach, and an id you cannot name is a block you cannot redact. Renders
                 nothing at all for a note that was never asked about, which is most. */}
             <Clarifications noteId={noteId} onErased={(body) => setView((v) => ({ ...v, body }))} />
+            {/* What the graph currently holds from this note — the former Analysis tab,
+                whole. Variant A replaces Analysis with Thread, but the transcript is a
+                record of DECISIONS and this is a readout of the CURRENT head: a value
+                superseded a month later still reads "written" in the turn that wrote it,
+                and only this says what is true now. It also carries the note's only
+                no-terminal re-run controls (note-level and per-image) and the OCR /
+                transcript expansions, none of which a turn can host. Folded under the
+                note's own text rather than given a fourth tab, because "the note, and
+                what it says" is one reading and four tabs on a phone is not. */}
+            <div className="note-record">
+              <h3 className="section-header">What this note says</h3>
+              <AnalysisTab
+                noteId={noteId}
+                attachments={view.attachments}
+                ingestState={view.ingestState}
+                bodyChars={view.body.length}
+                onOpenEntity={onOpenEntity}
+              />
+            </div>
           </>
         )}
         {tab === "attachments" && (
@@ -521,21 +518,6 @@ export function NoteScreen({
               }));
             }}
           />
-        )}
-        {tab === "analysis" && (
-          <AnalysisTab
-            noteId={noteId}
-            attachments={view.attachments}
-            ingestState={view.ingestState}
-            bodyChars={view.body.length}
-            onOpenEntity={onOpenEntity}
-          />
-        )}
-        {/* Outside the tab switch, because the tab he NOTICES a wrong fact on is
-            Analysis — which is also the tab this screen opens on — and the tab his
-            words end up on is Note. A note-level action, like the ⋯ menu. */}
-        {onOpenThread !== undefined && (
-          <AddThoughtButton noteId={noteId} onOpenThread={onOpenThread} />
         )}
       </div>
 

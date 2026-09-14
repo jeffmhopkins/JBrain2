@@ -1,22 +1,48 @@
 # Note conversations — where a note's agent thread lives
 
-> **Status:** GUI gate **settled on C**, `c-unified-conversations.html` — but read how.
-> Choosing C was a **delegated** call made inside this round, **not an owner gate
-> outcome**, and no ratified decision names a variant letter. What the owner ratified is
+> **Status:** **BUILT — variant A**, `a-note-thread.html`, after the owner **reversed**
+> this gate on **2026-09-14**.
+>
+> This round originally settled on **C** (`c-unified-conversations.html`) — a *delegated*
+> call made inside the round, not an owner gate outcome. What the owner ratified was
 > `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation
-> type: a note conversation is the same agent, loop and memory as chat"*, which in the
-> owner's own words at the gate meant a note conversation and a chat should be literally
-> the same thing, and **not a hidden path**. D1 ratifies C *in substance*: one
-> `AgentSession`, reached from the conversations surface rather than the note screen.
-> **Cite D1 for that, never "the owner chose C".** A and B are retained as the record.
-> **One part of C is superseded**: its `Asking` bucket is replaced by the **two-tab
-> inbox** (**D4**), with questions findable from the notes tab (**D5**) — so the mock's
-> segmented `Today · Older · Asking` picker is no longer the queue answer.
-> Companion dossier: `docs/research/agent-ingest/F1-GUI-MOCKS.md`. A follow-on round asked
-> what the *note screen* becomes under this model; it was **scrapped before its gate** —
-> the note screen does not change, and the writes render inside the conversation
-> (`docs/mocks/agent-ingest-note-body/SUPERSEDED.md`). Nothing is built.
-> **Last verified:** 2026-09-08.
+> type: a note conversation is the same agent, loop and memory as chat"* — and this README
+> read D1 as also settling **where he reaches it**: *"one `AgentSession`, reached from the
+> conversations surface rather than the note screen"*. **That second half is now
+> reversed.** Having used the shipped result (a note screen with an *Add a thought* button
+> that handed off to home's Full Brain chat), he said:
+>
+> > *"This is not matching my mockup at all where I wanted this to basically be another
+> > agent conversation. I can't see either thinking or anything else. It just has me to add
+> > on the conversation with another button. **When I click on the note, it should
+> > basically open up as a normal agent conversation same as jerv.** When I go to do a
+> > follow-up, **it shouldn't open in the brain chat. It should open up right there in the
+> > note entry chat.** I thought we had even mocked this so I'm a little confused"*
+>
+> — and, asked whether to build it properly: *"Yeah we need to build it properly."*
+>
+> **What is reversed:** where the owner reaches a note conversation. The note view's tab
+> row is now **Thread · Note · Files** and opens on **Thread**, exactly as `a-note-thread.html`
+> draws it. The home stream's ask chip opens the note screen too, so a note has one
+> destination rather than two.
+>
+> **What is NOT reversed — D1's substance.** A note conversation is still one
+> `AgentSession` with the same agent, loop and memory as chat; the Thread tab renders the
+> *shipped* transcript component (`frontend/src/agent/FullBrainSurface.tsx`'s
+> `AgentTranscript`), not a second ingest rendering; and every `note_ingest` session stays
+> listed on the Full Brain **Chats** panel (`useFullBrain.MODE_AGENTS`), so a settled
+> thread is still resumable from the conversations surface and is not a hidden path. C's
+> `Asking` bucket remains superseded by the **two-tab inbox** (**D4**) with questions
+> findable from the notes tab (**D5**).
+>
+> **B is retained as the record**, as is C — read C for the one-conversation-type argument
+> D1 ratified, and A for the surface that was built. The follow-on round that asked what
+> the *note screen* becomes (`docs/mocks/agent-ingest-note-body/`) was scrapped before its
+> gate on the premise that *"the note screen does not change"*; that premise is now false,
+> and its `SUPERSEDED.md` records the reversal. Companion dossier:
+> `docs/research/agent-ingest/F1-GUI-MOCKS.md`. Interaction spec inside the thread:
+> `docs/mocks/agent-ingest-thread/README.md`.
+> **Last verified:** 2026-09-14.
 
 ## The change these mocks are for
 
@@ -53,6 +79,28 @@ demo bar), and built on the `docs/reference/DESIGN.md` token sheet — no raw he
 token block, ≥44px targets, `prefers-reduced-motion` honored. Colour stays informational:
 green = committed/saved, amber = open question/pending, steel = agent/info, rose = medical,
 violet = financial.
+
+## What actually shipped for A, and where Analysis went
+
+A's own caption says only *"its `Analysis` tab is replaced by `Thread`"*, and its tab row
+reads **Thread · Note · Files** — so the round drew the replacement without saying where
+Analysis's content goes. It goes into **Note**, whole, under a `What this note says` rule
+(`frontend/src/screens/NoteScreen.tsx`). Dropping it was never an option and the choice is
+deliberate:
+
+- The transcript is a record of **decisions**; the fact table is a readout of the **current
+  head**. A value superseded a month later still reads *written* in the turn that wrote it,
+  and only the table says what is true now.
+- It carries the only no-terminal **re-run** controls the box has (note-level and per-image)
+  plus the OCR / audio-transcript expansions of the Sources card — none of which a turn can
+  host, and all of which CLAUDE.md #10 says must stay PWA-operable.
+- A fourth tab was rejected: three is already a lot on a phone, and *"the note, and what it
+  says"* is one reading. `Attachments` is renamed **Files** to match the mock; it keeps the
+  manifest and the per-file ⋯ sheet exactly.
+
+The **home stream is not quite untouched** either, contrary to A's caption: the ask chip now
+opens the note screen rather than home's conversation surface, because the note screen *is*
+the conversation and two doors to one place is the confusion this round created.
 
 ## What they reuse
 

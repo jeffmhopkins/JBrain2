@@ -51,7 +51,6 @@ function renderStream(
     onEdit: vi.fn(),
     onDelete: vi.fn(),
     onHide: vi.fn(),
-    onOpenThread: vi.fn(),
   };
   render(<Stream items={items} {...handlers} threads={threads} />);
   return handlers;
@@ -201,16 +200,18 @@ describe("a note whose thread is waiting on an answer", () => {
     expect(screen.queryByText("analyzing…")).not.toBeInTheDocument();
   });
 
-  // I2, decided (ii): the CHIP opens the thread; the row keeps the note screen, which is
-  // the only no-terminal way to the Analysis tab, the attachments and the answer eraser.
-  it("opens the thread from the chip and the NOTE from the row", () => {
+  // ⟲ The chip used to open home's conversation surface (I2, decided (ii)). The owner
+  // reversed that on 2026-09-14 — "it shouldn't open in the brain chat, it should open up
+  // right there in the note entry chat" — and the note screen now opens ON the thread, so
+  // chip and row have one destination between them.
+  it("opens the NOTE from the chip as well as from the row", () => {
     const note = item({ analyzed: false });
     const h = renderStream([note], waiting(note.id as string));
 
     fireEvent.click(screen.getByRole("button", { name: "3 questions" }));
-    expect(h.onOpenThread).toHaveBeenCalledWith(thread);
-    expect(h.onOpenNote).not.toHaveBeenCalled();
+    expect(h.onOpenNote).toHaveBeenCalledWith(note);
 
+    h.onOpenNote.mockClear();
     fireEvent.click(screen.getByText(note.body));
     expect(h.onOpenNote).toHaveBeenCalledWith(note);
   });

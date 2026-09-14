@@ -44,9 +44,16 @@ export function IngestChip({ item }: { item: LifecycleSource }) {
  * lifecycle chips and the inbox's ask chip already use — and the colour is not the only
  * carrier, the words are.
  *
- * It is also the TAP TARGET that opens the thread (I2, decided (ii)): the row's own tap
- * keeps the note screen, which is the only no-terminal route to the Analysis tab, the
- * attachments, the edit path, the clarification eraser and the re-run button. */
+ * ⟲ **It opens the NOTE SCREEN, the same place the row's own tap goes** — not home's
+ * conversation surface, which is what I2 (ii) wired and what the owner reversed on
+ * 2026-09-14: *"When I go to do a follow-up, it shouldn't open in the brain chat. It
+ * should open up right there in the note entry chat."* The note screen now opens ON its
+ * conversation, so there is exactly one destination and the chip's job is no longer to be
+ * a second door — it is the label that says why to walk through this one. It stays a
+ * 44px button rather than reverting to a `<span>`: it shares a WRAPPING row with the
+ * attachment links, where an out-of-flow hit area takes a neighbour's tap
+ * (`backend/tests/unit/test_tap_targets.py`), and a generous target on a dense day is
+ * worth more than the height it costs. */
 function AskChip({ thread, onOpen }: { thread: NoteThread; onOpen: () => void }) {
   const n = thread.questions;
   return (
@@ -64,10 +71,8 @@ interface NoteRowProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
-  /** This note's conversation, when it is waiting on an answer. */
+  /** This note's conversation, when it is waiting on an answer — the chip's state. */
   thread?: NoteThread | undefined;
-  /** Open that conversation — the chip's tap, never the row's. */
-  onOpenThread?: ((thread: NoteThread) => void) | undefined;
 }
 
 function NoteRow({
@@ -79,7 +84,6 @@ function NoteRow({
   onDelete,
   onHide,
   thread,
-  onOpenThread,
 }: NoteRowProps) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -99,8 +103,6 @@ function NoteRow({
 
   // Outbox-only rows have no server id yet — nothing to PATCH or DELETE.
   const canSwipe = item.id !== null;
-  // The chip only appears where there is somewhere for it to go.
-  const askable = onOpenThread !== undefined ? thread : undefined;
   const dragging = drag !== null && drag.axis === "h";
   const offset = dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
 
@@ -223,7 +225,7 @@ function NoteRow({
         </button>
         {(item.attachments.length > 0 ||
           item.pending ||
-          askable !== undefined ||
+          thread !== undefined ||
           lifecycleChip(item) !== null) && (
           <div className="note-chips">
             {item.attachments.map((att) =>
@@ -250,8 +252,10 @@ function NoteRow({
                 chip at all — `lifecycle.ts` makes "analyzed" the quiet end state, and only
                 the waiting state earns one. */}
             {!item.pending &&
-              (askable !== undefined ? (
-                <AskChip thread={askable} onOpen={() => onOpenThread?.(askable)} />
+              (thread !== undefined ? (
+                // Through the row's own tap handler so a chip tap behaves like a row tap
+                // — it closes an open swipe rail instead of navigating out from under it.
+                <AskChip thread={thread} onOpen={onBubbleTap} />
               ) : (
                 <IngestChip item={item} />
               ))}
@@ -269,10 +273,9 @@ interface StreamProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
-  /** Note conversations parked on an answer, by note id — the chip's state (§3b I1). */
+  /** Note conversations parked on an answer, by note id — the chip's state (§3b I1).
+   * Absent/empty = no chip is offered. */
   threads?: NoteThreads | undefined;
-  /** Open one of those conversations. Absent = no chip is offered. */
-  onOpenThread?: ((thread: NoteThread) => void) | undefined;
 }
 
 export function Stream({
@@ -283,7 +286,6 @@ export function Stream({
   onDelete,
   onHide,
   threads,
-  onOpenThread,
 }: StreamProps) {
   const scrollerRef = useRef<HTMLElement>(null);
   // One rail open at a time, like every messaging app.
@@ -329,7 +331,6 @@ export function Stream({
                   onDelete={onDelete}
                   onHide={onHide}
                   thread={item.id === null ? undefined : threads?.get(item.id)}
-                  onOpenThread={onOpenThread}
                 />
               ))}
             </div>

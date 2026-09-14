@@ -1199,7 +1199,7 @@ class AnalysisPipeline:
         settle that did not stamp at all. `close_reading` carries both fields now, but it
         carries them per CALL: a continuation call, or a pass clipped before it named the
         note, lands a reading whose title is empty, and an unconditional upsert would
-        wipe the heading off `GET /notes/{id}/analysis` (the Analysis tab), off
+        wipe the heading off `GET /notes/{id}/analysis` (the note screen's record), off
         `agent/externaltools.py`'s dedup line, and empty what
         `analysis/tagconsolidate.py` normalizes. The seam is `W5_PRECONDITIONS.md` §1's,
         kept for a different reason than it was proposed for: not to protect the

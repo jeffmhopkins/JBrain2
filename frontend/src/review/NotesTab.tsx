@@ -2,7 +2,15 @@
 // a-inbox-holds.html, variant A). Ingestion questions and staged approvals, oldest wait
 // first so the list drains from the top.
 //
-// Every row is a REDIRECT and nothing else (D4). There are no answer controls here —
+// Every row is a REDIRECT and nothing else (D4). ⟲ Where it redirects TO changed on
+// 2026-09-14: a row about a NOTE opens the note screen, which now opens on that note's
+// conversation, rather than handing off to home's Full Brain surface. The owner's ruling —
+// *"it shouldn't open in the brain chat. It should open up right there in the note entry
+// chat"* — is about every door into a note conversation, not only the stream's chip. A
+// staged `owner_prefs` approval carries no note (`note_id` is null) and is not about one,
+// so it keeps the conversation-surface handoff it has always had.
+//
+// There are no answer controls here —
 // they were in the reviewed draft and the owner's ruling removed them, because
 // answering in the inbox as well as in the thread would make this a second place note
 // ingestion gets decided. The row's whole job is to carry enough (which note, what is
@@ -91,11 +99,12 @@ function NotesRow({ row, onOpen }: { row: NotesInboxRow; onOpen: () => void }): 
 export function NotesTab({
   rows,
   loadError,
-  onOpenConversation,
+  onOpenRow,
 }: {
   rows: NotesInboxRow[] | null;
   loadError: boolean;
-  onOpenConversation: (sessionId: string, agent: string) => void;
+  /** Open what the row is about: its note, or — for a row with no note — its session. */
+  onOpenRow: (row: NotesInboxRow) => void;
 }): ReactNode {
   if (loadError) return <p className="analysis-quiet">couldn't load — reopen to retry.</p>;
   if (rows === null) return <p className="analysis-quiet">loading…</p>;
@@ -116,7 +125,7 @@ export function NotesTab({
           // hold two staged approvals, and `waiting_since` is what separates them.
           key={`${row.kind}:${row.session_id}:${row.waiting_since}`}
           row={row}
-          onOpen={() => onOpenConversation(row.session_id, row.agent)}
+          onOpen={() => onOpenRow(row)}
         />
       ))}
     </div>

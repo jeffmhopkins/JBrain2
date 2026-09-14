@@ -473,9 +473,14 @@ function EmptyLane({ lane }: { lane: ReviewFilter }) {
 type InboxTab = "notes" | "wiki";
 
 export function ReviewScreen({
+  onOpenNote,
   onOpenConversation,
 }: {
-  /** Open a note conversation — the only thing a notes row does. */
+  /** Open the note a notes row is about — its screen opens on that note's conversation,
+   * which is where every interaction about a note happens (owner's ruling, 2026-09-14). */
+  onOpenNote?: (noteId: string) => void;
+  /** Open a session directly, for the one notes row that is about no note: a staged
+   * `owner_prefs` approval. */
   onOpenConversation?: (sessionId: string, agent: string) => void;
 }) {
   const queue = useReviewQueue();
@@ -569,7 +574,10 @@ export function ReviewScreen({
             <NotesTab
               rows={notes.rows}
               loadError={notes.loadError}
-              onOpenConversation={(sessionId, agent) => onOpenConversation?.(sessionId, agent)}
+              onOpenRow={(row) => {
+                if (row.note_id !== null) onOpenNote?.(row.note_id);
+                else onOpenConversation?.(row.session_id, row.agent);
+              }}
             />
           ) : queue.loadError && filter === "pending" ? (
             <p className="analysis-quiet">couldn't load the inbox — reopen to retry.</p>

@@ -1348,20 +1348,35 @@ describe("ReviewScreen (split inbox)", () => {
 
   it("a notes row only redirects — it offers nothing to decide with", async () => {
     notesRows = [QUESTION];
-    const onOpenConversation = vi.fn();
-    render(<ReviewScreen onOpenConversation={onOpenConversation} />);
+    const onOpenNote = vi.fn();
+    render(<ReviewScreen onOpenNote={onOpenNote} onOpenConversation={vi.fn()} />);
     await screen.findByText(/Which is .the new one./);
 
-    // The ONE control in the row is the row itself, and it opens the conversation.
+    // The ONE control in the row is the row itself, and it opens the NOTE — whose screen
+    // opens on this very conversation. ⟲ It used to open home's Full Brain surface; the
+    // owner reversed that on 2026-09-14 ("it shouldn't open in the brain chat"), and his
+    // ruling covers every door into a note conversation, not only the stream's chip.
     const rowButtons = screen.getAllByRole("button");
     expect(rowButtons).toHaveLength(1);
     fireEvent.click(rowButtons[0] as HTMLElement);
-    expect(onOpenConversation).toHaveBeenCalledWith("sess-note-1", "note_ingest");
+    expect(onOpenNote).toHaveBeenCalledWith("note-1");
     // No answer/approve/dismiss affordance was rendered, and nothing was posted.
     expect(fetchMock).not.toHaveBeenCalledWith(
       expect.stringContaining("/resolve"),
       expect.anything(),
     );
+  });
+
+  it("a staged approval is about no note, so it still opens its session directly", async () => {
+    notesRows = [APPROVAL];
+    const onOpenNote = vi.fn();
+    const onOpenConversation = vi.fn();
+    render(<ReviewScreen onOpenNote={onOpenNote} onOpenConversation={onOpenConversation} />);
+    await screen.findByText(/preferences · general/);
+
+    fireEvent.click(screen.getAllByRole("button")[0] as HTMLElement);
+    expect(onOpenConversation).toHaveBeenCalledWith("sess-chat-9", "curator");
+    expect(onOpenNote).not.toHaveBeenCalled();
   });
 
   it("counts only what is waiting: a first pass still reading is listed, not counted", async () => {
