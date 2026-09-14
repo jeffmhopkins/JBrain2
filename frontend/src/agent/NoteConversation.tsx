@@ -44,6 +44,9 @@ export interface NoteConversationProps {
   modelLoad?: ModelLoad | null | undefined;
   /** Refresh the stream after an enacted proposal creates a note out of band. */
   onProposalEnacted?: (() => void) | undefined;
+  /** Open the note itself — offered in place of a conversation the box has not opened
+   * yet, so that state has something to do rather than only something to read. */
+  onOpenThisNote?: (() => void) | undefined;
 }
 
 export function NoteConversation({
@@ -54,6 +57,7 @@ export function NoteConversation({
   readAloud,
   modelLoad,
   onProposalEnacted,
+  onOpenThisNote,
 }: NoteConversationProps): ReactNode {
   return (
     <div className="fb-shell">
@@ -65,9 +69,19 @@ export function NoteConversation({
         readAloud={readAloud}
         modelLoad={modelLoad}
         noSessionText={
-          noThread
-            ? "No conversation yet — the box reads a note once it has indexed it, and the thread opens here."
-            : "Opening this note's conversation…"
+          noThread ? (
+            <>
+              No conversation yet — the box reads a note once it has indexed it, and the thread
+              opens here.
+              {onOpenThisNote && (
+                <button type="button" className="fb-empty-action" onClick={onOpenThisNote}>
+                  open the note
+                </button>
+              )}
+            </>
+          ) : (
+            "Opening this note's conversation…"
+          )
         }
         emptyText="Say something about this note — it reads the note with you."
       />

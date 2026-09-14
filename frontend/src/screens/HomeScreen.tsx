@@ -158,6 +158,9 @@ export function HomeScreen({
   const convMode: ConvMode | null =
     seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : entryOpen ? "entry" : null;
   const noteOpen = convMode === "entry";
+  // The lookup has answered, and this note has no conversation at all: nothing to reply
+  // into, so the surface says so and offers the note instead.
+  const noThread = entryNote !== null && thread.looked && thread.sessionId === null;
   const fb = useFullBrain(convMode, fbDeps, !noteOpen);
 
   // Hand the resolved session to the controller — the same targeted open the Tasks
@@ -388,10 +391,13 @@ export function HomeScreen({
         // this opened from is Entry's picker.
         <NoteConversation
           fb={fb}
-          noThread={entryNote !== null && thread.looked && thread.sessionId === null}
+          noThread={noThread}
           onOpenNote={onOpenNoteById}
           onOpenEntity={onOpenEntity}
           onProposalEnacted={() => void notes.refresh()}
+          onOpenThisNote={
+            entryNote !== null && onOpenNoteById ? () => onOpenNoteById(entryNote) : undefined
+          }
           readAloud={
             readAloud.available
               ? {
@@ -487,7 +493,13 @@ export function HomeScreen({
         // untouched, because it is the app's primary navigation and the only way back to
         // capture.
         conversation={conversational}
-        placeholder={noteOpen ? "Reply about this note…" : undefined}
+        placeholder={
+          noteOpen
+            ? noThread
+              ? "No thread yet — open the note above"
+              : "Reply about this note…"
+            : undefined
+        }
         onConversation={(body, files) => {
           // The omnibox is the conversation surface's composer: a send streams
           // into the transcript above (Research → Jerv/Teacher, Full Brain →
@@ -514,7 +526,9 @@ export function HomeScreen({
         // Conversation surfaces only: the Stop button aborts the live turn, and the
         // context meter shows how full the model's window is getting.
         onStop={conversational ? fb.stop : undefined}
-        contextUsage={conversational ? fb.usage : null}
+        // ...and the meter only once there is a window to fill: on Entry a note whose
+        // thread has not opened would otherwise read "0/262k · 0%" about nothing.
+        contextUsage={conversational && fb.active ? fb.usage : null}
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
         // Full Brain / Research only: a horizontal swipe across the omnibox shuttles

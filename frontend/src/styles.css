@@ -8985,6 +8985,23 @@ button.small {
   text-align: center;
   line-height: 1.5;
 }
+/* The one thing there is to DO with a note the box has not read yet: open the note. A
+   real control inside the empty state, so that state is not only something to read.
+   `--text-2` and its own border, deliberately — it must not inherit the surrounding
+   `--text-3`, which sits under the 4.5:1 floor (issue #25), and 44px because it is a tap
+   target with the whole column to itself. */
+.fb-shell .fb-empty-action {
+  display: block;
+  margin: 14px auto 0;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+
 /* transcript */
 .fb-shell .fb-chat {
   flex: 1;
