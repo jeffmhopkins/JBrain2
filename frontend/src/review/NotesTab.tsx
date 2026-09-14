@@ -3,12 +3,13 @@
 // first so the list drains from the top.
 //
 // Every row is a REDIRECT and nothing else (D4). ⟲ Where it redirects TO changed on
-// 2026-09-14: a row about a NOTE opens the note screen, which now opens on that note's
-// conversation, rather than handing off to home's Full Brain surface. The owner's ruling —
-// *"it shouldn't open in the brain chat. It should open up right there in the note entry
-// chat"* — is about every door into a note conversation, not only the stream's chip. A
-// staged `owner_prefs` approval carries no note (`note_id` is null) and is not about one,
-// so it keeps the conversation-surface handoff it has always had.
+// 2026-09-14: a row about a NOTE loads that note's conversation on the ENTRY surface —
+// the note's own chat in the main view, not the Brain chat and not a layer over it. The
+// owner's ruling — *"the default view of entry would be notes. And when you select a note,
+// it basically loads a conversation the same as if I had swiped left inside of jerv and
+// picked a different conversation"* — is about every door into a note conversation, not
+// only the stream's chip. A staged `owner_prefs` approval carries no note (`note_id` is
+// null) and is not about one, so it keeps the session handoff it has always had.
 //
 // There are no answer controls here —
 // they were in the reviewed draft and the owner's ruling removed them, because

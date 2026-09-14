@@ -136,6 +136,10 @@ export function App() {
   const [sessionBackTo, setSessionBackTo] = useState<Card | null>(null);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
+  // A note's CONVERSATION, handed to HomeScreen to load on the Entry surface — the review
+  // inbox's notes row, and a note screen's own door back into its thread.
+  const [noteThread, setNoteThread] = useState<string | null>(null);
+  const clearNoteThread = useCallback(() => setNoteThread(null), []);
   const [noteClosing, setNoteClosing] = useState(false);
   // The entity page stacks one layer above the note view (analysis chips).
   const [entityView, setEntityView] = useState<string | null>(null);
@@ -327,6 +331,17 @@ export function App() {
   async function openNoteById(noteId: string) {
     const item = await notes.fetchById(noteId);
     if (item !== null) setNoteView(noteViewFromItem(item));
+  }
+
+  /** Open a note's CONVERSATION: drop every reading layer and card covering home, then
+   * hand the note to HomeScreen, which loads its thread into the Entry surface (the
+   * owner's ruling of 2026-09-14 — a note conversation is loaded in the main view, not in
+   * a layer above it). */
+  function openNoteConversation(noteId: string) {
+    setNoteView(null);
+    setCard(null);
+    setLauncherOpen(false);
+    setNoteThread(noteId);
   }
 
   // "Open in jerv conversation" from the Research Library: drop the detail + list card +
@@ -527,6 +542,8 @@ export function App() {
           onComposeConsumed={clearCompose}
           openSession={openSession}
           onOpenSessionConsumed={clearOpenSession}
+          openNoteThread={noteThread}
+          onOpenNoteThreadConsumed={clearNoteThread}
         />
       </div>
 
@@ -599,15 +616,14 @@ export function App() {
                 }}
               />
             )}
-            {/* A notes-tab row REDIRECTS into its conversation (D4). ⟲ For a row about a
-              NOTE that is now the note layer, which opens on the note's own thread and
-              stacks ABOVE this card — so back climbs to the inbox rather than needing the
-              card dropped and a return marker left. A row about no note (a staged
-              `owner_prefs` approval) keeps the old handoff: drop the card and the launcher
-              so the chat is revealed, leaving a return marker for the back gesture. */}
+            {/* A notes-tab row REDIRECTS into its conversation (D4). ⟲ A row about a NOTE
+              loads that note's conversation on the ENTRY surface (the owner's ruling of
+              2026-09-14), so the card and launcher drop to reveal it. A row about no note
+              (a staged `owner_prefs` approval) keeps the session handoff, leaving a return
+              marker for the back gesture. */}
             {card === "review" && (
               <ReviewScreen
-                onOpenNote={(noteId) => void openNoteById(noteId)}
+                onOpenNote={openNoteConversation}
                 onOpenConversation={(sessionId, agent) => {
                   setCard(null);
                   setLauncherOpen(false);
@@ -733,9 +749,9 @@ export function App() {
             onAddAttachment={addAttachmentTo}
             onRemoveAttachment={removeAttachmentFrom}
             onOpenEntity={setEntityView}
-            // A Worked-block source card inside the thread cites another note; opening it
-            // swaps this layer for that one rather than stacking a second note screen.
-            onOpenNoteById={(id) => void openNoteById(id)}
+            // This layer holds the note's RECORD; its conversation loads on the Entry
+            // surface below, so opening it drops this layer rather than stacking.
+            onOpenConversation={openNoteConversation}
           />
         </div>
       )}

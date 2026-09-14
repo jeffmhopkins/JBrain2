@@ -69,6 +69,15 @@ interface OmniboxProps {
    * under way so the box can clear them; false (e.g. an upload failed) keeps them
    * staged for a retry. A void/undefined return is treated as success. */
   onConversation: (body: string, files: File[]) => undefined | Promise<boolean>;
+  /** This send is a TURN, not a capture. Research and Full Brain are conversations by
+   * definition (`MODES[mode].domain === null`); **Entry** is one only while a note's
+   * conversation is open in the main view — the notes list is its picker, and the same box
+   * captures a new note when no note is selected. One omnibox, as the owner settled it on
+   * 2026-09-14: *"I want you to keep the one omnibox just like jerv."* */
+  conversation?: boolean;
+  /** Override the mode's own placeholder — Entry's box says "Write an entry…" over the
+   * notes list and "Reply about this note…" inside a note's conversation. */
+  placeholder?: string | undefined;
   /** A turn is streaming — the send button becomes a Stop button (and another send
    * is blocked). */
   busy?: boolean;
@@ -130,6 +139,8 @@ export function Omnibox({
   onSegChange,
   onSend,
   onConversation,
+  conversation,
+  placeholder,
   busy = false,
   onStop,
   contextUsage,
@@ -196,11 +207,14 @@ export function Omnibox({
   // Entering edit mode loads the note body; leaving it restores blank capture.
   const meta = MODES[seg.mode];
   const destination = meta.dest ? (destinations[seg.mode] ?? meta.dest.options[0] ?? null) : null;
+  // The send's destination: a live conversation, or this mode's note domain. A mode with
+  // no domain is always a conversation; Entry becomes one while a note is open above.
+  const conversing = meta.domain === null || conversation === true;
 
   function send() {
     if (busy) return;
     const body = text.trim();
-    if (meta.domain === null) {
+    if (conversing) {
       // Research / Full Brain hand off to the conversation surface, staged files
       // riding along as chat attachments. A files-only turn is allowed (caption
       // optional). Clear the typed text at once — the transcript already shows the
@@ -223,7 +237,7 @@ export function Omnibox({
       }
       return;
     }
-    if (body === "") return;
+    if (body === "" || meta.domain === null) return;
     onSend({ domain: meta.domain, destination, body, files });
     setText("");
     setFiles([]);
@@ -422,7 +436,7 @@ export function Omnibox({
           <textarea
             ref={inputRef}
             className="composer-input"
-            placeholder={meta.placeholder}
+            placeholder={placeholder ?? meta.placeholder}
             value={text}
             onChange={(e) => setText(e.target.value)}
             aria-label="Composer"
@@ -527,9 +541,7 @@ export function Omnibox({
                   aria-label="Send"
                   onClick={send}
                   disabled={
-                    busy ||
-                    (text.trim() === "" &&
-                      !(meta.domain === null && (files.length > 0 || carrying)))
+                    busy || (text.trim() === "" && !(conversing && (files.length > 0 || carrying)))
                   }
                 >
                   <SendIcon size={24} />

@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NoteAnalysis, SearchResult } from "../api/client";
 import type { StreamItem } from "../notes/useNotes";
-import { inertThread } from "../test/agentStubs";
 import { NoteScreen, noteViewFromItem, noteViewFromSearch } from "./NoteScreen";
 
 const ITEM: StreamItem = {
@@ -63,11 +62,9 @@ const INDEXED: StreamItem = {
   ],
 };
 
-/** Everything here is about the Note and Files tabs, so the Thread tab gets an inert
- * conversation: a note with no thread and a controller whose every call is a stub. The
- * tab still MOUNTS (it is the default, and it stays mounted so a live turn survives a tab
- * switch), so leaving it live would put the agent-session routes on every fetch stub in
- * this file. */
+/** The note's RECORD — Note and Files. The conversation about it is not here any more
+ * (the owner's ruling of 2026-09-14): it loads on the Entry surface, covered by
+ * `HomeScreen.note.test.tsx`. */
 function setup(
   source = noteViewFromItem(ITEM),
   resolve: (id: string) => Promise<StreamItem | null> = vi.fn(async () => null),
@@ -88,15 +85,7 @@ function setup(
     onRemoveAttachment: vi.fn(async () => {}),
     onOpenEntity: vi.fn(),
   };
-  render(
-    <NoteScreen
-      source={source}
-      resolve={resolve}
-      syncStatus="synced"
-      {...handlers}
-      {...inertThread()}
-    />,
-  );
+  render(<NoteScreen source={source} resolve={resolve} syncStatus="synced" {...handlers} />);
   return handlers;
 }
 

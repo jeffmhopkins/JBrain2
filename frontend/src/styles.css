@@ -5187,72 +5187,15 @@ button.small {
   margin: 0;
 }
 
-/* The note screen's chrome — the domain/date head and the Thread · Note · Files tab row
-   — lifted OUT of the scrolling body. The Thread tab is a chat surface: its transcript
-   scrolls inside its own box under a pinned composer, so there is no single scrolling
-   column left for the chrome to ride, and the way back to the note's own text must not be
-   something you scroll a conversation to find. */
+/* The note screen's chrome — the domain/date head and the Note · Files tab row — lifted
+   OUT of the scrolling body, so the way between the note's text and its files is never
+   something you have to scroll a long analysis to find. */
 .note-view-chrome {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 8px 16px 12px;
-}
-
-/* The Thread tab: the shipped agent transcript (.fb-shell scopes every rule it draws
-   with) filling the screen under the chrome, with its composer pinned to the bottom
-   edge. `hidden` must be spelled out — .fb-shell sets `display: flex`, which outranks
-   the UA stylesheet's [hidden] rule. */
-.note-thread[hidden] {
-  display: none;
-}
-
-.note-thread .dock {
-  background: transparent;
-}
-
-/* The omnibox's body gutter assumes the segment row above it supplies the top edge;
-   this composer has no mode row (it would offer to navigate away from the note being
-   read), so it carries its own. */
-.note-thread-composer {
-  padding-top: 12px;
-}
-
-/* The composer's accent. `--mode` is normally set by the omnibox's active segment; with
-   no segment row it has to be stated, and steel is the Brain register a note
-   conversation belongs to. */
-.note-thread .omnibox {
-  --mode: var(--steel);
-  --mode-tint: var(--steel-tint);
-}
-
-/* The foot's microcopy: where a reply goes — the one thing the shipped hand-off got
-   wrong. `.composer-foot` pushes its children right, so this claims the free space. */
-.note-thread-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-right: auto;
-  min-width: 0;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-}
-
-.note-thread-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: var(--r-pill);
-  background: var(--steel);
-}
-
-/* The Thread tab's open-question count. Amber — the open-ask register the stream chip
-   and the inbox already use — against the neutral Files count beside it, so the two
-   numbers on one row do not read as the same kind of thing. */
-.tab-count-ask {
-  background: var(--amber-tint);
-  color: var(--amber);
 }
 
 /* "What this note says": the former Analysis tab, folded under the note's own text.
@@ -25121,6 +25064,13 @@ button.task-band:active {
    for one fact, one of them animated, in a row whose whole job is to be glanceable. */
 .sdr-btn {
   color: var(--steel);
+}
+
+/* The note button in the top bar's right cluster: the door from a note's conversation to
+   the note itself. Quiet (`--text-2`, the readout register beside it) — the conversation
+   is where the owner is, and this is the reference, not the destination. */
+.note-btn {
+  color: var(--text-2);
 }
 
 .sdr-note {
