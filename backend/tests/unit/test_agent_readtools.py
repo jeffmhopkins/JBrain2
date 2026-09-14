@@ -1028,10 +1028,14 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v4 is R1b: the model's own `confidence` field is DELETED (§3.3/O3b), and the
         # hold clause is rewritten from advice into the pass's obligation, because the
         # review card that used to be filed beside it is gone.
+        # v5 is the O15 ruling: an attribute collision now makes the NEWEST value live
+        # instead of parking both sides, so a replacement can be the resolution of a real
+        # disagreement rather than housekeeping. The prose names that result and makes
+        # asking the owner about it the pass's obligation — the only notice he gets.
         "assert_fact.tool": (
             "assert_fact",
-            4,
-            "eef75af6cb2b091a5f3a2c5ee3cddf4beb366296ff6f4d9094ddd401d1962875",
+            5,
+            "8dd7afd8d4d1155738a89578c80da4416835d3f289a29cbfb10ecb55c0947295",
         ),
         "resolve_entity.tool": (
             "resolve_entity",
@@ -1043,10 +1047,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # changes to a version-pinned sidecar.
         # v2 is R1b's half of the same rewrite: one channel, so the hold clause states
         # what the pass owes rather than what it might do.
+        # v3 is the O15 ruling, the same paragraph assert_fact v5 gains: a replacement
+        # that resolved a DISAGREEMENT is not housekeeping, and asking the owner about it
+        # is the pass's obligation.
         "close_reading.tool": (
             "close_reading",
-            2,
-            "7e717520a3361839bed76489e57b695501fc9b5916eb07df90560f24a5d5ce80",
+            3,
+            "30c22f0c8de329096cf2f40b7fad23c4b0a191211ef0037ab6d4b5c8ccb84ba6",
         ),
         # The on-reply half (D8): reachable only from a turn the owner sent, and each
         # force-supersedes or folds, so the wording is the contract for what a reply may

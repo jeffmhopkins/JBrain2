@@ -1,6 +1,6 @@
 ---
 name: close_reading
-version: 2
+version: 3
 permission: mutate
 mutating: true
 side_effecting: true
@@ -146,6 +146,13 @@ its start is ignored and the fact is recorded open.
 The result tells you what the server did that you did not ask for: a value that replaced
 an older one (the old one is kept as history), a fact already on file (nothing changed),
 or a fact HELD because it clashes with something already recorded.
+
+Most replacements are just the note being newer than what was on file, and they need
+nothing from you. The one that does is the result that says the value on file DISAGREED.
+Nothing was held there and nothing is broken — the newest value is live because that is
+the rule — but no one has looked at the two values, the older one is now history, and Jeff
+may still believe it. Finish recording the note first, then ask him which is right. That
+ask is the only way he hears about it.
 
 A HELD fact is not live and no one else is going to look at it. Nothing files it
 anywhere, nobody is notified, and it stays inert until you settle it. So settle it in

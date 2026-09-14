@@ -519,12 +519,14 @@ async def test_no_kind_of_unattested_fact_supersedes_an_attested_head(
     is what makes the guard reachable for all of them.
 
     The assertion is deliberately "the prior did not LOSE", not "the prior is still
-    active", because the two kinds are protected by different branches and they end
-    differently. `state` reaches the low-confidence guard, which parks the candidate and
-    leaves the head live. `attribute` never gets that far: its own branch fires first and
-    holds BOTH sides behind an `attribute_collision` ("two birthdays is a bug, not news").
-    Either way the attested value is still there for a human; `superseded` is the one
-    outcome that means it was overwritten by a quote the note does not contain."""
+    active": the attested value has to still be there for a human, and `superseded` is the
+    one outcome that means it was overwritten by a quote the note does not contain.
+
+    Every kind now reaches the SAME guard — the low-confidence floor, which parks the
+    candidate and leaves the head live. `attribute` used to be protected by something else
+    entirely: its own branch fired first and held BOTH sides behind an
+    `attribute_collision`. That branch makes the newest value live now (§8 O15), so this
+    property would have been lost with it had the floor not been made explicit there."""
     who = f"Dana {kind_predicate}"
     note_id, writer = await _own_person(maker, tmp_path, who)
     first = await writer.assert_fact(

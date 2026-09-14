@@ -209,10 +209,10 @@ class FactWrite:
 
     Under one channel (AGENT_INGEST_REWRITE R1b) this IS the notice: what `decide()`
     could not settle reaches the agent here and nowhere else, so it has to carry
-    everything the card it replaced carried. `also_held` is the other side of an
-    attribute collision — the row already on file that this write moved to
-    `pending_review` — and it is the one thing the write CHANGED beyond its own row, so
-    a result that omitted it would under-report what happened. `reciprocal_held` is the
+    everything the card it replaced carried. `also_held` is a row the write moved to
+    `pending_review` BESIDE its own — the head an owner correction out-argues — and it is
+    a thing the write CHANGED beyond the row the model named, so a result that omitted it
+    would under-report what happened. `reciprocal_held` is the
     primary head a derived reciprocal deferred to, reported on the fact whose reciprocal
     was refused because that is the only row the agent named."""
 
@@ -2815,8 +2815,8 @@ class AnalysisPipeline:
             replaced=replaced,
             hold_reason=decision.review_kind or "",
             conflicting=conflict.statement if conflict is not None else "",
-            # The rows this write moved to `pending_review` BESIDE its own — the
-            # attribute-collision branch holds both sides, and that is state the caller
+            # The rows this write moved to `pending_review` BESIDE its own — an owner
+            # correction parks the heads it out-argues — and that is state the caller
             # did not ask for and cannot see anywhere else.
             also_held=tuple(by_id[i].statement for i in decision.hold_ids if i in by_id),
             reciprocal_held=reciprocal.held_against,

@@ -88,10 +88,19 @@ def _fact(predicate: str, obj: str, statement: str, *, quote: str, when: str = "
 
 
 @pytest.mark.asyncio
-async def test_an_attribute_collision_holds_both_sides_and_files_nothing(maker, tmp_path) -> None:  # noqa: F811
-    """`supersession.py`'s attribute branch — two birthdays is a bug, not news, so BOTH
-    sides go to `pending_review`. It is the one hold that changes a row the model never
-    named, so the result has to say so or it under-reports the write."""
+async def test_an_attribute_collision_puts_the_newest_value_live_and_asks(maker, tmp_path) -> None:  # noqa: F811
+    """`supersession.py`'s attribute branch after the owner's ruling on §8 O15.
+
+    It used to park BOTH birthdays in `pending_review`, and nothing on this box could
+    retire either row: the key stayed contested forever, every later assert on it was held
+    or refreshed, the entity served no birthday at all, and the owner — who has no terminal
+    — could see the mess and not fix it. So the newest STATEMENT goes live by rule and the
+    value it displaces is chained as history.
+
+    Going live is only half of what he asked for. Deciding by rule is not knowing which
+    value is true, no card is filed on this path, and the row the owner may still believe
+    is now history rather than something waiting in an inbox — so the result line has to
+    hand the pass the obligation to ASK him, which is the only way he hears about it."""
     note_id, writer = await _own_person(maker, tmp_path, "Cleo Vance")
     first = await writer.assert_fact(
         {
@@ -125,20 +134,46 @@ async def test_an_attribute_collision_holds_both_sides_and_files_nothing(maker, 
         _ctx(),
     )
 
-    # 1. `decide()` still decides: neither value is live, both are held.
-    assert (await _row(maker, out.facts[0].fact_id)).status == "pending_review"
-    assert (await _row(maker, first.facts[0].fact_id)).status == "pending_review"
-    # 2. and nothing reached the owner's inbox from either note.
+    # 1. `decide()` still decides, and what it decides now is that the newest wins: the
+    #    new value is LIVE and the old one is history, chained to it. Nothing is parked.
+    landed = await _row(maker, out.facts[0].fact_id)
+    displaced = await _row(maker, first.facts[0].fact_id)
+    assert landed.status == "active"
+    assert displaced.status == "superseded"
+    assert displaced.superseded_by == landed.id  # kept as history, reachable, not lost
+    # 2. nothing reached the owner's inbox from either note — one channel is intact.
     assert await _cards(maker, note_id) == []
     assert await _cards(maker, second_note) == []
-    # 3. the result names the reason, the statement it clashes with, and the OTHER row.
+    # 3. the result says it LANDED, names what it replaced, and hands over the ask.
     line = str(out)
-    assert "held  Cleo Vance.birthDate" in line
-    assert "attribute_collision" in line
+    assert "ok  Cleo Vance.birthDate" in line
+    assert write_status(out.facts[0].outcome) == "written"
     # The statement is quoted inside the line's prose, so its own stop is trimmed.
-    assert "Cleo Vance was born March 3, 1990" in line
-    assert "was held too, so neither is live" in line
-    assert "ask the owner which is right" in line
+    assert "replaced Cleo Vance was born March 3, 1990, kept as history" in line
+    assert "the value on file DISAGREED (attribute_collision)" in line
+    assert "Finish recording the note, then ask the owner which is right" in line
+
+    # 4. and the deadlock is gone in the way that matters: restating the value that won
+    #    is an ordinary idempotent refresh. Under the old branch this hit the
+    #    short-circuit on a HELD row and reported STILL_HELD — the dead end O15 named.
+    again = await second.assert_fact(
+        {
+            "facts": [
+                _fact(
+                    "birthDate",
+                    "1985-11-12",
+                    "Cleo Vance was born November 12, 1985.",
+                    quote="Cleo Vance was born in November 1985.",
+                    when="1985-11-12",
+                )
+            ]
+        },
+        _ctx(),
+    )
+    assert again.facts[0].fact_id == out.facts[0].fact_id
+    assert (await _row(maker, again.facts[0].fact_id)).status == "active"
+    assert "NOT LIVE" not in str(again)
+    assert await _cards(maker, second_note) == []
 
 
 @pytest.mark.asyncio
@@ -158,7 +193,12 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
     seconds later — making `ok` the agent's LAST word on a fact the graph does not serve.
 
     So a refresh that leaves the row held reports HELD, and says the thing that is
-    actually true of it: restating changed nothing, and re-reading will not settle it."""
+    actually true of it: restating changed nothing, and re-reading will not settle it.
+
+    Staged on a PINNED head rather than on the attribute collision it was written against:
+    since §8 O15 that collision supersedes instead of holding, and the pin is the guard
+    that still parks a candidate the pass cannot settle. The property under test is the
+    refresh loop's, not any one branch's."""
     note_id, writer = await _own_person(maker, tmp_path, "Cleo Vance")
     born_1990 = _fact(
         "birthDate",
@@ -167,7 +207,14 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
         quote="Coffee with Cleo Vance at Ritual this morning.",
         when="1990-03-03",
     )
-    await writer.assert_fact({"facts": [born_1990]}, _ctx())
+    seeded = await writer.assert_fact({"facts": [born_1990]}, _ctx())
+    # The owner's own correction is the only thing that pins, and it is a REPLY-turn verb;
+    # seeding the flag directly is the shortest honest way to a head that holds.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            update(Fact).where(Fact.id == uuid.UUID(seeded.facts[0].fact_id)).values(pinned=True)
+        )
+        await s.commit()
     second_note = await _note(maker, tmp_path, body="Cleo Vance was born in November 1985.")
     second = await _writer(maker, second_note)
     await second.resolve_entity({"entities": [{"surface": "Cleo Vance", "kind": "person"}]}, _ctx())
@@ -186,6 +233,9 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
         _ctx(),
     )
     assert (await _row(maker, held.facts[0].fact_id)).status == "pending_review"
+    # Newest-wins never reaches a pin: the owner's own value is still the live one.
+    pin = await _row(maker, seeded.facts[0].fact_id)
+    assert pin.status == "active" and pin.pinned is True
 
     # The whole-note restatement `close_reading` requires, on the same note and pass.
     again = await second.assert_fact(
