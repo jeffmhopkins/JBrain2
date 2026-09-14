@@ -203,6 +203,6 @@ async def test_the_wipe_runs_clean_on_an_already_empty_corpus(
 
 def test_the_downgrade_refuses_rather_than_lying() -> None:
     """A `downgrade()` that silently did nothing would read, to someone under pressure,
-    as a rollback that worked. The rows are gone; the Ops -> Export is the way back."""
+    as a rollback that worked. The rows are gone; the backup is the way back."""
     with pytest.raises(RuntimeError, match="no downgrade"):
         _migration().downgrade()

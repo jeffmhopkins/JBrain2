@@ -2823,7 +2823,10 @@ tautology).
 pass-ending matrix passing; R3f merged, so the first note the new system ever reads is one
 the owner can actually watch and answer (§3b); R4 merged so no dead job kind is enqueued
 after the truncate;
-an `Ops → Export` taken (the existing PWA lever, `supervisor/src/supervisor/app.py:393`)
+a backup taken — **Data → Backup → "Back up everything"** in the PWA (it moved off the
+Ops screen onto its own Data launcher; this doc said `Ops → Export` for long enough that
+the owner went looking for a screen of that name and could not find one), or
+`scripts/debug-connect.sh backup` with a token
 so the pre-wipe state is recoverable without a terminal; and the owner told, in the PWA's
 terms, that the first capture after the update is the first note the new system has ever
 seen.

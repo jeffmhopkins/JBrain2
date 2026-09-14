@@ -2506,6 +2506,62 @@ async def update_status(
     return cast(dict[str, object], resp.json())
 
 
+@router.post("/backup", status_code=202)
+async def start_backup_debug(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """**Take a full backup** — the Data screen's "Back up everything", reachable with a
+    token.
+
+    It exists because the console could already CAUSE the irreversible thing and not the
+    reversible one. `/update` deploys, and a deploy can carry a destructive migration; the
+    snapshot that makes such a deploy survivable was the single step only the owner could
+    perform, from a screen whose name had drifted out of the docs (it moved from Ops to
+    its own Data launcher). So the safe half of "back up, then update" depended on finding
+    a button, and the unsafe half did not. That asymmetry is the gap this closes.
+
+    **It starts a backup; it cannot read one.** The archive is written on the box and
+    stays there — this returns the one-shot's state, never its bytes, and there is
+    deliberately no download route beside it. A token that could pull the archive would be
+    a way to exfiltrate every note, fact and attachment in one request, which is a far
+    larger grant than anything else on this surface and is not worth the convenience.
+    Retrieving the file remains the owner's, from the Data screen, over his own session.
+
+    409 while another one-shot is running — the supervisor's own mutual exclusion, since
+    a backup racing an update would snapshot a half-migrated database. Poll
+    `/backup/status` for the log tail and the filename it wrote."""
+    request.state.debug_detail = "backup (full export)"
+    resp = await _supervisor(request).post(
+        "/export", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another one-shot is already running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/backup/status")
+async def backup_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The most recent backup one-shot's state + log tail, proxied from the supervisor.
+
+    `state: "done"` with `exit_code: 0` is the only thing that licenses a destructive
+    deploy. Read it before pressing `/update` on a release carrying a data migration —
+    "I started a backup" is not the same claim as "a backup finished"."""
+    request.state.debug_detail = f"backup status (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/export/status",
+        params={"tail": tail},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 @router.post("/refresh", status_code=202)
 async def start_refresh_debug(
     request: Request, settings: SettingsDep, _p: DebugDep, service: str

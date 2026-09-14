@@ -36,7 +36,8 @@ every kept table that references the set.
 
 `downgrade()` refuses. Deleting data is not reversible, and a downgrade that pretended
 otherwise would be a lie in the one place someone reads under pressure. The recoverable
-copy is the `Ops -> Export` the owner takes before pressing Update.
+copy is the backup taken before pressing Update: Data -> Backup -> "Back up
+everything" in the PWA, or `debug-connect.sh backup` with a token.
 
 Revision ID: 0202
 Revises: 0201
@@ -130,6 +131,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     raise RuntimeError(
         "0202 deleted the note corpus, the graph, the wiki and the fact projections."
-        " There is no downgrade: the rows are gone. Restore from the Ops -> Export taken"
-        " before the update that ran this."
+        " There is no downgrade: the rows are gone. Restore from the backup taken before"
+        " the update that ran this (PWA: Data -> Backup -> Restore)."
     )

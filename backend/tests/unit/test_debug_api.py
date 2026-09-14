@@ -101,6 +101,11 @@ class _FakeSupervisor:
                 return _FakeResp(409, "")
             self.update_running = True
             return _FakeResp(202, "", json_body={"state": "running"})
+        if url == "/export":
+            if self.oneshot_running:
+                return _FakeResp(409, "")
+            self.oneshot_running = True
+            return _FakeResp(202, "", json_body={"oneshot": "jbrain-export-1"})
         if url == "/refresh":
             service = (json or {}).get("service")
             if service not in self.services:
@@ -125,6 +130,16 @@ class _FakeSupervisor:
                     "state": "running",
                     "exit_code": None,
                     "log_tail": "[update] syncing local models",
+                },
+            )
+        if url == "/export/status":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "state": "done",
+                    "exit_code": 0,
+                    "log_tail": "[export] wrote jbrain-backup.tar.zst",
                 },
             )
         if url == "/refresh/status":
@@ -1496,3 +1511,62 @@ def test_the_refresh_routes_require_the_debug_token(
 
     assert client.post("/api/debug/refresh", params={"service": "sdr"}).status_code == 401
     assert client.get("/api/debug/refresh/status").status_code == 401
+
+
+def test_the_console_can_take_a_backup_not_only_cause_an_update(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The asymmetry this closes: `/update` could already cause the IRREVERSIBLE thing —
+    a deploy, which can carry a destructive migration — while the snapshot that makes
+    such a deploy survivable was the one step only the owner could perform, from a screen
+    whose name had drifted out of the docs. The safe half depended on finding a button
+    and the unsafe half did not."""
+    client, key = debug_client
+
+    resp = client.post("/api/debug/backup", headers=_auth(key))
+
+    assert resp.status_code == 202
+    assert ("/export", {}) in _state(client).supervisor_client.posts
+
+
+def test_the_backup_route_starts_one_and_cannot_read_one(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The security property, asserted rather than left to the docstring. The archive is
+    every note, fact and attachment on the box in one file. Starting a backup is a safe
+    grant; DOWNLOADING one would be single-request exfiltration of the whole corpus, so
+    no route beside this may serve its bytes."""
+    client, key = debug_client
+    client.post("/api/debug/backup", headers=_auth(key))
+
+    routes = {getattr(r, "path", "") for r in cast(Any, client.app).routes}
+    readers = {p for p in routes if p.startswith("/api/debug/backup") and p != "/api/debug/backup"}
+    assert readers == {"/api/debug/backup/status"}, f"a backup reader appeared: {readers}"
+
+    status = client.get("/api/debug/backup/status", headers=_auth(key), params={"tail": 120})
+    assert status.status_code == 200
+    body = status.json()
+    assert body["state"] == "done" and body["exit_code"] == 0
+    assert "archive" not in body and "bytes" not in body
+    assert ("/export/status", {"tail": 120}) in _state(client).supervisor_client.calls
+
+
+def test_a_backup_while_another_oneshot_runs_is_refused(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The supervisor's own mutual exclusion, surfaced as a sentence. A backup racing an
+    update would snapshot a half-migrated database — the one artefact that must be
+    trustworthy is the one taken before a destructive deploy."""
+    client, key = debug_client
+    assert client.post("/api/debug/backup", headers=_auth(key)).status_code == 202
+
+    again = client.post("/api/debug/backup", headers=_auth(key))
+
+    assert again.status_code == 409
+    assert "already running" in again.json()["detail"]
+
+
+def test_the_backup_routes_need_a_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.post("/api/debug/backup").status_code == 401
+    assert client.get("/api/debug/backup/status").status_code == 401
