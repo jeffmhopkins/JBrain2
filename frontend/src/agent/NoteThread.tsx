@@ -40,6 +40,11 @@ export interface NoteThreadProps {
   fbDeps?: FullBrainDeps | undefined;
   /** Injected in tests; defaults to `GET /notes/{id}/thread`. */
   lookupThread?: ((noteId: string) => Promise<NoteThreadOut | null>) | undefined;
+  /** How many questions this thread is waiting on, whenever it changes — the count the
+   * tab row wears (the mock draws it on `Thread`). Reported upward rather than read
+   * twice: the questions are derived from the transcript this component already holds,
+   * and a second fetch for a number would be a second source of truth for it. */
+  onAskCount?: ((n: number) => void) | undefined;
 }
 
 export function NoteThread({
@@ -49,6 +54,7 @@ export function NoteThread({
   onOpenEntity,
   fbDeps,
   lookupThread,
+  onAskCount,
 }: NoteThreadProps): ReactNode {
   const [thread, setThread] = useState<NoteThreadOut | null>(null);
   // Distinguishes "no conversation" from "not looked yet", so the empty state never
@@ -120,6 +126,8 @@ export function NoteThread({
 
   const questions = fb.openQuestions;
   const answered = answeredCount(questions, fb.answers);
+  const asking = questions.length;
+  useEffect(() => onAskCount?.(asking), [asking, onAskCount]);
   // An answers-only reply is a real turn (§3b I7), so SEND is live on an empty box the
   // moment one candidate is picked. `fb.canSend` is the rest of it: a session is open and
   // no turn is in flight.

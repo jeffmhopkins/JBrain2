@@ -769,6 +769,11 @@ conversation; the back arrow is the way out.
   is opened by id over `GET /notes/{id}/thread`; it is still one
   `AgentSession` and still listed on the Full Brain **Chats** panel, so a
   settled thread stays resumable from the conversations surface too (D1).
+  The tab label carries an **amber count pill** when the thread is parked on
+  questions (the mock's own affordance) — the amber open-ask register the
+  stream chip and the inbox use, against the neutral Files count beside it,
+  and the only thing that says *it is asking you something* while the owner
+  is reading the other two tabs.
 - *Note tab*: the markdown body, the clarification eraser, **and the
   record** — everything the Analysis tab used to show, folded in whole
   under a **`What this note says`** rule. Thread took Analysis's slot;

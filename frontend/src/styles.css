@@ -5250,6 +5250,14 @@ button.small {
 /* "What this note says": the former Analysis tab, folded under the note's own text.
    A rule separates the two readings — what you wrote, then what the graph holds
    because of it. */
+/* The Thread tab's open-question count. Amber — the open-ask register the stream chip
+   and the inbox already use — against the neutral Files count beside it, so the two
+   numbers on one row do not read as the same kind of thing. */
+.tab-count-ask {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
 .note-record {
   margin-top: 22px;
   padding-top: 16px;

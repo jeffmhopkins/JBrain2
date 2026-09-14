@@ -158,6 +158,17 @@ describe("tapping a note opens its conversation", () => {
     await waitFor(() => expect(document.querySelector(".fb-step-row")).toBeInTheDocument());
   });
 
+  it("wears the open-question count on the Thread tab, as the mock draws it", async () => {
+    openNote();
+    await screen.findByText("Which Dr. Chen?");
+    // The only thing that says "it is asking you something" while the owner is reading
+    // the Note or Files tab, and the count comes from the thread rather than a second
+    // fetch. Amber, the open-ask register — not the neutral Files count beside it.
+    const tab = screen.getByRole("tab", { name: /^Thread/ });
+    expect(tab).toHaveTextContent("2");
+    expect(tab.querySelector(".tab-count-ask")).toBeInTheDocument();
+  });
+
   it("renders the question block, and selecting a candidate cannot start a turn", async () => {
     const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {});
     openNote({ fbDeps: threadDeps({ chat }) });

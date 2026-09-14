@@ -309,6 +309,10 @@ export function NoteScreen({
   // note — a correction, an answer, a second thought — is a turn in it, so the thread is
   // the screen and the note's own text is one tap away, not the other way round.
   const [tab, setTab] = useState<"thread" | "note" | "attachments">("thread");
+  // How many questions the thread is parked on, reported up by the Thread tab — the
+  // count the tab row wears (the mock draws it on `Thread`), which is the only thing
+  // that says "it is asking you something" while the owner is reading the other two.
+  const [asking, setAsking] = useState(0);
 
   // Keep the local view in step when App refreshes the source (saved edits,
   // attachment changes from the editor layer).
@@ -422,6 +426,7 @@ export function NoteScreen({
             onClick={() => setTab("thread")}
           >
             Thread
+            {asking > 0 && <span className="tab-count tab-count-ask">{asking}</span>}
           </button>
           <button
             type="button"
@@ -458,6 +463,7 @@ export function NoteScreen({
         onOpenEntity={onOpenEntity}
         fbDeps={fbDeps}
         lookupThread={lookupThread}
+        onAskCount={setAsking}
       />
 
       <div className="screen-body note-view" ref={scrollerRef} hidden={tab === "thread"}>
