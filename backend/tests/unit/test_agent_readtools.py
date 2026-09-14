@@ -1668,10 +1668,15 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # which is now the opposite of the behaviour. Description text IS the calibration
         # lever (TOOL_SURFACE.md), so the rewrite is the behaviour change, not a footnote
         # to it.
+        # v3 is the O15 ruling: the bar ("you genuinely cannot settle it") would otherwise
+        # have VETOED the ask that ruling requires, because a newest-wins supersession
+        # blocks nothing. Naming the second reason here is the point — this sidecar is
+        # where the bar is calibrated, so leaving it unamended would have made the write
+        # line's obligation argue with the tool's own instructions.
         "ask_owner.tool": (
             "ask_owner",
-            2,
-            "d8c08e60f32a27aa18a0b8c0694d631b3a75a11e30bd5bae6193e840e10cf5ef",
+            3,
+            "6aba939100de9bf45f0aeb0b1e3f232b80234adfb8e43409de00f0367e8dc8fa",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
