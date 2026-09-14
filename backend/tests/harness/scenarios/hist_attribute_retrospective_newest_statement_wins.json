@@ -1,0 +1,50 @@
+{
+  "name": "a retrospectively-dated conflicting attribute is never buried as history — the newest statement wins",
+  "description": "Adversarial: note A asserts Tomas's birthday is 1990-04-12. Note B, captured a week LATER, gives a CONFLICTING birthday 1991-08-03 but is phrased retrospectively, so its temporal is the older of the two. The property under test has not changed and is the whole point of the scenario: the old VALIDITY must not cause the newer STATEMENT to be silently filed as closed history behind the value it disputes. \u27f2 REWRITTEN for the owner's ruling on AGENT_INGEST_REWRITE \u00a78 O15, which changed the disposition and not the property. It used to assert that BOTH birthdays end pending_review and NEITHER is live \u2014 that was the behaviour the owner overruled, because holding both left the key permanently contested with nothing on the box able to retire either row, so Tomas served no birthday at all. Now the newest statement is ACTIVE and the older one is superseded and CHAINED to it, kept as history. What keeps the scenario's property true is the ordering: the attribute branch compares reported_at, never valid_from, because an attribute's `when` is routinely the value itself \u2014 ordering by validity here would rank these two birthdays by which birthday they claim and would bury note B exactly as the old description warned. Split detection still ignores validity entirely (a backdated wrong birthday is still a split signal), and the split remains an answer the owner may give when asked. ONE CHANNEL (AGENT_INGEST_REWRITE R1b): the harness IS the note conversation and its write path files no review card \u2014 decide() reports back in the tool result and the AGENT settles it, which since O15 means asking the owner which value is right. So the card count is 0 and the ROW STATUSES above are the whole assertion: decide()'s authority over what LANDS is untouched, only who is told moved.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-01T09:00:00-06:00",
+      "body": "Tomas's birthday is April 12, 1990.",
+      "extraction": {
+        "title": "Tomas birthday",
+        "tags": ["tomas", "birthday"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Tomas was born on 1990-04-12.", "value_json": {"date": "1990-04-12"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "April 12, 1990", "resolved_start": "1990-04-12T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+        ],
+        "temporal_tokens": []
+      }
+    },
+    {
+      "domain": "general",
+      "created_at": "2026-06-08T09:00:00-06:00",
+      "body": "An old record from years ago lists Tomas's birthday as August 3, 1991.",
+      "extraction": {
+        "title": "Tomas birthday (old record)",
+        "tags": ["tomas", "birthday", "record"],
+        "mentions": [{"name": "Tomas", "kind": "Person", "surface_text": "Tomas"}],
+        "facts": [
+          {"predicate": "birthDate", "qualifier": "", "kind": "attribute", "statement": "Tomas was born on 1991-08-03.", "value_json": {"date": "1991-08-03"}, "assertion": "asserted", "entity_ref": "Tomas", "object_entity_ref": null, "temporal": {"phrase": "August 3, 1991", "resolved_start": "1991-08-03T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.6}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Tomas", "predicate": "birthDate", "kind": "attribute", "value_contains": "1991-08-03", "status": "active", "chained": false, "count": 1},
+      {"entity": "Tomas", "predicate": "birthDate", "kind": "attribute", "value_contains": "1990-04-12", "status": "superseded", "chained": true}
+    ],
+    "absent_facts": [
+      {"entity": "Tomas", "predicate": "birthDate", "status": "pending_review"},
+      {"entity": "Tomas", "predicate": "birthDate", "value_contains": "1991-08-03", "status": "superseded"}
+    ],
+    "review_items": [
+      {"kind": "attribute_collision", "count": 0}
+    ],
+    "entities": [
+      {"name": "Tomas", "kind": "Person", "status": "provisional"}
+    ]
+  }
+}
