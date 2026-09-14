@@ -3166,12 +3166,23 @@ a mechanism, and this does neither: nothing about what the MODEL may do changed,
   conversation or from nothing. It reaches the model through the channel R1b already built
   (`_write_line`), which now says the value on file DISAGREED, that this one is live
   because the newest wins rather than because anyone checked, and that finishing the
-  reading and then asking is the pass's job. **The persona was deliberately NOT touched**:
-  O3 measured the persona failing at exactly this (0 asks in 144 runs, including under a
-  persona told to ask when the note contradicts the graph), and the result line is the lever
-  R1b chose for that reason. `assert_fact` v5 and `close_reading` v3 carry the matching
-  paragraph. "Finish the reading FIRST" is load-bearing: `ask_owner` ends the turn, so an ask
-  raised mid-reading strands every fact the pass has not written yet.
+  reading and then asking is the pass's job. `assert_fact` v5 and `close_reading` v3 carry
+  the matching paragraph. "Finish the reading FIRST" is load-bearing: `ask_owner` ends the
+  turn, so an ask raised mid-reading strands every fact the pass has not written yet.
+
+  **And the result line alone could not have delivered it, which is why the persona moved
+  too (`agent-note-ingest-v8` → `v9`, a deliberate `PROMPT_VERSION` bump) along with
+  `ask_owner` v3.** Both of them set the bar for a question at *"I genuinely cannot
+  proceed"*, and the persona additionally enumerated a REPLACED result as routine — so
+  between them the model had a standing instruction NOT to ask about a landing that blocks
+  nothing, and the obligation would have argued with the tool's own calibration instead of
+  reaching the owner. The edit names exactly one second reason, tied to a result the write
+  path emits, and repeats the ordering (finish, write, ask last). It does not move the bar
+  generally. O3's finding is the reason the persona is not carrying this ALONE — it
+  measured prompt wording failing to produce an ask the model had to *notice* the occasion
+  for (0 in 144); here the write path hands the occasion over explicitly and the persona
+  only has to stop forbidding it. The `prompt_version` drift is real and near-zero at this
+  moment: R5 wipes the notes and the graph.
 
 *What this does NOT do, and it is the residual:* rows ALREADY held as a pair — from before
 this change, or from the pinned/irrealis/low-weight guards — still have no retirement path,
