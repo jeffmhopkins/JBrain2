@@ -240,6 +240,21 @@ describe("a note the box has not read yet", () => {
     expect(screen.getByRole("tab", { name: "Thread" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText(/No conversation yet/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Conversation")).not.toBeInTheDocument();
+    // And no composer: a box that can send nowhere is worse than none — the same rule
+    // the deleted "Add a thought" button followed.
+    expect(screen.queryByLabelText("Composer")).not.toBeInTheDocument();
+  });
+});
+
+describe("opening the session", () => {
+  // ⟲ The handoff effect keyed on `requestOpen` as well as the id. That function is
+  // recreated every render, so the effect re-fired on each one — and every fire before
+  // the session list had loaded issued another `listSessions()`. The id is the trigger.
+  it("asks for the session list once, not once per render", async () => {
+    const d = threadDeps();
+    openNote({ fbDeps: d });
+    await screen.findByText("Which Dr. Chen?");
+    expect(vi.mocked(d.listSessions).mock.calls.length).toBeLessThanOrEqual(2);
   });
 });
 
