@@ -147,7 +147,7 @@ async def test_an_attribute_collision_puts_the_newest_value_live_and_asks(maker,
     # 3. the result says it LANDED, names what it replaced, and hands over the ask.
     line = str(out)
     assert "ok  Cleo Vance.birthDate" in line
-    assert write_status(out.facts[0].outcome) == "written"
+    assert write_status(out.facts[0].outcome) == "replaced"  # live, and the diff is shown
     # The statement is quoted inside the line's prose, so its own stop is trimmed.
     assert "replaced Cleo Vance was born March 3, 1990, kept as history" in line
     assert "the value on file DISAGREED (attribute_collision)" in line
@@ -198,13 +198,15 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
     Staged on a PINNED head rather than on the attribute collision it was written against:
     since §8 O15 that collision supersedes instead of holding, and the pin is the guard
     that still parks a candidate the pass cannot settle. The property under test is the
-    refresh loop's, not any one branch's."""
-    note_id, writer = await _own_person(maker, tmp_path, "Cleo Vance")
+    refresh loop's, not any one branch's. Its own subject, too — entities resolve by name
+    across tests, and the collision above now leaves a LIVE head on its key, which this
+    one's first write would refresh instead of seeding."""
+    note_id, writer = await _own_person(maker, tmp_path, "Hollis Vance")
     born_1990 = _fact(
         "birthDate",
         "1990-03-03",
-        "Cleo Vance was born March 3, 1990.",
-        quote="Coffee with Cleo Vance at Ritual this morning.",
+        "Hollis Vance was born March 3, 1990.",
+        quote="Coffee with Hollis Vance at Ritual this morning.",
         when="1990-03-03",
     )
     seeded = await writer.assert_fact({"facts": [born_1990]}, _ctx())
@@ -215,17 +217,19 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
             update(Fact).where(Fact.id == uuid.UUID(seeded.facts[0].fact_id)).values(pinned=True)
         )
         await s.commit()
-    second_note = await _note(maker, tmp_path, body="Cleo Vance was born in November 1985.")
+    second_note = await _note(maker, tmp_path, body="Hollis Vance was born in November 1985.")
     second = await _writer(maker, second_note)
-    await second.resolve_entity({"entities": [{"surface": "Cleo Vance", "kind": "person"}]}, _ctx())
+    await second.resolve_entity(
+        {"entities": [{"surface": "Hollis Vance", "kind": "person"}]}, _ctx()
+    )
     held = await second.assert_fact(
         {
             "facts": [
                 _fact(
                     "birthDate",
                     "1985-11-12",
-                    "Cleo Vance was born November 12, 1985.",
-                    quote="Cleo Vance was born in November 1985.",
+                    "Hollis Vance was born November 12, 1985.",
+                    quote="Hollis Vance was born in November 1985.",
                     when="1985-11-12",
                 )
             ]
@@ -244,8 +248,8 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
                 _fact(
                     "birthDate",
                     "1985-11-12",
-                    "Cleo Vance was born November 12, 1985.",
-                    quote="Cleo Vance was born in November 1985.",
+                    "Hollis Vance was born November 12, 1985.",
+                    quote="Hollis Vance was born in November 1985.",
                     when="1985-11-12",
                 )
             ]
@@ -257,11 +261,11 @@ async def test_restating_a_still_held_row_reports_held_not_ok(maker, tmp_path) -
     assert (await _row(maker, again.facts[0].fact_id)).status == "pending_review"
 
     line = str(again)
-    assert "held  Cleo Vance.birthDate" in line
+    assert "held  Hollis Vance.birthDate" in line
     assert "already recorded, and STILL NOT LIVE" in line
     assert "ask the owner which is right" in line
     # The two spellings that would tell the agent, and the D3 chip, the opposite.
-    assert "ok  Cleo Vance.birthDate" not in line
+    assert "ok  Hollis Vance.birthDate" not in line
     assert write_status(again.facts[0].outcome) == "held"
     # Still nobody's inbox.
     assert await _cards(maker, note_id) == []
