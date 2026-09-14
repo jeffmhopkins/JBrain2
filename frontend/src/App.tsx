@@ -734,6 +734,14 @@ export function App() {
             onAddAttachment={addAttachmentTo}
             onRemoveAttachment={removeAttachmentFrom}
             onOpenEntity={setEntityView}
+            // "Add a thought" → this note's conversation (O16). The note layer sits
+            // ABOVE home, where the Full Brain surface renders, so it has to close on
+            // the way — the stream's ask chip needs no such step because it is already
+            // on home.
+            onOpenThread={(sessionId, agent) => {
+              closeNoteView();
+              setOpenSession({ id: sessionId, agent });
+            }}
           />
         </div>
       )}

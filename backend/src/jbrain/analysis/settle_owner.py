@@ -40,10 +40,13 @@ string split here would be strictly worse: the unattended pass's settle would ea
 reply turn's writes outright, and no reading would re-absorb them). What it no longer
 covers is a reply-turn write that never becomes note text, and that is narrowed at the
 source rather than here: `assert_fact` is off a reply turn whose words did not land on
-the note as source text (`agents.narrow_for_unprompted_reply`, keyed on
+the note as source text (`agents.narrow_for_unlanded_reply`, keyed on
 `clarify.owner_words_reached_note`), `correct_fact`'s empty-address arm — the one
 that MINTS a pinned row — refuses on the same condition, and `close_reading`'s
-correction-note elevation is withheld on it (both `replytools`).
+correction-note elevation is withheld on it (both `replytools`). Since migration 0203 that
+condition catches far less, and by design: an unprompted reply files an `addition` block,
+so its words ARE the note's text and a reply turn writing off them is writing off something
+the next reading restates.
 
 ⟲ **This used to close with "so every fact this producer commits has words on the note
 behind it, and the next reading re-states it." That is false, on two paths at once**,
@@ -79,7 +82,7 @@ graph holds nothing for.**
 
 All three read the same condition — `ASSERT_FACT not in ctx.agent_tools`, taken at the
 reply registry where it is exact. `assert_fact` is off such a turn entirely
-(`agents.narrow_for_unprompted_reply`); `correct_fact`'s EMPTY-ADDRESS arm refuses
+(`agents.narrow_for_unlanded_reply`); `correct_fact`'s EMPTY-ADDRESS arm refuses
 (`replytools`); `close_reading`'s correction-note elevation is withheld
 (`graphwritetools`, `words_reached_note`, which since R3's fourth review governs a
 `correction=True` passed as a parameter too). Those are every route into the only branch

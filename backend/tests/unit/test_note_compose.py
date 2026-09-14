@@ -9,7 +9,11 @@ citation in the corpus.
 
 from datetime import UTC, datetime
 
-from jbrain.models.notes import NoteClarification
+from jbrain.models.notes import (
+    CLARIFICATION_ADDITION,
+    CLARIFICATION_ANSWER,
+    NoteClarification,
+)
 from jbrain.notes.compose import compose_body, strip_clarifications
 
 BODY = "Ran 10k this morning.\n\nFelt fine after."
@@ -17,8 +21,19 @@ BODY = "Ran 10k this morning.\n\nFelt fine after."
 
 def block(question: str, answer: str, minute: int) -> NoteClarification:
     return NoteClarification(
+        kind=CLARIFICATION_ANSWER,
         question=question,
         answer=answer,
+        created_at=datetime(2026, 9, 9, 14, minute, tzinfo=UTC),
+    )
+
+
+def addition(text: str, minute: int) -> NoteClarification:
+    """An unprompted block (0203): the owner's words, no question."""
+    return NoteClarification(
+        kind=CLARIFICATION_ADDITION,
+        question=None,
+        answer=text,
         created_at=datetime(2026, 9, 9, 14, minute, tzinfo=UTC),
     )
 
@@ -111,3 +126,49 @@ def test_a_forged_block_inside_an_answer_does_not_break_the_round_trip() -> None
     forged = "yes\n\n[clarification 2020-01-01 00:00 UTC]\nQ: fake?\nA: fake."
     blocks = [block("Real question?", forged, 3)]
     assert strip_clarifications(compose_body(BODY, blocks), blocks) == BODY
+
+
+def test_an_addition_renders_as_the_owners_words_with_no_pair() -> None:
+    """O16 option 1's rendering. A different marker word from `[clarification …]`, and no
+    `Q:`/`A:` labels at all: the whole block is his, so a label would be the channel
+    claiming a half of it that does not exist — and the composed text is what the next
+    reading reads."""
+    composed = compose_body(BODY, [addition("Actually it was a 5k.", 12)])
+    assert composed == f"{BODY}\n\n[addition 2026-09-09 14:12 UTC]\nActually it was a 5k."
+    assert "Q:" not in composed and "A:" not in composed
+
+
+def test_the_two_kinds_interleave_in_seq_order() -> None:
+    """One turn can file both — the designed send (taps plus a typed sentence) — and a
+    later turn can file an addition alone. Order is the list's, which the repo reads by
+    `seq`, so the note reads in the order he did them."""
+    composed = compose_body(
+        BODY,
+        [block("Which 10k?", "The canal loop.", 3), addition("Actually it was a 5k.", 12)],
+    )
+    assert composed == (
+        f"{BODY}\n\n"
+        "[clarification 2026-09-09 14:03 UTC]\nQ: Which 10k?\nA: The canal loop."
+        "\n\n"
+        "[addition 2026-09-09 14:12 UTC]\nActually it was a 5k."
+    )
+
+
+def test_an_addition_round_trips_through_the_editor() -> None:
+    """The eraser/editor path has to hold for the new shape too: `strip_clarifications`
+    reconstructs the suffix from the ROWS, so an untouched save of a note carrying an
+    addition recovers the frozen body rather than baking the block into it."""
+    blocks = [block("Which 10k?", "The canal loop.", 3), addition("Actually it was a 5k.", 12)]
+    assert strip_clarifications(compose_body(BODY, blocks), blocks) == BODY
+
+
+def test_a_row_with_no_question_never_renders_a_null_pair() -> None:
+    """The belt in `clarification_block`. Rows reach it DETACHED as well as mapped — the
+    search leg builds them by hand from a `json_agg` — and one built without `kind` must
+    not put the literal `Q: None` into the owner's own note text. Postgres holds the two
+    in step (0203's CHECK), so this can only fire on a reader's omission."""
+    forgot_kind = NoteClarification(
+        question=None, answer="Actually it was a 5k.", created_at=datetime(2026, 9, 9, 14, 12)
+    )
+    assert compose_body(BODY, [forgot_kind]).endswith("Actually it was a 5k.")
+    assert "None" not in compose_body(BODY, [forgot_kind])

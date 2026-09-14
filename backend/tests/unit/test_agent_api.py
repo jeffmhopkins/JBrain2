@@ -2497,6 +2497,7 @@ def _answering(monkeypatch: pytest.MonkeyPatch) -> None:
             unanswered=[],
             clarified=True,
             note_moved=False,
+            claimed=True,
         )
 
     monkeypatch.setattr(agent_mod, "record_owner_reply", _landed)
@@ -2555,10 +2556,16 @@ def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_no
             "the block appended and nothing he said was dropped",
         ),
         (
-            "dropped_prose",
+            "unprompted_addition",
+            True,
+            "O16 option 1: nothing was asked, he typed anyway, and the sentence is an"
+            " `addition` block on the note — so the verb rides the same invariant",
+        ),
+        (
+            "unplaceable_answer",
             False,
-            "§3b I7's designed send: the tapped answers landed and the free text beside"
-            " them had no open question, so `_pair` dropped it and the note never says it",
+            "an answer naming a question the open set does not carry: no block shape"
+            " holds it, so the note never says it",
         ),
         (
             "append_failed",
@@ -2568,8 +2575,8 @@ def test_a_reply_into_a_stranger_s_note_the_emr_importer_also_owns_is_offered_no
         (
             "none",
             False,
-            "not an answer at all: a settled thread, or an `owner_authored=False` turn,"
-            " which returns before `claim_waiting` with the state still reading waiting",
+            "not a reply at all: no conversation row, or an `owner_authored=False` turn,"
+            " which returns before anything is appended",
         ),
     ],
 )
@@ -2587,11 +2594,12 @@ def test_assert_fact_rides_the_owner_s_words_landing_on_the_note(
 
     `assert_fact` on a reply turn records "one more thing the owner just told me", and
     the only thing that makes that write survivable is that his words BECAME THE NOTE'S
-    TEXT: the D6 block is appended, the note re-ingests, and the next reading restates
-    what the agent wrote. The first round keyed the narrowing on the thread's STATE,
-    which is a different set — three of the four rows below are `waiting_on_owner` turns
-    on which the note receives nothing, and the middle one is the DESIGNED send rather
-    than a failure. So the verb is bound to `record_owner_reply`'s outcome.
+    TEXT: a block is appended, the note re-ingests, and the next reading restates what the
+    agent wrote. The first round keyed the narrowing on the thread's STATE, which is a
+    different set in both directions — two rows below are `waiting_on_owner` turns on
+    which the note receives nothing, and one is a thread waiting on NOTHING whose words
+    land anyway (O16, migration 0203). So the verb is bound to `record_owner_reply`'s
+    outcome.
 
     Asserted at the route because the ordering is the finding: the profile is resolved
     before that call and `claim_waiting` has flipped the state by the time a tool
@@ -2609,19 +2617,30 @@ def test_assert_fact_rides_the_owner_s_words_landing_on_the_note(
             unanswered=[],
             clarified=True,
             note_moved=False,
+            claimed=True,
         ),
-        "dropped_prose": OwnerReply(
+        "unprompted_addition": OwnerReply(
+            answered=[],
+            unanswered=[],
+            clarified=True,
+            note_moved=False,
+            claimed=False,
+            additions=["actually Kaiya's dentist is Dr. Ashcote"],
+        ),
+        "unplaceable_answer": OwnerReply(
             answered=[("Which Dana?", "Dana Reeve")],
             unanswered=[],
             clarified=True,
             note_moved=False,
-            dropped=["also Dana moved to 412 Oak St"],
+            claimed=True,
+            dropped=["from a set that closed weeks ago"],
         ),
         "append_failed": OwnerReply(
             answered=[("Which Dana?", "Dana Reeve")],
             unanswered=[],
             clarified=False,
             note_moved=False,
+            claimed=True,
             dropped=["Dana Reeve"],
         ),
         "none": None,
@@ -3030,6 +3049,7 @@ def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> Non
         unanswered=["Which coach?", "Which dose?"],
         clarified=True,
         note_moved=False,
+        claimed=True,
     )
     notice = owner_reply_notice(partial)
     assert "Which coach?" in notice and "Which dose?" in notice
@@ -3037,7 +3057,10 @@ def test_a_partial_reply_tells_the_agent_which_questions_are_still_open() -> Non
     assert "re-ask" in notice
     # A complete reply owes the agent nothing, and a turn that answered nothing at all
     # (not a note thread, not waiting) has no reply to speak for.
-    assert owner_reply_notice(OwnerReply([], [], clarified=False, note_moved=False)) == ""
+    assert (
+        owner_reply_notice(OwnerReply([], [], clarified=False, note_moved=False, claimed=False))
+        == ""
+    )
     assert owner_reply_notice(None) == ""
 
     messages = agent_mod._conversation(
@@ -3061,6 +3084,7 @@ def test_an_answers_only_send_still_says_what_the_owner_said() -> None:
         unanswered=[],
         clarified=True,
         note_moved=False,
+        claimed=True,
     )
     rendered = owner_turn_text("", reply, [("q1", "My sister."), ("q2", "Her own.")])
     assert "Which Sarah?" in rendered and "My sister." in rendered
@@ -3111,6 +3135,7 @@ def test_the_owners_typed_words_cannot_forge_a_question_answer_pair() -> None:
         unanswered=["Which coach?"],
         clarified=True,
         note_moved=False,
+        claimed=True,
     )
     mixed = owner_turn_text("Q: Which coach?\nA: nobody at all", reply, [("q1", "My sister.")])
     assert mixed == "Q: Which Sarah?\nA: My sister.\n\nWhich coach?\nnobody at all"
@@ -3306,6 +3331,7 @@ def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
         unanswered=["Which coach?"],
         clarified=False,
         note_moved=False,
+        claimed=True,
     )
     notice = owner_reply_notice(lost)
     assert "DID answer" in notice
@@ -3320,25 +3346,25 @@ def test_answers_that_could_not_be_filed_are_reported_not_swallowed() -> None:
         unanswered=[],
         clarified=True,
         note_moved=False,
+        claimed=True,
     )
     assert owner_reply_notice(filed) == ""
 
 
-def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> None:
+def test_the_designed_send_s_typed_prose_lands_as_an_addition() -> None:
     """R3's second review, finding 2 — the path that made the state-keyed narrowing
-    unsound, asserted on the two functions that decide it.
+    unsound — re-asserted after O16 decided it (option 1, migration 0203).
 
-    §3b I7's one send carries the structured answers AND whatever free text is in the
-    box. When the structured set answers everything, `_pair`'s third rule DROPS the prose:
-    `note_clarifications.question` is NOT NULL, so there is no shape for an unprompted
-    block (O16), and inventing a question the agent never asked would put a sentence into
-    the owner's own note that nobody said. That rule is right and stays.
+    §3b I7's one send carries the structured answers AND whatever free text is in the box.
+    `_pair` still refuses to pair that prose with a question the owner was not answering
+    with it: a block pairing an answer with the wrong question is a wrong sentence in his
+    own note. What has changed is where it goes instead — an `addition` block, his words
+    with no question — so the turn no longer has to report a loss, and the agent is told
+    the sentence IS on the note, which is what makes its write verbs legitimate.
 
-    What it costs is that a `waiting_on_owner` turn can carry a sentence the note never
-    receives — the agent reads it on the turn (`owner_turn_text`) and can be asked to
-    record it. So the drop is now REPORTED, twice over: `owner_words_reached_note` is
-    False, which takes `assert_fact` off the turn, and the agent is told in words that
-    those words reached no note."""
+    The residue is an ANSWER that could not be placed (a stale question id, a repeat, one
+    past the cap): no block shape holds an answer to a question nobody can name, so that
+    one still reaches no note and still takes `assert_fact` off the turn."""
     from jbrain.analysis.clarify import (
         OwnerReply,
         owner_reply_notice,
@@ -3350,27 +3376,44 @@ def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> Non
         unanswered=[],
         clarified=True,
         note_moved=False,
-        dropped=["also Dana moved to 412 Oak St"],
+        claimed=True,
+        additions=["also Dana moved to 412 Oak St"],
     )
-    assert owner_words_reached_note(designed) is False
+    assert owner_words_reached_note(designed) is True
     notice = owner_reply_notice(designed)
     assert "412 Oak St" in notice
-    assert "did NOT reach the note" in notice
-    assert "cannot record a fact" in notice
+    assert "added this to the note himself" in notice
+    assert "did NOT reach the note" not in notice
 
-    # The clean send of the same shape: everything he said landed, the verb stays, and
-    # the agent is told nothing it does not need.
+    # The clean send with nothing typed beside it: the verb stays and the agent is told
+    # nothing it does not need.
     landed = OwnerReply(
         answered=[("Which Dana?", "Dana Reeve")],
         unanswered=[],
         clarified=True,
         note_moved=False,
+        claimed=True,
     )
     assert owner_words_reached_note(landed) is True
     assert owner_reply_notice(landed) == ""
 
-    # And the two cases the state could never see: a turn with no reply at all (a settled
-    # thread, an `owner_authored=False` turn), and one whose block did not land.
+    # The residue: an answer naming a question that is not open. It reaches no note, the
+    # verb goes, and the agent is told in words.
+    unplaceable = OwnerReply(
+        answered=[("Which Dana?", "Dana Reeve")],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+        claimed=True,
+        dropped=["from a set that closed weeks ago"],
+    )
+    assert owner_words_reached_note(unplaceable) is False
+    residue = owner_reply_notice(unplaceable)
+    assert "did NOT reach the note" in residue
+    assert "cannot record a fact" in residue
+
+    # And the cases the thread state could never see: no reply at all (not a note
+    # conversation, not owner-authored), and one whose block did not land.
     assert owner_words_reached_note(None) is False
     assert (
         owner_words_reached_note(
@@ -3379,6 +3422,7 @@ def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> Non
                 unanswered=[],
                 clarified=False,
                 note_moved=False,
+                claimed=True,
             )
         )
         is False
@@ -3389,48 +3433,107 @@ def test_the_designed_send_s_dropped_prose_is_reported_and_never_silent() -> Non
         unanswered=[],
         clarified=False,
         note_moved=False,
+        claimed=True,
         dropped=["Dana moved to 412 Oak St"],
     )
     assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(nothing)
 
 
-def test_pairing_reports_the_words_it_could_not_file() -> None:
-    """`_pair`'s two dropping rules, each returning what it dropped.
+def test_an_unprompted_addition_is_announced_as_note_text() -> None:
+    """The notice O16 is for: Jeff opened a note nothing was asking him about and typed a
+    correction into its thread.
 
-    Free text beside a structured answer is chat with nowhere to go; a structured answer
-    naming an id the open set does not carry is a stale block replayed out of a reopened
-    thread (§3b I9). Both were silent before — the second logged a warning nobody
-    downstream could read — and both are the owner's own words reaching no note, which is
-    the condition the reply turn's write verbs now turn on."""
+    The turn text alone reads like chat, so without this the agent has no way to know the
+    sentence is now part of the note — and every verb it holds on that turn is bound on
+    exactly that being true. The notice states it as DATA (what he did, where the words
+    are) and leaves the reading to the agent, which is the boundary `api/agent.py`'s other
+    server-composed preambles keep."""
+    from jbrain.analysis.clarify import (
+        OwnerReply,
+        owner_reply_notice,
+        owner_words_reached_note,
+    )
+
+    unprompted = OwnerReply(
+        answered=[],
+        unanswered=[],
+        clarified=True,
+        note_moved=False,
+        claimed=False,
+        additions=["actually Kaiya's dentist is Dr. Ashcote"],
+    )
+    assert owner_words_reached_note(unprompted) is True
+    notice = owner_reply_notice(unprompted)
+    assert "Dr. Ashcote" in notice
+    assert "part of what it says" in notice
+    # No question was open, so nothing here may read as "he answered you".
+    assert "answered" not in notice
+
+    # An addition whose append FAILED says the opposite, through the ordinary `dropped`
+    # channel — `record_owner_reply` moves it there itself.
+    failed = OwnerReply(
+        answered=[],
+        unanswered=[],
+        clarified=False,
+        note_moved=False,
+        claimed=False,
+        dropped=["actually Kaiya's dentist is Dr. Ashcote"],
+    )
+    assert owner_words_reached_note(failed) is False
+    assert "Nothing Jeff said on this turn reached the note" in owner_reply_notice(failed)
+
+
+def test_pairing_places_what_it_can_and_adds_the_rest() -> None:
+    """`_pair`'s three outcomes: an answer placed, an answer DROPPED, prose made an
+    ADDITION.
+
+    A structured answer naming an id the open set does not carry is a stale block replayed
+    out of a reopened thread (§3b I9) and reaches no note at all. Prose that answers no
+    open question is not dropped any more (0203): it lands as the owner's own unprompted
+    block, which is O16 option 1 in one line of code."""
     from jbrain.analysis.clarify import _pair
     from jbrain.models.note_conversation import AskedQuestion
 
     one = [AskedQuestion(id="q1", question="Which Dana?")]
-    answered, dropped = _pair(one, [("q1", "Dana Reeve")], "also she moved", session_id="s")
+    answered, dropped, addition = _pair(
+        one, [("q1", "Dana Reeve")], "also she moved", session_id="s"
+    )
     assert answered == {"q1": "Dana Reeve"}
-    assert dropped == ["also she moved"]
+    assert dropped == []
+    assert addition == "also she moved"
 
-    # A stale id: dropped — and so is the prose, because the send CARRIED a structured
-    # answer. R3f's review, finding 5: the rule is keyed on the block having been used at
-    # all, not on whether its answers landed. The owner was typing beside a block here,
-    # and his sentence is no more an answer to the question that block left open than it
-    # would be beside a tap that had landed.
-    answered, dropped = _pair(one, [("q9", "from a closed set")], "Dana Reeve", session_id="s")
+    # A stale id: dropped — and the prose is STILL not read as an answer, because the send
+    # carried a structured answer (R3f's review, finding 5: the rule is keyed on the block
+    # having been used at all). It is an addition rather than a loss.
+    answered, dropped, addition = _pair(
+        one, [("q9", "from a closed set")], "Dana Reeve", session_id="s"
+    )
     assert answered == {}
-    assert dropped == ["from a closed set", "Dana Reeve"]
+    assert dropped == ["from a closed set"]
+    assert addition == "Dana Reeve"
 
     # Free text ALONE still answers the oldest open question, and cannot mispair: with
-    # nothing else in the send there is only one thing it could be answering.
+    # nothing else in the send there is only one thing it could be answering. The degrade
+    # path a client that cannot render the question block takes.
     two = [*one, AskedQuestion(id="q2", question="Which coach?")]
-    answered, dropped = _pair(two, [], "Dana Reeve", session_id="s")
-    assert answered == {"q1": "Dana Reeve"} and dropped == []
+    answered, dropped, addition = _pair(two, [], "Dana Reeve", session_id="s")
+    assert answered == {"q1": "Dana Reeve"} and dropped == [] and addition == ""
 
-    # But beside ONE tap on a THREE-question set it is filed against nothing — the
-    # mispairing that finding is about: "this note is about Kaiya not me" typed beside a
-    # tap used to be appended as the owner's answer to "Which coach?".
-    answered, dropped = _pair(two, [("q2", "her own")], "this is about Kaiya", session_id="s")
+    # Beside ONE tap on a two-question set it is filed against nothing — "this is about
+    # Kaiya" must never become the answer to "Which coach?" — and it is no longer lost
+    # either.
+    answered, dropped, addition = _pair(
+        two, [("q2", "her own")], "this is about Kaiya", session_id="s"
+    )
     assert answered == {"q2": "her own"}
-    assert dropped == ["this is about Kaiya"]
+    assert dropped == []
+    assert addition == "this is about Kaiya"
+
+    # With NO open set at all — the settled thread the owner reopened to say one thing —
+    # every rule reads the same way: nothing to pair, so the sentence is an addition.
+    answered, dropped, addition = _pair([], [], "actually it was a 5k", session_id="s")
+    assert answered == {} and dropped == []
+    assert addition == "actually it was a 5k"
 
 
 def test_model_message_frames_a_deferred_outcome_as_data() -> None:

@@ -221,9 +221,20 @@ async def _open_set(
 async def _blocks(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext, note_id: str
 ) -> list[tuple[str, str]]:
+    """The note's ANSWER blocks as (question, answer). An `addition` has no question, so
+    it is not one of these — `_additions` reads those."""
     rows = await SqlNotesRepo(maker).list_clarifications(owner, note_id)
     assert rows is not None
-    return [(c.question, c.answer) for c in rows]
+    return [(c.question, c.answer) for c in rows if c.question is not None]
+
+
+async def _additions(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext, note_id: str
+) -> list[str]:
+    """The note's unprompted `addition` blocks, in seq order (0203)."""
+    rows = await SqlNotesRepo(maker).list_clarifications(owner, note_id)
+    assert rows is not None
+    return [c.answer for c in rows if c.kind == "addition"]
 
 
 # --- the ask ------------------------------------------------------------------
@@ -538,14 +549,30 @@ async def test_the_reply_becomes_a_dated_block_on_the_note_and_re_ingests_it(
     assert sha == note_body_sha(note.body)
 
 
-async def test_a_reply_into_a_thread_that_is_not_waiting_is_only_conversation(
+async def test_an_unprompted_reply_into_a_settled_thread_lands_on_the_note(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """`note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
-    no shape for "the owner said something unprompted" — and there should not be: a note
-    is not a chat log. An unprompted message stays chat."""
+    """O16, decided (option 1) and built — the thing the owner asked for in his own words:
+    *"I foresee me adding a note. The AI adding a bunch of facts and me having to correct
+    it even though it's not prompting me."*
+
+    Before 0203 this reply reached NO note anywhere. `note_clarifications.question` was
+    NOT NULL, so D6 had no shape for a sentence nobody asked for, and the agent was told
+    it could not record what he had just said. Now it is an `addition` block: his words,
+    no question, composed onto the note like any other block and re-ingested with it — so
+    the next reading of the note has the correction in front of it, and the reply turn
+    that follows may write off the back of it.
+
+    The state is untouched. A settled thread has no question set to consume, so nothing is
+    claimed and nothing is re-opened (`claimed` False), which is what keeps this turn out
+    of `close_owner_reply`'s way."""
     note_id = await _note(maker, owner)
-    session_id = await _conversation(maker, owner, note_id, state="running")
+    # A thread that RAN and finished, the way one gets to `settled`: `start` refuses to
+    # open a conversation in a terminal state, because one that opened there would release
+    # a note it never read.
+    session_id = await _conversation(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().set_state(s, session_id, "settled")
 
     reply = await record_owner_reply(
         maker,
@@ -556,9 +583,50 @@ async def test_a_reply_into_a_thread_that_is_not_waiting_is_only_conversation(
         message="Actually it was a 5k.",
     )
 
-    assert reply is None
+    assert reply is not None
+    assert reply.additions == ["Actually it was a 5k."]
+    assert reply.answered == [] and reply.unanswered == [] and reply.dropped == []
+    assert reply.clarified is True
+    assert reply.claimed is False
+    # The words are the NOTE'S text now, which is the whole point: the verbs this turn
+    # holds are bound on exactly this.
+    assert owner_words_reached_note(reply) is True
+    assert await _additions(maker, owner, note_id) == ["Actually it was a 5k."]
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
-    assert note is not None and note.body == NOTE_BODY
+    assert note is not None
+    assert note.body.startswith(NOTE_BODY)
+    assert "[addition " in note.body and "Actually it was a 5k." in note.body
+    # No `Q:`/`A:` pair invented to hold it — that would be a sentence in his own note
+    # that nobody said.
+    assert await _blocks(maker, owner, note_id) == []
+    # And it re-ingests, so the graph re-derives from the note including his correction.
+    assert await _queued(maker, owner, note_id) == 1
+    assert (await _state(maker, owner, session_id))[0] == "settled"
+    # The agent is told the sentence is on the note — the turn text alone reads as chat.
+    notice = owner_reply_notice(reply)
+    assert "added this to the note himself" in notice and "5k" in notice
+
+
+async def test_a_reply_with_no_conversation_row_reaches_no_note(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The one remaining `None`: a session that is not a note conversation at all. There
+    is no note behind it, so there is nothing to append to and no reply to speak for."""
+    session = await AgentSessionRepo(maker).create(
+        owner, domain_scopes=[], title="not a note thread", agent=NOTE_CONVERSE_AGENT
+    )
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=session.id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="Actually it was a 5k.",
+    )
+
+    assert reply is None
+    assert owner_words_reached_note(reply) is False
 
 
 async def test_a_note_that_moved_under_the_thread_keeps_its_stale_sha(
@@ -597,20 +665,30 @@ async def test_a_note_that_moved_under_the_thread_keeps_its_stale_sha(
     assert sha_now != note_body_sha(note.body)
 
 
-async def test_the_answer_is_recorded_once_even_if_the_owner_says_it_twice(
+async def test_a_question_is_answered_once_even_if_the_owner_says_it_twice(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
     """The CLAIM is the latch, and it happens BEFORE the append: the second message finds
-    a thread that is no longer waiting, so the note cannot collect the same answer twice
-    as source text — which, with no per-block eraser in the PWA, is the one of the two
-    failure directions the owner could not undo.
+    a thread that is no longer waiting, so the same question can never collect two
+    ANSWERS — a pair filed against a question that is already spent is a sentence in the
+    owner's own note attributed to something nobody asked twice.
 
     Sequential, and that word is load-bearing. This case passed against the old
     `set_state` latch too, which is exactly why it could not see that the latch was not
     one: `_ALLOWED_SOURCES["running"]` admits `running`, so a CONCURRENT second reply
     updated a second time and filed a second block.
     `test_two_overlapping_replies_and_exactly_one_claims_the_set` is the test that
-    discriminates, and `claim_waiting`'s conditional UPDATE is what makes both pass."""
+    discriminates, and `claim_waiting`'s conditional UPDATE is what makes both pass.
+
+    ⟲ **What the second message DOES do has changed, and the change is deliberate** (0203).
+    It used to reach no note at all. It is now an `addition`: a send that arrives after
+    the set is spent is the owner typing into a thread with nothing open, which is the
+    ordinary unprompted case and not a special one. So the note gains his words a second
+    time — as his words, not as a second answer — and the eraser is the undo. The cost is
+    a duplicated sentence on a deliberate re-send; the alternative is dropping text the
+    owner typed, which is the failure O16 exists to end. A CONCURRENT double-send is a
+    different case and is still deduplicated: the loser of `claim_waiting` files nothing
+    at all."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
     await build_ask_owner_handlers(maker)[ASK_OWNER_TOOL](_ask(QUESTION), _ctx(owner, session_id))
@@ -623,10 +701,13 @@ async def test_the_answer_is_recorded_once_even_if_the_owner_says_it_twice(
         maker, notes, owner, session_id=session_id, agent=NOTE_CONVERSE_AGENT, message="My sister."
     )
 
-    assert first is not None and first.clarified is True
-    assert second is None
+    assert first is not None and first.clarified is True and first.claimed is True
+    assert first.answered == [(QUESTION, "My sister.")]
+    # The second message did not answer anything — the set was consumed by the first.
+    assert second is not None and second.answered == [] and second.claimed is False
     note = await notes.get_note(owner, note_id)
     assert note is not None and note.body.count("A: My sister.") == 1
+    assert await _additions(maker, owner, note_id) == ["My sister."]
 
 
 async def test_a_server_authored_outcome_is_never_filed_as_the_owners_answer(
@@ -819,18 +900,22 @@ async def test_a_reply_turn_that_died_releases_the_note(
 async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The close needs a POSITIVE signal, not a `running` state.
+    """The close needs a POSITIVE signal, and since 0203 a reply object is not one.
 
     A conversation is `running` for the whole unattended pass — up to
     `NOTE_TURN_WALL_CLOCK`, 30 minutes — and `/chat`'s busy guard counts only the API's
     own live turns, so nothing stops the owner opening the thread and typing while the
-    worker's pass is mid-flight. `record_owner_reply` correctly declines (the thread is
-    not waiting on anything, so there is no question to pair the message with), and the
-    close must decline with it: settling here would declare a LIVE pass finished before
-    its `_record` wrote a ledger row, and the settle behind the close would then sweep
-    the note against an empty ledger. It also left the worker's own `set_state` raising
-    `InvalidStateTransition` into a job retry, which opens a second thread for the note.
-    """
+    worker's pass is mid-flight. His words LAND (the append is not the worker's business,
+    and a sentence he typed is a sentence the note should have), and the close must still
+    decline: settling here would declare a LIVE pass finished before its `_record` wrote a
+    ledger row, and the settle behind the close would then sweep the note against an empty
+    ledger. It also left the worker's own `set_state` raising `InvalidStateTransition` into
+    a job retry, which opens a second thread for the note.
+
+    ⟲ The signal used to be "`record_owner_reply` returned an `OwnerReply`", which was the
+    same set only while an unprompted reply reached no note. It is `claimed` now — the
+    `waiting_on_owner -> running` flip itself — and this test is why the distinction has to
+    exist rather than being derivable."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)  # opens `running`
 
@@ -842,7 +927,10 @@ async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
         agent=NOTE_CONVERSE_AGENT,
         message="just a thought while you read",
     )
-    assert reply is None, "nothing was waiting, so nothing was answered"
+    assert reply is not None
+    assert reply.additions == ["just a thought while you read"]
+    assert reply.claimed is False, "an unprompted addition claimed a set it was not given"
+    assert await _additions(maker, owner, note_id) == ["just a thought while you read"]
 
     closed = await close_owner_reply(
         maker,
@@ -850,7 +938,7 @@ async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
         session_id=session_id,
         agent=NOTE_CONVERSE_AGENT,
         stop_reason="end_turn",
-        reopened=reply is not None,
+        reopened=reply.claimed,
     )
 
     assert closed is None, "the chat turn ended a pass it had no part in"
@@ -992,12 +1080,16 @@ async def test_the_composite_send_end_to_end(
     )
     assert reply is not None
 
-    # 1. THE NOTE gets the two tapped answers, each under the question it answers, and
-    #    nothing else. The typed sentence is not filed against DOSE.
+    # 1. THE NOTE gets the two tapped answers, each under the question it answers — and
+    #    the typed sentence as a block of its OWN, not filed against DOSE. One append,
+    #    one re-ingest.
     assert reply.answered == [(QUESTION, "My sister."), (COACH, "Her own.")]
     assert await _blocks(maker, owner, note_id) == reply.answered
+    assert await _additions(maker, owner, note_id) == ["also the dinner is cancelled"]
+    assert await _queued(maker, owner, note_id) == 1
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
-    assert note is not None and "dinner is cancelled" not in note.body
+    assert note is not None and "dinner is cancelled" in note.body
+    assert f"Q: {DOSE}" not in note.body
 
     # 2. THE THIRD QUESTION is still open — not silently spent on a sentence that does
     #    not answer it.
@@ -1010,12 +1102,13 @@ async def test_the_composite_send_end_to_end(
         f"Q: {QUESTION}\nA: My sister.\n\nQ: {COACH}\nA: Her own.\n\nalso the dinner is cancelled"
     )
 
-    # 4. THE AGENT is told the sentence reached no note, and that DOSE is still open —
-    #    and the turn holds no `assert_fact` off the back of it.
-    assert reply.dropped == ["also the dinner is cancelled"]
-    assert owner_words_reached_note(reply) is False
+    # 4. THE AGENT is told the sentence is on the note, and that DOSE is still open — and
+    #    the turn keeps its write verbs, because every word he said landed.
+    assert reply.dropped == []
+    assert reply.additions == ["also the dinner is cancelled"]
+    assert owner_words_reached_note(reply) is True
     notice = owner_reply_notice(reply)
-    assert "dinner is cancelled" in notice and "did NOT reach the note" in notice
+    assert "dinner is cancelled" in notice and "added this to the note himself" in notice
     assert DOSE in notice and "still open" in notice
 
 
@@ -1130,8 +1223,9 @@ async def test_free_prose_beside_a_partial_set_is_not_filed_as_an_answer(
     sentence is appended to his own note as the answer to a question it does not answer —
     permanently, searchably, with the clarification eraser as the only undo. A block that
     pairs an answer with the wrong question is a wrong sentence in the owner's corpus, so
-    the typed half is no longer paired at all: it rides the turn's text for the agent to
-    read, and `dropped` says it reached no note."""
+    the typed half is no longer paired at all. ⟲ It used to ride the turn's text with
+    `dropped` saying it reached no note; since 0203 it lands as an `addition` — the same
+    refusal to guess, without the loss (O16 option 1)."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH, DOSE
@@ -1153,22 +1247,28 @@ async def test_free_prose_beside_a_partial_set_is_not_filed_as_an_answer(
     # sentence that does not answer it.
     assert reply.unanswered == [COACH, DOSE]
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
-    assert reply.dropped == ["this note is about Kaiya not me"]
-    assert owner_words_reached_note(reply) is False
-    # And the agent hears both halves: the sentence that reached no note, and the
+    # ⟲ And the sentence itself is no longer lost: `dropped` used to carry it, which was
+    # O16's cost being reported rather than paid. It is an `addition` block now (0203),
+    # filed in the SAME transaction as the answer — one turn, one re-ingest.
+    assert reply.dropped == []
+    assert reply.additions == ["this note is about Kaiya not me"]
+    assert await _additions(maker, owner, note_id) == ["this note is about Kaiya not me"]
+    assert await _queued(maker, owner, note_id) == 1
+    assert owner_words_reached_note(reply) is True
+    # And the agent hears both halves: the sentence that is now on the note, and the
     # questions still open.
     notice = owner_reply_notice(reply)
-    assert "Kaiya" in notice and "did NOT reach the note" in notice
+    assert "Kaiya" in notice and "added this to the note himself" in notice
     assert COACH in notice and "still open" in notice
 
 
-async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
+async def test_free_prose_beside_a_complete_set_is_its_own_block(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """`note_clarifications.question` is NOT NULL and non-blank in Postgres, so there is
-    no shape for an unprompted block — and inventing a question the agent never asked to
-    hold the owner's aside would put a sentence into their own note that nobody said. It
-    stays chat, which the agent reads either way."""
+    """Inventing a question the agent never asked, to hold the owner's aside, would put a
+    sentence into his own note that nobody said — so the refusal to PAIR it stands. What
+    changed with 0203 is where it goes instead: an `addition`, his words with no question,
+    which is a shape that needs nothing invented."""
     note_id = await _note(maker, owner)
     session_id, ids = await _open_set(
         maker, owner, await _conversation(maker, owner, note_id), QUESTION, COACH
@@ -1189,25 +1289,34 @@ async def test_free_prose_beside_a_complete_set_is_chat_and_files_no_block(
     assert reply.unanswered == []
     assert await _blocks(maker, owner, note_id) == reply.answered
     note = await SqlNotesRepo(maker).get_note(owner, note_id)
-    assert note is not None and "great run" not in note.body
-    # ⟲ And the drop is REPORTED, which is R3's second review, finding 2. This is the
-    # DESIGNED send on a `waiting_on_owner` thread, so the state said "the owner is
-    # answering" while a sentence of his reached no note at all — and the reply turn's
-    # `assert_fact` was bound on that state. It is bound on this instead.
-    assert reply.dropped == ["great run by the way"]
-    assert owner_words_reached_note(reply) is False
+    assert note is not None and "great run by the way" in note.body
+    # The order is the order he did them in: the answers he tapped, then the words he
+    # typed beside them — which is also how `owner_turn_text` renders the same turn.
+    assert note.body.index("Her own.") < note.body.index("great run by the way")
+    # ⟲ This used to assert the drop was REPORTED (R3's second review, finding 2): the
+    # DESIGNED send on a `waiting_on_owner` thread lost the typed half, and the reply
+    # turn's `assert_fact` went with it. Both halves land now, so the verb stays.
+    assert reply.dropped == []
+    assert reply.additions == ["great run by the way"]
+    assert owner_words_reached_note(reply) is True
 
 
-async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(
+async def test_one_reply_consumes_the_whole_set_and_a_second_answers_nothing(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
     """The soundness claim the batch rests on, in its SEQUENTIAL case.
 
     The claim stays at the level a reply arrives at: ONE reply consumes the whole set, so
-    a second reply finds the thread `running` and files nothing, and two replies can never
-    answer the same question twice. That is what makes O11 (ii) cost no per-question
+    a second reply finds the thread `running` and can PAIR nothing, and two replies can
+    never answer the same question twice. That is what makes O11 (ii) cost no per-question
     claim — what a partial send leaves behind is not durable state, it is a sentence
     handed to the agent.
+
+    ⟲ "and a second files nothing" was the old title, and 0203 splits it in two: the
+    second reply still answers nothing (the set is spent), and what it typed is now his
+    own words on the note rather than a loss. The tapped ANSWER it carried is a different
+    matter — it names a question that is no longer open, which no block shape can hold, so
+    it goes to `dropped` and the turn is narrowed.
 
     This test awaits the first reply before sending the second, so it pins that and only
     that. The case the property actually has to survive is two replies IN FLIGHT, and it
@@ -1239,9 +1348,17 @@ async def test_one_reply_consumes_the_whole_set_and_a_second_files_nothing(
     )
 
     assert first is not None and first.unanswered == [COACH, DOSE]
-    assert second is None
+    # The second reply pairs NOTHING — the set it names was consumed — so COACH never
+    # collects an answer out of a message the thread was no longer waiting for.
+    assert second is not None and second.answered == [] and second.claimed is False
+    assert second.dropped == ["Her own."]
     assert await _blocks(maker, owner, note_id) == [(QUESTION, "My sister.")]
-    assert await _queued(maker, owner, note_id) == 1
+    # Its typed half is his own words, filed as such.
+    assert await _additions(maker, owner, note_id) == ["and her own coach"]
+    # An answer that reached no note narrows the turn, whatever else landed on it.
+    assert owner_words_reached_note(second) is False
+    # Two appends, two re-ingests: the second one carried text of its own.
+    assert await _queued(maker, owner, note_id) == 2
 
 
 async def test_a_question_asked_before_the_batch_shipped_still_pairs(
@@ -1286,7 +1403,11 @@ async def test_the_open_set_is_the_newest_ask_even_when_it_parses_empty(
     turn's words with a question that closed weeks ago and append the pair to the owner's
     own note as source text — the mispairing `_pair` exists to prevent, arriving through
     the reader instead of the pairer. `_fit` is what keeps an empty parse out of the
-    ledger; this pins what happens if one ever gets there anyway."""
+    ledger; this pins what happens if one ever gets there anyway.
+
+    ⟲ His words used to be lost outright here, which was the O16 gap reached through an
+    anomaly. They land as an `addition` now (0203) — nothing is PAIRED, which is the
+    property under test, and nothing is thrown away either."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
     repo = NoteConversationRepo()
@@ -1316,8 +1437,12 @@ async def test_the_open_set_is_the_newest_ask_even_when_it_parses_empty(
         message="My sister.",
     )
 
-    assert reply is not None and reply.clarified is False
-    assert await _blocks(maker, owner, note_id) == []
+    assert reply is not None
+    # Nothing was PAIRED — no question was found, so no pair could be made.
+    assert reply.answered == [] and await _blocks(maker, owner, note_id) == []
+    # And his sentence is his own words on the note rather than an answer to a question
+    # that closed weeks ago.
+    assert await _additions(maker, owner, note_id) == ["My sister."]
 
 
 async def test_the_inbox_and_the_reply_path_read_the_same_open_set(

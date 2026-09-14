@@ -1,5 +1,5 @@
-"""Migration 0193 against real Postgres: RLS isolation for `app.note_clarifications`
-(CLAUDE.md rule 3 — every new table gets one).
+"""Migrations 0193 and 0203 against real Postgres: RLS isolation for
+`app.note_clarifications` (CLAUDE.md rule 3 — every new table gets one).
 
 The posture is the NOTE's, not the owner-only posture of `graph_rebuild_runs` or
 `archivist_memory`: a clarification is the owner's own words about a note in a domain,
@@ -12,6 +12,13 @@ read.
 The write side proves the D6 freeze where it actually holds: 0193 grants only
 `UPDATE (domain_code)`, so nothing — not even a full-owner session — can rewrite what
 the owner said.
+
+0203 adds a SECOND block shape — an `addition`, the owner's unprompted words with no
+question (O16 option 1) — and adds no policy, no grant and no trigger of its own. That is
+a claim, so the last test here makes it one Postgres answers: the firewall, the freeze and
+the domain trigger all cover an addition exactly as they cover an answer. A shape that
+slipped past any of them would be the owner's own sentence about a health note readable
+from a general scope.
 """
 
 import uuid
@@ -238,3 +245,75 @@ async def test_a_blank_answer_is_refused(maker: async_sessionmaker) -> None:
                 ),
                 {"n": note_id},
             )
+
+
+async def test_the_firewall_and_the_freeze_cover_an_unprompted_addition(
+    maker: async_sessionmaker,
+) -> None:
+    """0203's new shape under every rule 0193 wrote, because it inherits all of them and
+    inheriting is easy to believe and cheap to check.
+
+    An addition is the owner typing into a note's thread unprompted — on a HEALTH note,
+    that is a sentence about his own medical record — so it is firewalled by the note's
+    domain, unwritable from another scope, immutable once written, and unable to be
+    stamped with a domain its note does not have."""
+    note_id = str(uuid.uuid4())
+    block_id = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (CAST(:id AS uuid), :cid, 'health', 'Saw Dr. Patel.')"
+            ),
+            {"id": note_id, "cid": f"clar-rls-{note_id}"},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.note_clarifications"
+                " (id, note_id, kind, question, answer, domain_code)"
+                " VALUES (CAST(:id AS uuid), CAST(:n AS uuid), 'addition', NULL,"
+                " 'Actually the dentist is Dr. Ashcote.', 'health')"
+            ),
+            {"id": block_id, "n": note_id},
+        )
+
+    assert await visible(maker, OWNER, block_id) == 1
+    assert await visible(maker, OWNER_HEALTH, block_id) == 1
+    # The firewall, on the shape that has never been through it before.
+    assert await visible(maker, GENERAL_TOKEN, block_id) == 0
+    assert await visible(maker, UNSCOPED, block_id) == 0
+
+    # The write side: a general-scoped token cannot file one onto a health note.
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, GENERAL_TOKEN) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.note_clarifications (note_id, kind, question, answer,"
+                    " domain_code) VALUES (CAST(:n AS uuid), 'addition', NULL, 'a', 'health')"
+                ),
+                {"n": note_id},
+            )
+    # And it cannot be stamped `general` to get there either — 0193's trigger reads the
+    # NOTE's domain, and says so for an addition as for an answer.
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, GENERAL_TOKEN) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.note_clarifications (note_id, kind, question, answer,"
+                    " domain_code) VALUES (CAST(:n AS uuid), 'addition', NULL, 'a', 'general')"
+                ),
+                {"n": note_id},
+            )
+
+    # The freeze: his unprompted words are as immutable as his answers.
+    for column in ("answer", "kind"):
+        with pytest.raises(ProgrammingError):
+            async with scoped_session(maker, OWNER) as s:
+                await s.execute(
+                    text(
+                        f"UPDATE app.note_clarifications SET {column} = 'rewritten'"
+                        " WHERE id = CAST(:id AS uuid)"
+                    ),
+                    {"id": block_id},
+                )
+    assert await count_for_note(maker, note_id) == 1

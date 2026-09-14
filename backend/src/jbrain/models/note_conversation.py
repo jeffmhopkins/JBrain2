@@ -152,13 +152,15 @@ CLEAN_STOP = "end_turn"
 # spelling that a rename cannot quietly fork.
 SETTLED = "settled"
 
-# The state in which the thread holds an OPEN QUESTION — and, since R3's review, the one
-# state in which a reply turn may `assert_fact`. Named beside `SETTLED` because it is a
-# gate for the same kind of reason: a reply into a waiting thread is appended to the note
-# as source text (D6) and a reply into any other thread reaches no note at all, so
-# `agents.narrow_for_unprompted_reply` turns on this exact string. Read BEFORE
-# `claim_waiting` moves it, which is the whole of `clarify.reply_profile_for_session`'s
-# placement.
+# The state in which the thread holds an OPEN QUESTION — and therefore the one state in
+# which `record_owner_reply` consumes a question set (`claim_waiting`). Named beside
+# `SETTLED` because it is a gate for the same kind of reason: only a waiting thread has
+# answers to pair, and only a turn that claimed one may end it (`close_owner_reply`).
+#
+# ⟲ It used to be "the one state in which a reply turn may `assert_fact`", which was the
+# narrowing's first, rejected key (R3's second review keyed it on the OUTCOME instead) and
+# is doubly wrong since 0203: a reply into a thread that is NOT waiting appends an
+# `addition` block, so its words reach the note and its verbs stand.
 WAITING_ON_OWNER = "waiting_on_owner"
 
 
@@ -308,6 +310,18 @@ class NoteConversation(Base):
     note_body_sha: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+@dataclass(frozen=True)
+class NoteThread:
+    """One note's conversation, as the PWA needs it to OPEN that conversation: which
+    session to resume and which persona tab hosts it (`modeForAgent` — a handoff that
+    lands on the wrong tab shows an empty chat). `state` rides along so the screen can
+    say whether the thread is asking him something."""
+
+    session_id: str
+    agent: str
+    state: str
 
 
 class NoteConversationToolCall(Base):
@@ -611,6 +625,37 @@ class NoteConversationRepo:
             NoteConversation.state.in_(LIVE_STATES),
         )
         return (await session.execute(stmt)).scalars().first()
+
+    async def thread_for_note(self, session: AsyncSession, note_id: str) -> NoteThread | None:
+        """The note's most recent thread whatever state it is in, or None if it has never
+        been read. The door the PWA's note screen opens (`GET /notes/{id}/thread`), so the
+        owner can say something about a note nobody is asking him about (O16).
+
+        Deliberately NOT `live_for_note`: the thread he needs when he has something to add
+        is usually the SETTLED one — the pass finished, said what it recorded, and asked
+        nothing — and that is exactly the thread `live_for_note` returns None for. It
+        reclaims nothing for the same reason: this is a read for a screen, and the reclaim
+        in `live_for_note` exists to unblock the note's live slot, which nobody is
+        competing for here.
+
+        Newest by `created_at`, tie-broken on the session id so a note read twice inside
+        one clock tick still has ONE answer."""
+        row = (
+            await session.execute(
+                text(
+                    "SELECT c.session_id, c.state, s.agent"
+                    "  FROM app.note_conversations c"
+                    "  JOIN app.agent_sessions s ON s.id = c.session_id"
+                    " WHERE c.note_id = :note"
+                    " ORDER BY c.created_at DESC, c.session_id DESC"
+                    " LIMIT 1"
+                ),
+                {"note": _as_uuid(note_id)},
+            )
+        ).first()
+        if row is None:
+            return None
+        return NoteThread(session_id=str(row.session_id), agent=row.agent, state=row.state)
 
     async def list_in_state(
         self, session: AsyncSession, state: str, *, limit: int = 50

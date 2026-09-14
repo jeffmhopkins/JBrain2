@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-13
+> **Status:** Living · **Last verified:** 2026-09-14
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -744,18 +744,34 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes. Below the body, and **only when the note has any**, a
-  collapsed **"Answers you gave"** disclosure with a count pill: the note's
-  D6 clarification blocks, each with a rose tap-again **erase**. This is
+  outbox notes. At the FOOT OF EVERY TAB, and **only when the note has a
+  thread**, a quiet full-width **"Add a thought"** row (surface-2 card, a
+  `text-3` hint line under the label) that opens the note's own conversation
+  — outside the tab switch deliberately, because the tab he NOTICES a wrong
+  fact on is Analysis (which is also the tab this screen opens on) and the
+  tab his words end up on is Note. The door
+  O16 found missing, since the stream's ask chip appears only while a
+  thread is WAITING and the moment the owner most wants to speak is the one
+  where nothing is asking him. What he types there is appended to the note
+  as his own words and read again with it. On a thread that IS waiting the
+  label reads **"Answer what it asked"** with the hint "it's waiting on
+  you", because that is a different errand. Absent when the note has no
+  conversation (never read, or ingest still pending) and when the lookup
+  fails — a door that leads nowhere is worse than none.
+  On the Note tab, above it and **only when the note has any**, a
+  collapsed **"What you've added"** disclosure with a count pill: the note's
+  D6 clarification blocks, each with a rose tap-again **erase**. Both block
+  shapes are listed — answers he gave, and additions he made unprompted,
+  which carry the label "you added" in place of a question. This is
   not a second rendering of the blocks — they are already in the body as
   prose, which is the whole of D6's storage-only treatment — it is the
   ERASER, and the only place a block's id is reachable at all, since the
-  body is one composed string. An answer becomes the note's own searchable,
+  body is one composed string. A block becomes the note's own searchable,
   citable text, so a password or a diagnosis typed into one has to be
   removable without deleting the whole note; on a box with no terminal
   (CLAUDE.md #10) that is not a limit the owner can work around. Absent
-  entirely on a note that was never asked about, which is nearly every
-  note — so the note screen is unchanged for it, as D6 requires.
+  entirely on a note that was never asked about and never added to, which is
+  nearly every note — so the note screen is unchanged for it, as D6 requires.
 - *Attachments tab* — the **canonical attachment manager** (the editor
   keeps its quick paperclip for capture-time adds). The tab label carries a
   count pill. Layout is a **manifest**: a one-line summary

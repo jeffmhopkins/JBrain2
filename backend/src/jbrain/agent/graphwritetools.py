@@ -1108,7 +1108,7 @@ class NoteGraphWriter:
                         # `words_reached_note=True` is stated rather than defaulted, and
                         # for this verb the BINDING is the condition: `assert_fact` is
                         # absent from a reply turn whose words never became note text
-                        # (`agents.narrow_for_unprompted_reply`) and absent from the
+                        # (`agents.narrow_for_unlanded_reply`) and absent from the
                         # unattended pass altogether, so every turn that reaches this line
                         # is one whose words are — or are about to be — the note's own.
                         line, write, touched = await self._assert_one(

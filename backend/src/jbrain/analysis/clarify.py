@@ -408,34 +408,58 @@ class OwnerReply:
     turn as a sentence, and the agent re-raises what it is still stuck on."""
 
     clarified: bool
-    """Whether the answers actually landed on the note as blocks. False means the note is
-    unchanged and no re-ingest was queued — and R1c is why that now needs a consumer: on
-    an answers-only send the owner's words are `ChatRequest.answers`, which is turn-local,
-    so the block was their only durable home. `owner_reply_notice` reads this field and
-    tells the agent plainly that Jeff DID answer and that his answers did not reach the
-    note; `owner_turn_text` puts the words themselves on the turn."""
+    """Whether this turn's words actually landed on the note as blocks — answers, the
+    owner's own unprompted ADDITIONS (0203), or both. False means the note is unchanged
+    and no re-ingest was queued — and R1c is why that needs a consumer: on an answers-only
+    send the owner's words are `ChatRequest.answers`, which is turn-local, so the block was
+    their only durable home. `owner_reply_notice` reads this field and tells the agent
+    plainly that Jeff DID answer and that his answers did not reach the note;
+    `owner_turn_text` puts the words themselves on the turn."""
 
     note_moved: bool
     """Whether the note had changed under the conversation since it was read."""
 
+    claimed: bool
+    """Whether THIS turn moved the thread `waiting_on_owner -> running`.
+
+    Required rather than derived from "an `OwnerReply` exists", because since 0203 the two
+    are different sets: an unprompted addition files a block on a thread that is SETTLED
+    (or one the worker is mid-pass on) and claims nothing. `close_owner_reply` ends only
+    the thread its own turn re-opened — read the `reopened` argument there for what
+    closing somebody else's `running` pass costs, which is a live pass declared settled
+    and swept against an empty ledger."""
+
     dropped: list[str] = field(default_factory=list)
     """The owner's words on this turn that reached NO note.
 
-    FOUR ways it fills, and none is an error path: free text beside ANY structured answer
-    (§3b I7's one send carries the tapped answers AND whatever is in the box, and `_pair`
-    refuses to pair the prose with a question the owner was not answering with it — the
-    O16 gap, since `note_clarifications.question` is NOT NULL and an unprompted block has
-    no shape); a structured answer naming a question the open set does not carry (a
-    reopened thread replaying a stale block, `_pair`'s first rule); the earlier answer of
-    a REPEATED question id, which last-writer-wins overwrites (`_pair`'s third bullet);
-    and an answer past `MAX_ANSWERS`, cut by `answers_over_cap` before `_pair` ever sees
-    the list. The append paths add a fifth on failure: a pairing that succeeded onto a
-    note that would not take it.
+    THREE ways it fills, and none is an error path: a structured answer naming a question
+    the open set does not carry (a reopened thread replaying a stale block, `_pair`'s
+    first rule); the earlier answer of a REPEATED question id, which last-writer-wins
+    overwrites (`_pair`'s third bullet); and an answer past `MAX_ANSWERS`, cut by
+    `answers_over_cap` before `_pair` ever sees the list. The append paths add a fourth on
+    failure: a pairing that succeeded onto a note that would not take it.
+
+    ⟲ **There used to be a fourth, and it was the commonest: free text beside ANY
+    structured answer** — §3b I7's one send carries the tapped answers AND whatever is in
+    the box, and `_pair` would not pair prose with a question the owner was not answering
+    with it. That prose is now an `addition` block (O16, decided option 1), so the words
+    land instead of being reported lost. What still fills this list is an ANSWER that
+    could not be placed, which no block shape can hold: an answer to a question nobody
+    can name is not an addition, it is an answer to nothing.
 
     It is the half of "did the owner's words become note text" that `clarified` cannot
     see: `clarified` says SOMETHING landed, this says something did not, and
     `owner_words_reached_note` is the conjunction. A write verb bound on a turn with a
     non-empty `dropped` would let the agent record what only the transcript holds."""
+
+    additions: list[str] = field(default_factory=list)
+    """The owner's unprompted words that became `addition` blocks on the note this turn
+    (0203). `clarified` says whether the append landed, exactly as it does for `answered`.
+
+    Carried separately from `answered` because the agent is told a different thing about
+    each: an answer closes a question it asked, an addition is Jeff coming back to the
+    note with something no question was open for — which is what `owner_reply_notice`
+    has to say, and what makes the write verbs on this turn legitimate."""
 
 
 async def reply_profile_for_session(
@@ -514,9 +538,25 @@ async def record_owner_reply(
     answers: Sequence[tuple[str, str]] = (),
     owner_authored: bool = True,
 ) -> OwnerReply | None:
-    """Turn the owner's reply into clarification blocks on the note. `None` when this
-    message is not an answer to anything — not a note conversation, not waiting, not
-    written by the owner, or empty.
+    """Turn the owner's reply into clarification blocks on the note — the answers it
+    pairs with open questions, and the words it carries that answer nothing. `None` when
+    the turn puts no text on the note at all: not a note conversation, no conversation
+    row, not written by the owner, empty, or a reply that lost the race for a question set
+    another reply had already claimed.
+
+    ⟲ **"Not waiting" used to be in that list, and removing it is O16 decided (option
+    1).** A thread that is not waiting was the whole of the gap: the owner opening a note
+    he saved yesterday and typing "actually the dentist is Dr. Ashcote" reached no note
+    anywhere, because D6 pairs a QUESTION with an ANSWER and there was no shape for a
+    sentence nobody asked for. Migration 0203 is that shape — an `addition` block, the
+    owner's words with no question — so an unprompted reply now files one, the note is
+    re-ingested like any other text change, and the turn's write verbs are legitimate
+    because what he said IS on the note. The same shape catches the prose beside a tap,
+    which the designed send produces on a thread that IS waiting.
+
+    What did NOT change with it: the question set is still consumed by a claim
+    (`claim_waiting`) and only a WAITING thread has one, so an unprompted addition claims
+    nothing, reopens nothing, and ends nothing — `claimed` on the result is what says so.
 
     `answers` is the structured half of the send: `(question_id, answer)` pairs the PWA's
     question block produced, each id one the open set carries (§3b I7 — a joined prose
@@ -570,28 +610,31 @@ async def record_owner_reply(
     # A turn carrying a cut answer is a REPLY, so it takes the ordinary reply path: the
     # claim, a pairing that places nothing, and an `OwnerReply` whose `dropped` says his
     # words reached no note. It must NOT short-circuit to an `OwnerReply` from here
-    # instead — `close_owner_reply`'s `reopened` is exactly "this call returned one", and
-    # a reply object minted before `claim_waiting` would have a reply turn settling the
-    # worker's own live unattended pass.
+    # instead — that object is what tells the caller a block landed and what the turn may
+    # write off the back of it, and one minted before the append would claim a landing
+    # that never happened. (⟲ It used to say `close_owner_reply`'s `reopened` is "this
+    # call returned one". It is not, since 0203: a reply that claimed nothing returns an
+    # `OwnerReply` too, and `claimed` is the field that answers that question now.)
     if not prose and not structured and not over_cap:
         # An attachment-only turn, say. Nothing to record as an answer, and the thread
         # stays `waiting_on_owner` — the questions are still open, which is the truth.
         return None
 
     repo = NoteConversationRepo()
+    claimed = False
     try:
         async with scoped_session(maker, ctx) as s:
             conversation = await repo.get(s, session_id)
-            if conversation is None or conversation.state != "waiting_on_owner":
-                # An ordinary follow-up in a note thread that is not waiting on anything.
-                # It is conversation, not an answer, and D6's block pairs a question with
-                # an answer — `note_clarifications.question` is NOT NULL and non-blank in
-                # Postgres, so there is no shape for "the owner said something unprompted"
-                # even if it were wanted. The reply stands as chat.
+            if conversation is None:
+                # No note behind this session, so there is nothing to append to. Every
+                # other thread state is now a home for the owner's words: a thread that
+                # is not waiting has no open question, and what he typed into it is an
+                # `addition` (O16 option 1) rather than the refusal it used to be.
                 return None
             note_id = str(conversation.note_id)
             stored_sha = conversation.note_body_sha
-            open_set = await open_questions(s, repo, session_id)
+            waiting = conversation.state == "waiting_on_owner"
+            open_set = await open_questions(s, repo, session_id) if waiting else []
             # The question SET is consumed HERE, before the append: this transition is
             # what says "that set has been consumed", and it is the latch that stops a
             # second reply appending the same answers again.
@@ -602,21 +645,30 @@ async def record_owner_reply(
             # filters on `_ALLOWED_SOURCES["running"]`, which contains `running`, so the
             # loser's UPDATE matches the winner's committed row and BOTH proceed. A
             # conditional UPDATE on `waiting_on_owner` is what actually serializes them —
-            # exactly one claims, the loser returns None just as a non-waiting thread
-            # does, and two replies can never answer the same question twice.
+            # exactly one claims, the loser returns None and files nothing at all, and two
+            # replies can never answer the same question twice. (⟲ It used to say the
+            # loser returns None "just as a non-waiting thread does". A non-waiting thread
+            # no longer returns None — it files an `addition` — and the loser of a race
+            # still must not, because its words are the same words the winner just filed.)
             #
             # What a PARTIAL send leaves behind still needs no claim of its own, and that
             # is O11 (ii) paying for itself: an unanswered question is not durable state,
             # it is a SENTENCE handed to the agent on its reply turn
             # (`owner_reply_notice`), and the agent re-raises it if it is still stuck.
             # Hence no per-question claim, no new table, no migration.
-            if not await repo.claim_waiting(s, session_id):
-                return None
+            #
+            # Only a WAITING thread has a set to consume. An unprompted addition claims
+            # nothing and leaves the state exactly as it found it — including `running`,
+            # which is the worker's own live pass and is not this turn's to end.
+            if waiting:
+                if not await repo.claim_waiting(s, session_id):
+                    return None
+                claimed = True
     except Exception as exc:  # noqa: BLE001 — a reply the engine cannot file is still a reply
         log.warning("note_reply.claim_failed", session_id=session_id, error=repr(exc))
         return None
 
-    if not open_set:
+    if waiting and not open_set:
         # `ask_owner` writes the ledger row and the state in one transaction, and `_fit`
         # is what keeps that row readable however the model filled it, so this is
         # unreachable short of a hand-edited row. `open_questions` does NOT reach past an
@@ -625,52 +677,65 @@ async def record_owner_reply(
         # question — the same wrong sentence in his own note as a fabricated one, with a
         # real question on it.
         log.warning("note_reply.no_recorded_question", session_id=session_id, note_id=note_id)
-        # Nothing was PAIRED, so everything the owner sent is a word that reached no
-        # note: `dropped` carries it, and the turn keeps no write verb off the back of it.
-        return OwnerReply(
-            answered=[],
-            unanswered=[],
-            clarified=False,
-            note_moved=False,
-            dropped=over_cap + [a for _, a in structured] + ([prose] if prose else []),
-        )
 
-    answered, paired_out = _pair(open_set, structured, prose, session_id=session_id)
+    # With no open set, `_pair` places nothing and every rule below reads the same way it
+    # does on a thread that has one: a structured answer names a question nobody can find,
+    # so it is dropped; prose answers no question, so it becomes an `addition`. That is
+    # why the anomaly above logs and falls through rather than returning — the owner's
+    # typed words have a home now, and short-circuiting would be the old refusal wearing a
+    # warning.
+    answered, paired_out, addition = _pair(open_set, structured, prose, session_id=session_id)
     dropped = over_cap + paired_out
     pairs = [(q.question, answered[q.id]) for q in open_set if q.id in answered]
     unanswered = [q.question for q in open_set if q.id not in answered]
+    additions = [addition] if addition else []
 
     moved = False
     try:
         current = await notes.get_note(ctx, note_id)
         moved = current is not None and note_body_sha(current.body) != stored_sha
+        # ONE call for both halves of the send, which is what keeps one turn to one
+        # re-ingest: `append_clarifications` flips `ingest_state` and enqueues
+        # `ingest_note` once for everything it writes.
         clarified = await notes.append_clarifications(
-            ctx, note_id, pairs=pairs, session_id=session_id
+            ctx, note_id, pairs=pairs, additions=additions, session_id=session_id
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("note_reply.append_failed", session_id=session_id, error=repr(exc))
-        # The pairing succeeded and the APPEND did not, so the paired answers reached no
-        # note either — they join whatever `_pair` had already dropped.
+        # The pairing succeeded and the APPEND did not, so nothing this turn placed
+        # reached the note — the paired answers and the addition alike join whatever
+        # `_pair` had already dropped.
         return OwnerReply(
             answered=pairs,
             unanswered=unanswered,
             clarified=False,
             note_moved=moved,
-            dropped=[a for _, a in pairs] + dropped,
+            claimed=claimed,
+            dropped=[a for _, a in pairs] + additions + dropped,
         )
     if clarified is None:
-        # The note is gone (soft-deleted). The questions cannot be answered onto it, and
-        # the state is already back to `running`, so nothing holds the note's live slot.
+        # The note is gone (soft-deleted). Nothing can be appended to it, and a turn that
+        # claimed the thread has already put it back in `running`, so nothing holds the
+        # note's live slot.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
         return OwnerReply(
             answered=pairs,
             unanswered=unanswered,
             clarified=False,
             note_moved=moved,
-            dropped=[a for _, a in pairs] + dropped,
+            claimed=claimed,
+            dropped=[a for _, a in pairs] + additions + dropped,
         )
 
-    if not moved and pairs:
+    if not moved and (pairs or additions):
+        # An `addition` earns the re-stamp on the same grounds an answer does, and they
+        # are the grounds rather than the thread's state: the words were typed INTO this
+        # thread on this turn, so a conversation that had read the note as it stood has
+        # read it as it now stands. The one case where that is thin is an addition onto a
+        # thread the WORKER is mid-pass on — the row has the words and the live pass's
+        # context does not — and it costs nothing today, because the only reader of this
+        # field is the `moved` comparison four lines up. Anything that grows a second
+        # reader (O4's parked-thread edit is the candidate) has to re-derive this.
         with contextlib.suppress(Exception):
             async with scoped_session(maker, ctx) as s:
                 await repo.set_body_sha(s, session_id, note_body_sha(clarified.body))
@@ -682,13 +747,17 @@ async def record_owner_reply(
         answered=len(pairs),
         unanswered=len(unanswered),
         dropped=len(dropped),
+        additions=len(additions),
+        claimed=claimed,
     )
     return OwnerReply(
         answered=pairs,
         unanswered=unanswered,
-        clarified=bool(pairs),
+        clarified=bool(pairs or additions),
         note_moved=moved,
+        claimed=claimed,
         dropped=dropped,
+        additions=additions,
     )
 
 
@@ -698,17 +767,22 @@ def _pair(
     prose: str,
     *,
     session_id: str,
-) -> tuple[dict[str, str], list[str]]:
-    """Which open question each part of one reply answers, keyed by question id — and
-    what of the owner's words it could NOT place.
+) -> tuple[dict[str, str], list[str], str]:
+    """Where each part of one reply goes: which open question it answers (keyed by
+    question id), what could NOT be placed, and what becomes an unprompted ADDITION to
+    the note.
 
-    The second element is the load-bearing addition (R3's second review, finding 2).
-    Three of the four rules below DROP something the owner said, and a dropped sentence
-    reaches no note: the reply turn's `assert_fact` is bound on "his words became note
-    text", so the function that decides which words did has to report which did not.
-    Returning it beats re-deriving it at the call site, which would be the same rules
-    written twice. It does NOT cover what never arrived here — the structured list is
-    capped before this call, and `answers_over_cap` is that half.
+    The second element is the load-bearing addition of R3's second review (finding 2):
+    a dropped sentence reaches no note, and the reply turn's `assert_fact` is bound on
+    "his words became note text", so the function that decides which words did has to
+    report which did not. Returning it beats re-deriving it at the call site, which
+    would be the same rules written twice. It does NOT cover what never arrived here —
+    the structured list is capped before this call, and `answers_over_cap` is that half.
+
+    The THIRD element is O16 decided (option 1). Prose the rules below cannot pair used
+    to be a loss to report; migration 0203 gives it a block of its own — the owner's
+    words, no question — so it is now a place to put it. At most one per turn: one send
+    carries one box of typed text.
 
     Four rules, and each is there because the alternative writes a sentence into the
     owner's own note that nobody said — or loses one without saying so:
@@ -725,9 +799,12 @@ def _pair(
     - **A REPEATED question id keeps the last answer and drops the earlier one**, which
       is the rule an over-eager block or a double-filled form produces. Last-writer-wins
       is right (a re-send is a correction); reporting the loser is what makes it honest.
-    - **Free text beside ANY structured answer files nothing.** It rides the turn as the
-      owner's words (`owner_turn_text`) and goes into `dropped`, so `owner_reply_notice`
-      tells the agent he said something that reached no note.
+    - **Free text beside ANY structured answer is an ADDITION, not an answer.** It is
+      not paired with a question the owner was not answering with it — that mispairing is
+      what the rule has always been about — and since 0203 not pairing it no longer means
+      losing it: it lands on the note as his own unprompted words, and the note re-ingests
+      with it. ⟲ This rule used to end "files nothing … goes into `dropped`", which was
+      the O16 gap being reported rather than fixed.
 
     ⟲ **That last rule used to fire only on a COMPLETE structured set; beside a PARTIAL
     one the prose answered the oldest question the taps left open.** R1c wrote that rule
@@ -739,9 +816,10 @@ def _pair(
     medication called?" — permanently, searchably, with the clarification eraser as the
     only undo. **A block that pairs an answer with the wrong question is a wrong sentence
     in the owner's own corpus, not a cosmetic slip** (`asktools.py:35-37`), so this
-    refuses to guess, which is the same choice R3 made four times over. The cost is that
-    a typed aside beside one tap now lands nowhere durable — the O16 gap, reported rather
-    than papered over, and the owner's own note is how such a sentence lands.
+    refuses to guess, which is the same choice R3 made four times over. ⟲ That paragraph
+    used to end "the cost is that a typed aside beside one tap now lands nowhere durable
+    — the O16 gap". The refusal to GUESS stands; the cost is paid off, because the aside
+    lands as an addition instead of as nothing.
     """
     by_id = {q.id: q for q in open_set}
     answered: dict[str, str] = {}
@@ -769,6 +847,7 @@ def _pair(
             )
             dropped.append(answered[question_id])
         answered[question_id] = answer
+    addition = ""
     if prose:
         # Keyed on `structured`, not on `answered`: a send whose every structured answer
         # named a closed question still came from a block the owner was typing beside, so
@@ -780,12 +859,13 @@ def _pair(
         if oldest_open is not None:
             answered[oldest_open.id] = prose
         else:
-            # The designed send of §3b I7, not a malformed one: the block carried the
-            # answers, and the free text in the box beside it is a sentence about the
-            # note that no question is open for. It stands as chat and lands nowhere
-            # durable, which is exactly what the turn's write verbs must be told.
-            dropped.append(prose)
-    return answered, dropped
+            # Either the designed send of §3b I7 (the block carried the answers and this
+            # is the sentence typed beside them), or a thread with no open question at all
+            # — the owner coming back to a note he saved to say one more thing. Both are
+            # the same shape: words about the note that answer nothing, which is exactly
+            # what an `addition` block holds.
+            addition = prose
+    return answered, dropped, addition
 
 
 def owner_words_reached_note(reply: OwnerReply | None) -> bool:
@@ -797,22 +877,25 @@ def owner_words_reached_note(reply: OwnerReply | None) -> bool:
     owner's words became note text", in three ways that all commit a fact citing text
     that exists nowhere:
 
-    - the DESIGNED send (§3b I7). One send carries the structured answers plus whatever
-      free text is in the box. Beside any structured answer `_pair` drops the prose,
-      because it is not an answer to any question the block left open and
-      `note_clarifications.question` is NOT NULL (the O16 gap). The thread was
-      `waiting_on_owner`, the owner typed "also Dana moved to 412 Oak St", the agent
-      reads it on the turn (`owner_turn_text`) — and the note never says it;
-    - `append_failed` and the soft-deleted note. The thread was waiting, the block did
-      not land, `clarified` is False;
+    - ⟲ the DESIGNED send (§3b I7) was the first of them and is no longer one. One send
+      carries the structured answers plus whatever free text is in the box; `_pair` still
+      refuses to pair that prose with a question the owner was not answering with it, but
+      since 0203 not pairing it files an `addition` instead of dropping it, so the note
+      DOES say it and the turn keeps its verbs. What remains in `dropped` is an ANSWER
+      that could not be placed — a stale question id, a repeated one, one past the cap —
+      and no block shape can hold an answer to a question nobody can name;
+    - `append_failed` and the soft-deleted note. The block did not land, `clarified` is
+      False;
     - an `owner_authored=False` turn (a deferred-tool outcome, a proposal enact).
-      `record_owner_reply` returns before `claim_waiting`, so the state still reads
-      `waiting_on_owner` while nothing at all was appended.
+      `record_owner_reply` returns before it reads the conversation at all, so nothing was
+      appended;
+    - a reply that lost the race for a question set another reply had already claimed.
 
-    So the verb is bound to the OUTCOME: a reply that landed at least one block and
-    dropped none of the owner's words. Everything else — no reply object at all (not a
-    note conversation, not waiting, not owner-authored, an empty message), a reply whose
-    blocks did not land, a reply that dropped a sentence — narrows.
+    So the verb is bound to the OUTCOME: a reply that landed at least one block — an
+    answer or an unprompted addition — and dropped none of the owner's words. Everything
+    else — no reply object at all (not a note conversation, no conversation row, not
+    owner-authored, an empty message), a reply whose blocks did not land, a reply that
+    dropped an answer — narrows.
 
     Both halves matter and the conjunction is why: `clarified` alone says SOMETHING
     landed while a sentence went nowhere, and an empty `dropped` alone is true of a turn
@@ -840,16 +923,21 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
     **"I can record that."** ⟲ Added by R3's second review, finding 2, and the reason is
     that the turn's write verbs now turn on exactly this: `assert_fact` is bound only
     when every word the owner said became note text (`owner_words_reached_note`). Words
-    that did not land are the `dropped` list, and the agent is told about them SPECIFICALLY
-    — because the commonest way they arise is the designed send of §3b I7, where the
-    structured answers land and the prose beside them does not. The sentence names the
-    three ways rather than only that one: R3's third review found the other two (a
-    repeated question id, whose earlier answer is overwritten, and an answer past
-    `MAX_ANSWERS`), and a notice that gave the wrong reason for a real loss would have
-    the agent telling Jeff something untrue about his own words. The agent reads that
-    prose on its turn (`owner_turn_text`) and must not believe it can record a fact out
-    of it: the note has no such text, so the next unattended pass's reading does not
-    restate it and the sweep retracts it.
+    that did not land are the `dropped` list, and the agent is told about them
+    SPECIFICALLY, because a notice that gave the wrong reason for a real loss would have
+    the agent telling Jeff something untrue about his own words. ⟲ The commonest way that
+    list used to fill — typed prose beside a tap — is now an `addition` block, so the
+    sentence no longer offers "it answered no question you had asked" as a reason; what
+    is left is an ANSWER that could not be placed (a stale question id, a repeated one,
+    one past the cap).
+
+    **"He only ever answers me."** The fourth thing, and O16's whole point: Jeff can now
+    open a note and say something nobody asked for, on a thread that asked nothing and on
+    one that asked three things. Those words are on the note (`additions`), which is why
+    the turn holds its write verbs at all — so the notice says they are there and that
+    they answer no question, and leaves what they MEAN to the agent. Without it a
+    correction typed into a settled thread reads as small talk beside a note that has
+    silently changed under the reading.
 
     Framed as DATA about the turn, in the voice `api/agent.py`'s other server-composed
     preambles use: it reports what the owner did, and leaves what to do about it to the
@@ -862,9 +950,9 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
         # branch below, which is "none of it landed" and reads very differently.
         lost = "; ".join(f"{w!r}" for w in reply.dropped)
         parts.append(
-            "(Some of what Jeff said on this turn did NOT reach the note — it answered"
-            " no question you had asked, or a later answer replaced it, or it was past"
-            f" the cap on one send: {lost}. It exists in this thread and"
+            "(Some of what Jeff said on this turn did NOT reach the note — it answered a"
+            " question that is no longer open, or a later answer replaced it, or it was"
+            f" past the cap on one send: {lost}. It exists in this thread and"
             " nowhere else, so you cannot record a fact from it — the note has no such"
             " text, and the next pass over the note would retract anything you wrote out"
             " of it. Tell him it is not recorded and that a note of his own (or an answer"
@@ -877,6 +965,21 @@ def owner_reply_notice(reply: OwnerReply | None) -> str:
             " would retract anything you wrote out of it. Tell him it is not recorded and"
             " that a note of his own, or an answer to a question you ask now, is how it"
             " lands.)"
+        )
+    if reply.additions and reply.clarified:
+        added = "; ".join(f"{w!r}" for w in reply.additions)
+        # DATA about the turn, and deliberately not an instruction about what to do with
+        # it: whether this corrects something on file, adds something new or says nothing
+        # recordable at all is the agent's reading to make, with the same verbs and the
+        # same rules it has on any other reply turn. What the agent cannot work out for
+        # itself is that the sentence is now ON THE NOTE — the turn text alone reads like
+        # chat — and that is the whole of what this says.
+        parts.append(
+            "(Jeff added this to the note himself — nothing you asked, his own words,"
+            f" appended to the note and now part of what it says: {added}. The note is"
+            " being read again with it, so anything you record from it has text behind"
+            " it. If it contradicts something already on file, that is him correcting"
+            " it.)"
         )
     if reply.answered and not reply.clarified:
         given = "; ".join(f"{q!r} — he answered {a!r}" for q, a in reply.answered)
@@ -1074,11 +1177,21 @@ def owner_turn_text(
     that same string is what lands on the NOTE — so every value this branch can render is
     either flattened or sanitised. Unreachable from the PWA either way; the endpoint is
     reachable by anything holding the owner's token."""
-    # Sanitised only where a block could read this turn back as answers: a reply the note
-    # thread filed against (`reply`), or a send carrying structured answers. An ordinary
-    # follow-up in a settled thread has no open set above it and is left verbatim — which
-    # is what the PWA's mirror does too, so the bubble and the persisted turn agree.
-    if reply is None and not answers:
+    # Sanitised only where a block could read this turn back as answers: a send carrying
+    # structured answers, or a reply that PAIRED something (the prose-only degrade path,
+    # where the typed words are themselves an answer and the block will show them as one).
+    # An ordinary follow-up in a thread with no open question is left verbatim — which is
+    # what the PWA's mirror does too (`useFullBrain` calls `ownerTurnText` only when the
+    # turn has answers or an open ask), so the bubble and the persisted turn agree.
+    #
+    # ⟲ The condition used to be `reply is None and not answers`, and "a reply exists"
+    # stopped meaning "this turn answered something" when 0203 gave an unprompted addition
+    # a reply object of its own. Left as it was, an addition-only turn would have been
+    # stripped here and not there, which is the bubble/transcript disagreement R3f's
+    # fourth review found from the other side. The NOTE is safe either way: the sentence
+    # that becomes an `addition` block is sanitised in `record_owner_reply`, at the source,
+    # for the reason finding 3a gives.
+    if not answers and not (reply is not None and reply.answered):
         return message
     safe = _strip_pair_labels(message)
     if not answers:
@@ -1113,7 +1226,10 @@ async def close_owner_reply(
     beside it.
 
     `reopened` says whether THIS turn moved the thread `waiting_on_owner -> running`,
-    which is exactly `record_owner_reply` returning an `OwnerReply`. It is required, and
+    which is `OwnerReply.claimed` — ⟲ NOT "`record_owner_reply` returned an `OwnerReply`",
+    which it was until 0203 gave an unprompted addition a reply object of its own. Such a
+    turn appends a block to a thread that is settled (or one the worker is mid-pass on)
+    and claims nothing, so it must end nothing. It is required, and
     a `running` state is not a substitute for it: a conversation is `running` for the
     whole of the worker's unattended pass — up to `NOTE_TURN_WALL_CLOCK`, 30 minutes —
     and `/chat`'s busy guard counts only the API's own live turns, so nothing stops the

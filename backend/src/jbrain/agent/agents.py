@@ -531,10 +531,12 @@ NOTE_INGEST_UNATTENDED_TOOLS: frozenset[str] = frozenset(
 #   reading the sweep is derived from, which is the overlap R3 removed (see the unattended
 #   set above). A reply turn that HAS re-read the whole note ends with `close_reading` too,
 #   and that is what sweeps. It is in this set CONDITIONALLY, and the condition is the
-#   turn's OUTCOME rather than anything about the note: `narrow_for_unprompted_reply` takes
+#   turn's OUTCOME rather than anything about the note: `narrow_for_unlanded_reply` takes
 #   it back off a reply whose words did not land on the note as source text
 #   (`clarify.owner_words_reached_note`), because a fact with no source text is one the
-#   next pass retracts.
+#   next pass retracts. Since 0203 that is the residue — an answer that could not be
+#   placed, or an append that failed — and no longer the ordinary unprompted reply, whose
+#   words become an `addition` block on the note like any answer.
 # - `correct_fact` force-supersedes and PINS (D11). Unattended, the only voice in the room
 #   is the note, and a note that talks its way into overriding the graph past the arbiter's
 #   own confidence guards is plan risk 1 entire. That authority belongs to a turn the owner
@@ -632,7 +634,7 @@ NOTE_GRAPH_WRITE_TOOLS: frozenset[str] = frozenset(
 )
 
 # The write verbs a reply turn holds only while the owner's words on that turn BECAME THE
-# NOTE'S TEXT (`clarify.owner_words_reached_note`). `narrow_for_unprompted_reply`
+# NOTE'S TEXT (`clarify.owner_words_reached_note`). `narrow_for_unlanded_reply`
 # subtracts exactly these, and its docstring is the argument; the short version is that
 # `assert_fact` on a turn whose words the note never received writes a row with no source
 # text anywhere, which the next unattended pass then retracts.
@@ -1089,7 +1091,7 @@ def narrow_for_emr(profile: AgentProfile) -> AgentProfile:
     return replace(profile, tools=profile.tools - NOTE_GRAPH_WRITE_TOOLS)
 
 
-def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
+def narrow_for_unlanded_reply(profile: AgentProfile) -> AgentProfile:
     """Subtract `assert_fact` from a reply turn whose words did not become the note's own
     text (`clarify.owner_words_reached_note`). The other narrowing of the on-reply
     widening, applied on the same seam and for a reason of the same kind: a write the
@@ -1098,6 +1100,14 @@ def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
     ⟲ This line used to say "whose thread is NOT `waiting_on_owner`", which the ⟲ twelve
     lines down refutes — and a ⟲ correcting the summary a reader skims and a signature
     hover shows is a ⟲ nobody reads in time (R3's third review).
+
+    ⟲ **And it was called `narrow_for_unprompted_reply` until O16 was decided, which by
+    then named the wrong set twice over.** An unprompted reply is now the case that LANDS:
+    migration 0203 gives the owner's unasked-for words a block of their own, so he can
+    open a settled note thread, say "actually the dentist is Dr. Ashcote", and have that
+    sentence become the note's text — which is what makes the write verbs on that turn
+    legitimate rather than what takes them away. What is left here is the turn whose words
+    reached NO note, and the name says that now.
 
     **The premise is the founding one — notes are the sole sources of truth.** A reply
     into a WAITING thread is an ANSWER: `clarify.record_owner_reply` appends it to the
@@ -1108,18 +1118,18 @@ def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
 
     ⟲ **And "a reply into a waiting thread" is not the test — "his words landed" is**
     (R3's second review). The first round keyed the caller on the thread's STATE, and the
-    two sets differ: with a complete structured set the designed send's free text is
-    DROPPED by `_pair` (`note_clarifications.question` is NOT NULL, so an unprompted
-    block has no shape — the O16 gap), an append can fail, and an `owner_authored=False`
-    turn returns before `claim_waiting` with the state still reading `waiting_on_owner`.
-    On each of those the thread was waiting and the note still received nothing. The
-    caller now keys on `clarify.owner_words_reached_note`, i.e. on what
-    `record_owner_reply` DID, which is the invariant rather than a proxy for it.
+    two sets differ: an append can fail, a reply can lose the race for a question set, and
+    an `owner_authored=False` turn returns before anything is appended at all. On each of
+    those the thread was waiting and the note still received nothing. The caller keys on
+    `clarify.owner_words_reached_note`, i.e. on what `record_owner_reply` DID, which is
+    the invariant rather than a proxy for it. (The designed send's free text used to be a
+    fourth case and is not one since 0203 — it lands as an `addition`.)
 
-    On any turn where they did not land, D6 has no shape for them:
-    `note_clarifications.question` is `NOT NULL` and non-blank in Postgres, so there is
-    no unprompted block. The owner's words reach the note NOWHERE. What `assert_fact`
-    would then commit is a row that:
+    What is left when they did not land is an ANSWER that could not be placed: one naming
+    a question the open set does not carry, one a later answer replaced, one past
+    `MAX_ANSWERS`, or a whole reply whose append failed. No block shape holds those — an
+    answer to a question nobody can name is not an addition — so the owner's words reach
+    the note NOWHERE. What `assert_fact` would then commit is a row that:
 
     - the sweep retracts on the note's next unattended pass — `note_ingest` and
       `note_ingest_reply` are ONE producer sharing one claim (`analysis/settle_owner.py`),
@@ -1145,10 +1155,11 @@ def narrow_for_unprompted_reply(profile: AgentProfile) -> AgentProfile:
 
     What the agent must do with the fact it just learned is tell Jeff it cannot record it
     here and that a note — or an answer to an open question — is how it lands; it is told
-    so on the turn as well (`clarify.owner_reply_notice`). This removes power rather than
-    adding it and invents no data shape; the principled fix, giving unprompted owner text
-    a home on the note, needs a shape `note_clarifications` does not have and is O16 in
-    `docs/plans/AGENT_INGEST_REWRITE.md`.
+    so on the turn as well (`clarify.owner_reply_notice`). ⟲ This used to close by naming
+    the principled fix as owed: "giving unprompted owner text a home on the note needs a
+    shape `note_clarifications` does not have, and is O16". That shape exists (migration
+    0203), so the principled fix is what the ordinary path now does and this narrowing has
+    shrunk to the residue it always should have been.
 
     The caller applies it AFTER `record_owner_reply` (`api/agent.py`), which is the
     earliest point the outcome exists: `/chat` resolves the profile before that call, and

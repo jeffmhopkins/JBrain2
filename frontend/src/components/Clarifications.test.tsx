@@ -17,6 +17,7 @@ afterEach(() => vi.clearAllMocks());
 const block = (over: Partial<ClarificationOut> = {}): ClarificationOut => ({
   id: "b1",
   seq: 1,
+  kind: "answer",
   question: "Which Sarah?",
   answer: "my sister — the door code is 4417",
   created_at: "2026-09-01T10:00:00Z",
@@ -36,7 +37,7 @@ describe("the D6 eraser", () => {
     const onErased = vi.fn();
     render(<Clarifications noteId="n1" onErased={onErased} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Answers you gave/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /What you've added/ }));
     expect(screen.getByText("my sister — the door code is 4417")).toBeInTheDocument();
 
     // Destructive, so it takes the app's tap-again confirm — and the armed label spells
@@ -49,6 +50,32 @@ describe("the D6 eraser", () => {
     // Gone from the panel, and the body above updates without a second fetch.
     await waitFor(() => expect(screen.queryByText("my sister — the door code is 4417")).toBeNull());
     expect(onErased).toHaveBeenCalledWith("Ran the 10k.");
+  });
+
+  it("labels an unprompted addition instead of printing a null question", async () => {
+    // Backend 0203: an `addition` has no question, because nobody asked. A row that
+    // rendered `block.question` unconditionally would print "null" into a list of the
+    // owner's own sentences — and, worse, an addition would read as the answer to
+    // whatever question sits above it.
+    listClarifications.mockResolvedValue([
+      block(),
+      block({
+        id: "b2",
+        seq: 2,
+        kind: "addition",
+        question: null,
+        answer: "actually the dentist is Dr. Ashcote",
+      }),
+    ]);
+    render(<Clarifications noteId="n1" onErased={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /What you've added/ }));
+    expect(screen.getByText("actually the dentist is Dr. Ashcote")).toBeInTheDocument();
+    expect(screen.getByText("you added")).toBeInTheDocument();
+    expect(screen.queryByText("null")).toBeNull();
+    // Both shapes are erasable — an addition is the owner's own words on the note just
+    // as an answer is, and a secret can be typed into either.
+    expect(screen.getAllByRole("button", { name: "erase" })).toHaveLength(2);
   });
 
   it("renders nothing for a note that was never asked about", async () => {

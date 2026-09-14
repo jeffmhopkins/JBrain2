@@ -5,8 +5,8 @@
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { Markdown } from "../agent/markdown";
-import type { SearchResult } from "../api/client";
-import { attachmentUrl } from "../api/client";
+import type { NoteThreadOut, SearchResult } from "../api/client";
+import { api, attachmentUrl } from "../api/client";
 import { AnalysisTab } from "../components/AnalysisTab";
 import { Clarifications } from "../components/Clarifications";
 import { fmtBytes } from "../components/ImageExtracts";
@@ -82,6 +82,66 @@ function BodyParagraphs({ body }: { body: string }) {
     <div className="note-view-body">
       <Markdown text={body} />
     </div>
+  );
+}
+
+/** "Add a thought" — the door from a note into its own conversation (O16 of
+ * `docs/plans/AGENT_INGEST_REWRITE.md`).
+ *
+ * The owner has no terminal and, until this, no way to say anything about a note unless
+ * the agent happened to be ASKING: a thread was reachable only from a stream row's ask
+ * chip, which appears only while the thread waits. The moment he most wants to speak —
+ * the pass has finished, it recorded a pile of facts, one of them is wrong, and nothing
+ * is prompting him — was the one moment the thread had no door. This is the door, and
+ * what he types behind it is appended to the note as his own words and read again with
+ * it (backend migration 0203).
+ *
+ * Absent when the note has no conversation (captured seconds ago, ingest still pending)
+ * and when the lookup fails: an affordance that leads nowhere is worse than none, and
+ * the note screen must read exactly as before for a note the box has not got to yet.
+ *
+ * The label follows the thread's state, because the two are genuinely different errands:
+ * a waiting thread is asking him something and the composer will show the question block
+ * above it. */
+function AddThoughtButton({
+  noteId,
+  onOpenThread,
+}: {
+  noteId: string | null;
+  onOpenThread: (sessionId: string, agent: string) => void;
+}) {
+  const [thread, setThread] = useState<NoteThreadOut | null>(null);
+
+  useEffect(() => {
+    if (noteId === null) return;
+    let stale = false;
+    void api
+      .noteThread(noteId)
+      .then((found) => {
+        if (!stale) setThread(found);
+      })
+      .catch(() => {
+        // Silent: a note with no thread is the ordinary case this returns null for, and
+        // a failure is indistinguishable from it as far as the screen is concerned.
+      });
+    return () => {
+      stale = true;
+    };
+  }, [noteId]);
+
+  if (thread === null) return null;
+  const waiting = thread.state === "waiting_on_owner";
+  return (
+    <button
+      type="button"
+      className="note-thought"
+      onClick={() => onOpenThread(thread.session_id, thread.agent)}
+    >
+      {waiting ? "Answer what it asked" : "Add a thought"}
+      <span className="note-thought-hint">
+        {waiting ? "it's waiting on you" : "corrections and second thoughts — it goes on the note"}
+      </span>
+    </button>
   );
 }
 
@@ -278,6 +338,9 @@ interface NoteScreenProps {
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
   /** Analysis-tab entity chips open the entity layer above this one. */
   onOpenEntity: (entityId: string) => void;
+  /** Open this note's conversation — the "add a thought" door (O16). Optional the way
+   * the stream's ask chip is: no handler, no affordance. */
+  onOpenThread?: ((sessionId: string, agent: string) => void) | undefined;
 }
 
 export function NoteScreen({
@@ -291,6 +354,7 @@ export function NoteScreen({
   onAddAttachment,
   onRemoveAttachment,
   onOpenEntity,
+  onOpenThread,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
   // Analysis is the most useful surface once a note exists, so it opens first;
@@ -353,7 +417,9 @@ export function NoteScreen({
           >
             <span
               className="domain-dot"
-              style={{ background: DOMAIN_COLOR[view.domain] ?? "var(--steel)" }}
+              style={{
+                background: DOMAIN_COLOR[view.domain] ?? "var(--steel)",
+              }}
             />
             {DOMAIN_TITLE[view.domain] ?? view.domain}
             {view.destination ? ` → ${view.destination}` : ""}
@@ -365,7 +431,11 @@ export function NoteScreen({
               day: "numeric",
               year: "numeric",
             })}{" "}
-            · {view.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+            ·{" "}
+            {view.createdAt.toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
           </span>
           <IngestChip item={{ ...view, attachments: view.attachments ?? [] }} />
           {view.provenance === "agent" && (
@@ -461,6 +531,12 @@ export function NoteScreen({
             onOpenEntity={onOpenEntity}
           />
         )}
+        {/* Outside the tab switch, because the tab he NOTICES a wrong fact on is
+            Analysis — which is also the tab this screen opens on — and the tab his
+            words end up on is Note. A note-level action, like the ⋯ menu. */}
+        {onOpenThread !== undefined && (
+          <AddThoughtButton noteId={noteId} onOpenThread={onOpenThread} />
+        )}
       </div>
 
       {menuOpen && noteId !== null && (
@@ -480,7 +556,11 @@ export function NoteScreen({
             className="sheet-action"
             onClick={() => {
               setMenuOpen(false);
-              onMove({ id: noteId, domain: view.domain, destination: view.destination });
+              onMove({
+                id: noteId,
+                domain: view.domain,
+                destination: view.destination,
+              });
             }}
           >
             move domain

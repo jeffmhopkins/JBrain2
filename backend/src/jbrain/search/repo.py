@@ -32,7 +32,8 @@ _SELECT = """
     JOIN app.notes n ON n.id = c.note_id
     LEFT JOIN LATERAL (
         SELECT json_agg(json_build_object(
-                   'question', k.question, 'answer', k.answer, 'created_at', k.created_at
+                   'kind', k.kind, 'question', k.question,
+                   'answer', k.answer, 'created_at', k.created_at
                ) ORDER BY k.seq) AS blocks
         FROM app.note_clarifications k WHERE k.note_id = n.id
     ) cl ON true
@@ -129,6 +130,10 @@ def _blocks(raw: str) -> tuple[NoteClarification, ...]:
     """
     return tuple(
         NoteClarification(
+            # `kind` rides along because `clarification_block` renders the two shapes
+            # differently (0203) — a preview built without it would show an unprompted
+            # addition as a Q/A pair with no question.
+            kind=b["kind"],
             question=b["question"],
             answer=b["answer"],
             created_at=datetime.fromisoformat(b["created_at"]),

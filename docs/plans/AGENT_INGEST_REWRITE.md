@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-14 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-14 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️ R7✅
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -733,18 +733,27 @@ correct.
 
 ⟲ **And only on a reply turn whose words LANDED ON THE NOTE** (R3's review, re-keyed by
 its second round). The set above is the turn's ceiling;
-`agents.narrow_for_unprompted_reply` takes `assert_fact` back off otherwise. The reason is
-the founding premise: only text that reaches the note is a source of truth (D6 pairs a
-question with an answer, and `note_clarifications.question` is NOT NULL), so a fact
+`agents.narrow_for_unlanded_reply` takes `assert_fact` back off otherwise. The reason is
+the founding premise: only text that reaches the note is a source of truth, so a fact
 asserted on any other reply turn cites text that exists nowhere, and the note's next
 unattended pass — one producer, one claim — retracts it.
+
+⟲⟲ **And the set of "other reply turns" has SHRUNK to a residue, because O16 is decided
+(option 1) and built.** The clause this paragraph used to carry — "D6 pairs a question with
+an answer, and `note_clarifications.question` is NOT NULL" — is what made an unprompted
+reply unlandable, and migration 0203 removes it: such a reply files an `addition` block, so
+its words ARE the note's text and the ceiling above is what it holds. What still fails the
+predicate is an ANSWER no block shape can hold — one naming a question that is not open,
+one a later answer replaced, one past the cap — and an append that failed. Hence the
+function's name: it is about words that did not LAND, not about words nobody asked for.
 
 ⟲ **The first round keyed that on the thread being `waiting_on_owner` and applied it from
 `clarify.reply_profile_for_session`, before `record_owner_reply` claimed the thread. That
 is a PROXY and it leaks**, three ways, each of them a waiting turn on which the note
 receives nothing: I7's DESIGNED send carries the structured answers plus whatever free text
-is in the box and `_pair` drops the prose when the structured set is complete (the O16 gap,
-and this is the ordinary case rather than a failure); an `append_failed` or soft-deleted
+is in the box and `_pair` used to drop the prose (the O16 gap, and this was the ordinary
+case rather than a failure — 0203 makes that prose an `addition` block, so this leak is
+closed at the source rather than by the narrowing); an `append_failed` or soft-deleted
 note leaves `clarified` False with the verb still bound; and an `owner_authored=False` turn
 (a deferred-tool outcome, a proposal enact) returns before `claim_waiting`, so the state
 still reads `waiting_on_owner`. The narrowing is now keyed on `record_owner_reply`'s own
@@ -770,7 +779,8 @@ note's chunks that never asks whether the quoted line supports the value — so 
 could quote a real line, carry a value the owner had only typed in the thread, and commit
 active + pinned at confidence 1.0. Same fix, same condition, same place it is read
 (`replytools.close_reading_tool` passes it into the writer); the UNPINNED row the element
-still commits is O16's loss shape, deliberately left open.
+still commits is falsifiable by the next reading, deliberately left open. (It used to be
+called O16's loss shape; since 0203 the turns that reach it are the residue above.)
 
 ⟲ **What the three narrowings enforce is narrow, and it is not an absolute** (R3's fourth
 round, which found the fourth site the absolute was false at). Three rounds of this section
@@ -785,8 +795,9 @@ the turn can repair an address, never open one. `analysis/settle_owner.py` carri
 its residue, and `decide()`'s `insert_pinned` — set on `candidate.correction` and nothing
 else — is why those three gates are all of them.
 
-Refusing the write and telling the owner is the conservative direction; giving unprompted
-text a home on the note is **O16**, open.
+Refusing the write and telling the owner was the conservative direction while unprompted
+text had nowhere to go. It has somewhere now — **O16 is decided (option 1) and built**, see
+§8 — so the refusal covers what is left rather than the ordinary case.
 
 `NOTE_GRAPH_WRITE_TOOLS` (`agents.py:586`, the set W4's two narrowings subtract) becomes
 `{resolve_entity, close_reading, assert_fact, correct_fact, merge_entities}`. Both new
@@ -1203,13 +1214,16 @@ reply").**
    could only ever be an answer. With both on screen it is actively wrong: three questions,
    the owner taps q2 and q3 and types "this note is about Kaiya not me", and that sentence
    is appended to his own note as the answer to *"What's the medication called?"* —
-   permanently, searchably, with the clarification eraser as the only undo. It now rides
-   the turn as his words and goes into `dropped`, so `owner_reply_notice` tells the agent
-   he said something that reached no note. **Free text ALONE still answers the oldest open
-   question**: that is the genuine degrade path for a client that cannot render the block,
-   and it cannot mispair because there is only one thing it could be answering. Refusing to
-   guess is the same choice §3 makes four times over, and the cost — a typed aside beside
-   one tap lands nowhere durable — is the O16 gap, reported rather than papered over.
+   permanently, searchably, with the clarification eraser as the only undo. It rides the
+   turn as his words and is appended to the note as an `addition` block of its own — his
+   words, no question (O16 option 1, migration 0203). **Free text ALONE still answers the
+   oldest open question**: that is the genuine degrade path for a client that cannot render
+   the block, and it cannot mispair because there is only one thing it could be answering.
+   Refusing to GUESS is the same choice §3 makes four times over. ⟲ This used to end "the
+   cost — a typed aside beside one tap lands nowhere durable — is the O16 gap, reported
+   rather than papered over". The refusal to guess stands; the cost is paid off, and
+   `owner_reply_notice` now tells the agent the sentence IS on the note rather than that it
+   reached none.
 
 **Built in R3f.** The draft lives per session on `useFullBrain` (beside the model and
 effort picks, and turn-local like them); `send` narrows it to the OPEN set before filling
@@ -2488,7 +2502,9 @@ chunks and never a check that the quoted line supports the value, so on an
 typed in the thread and mint active + pinned at confidence 1.0 — unsweepable, unsupersedable,
 unreachable by any correction note. It is gated now on the same `ASSERT_FACT not in
 ctx.agent_tools` the empty-address arm uses, read at the reply registry where it is exact.
-The UNPINNED row such an element still commits is O16's loss shape and stays deferred.
+The UNPINNED row such an element still commits stays admitted — falsifiable by the next
+reading. (It was called O16's loss shape here; O16 is decided and built in R7, and what
+reaches this branch since is an answer that could not be placed, not an unprompted one.)
 (6) `dropped` — the list `owner_words_reached_note` reads — was not filled on two paths that
 lose the owner's words: a repeated `question_id` overwrote its predecessor silently, and an
 answer past `MAX_ANSWERS` was cut before `_pair` could account for it (unreachable only by
@@ -2830,6 +2846,23 @@ the owner went looking for a screen of that name and could not find one), or
 so the pre-wipe state is recoverable without a terminal; and the owner told, in the PWA's
 terms, that the first capture after the update is the first note the new system has ever
 seen.
+
+**R7 — the owner can add something nobody asked for. DONE** (O16 decided, option 1).
+Migration 0203 gives `note_clarifications` a second block shape — `kind` (`answer` /
+`addition`) with the CHECK that ties it to `question`, which becomes nullable for the
+addition arm only. `record_owner_reply` stops refusing a thread that is not waiting:
+prose that answers no open question becomes an `addition` in the SAME append as any
+answers, so one turn is still one re-ingest, and `_pair` keeps refusing to guess WHICH
+question a sentence answers. `OwnerReply` gains `additions` and `claimed`; the turn seam's
+`reopened` reads `claimed` rather than "a reply object exists", because an addition lands
+on a settled thread and on one the worker is mid-pass on, and ending the latter is the
+incomplete-ledger sweep the gate exists to prevent. `narrow_for_unprompted_reply` is
+renamed `narrow_for_unlanded_reply` and keeps its job over the residue. Persona v10.
+In the PWA: **Add a thought** on the Note tab over `GET /notes/{id}/thread`, because the
+ask chip only ever appeared while a thread was waiting, and the eraser (now "What you've
+added") renders both shapes. It sits after R6 in this list and before it in no sense — it
+is the answer to a question the owner asked while reading R5's output, not a step R5
+depended on.
 
 **R6 — sign-off on the box.** (4) and (5) of §6's day-one list, confirmed by the owner in
 the thread. The plan archives on this.
@@ -3279,9 +3312,81 @@ the dead end honest and visible instead of silent — which is why this is a rec
 residual rather than a live loss — but no row is retired by any of it.
 
 **O16 — unprompted owner text has no home on the note, so a fact learned from it cannot
-be recorded at all.** *Opened by R3's review, which closed the loss and left the shape
-open. Not decided and deliberately not built: it needs a data shape `note_clarifications`
-does not have, and inventing one is the owner's call.*
+be recorded at all. DECIDED (option 1) and BUILT in R7.** *Opened by R3's review, which
+closed the loss and left the shape open. The owner decided it himself, and in the sentence
+that names the requirement: asked whether he should be able to add a plain thought to a
+note he had already saved —* "Yes, I foresee me adding a note. The AI adding a bunch of
+facts and me having to correct it even though it's not prompting me." *Read the second
+sentence as the requirement: appending text is the easy half; the work was routing
+unprompted text into the CORRECTION path.*
+
+**What shipped, and the four decisions it took.**
+
+1. **The shape: a `kind` discriminator, not a bare nullable column.** Migration 0203 makes
+   `question` nullable and adds `kind` (`answer` / `addition`) with a CHECK that ties them
+   together — an answer has a non-blank question, an addition has none. Nullable alone was
+   the cheaper edit and the wrong one: THREE renderers read `question` (`notes.compose`,
+   the PWA's eraser list, the search leg's composed preview), and a reader that takes a
+   NULL as an absence prints `Q: None` into the owner's own note text. `kind` makes the
+   two shapes nameable and the CHECK makes the pairing a fact of the schema rather than a
+   convention four modules keep separately; the `answer` DEFAULT makes a writer that
+   forgets it fail loudly instead of storing a questionless "answer". `compose` also keeps
+   a belt — a row with no question never renders as a pair — because the search leg builds
+   rows by hand from a `json_agg` and a forgotten field there reaches the note's text.
+2. **What triggers a turn: always, because the turn IS the send.** The addition arrives as
+   an ordinary `/chat` turn in the note's own thread, so there is no "does this look like a
+   correction?" classifier to get wrong and no second machine: the same reply turn, the
+   same `correct_fact` / `merge_entities` / `close_reading`, the same notice channel. The
+   cost is THREE things, not two, and the third is the expensive one. (i) The reply turn
+   itself. (ii) The re-ingest the append enqueues — one per turn, not one per block,
+   because the answers and the addition go in ONE `append_clarifications` call. (iii) **A
+   full unattended `note_converse` pass**, because an addition on a settled thread leaves
+   `claimed` False, so `close_owner_reply` returns None and the state stays `settled` —
+   and `dispatcher` suppresses a pass only on a queued twin or a LIVE conversation, where
+   live means `running` / `waiting_on_owner`. `settled` is neither, so the re-ingest's
+   `note.ingested` opens a pass and the local model re-reads the whole note.
+
+   That third item is load-bearing where the feature is *for*: his correction only reaches
+   the graph because the note is read again. It is pure waste for "thanks!", and it is a
+   whole GPU pass on a one-GPU box — the eraser can remove the text, nothing refunds the
+   pass. An addition is typed by hand so the volume is a handful a week, but budget it as
+   a pass apiece rather than as a turn apiece.
+3. **The PWA is IN, not deferred** (CLAUDE.md #10). A note conversation was reachable only
+   from a stream row's ask chip, which appears only while the thread WAITS — so the moment
+   this feature exists for (the pass finished, it recorded a pile of facts, one is wrong,
+   nothing is prompting him) was the one moment the thread had no door. `GET
+   /notes/{id}/thread` returns the note's conversation whatever state it is in, and the
+   Note tab carries **Add a thought** over it; the eraser lists both shapes.
+4. **Constraint 5 is untouched.** `supersession.decide()` gains no model-facing verb and
+   the model may retire nothing it could not retire before. What the addition changes is
+   the SOURCE TEXT behind a write the reply turn could always make: `correct_fact` at an
+   occupied address, which pins and force-supersedes, and which §3's fourth ⟲ keeps
+   precisely for this repair.
+
+**How it meets `close_reading`'s re-derivation, which is the part that could have stranded
+facts.** An addition is note TEXT, so the next unattended pass reads the note WITH it and
+states what the note says now; a fact the correction removes is simply not restated and the
+sweep releases it, which is the mechanism working rather than being worked around. A fact
+the reply turn writes is restated by that same reading, because the words behind it are on
+the note — which is the whole of what `owner_words_reached_note` was protecting. The
+re-ingest is what makes both true and it is enqueued inside the append's own transaction.
+
+**What it did NOT change.** The claim on a question set is still `claim_waiting`, and only a
+WAITING thread has one — so an addition claims nothing, reopens nothing and ends nothing
+(`OwnerReply.claimed`, which the turn seam's `reopened` now reads). `_pair` still refuses to
+pair prose with a question the owner was not answering with it. And an ANSWER that cannot be
+placed still reaches no note: no block shape holds an answer to a question nobody can name,
+so `dropped` survives with the narrowing over it.
+
+**The residue, named rather than left to be found.** A deliberate re-send of the same words
+after the set is spent lands them a second time as an addition (the note gains a duplicate
+sentence, erasable); a CONCURRENT double-send is still deduplicated by `claim_waiting`. And
+a reply turn on a settled thread settles nothing — `close_owner_reply` writes no state, so
+`settle_conversation` runs no tail — which means a projection the turn's write implies
+(an appointment, a canonical name) refreshes on the re-ingest's pass rather than on the
+turn itself.
+
+*The original entry follows, as the record of what was decided against.*
 
 **The state.** D6 pairs a QUESTION with an ANSWER: `note_clarifications.question` is
 `NOT NULL` and non-blank in Postgres, and `record_owner_reply` appends a block only on a
@@ -3291,7 +3396,8 @@ no note anywhere. Until R3's review the agent could still `assert_fact` on that 
 the row it committed was `active`, unpinned, claimed `['conversation']`, and cited no text
 the note has ever contained: the note's next unattended pass closed a complete reading of a
 note that does not say it and the sweep retracted it, silently. The review's fix removes
-the verb on that turn (`agents.narrow_for_unprompted_reply`) and has the agent say it
+the verb on that turn (`agents.narrow_for_unlanded_reply`, named `narrow_for_unprompted_
+reply` at the time) and has the agent say it
 cannot record it there. **That is a refusal, not a feature** — the owner's sentence is
 still lost, he is just told so.
 
@@ -3341,8 +3447,9 @@ It changes none of the three options below; it raises how often option 3's cost 
    that a finished thread is not a place to record things, which is exactly the kind of
    invisible rule this system is supposed to not have.
 
-**What the refusal actually leaves behind, stated precisely** (R3's third review; a
-description of the residue, not a change to the decision). The refusal covers the two
+**What the refusal left behind, stated precisely** (R3's third review; a description of the
+residue as it stood before R7 built option 1 — an unprompted reply now lands, so what
+reaches these gates is an answer that could not be placed). The refusal covers the two
 verbs that MINT — `assert_fact` and `correct_fact`'s empty-address arm — and, since that
 review, `close_reading`'s correction-note elevation as well. It does not cover
 `correct_fact` at an OCCUPIED address, which is the repair path §3's fourth ⟲ argues for
