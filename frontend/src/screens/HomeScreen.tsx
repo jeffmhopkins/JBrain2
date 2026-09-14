@@ -256,14 +256,24 @@ export function HomeScreen({
     readAloud.feed(String(msgs.length - 1), last.text, !last.streaming);
   }, [fb.messages, convMode, readAloud.available, readAloud.autoPlay, readAloud.feed]);
 
-  // A Tasks run → open its session: flip to the conversation tab that hosts the
+  // A Tasks run (or a staged `owner_prefs` approval, which sits in a note conversation
+  // about no note) → open its session: flip to the conversation tab that hosts the
   // session's persona, then open it by id (the controller suppresses the tab's
   // auto-open of the latest chat until the requested one loads).
   // biome-ignore lint/correctness/useExhaustiveDependencies: fb methods are recreated each render; keying on them would re-fire the handoff.
   useEffect(() => {
     if (!openSession) return;
-    setSeg({ row: "main", mode: modeForAgent(openSession.agent) });
-    fb.requestOpen(openSession.id);
+    const mode = modeForAgent(openSession.agent);
+    setSeg({ row: "main", mode });
+    if (mode === "entry") {
+      // Entry's controller is OFF until a note conversation is open, so `requestOpen`
+      // alone would reach a disabled hook and the surface would stay on the notes list.
+      // The session is the state here — this handoff carries no note id.
+      setEntryNote(null);
+      setEntrySession(openSession.id);
+    } else {
+      fb.requestOpen(openSession.id);
+    }
     fb.setPanel("none");
     onOpenSessionConsumed?.();
   }, [openSession, onOpenSessionConsumed]);

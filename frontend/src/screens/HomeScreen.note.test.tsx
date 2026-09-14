@@ -411,6 +411,37 @@ describe("back, at every level", () => {
   });
 });
 
+describe("a handoff that carries a session and no note", () => {
+  // The review inbox's other row: a staged `owner_prefs` approval lives in a note
+  // conversation but is about no note (`note_id` is null), so it arrives as a session id.
+  // It still belongs on Entry, because that is where note conversations live now.
+  it("opens it on Entry all the same", async () => {
+    render(
+      <HomeScreen
+        notes={controller([ITEM, OTHER])}
+        actions={actions()}
+        onOpenNote={vi.fn()}
+        onOpenNoteById={vi.fn()}
+        onOpenEntity={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenRadio={vi.fn()}
+        onOpenVitals={vi.fn()}
+        fbDeps={threadDeps()}
+        lookupThread={vi.fn(async () => FOUND)}
+        openSession={{ id: "s1", agent: "note_ingest" }}
+        onOpenSessionConsumed={vi.fn()}
+      />,
+    );
+    await screen.findByLabelText("Conversation");
+    await waitFor(() => expect(document.querySelector(".fb-turn0")).toBeInTheDocument());
+    // On ENTRY: the mode row says so, and back returns to the notes list.
+    expect(screen.getByRole("tab", { name: "Entry" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText(OTHER.body)).toBeInTheDocument();
+  });
+});
+
 describe("leaving Entry does not disturb the other tabs", () => {
   // ⟲ The mode row closes Entry's note on every tap, and closing calls `fb.close()`. A
   // Research re-click that REUSES its open empty chat (`startFresh`'s reuse path) has
