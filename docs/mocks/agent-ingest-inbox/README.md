@@ -26,9 +26,10 @@ reviewed:
   deliberately: where a row *lands* is the sibling gate's business
   (`docs/mocks/agent-ingest/`); all this one settles is that the row goes there.
   ⟲ This bullet used to open *"the note screen does not change at all"*. The owner
-  reversed that on **2026-09-14**: the note screen now HOSTS the conversation on a `Thread`
-  tab, so a notes-tab row lands on the note screen. Nothing else here moves — the row is
-  still a redirect and still decides nothing.
+  reversed that on **2026-09-14** and then corrected the correction the same day: the
+  conversation is hosted by **Entry**, whose default view is the notes list, so a notes-tab
+  row drops the card and loads that note's thread into Entry's main view. Nothing else here
+  moves — the row is still a redirect and still decides nothing.
 
 **The wiki tab is unaffected** by the ruling. Those cards are not note ingestion, have no
 thread to redirect to, and keep the two verbs their producers actually file.
