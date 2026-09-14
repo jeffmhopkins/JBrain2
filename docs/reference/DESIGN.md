@@ -977,7 +977,11 @@ becomes a second surface where it happens.
 - **notes** — the ingestion questions and staged approvals waiting on you, **oldest
   first** so the list drains from the top. A row carries the note it came from, what is
   being asked, how long it has waited, how much the agent already committed, and a kind
-  chip (`question` / `approval`). Tapping it **opens the conversation**; there are no
+  chip (`question` / `approval`). Tapping it **opens the conversation**, which since
+  2026-09-14 means **opening the note** — a note screen opens on its own thread, and the
+  note layer stacks above this card so back climbs to the inbox. A row about **no** note
+  (a staged `owner_prefs` approval) still opens its session on the conversation surface,
+  because there is no note to open. There are no
   answer controls, and the wire agrees — `GET /api/review/notes` returns no item id and
   there is no endpoint an inbox row could answer through. Answer chips on the row were
   briefly this variant's headline feature and were removed by the ruling. A conversation

@@ -599,11 +599,15 @@ export function App() {
                 }}
               />
             )}
-            {/* A notes-tab row REDIRECTS into its conversation (D4) — the same handoff
-              a Tasks run makes: drop the card and the launcher so the chat is revealed,
-              leaving a return marker for the back gesture. */}
+            {/* A notes-tab row REDIRECTS into its conversation (D4). ⟲ For a row about a
+              NOTE that is now the note layer, which opens on the note's own thread and
+              stacks ABOVE this card — so back climbs to the inbox rather than needing the
+              card dropped and a return marker left. A row about no note (a staged
+              `owner_prefs` approval) keeps the old handoff: drop the card and the launcher
+              so the chat is revealed, leaving a return marker for the back gesture. */}
             {card === "review" && (
               <ReviewScreen
+                onOpenNote={(noteId) => void openNoteById(noteId)}
                 onOpenConversation={(sessionId, agent) => {
                   setCard(null);
                   setLauncherOpen(false);
