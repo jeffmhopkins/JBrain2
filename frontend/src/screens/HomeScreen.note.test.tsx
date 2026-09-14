@@ -411,6 +411,23 @@ describe("back, at every level", () => {
   });
 });
 
+describe("leaving Entry does not disturb the other tabs", () => {
+  // ⟲ The mode row closes Entry's note on every tap, and closing calls `fb.close()`. A
+  // Research re-click that REUSES its open empty chat (`startFresh`'s reuse path) has
+  // nothing left to re-open it, so an unconditional close blanked a chat that was never a
+  // note's. Closing is a no-op when no note is open.
+  it("re-clicking Research with no note open keeps its chat", async () => {
+    // An EMPTY jerv chat, which is the case `startFresh` reuses in place rather than
+    // replacing — so nothing re-opens it if the re-click also closes it.
+    const jerv = { ...SESSION, id: "j1", title: "Jerv", agent: "jerv", turn_count: 0 };
+    home({ fbDeps: threadDeps({ listSessions: vi.fn(async () => [SESSION, jerv]) }) });
+    await screen.findByLabelText("Conversation");
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
+  });
+});
+
 describe("a proposal staged in a note thread", () => {
   // `prefs_write` is on the `note_ingest` on-reply allowlist and its kind, `owner-prefs`,
   // is not an INLINE_KIND — so the turn draws the NAVIGATIONAL "Review proposal" chip,

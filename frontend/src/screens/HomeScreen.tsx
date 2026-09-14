@@ -184,12 +184,17 @@ export function HomeScreen({
     [fb.close],
   );
   // Back to the notes list — Entry's one way out of a conversation, from the top-left
-  // arrow and from the platform back gesture alike.
+  // arrow and from the platform back gesture alike. A NO-OP when no note is open, because
+  // `fb.close()` would otherwise blank whatever chat the other two tabs have on screen:
+  // the mode row calls this on every tap, and a Research re-click that REUSED its open
+  // empty chat (`startFresh`) would come back to an emptied surface with nothing left to
+  // re-open it.
   const closeNoteConversation = useCallback(() => {
+    if (entryNote === null && entrySession === null) return;
     fb.close();
     setEntryNote(null);
     setEntrySession(null);
-  }, [fb.close]);
+  }, [fb.close, entryNote, entrySession]);
 
   // The review inbox's notes row (and the note screen's own door back into its thread)
   // hands a note id in from outside.
