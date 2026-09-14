@@ -773,7 +773,14 @@ conversation; the back arrow is the way out.
   questions (the mock's own affordance) — the amber open-ask register the
   stream chip and the inbox use, against the neutral Files count beside it,
   and the only thing that says *it is asking you something* while the owner
-  is reading the other two tabs.
+  is reading the other two tabs. The **Proposals panel** mounts here too:
+  `prefs_write` is on the note persona's on-reply allowlist and `owner-prefs`
+  is not an inline kind, so a note turn can draw the navigational *Review
+  proposal* chip, whose only destination is that panel. It pins to this
+  screen's own shell and registers a back layer while open, so Back closes
+  the panel, not the note beneath it. The **Sessions** panel does not: the
+  screen is one note's one thread, and a session picker on it would be a way
+  to navigate to some other note's conversation from inside this one.
 - *Note tab*: the markdown body, the clarification eraser, **and the
   record** — everything the Analysis tab used to show, folded in whole
   under a **`What this note says`** rule. Thread took Analysis's slot;
