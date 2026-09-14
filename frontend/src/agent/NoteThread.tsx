@@ -159,32 +159,41 @@ export function NoteThread({
             <textarea
               ref={inputRef}
               className="composer-input"
-              placeholder="Reply in this note's thread…"
+              placeholder="Reply about this note…"
               value={text}
               onChange={(e) => setText(e.target.value)}
               aria-label="Composer"
             />
             <div className="composer-foot">
-              {fb.busy ? (
-                <button
-                  type="button"
-                  className="icon-btn stop-btn"
-                  aria-label="Stop generating"
-                  onClick={fb.stop}
-                >
-                  <StopIcon size={24} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="icon-btn send-btn"
-                  aria-label="Send"
-                  onClick={send}
-                  disabled={!canSend}
-                >
-                  <SendIcon size={24} />
-                </button>
-              )}
+              {/* The omnibox foot's microcopy line, in this surface's words. It is what
+                  says WHERE a reply goes — the one thing the shipped hand-off got wrong
+                  — and it is the mock's own line. */}
+              <span className="note-thread-note">
+                <span className="note-thread-dot" aria-hidden="true" />
+                replying into this note's thread
+              </span>
+              <div className="foot-icons">
+                {fb.busy ? (
+                  <button
+                    type="button"
+                    className="icon-btn stop-btn"
+                    aria-label="Stop generating"
+                    onClick={fb.stop}
+                  >
+                    <StopIcon size={24} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="icon-btn send-btn"
+                    aria-label="Send"
+                    onClick={send}
+                    disabled={!canSend}
+                  >
+                    <SendIcon size={24} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

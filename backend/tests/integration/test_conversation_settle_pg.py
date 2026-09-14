@@ -282,7 +282,7 @@ async def test_the_settle_stamps_the_reading_and_never_blanks_a_title(
 
     NOT stamping is the failure this closes and it is not cosmetic: with no row
     `Note.analyzed` is false forever, the home stream's lifecycle chip sits permanently
-    amber, the Analysis tab renders "nothing here yet" over a note whose graph is
+    amber, the note screen's record renders "nothing here yet" over a note whose graph is
     written, and the re-run button polls an `analyzed_at` that never moves — the PWA's
     only no-terminal re-analysis lever, spinning (CLAUDE.md #10).
 
@@ -349,7 +349,7 @@ async def test_a_pass_that_asked_a_question_still_stamps_the_note(
     told to record everything it can settle and ask LAST, so the pass that parks on a
     question has read the note and named it. Withholding the stamp from it left
     `Note.analyzed` false, a permanent amber "analyzing…" chip in the home stream, an
-    Analysis tab reading "nothing here yet" over a note whose graph IS written, and a
+    record reading "nothing here yet" over a note whose graph IS written, and a
     re-run button polling an `analyzed_at` that never moves — until the owner got round
     to answering, and forever if he never did (CLAUDE.md #10).
 

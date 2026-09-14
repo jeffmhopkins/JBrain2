@@ -1,6 +1,6 @@
 # Agent-Conversation Ingestion — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-09-11 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5❌superseded
+> **Status:** In progress · **Last verified:** 2026-09-14 · **Waves:** W1✅ W2✅ W3◐ W4◐ W5❌superseded
 >
 > **W5 IS SUPERSEDED by `AGENT_INGEST_REWRITE.md`.** The owner redirected the work to a
 > complete rewrite of ingestion with a wipe of the notes, the graph and the predicate
@@ -86,11 +86,19 @@ the note, writes what it means through tools, and shows you what it did. You cor
 by talking to it. Deterministic code still owns *how* a write lands:
 `supersession.decide()`, the domain floors, span attestation, the projections.
 
-**The note screen is not a surface this plan changes.** A note conversation is the
-ordinary agent conversation — the same loop, memory and chat surface as Full Brain —
-with the note as turn 0. The writes and the clarification asks are tool components
-inside it. There is no Record tab, no as-captured toggle, and no bespoke clarification
-treatment; the GUI work is two components and an inbox that redirects.
+**The note screen grows no bespoke ingest surface.** A note conversation is the
+ordinary agent conversation — the same loop, memory and transcript as Full Brain — with
+the note as turn 0. The writes and the clarification asks are tool components inside it.
+There is no Record tab, no as-captured toggle, and no bespoke clarification treatment.
+
+⟲ **This paragraph used to open "the note screen is not a surface this plan changes", and
+the owner reversed that on 2026-09-14**: *"When I click on the note, it should basically
+open up as a normal agent conversation same as jerv… it shouldn't open in the brain chat.
+It should open up right there in the note entry chat."* The note screen now HOSTS the
+conversation — tabs `Thread · Note · Files`, opening on Thread
+(`docs/mocks/agent-ingest/README.md`, variant A). Everything else in the paragraph stands,
+and is in fact what makes hosting it cheap: the Thread tab mounts the SAME transcript
+component the Full Brain surface does, so this is still not a second ingest rendering.
 
 The model supplies meaning; the engine supplies mechanics. What ratification changed is
 the *posture*: the agent does not hold facts back for approval. It commits its reading
@@ -105,7 +113,7 @@ and makes the write legible, and disagreement is a reply, not a queue.
 | D3 | **Every tool call is visible as a custom tool component inside the conversation**, expandable to what changed — not a note-screen surface. It must render `written · replaced · held · from a photo · failed · truncated · writing…`, with each write's domain named **in words, never colour alone**. Correction is conversational. |
 | D4 | **The inbox becomes two tabs, and it only redirects.** A **notes** tab lists ingestion questions *and pending approvals* waiting on you; tapping opens the conversation. **Nothing is answerable from the inbox** — the conversation is the only place ingestion is decided, or the inbox becomes a second surface where that happens. A **wiki** tab holds findings that never start from a note. |
 | D5 | **Questions live in their note's conversation** — findable from the notes tab, which is the discoverability answer the original "no queue at all" lacked. Still no push and no nagging badge. |
-| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. This is a **storage** decision with no bespoke rendering: the existing note view renders appended text as text, and the note screen does not change. *Shipped as `app.note_clarifications` (0193) composed onto the note's text at read time — never into `notes.body`, which a `PATCH` would overwrite whole.* |
+| D6 | **A note keeps its original body frozen** and gains appended, timestamped clarification blocks as you answer. This is a **storage** decision with no bespoke rendering: the note view renders appended text as text, and D6 adds no surface. (D6 is unchanged by the 2026-09-14 reversal of *where* the conversation lives — the blocks still render as prose on the `Note` tab, with the eraser beneath.) *Shipped as `app.note_clarifications` (0193) composed onto the note's text at read time — never into `notes.body`, which a `PATCH` would overwrite whole.* |
 | D7 | **Re-derivability stays binding.** Clarification blocks are chunks of the same note, so the graph re-derives from notes alone and citations have a real chunk. |
 | D8 | **Unattended, the first pass gets graph tools only.** Nothing outward-facing runs while you are asleep. The full surface unlocks when you reply. |
 | D9 | **EMR import goes through the agent conversation, like a note.** Large imports chunk across several turns. |
@@ -490,8 +498,8 @@ block as one run-on line — as it does every multi-line note, and always has. T
 runs the body through the assistant Markdown renderer (`NoteScreen.tsx` → `agent/markdown.tsx`),
 which makes the blank line a paragraph and the soft newlines `<br>`s, so a block renders as
 designed. `white-space: pre-wrap` on `.note-body` would change how every note in the stream
-renders — a design change, and D6 says the note screen does not change — so nothing was changed
-there. Plain text stays the right block format because it is the only one correct on both.
+renders — a design change D6 does not license (D6 adds no surface of its own) — so nothing was
+changed there. Plain text stays the right block format because it is the only one correct on both.
 
 **W3 — Write tools, chip, tabs, `owner_prefs`.** The tools in `TOOL_SURFACE.md`; the
 "entity modified" chip (~80% shipped — reuse `ToolOutcome.entities`, `StepRow` and

@@ -1,14 +1,27 @@
 # The note screen under the conversation model — frozen body, clarifications, write chips
 
 > **Status: SUPERSEDED — this round was scrapped before the gate.** It was never presented
-> to the owner and will not be merged. **The note screen does not change**: a note
-> conversation is an ordinary agent conversation with the note as turn 0 (plan **D1**), and
-> the agent's graph writes and questions render as **tool components inside that
-> conversation**. Read **`SUPERSEDED.md`** first — it records why, and the two findings that
-> carry forward. Everything below is the round as it stood, kept as the record.
-> **Last verified:** 2026-09-08.
+> to the owner and will not be merged. Read **`SUPERSEDED.md`** first — it records why, and
+> the two findings that carry forward. Everything below is the round as it stood, kept as
+> the record.
+>
+> ⟲ **Its premise is half false since 2026-09-14.** This round was scrapped on the ruling
+> that *"the note screen does not change"*; the owner reversed that, and the note screen is
+> now **Thread · Note · Files**, opening on the conversation
+> (`docs/mocks/agent-ingest/README.md`). What was right, and is what shipped, is that the
+> note screen gets **no bespoke ingest rendering**: the Thread tab mounts the same
+> `AgentTranscript` a jerv chat does, and the Analysis tab's content moved into `Note`
+> unchanged rather than being redesigned into a Record tab. Everything below still stands
+> as a redesign that was not built.
+> **Last verified:** 2026-09-14.
 
-## What is already settled, and therefore not on offer here
+## What was "already settled" here — and is not any more
+
+> ⟲ Everything in this section was reversed on **2026-09-14**. It is kept verbatim because
+> it is the clearest statement of the belief that produced the shipped miss: a note screen
+> with a button that handed the owner off to another surface. The note screen now IS the
+> thread, and a variant that *"gave it a `Thread` tab"* — dismissed two paragraphs down as
+> re-litigating a ratified decision — is what was built.
 
 **The conversation does not live on the note screen.** The authority is
 `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation

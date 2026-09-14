@@ -5219,6 +5219,34 @@ button.small {
   padding-top: 12px;
 }
 
+/* The composer's accent. `--mode` is normally set by the omnibox's active segment; with
+   no segment row it has to be stated, and steel is the Brain register a note
+   conversation belongs to. */
+.note-thread .omnibox {
+  --mode: var(--steel);
+  --mode-tint: var(--steel-tint);
+}
+
+/* The foot's microcopy: where a reply goes — the one thing the shipped hand-off got
+   wrong. `.composer-foot` pushes its children right, so this claims the free space. */
+.note-thread-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: auto;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.note-thread-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+}
+
 /* "What this note says": the former Analysis tab, folded under the note's own text.
    A rule separates the two readings — what you wrote, then what the graph holds
    because of it. */

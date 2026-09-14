@@ -20,12 +20,15 @@ reviewed:
   opens the conversation. The reviewed draft put answer chips in the row; **they are removed.**
   Answering in the inbox *and* in the thread would re-create the second decision surface this
   whole design exists to delete, which outweighs the one-tap drain they bought.
-- **The note screen does not change at all.** A note conversation is an ordinary agent
-  conversation — Full Brain / Jervis — with the note as turn 0 and the agent's writes and
-  clarification asks rendered as custom tool components inside it. The companion note-body mock
-  round was scrapped for that reason. This gate therefore draws the conversation thinly and
+- **The conversation a row opens is an ordinary agent conversation** — Full Brain / Jervis
+  — with the note as turn 0 and the agent's writes and clarification asks rendered as
+  custom tool components inside it. This gate therefore draws the conversation thinly and
   deliberately: where a row *lands* is the sibling gate's business
   (`docs/mocks/agent-ingest/`); all this one settles is that the row goes there.
+  ⟲ This bullet used to open *"the note screen does not change at all"*. The owner
+  reversed that on **2026-09-14**: the note screen now HOSTS the conversation on a `Thread`
+  tab, so a notes-tab row lands on the note screen. Nothing else here moves — the row is
+  still a redirect and still decides nothing.
 
 **The wiki tab is unaffected** by the ruling. Those cards are not note ingestion, have no
 thread to redirect to, and keep the two verbs their producers actually file.

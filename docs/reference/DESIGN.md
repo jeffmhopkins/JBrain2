@@ -733,32 +733,63 @@ never waits: vision runs after sync.
 
 **Note view** (settled in the Phase 2 review; Attachments tab settled in a
 later three-way review — **manifest** won over gallery and inline-viewer
-designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
-**note view layer** (slide-up tree level, swipe-down back) with a
-**Note / Attachments / Analysis tab split**:
+designs; the tab row reworked **2026-09-14** when the owner ruled that a
+note screen IS its conversation): entry-stream bubbles clamp at **3
+lines**; tapping opens the **note view layer** (slide-up tree level) with
+a **Thread / Note / Files tab split**, **opening on Thread**.
 
-- *Note tab*: full markdown body only. No attachment chrome (files live
-  in their own tab) and no action buttons — note actions live in a
+**The tab row and the default are binding** (`docs/mocks/agent-ingest/a-note-thread.html`,
+variant A). Before this the screen opened on `Analysis` — a facts table
+with no transcript — and a note's conversation was reached from home's
+conversation surface through an *Add a thought* button. The owner, having
+used it: *"When I click on the note, it should basically open up as a
+normal agent conversation same as jerv… When I go to do a follow-up, it
+shouldn't open in the brain chat. It should open up right there in the
+note entry chat."* The head + tab row are **pinned above the tab body**,
+because Thread gives the transcript its own scroll box under a pinned
+composer and the way back to the note's text must not be something you
+scroll a conversation to find. **Swipe-down-to-close is off on Thread**
+for the same reason — a downward drag there is reading back through the
+conversation; the back arrow is the way out.
+
+- *Thread tab* (default): **the note's own agent conversation**, rendered
+  with the **shipped transcript** — the same `AgentTranscript` the home
+  conversation surface mounts (`frontend/src/agent/FullBrainSurface.tsx`),
+  so turn 0 is the frozen note, and the violet Thought chip, the steel
+  Worked chip, the live phase line, the step rows and the inert question
+  block are one definition with two hosts. **Never a bespoke ingest
+  view.** Its **composer is inline on the tab** and is the thread's one
+  submit (the §3b contract below, carry strip included); a follow-up is a
+  turn in *this* thread and never navigates to home. The composer has no
+  mode row — on a note screen that would offer to navigate away from the
+  note being read — so it states its own accent (steel, the Brain
+  register) and carries the mock's microcopy, *"replying into this note's
+  thread"*. A note whose first pass has not run says so in the empty
+  state rather than offering a conversation that isn't there. The session
+  is opened by id over `GET /notes/{id}/thread`; it is still one
+  `AgentSession` and still listed on the Full Brain **Chats** panel, so a
+  settled thread stays resumable from the conversations surface too (D1).
+- *Note tab*: the markdown body, the clarification eraser, **and the
+  record** — everything the Analysis tab used to show, folded in whole
+  under a **`What this note says`** rule. Thread took Analysis's slot;
+  its content was not dropped, because the transcript records *decisions*
+  while that table is the *current head* (a value superseded later still
+  reads "written" in the turn that wrote it), and because it carries the
+  only no-terminal re-run controls the box has. No attachment chrome
+  (files live in their own tab) and no action buttons — note actions live in a
   **⋯ menu right-aligned on the domain/date line** (same affordance as
   the attachment rows' ⋯; kept out of the top bar, which stays
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes. At the FOOT OF EVERY TAB, and **only when the note has a
-  thread**, a quiet full-width **"Add a thought"** row (surface-2 card, a
-  `text-3` hint line under the label) that opens the note's own conversation
-  — outside the tab switch deliberately, because the tab he NOTICES a wrong
-  fact on is Analysis (which is also the tab this screen opens on) and the
-  tab his words end up on is Note. The door
-  O16 found missing, since the stream's ask chip appears only while a
-  thread is WAITING and the moment the owner most wants to speak is the one
-  where nothing is asking him. What he types there is appended to the note
-  as his own words and read again with it. On a thread that IS waiting the
-  label reads **"Answer what it asked"** with the hint "it's waiting on
-  you", because that is a different errand. Absent when the note has no
-  conversation (never read, or ingest still pending) and when the lookup
-  fails — a door that leads nowhere is worse than none.
-  On the Note tab, above it and **only when the note has any**, a
+  outbox notes. ⟲ **The "Add a thought" row is gone** (2026-09-14): it
+  existed only because the conversation lived on another surface, and the
+  Thread tab is that door now — one tap, and what he types there is
+  appended to the note as his own words and read again with it, exactly
+  as before. O16's gap (the stream's ask chip appears only while a thread
+  is WAITING, so the moment he most wants to speak had no door) is closed
+  by the tab, not by a button.
+  Above the record and **only when the note has any**, a
   collapsed **"What you've added"** disclosure with a count pill: the note's
   D6 clarification blocks, each with a rose tap-again **erase**. Both block
   shapes are listed — answers he gave, and additions he made unprompted,
@@ -772,9 +803,10 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   (CLAUDE.md #10) that is not a limit the owner can work around. Absent
   entirely on a note that was never asked about and never added to, which is
   nearly every note — so the note screen is unchanged for it, as D6 requires.
-- *Attachments tab* — the **canonical attachment manager** (the editor
-  keeps its quick paperclip for capture-time adds). The tab label carries a
-  count pill. Layout is a **manifest**: a one-line summary
+- *Files tab* (named `Attachments` until 2026-09-14; the mock's word is
+  Files and the tab row has to fit three) — the **canonical attachment
+  manager** (the editor keeps its quick paperclip for capture-time adds).
+  The tab label carries a count pill. Layout is a **manifest**: a one-line summary
   (`N files · total size · how many searchable / indexing / awaiting ocr`),
   then one bordered card of rows — type icon, filename,
   `size · media type` meta line, and a **pipeline status chip** derived
@@ -792,11 +824,13 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   **Image extracts moved out** (settled twice: first a three-way review
   chose inline expansion in the manifest [mock C]; then the Sources-card
   review [decided: **variant B** of three mockups] relocated viewing +
-  the analyze re-run to the **Analysis tab's Sources card**): Attachments
-  is a **pure manifest** again. The status chips stay; rows are **inert**
+  the analyze re-run to the **Sources card**): Files is a **pure
+  manifest** again. The status chips stay; rows are **inert**
   — no caret, no tap expansion, no pdf-hint line; the per-file ⋯ sheet
   (open / remove) is untouched.
-- *Analysis tab* (lights up by phase): generated title + 3-6 tags (P3 —
+- *The record*, `What this note says` on the **Note tab** (the former
+  *Analysis tab*, folded in whole and otherwise unchanged; lights up by
+  phase): generated title + 3-6 tags (P3 —
   pre-P3 the header shows only domain + date, **no title fallback**);
   salient facts with kind badges (measurement/state/event/preference),
   status chips (active / pending-review / **pinned**) and confidence;
@@ -849,10 +883,11 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
 Search results and stream taps open the same surface — this *is* the
 former "note sheet", upgraded.
 
-**Analysis tab + entity pages** (settled in the Phase 3 three-way review —
-**graph-forward** won over a dense dossier and soft cards): the analysis
-tab renders facts as **literal property-graph edges grouped by subject
-node** (`me.blood_pressure → 128/82 mmHg`,
+**The record + entity pages** (settled in the Phase 3 three-way review as
+the *Analysis tab* — **graph-forward** won over a dense dossier and soft
+cards; it is the Note tab's `What this note says` section since
+2026-09-14 and its rendering did not change): it renders facts as
+**literal property-graph edges grouped by subject node** (`me.blood_pressure → 128/82 mmHg`,
 `appt:patel-follow-up.scheduled_time → Sep 2026 ±`), predicate paths in
 monospace; subject headers double as entity navigation. Tapping a fact
 cites back to the **highlighted source words**. The **entity page is a
@@ -1518,14 +1553,16 @@ There is no bespoke ingest view and no second idiom for the same information.
   **amber**, the open-ask register, never rose: rose is the MEDICAL domain and the row
   already wears its domain as a dot. A settled note wears no chip at all; "analyzed" is the
   quiet end state, and only the waiting state earns one.
-- **The chip is the door; the row is not.** Tapping the row opens the NOTE SCREEN, which is
-  the only no-terminal route to the Analysis tab, the attachments, the edit path, the answer
-  eraser and the re-run button. Tapping the chip opens the thread. The note screen itself
-  does not change and gains no tab. The chip is a full **44px box** rather than a small
-  drawing with a bleeding hit area: it shares a **wrapping** row with the attachment links,
-  and an out-of-flow target that reaches a wrapped neighbour takes that neighbour's tap —
-  the same reason the question block's candidates grow their boxes. A near-miss here does
-  not no-op, so the row it costs height is the right trade.
+- **The chip and the row open the same screen.** ⟲ This used to read *"the chip is the
+  door; the row is not"* — the row opened the note screen and the chip opened the thread on
+  the conversation surface. The owner reversed that on **2026-09-14**: *"it shouldn't open
+  in the brain chat. It should open up right there in the note entry chat."* The note screen
+  **does** change and **does** gain a tab; it opens on `Thread`, so a note has one
+  destination and the chip is no longer a second door — it is the label that says why to
+  walk through this one. The chip stays a full **44px box** rather than reverting to a
+  small drawing: it shares a **wrapping** row with the attachment links, and an out-of-flow
+  target that reaches a wrapped neighbour takes that neighbour's tap — the same reason the
+  question block's candidates grow their boxes (`backend/tests/unit/test_tap_targets.py`).
 - **Turn 0 is the note, frozen** — ruled in the note's own domain colour, labelled as THE
   NOTE rather than as something the owner said, and with its injection fence stripped **for
   display only**. The frame is a security property the model must keep seeing whole; the
@@ -1544,7 +1581,10 @@ There is no bespoke ingest view and no second idiom for the same information.
   deliberate exception to the inline-component rule below, where `InlineProposal` posts its
   own outcome: there the enact IS the event, here three answers that each posted would cost
   three turns and three re-reads of the note.
-- **The omnibox send is the one submit**, inside a thread as everywhere else. A carry strip
+- **The composer's send is the one submit**, inside a thread as everywhere else. (On the
+  Thread tab that composer is the tab's own, not the omnibox; the contract and the strip are
+  identical, and the closing sentence about the mode row applies only to the omnibox — the
+  note screen has tabs, not modes, and its way back is the back arrow.) A carry strip
   above the input reads `2 of 3 answered — rides with your next send`, and at zero
   `0 of 3 answered — answer above, or just reply` (the 0-state names both affordances,
   because at that point neither has been used) — the same shape as the calendar handoff's
