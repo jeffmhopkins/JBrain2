@@ -5117,6 +5117,9 @@ button.small {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The head and tab row live in .note-view-chrome above, so this scroller starts at
+     the tab body — its own top gutter would double the chrome's bottom one. */
+  padding-top: 0;
 }
 
 .note-view-head {
@@ -5124,10 +5127,6 @@ button.small {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  /* The scroller is itself the flex column (.screen-body.note-view), so the
-     head and tab bar must not shrink — a tall Analysis tab would otherwise
-     squeeze their height instead of scrolling. */
-  flex-shrink: 0;
 }
 
 .domain-pill {
@@ -5164,8 +5163,8 @@ button.small {
   border: 1px solid var(--border);
   border-radius: var(--r-seg);
   overflow: hidden;
-  /* Keep its height regardless of how tall the tab body grows (see
-     .note-view-head); the sibling .seg-row guards the same way. */
+  /* Keep its height regardless of how tall the chrome column gets; the sibling
+     .seg-row guards the same way. */
   flex: none;
 }
 
@@ -5188,29 +5187,45 @@ button.small {
   margin: 0;
 }
 
-/* "Add a thought": the note screen's door into the note's own conversation (O16 of
-   AGENT_INGEST_REWRITE). Quiet and full-width under the body — it is not a primary
-   action competing with the tabs, it is the answer to "the AI got this wrong and nothing
-   is asking me". Hidden entirely for a note with no thread, so an un-analysed note reads
-   exactly as before. */
-.note-thought {
+/* The note screen's chrome — the domain/date head and the Thread · Note · Files tab row
+   — lifted OUT of the scrolling body. The Thread tab is a chat surface: its transcript
+   scrolls inside its own box under a pinned composer, so there is no single scrolling
+   column left for the chrome to ride, and the way back to the note's own text must not be
+   something you scroll a conversation to find. */
+.note-view-chrome {
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  margin-top: 18px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: var(--fs-secondary);
-  text-align: left;
+  gap: 14px;
+  padding: 8px 16px 12px;
 }
 
-.note-thought-hint {
-  color: var(--text-3);
-  font-size: var(--fs-micro);
+/* The Thread tab: the shipped agent transcript (.fb-shell scopes every rule it draws
+   with) filling the screen under the chrome, with its composer pinned to the bottom
+   edge. `hidden` must be spelled out — .fb-shell sets `display: flex`, which outranks
+   the UA stylesheet's [hidden] rule. */
+.note-thread[hidden] {
+  display: none;
+}
+
+.note-thread .dock {
+  background: transparent;
+}
+
+/* The omnibox's body gutter assumes the segment row above it supplies the top edge;
+   this composer has no mode row (it would offer to navigate away from the note being
+   read), so it carries its own. */
+.note-thread-composer {
+  padding-top: 12px;
+}
+
+/* "What this note says": the former Analysis tab, folded under the note's own text.
+   A rule separates the two readings — what you wrote, then what the graph holds
+   because of it. */
+.note-record {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 /* "What you've added": the D6 clarification eraser, at the foot of the Note tab

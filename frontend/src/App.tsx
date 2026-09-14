@@ -519,11 +519,6 @@ export function App() {
           onOpenNote={openNoteFromStream}
           onOpenNoteById={(noteId) => void openNoteById(noteId)}
           onOpenEntity={setEntityView}
-          // A stream row's ask chip → that note's conversation (§3b I1/I2). The same
-          // handoff a notes-tab row makes, minus the card to drop: the stream is already
-          // on home, so there is no back marker to leave — the conversation tab IS home,
-          // and Entry is one tap left.
-          onOpenThread={(sessionId, agent) => setOpenSession({ id: sessionId, agent })}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
           onOpenRadio={() => setCard("radio")}
@@ -734,14 +729,9 @@ export function App() {
             onAddAttachment={addAttachmentTo}
             onRemoveAttachment={removeAttachmentFrom}
             onOpenEntity={setEntityView}
-            // "Add a thought" → this note's conversation (O16). The note layer sits
-            // ABOVE home, where the Full Brain surface renders, so it has to close on
-            // the way — the stream's ask chip needs no such step because it is already
-            // on home.
-            onOpenThread={(sessionId, agent) => {
-              closeNoteView();
-              setOpenSession({ id: sessionId, agent });
-            }}
+            // A Worked-block source card inside the thread cites another note; opening it
+            // swaps this layer for that one rather than stacking a second note screen.
+            onOpenNoteById={(id) => void openNoteById(id)}
           />
         </div>
       )}

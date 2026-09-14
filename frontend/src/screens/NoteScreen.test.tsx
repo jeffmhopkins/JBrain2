@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NoteAnalysis, SearchResult } from "../api/client";
 import type { StreamItem } from "../notes/useNotes";
+import { inertThread } from "../test/agentStubs";
 import { NoteScreen, noteViewFromItem, noteViewFromSearch } from "./NoteScreen";
 
 const ITEM: StreamItem = {
@@ -62,13 +63,14 @@ const INDEXED: StreamItem = {
   ],
 };
 
+/** Everything here is about the Note and Files tabs, so the Thread tab gets an inert
+ * conversation: a note with no thread and a controller whose every call is a stub. The
+ * tab still MOUNTS (it is the default, and it stays mounted so a live turn survives a tab
+ * switch), so leaving it live would put the agent-session routes on every fetch stub in
+ * this file. */
 function setup(
   source = noteViewFromItem(ITEM),
   resolve: (id: string) => Promise<StreamItem | null> = vi.fn(async () => null),
-  // The thread door is opt-in the way the stream's ask chip is (no handler, no
-  // affordance), so the tests that are not about it render exactly the screen they
-  // always did — and never reach for `/thread`.
-  onOpenThread?: (sessionId: string, agent: string) => void,
 ) {
   const handlers = {
     onClose: vi.fn(),
@@ -92,7 +94,7 @@ function setup(
       resolve={resolve}
       syncStatus="synced"
       {...handlers}
-      onOpenThread={onOpenThread}
+      {...inertThread()}
     />,
   );
   return handlers;
@@ -262,12 +264,12 @@ describe("NoteScreen", () => {
     expect(screen.getByText("first paragraph")).toBeInTheDocument();
     expect(screen.getByText("second paragraph")).toBeInTheDocument();
     expect(screen.queryByText("lab-orders.pdf")).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("1");
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveTextContent("1");
   });
 
-  it("Attachments tab: summary + manifest rows with per-file status chips", () => {
+  it("Files tab: summary + manifest rows with per-file status chips", () => {
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     // OCR'd images count as searchable; only the pending one awaits OCR.
     expect(
@@ -287,14 +289,14 @@ describe("NoteScreen", () => {
 
   it("images show the indexing chip while the note itself is still indexing", () => {
     setup(noteViewFromItem({ ...INDEXED, ingestState: "processing" }));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     expect(screen.getAllByText("indexing…").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("ocr queued…")).not.toBeInTheDocument();
   });
 
   it("⋯ opens the file sheet with an open link; remove needs the tap-again confirm", async () => {
     const { onRemoveAttachment } = setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     fireEvent.click(screen.getByRole("button", { name: "Actions for lab-orders.pdf" }));
 
     const open = screen.getByText("open").closest("a");
@@ -312,7 +314,7 @@ describe("NoteScreen", () => {
 
   it("add files uploads through the handler and appends a manifest row", async () => {
     const { onAddAttachment } = setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -321,13 +323,13 @@ describe("NoteScreen", () => {
 
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeInTheDocument());
     expect(onAddAttachment).toHaveBeenCalledWith("n1", file);
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("5");
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveTextContent("5");
   });
 
-  it("Analysis tab: title, tags, and facts as edges grouped by subject", async () => {
+  it("the Note tab carries the record: title, tags, and facts as edges grouped by subject", async () => {
     stubAnalysisFetch(ANALYSIS);
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
     expect(await screen.findByText("Dr. Patel visit — BP 128/82")).toBeInTheDocument();
     expect(screen.getByText("blood-pressure")).toBeInTheDocument();
@@ -359,7 +361,7 @@ describe("NoteScreen", () => {
   it("tapping a fact expands its citation with the source words highlighted", async () => {
     stubAnalysisFetch(ANALYSIS);
     const { onOpenEntity } = setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
     const row = await screen.findByRole("button", { name: /blood_pressure/ });
     expect(row).toHaveAttribute("aria-expanded", "false");
@@ -392,7 +394,7 @@ describe("NoteScreen", () => {
       temporal_tokens: [],
     });
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(
       await screen.findByText("analysis runs after indexing — nothing here yet."),
     ).toBeInTheDocument();
@@ -411,7 +413,7 @@ describe("NoteScreen", () => {
     // INDEXED carries receipt.png with an empty vision cache: the backend
     // gates analysis on it, and the tab says so over the mid-flight card.
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(
       await screen.findByText(
         "waiting on image analysis — facts extract once every source below is in.",
@@ -421,81 +423,6 @@ describe("NoteScreen", () => {
       screen.getByText("analysis waits here — runs automatically when every source is in."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "re-run analysis" })).toBeDisabled();
-  });
-
-  it("'add a thought' opens the note's own thread, settled or not", async () => {
-    // O16. The stream's ask chip is the only other door into a note conversation and it
-    // exists only while the thread WAITS — so the moment the owner most wants to speak
-    // (the pass finished, it recorded a pile of facts, one is wrong, nothing is prompting
-    // him) had no door at all. What he types behind this one is appended to the note.
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      const url = String(input);
-      if (url === "/api/notes/n1/thread") {
-        return jsonResponse({ session_id: "sess-note", agent: "note_ingest", state: "settled" });
-      }
-      if (url === "/api/notes/n1/analysis") return jsonResponse(ANALYSIS);
-      if (url === "/api/settings") return jsonResponse({ image_analysis_mode: "full" });
-      if (/^\/api\/attachments\/[^/]+\/extracts$/.test(url)) return jsonResponse({ extracts: [] });
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const onOpenThread = vi.fn();
-    setup(
-      noteViewFromItem(ITEM),
-      vi.fn(async () => null),
-      onOpenThread,
-    );
-
-    // On the tab the screen OPENS on, not only the Note tab: Analysis is where the facts
-    // the pass wrote are listed, so it is where he notices one is wrong.
-    expect(screen.getByRole("tab", { name: "Analysis" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(await screen.findByRole("button", { name: /Add a thought/ }));
-    expect(onOpenThread).toHaveBeenCalledWith("sess-note", "note_ingest");
-
-    // And from the Note tab, which is where his words will end up.
-    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
-    expect(screen.getByRole("button", { name: /Add a thought/ })).toBeInTheDocument();
-  });
-
-  it("says the thread is waiting when it is, and shows nothing when there is none", async () => {
-    // The same door, two states. A waiting thread is asking him something — the composer
-    // will carry the question block — so the label says so rather than inviting a
-    // thought he has not been asked for.
-    const waiting = vi.fn<typeof fetch>(async (input) => {
-      if (String(input) === "/api/notes/n1/thread") {
-        return jsonResponse({
-          session_id: "sess-note",
-          agent: "note_ingest",
-          state: "waiting_on_owner",
-        });
-      }
-      throw new Error(`Unexpected fetch: ${String(input)}`);
-    });
-    vi.stubGlobal("fetch", waiting);
-    setup(
-      noteViewFromItem(ITEM),
-      vi.fn(async () => null),
-      vi.fn(),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
-    expect(await screen.findByRole("button", { name: /Answer what it asked/ })).toBeInTheDocument();
-    expect(screen.getByText("it's waiting on you")).toBeInTheDocument();
-
-    cleanup();
-    // A note the box has not read yet has no thread, and a door that leads nowhere is
-    // worse than no door: the screen reads exactly as it did before.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(async () => jsonResponse(null)),
-    );
-    setup(
-      noteViewFromItem(ITEM),
-      vi.fn(async () => null),
-      vi.fn(),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
-    await waitFor(() => expect(screen.getByText("first paragraph")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: /Add a thought/ })).toBeNull();
   });
 
   it("the top-right ⋯ sheet drives edit / move / delete, with a tap-again delete", () => {
@@ -548,12 +475,12 @@ describe("NoteScreen", () => {
     await waitFor(() => expect(screen.getByText("second paragraph")).toBeInTheDocument());
     expect(resolve).toHaveBeenCalledWith("n1");
     expect(screen.queryByText("loading the full note…")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
   });
 });
 
-// ===== pure manifest (extract viewing lives in the Analysis tab now) =====
+// ===== pure manifest (extract viewing lives in the Note tab's record now) =====
 
 describe("AttachmentsTab manifest", () => {
   it("rows are inert manifest entries — no expansion affordances, no fetches", () => {
@@ -562,7 +489,7 @@ describe("AttachmentsTab manifest", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     // Neither image nor pdf rows expand: no role, no caret, no aria state.
     for (const filename of ["whiteboard.jpg", "lab-orders.pdf"]) {
