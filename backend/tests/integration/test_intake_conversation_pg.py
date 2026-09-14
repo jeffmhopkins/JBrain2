@@ -400,7 +400,16 @@ async def test_a_submitter_can_neither_be_asked_nor_answer(
     Inbound: even were one open, `record_owner_reply` is reached only from `/chat`,
     which is owner-only, and it declines any agent but the note persona. The stranger's
     principal cannot post a turn or a block (asserted above), so there is no second path
-    to the same effect."""
+    to the same effect.
+
+    ⟲ **This test used to close by calling `record_owner_reply` as the OWNER and asserting
+    it filed nothing, on the reading that "no text at all becomes source text this way".**
+    That belt was the O16 refusal, and since migration 0203 it is gone: the owner typing
+    into a thread that is not waiting files an `addition`. Which is correct and is not this
+    test's subject — those are the OWNER'S words, typed by him, onto a note in his own
+    corpus; D10 is about a STRANGER'S text. So the call stays, with the assertion it should
+    always have had: his words land, and the stranger's principal still cannot reach this
+    function or the rows behind it."""
     _, principal_id, _ = await _stranger(maker, owner)
     note_id = await _enacted_note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)
@@ -421,18 +430,36 @@ async def test_a_submitter_can_neither_be_asked_nor_answer(
             )
         ).scalar_one() == 0
 
-    # And a reply into a thread that is not waiting is conversation, never an answer:
-    # nothing is appended to the note, so no text at all becomes source text this way.
+    # The OWNER may say something about a stranger's note in its thread, and his words
+    # land — as HIS, in an `addition` block, never as an answer to a question nobody asked.
     reply = await record_owner_reply(
         maker,
         SqlNotesRepo(maker),
         owner,
         session_id=session_id,
         agent=NOTE_CONVERSE_AGENT,
-        message="his account number is 1234",
+        message="this is about the other Dana",
     )
-    assert reply is None
+    assert reply is not None
+    assert reply.additions == ["this is about the other Dana"]
+    assert reply.answered == [] and reply.claimed is False
     async with scoped_session(maker, owner) as s:
+        rows = list(
+            (
+                await s.execute(
+                    text(
+                        "SELECT kind, question FROM app.note_clarifications"
+                        " WHERE note_id = CAST(:n AS uuid)"
+                    ),
+                    {"n": note_id},
+                )
+            ).all()
+        )
+    assert [(r.kind, r.question) for r in rows] == [("addition", None)]
+
+    # And the stranger still cannot see it, let alone write one: the block is the owner's
+    # words on the owner's note, under the note's own domain policy.
+    async with scoped_session(maker, intake_context(principal_id)) as s:
         assert (
             await s.execute(
                 text(
