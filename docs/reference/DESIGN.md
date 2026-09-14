@@ -744,9 +744,12 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   navigation-only) opening the shared bottom sheet with **edit**
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
-  outbox notes. Below the body, and **only when the note has a thread**, a
-  quiet full-width **"Add a thought"** row (surface-2 card, a `text-3` hint
-  line under the label) that opens the note's own conversation — the door
+  outbox notes. At the FOOT OF EVERY TAB, and **only when the note has a
+  thread**, a quiet full-width **"Add a thought"** row (surface-2 card, a
+  `text-3` hint line under the label) that opens the note's own conversation
+  — outside the tab switch deliberately, because the tab he NOTICES a wrong
+  fact on is Analysis (which is also the tab this screen opens on) and the
+  tab his words end up on is Note. The door
   O16 found missing, since the stream's ask chip appears only while a
   thread is WAITING and the moment the owner most wants to speak is the one
   where nothing is asking him. What he types there is appended to the note
@@ -755,7 +758,7 @@ designs): entry-stream bubbles clamp at **3 lines**; tapping opens the
   you", because that is a different errand. Absent when the note has no
   conversation (never read, or ingest still pending) and when the lookup
   fails — a door that leads nowhere is worse than none.
-  Under it, and **only when the note has any**, a
+  On the Note tab, above it and **only when the note has any**, a
   collapsed **"What you've added"** disclosure with a count pill: the note's
   D6 clarification blocks, each with a rose tap-again **erase**. Both block
   shapes are listed — answers he gave, and additions he made unprompted,

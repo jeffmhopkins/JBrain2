@@ -493,9 +493,6 @@ export function NoteScreen({
           <>
             <BodyParagraphs body={view.body} />
             {view.partial && <p className="note-view-loading">loading the full note…</p>}
-            {onOpenThread !== undefined && (
-              <AddThoughtButton noteId={noteId} onOpenThread={onOpenThread} />
-            )}
             {/* The D6 eraser. The body above already renders the blocks as prose —
                 D6 changes no screen — but the block IDS exist nowhere the owner can
                 reach, and an id you cannot name is a block you cannot redact. Renders
@@ -533,6 +530,12 @@ export function NoteScreen({
             bodyChars={view.body.length}
             onOpenEntity={onOpenEntity}
           />
+        )}
+        {/* Outside the tab switch, because the tab he NOTICES a wrong fact on is
+            Analysis — which is also the tab this screen opens on — and the tab his
+            words end up on is Note. A note-level action, like the ⋯ menu. */}
+        {onOpenThread !== undefined && (
+          <AddThoughtButton noteId={noteId} onOpenThread={onOpenThread} />
         )}
       </div>
 

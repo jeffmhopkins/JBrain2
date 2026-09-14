@@ -429,10 +429,14 @@ describe("NoteScreen", () => {
     // (the pass finished, it recorded a pile of facts, one is wrong, nothing is prompting
     // him) had no door at all. What he types behind this one is appended to the note.
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (String(input) === "/api/notes/n1/thread") {
+      const url = String(input);
+      if (url === "/api/notes/n1/thread") {
         return jsonResponse({ session_id: "sess-note", agent: "note_ingest", state: "settled" });
       }
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+      if (url === "/api/notes/n1/analysis") return jsonResponse(ANALYSIS);
+      if (url === "/api/settings") return jsonResponse({ image_analysis_mode: "full" });
+      if (/^\/api\/attachments\/[^/]+\/extracts$/.test(url)) return jsonResponse({ extracts: [] });
+      throw new Error(`Unexpected fetch: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     const onOpenThread = vi.fn();
@@ -441,10 +445,16 @@ describe("NoteScreen", () => {
       vi.fn(async () => null),
       onOpenThread,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
+    // On the tab the screen OPENS on, not only the Note tab: Analysis is where the facts
+    // the pass wrote are listed, so it is where he notices one is wrong.
+    expect(screen.getByRole("tab", { name: "Analysis" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(await screen.findByRole("button", { name: /Add a thought/ }));
     expect(onOpenThread).toHaveBeenCalledWith("sess-note", "note_ingest");
+
+    // And from the Note tab, which is where his words will end up.
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
+    expect(screen.getByRole("button", { name: /Add a thought/ })).toBeInTheDocument();
   });
 
   it("says the thread is waiting when it is, and shows nothing when there is none", async () => {
@@ -469,6 +479,7 @@ describe("NoteScreen", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(await screen.findByRole("button", { name: /Answer what it asked/ })).toBeInTheDocument();
+    expect(screen.getByText("it's waiting on you")).toBeInTheDocument();
 
     cleanup();
     // A note the box has not read yet has no thread, and a door that leads nowhere is
