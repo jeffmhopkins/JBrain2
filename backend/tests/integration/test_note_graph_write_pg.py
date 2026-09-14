@@ -519,12 +519,14 @@ async def test_no_kind_of_unattested_fact_supersedes_an_attested_head(
     is what makes the guard reachable for all of them.
 
     The assertion is deliberately "the prior did not LOSE", not "the prior is still
-    active", because the two kinds are protected by different branches and they end
-    differently. `state` reaches the low-confidence guard, which parks the candidate and
-    leaves the head live. `attribute` never gets that far: its own branch fires first and
-    holds BOTH sides behind an `attribute_collision` ("two birthdays is a bug, not news").
-    Either way the attested value is still there for a human; `superseded` is the one
-    outcome that means it was overwritten by a quote the note does not contain."""
+    active": the attested value has to still be there for a human, and `superseded` is the
+    one outcome that means it was overwritten by a quote the note does not contain.
+
+    Every kind now reaches the SAME guard — the low-confidence floor, which parks the
+    candidate and leaves the head live. `attribute` used to be protected by something else
+    entirely: its own branch fired first and held BOTH sides behind an
+    `attribute_collision`. That branch makes the newest value live now (§8 O15), so this
+    property would have been lost with it had the floor not been made explicit there."""
     who = f"Dana {kind_predicate}"
     note_id, writer = await _own_person(maker, tmp_path, who)
     first = await writer.assert_fact(
@@ -795,15 +797,20 @@ async def test_a_write_decide_parked_reports_held_and_never_written(  # noqa: F8
     maker,  # noqa: F811
     tmp_path,
 ) -> None:
-    """THE finding. `decide()` refused to make this value live — it clashes with a head
-    it cannot order — and a rung that calls that "written" tells Jeff his graph says
-    something it does not. `ask_owner.tool` and the persona prompt both instruct the
-    model to raise exactly this case, so the screen contradicting them is worse than
-    silence.
+    """THE finding. `decide()` refused to make this value live and a rung that calls that
+    "written" tells Jeff his graph says something it does not. `ask_owner.tool` and the
+    persona prompt both instruct the model to raise exactly this case, so the screen
+    contradicting them is worse than silence.
 
     The reviewer's reproduction fed two facts (one replaced, one held) through the
     shipped helpers and got "2 written". This is the backend half of stopping that: the
-    write path reports the state, and `status` carries it."""
+    write path reports the state, and `status` carries it.
+
+    The hold is reached through the LOW-CONFIDENCE guard: the second write quotes a
+    passage the note does not contain, so it lands at low weight and cannot displace the
+    attested head. It used to be reached through the attribute collision, which since
+    §8 O15 supersedes rather than holding. The property under test is the rung's, not
+    that branch's — any outcome `decide()` refuses to make live has to read as held."""
     _, writer = await _resolved(maker, tmp_path)
     first = await writer.assert_fact(
         {
@@ -831,7 +838,7 @@ async def test_a_write_decide_parked_reports_held_and_never_written(  # noqa: F8
                     "object": "principal engineer",
                     "statement": "Dana Whitfield is a principal engineer.",
                     "when": "2026-06",
-                    "quote": "as a staff engineer",
+                    "quote": "a passage this note does not contain at all",
                 }
             ]
         },

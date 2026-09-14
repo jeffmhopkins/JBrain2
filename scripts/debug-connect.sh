@@ -115,6 +115,8 @@
 #      live lease.)
 #   scripts/debug-connect.sh update                    # pull main, rebuild, restart
 #   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
+#   scripts/debug-connect.sh backup                    # full backup ("Back up everything")
+#   scripts/debug-connect.sh backup-status [tail]      # that backup's state + log tail
 #     (The Ops → Update button, reachable with a token. It takes NO ref: the supervisor
 #      builds whatever `main` is, so this can only deploy what a merged PR already put
 #      there — a token cannot choose the code it runs. 409 while one is already going.
@@ -629,6 +631,16 @@ PY
     _call POST "/api/debug/refresh?service=$svc" | _pp ;;
   refresh-status) # [tail] — that refresh's state + log tail
     _call GET "/api/debug/refresh/status?tail=${1:-200}" | _pp ;;
+
+  backup) # take a full backup — the Data screen's "Back up everything", from here
+    # The one that makes `update` survivable. Starts it only: the archive stays on the
+    # box and there is no route here that reads it, because a token that could pull it
+    # would be every note and attachment in one request. Poll `backup-status` and wait
+    # for state=done, exit_code=0 — STARTING a backup is not HAVING one.
+    _call POST "/api/debug/backup" | _pp ;;
+
+  backup-status) # [tail] — that backup's state + log tail
+    _call GET "/api/debug/backup/status?tail=${1:-200}" | _pp ;;
 
   update) # pull main, rebuild, restart — the Ops → Update button, from here
     # No ref to pass, deliberately: the supervisor builds whatever `main` is, so this

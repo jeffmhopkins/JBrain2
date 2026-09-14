@@ -275,7 +275,12 @@ async def test_a_settled_card_of_every_fact_naming_kind_survives_a_rebuild_uncha
     # itself.
     for predicate, expected in (
         ("industry", {(ids["industry"], "active"), (industry_b, "retracted")}),
-        ("sector", {(ids["sector"], "pending_review"), (sector_c, "pending_review")}),
+        # The DEFERRED collision. Since §8 O15 the attribute branch supersedes rather
+        # than holding, so the pair the card cites is live-plus-history instead of two
+        # held rows — and that is the whole point of the row: both statuses come back
+        # from the rebuild EXACTLY as the pre-sweep integration left them, on their
+        # original ids, so the card the owner un-parks still cites the same two facts.
+        ("sector", {(ids["sector"], "superseded"), (sector_c, "active")}),
         ("headquarters", {(ids["headquarters"], "retracted")}),
         ("founded", {(ids["founded"], "active")}),
         ("motto", {(ids["motto"], "active")}),

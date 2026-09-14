@@ -151,6 +151,7 @@ from jbrain.analysis.pipeline import (
 )
 from jbrain.analysis.recurrence import parse_recurrence
 from jbrain.analysis.settle_owner import CONVERSATION
+from jbrain.analysis.supersession import ATTRIBUTE_COLLISION
 from jbrain.analysis.thirdparty import is_third_party
 from jbrain.analysis.weight import ConfidenceSignals, effective_weight
 from jbrain.db.session import SessionContext, scoped_session
@@ -1743,15 +1744,39 @@ def _write_line(
     as advice — a second reader would reach it anyway. There is no second reader now:
     an unsettled hold this pass leaves alone stays inert until some later note happens to
     restate it. So the line states the obligation, and it states what the write did to
-    rows the model never named — the other side of a collision, and a reciprocal edge
-    refused in favour of a primary head."""
+    rows the model never named — a head an owner correction parked, and a reciprocal edge
+    refused in favour of a primary head.
+
+    It is also the only channel a RESOLVED disagreement has, which is the second half of
+    the O15 ruling: an attribute collision no longer holds, it supersedes, so the row that
+    used to wait in an inbox is now history and the line is the whole of the owner's
+    notice. `replaced … kept as history` alone reads as housekeeping, so that landing gets
+    the obligation too."""
     head = f"{'held' if write.outcome == HELD else 'ok'}  {subject}.{predicate} → {value}"
     tail: list[str] = list(notes)
     if write.outcome == REPLACED and write.replaced:
         tail.insert(
             0, f"replaced {'; '.join(_trim_stop(r) for r in write.replaced)}, kept as history"
         )
-        if write.hold_reason:
+        if write.hold_reason == ATTRIBUTE_COLLISION:
+            # The owner's ruling on O15 has two halves and this line is the second one.
+            # `decide()` made the newest value live BY RULE, which is the half that
+            # unsticks the graph; it did not establish which value is TRUE, and on this
+            # path nobody else will. No card is filed for a conversation write (R1b), the
+            # displaced row is now history rather than something sitting in an inbox, and
+            # the owner may still believe the value that just became history. So the line
+            # says what the HELD lines say — the next move is his, and it is yours to make
+            # — rather than reporting a replacement the model can read as routine
+            # housekeeping. "Finish the reading first" because `ask_owner` ENDS THE TURN:
+            # asking here, mid-reading, strands the facts the pass has not written yet.
+            tail.insert(
+                1,
+                f"the value on file DISAGREED ({write.hold_reason}) — this one is live"
+                " because the newest wins, not because anyone checked which is right,"
+                " and nothing else will raise it. Finish recording the note, then ask"
+                " the owner which is right",
+            )
+        elif write.hold_reason:
             # It LANDED LIVE and still was not a clean update: same value-instant, or a
             # preference. Nothing is held and nothing is owed — but the model asked for
             # one write and got a supersession it did not name, so it is told.
@@ -1784,12 +1809,15 @@ def _write_line(
     elif write.outcome in _OUTCOME_WORDS:
         tail.insert(0, _OUTCOME_WORDS[write.outcome])
     if write.also_held:
-        # Rendered for EVERY outcome, not only HELD. `decide()` sets `hold_ids` on two
-        # branches and only one of them holds the candidate too: an owner correction
-        # inserts ACTIVE and parks the heads it out-argues, so the write lands
-        # `replaced`/`written` while still moving rows the model never named. Reporting
-        # `also_held` only under HELD would drop exactly those — the under-reporting
-        # this field was added to stop, in the one case the field is the sole witness.
+        # Rendered for EVERY outcome, not only HELD, and since the O15 ruling the LIVE arm
+        # is the only one `decide()` can still reach from this path: an owner correction
+        # inserts ACTIVE and parks the `pending_review` heads it out-argues, so the write
+        # lands `replaced`/`written` while still moving rows the model never named.
+        # Reporting `also_held` only under HELD would drop exactly those — the
+        # under-reporting this field was added to stop, in the one case the field is the
+        # sole witness. The HELD arm stays because this is a renderer over a public
+        # dataclass and it must stay truthful for whatever it is handed, not because a
+        # branch upstream still produces it.
         others = "; ".join(_trim_stop(h) for h in write.also_held)
         tail.append(
             f"{others} was held too, so neither is live"

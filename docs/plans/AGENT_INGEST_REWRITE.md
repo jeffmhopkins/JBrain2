@@ -1,6 +1,6 @@
 # Agent-forward ingestion — the rewrite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-11 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️
+> **Status:** Scheduled · **Last verified:** 2026-09-14 · **Waves:** R0✅ R1✅ R1b✅ R1c✅ R2✅ R3✅ R3f✅ R4✅ R5◻️ R6◻️
 
 **This doc supersedes the unbuilt waves of `AGENT_INGEST_CONVERSATION_PLAN.md`
 (W5a/W5b/W5c), `SETTLE_OWNERSHIP.md` S4–S5, and `W5_PRECONDITIONS.md`'s
@@ -2303,14 +2303,17 @@ whose `accept_a`/`accept_b` arm retracted the loser is the one that went. `corre
 NOT the discharge: `decide()`'s correction branch holds its `pending_review` heads rather
 than superseding them, so the key stays permanently contested even after the owner answers.
 Every fix touches what LANDS, so it is a constraint-5 change and the owner's; O15 has the
-mechanism and the three candidates.
+mechanism and the three candidates. ⟲ **DECIDED and BUILT** — by a fourth route that changes
+what `decide()` does rather than what the model may do: the `attribute` branch no longer
+creates the pair, and the write result carries the ask. See O15.
 
 **A re-assert of a still-held row used to report `ok`**, which under one channel was the
 failure the channel exists to prevent — the refresh loop admits `pending_review`, and
 `close_reading` restates the whole note by design, so a hold could be contradicted by the
 agent's own last word one call later. Fixed in this wave (`STILL_HELD`): the write returns
 `HELD` and the line says the restatement changed nothing and that only the owner can settle
-it. It is the reason O15 is a recorded residual rather than a live silent loss.
+it. It is the reason O15 was a recorded residual rather than a live silent loss until the
+owner settled it.
 
 *Left standing deliberately:* `_sweep_stale_ambiguous` and `_sync_truncation_review` stay
 in `settle_note` this wave. R3's paragraph says R1b deleted them and R1b's own scope did
@@ -2584,7 +2587,9 @@ untouched**: `sweep_note` has always released and retracted `pending_review` row
 as `active` ones, so a held row the note stops saying is now swept with everything else —
 but O15's case is two facts that disagree while the note still says BOTH, and a reading
 that re-states both leaves both in `touched`, so neither is released. Nothing here gives a
-held row a retirement path it did not have; the decision stays the owner's.
+held row a retirement path it did not have. ⟲ **The owner has since ruled**: the `attribute`
+branch makes the newest value live instead of parking the pair, so on that key there is no
+held row left to retire. See O15.
 
 *Named residuals, none of them regressions:*
 
@@ -2818,7 +2823,10 @@ tautology).
 pass-ending matrix passing; R3f merged, so the first note the new system ever reads is one
 the owner can actually watch and answer (§3b); R4 merged so no dead job kind is enqueued
 after the truncate;
-an `Ops → Export` taken (the existing PWA lever, `supervisor/src/supervisor/app.py:393`)
+a backup taken — **Data → Backup → "Back up everything"** in the PWA (it moved off the
+Ops screen onto its own Data launcher; this doc said `Ops → Export` for long enough that
+the owner went looking for a screen of that name and could not find one), or
+`scripts/debug-connect.sh backup` with a token
 so the pre-wipe state is recoverable without a terminal; and the owner told, in the PWA's
 terms, that the first capture after the update is the first note the new system has ever
 seen.
@@ -3134,10 +3142,61 @@ projection change made on a guess about what the model writes, and the scenario 
 turns that guess into a number.
 
 **O15 — a held row the conversation wrote has NO retirement path, and the owner's own
-answer does not create one.** *Opened by R1b, on review, then corrected on a second review
-that found the first description materially incomplete. Not decided, and deliberately not
-built: two of the three fixes hand the model a power constraint 5 withholds, which is the
-owner's call.*
+answer does not create one. DECIDED by the owner, and BUILT — with a fourth option none of
+the three candidates below was:** *"It should default to the newest being live, but the
+note conversation that initiates the new fact should bring it up with the owner."*
+
+The `attribute` branch no longer holds. The newest STATEMENT goes live by rule, the heads
+it displaces are chained as history, and the result line the write path hands back is
+rewritten from a report into the pass's obligation to ask the owner which value is right.
+Constraint 5 is untouched — every one of the three candidates below engaged it or invented
+a mechanism, and this does neither: nothing about what the MODEL may do changed, only what
+`decide()` does with what it is given. The two halves, and why they are both needed:
+
+- **Newest wins** ends the deadlock at its source. There is no held pair to retire because
+  none is created; a re-assert of the winning value is now an ordinary idempotent refresh
+  rather than a `STILL_HELD` dead end; and the key serves a value again instead of nothing.
+  Three guards keep the rule from being a blunt instrument, and two are new here because
+  the collision used to park everything that reached it: a PINNED head (checked across
+  EVERY head, not only the newest — a pin the newest row has out-dated is still the owner's
+  word), an irrealis candidate, and a low-weight read, each of which holds as before.
+  Ordering is by `reported_at`, not validity: an attribute's `when` is routinely the value
+  itself, so validity order would make correcting a birthday to an EARLIER date lose to the
+  date it corrects.
+- **The ask** is the half that keeps the rule honest. Going live by rule is not the same as
+  being right, no card is filed on this path (R1b), and the value the owner may still
+  believe is now history rather than a row in an inbox — so he hears about it from the
+  conversation or from nothing. It reaches the model through the channel R1b already built
+  (`_write_line`), which now says the value on file DISAGREED, that this one is live
+  because the newest wins rather than because anyone checked, and that finishing the
+  reading and then asking is the pass's job. `assert_fact` v5 and `close_reading` v3 carry
+  the matching paragraph. "Finish the reading FIRST" is load-bearing: `ask_owner` ends the
+  turn, so an ask raised mid-reading strands every fact the pass has not written yet.
+
+  **And the result line alone could not have delivered it, which is why the persona moved
+  too (`agent-note-ingest-v8` → `v9`, a deliberate `PROMPT_VERSION` bump) along with
+  `ask_owner` v3.** Both of them set the bar for a question at *"I genuinely cannot
+  proceed"*, and the persona additionally enumerated a REPLACED result as routine — so
+  between them the model had a standing instruction NOT to ask about a landing that blocks
+  nothing, and the obligation would have argued with the tool's own calibration instead of
+  reaching the owner. The edit names exactly one second reason, tied to a result the write
+  path emits, and repeats the ordering (finish, write, ask last). It does not move the bar
+  generally. O3's finding is the reason the persona is not carrying this ALONE — it
+  measured prompt wording failing to produce an ask the model had to *notice* the occasion
+  for (0 in 144); here the write path hands the occasion over explicitly and the persona
+  only has to stop forbidding it. The `prompt_version` drift is real and near-zero at this
+  moment: R5 wipes the notes and the graph.
+
+*What this does NOT do, and it is the residual:* rows ALREADY held as a pair — from before
+this change, or from the pinned/irrealis/low-weight guards — still have no retirement path,
+because the owner answering with one of the contested values still hits the idempotency
+short-circuit (reason 1 below). R5's wipe removes the first population; the guards' holds
+are a different shape, since each leaves an ACTIVE head live beside the parked candidate and
+so has an exit. `fact_conflict` was examined and left alone: it inserts `pending_review`
+WITHOUT holding the other side, so it is not this trap.
+
+*The state as it stood before the ruling, kept because the reasoning is what the decision
+answers:*
 
 **The state.** Before R1b, a `fact_conflict` / `attribute_collision` card carried the
 discharge in its `accept_a`/`accept_b` arm (`analysis/repo.py`): pin the winner ACTIVE,

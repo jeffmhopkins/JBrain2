@@ -486,10 +486,10 @@ def test_a_held_fact_says_it_is_not_live_and_names_decides_own_reason(reason: st
 
 
 def test_a_collision_that_held_the_other_side_too_says_so() -> None:
-    """The one `decide()` branch that changes state the model never named: an attribute
-    collision holds BOTH birthdays. A result that reported only the row it was handed
-    would under-report the write — the agent would think the value on file was still
-    live, and would not know it had just parked the owner's existing answer."""
+    """`also_held` beside a HELD row. No `decide()` branch reaches this shape any more —
+    the attribute collision that did now supersedes (§8 O15) — but `_write_line` is a
+    renderer over a public dataclass, and a write that parks another row while being held
+    itself has to read as "neither is live" rather than as a landing."""
     both = FactWrite(
         gw.uuid.uuid4(),
         HELD,
@@ -551,6 +551,35 @@ def test_a_restatement_of_a_held_row_does_not_read_as_a_fresh_clash() -> None:
     assert "Re-reading will not settle this; ask the owner which is right" in line
     # The generic hold's advice would send it round a loop it has already run.
     assert "Re-read the note" not in line
+
+
+def test_an_attribute_collision_that_went_live_tells_the_model_to_ask() -> None:
+    """The second half of the O15 ruling. `decide()` makes the newest attribute value live
+    BY RULE; it did not establish which value is TRUE, and on this path nothing else ever
+    will — no card is filed for a conversation write, and the value the owner may still
+    believe is now history rather than a row in an inbox.
+
+    So this landing cannot render as the housekeeping a clean supersede is. The line has
+    to carry the same shape of obligation the HELD lines carry — the next move is the
+    owner's, and it is the pass's job to make it — and it has to say FINISH FIRST, because
+    `ask_owner` ends the turn and an ask raised mid-reading strands everything the pass has
+    not written yet."""
+    collided = FactWrite(
+        gw.uuid.uuid4(),
+        REPLACED,
+        "general",
+        "Cleo was born November 12, 1985",
+        replaced=("Cleo was born March 3, 1990.",),
+        hold_reason="attribute_collision",
+    )
+    line = gw._write_line(0, "Cleo", "birthDate", "1985-11-12", collided, [])
+    assert line.startswith("ok  Cleo.birthDate → 1985-11-12")
+    assert "replaced Cleo was born March 3, 1990, kept as history" in line
+    assert "the value on file DISAGREED (attribute_collision)" in line
+    assert "nothing else will raise it" in line
+    assert "Finish recording the note, then ask the owner which is right" in line
+    # It is NOT the mild clause a same-instant state supersede gets.
+    assert "not a clean update" not in line
 
 
 def test_a_supersede_that_landed_live_still_names_why_it_was_not_clean() -> None:

@@ -1,6 +1,6 @@
 ---
 name: ask_owner
-version: 2
+version: 3
 permission: mutate
 side_effecting: true
 params:
@@ -56,6 +56,13 @@ the note never gives, or a word is smudged past reading. Not to have a reading a
 not for anything the note answers on a second read, and not as a hedge — you commit your
 reading and Jeff corrects you by replying, so a question you did not need costs more than
 a wrong link would. Anything you CAN settle, settle and write first.
+
+One kind of question clears that bar without your being stuck, and a write result is what
+tells you: a value you recorded REPLACED one already on file that DISAGREED with it. The
+graph settled that by rule — the newest wins — so nothing is blocked and nothing is yours
+to undo. But a rule is not knowledge of which value is true, no one else is told, and the
+one Jeff may still believe is now history. Ask him which is right, in this same call,
+after the reading is finished.
 
 `blocks` and `candidates` are what let Jeff answer with one tap. `blocks` says which
 predicate or which resolve call is stuck, so he can see what his answer buys; `candidates`

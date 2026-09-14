@@ -909,9 +909,15 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
+        # v9 is the O15 ruling. The persona set the bar for asking at "I cannot proceed"
+        # and told the model a REPLACED result was routine — between them they would have
+        # vetoed the ask the ruling requires, since a newest-wins supersession blocks
+        # nothing. This is a deliberate PROMPT_VERSION bump (analysis/prompt.py): it
+        # stamps `facts.prompt_version` and `note_analysis.prompt_version`, and the corpus
+        # drift is real but near-zero here — R5 wipes the notes and the graph anyway.
         "note_ingest": (
-            "agent-note-ingest-v8",
-            "1cf42e98d2e41c61a397cf31471ffd14be49a244bc5fa3e32399138321e5354d",
+            "agent-note-ingest-v9",
+            "035422211ee94f16bbb758a912749e6a9ce1d0ed4944ec96d7abeb4e41dc7c8b",
         ),
     }
     assert set(pins) == AGENT_NAMES

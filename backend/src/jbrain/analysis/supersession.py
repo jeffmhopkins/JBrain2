@@ -6,7 +6,16 @@ Two invariants hold for every kind:
 
 - supersession compares VALIDITY time (valid_from, tie-broken by reported_at),
   never capture time — a retrospective note about 2019 lands as history, not
-  as the new current value;
+  as the new current value. Three kinds are ordered by REPORT time instead, and
+  for one reason: their `valid_from` is not a validity period but a restatement
+  of the value. A `preference` is valid from when it is voiced; a schedule
+  binding's value IS an instant (SCHEDULE_PREDICATES); and an `attribute`'s
+  `when` is routinely the value itself (a birthDate's validity is the date it
+  states). The first two order a WINNER that way. The third does not, and the
+  distinction is worth keeping straight because a draft of this list blurred it:
+  since O15 an `attribute` candidate always lands active and supersedes, so its
+  report-time order picks only which head is cited and whose confidence the
+  low-confidence floor compares against;
 - a pinned fact is a human override: it is never auto-superseded or held,
   only re-flagged via a review item.
 """
@@ -182,6 +191,14 @@ def is_schedule_binding(predicate: str) -> bool:
 # under-guarding a health fact is a silent overwrite by garbage.
 LOW_CONFIDENCE = 0.5
 
+# `decide()`'s review_kind for two disagreeing values on a single-valued address. Named
+# because the result line the note conversation reads branches on it (`graphwritetools.
+# _write_line`): after the O15 ruling this kind no longer means "held", it means "the
+# newest went live over a value that disagreed", and that is the one landing the agent
+# is obliged to raise with the owner. A bare string on both sides could drift apart
+# without a test noticing.
+ATTRIBUTE_COLLISION = "attribute_collision"
+
 # Irrealis assertions are not claims about the present truth, so they must never
 # auto-displace an ASSERTED current head — they park behind a conflict card for
 # the owner. NEGATED is excluded (a negated disposal "I no longer own X" is a
@@ -276,7 +293,8 @@ class Decision:
     existing open interval (same value/object, same valid_from), so the
     pipeline UPDATEs that row instead of chaining a duplicate. supersede_ids
     close and chain old facts onto the new row; hold_ids move old facts to
-    pending_review (attribute collisions hold BOTH sides).
+    pending_review (an owner correction parks the held heads it out-argues, and
+    a lab revision parks the pending readings of its draw).
     """
 
     refresh_id: str | None = None
@@ -655,20 +673,85 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
         heads = [e for e in live if e.status in ("active", "pending_review")]
         if not heads:
             return Decision(insert=True)
-        current = max(heads, key=lambda e: _validity(e.valid_from, e.reported_at))
-        if current.pinned:
+        # Report time, not validity: an attribute's `when` is so often the value itself
+        # (a birthDate's validity IS the date it states) that ordering by it would rank
+        # two birthdays by which birthday they claim.
+        #
+        # Narrower than it looks, and measured rather than assumed: this does NOT pick a
+        # winner. The candidate always lands active and supersedes below — there is no
+        # candidate-vs-head comparison in this arm — so `current` only decides which head
+        # is CITED as the conflicting row and whose confidence the floor below compares
+        # against. Both matter solely when more than one head survives. An earlier draft
+        # of this comment claimed a validity ordering would make a correction "lose and
+        # land as history"; it cannot, and saying so sent two readers looking for a
+        # branch that does not exist.
+        current = max(heads, key=lambda e: e.reported_at)
+        pinned = max((e for e in heads if e.pinned), key=lambda e: e.reported_at, default=None)
+        if pinned is not None:
+            # Newest-wins below is a RULE, and a pin is the owner's own explicit
+            # decision: a rule must never overrule him silently. Checked over EVERY
+            # head rather than only the newest — a pin that has since been out-dated by
+            # a held row is still his word, and superseding it here would be exactly the
+            # auto-overwrite the module's second invariant forbids.
             return Decision(
                 insert=True,
                 insert_status="pending_review",
-                review_kind="attribute_collision",
+                review_kind=ATTRIBUTE_COLLISION,
+                conflicting_id=pinned.id,
+            )
+        if candidate.assertion in _IRREALIS and current.assertion == "asserted":
+            # "maybe her birthday is in March" is not a claim about what is true, so it
+            # cannot be the newest VALUE however new the statement is. Same guard, same
+            # reason, as the single-head path below.
+            return Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="fact_conflict",
                 conflicting_id=current.id,
             )
-        # Two birthdays is a bug, not news: BOTH sides go to pending_review.
+        if (
+            candidate.self_confidence < LOW_CONFIDENCE
+            and candidate.self_confidence < current.confidence
+        ):
+            # The other guard the single-head path applies, and newly load-bearing here:
+            # while this branch held everything, an unreadable value was parked by the
+            # collision itself. Now that it would go LIVE, the blurry-OCR case needs the
+            # explicit floor — and both write sidecars already promise it ("a low-weight
+            # value that disagrees with a confident one already on file is HELD").
+            return Decision(
+                insert=True,
+                insert_status="pending_review",
+                review_kind="low_confidence",
+                conflicting_id=current.id,
+            )
+        if candidate.reported_at < current.reported_at:
+            # Newest wins cuts both ways: an OLDER statement re-read after a newer one
+            # (a corpus rebuild re-ingests notes in no guaranteed order) lands as history
+            # instead of flipping the live value, which is what makes the outcome
+            # independent of the order the notes happen to be processed in.
+            # No borrowed `valid_to` (the single-head path's `current.valid_from`): an
+            # attribute's validity is not an interval start, so dating this row's "end"
+            # from the other value's would read as "born 1990 until 1985".
+            return Decision(
+                insert=True,
+                insert_status="superseded",
+                insert_superseded_by=current.id,
+                insert_valid_to=candidate.valid_to,
+            )
+        # NEWEST WINS, by rule. Two birthdays is still a bug rather than news — but the
+        # owner's ruling (AGENT_INGEST_REWRITE §8 O15) is that parking BOTH sides is the
+        # worse answer: it left the key permanently contested, with nothing on this box
+        # able to retire either row, so the graph served no birthday at all and the owner
+        # had no terminal to fix it from. So the newest statement goes live and the heads
+        # it displaces are chained as history — recoverable, never lost. `review_kind`
+        # stays set: a producer with no agent still gets its card, and for the note
+        # conversation it is what turns this landing into the obligation to ASK
+        # (agent/graphwritetools.py `_write_line`). Deciding by rule is not the same as
+        # knowing which value is right, and only the owner does.
         return Decision(
             insert=True,
-            insert_status="pending_review",
-            hold_ids=[e.id for e in heads if e.status == "active"],
-            review_kind="attribute_collision",
+            supersede_ids=[e.id for e in heads],
+            review_kind=ATTRIBUTE_COLLISION,
             conflicting_id=current.id,
         )
 

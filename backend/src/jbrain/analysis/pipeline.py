@@ -209,12 +209,12 @@ class FactWrite:
 
     Under one channel (AGENT_INGEST_REWRITE R1b) this IS the notice: what `decide()`
     could not settle reaches the agent here and nowhere else, so it has to carry
-    everything the card it replaced carried. `also_held` is the other side of an
-    attribute collision — the row already on file that this write moved to
-    `pending_review` — and it is the one thing the write CHANGED beyond its own row, so
-    a result that omitted it would under-report what happened. `reciprocal_held` is the
-    primary head a derived reciprocal deferred to, reported on the fact whose reciprocal
-    was refused because that is the only row the agent named."""
+    everything the card it replaced carried. `also_held` is a row the write moved to
+    `pending_review` BESIDE its own — the head an owner correction out-argues — and it is a
+    thing the write CHANGED beyond the row the model named, so a result that omitted it
+    would under-report what happened. `reciprocal_held` is the primary head a derived
+    reciprocal deferred to, reported on the fact whose reciprocal was refused because that
+    is the only row the agent named."""
 
     fact_id: uuid.UUID
     outcome: str
@@ -2815,8 +2815,8 @@ class AnalysisPipeline:
             replaced=replaced,
             hold_reason=decision.review_kind or "",
             conflicting=conflict.statement if conflict is not None else "",
-            # The rows this write moved to `pending_review` BESIDE its own — the
-            # attribute-collision branch holds both sides, and that is state the caller
+            # The rows this write moved to `pending_review` BESIDE its own — an owner
+            # correction parks the heads it out-argues — and that is state the caller
             # did not ask for and cannot see anywhere else.
             also_held=tuple(by_id[i].statement for i in decision.hold_ids if i in by_id),
             reciprocal_held=reciprocal.held_against,
@@ -2850,7 +2850,12 @@ class AnalysisPipeline:
     ) -> None:
         for old_id in decision.supersede_ids:
             values: dict[str, Any] = {"status": "superseded", "superseded_by": new_fact_id}
-            if valid_from is not None:
+            # An ATTRIBUTE has no interval to close: its `valid_from` is a restatement of
+            # the VALUE (a birthDate's validity is the date it states), so dating the old
+            # row's end from the new one's would write "born 1990-03-03 until 1985-11-12"
+            # onto the history the O15 supersession now creates. The chain link is the
+            # record there; SCD-2 is for the kinds that really do occupy an interval.
+            if valid_from is not None and fact.kind != "attribute":
                 # SCD-2 close: the old fact stays true about its interval; an
                 # interval already closed by better information is kept.
                 values["valid_to"] = func.coalesce(Fact.valid_to, valid_from)
