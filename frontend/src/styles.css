@@ -5264,6 +5264,13 @@ button.small {
   border-top: 1px solid var(--border);
 }
 
+/* The record's own heading. `--text-2`, not `.section-header`'s `--text-3`: text-3 sits
+   under the 4.5:1 floor (issue #25) and this wave adds no new use of it — and the rule
+   that introduces a whole section should read a step above the sub-headers inside it. */
+.note-record > .section-header {
+  color: var(--text-2);
+}
+
 /* "What you've added": the D6 clarification eraser, at the foot of the Note tab
    (AGENT_INGEST_CONVERSATION_PLAN D6 — W2's "the wave that ships the writer ships the
    eraser"). It lists BOTH block shapes since 0203 — answers he gave, and what he added
