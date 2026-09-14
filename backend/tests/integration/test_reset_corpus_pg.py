@@ -206,3 +206,92 @@ def test_the_downgrade_refuses_rather_than_lying() -> None:
     as a rollback that worked. The rows are gone; the backup is the way back."""
     with pytest.raises(RuntimeError, match="no downgrade"):
         _migration().downgrade()
+
+
+async def test_the_wipe_deletes_a_dated_fact_and_its_temporal_token(
+    maker: async_sessionmaker, run_upgrade: object
+) -> None:
+    """The case that aborted the first draft, and the one this file existed for and did
+    not cover.
+
+    `facts.temporal_token_id` is NO ACTION, so the token is the PARENT even though it
+    reads like a detail hanging off the fact. Deleting tokens first raises
+    `facts_temporal_token_id_fkey` and takes the whole migration — and with it every
+    `Ops -> Update` on the release carrying it. `temporal_token_id` is written on the
+    normal path for any DATED fact, so this is the common case, not an edge."""
+    repo = SqlNotesRepo(maker)
+    note, _ = await repo.create_note(
+        OWNER, client_id=f"wipe-{uuid.uuid4()}", domain="general", destination=None, body="dated"
+    )
+    entity_id, token_id, fact_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                " VALUES (:id, 'Person', 'Sam', 'general')"
+            ),
+            {"id": entity_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.temporal_tokens (id, note_id, surface_phrase, kind,"
+                " resolved_start, temporal_precision, capture_anchor, domain_code)"
+                " VALUES (:id, :n, 'last Tuesday', 'point', now(), 'day', now(), 'general')"
+            ),
+            {"id": token_id, "n": note.id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.facts"
+                " (id, note_id, entity_id, kind, predicate, statement, assertion,"
+                " reported_at, temporal_precision, extractor, prompt_version,"
+                " temporal_token_id, domain_code)"
+                " VALUES (:id, :n, :e, 'event', 'attended', 'Sam attended.', 'asserted',"
+                " now(), 'day', 'test', 'test-v1', :t, 'general')"
+            ),
+            {"id": fact_id, "n": note.id, "e": entity_id, "t": token_id},
+        )
+
+    run_upgrade()  # type: ignore[operator]
+
+    assert await _count(maker, "SELECT count(*) FROM app.facts") == 0
+    assert await _count(maker, "SELECT count(*) FROM app.temporal_tokens") == 0
+    assert await _count(maker, "SELECT count(*) FROM app.entities") == 0
+
+
+async def test_the_wipe_order_satisfies_every_blocking_constraint(
+    maker: async_sessionmaker,
+) -> None:
+    """Derive the rule from the schema instead of re-reading the list.
+
+    A seeded test only catches the constraint someone thought to seed — which is exactly
+    how `facts -> temporal_tokens` survived the first draft. This asks Postgres for every
+    NO ACTION / RESTRICT foreign key INSIDE the wipe set (the ones that actually block a
+    DELETE; CASCADE and SET NULL resolve themselves) and asserts `_WIPE` is a valid order
+    for all of them. It fails on a constraint added years from now by someone who never
+    reads this file."""
+    wipe = list(_migration()._WIPE)
+    position = {t: i for i, t in enumerate(wipe)}
+    async with scoped_session(maker, OWNER) as s:
+        pairs = (
+            await s.execute(
+                text(
+                    "SELECT DISTINCT src.relname, tgt.relname"
+                    " FROM pg_constraint c"
+                    " JOIN pg_class src ON src.oid = c.conrelid"
+                    " JOIN pg_class tgt ON tgt.oid = c.confrelid"
+                    " WHERE c.contype = 'f' AND c.confdeltype IN ('a', 'r')"
+                    "   AND src.relname = ANY(:w) AND tgt.relname = ANY(:w)"
+                    "   AND src.relname <> tgt.relname"
+                ),
+                {"w": wipe},
+            )
+        ).all()
+
+    assert pairs, "no blocking constraints found — the query or the table names are wrong"
+    wrong = [(c, p) for c, p in pairs if position[c] > position[p]]
+    assert not wrong, "\n".join(
+        f"{child} must be deleted BEFORE {parent} (its FK is NO ACTION), but _WIPE has"
+        f" {parent} at {position[parent]} and {child} at {position[child]}"
+        for child, parent in wrong
+    )

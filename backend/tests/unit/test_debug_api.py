@@ -1539,8 +1539,24 @@ def test_the_backup_route_starts_one_and_cannot_read_one(
     client, key = debug_client
     client.post("/api/debug/backup", headers=_auth(key))
 
-    routes = {getattr(r, "path", "") for r in cast(Any, client.app).routes}
-    readers = {p for p in routes if p.startswith("/api/debug/backup") and p != "/api/debug/backup"}
+    # Scan the WHOLE debug surface, not just paths under /backup. A prefix guard would
+    # miss the regression it exists to prevent — a later `/api/debug/archive` or
+    # `/api/debug/export/file/…` is a different prefix and would sail past it.
+    from fastapi.responses import FileResponse, StreamingResponse
+
+    servers = [
+        r
+        for r in cast(Any, client.app).routes
+        if str(getattr(r, "path", "")).startswith("/api/debug/")
+        and isinstance(getattr(r, "response_class", None), type)
+        and issubclass(r.response_class, FileResponse | StreamingResponse)
+    ]
+    assert not servers, f"a debug route serves a file body: {[r.path for r in servers]}"
+    readers = {
+        p
+        for p in {str(getattr(r, "path", "")) for r in cast(Any, client.app).routes}
+        if p.startswith("/api/debug/backup") and p != "/api/debug/backup"
+    }
     assert readers == {"/api/debug/backup/status"}, f"a backup reader appeared: {readers}"
 
     status = client.get("/api/debug/backup/status", headers=_auth(key), params={"tail": 120})

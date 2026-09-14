@@ -30,9 +30,12 @@ so the only thing TRUNCATE bought was a foot-gun. No sequences are reset because
 tables key on `gen_random_uuid()`, not on serials.
 
 Order is children-before-parents throughout, so no statement leans on a cascade to be
-correct. That matters because CI runs this against an EMPTY schema, where a wrong order
-cannot fail: `test_reset_corpus_pg.py` is what actually exercises it, seeding a row in
-every kept table that references the set.
+correct. That is not a claim to take on trust — the first draft got it wrong
+(`temporal_tokens` before `facts`) and would have aborted every `Ops -> Update` on this
+release, because CI runs migrations against an EMPTY schema where a wrong order cannot
+fail and an over-broad delete deletes nothing. So `test_reset_corpus_pg.py` seeds real
+referential data, and derives the blocking-constraint graph from the schema to check this
+list is a valid order — rather than re-asserting a reading of it.
 
 `downgrade()` refuses. Deleting data is not reversible, and a downgrade that pretended
 otherwise would be a lie in the one place someone reads under pressure. The recoverable
@@ -81,8 +84,13 @@ _WIPE = (
     "entity_mentions",
     "entity_aliases",
     "entity_distinctions",
-    "temporal_tokens",
+    # `facts` BEFORE `temporal_tokens`: `facts.temporal_token_id` is NO ACTION, so the
+    # token is the parent here even though a token reads like a detail of the fact. The
+    # first draft had them the other way round and aborted the whole migration on any
+    # dated fact — which is most of them. `test_the_wipe_order_satisfies_every_blocking
+    # _constraint` now derives this from the live schema rather than trusting the reading.
     "facts",
+    "temporal_tokens",
     "entities",
     # The predicate registry: tier-1 vocabulary learned from a corpus that is going.
     "predicate_aliases",

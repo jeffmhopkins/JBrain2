@@ -11,8 +11,11 @@ Two invariants hold for every kind:
   of the value. A `preference` is valid from when it is voiced; a schedule
   binding's value IS an instant (SCHEDULE_PREDICATES); and an `attribute`'s
   `when` is routinely the value itself (a birthDate's validity is the date it
-  states), so validity order would make correcting a birthday to an EARLIER
-  date lose to the date it corrects;
+  states). The first two order a WINNER that way. The third does not, and the
+  distinction is worth keeping straight because a draft of this list blurred it:
+  since O15 an `attribute` candidate always lands active and supersedes, so its
+  report-time order picks only which head is cited and whose confidence the
+  low-confidence floor compares against;
 - a pinned fact is a human override: it is never auto-superseded or held,
   only re-flagged via a review item.
 """
@@ -670,9 +673,18 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
         heads = [e for e in live if e.status in ("active", "pending_review")]
         if not heads:
             return Decision(insert=True)
-        # Report time, not validity — see the module docstring's first invariant: an
-        # attribute's `when` is so often the value itself that ordering by it would
-        # rank the two birthdays by which birthday they claim.
+        # Report time, not validity: an attribute's `when` is so often the value itself
+        # (a birthDate's validity IS the date it states) that ordering by it would rank
+        # two birthdays by which birthday they claim.
+        #
+        # Narrower than it looks, and measured rather than assumed: this does NOT pick a
+        # winner. The candidate always lands active and supersedes below — there is no
+        # candidate-vs-head comparison in this arm — so `current` only decides which head
+        # is CITED as the conflicting row and whose confidence the floor below compares
+        # against. Both matter solely when more than one head survives. An earlier draft
+        # of this comment claimed a validity ordering would make a correction "lose and
+        # land as history"; it cannot, and saying so sent two readers looking for a
+        # branch that does not exist.
         current = max(heads, key=lambda e: e.reported_at)
         pinned = max((e for e in heads if e.pinned), key=lambda e: e.reported_at, default=None)
         if pinned is not None:
