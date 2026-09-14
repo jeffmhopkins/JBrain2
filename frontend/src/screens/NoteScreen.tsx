@@ -1,12 +1,12 @@
 // Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level over home
 // or search with **Thread / Note / Files** tabs, opening on Thread — the note IS its
 // conversation (mock `docs/mocks/agent-ingest/a-note-thread.html`, variant A; the owner
-// reversed the variant-C gate on 2026-09-14, see `NoteThread.tsx`). Files is the canonical
+// reversed the variant-C gate on 2026-09-14, see `NoteThreadTab.tsx`). Files is the canonical
 // attachment manager (manifest rows + per-file sheet); Note carries the body, the
 // clarification eraser and everything the Analysis tab used to show on its own.
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
-import { NoteThread } from "../agent/NoteThread";
+import { NoteThreadTab } from "../agent/NoteThreadTab";
 import { Markdown } from "../agent/markdown";
 import type { FullBrainDeps } from "../agent/useFullBrain";
 import type { NoteThreadOut, SearchResult } from "../api/client";
@@ -456,7 +456,7 @@ export function NoteScreen({
           pass on the box's own GPU runs for minutes, and dropping the live stream every
           time the owner glanced at the body would be the surface losing the turn he is
           waiting for. */}
-      <NoteThread
+      <NoteThreadTab
         noteId={noteId}
         hidden={tab !== "thread"}
         onOpenNote={onOpenNoteById}

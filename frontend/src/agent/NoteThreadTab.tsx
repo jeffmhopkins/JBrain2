@@ -1,4 +1,5 @@
-// The note's own conversation, rendered ON the note screen (mock
+// The note screen's Thread tab — the note's own conversation, rendered ON the note
+// screen (mock
 // `docs/mocks/agent-ingest/a-note-thread.html`, variant A — the owner reversed the
 // variant-C gate on 2026-09-14: *"When I click on the note, it should basically open up
 // as a normal agent conversation same as jerv… When I go to do a follow-up, it shouldn't
@@ -10,6 +11,11 @@
 // definition with two hosts. The only thing written here is the composer, because the
 // home composer is the omnibox — the app's primary navigation — and a mode row on a note
 // screen would offer to navigate away from the note you are reading.
+//
+// Named `NoteThreadTab`, not `NoteThread`: `notes/useNoteThreads.ts` already exports a
+// `NoteThread` — the waiting-thread record the stream's ask chip is drawn from — and two
+// symbols of that name, one a component and one a row of state, is a collision waiting
+// for the file that needs both.
 //
 // What the omnibox has and this deliberately does not: the mode row (above), the
 // paperclip (a note's own files are added on the Files tab, which is one tap away and is
@@ -25,7 +31,7 @@ import { AgentTranscript, ProposalsAside } from "./FullBrainSurface";
 import { answeredCount } from "./asked";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
-export interface NoteThreadProps {
+export interface NoteThreadTabProps {
   /** Server note id; null for an outbox row that hasn't synced, which can have no
    * conversation yet. */
   noteId: string | null;
@@ -48,7 +54,7 @@ export interface NoteThreadProps {
   onAskCount?: ((n: number) => void) | undefined;
 }
 
-export function NoteThread({
+export function NoteThreadTab({
   noteId,
   hidden,
   onOpenNote,
@@ -56,7 +62,7 @@ export function NoteThread({
   fbDeps,
   lookupThread,
   onAskCount,
-}: NoteThreadProps): ReactNode {
+}: NoteThreadTabProps): ReactNode {
   const [thread, setThread] = useState<NoteThreadOut | null>(null);
   // Distinguishes "no conversation" from "not looked yet", so the empty state never
   // flashes "the box hasn't read this note" at a note whose thread is one tick away.
