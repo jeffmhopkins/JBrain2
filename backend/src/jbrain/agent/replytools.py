@@ -26,17 +26,22 @@ her title is CTO") lands PINNED against every later note. The verb that records 
 fact has to be reachable in the turn that learns one.
 
 **And it is reachable only on a turn whose words LANDED ON THE NOTE** (R3's review,
-finding 2, re-keyed by its second round). What `clarify.record_owner_reply` appends as a
-D6 clarification block becomes the note's own text, so a fact asserted beside it is
-re-stated by the note's next reading and survives the sweep. Where the append did not
-happen — a thread that is not waiting, an append that failed, a send whose free text
-`_pair` had no open question for — the owner's words reach no note at all
-(`note_clarifications.question` is NOT NULL, so D6 has no unprompted block), and the row
-would be swept by the note's next unattended pass, which shares this producer's single
-claim (`analysis/settle_owner.py`). `agents.narrow_for_unprompted_reply` takes the verb
-off that turn, applied from `api/agent.py` on `clarify.owner_words_reached_note` — the
-outcome of the append, which is the invariant, rather than the thread state, which is a
-proxy that admits all three cases above.
+finding 2, re-keyed by its second round). What `clarify.record_owner_reply` appends —
+an answer's D6 block, or since migration 0203 an `addition` carrying words nobody asked
+for — becomes the note's own text, so a fact asserted beside it is re-stated by the note's
+next reading and survives the sweep. Where the append did not happen — it failed, the note
+was deleted, or an ANSWER could not be placed against any open question — the owner's words
+reach no note at all, and the row would be swept by the note's next unattended pass, which
+shares this producer's single claim (`analysis/settle_owner.py`).
+`agents.narrow_for_unlanded_reply` takes the verb off that turn, applied from
+`api/agent.py` on `clarify.owner_words_reached_note` — the outcome of the append, which is
+the invariant, rather than the thread state, which is a proxy that admits all of them.
+
+⟲ **"A thread that is not waiting" used to head that list of failures, and it is now the
+ORDINARY case this whole surface is for** (O16, decided option 1). The owner opening a note
+he saved days ago and typing "actually the dentist is Dr. Ashcote" files an addition, the
+note re-ingests, and the reply turn holds every verb below — which is the point: he is
+correcting something the ingest wrote without anybody prompting him to.
 
 **`correct_fact` is bound on that turn and its EMPTY-ADDRESS arm is not.** The verb is
 two writes wearing one name: against a live head it supersedes and pins, which is the
@@ -510,10 +515,15 @@ def build_reply_write_handlers(
         # owner's words became the note's text that is the designed behaviour and stays.
         # On a turn where they did not, it is the worst write in the system: the row cites
         # text that exists nowhere, so no re-reading of the note can ever falsify it, and
-        # no correction note can reach it either. `narrow_for_unprompted_reply` takes
+        # no correction note can reach it either. `narrow_for_unlanded_reply` takes
         # `assert_fact` off exactly that turn, and leaving this arm bound made the refusal
         # a lie — the agent told it cannot record a new fact, holding a verb that records
         # one permanently.
+        #
+        # ⟲ Which turn that IS has changed under this comment (0203): the unprompted reply
+        # it was mostly written about now lands its words on the note as an `addition`, so
+        # this arm is bound there and the refusal has narrowed to a turn that placed
+        # nothing — an unplaceable answer, or an append that failed.
         #
         # The condition is read off `ctx.agent_tools`, this turn's effective allowlist,
         # and that is not a proxy here: `assert_fact` is absent from it for exactly two
@@ -730,14 +740,17 @@ def build_reply_write_handlers(
         # row at confidence 1.0 that no sweep, no later note and no correction note can
         # ever reach. Reaching THIS line means the chat registry, so it is a reply turn,
         # and `assert_fact` is absent from its allowlist for one reason:
-        # `narrow_for_unprompted_reply` took it off. The EMR and third-party narrowings
+        # `narrow_for_unlanded_reply` took it off. The EMR and third-party narrowings
         # cannot present here — the first takes `close_reading` too (so dispatch never
         # arrives), and the second only applies to a note a STRANGER wrote, which is never
         # an `owner_correction` one, so the elevation is unreachable on it either way.
         #
-        # The unpinned row such an element still commits is O16's open loss shape, left
-        # open deliberately: it is falsifiable by the next reading and swept when one
-        # comes. What is closed here is the PERMANENT shape.
+        # The unpinned row such an element still commits is falsifiable by the next
+        # reading and swept when one comes, so it stays admitted; what is closed here is
+        # the PERMANENT shape. (⟲ This called that "O16's open loss shape". O16 is decided
+        # and built — 0203 — and what is left here is not it: this branch is reached only
+        # when the owner's words did NOT land, which since 0203 means an answer that could
+        # not be placed rather than any unprompted sentence.)
         return await writer.close_reading(
             arguments, ctx, words_reached_note=ASSERT_FACT in ctx.agent_tools
         )

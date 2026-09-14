@@ -34,7 +34,7 @@ from jbrain.agent.agents import (
     AgentProfile,
     agent_for_owner_reply,
     narrow_for_third_party_note,
-    narrow_for_unprompted_reply,
+    narrow_for_unlanded_reply,
 )
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
@@ -1006,7 +1006,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # never receives. So the verb is bound to the OUTCOME, which is why this call
         # cannot happen any earlier than this line.
         if not owner_words_reached_note(owner_reply):
-            profile = narrow_for_unprompted_reply(profile)
+            profile = narrow_for_unlanded_reply(profile)
 
     runlog = get_agent_runlog(request)
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
@@ -1675,7 +1675,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         # `waiting_on_owner` may end it. A thread is also `running` for
                         # the whole of the worker's unattended pass, and this turn must
                         # not settle THAT — see `close_owner_reply`.
-                        reopened=owner_reply is not None,
+                        #
+                        # ⟲ This read `owner_reply is not None`, which was the same set
+                        # until 0203: an unprompted addition files a block on a thread
+                        # that is SETTLED or mid-pass and claims nothing, so it returns a
+                        # reply object without having re-opened anything. `claimed` is the
+                        # flip itself.
+                        reopened=owner_reply is not None and owner_reply.claimed,
                     )
                     # The reply turn's writes are the conversation's too, so the pass
                     # settles from HERE as well as from the worker's unattended pass —

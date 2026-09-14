@@ -45,7 +45,7 @@ from sqlalchemy import select, text
 from jbrain.agent.agents import (
     NOTE_INGEST_ON_REPLY_TOOLS,
     agent_for_owner_reply,
-    narrow_for_unprompted_reply,
+    narrow_for_unlanded_reply,
 )
 from jbrain.agent.contracts import DoneEvent, ToolCallEvent, ToolResultEvent
 from jbrain.agent.loop import ToolContext, ToolOutput
@@ -55,7 +55,12 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
-from jbrain.analysis.clarify import NOTE_CONVERSE_AGENT, record_reply_writes
+from jbrain.analysis.clarify import (
+    NOTE_CONVERSE_AGENT,
+    owner_words_reached_note,
+    record_owner_reply,
+    record_reply_writes,
+)
 from jbrain.analysis.entities import merge_entity_pair, normalize_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -135,6 +140,7 @@ def _ctx(
     scopes: tuple[str, ...] = ("general",),
     *,
     answering: bool = True,
+    agent_tools: frozenset[str] | None = None,
 ):
     """The turn as `/chat` builds it for a note thread: the owner NARROWED to the
     conversation's own scopes (constraint 2's `(note_domain, 'general')`), carrying this
@@ -142,7 +148,7 @@ def _ctx(
 
     `agent_tools` is not decoration here. `AgentLoop` fills it with the names this turn
     may actually dispatch, and `correct_fact`'s empty-address arm reads it: `answering
-    =False` is the turn `narrow_for_unprompted_reply` took `assert_fact` off, i.e. one
+    =False` is the turn `narrow_for_unlanded_reply` took `assert_fact` off, i.e. one
     whose words never reached the note."""
     narrowed = SessionContext(
         principal_id=owner.principal_id,
@@ -150,10 +156,12 @@ def _ctx(
         owner_scoped=True,
         domain_scopes=scopes,
     )
-    allowed = NOTE_INGEST_ON_REPLY_TOOLS
-    if not answering:
+    # `agent_tools` given: the caller resolved the turn's allowlist the way the route
+    # does and hands it over, rather than restating it as a flag.
+    allowed = agent_tools if agent_tools is not None else NOTE_INGEST_ON_REPLY_TOOLS
+    if agent_tools is None and not answering:
         allowed = (
-            narrow_for_unprompted_reply(agent_for_owner_reply(NOTE_CONVERSE_AGENT)).tools
+            narrow_for_unlanded_reply(agent_for_owner_reply(NOTE_CONVERSE_AGENT)).tools
             or frozenset()
         )
     return ToolContext(
@@ -456,18 +464,19 @@ async def test_a_correction_at_an_empty_address_records_and_pins_anyway(  # noqa
 
 
 @pytest.mark.asyncio
-async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_correction(  # noqa: F811
+async def test_an_unlanded_turn_is_refused_the_empty_address_and_keeps_the_correction(  # noqa: F811
     maker,  # noqa: F811
     tmp_path,
     owner_ctx,  # noqa: F811
 ) -> None:
     """R3's second review, finding 3 — and it is a surgical refusal, not a subtraction.
 
-    `narrow_for_unprompted_reply` takes `assert_fact` off a turn whose words never
-    reached the note, and left `correct_fact` whole. That was worse than the loss it
-    prevented: at an EMPTY address `decide()`'s correction branch commits active +
-    PINNED, so the agent was told it could not record a new fact while holding a verb
-    that records one permanently — a row citing text that exists nowhere, which no
+    `narrow_for_unlanded_reply` takes `assert_fact` off a turn whose words never
+    reached the note — since 0203 that is an answer nobody could place, or an append that
+    failed, rather than any unprompted sentence — and left `correct_fact` whole. That was
+    worse than the loss it prevented: at an EMPTY address `decide()`'s correction branch
+    commits active + PINNED, so the agent was told it could not record a new fact while
+    holding a verb that records one permanently — a row citing text that exists nowhere, which no
     re-reading of the note can falsify and no correction note can reach.
 
     But simply dropping the verb would take away the owner's own repair path: correcting
@@ -484,7 +493,7 @@ async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_cor
     note_id = await make_note(maker, domain="general", body=BODY)
     await ingest(maker, note_id, tmp_path)
     session_id = await _conversation(maker, owner_ctx, note_id)
-    dana = await _entity(maker, "Dana of the unprompted reply")
+    dana = await _entity(maker, "Dana of the unlanded reply")
     on_file = await _fact(
         maker,
         dana,
@@ -493,21 +502,21 @@ async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_cor
         statement="Dana lives at 118 Pine Ave.",
         value="118 Pine Ave",
     )
-    unprompted = _ctx(owner_ctx, session_id, answering=False)
+    unlanded = _ctx(owner_ctx, session_id, answering=False)
     handlers = _handlers(maker)
 
     # (a) the empty address: a NEW pinned fact out of words the note never received.
     refused = str(
         await handlers[CORRECT_FACT](
             {
-                "entity": "Dana of the unprompted reply",
+                "entity": "Dana of the unlanded reply",
                 "predicate": "jobTitle",
                 "qualifier": "",
                 "object": "CTO",
                 "statement": "Dana is the CTO.",
                 "when": "",
             },
-            unprompted,
+            unlanded,
         )
     )
     assert "holds nothing on file" in refused
@@ -517,14 +526,14 @@ async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_cor
     # (b) the same turn, correcting what IS on file: untouched, and still pinned.
     ok = await handlers[CORRECT_FACT](
         {
-            "entity": "Dana of the unprompted reply",
+            "entity": "Dana of the unlanded reply",
             "predicate": "homeLocation",
             "qualifier": "",
             "object": "412 Oak St",
             "statement": "Dana lives at 412 Oak St.",
             "when": "",
         },
-        unprompted,
+        unlanded,
     )
     assert "412 Oak St" in str(ok), str(ok)
     live = [f for f in await _rows(maker, dana, "homeLocation") if f.status == "active"]
@@ -532,11 +541,11 @@ async def test_an_unprompted_turn_is_refused_the_empty_address_and_keeps_the_cor
     assert live[0].pinned is True
     assert str(live[0].id) != on_file, "the head on file was refreshed rather than superseded"
 
-    # (c) and on an ANSWERING turn the empty address still records, because there his
-    # words are the note's text. Same handler, same address, one flag apart.
+    # (c) and on a turn whose words DID land the empty address still records, because
+    # there they are the note's text. Same handler, same address, one flag apart.
     answered = await handlers[CORRECT_FACT](
         {
-            "entity": "Dana of the unprompted reply",
+            "entity": "Dana of the unlanded reply",
             "predicate": "jobTitle",
             "qualifier": "",
             "object": "CTO",
@@ -962,12 +971,13 @@ async def test_the_reply_turn_can_resolve_and_assert_and_what_it_asserts_is_not_
 
 
 @pytest.mark.asyncio
-async def test_an_unprompted_reply_may_not_pin_a_correction_out_of_a_real_quote(  # noqa: F811
+async def test_a_reply_whose_words_did_not_land_may_not_pin_a_correction(  # noqa: F811
     maker,  # noqa: F811
     tmp_path,
     owner_ctx,  # noqa: F811
 ) -> None:
-    """R3's third review, finding 1 — the PERMANENT shape of the O16 deferral, closed.
+    """R3's third review, finding 1 — the PERMANENT shape of the write with no source
+    text, closed.
 
     The elevation in `_assert_one` turns an ATTESTED element of an `owner_correction`
     note into `correction=True`, which force-supersedes and PINS at confidence 1.0. And
@@ -976,17 +986,20 @@ async def test_an_unprompted_reply_may_not_pin_a_correction_out_of_a_real_quote(
     later, a `close_reading` element quoting a line the note really contains, carrying a
     value he typed only into the thread, landed active + pinned: `sweep_note` spares a
     pinned row, no later note supersedes one, and no correction note can address it.
-    Nothing in the system could ever take it back, which is what O16 calls worse than the
-    loss it stands in for.
+    Nothing in the system could ever take it back, which is worse than the loss it stands
+    in for.
 
-    The gate is the turn's own allowlist, where `narrow_for_unprompted_reply` already
+    The gate is the turn's own allowlist, where `narrow_for_unlanded_reply` already
     landed (`_ctx(answering=False)`), and both halves are on one note:
 
-    - the unprompted turn's element commits UNPINNED — still the O16 loss shape,
-      deliberately still open, because it is falsifiable by the next reading and swept
-      when one comes;
-    - the answering turn's element, same note and same quote, still pins, because there
-      the owner's words ARE the note's text and the elevation is what it is for."""
+    - the unlanded turn's element commits UNPINNED — still a loss shape, deliberately
+      still open, because it is falsifiable by the next reading and swept when one comes;
+    - the landed turn's element, same note and same quote, still pins, because there the
+      owner's words ARE the note's text and the elevation is what it is for.
+
+    ⟲ This used to be reached by the ORDINARY unprompted reply and is not since 0203:
+    such a reply files an `addition` block, so its words are the note's text and it takes
+    the second arm. What reaches the first is an answer that could not be placed."""
     body = (
         "Correction: Kaiya's dentist is not Dr. Patel. Kaiya is seen by Dr. Marsh for orthodontics."
     )
@@ -1005,10 +1018,10 @@ async def test_an_unprompted_reply_may_not_pin_a_correction_out_of_a_real_quote(
     handlers = _handlers(maker)
     quote = "Kaiya is seen by Dr. Marsh for orthodontics."
 
-    unprompted = _ctx(owner_ctx, session_id, answering=False)
+    unlanded = _ctx(owner_ctx, session_id, answering=False)
     await handlers["resolve_entity"](
         {"entities": [{"surface": "Kaiya of the reopened correction", "kind": "person"}]},
-        unprompted,
+        unlanded,
     )
     said_in_chat = await handlers["close_reading"](
         {
@@ -1028,11 +1041,11 @@ async def test_an_unprompted_reply_may_not_pin_a_correction_out_of_a_real_quote(
                 }
             ],
         },
-        unprompted,
+        unlanded,
     )
     assert isinstance(said_in_chat, ToolOutput) and len(said_in_chat.facts) == 1
     row = await _fact_row(maker, uuid.UUID(said_in_chat.facts[0].fact_id))
-    assert row.pinned is False, "an unprompted reply minted a fact nothing can ever correct"
+    assert row.pinned is False, "an unlanded reply minted a fact nothing can ever correct"
     # And the model is told, because a row it believes is pinned is one it reports as
     # settled to the owner.
     assert "NOT as a pinned correction" in str(said_in_chat)
@@ -1111,6 +1124,110 @@ async def test_the_reply_turns_four_verbs_share_one_handle_table(  # noqa: F811
     )
     assert isinstance(out, ToolOutput) and len(out.facts) == 1
     assert "no such handle" not in str(out)
+
+
+# --- the unprompted loop, end to end ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_unprompted_addition_reaches_a_reply_turn_that_corrects_a_fact(  # noqa: F811
+    maker,  # noqa: F811
+    tmp_path,
+    owner_ctx,  # noqa: F811
+) -> None:
+    """O16's whole loop in one test, because it is three pieces that have to meet: the
+    owner's unprompted sentence ATTACHES to the note, the turn it drives HOLDS the write
+    verbs, and a correction on that turn CHANGES the fact.
+
+    This is what he asked for, in his words: *"I foresee me adding a note. The AI adding a
+    bunch of facts and me having to correct it even though it's not prompting me."* The
+    note has been read, the pass is settled, one of the facts it wrote is wrong, and
+    nothing is asking him anything. Before 0203 there was no way in at all — the reply
+    reached no note, so the turn was narrowed and the agent's answer was a refusal.
+
+    Each step is asserted at the layer that owns it rather than through a scripted model,
+    which is the same shape the rest of this file takes: the append is `record_owner_reply`
+    against real Postgres, the surface is the profile the route resolves (the exact two
+    calls `api/agent.py` makes, in its order), and the correction is the handler the turn
+    would dispatch. What is NOT faked is anything that decides how the write lands."""
+    note_id = await make_note(maker, domain="general", body=BODY)
+    await ingest(maker, note_id, tmp_path)
+    session_id = await _conversation(maker, owner_ctx, note_id)
+    # The pass finished and said what it recorded — the thread the ask chip does not show,
+    # because nothing is waiting.
+    async with scoped_session(maker, owner_ctx) as s:
+        await NoteConversationRepo().set_state(s, session_id, "settled")
+
+    kaiya = await _entity(maker, "Kaiya of the unprompted correction")
+    wrong = await _fact(
+        maker,
+        kaiya,
+        note_id,
+        predicate="dentist",
+        statement="Kaiya is seen by Dr. Patel.",
+        value="Dr. Patel",
+    )
+
+    # 1. HE TYPES IT. Nothing asked him, and the sentence lands on the note as his own
+    #    words — no invented question, and a re-ingest so the note is read again with it.
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner_ctx,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        message="Actually Kaiya's dentist is Dr. Ashcote, not Dr. Patel.",
+    )
+    assert reply is not None
+    assert reply.additions == ["Actually Kaiya's dentist is Dr. Ashcote, not Dr. Patel."]
+    assert reply.claimed is False, "an unprompted addition must not claim a question set"
+    note = await SqlNotesRepo(maker).get_note(owner_ctx, note_id)
+    assert note is not None and "Dr. Ashcote" in note.body
+    async with scoped_session(maker, owner_ctx) as s:
+        queued = int(
+            (
+                await s.execute(
+                    text(
+                        "SELECT count(*) FROM app.jobs WHERE kind = 'ingest_note'"
+                        " AND payload->>'note_id' = :n"
+                    ),
+                    {"n": note_id},
+                )
+            ).scalar_one()
+        )
+    assert queued == 1, "the note was not re-read with the correction on it"
+
+    # 2. THE TURN KEEPS ITS VERBS. The two lines `/chat` runs, in its order — the
+    #    on-reply widening, then the narrowing keyed on what the append actually did.
+    profile = agent_for_owner_reply(NOTE_CONVERSE_AGENT)
+    assert owner_words_reached_note(reply) is True
+    if not owner_words_reached_note(reply):  # pragma: no cover - the route's own branch
+        profile = narrow_for_unlanded_reply(profile)
+    assert profile.tools is not None
+    assert {"correct_fact", "assert_fact", "close_reading"} <= profile.tools
+
+    # 3. THE CORRECTION CHANGES THE FACT. `correct_fact` at an OCCUPIED address: the head
+    #    on file is superseded and the owner's value is active and pinned, so a later note
+    #    cannot quietly flip it back. Asserted on the rows, never on the result text.
+    out = await _handlers(maker)[CORRECT_FACT](
+        {
+            "entity": "Kaiya of the unprompted correction",
+            "predicate": "dentist",
+            "qualifier": "",
+            "object": "Dr. Ashcote",
+            "statement": "Kaiya is seen by Dr. Ashcote.",
+            "when": "",
+        },
+        _ctx(owner_ctx, session_id, agent_tools=profile.tools),
+    )
+    assert "Dr. Ashcote" in str(out), str(out)
+    live = [f for f in await _rows(maker, kaiya, "dentist") if f.status == "active"]
+    assert len(live) == 1
+    assert live[0].value_json == {"value": "Dr. Ashcote"}
+    assert live[0].pinned is True
+    assert str(live[0].id) != wrong
+    superseded = await _fact_row(maker, uuid.UUID(wrong))
+    assert superseded.status == "superseded"
 
 
 # --- merge_entities -----------------------------------------------------------

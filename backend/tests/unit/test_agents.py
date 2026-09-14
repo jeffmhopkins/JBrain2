@@ -909,15 +909,23 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
-        # v9 is the O15 ruling. The persona set the bar for asking at "I cannot proceed"
-        # and told the model a REPLACED result was routine — between them they would have
-        # vetoed the ask the ruling requires, since a newest-wins supersession blocks
-        # nothing. This is a deliberate PROMPT_VERSION bump (analysis/prompt.py): it
-        # stamps `facts.prompt_version` and `note_analysis.prompt_version`, and the corpus
-        # drift is real but near-zero here — R5 wipes the notes and the graph anyway.
+        # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
+        # block on the note (migration 0203), so the persona's rule for `assert_fact` —
+        # "only what he said that became the note's text" — has a different, much larger
+        # set behind it, and the paragraph that told the model his typed aside beside a tap
+        # reaches no note had stopped being true. It also tells the persona the thing the
+        # feature exists for: he can open a note nobody is asking him about and correct it.
+        # A deliberate PROMPT_VERSION bump (analysis/prompt.py) — it stamps
+        # `facts.prompt_version` and `note_analysis.prompt_version`, and the drift is nil
+        # rather than near-nil this time: 0202 wiped the corpus, so there is nothing
+        # stamped with v9 on the box at all.
+        #
+        # (v9 was the O15 ruling: the persona set the bar for asking at "I cannot proceed"
+        # and told the model a REPLACED result was routine, which between them would have
+        # vetoed the ask that ruling requires.)
         "note_ingest": (
-            "agent-note-ingest-v9",
-            "035422211ee94f16bbb758a912749e6a9ce1d0ed4944ec96d7abeb4e41dc7c8b",
+            "agent-note-ingest-v10",
+            "33fedfedde320521572e76dc0d653ec570203ec1ba57161002b89b0c16d68656",
         ),
     }
     assert set(pins) == AGENT_NAMES
