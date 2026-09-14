@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.note_conversation import WAITING_ON_OWNER, NoteConversationRepo
+from jbrain.models.note_conversation import WAITING_ON_OWNER, NoteConversationRepo, NoteThread
 from jbrain.notes.service import (
     ClarificationsAltered,
     NoteInfo,
@@ -78,7 +78,12 @@ class ClarificationOut(BaseModel):
 
     id: str
     seq: int
-    question: str
+    #: `answer` (a question the agent asked, with what Jeff replied) or `addition` (what
+    #: he came back and typed himself, which no question was open for — 0203).
+    kind: str
+    #: None on an `addition`. The PWA's eraser switches on `kind` rather than on this,
+    #: so a client that renders the pair unconditionally cannot print a null question.
+    question: str | None
     answer: str
     created_at: datetime
 
@@ -314,12 +319,56 @@ async def list_clarifications(
         ClarificationOut(
             id=b.id,
             seq=b.seq,
+            kind=b.kind,
             question=b.question,
             answer=b.answer,
             created_at=b.created_at,
         )
         for b in blocks
     ]
+
+
+class NoteThreadOut(BaseModel):
+    """The note's conversation, so the note screen can open it."""
+
+    session_id: str
+    agent: str
+    state: str
+
+
+@router.get("/notes/{note_id}/thread")
+async def note_thread(
+    note_id: str, principal: OwnerDep, repo: NotesRepoDep, maker: SessionMakerDep
+) -> NoteThreadOut | None:
+    """Which conversation this note has, live or long finished — the note screen's door
+    into it (O16 of `docs/plans/AGENT_INGEST_REWRITE.md`).
+
+    The owner has no terminal (CLAUDE.md #10) and, until this route, no way in: a thread
+    was reachable only from a stream row's ask chip, which appears only while the thread
+    is WAITING. So the one moment he most wants to say something — the pass has finished
+    and recorded a pile of facts, one of which is wrong, and nothing is asking him
+    anything — was the one moment the thread had no door. He could open the note and read
+    what it said, and had nowhere to answer it.
+
+    Null rather than 404 when the note has no conversation yet (captured seconds ago, or
+    ingest still pending): "this note has no thread" is an ordinary state of an ordinary
+    note, and the screen hides the affordance rather than showing an error.
+
+    `OwnerDep` like the clarification routes beside it and for the same reason: it names
+    a session id that `/chat` will write the owner's own graph through, across every
+    domain including health.
+    """
+    if await repo.get_note(ctx_for(principal), note_id) is None:
+        # Through the notes repo, so a note outside this principal's domain scopes is a
+        # 404 here exactly as it is everywhere else — `note_conversations` carries no
+        # domain of its own to narrow by.
+        raise HTTPException(status_code=404, detail="note not found")
+    ctx = ctx_for(principal)
+    async with scoped_session(maker, ctx) as session:
+        thread: NoteThread | None = await NoteConversationRepo().thread_for_note(session, note_id)
+    if thread is None:
+        return None
+    return NoteThreadOut(session_id=thread.session_id, agent=thread.agent, state=thread.state)
 
 
 @router.delete("/notes/{note_id}/clarifications/{clarification_id}")

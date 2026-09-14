@@ -121,8 +121,18 @@ class Note(Base):
     )
 
 
+#: A block that pairs a question the agent ASKED with the owner's answer (D6, the only
+#: shape migration 0193 had).
+CLARIFICATION_ANSWER = "answer"
+#: A block the owner wrote UNPROMPTED — his own words, no question (migration 0203, O16
+#: option 1 of `docs/plans/AGENT_INGEST_REWRITE.md`, which calls it an addendum). Same
+#: row, same composition, same chunking; what differs is that there is nothing to pair it
+#: with, which is why `question` is nullable and `kind` says which shape a row is.
+CLARIFICATION_ADDITION = "addition"
+
+
 class NoteClarification(Base):
-    """One appended, timestamped clarification block (D6, migration 0193).
+    """One appended, timestamped clarification block (D6, migrations 0193 and 0203).
 
     The note's `body` column stays exactly as its author wrote it — a clarification
     never rewrites it, and an owner body edit never destroys clarifications, because
@@ -147,7 +157,12 @@ class NoteClarification(Base):
     # DB-generated (GENERATED ALWAYS AS IDENTITY): a global sequence, so two answers
     # racing onto the same note still get a total order.
     seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True))
-    question: Mapped[str] = mapped_column(Text)
+    #: `answer` or `addition` — which of the two block shapes this row is. Postgres ties
+    #: it to `question` (0203's CHECK), so a reader may switch on it rather than infer
+    #: the shape from a NULL.
+    kind: Mapped[str] = mapped_column(Text, server_default=CLARIFICATION_ANSWER)
+    #: NULL on an `addition`: nobody asked, so there is no question to pair (0203).
+    question: Mapped[str | None] = mapped_column(Text, nullable=True)
     answer: Mapped[str] = mapped_column(Text)
     # The conversation the answer came from (D1); NULL once that session is purged.
     session_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -931,6 +931,7 @@ def test_the_clarification_eraser_is_owner_only_on_both_verbs(
         ClarificationInfo(
             id="b1",
             seq=1,
+            kind="answer",
             question="Which Sarah?",
             answer="my sister — reachable on 555-0148",
             created_at=datetime.now(UTC),

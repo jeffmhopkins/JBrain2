@@ -27,9 +27,14 @@ next read.
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from jbrain.models.notes import NoteClarification
+from jbrain.models.notes import CLARIFICATION_ADDITION, NoteClarification
 
 _MARK = "[clarification "
+#: An unprompted block's marker (0203). A DIFFERENT word, not the same one with the Q/A
+#: dropped: the composed text is what the next reading reads, and "the agent asked and he
+#: answered" and "he came back to the note and said this" are different claims about
+#: where a sentence came from.
+_ADDED_MARK = "[addition "
 
 
 def _stamp(at: datetime) -> str:
@@ -40,7 +45,8 @@ def _stamp(at: datetime) -> str:
 
 
 def clarification_block(c: NoteClarification) -> str:
-    """One block as it appears in the note's text.
+    """One block as it appears in the note's text — an ANSWER's Q/A pair, or the owner's
+    own unprompted ADDITION (0203, O16 option 1).
 
     Plain text on purpose, and it has to read correctly on BOTH surfaces, which do not
     agree: the stream bubble renders the body as a text child (`Stream.tsx`), so markup
@@ -50,6 +56,16 @@ def clarification_block(c: NoteClarification) -> str:
     format that is right in both — and it is where the owner READS a note that the block
     structure actually renders.
     """
+    # `kind` is the discriminator and `question is None` is the belt: rows reach here
+    # DETACHED as well as mapped (the search leg builds them by hand from a json_agg),
+    # and a hand-built row that forgot `kind` must not render `Q: None` into the note's
+    # own text. Postgres holds the two in step (0203's CHECK), so the `or` can only fire
+    # on a reader's omission, which is exactly when it is worth having.
+    if c.kind == CLARIFICATION_ADDITION or c.question is None:
+        # No `A:` label on an addition, because there is no `Q:` for it to be the other
+        # half of — and a lone label would read to the next pass as the channel's own
+        # labelling of somebody's words. The whole of an addition is the owner's text.
+        return f"{_ADDED_MARK}{_stamp(c.created_at)}]\n{c.answer}"
     return f"{_MARK}{_stamp(c.created_at)}]\nQ: {c.question}\nA: {c.answer}"
 
 

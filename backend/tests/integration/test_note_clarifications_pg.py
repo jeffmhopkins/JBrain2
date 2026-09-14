@@ -15,10 +15,11 @@ covers the path D6 makes fire on every answered question.
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -311,6 +312,97 @@ async def test_the_append_queues_its_own_re_ingest(
         ).scalar_one()
     assert queued == 1
     assert state == "pending"
+
+
+async def test_an_addition_is_stored_composed_and_chunked_like_any_block(
+    maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """The unprompted shape, end to end through storage (0203, O16 option 1).
+
+    D7 is the load-bearing half: the composed text is what the chunker sees, so an
+    addition is a CHUNK of the same note — which is what makes a fact drawn from the
+    owner's unprompted correction able to cite a chunk at all. Without that the write is
+    the very thing the reply turn's narrowing exists to refuse."""
+    repo = SqlNotesRepo(maker)
+    note_id = await make_note(maker)
+    composed = await repo.append_clarifications(
+        OWNER, note_id, additions=["Actually it was a 5k — I cut it short."]
+    )
+    assert composed is not None
+    # The body column is untouched; the block composes onto it, after it, as an answer
+    # does — and with no invented `Q:` pair, which is the shape's whole point.
+    assert await stored_body(maker, note_id) == BODY
+    assert composed.body.startswith(BODY)
+    assert "Actually it was a 5k — I cut it short." in composed.body
+    assert "Q:" not in composed.body
+
+    await IngestPipeline(maker, FsBlobStore(tmp_path)).ingest_note({"note_id": note_id})
+    async with scoped_session(maker, OWNER) as s:
+        texts = list(
+            (
+                await s.execute(
+                    text(
+                        "SELECT text FROM app.chunks WHERE note_id = :n"
+                        " AND granularity = 'paragraph' ORDER BY seq"
+                    ),
+                    {"n": note_id},
+                )
+            ).scalars()
+        )
+    assert any("Actually it was a 5k" in t for t in texts)
+
+
+async def test_the_two_block_shapes_are_tied_to_their_question_in_postgres(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """0203's CHECK, both ways round. `kind` is the discriminator three renderers switch
+    on (`notes.compose`, the PWA eraser, the search preview), so "an answer has a
+    question, an addition has none" has to be a fact of the schema rather than a
+    convention each of them keeps separately — a questionless row wearing `answer` would
+    render `Q: None` into the owner's own note text.
+
+    The DEFAULT is `answer`, which is what makes the forgetful writer loud rather than
+    silent: omit `kind` while passing no question and the row is refused."""
+    note_id = await make_note(maker)
+    async with scoped_session(maker, OWNER) as s:
+        domain = (
+            await s.execute(text("SELECT domain_code FROM app.notes WHERE id = :n"), {"n": note_id})
+        ).scalar_one()
+
+    async def _insert(kind: str | None, question: str | None) -> None:
+        async with scoped_session(maker, OWNER) as s:
+            cols = "note_id, answer, domain_code, question" + ("" if kind is None else ", kind")
+            vals = ":n, 'some text', :d, :q" + ("" if kind is None else ", :k")
+            params: dict[str, Any] = {"n": note_id, "d": domain, "q": question}
+            if kind is not None:
+                params["k"] = kind
+            await s.execute(
+                text(f"INSERT INTO app.note_clarifications ({cols}) VALUES ({vals})"), params
+            )
+
+    # An answer with no question — including the writer that simply forgot `kind`.
+    with pytest.raises(IntegrityError):
+        await _insert("answer", None)
+    with pytest.raises(IntegrityError):
+        await _insert(None, None)
+    # An answer whose question is blank: 0193's non-blank rule, kept for the rows it was
+    # about rather than dropped with the NOT NULL.
+    with pytest.raises(IntegrityError):
+        await _insert("answer", "   ")
+    # An addition carrying a question — a pair nobody asked for, which is exactly the
+    # "synthesize a question so a block can be filed" shortcut O16 rejected.
+    with pytest.raises(IntegrityError):
+        await _insert("addition", "Which 10k?")
+    # And an unknown kind is not a third shape: the CHECK enumerates both arms, so it
+    # bounds the column too.
+    with pytest.raises(IntegrityError):
+        await _insert("note", None)
+    assert await block_count(maker, note_id) == 0
+
+    # The two legal shapes go in.
+    await _insert("answer", "Which 10k?")
+    await _insert("addition", None)
+    assert await block_count(maker, note_id) == 2
 
 
 async def test_one_block_can_be_erased_without_taking_the_note_with_it(

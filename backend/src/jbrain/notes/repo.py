@@ -13,7 +13,15 @@ from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.chunker import PARAGRAPH
 from jbrain.ingest.extract import KIND_TEXT_LAYER
-from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note, NoteClarification
+from jbrain.models.notes import (
+    CLARIFICATION_ADDITION,
+    CLARIFICATION_ANSWER,
+    Attachment,
+    AttachmentExtract,
+    Chunk,
+    Note,
+    NoteClarification,
+)
 from jbrain.notes.compose import compose_body, strip_clarifications
 from jbrain.notes.service import (
     AttachmentInfo,
@@ -216,7 +224,8 @@ class SqlNotesRepo:
         ctx: SessionContext,
         note_id: str,
         *,
-        pairs: Sequence[tuple[str, str]],
+        pairs: Sequence[tuple[str, str]] = (),
+        additions: Sequence[str] = (),
         session_id: str | None = None,
     ) -> NoteInfo | None:
         async with scoped_session(self._maker, ctx) as session:
@@ -227,17 +236,32 @@ class SqlNotesRepo:
             ).scalar_one_or_none()
             if note is None:
                 return None
-            if not pairs:
+            if not pairs and not additions:
                 # Nothing was appended, so the note's text did not change: flipping
                 # `ingest_state` and queueing a re-ingest here would re-chunk a note
                 # nobody edited. A reply whose every answer was dropped lands here.
                 return _note_info(note)
+            # Answers first, then the owner's unprompted words — the order
+            # `clarify.owner_turn_text` renders the same turn in, and the order he did
+            # them in: he taps, then types beside the taps.
             for question, answer in pairs:
                 session.add(
                     NoteClarification(
                         note_id=note.id,
+                        kind=CLARIFICATION_ANSWER,
                         question=question,
                         answer=answer,
+                        session_id=uuid.UUID(session_id) if session_id else None,
+                        domain_code=note.domain_code,
+                    )
+                )
+            for addition in additions:
+                session.add(
+                    NoteClarification(
+                        note_id=note.id,
+                        kind=CLARIFICATION_ADDITION,
+                        question=None,
+                        answer=addition,
                         session_id=uuid.UUID(session_id) if session_id else None,
                         domain_code=note.domain_code,
                     )
@@ -280,6 +304,7 @@ class SqlNotesRepo:
                 ClarificationInfo(
                     id=str(c.id),
                     seq=c.seq,
+                    kind=c.kind,
                     question=c.question,
                     answer=c.answer,
                     created_at=c.created_at,

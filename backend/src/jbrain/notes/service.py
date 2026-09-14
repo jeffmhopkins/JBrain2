@@ -97,11 +97,16 @@ class ClarificationInfo:
     The note view renders the blocks as TEXT — that is the whole of D6's storage-only
     treatment — so the block ids exist nowhere the owner can reach without this. Listing
     them is what makes the eraser usable at all: a secret typed into an answer has to be
-    identifiable before it can be removed."""
+    identifiable before it can be removed — and since 0203 the same is true of a sentence
+    he added himself, which is the other thing this list now has to be able to name."""
 
     id: str
     seq: int
-    question: str
+    #: `answer` or `addition` (`models.notes.CLARIFICATION_*`). The eraser renders the
+    #: two differently, so it is told which rather than inferring it from a null.
+    kind: str
+    #: None on an `addition` — nobody asked (0203).
+    question: str | None
     answer: str
     created_at: datetime
 
@@ -190,16 +195,24 @@ class NotesRepo(Protocol):
         ctx: SessionContext,
         note_id: str,
         *,
-        pairs: Sequence[tuple[str, str]],
+        pairs: Sequence[tuple[str, str]] = (),
+        additions: Sequence[str] = (),
         session_id: str | None = None,
     ) -> NoteInfo | None:
-        """Append EVERY pair of one reply, in ONE transaction (R1c's batched ask).
+        """Append everything ONE reply put on the note, in ONE transaction (R1c's batched
+        ask, and 0203's unprompted additions).
 
         Same contract as `append_clarification` above, and the reason it exists is the
         `ingest_state` flip and the `ingest_note` enqueue that ride inside it: called in
         a loop they would queue one re-ingest of the same note per answer, which is the
-        cost the batch was built to remove. An empty `pairs` returns the note untouched:
-        nothing was appended, so nothing is stale and there is nothing to re-ingest.
+        cost the batch was built to remove. `additions` is in the SAME call rather than a
+        sibling method for exactly that reason — the designed send carries taps AND typed
+        words, and two calls would re-chunk the note twice for one turn.
+
+        `pairs` are the answers to questions the agent asked; `additions` are sentences
+        the owner wrote that answer nothing (O16 option 1). Both empty returns the note
+        untouched: nothing was appended, so nothing is stale and there is nothing to
+        re-ingest.
         """
         ...
 
