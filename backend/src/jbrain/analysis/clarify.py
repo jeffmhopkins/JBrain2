@@ -645,8 +645,11 @@ async def record_owner_reply(
             # filters on `_ALLOWED_SOURCES["running"]`, which contains `running`, so the
             # loser's UPDATE matches the winner's committed row and BOTH proceed. A
             # conditional UPDATE on `waiting_on_owner` is what actually serializes them —
-            # exactly one claims, the loser returns None just as a non-waiting thread
-            # does, and two replies can never answer the same question twice.
+            # exactly one claims, the loser returns None and files nothing at all, and two
+            # replies can never answer the same question twice. (⟲ It used to say the
+            # loser returns None "just as a non-waiting thread does". A non-waiting thread
+            # no longer returns None — it files an `addition` — and the loser of a race
+            # still must not, because its words are the same words the winner just filed.)
             #
             # What a PARTIAL send leaves behind still needs no claim of its own, and that
             # is O11 (ii) paying for itself: an unanswered question is not durable state,
@@ -711,8 +714,9 @@ async def record_owner_reply(
             dropped=[a for _, a in pairs] + additions + dropped,
         )
     if clarified is None:
-        # The note is gone (soft-deleted). The questions cannot be answered onto it, and
-        # the state is already back to `running`, so nothing holds the note's live slot.
+        # The note is gone (soft-deleted). Nothing can be appended to it, and a turn that
+        # claimed the thread has already put it back in `running`, so nothing holds the
+        # note's live slot.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
         return OwnerReply(
             answered=pairs,
@@ -724,6 +728,14 @@ async def record_owner_reply(
         )
 
     if not moved and (pairs or additions):
+        # An `addition` earns the re-stamp on the same grounds an answer does, and they
+        # are the grounds rather than the thread's state: the words were typed INTO this
+        # thread on this turn, so a conversation that had read the note as it stood has
+        # read it as it now stands. The one case where that is thin is an addition onto a
+        # thread the WORKER is mid-pass on — the row has the words and the live pass's
+        # context does not — and it costs nothing today, because the only reader of this
+        # field is the `moved` comparison four lines up. Anything that grows a second
+        # reader (O4's parked-thread edit is the candidate) has to re-derive this.
         with contextlib.suppress(Exception):
             async with scoped_session(maker, ctx) as s:
                 await repo.set_body_sha(s, session_id, note_body_sha(clarified.body))
