@@ -176,3 +176,25 @@ def test_the_older_notes_pill_is_a_button_with_a_buttons_floor() -> None:
     bleed = _rule(".older-pill::before")
     assert re.search(r"height:\s*44px", bleed)
     assert re.search(r"transform:\s*translateY\(-50%\)", bleed)
+
+
+def test_the_ledgers_overflow_control_cannot_reach_the_worked_chip() -> None:
+    """The ledger card renders directly above the activity strip, so its last control's
+    hit area is a hair from the Worked chip's.
+
+    A bleed is what this control would ordinarily get — it is a quiet "+N more" in the
+    same register as `.entity-chip-more`, and painting a 44px box around eleven-pixel
+    text is the thing bleeds exist to avoid. It does not get one, because `button.
+    chip-ask` above already paid for that lesson on a wrapping row: an absolutely
+    positioned pseudo is painted after the static siblings and WINS the hit test, so the
+    bottom third of this control would open the Worked disclosure's neighbour instead of
+    the steps. A ledger's last line is cheap to make tall. The property is that its tap
+    area is its own in-flow box."""
+    more = _rule(".fb-shell .fb-ledger-more")
+    assert re.search(r"min-height:\s*44px", more)
+    assert not re.search(r"position:\s*(absolute|fixed|relative)", more)
+    # And no out-of-flow hit area hung off it anywhere in the sheet, however spelled.
+    src = _STYLES.read_text(encoding="utf-8")
+    for at in (m.end() for m in re.finditer(r"\bfb-ledger-more", src)):
+        selector = src[at : src.find("{", at)]
+        assert ":before" not in selector and ":after" not in selector

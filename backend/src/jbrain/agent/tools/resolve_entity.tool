@@ -1,6 +1,6 @@
 ---
 name: resolve_entity
-version: 2
+version: 3
 permission: mutate
 mutating: true
 side_effecting: true
@@ -21,7 +21,8 @@ params:
             type: string
             description: >-
               The name exactly as the note writes it — "Dana Whitfield", "Ritual",
-              "Everlane". Never a role word like "her partner" or "my doctor".
+              "Everlane". Never a role word like "her partner" or "my doctor" — EXCEPT
+              the owner himself, who is always "Me".
           kind:
             type: string
             description: >-
@@ -52,6 +53,13 @@ examples:
       - surface: Dana
         kind: person
         distinguish: the one in Boulder
+  - entities:
+      - surface: Me
+        kind: person
+        distinguish: ""
+      - surface: Boss
+        kind: animal
+        distinguish: ""
 ---
 Turn the names this note uses into handles you can then record facts about. Send the
 whole cast of the note in one call — up to 12 — not one call per name.
@@ -72,6 +80,20 @@ Pass the name the note actually writes, not a role. "Her partner Theo" resolves 
 "Theo"; "my doctor" is not a name at all — if the note never names them, there is
 nothing to resolve, and the fact you wanted to record about them is one to ask about
 instead.
+
+**The owner is an entity too, and he is "Me".** Resolve him whenever the note says
+something about him or about something of his. Most notes are about him: "my dog",
+"my tv", "my doctor", "I started a new medication" are all notes where he is one end of
+the fact. Resolve BOTH him and the thing he names, and record the relation that joins
+them — that is the fact the note is actually making. A note reading "My dogs name is
+Boss" is about Jeff and his dog: resolve "Me" and "Boss", then record that Boss is his
+pet. It is not a note about the string "Boss".
+
+**Resolving a name IS recording what the thing is called.** The handle you get back is
+that entity under that name; the graph has already stored it. So never follow a resolve
+with a fact whose whole content is the name again — no `hasName`, no `name`, no `isCalled`
+about the entity you just resolved under that very name. It records nothing, and it is
+the whole of what a reader sees you do. Record what the note SAYS about the thing.
 
 A name that matches several of the owner's existing entities comes back unresolved and
 with no handle, deliberately: guessing which one is meant is how a fact ends up on the

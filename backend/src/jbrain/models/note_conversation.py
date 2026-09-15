@@ -123,8 +123,11 @@ STALE_CONVERSATION = 2 * max(NOTE_TURN_WALL_CLOCK, TURN_WALL_CLOCK)
 # They are EDGES and never CLAIMS. `running` is a legal source of `running` — a pass moves
 # within it — so an UPDATE filtered through this table is not a compare-and-swap on any one
 # source state, and a caller that needs to win a race against another caller in the same
-# state needs its own conditional UPDATE. `claim_waiting` is that, for the one place it
-# matters (the owner's reply consuming an open question set).
+# state needs its own conditional UPDATE. There are TWO, and each is a named door into
+# `running` rather than an edge added here: `claim_waiting` (the owner's reply consuming an
+# open question set) and `reopen` (a re-reading, or an unprompted addition, taking a thread
+# that had ENDED). Neither belongs in this table — an edge is something any `set_state`
+# caller may take, and taking the note's one live slot is not.
 _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "running": frozenset({"running", "waiting_on_owner"}),
     "waiting_on_owner": frozenset({"running", "waiting_on_owner"}),
@@ -598,8 +601,13 @@ class NoteConversationRepo:
 
         TWO kinds of turn sit in `running`, which is the whole of why `horizon` defaults
         to what it does: the worker's unattended pass, and the owner's REPLY turn, which
-        `claim_waiting` moves out of `waiting_on_owner` and which runs in the API process
-        under `/chat`'s own, much longer cap. `STALE_CONVERSATION` covers the longer of
+        runs in the API process under `/chat`'s own, much longer cap. That reply turn
+        reaches `running` by EITHER of two doors — `claim_waiting` from
+        `waiting_on_owner` when he is answering a question, and `reopen` from `settled`
+        when he adds something unprompted — and this reaper cannot tell them apart, nor
+        does it need to: both are a live `/chat` turn with `close_owner_reply` behind it,
+        and both are reaped only when that close never came.
+        `STALE_CONVERSATION` covers the longer of
         the two — reclaiming a live reply turn is not a tidy-up, it is the reconciler
         enqueuing a rival pass whose sweep retracts what the owner is still saying (the
         derivation above says it in full). A caller passing its own `horizon` is saying
@@ -813,9 +821,15 @@ class NoteConversationRepo:
         cannot be: two reopens that both pass this UPDATE's WHERE cannot both commit,
         because a note has at most one LIVE conversation and this moves a row INTO that
         set. The loser gets an `IntegrityError`, which the caller treats as "somebody
-        else is reading this note" — a skip, never an error. That direction is safe here
-        in a way it is NOT on the owner's reply path: nothing of his is lost by losing
-        this race, because the words that matter are already on the note."""
+        else is reading this note" — a skip, never an error.
+
+        LOSING IS ALWAYS CHEAP, which is what makes that treatment right, and it has to
+        stay true of every caller. A re-reading that loses is a reading somebody else is
+        already doing. An unprompted ADDITION that loses (0204) does not lose the owner's
+        words either, and deliberately: the call is wrapped, `claimed` stays False, and
+        the append below it runs exactly as it did before this door existed. The refusal
+        costs the ordering the hold was for, never the sentence he typed — a thread taken
+        is worth strictly less than that."""
         stmt = (
             update(NoteConversation)
             .where(

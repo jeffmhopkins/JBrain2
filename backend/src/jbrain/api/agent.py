@@ -1674,16 +1674,15 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         session_id=str(session.id),
                         agent=session.agent,
                         stop_reason=stop_reason if recorded else "record_failed",
-                        # Only a turn that itself moved the thread out of
-                        # `waiting_on_owner` may end it. A thread is also `running` for
-                        # the whole of the worker's unattended pass, and this turn must
-                        # not settle THAT — see `close_owner_reply`.
+                        # Only a turn that itself took the thread live may end it. A
+                        # thread is also `running` for the whole of the worker's
+                        # unattended pass, and this turn must not settle THAT — see
+                        # `close_owner_reply`.
                         #
                         # ⟲ This read `owner_reply is not None`, which was the same set
-                        # until 0203: an unprompted addition files a block on a thread
-                        # that is SETTLED or mid-pass and claims nothing, so it returns a
-                        # reply object without having re-opened anything. `claimed` is the
-                        # flip itself.
+                        # until 0203: an unprompted addition onto a thread the worker is
+                        # mid-pass on returns a reply object without having taken
+                        # anything. `claimed` is the flip itself, by either door.
                         reopened=owner_reply is not None and owner_reply.claimed,
                     )
                     # The reply turn's writes are the conversation's too, so the pass

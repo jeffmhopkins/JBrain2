@@ -53,6 +53,15 @@ one hole in this paragraph's reasoning and it is a crash, not an exception — n
 here can close it. Closing it means the claim and the append sharing a transaction, which
 means the repo giving up owning the append's, and that is a bigger change than this wave.
 
+0204's unprompted ADDITION takes the thread by the other door (`reopen`, from `settled`)
+and so inherits this same window, with one consequence of its own: the note's thread
+reads *analysing* in the PWA for the whole `STALE_CONVERSATION` before the reclaim, where
+before it simply stayed settled and lost his words. Only on a process death — an ordinary
+exception in the append returns an `OwnerReply` with `claimed` set, and `/chat` runs
+`close_owner_reply` on it, which settles the thread on the way out. Named here rather than
+engineered around because the ordering is forced: the hold has to commit BEFORE the append
+enqueues the re-reading, or the re-reading is exactly what it was added to stand off.
+
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
 SERVER wrote — an enact summary ("Enacted 1 of 1 — 1 approved…"), a finished off-turn
@@ -420,14 +429,21 @@ class OwnerReply:
     """Whether the note had changed under the conversation since it was read."""
 
     claimed: bool
-    """Whether THIS turn moved the thread `waiting_on_owner -> running`.
+    """Whether THIS turn took the thread LIVE, and so owes it a close.
 
-    Required rather than derived from "an `OwnerReply` exists", because since 0203 the two
-    are different sets: an unprompted addition files a block on a thread that is SETTLED
-    (or one the worker is mid-pass on) and claims nothing. `close_owner_reply` ends only
-    the thread its own turn re-opened — read the `reopened` argument there for what
-    closing somebody else's `running` pass costs, which is a live pass declared settled
-    and swept against an empty ledger."""
+    Two transitions now set it, and the field means the thing they have in common rather
+    than either one: `waiting_on_owner -> running`, which also consumes the open question
+    set, and `settled -> running`, which consumes nothing. The second was added because an
+    unprompted addition enqueues the note's re-reading, and the worker would start it
+    while this turn was still streaming — both then landing in one thread by completion
+    time, which is how a re-read came to sit ABOVE the reply that caused it on the owner's
+    screen. Holding the thread makes the live slot mean what it says.
+
+    Required rather than derived from "an `OwnerReply` exists": a reply whose every answer
+    was dropped, or one that lost the claim race, returns an `OwnerReply` and took
+    nothing. `close_owner_reply` ends only the thread its own turn took — read the
+    `reopened` argument there for what closing somebody else's `running` pass costs, which
+    is a live pass declared settled and swept against an empty ledger."""
 
     dropped: list[str] = field(default_factory=list)
     """The owner's words on this turn that reached NO note.
@@ -657,9 +673,10 @@ async def record_owner_reply(
             # (`owner_reply_notice`), and the agent re-raises it if it is still stuck.
             # Hence no per-question claim, no new table, no migration.
             #
-            # Only a WAITING thread has a set to consume. An unprompted addition claims
-            # nothing and leaves the state exactly as it found it — including `running`,
-            # which is the worker's own live pass and is not this turn's to end.
+            # Only a WAITING thread has a set to consume. An unprompted addition has no
+            # set — it takes the thread by the other door (`reopen`, AFTER this block),
+            # which is refused on `running`: that state is the worker's own live pass,
+            # and not this turn's to take or to end.
             if waiting:
                 if not await repo.claim_waiting(s, session_id):
                     return None
@@ -667,6 +684,35 @@ async def record_owner_reply(
     except Exception as exc:  # noqa: BLE001 — a reply the engine cannot file is still a reply
         log.warning("note_reply.claim_failed", session_id=session_id, error=repr(exc))
         return None
+
+    if not waiting:
+        # An unprompted addition into a SETTLED thread still has to HOLD it while its turn
+        # runs. The append below enqueues the note's re-reading, and the worker will
+        # happily start it while this turn is still streaming. Both then land in the same
+        # thread by completion time, so the owner's screenshot showed a re-read ABOVE the
+        # reply that caused it. Reopening makes the live slot mean what it says: the
+        # re-reading's own `reopen` finds the thread live, skips, and the reconciler
+        # re-drives it once this turn has closed and released it.
+        #
+        # `claimed` is what the winner of EITHER door sets, because it is one question —
+        # "did this turn take the thread, and so owe it a close?" — and `close_owner_reply`
+        # is the answer. It is NOT "a question set was consumed": nothing downstream asks
+        # that, and giving the field that second meaning is how this turn came to hold a
+        # thread it never released.
+        #
+        # ITS OWN SESSION, and the suppress OUTSIDE it — both load-bearing, and the second
+        # is a review finding rather than style. This ran inside the read's transaction
+        # with the suppress around the call alone, which does not do what it says: a
+        # DBAPI-level failure in the UPDATE (the one-live `IntegrityError`, a statement
+        # timeout, a deadlock) was swallowed here but left the transaction DEACTIVATED,
+        # and `scoped_session`'s commit on exit then raised `PendingRollbackError` from
+        # outside the suppress — into the `except` above, which returns None. No pairing,
+        # no append, no re-ingest, no notice: the owner's typed words dropped by exactly
+        # the state transition the comment promised would never cost them. Wrapping the
+        # whole `async with` is what makes "falls through to the old behaviour" true.
+        with contextlib.suppress(Exception):
+            async with scoped_session(maker, ctx) as s2:
+                claimed = await repo.reopen(s2, session_id)
 
     if waiting and not open_set:
         # `ask_owner` writes the ledger row and the state in one transaction, and `_fit`
@@ -714,9 +760,12 @@ async def record_owner_reply(
             dropped=[a for _, a in pairs] + additions + dropped,
         )
     if clarified is None:
-        # The note is gone (soft-deleted). Nothing can be appended to it, and a turn that
-        # claimed the thread has already put it back in `running`, so nothing holds the
-        # note's live slot.
+        # The note is gone (soft-deleted). Nothing can be appended to it. ⟲ This used to
+        # read "a turn that claimed the thread has already put it back in `running`, so
+        # nothing holds the note's live slot", which is backwards — `running` IS the hold.
+        # It holds, and `close_owner_reply` releases it on the way out of the turn, which
+        # is the same release every other path gets. A soft-deleted note has no re-reading
+        # to stand off anyway, so the hold costs nothing here either way.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
         return OwnerReply(
             answered=pairs,
@@ -1225,11 +1274,12 @@ async def close_owner_reply(
     this pass end cleanly?" is given by the call that decided it rather than re-derived
     beside it.
 
-    `reopened` says whether THIS turn moved the thread `waiting_on_owner -> running`,
-    which is `OwnerReply.claimed` — ⟲ NOT "`record_owner_reply` returned an `OwnerReply`",
-    which it was until 0203 gave an unprompted addition a reply object of its own. Such a
-    turn appends a block to a thread that is settled (or one the worker is mid-pass on)
-    and claims nothing, so it must end nothing. It is required, and
+    `reopened` says whether THIS turn took the thread live, by either door —
+    `waiting_on_owner -> running` or `settled -> running` — which is `OwnerReply.claimed`.
+    ⟲ NOT "`record_owner_reply` returned an `OwnerReply`", which it was until 0203 gave an
+    unprompted addition a reply object of its own: a reply whose every answer was dropped,
+    one that lost a race, and one whose reopen was refused because the worker holds the
+    thread all return an `OwnerReply` and took nothing. It is required, and
     a `running` state is not a substitute for it: a conversation is `running` for the
     whole of the worker's unattended pass — up to `NOTE_TURN_WALL_CLOCK`, 30 minutes —
     and `/chat`'s busy guard counts only the API's own live turns, so nothing stops the
@@ -1241,7 +1291,7 @@ async def close_owner_reply(
     raising `InvalidStateTransition` into a job retry, which opens a second thread for
     the note.
 
-    Something has to: `record_owner_reply` put the thread back in `running`, and `running`
+    Something has to: `record_owner_reply` put the thread into `running`, and `running`
     holds the note's ONE live slot — the re-ingest the answer just queued emits its own
     `note.ingested`, and the pass that event opens is suppressed while this one stands. So
     a reply turn that never closed would leave the answered note un-re-read, until the

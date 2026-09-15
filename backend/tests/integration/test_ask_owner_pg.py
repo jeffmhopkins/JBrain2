@@ -563,9 +563,10 @@ async def test_an_unprompted_reply_into_a_settled_thread_lands_on_the_note(
     the next reading of the note has the correction in front of it, and the reply turn
     that follows may write off the back of it.
 
-    The state is untouched. A settled thread has no question set to consume, so nothing is
-    claimed and nothing is re-opened (`claimed` False), which is what keeps this turn out
-    of `close_owner_reply`'s way."""
+    The thread goes LIVE for the length of the turn. There is no question set to consume
+    — a settled thread has none — but the append queues the note's re-reading, and the
+    worker would start it on top of a turn still writing into the same thread. `claimed`
+    is the hold, not the set, and `close_owner_reply` is where the turn hands it back."""
     note_id = await _note(maker, owner)
     # A thread that RAN and finished, the way one gets to `settled`: `start` refuses to
     # open a conversation in a terminal state, because one that opened there would release
@@ -587,7 +588,7 @@ async def test_an_unprompted_reply_into_a_settled_thread_lands_on_the_note(
     assert reply.additions == ["Actually it was a 5k."]
     assert reply.answered == [] and reply.unanswered == [] and reply.dropped == []
     assert reply.clarified is True
-    assert reply.claimed is False
+    assert reply.claimed is True
     # The words are the NOTE'S text now, which is the whole point: the verbs this turn
     # holds are bound on exactly this.
     assert owner_words_reached_note(reply) is True
@@ -601,6 +602,18 @@ async def test_an_unprompted_reply_into_a_settled_thread_lands_on_the_note(
     assert await _blocks(maker, owner, note_id) == []
     # And it re-ingests, so the graph re-derives from the note including his correction.
     assert await _queued(maker, owner, note_id) == 1
+    # Held while the turn runs, and handed back by the same call `/chat` makes at the end
+    # of one — which is also what lets the queued re-reading finally run.
+    assert (await _state(maker, owner, session_id))[0] == "running"
+    closed = await close_owner_reply(
+        maker,
+        owner,
+        session_id=session_id,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="end_turn",
+        reopened=reply.claimed,
+    )
+    assert closed == "settled"
     assert (await _state(maker, owner, session_id))[0] == "settled"
     # The agent is told the sentence is on the note — the turn text alone reads as chat.
     notice = owner_reply_notice(reply)
@@ -914,8 +927,11 @@ async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
 
     ⟲ The signal used to be "`record_owner_reply` returned an `OwnerReply`", which was the
     same set only while an unprompted reply reached no note. It is `claimed` now — the
-    `waiting_on_owner -> running` flip itself — and this test is why the distinction has to
-    exist rather than being derivable."""
+    flip itself, by whichever door — and this test is why the distinction has to exist
+    rather than being derivable. Note that the addition's own door (`reopen`) is the
+    reason `claimed` is False HERE and True on a settled thread: `reopen` is a
+    compare-and-swap on `settled`/`failed`, so the one state it cannot take is the one
+    this test is in — the worker's live pass."""
     note_id = await _note(maker, owner)
     session_id = await _conversation(maker, owner, note_id)  # opens `running`
 
@@ -929,7 +945,7 @@ async def test_a_chat_turn_during_the_worker_pass_does_not_end_it(
     )
     assert reply is not None
     assert reply.additions == ["just a thought while you read"]
-    assert reply.claimed is False, "an unprompted addition claimed a set it was not given"
+    assert reply.claimed is False, "the chat turn took a thread the worker is reading in"
     assert await _additions(maker, owner, note_id) == ["just a thought while you read"]
 
     closed = await close_owner_reply(

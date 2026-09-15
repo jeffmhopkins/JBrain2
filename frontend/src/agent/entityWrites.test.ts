@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   domainWord,
+  entityPhrase,
+  ledgerRows,
+  ledgerWord,
   stepWriteState,
   tallyWrites,
   turnWriteSummary,
@@ -101,7 +104,13 @@ describe("the seven D3 states", () => {
       ],
     });
     expect(writePhrase(s)).toBe("2 recorded · 1 updated · 1 not recorded · general");
-    expect(tallyWrites(s.facts)).toEqual({ written: 2, replaced: 1, held: 1, fromPhoto: 0 });
+    expect(tallyWrites(s.facts)).toEqual({
+      written: 2,
+      replaced: 1,
+      held: 1,
+      already: 0,
+      fromPhoto: 0,
+    });
   });
 
   it("marks an attachment-sourced write as from a photo (D12)", () => {
@@ -176,13 +185,24 @@ describe("what a whole turn did to the graph", () => {
         ],
       }),
     ];
-    expect(turnWriteSummary(steps)).toBe("updated 1 fact");
+    // The two unchanged facts are the TAIL, never the news — without them "updated 1
+    // fact" reads as though the other two had gone somewhere.
+    expect(turnWriteSummary(steps)).toBe("updated 1 fact · 2 facts unchanged");
   });
 
-  it("says nothing at all when a re-reading changed nothing", () => {
-    // The step count is then the honest headline. A turn that restated the note without
-    // altering it must not claim otherwise.
+  it("says a re-reading that changed nothing changed nothing, out loud", () => {
+    // ⟲ This asserted `undefined`, on the reasoning that the step count was then the
+    // honest headline. It is not an answer: the owner opened a re-read note and found a
+    // turn headlined "1 step", which says neither that the pass ran nor that it agreed
+    // with what was on file. "Nothing new" is a result, and he can accept it.
     const steps = [step({ name: "close_reading", facts: [fact({ outcome: "already" })] })];
+    expect(turnWriteSummary(steps)).toBe("nothing new · 1 fact re-confirmed");
+  });
+
+  it("still says nothing for a turn that wrote no facts at all", () => {
+    // The undefined case that remains, and the one the step count IS honest for: a read
+    // turn. Nothing about the graph happened, so there is nothing to summarise.
+    const steps = [step({ name: "search", facts: [] })];
     expect(turnWriteSummary(steps)).toBeUndefined();
   });
 
@@ -199,6 +219,52 @@ describe("what a whole turn did to the graph", () => {
     expect(turnWriteSummary(steps)).toBe("recorded 2 facts · not recorded 1 fact");
   });
 
+  it("counts a minted entity ONCE, however many facts go on to name it", () => {
+    // The shape the backend really emits, which the first version of the test above did
+    // not: `close_reading` returns an `EntityRef` per touched handle PER FACT, and
+    // `created` belongs to the HANDLE, so it stays true for the whole pass. Two facts
+    // about Me and Boss ship four more refs, all `created`.
+    //
+    // Uncaught, that filled the card with "Me added / Boss added / Me added / Boss added"
+    // and pushed the fact — the actual receipt — behind "+1 more", on the FIRST pass,
+    // which is the one he reported. (A carried-over handle has `created: false`, so a
+    // re-read never showed it.)
+    const me = {
+      kind: "entity" as const,
+      entity_id: "e1",
+      label: "Me",
+      domain: "general" as const,
+      created: true,
+    };
+    const boss = {
+      kind: "entity" as const,
+      entity_id: "e2",
+      label: "Boss",
+      domain: "general" as const,
+      created: true,
+    };
+    const steps = [
+      step({ name: "resolve_entity", entities: [me, boss] }),
+      step({
+        name: "close_reading",
+        entities: [me, boss, me, boss],
+        facts: [
+          fact({ fact_id: "a", label: "Boss is Jeff's dog." }),
+          fact({ fact_id: "b", label: "Boss is a labrador." }),
+        ],
+      }),
+    ];
+    expect(ledgerRows(steps)).toEqual([
+      { key: "e:e1", text: "Me", face: "new", domain: "general" },
+      { key: "e:e2", text: "Boss", face: "new", domain: "general" },
+      { key: "f:a", text: "Boss is Jeff's dog.", face: "written", domain: "general" },
+      { key: "f:b", text: "Boss is a labrador.", face: "written", domain: "general" },
+    ]);
+    // And every row addresses a distinct thing, so nothing renders on a duplicate key.
+    const keys = ledgerRows(steps).map((r) => r.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it("says nothing for a turn that only read, so a search keeps its step count", () => {
     expect(turnWriteSummary([step({ name: "search" })])).toBeUndefined();
   });
@@ -206,5 +272,88 @@ describe("what a whole turn did to the graph", () => {
   it("ignores a failed write — it wrote nothing whatever its arguments claimed", () => {
     const steps = [step({ name: "close_reading", ok: false, facts: [fact()] })];
     expect(turnWriteSummary(steps)).toBeUndefined();
+  });
+});
+
+describe("the ledger on the face of the turn", () => {
+  it("lists what CHANGED, and leaves what was already on file to the summary", () => {
+    // The owner's report: "I don't see how it actually added the entity to the database,
+    // the conversation kinda looks like after that actually took place?" The agent's
+    // prose is a claim; these lines are the receipt, and they render without a tap.
+    const steps = [
+      step({
+        name: "resolve_entity",
+        entities: [
+          { kind: "entity", entity_id: "e1", label: "Boss", domain: "general", created: true },
+          { kind: "entity", entity_id: "e2", label: "Me", domain: "general", created: false },
+        ],
+      }),
+      step({
+        name: "close_reading",
+        facts: [
+          fact({ fact_id: "a", label: "Boss is Jeff's dog." }),
+          fact({ fact_id: "b", outcome: "already", label: "Jeff lives in the Marina." }),
+        ],
+      }),
+    ];
+    expect(ledgerRows(steps)).toEqual([
+      { key: "e:e1", text: "Boss", face: "new", domain: "general" },
+      { key: "f:a", text: "Boss is Jeff's dog.", face: "written", domain: "general" },
+    ]);
+  });
+
+  it("says nothing for a re-reading that changed nothing", () => {
+    // A ledger of twelve unchanged facts buries the one line that is news under eleven
+    // that are not. The count of them is `turnWriteSummary`'s job, not this card's.
+    const steps = [
+      step({
+        name: "close_reading",
+        facts: [fact({ outcome: "already" }), fact({ outcome: "already" })],
+      }),
+    ];
+    expect(ledgerRows(steps)).toEqual([]);
+  });
+
+  it("holds its line until the call that would make it has settled", () => {
+    // In flight and failed alike: neither has a settled answer to what changed, and a
+    // line that appears and then retracts is worse than one that arrives a second late.
+    const live = step({ name: "close_reading", ok: undefined, facts: [fact()] });
+    const dead = step({ name: "close_reading", ok: false, facts: [fact()] });
+    expect(ledgerRows([live, dead])).toEqual([]);
+  });
+
+  it("speaks the same words the expanded rung does", () => {
+    expect(ledgerWord("written")).toBe("recorded");
+    expect(ledgerWord("replaced")).toBe("updated");
+    expect(ledgerWord("held")).toBe("not recorded");
+    // The entity case says what happened, rather than naming a write state it has none of.
+    expect(ledgerWord("new")).toBe("added");
+  });
+});
+
+describe("what a resolve did to the owner's cast", () => {
+  it("names the records it made and the ones it matched", () => {
+    // `stepWriteState` calls a mint-only resolve `none` on purpose — it wrote no fact.
+    // The cost was a row with no mark at all, so the one call that creates his records
+    // read as a call that did nothing.
+    const s = step({
+      name: "resolve_entity",
+      entities: [
+        { kind: "entity", entity_id: "e1", label: "Boss", domain: "general", created: true },
+        { kind: "entity", entity_id: "e2", label: "Me", domain: "general", created: false },
+      ],
+    });
+    expect(entityPhrase(s)).toBe("1 new · 1 already known");
+  });
+
+  it("says nothing when the refs cannot answer 'new or already mine?'", () => {
+    // A ref persisted before `created` existed. A bare count of entities is the step
+    // count again, in a costlier form.
+    const s = step({
+      name: "resolve_entity",
+      entities: [{ kind: "entity", entity_id: "e1", label: "Boss", domain: "general" }],
+    });
+    expect(entityPhrase(s)).toBeUndefined();
+    expect(entityPhrase(step({ name: "search" }))).toBeUndefined();
   });
 });

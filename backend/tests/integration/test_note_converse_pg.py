@@ -78,7 +78,12 @@ from jbrain.analysis.clarify import (
     record_reply_writes,
     reply_profile_for_session,
 )
-from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, REREAD_LEAD, NoteConverseRunner
+from jbrain.analysis.converse import (
+    NOTE_CONVERSE_AGENT,
+    REREAD_LEAD,
+    REREAD_MARK,
+    NoteConverseRunner,
+)
 from jbrain.analysis.noteframe import FRAME_OPEN
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
@@ -634,15 +639,16 @@ async def test_a_settled_conversation_is_REOPENED_for_the_next_reading(
     # skipped: both passes are on the record.
     turns = await _turns(maker, owner, first.sid)
     assert len([role for role, _ in turns if role == "assistant"]) == 2
-    # And the RECORDED user turn is the bare framed note, with no lead-in on it. The PWA
-    # strips the fence with a regex anchored at the start of the turn
-    # (`frontend/src/agent/noteFrame.ts`); anything in front makes that match fail, and a
-    # failed match renders the ten-line injection header, the nonce and the end marker as
-    # an ordinary bubble attributed to the OWNER. The lead-in is model-facing only.
-    for role, content in turns:
-        if role == "user":
-            assert content.startswith(FRAME_OPEN), "a prefix breaks the PWA's fence strip"
-            assert REREAD_LEAD not in content
+    # The thread holds the note ONCE and a marker for the re-reading. Persisting the
+    # framed note again put two copies of his own note in his own conversation, and the
+    # second told him nothing his reply had not. The lead-in is model-facing only: the
+    # PWA strips the fence with a regex ANCHORED at the start of the turn
+    # (`frontend/src/agent/noteFrame.ts`), so anything in front of it renders the ten-line
+    # injection header, the nonce and the end marker as a bubble attributed to the OWNER.
+    user_turns = [content for role, content in turns if role == "user"]
+    assert sum(c.startswith(FRAME_OPEN) for c in user_turns) == 1, "the note is in here twice"
+    assert sum(c.startswith(REREAD_MARK) for c in user_turns) == 1
+    assert not any(REREAD_LEAD in c for c in user_turns)
 
 
 async def test_the_owners_addition_is_read_in_HIS_thread_and_not_a_new_one(
@@ -674,6 +680,21 @@ async def test_the_owners_addition_is_read_in_HIS_thread_and_not_a_new_one(
     )
     assert reply is not None and reply.clarified
 
+    # His reply HOLDS the thread while its own chat turn runs, and `/chat` hands the hold
+    # back at the end of that turn — this call is what the API makes there. Skipping it
+    # here would be a test of a state no live turn ever leaves behind: the re-ingest
+    # standing off a thread that is still live is the hold working, not the fork.
+    assert reply.claimed, "an unprompted addition must take the thread it writes into"
+    closed = await close_owner_reply(
+        maker,
+        owner,
+        session_id=mine.sid,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="end_turn",
+        reopened=reply.claimed,
+    )
+    assert closed == "settled"
+
     # The re-ingest's pass, which is what used to fork.
     second = FakeTurn()
     await _runner(maker, owner, second).note_converse({"note_id": note_id})
@@ -685,6 +706,64 @@ async def test_the_owners_addition_is_read_in_HIS_thread_and_not_a_new_one(
     assert second.conversations, "the re-reading never reached the model"
     text_sent = "\n".join(getattr(m, "text", "") for m in second.conversations[-1])
     assert 'Change the size to 60"' in text_sent
+    # The MODEL is sent the whole note; the TRANSCRIPT keeps a marker.
+    async with scoped_session(maker, owner) as s:
+        recorded = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.agent_turns WHERE session_id = CAST(:s AS uuid)"
+                    " AND role = 'user' AND content LIKE :mark"
+                ),
+                {"s": mine.sid, "mark": f"{REREAD_MARK}%"},
+            )
+        ).scalar_one()
+    assert recorded == 1
+
+
+async def test_an_addition_holds_the_thread_until_its_own_turn_is_done(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The ORDERING half of the same complaint: *"the conversation view changes after I
+    had left the conversation and went back into it"*.
+
+    `append_clarifications` enqueues the re-reading inside the reply turn, so the worker
+    picks it up while the reply's own model turn is still streaming. Both finish into one
+    thread and the re-read lands ABOVE the reply that caused it. Taking the thread live
+    for the length of the reply turn is what orders them: the re-reading stands off, and
+    the reconciler re-drives it once the turn has handed the thread back."""
+    note_id = await _note(maker, owner, 'My tv is 58"')
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    mine = (await _conversation(maker, owner, note_id))[0]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=mine.sid,
+        agent=NOTE_CONVERSE_AGENT,
+        message='Change the size to 60"',
+    )
+    assert reply is not None and reply.claimed
+
+    # Mid-turn: the worker's re-reading arrives and finds the thread held.
+    racing = FakeTurn()
+    await _runner(maker, owner, racing).note_converse({"note_id": note_id})
+    assert not racing.conversations, "the re-reading ran on top of the owner's live turn"
+
+    await close_owner_reply(
+        maker,
+        owner,
+        session_id=mine.sid,
+        agent=NOTE_CONVERSE_AGENT,
+        stop_reason="end_turn",
+        reopened=reply.claimed,
+    )
+
+    # The reconciler's re-drive, which is what the skip above defers to.
+    after = FakeTurn()
+    await _runner(maker, owner, after).note_converse({"note_id": note_id})
+    assert after.conversations, "nothing ever re-read the note he had added to"
+    assert len(await _conversation(maker, owner, note_id)) == 1
 
 
 async def test_a_re_reading_carries_the_thread_it_is_resuming(

@@ -1598,10 +1598,14 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   carries the meaning. This is an accessibility rule *and* a firewall rule — a boundary
   the owner cannot read is not a boundary they can check — so one helper turns a domain
   code into text and every renderer goes through it (an unrecognised code says so).
-- Each write renders in the shipped **`predicate → value`** edge form (the entity page's
-  and the review row's), falling back to the whole statement when the edge parts are
-  absent. A **supersession** renders through the app's ONE before→after diff renderer
-  (`ClaimDiffView`), labelled as a write that already landed, never as one still proposed.
+- **In the transcript the STATEMENT leads**, with the shipped `predicate → value` edge
+  (the entity page's and the review row's) behind it. The edge is the right lead where
+  the owner has already chosen an entity and a predicate is the column he reads down; in
+  a conversation he has chosen nothing, the sentence is the only thing saying which of
+  his facts a row is, and `size → 60in` over a note about a television reads as a dump of
+  his own words back at him. A **supersession** renders through the app's ONE before→after
+  diff renderer (`ClaimDiffView`), labelled as a write that already landed, never as one
+  still proposed.
 - **A write tool that wrote nothing says so.** An absent rung would read as "not a write".
 - **There is no edit affordance.** Correction is conversational: the owner disagrees by
   replying in the thread. A control that fixed a value in place would make the transcript
@@ -1609,6 +1613,40 @@ the step that made it. Not a surface of its own and not a note-screen change: th
 - It renders from the **persisted turn** — the writes ride the tool result and are stored
   on the turn — so a conversation reopened days later says exactly what it said live,
   with no second fetch and no second source of truth.
+- **The ledger is not a disclosure.** What a turn CHANGED renders on the face of that
+  turn, above the activity strip: one line per change — the statement in the owner's own
+  words, its domain, and what became of it (`recorded · updated · not recorded · added`).
+  The rung above is where a change is *examined*; this is where it is *seen*. It exists
+  because the agent's prose is a claim and the ledger is the receipt, and the receipt sat
+  behind two taps — the Worked chip, then the step — which is what the owner met as *"I
+  don't see how it actually added the entity to the database, the conversation kinda
+  looks like after that actually took place?"*
+  - **Only changes.** A re-reading restates the whole note, so most of what it reports is
+    already on file; a card listing all of it buries the one line that is news. The count
+    of the unchanged belongs in the turn's summary, which is also what says **"nothing
+    new · N facts re-confirmed"** when there is no news at all — a pass that changed
+    nothing has an answer, and it is not a step count.
+  - **Capped, and the overflow opens the steps** rather than growing a second list beside
+    the one that already holds every write with its diff and its domain.
+  - **A fact already on file is never called "recorded".** It is a fourth display state
+    (`already on file`), separate from the write path's three — which fold it into
+    `written`, correctly, because the fact IS on file either way. The graph's vocabulary
+    and the owner's are not the same vocabulary, and one screen must not speak both.
+  - **A resolve says what it did to the cast** — `2 new · 1 already known` — and a chip
+    for a record the box MADE is marked `new`. "Did you make a new Boss, or match the one
+    I have?" is the whole of what a note introducing something asks.
+  - **A write that did not go live says why**, in the owner's words. `attribute_collision`
+    is the one that matters: the newest value went live *by rule*, nobody checked which is
+    true, no review card is filed for a conversation write, and nothing else will raise
+    it. A reason with no owner-facing meaning renders nothing — a code he cannot act on is
+    a code he has to ask about.
+- **A step's arguments are not its result.** The request and the verbatim payload share
+  ONE disclosure, *below* what the call did — "what the agent sent". Arguments that render
+  unconditionally put a JSON dump of the request above the answer to "what did this do?",
+  which is the only question a step is opened for. For the same reason a batching write
+  tool's inline row carries its TITLE, never its facts: the batch's subject handles
+  (`e1, e1, e2 +3`) are the model's private names for one pass, and they land exactly
+  where the owner looks to see what the call was about.
 
 ### The note's own thread (build plan `docs/plans/AGENT_INGEST_REWRITE.md` §3b — binding mock: `docs/mocks/agent-ingest-thread/note-thread.html`)
 

@@ -1,6 +1,6 @@
 ---
 name: ask_owner
-version: 3
+version: 4
 permission: mutate
 side_effecting: true
 params:
@@ -25,9 +25,10 @@ params:
           blocks:
             type: string
             description: >-
-              What this is blocking, in a few words — the predicate you cannot write or
-              the resolve call you are stuck on ("who ran the 10k with you", "the dose
-              on the second line").
+              What this is blocking, in a few words, IN JEFF'S OWN WORDS — never a
+              tool call, a handle or a predicate name. He reads this line; it is shown
+              to him beside the question. "who ran the 10k with you", "the dose on the
+              second line" — not `resolve_entity("Dr. Chen")` and not `hasDose`.
           candidates:
             type: string
             description: >-

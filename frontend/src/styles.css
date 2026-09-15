@@ -9598,6 +9598,14 @@ button.small {
 .fb-shell .fbw-row.fbw-held .fbw-verb {
   background: var(--amber-tint);
 }
+/* found already on file and left alone. No tint — nothing about the graph happened, and
+   a green pill over it is the sentence "recorded" wearing a different word. */
+.fb-shell .fbw-row.fbw-already .fbw-verb,
+.fb-shell .fb-ledger-row.fbw-already .fb-ledger-verb {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
 /* the domain, as a dot AND its name — D3's "never colour alone" is the firewall being
    legible, so the word is not optional decoration beside the dot. */
 .fb-shell .fbw-dom {
@@ -9611,6 +9619,13 @@ button.small {
 }
 .fb-shell .fbw-row .fact-edge {
   font-size: 12px;
+}
+/* the edge BEHIND the statement, which now leads (DESIGN.md). Demoted deliberately: it
+   is the address of the fact, not the fact, and at equal weight the two read as the same
+   sentence said twice. */
+.fb-shell .fbw-row .fbw-edge {
+  font-size: 11px;
+  opacity: 0.75;
 }
 .fb-shell .fbw-stmt {
   font-size: 12px;
@@ -9639,6 +9654,11 @@ button.small {
 }
 .fb-shell .fbw-cnt.fbw-failed {
   color: var(--rose);
+}
+/* a call that changed nothing — every fact of it already on file, which is the ordinary
+   shape of a re-reading. Muted, because it is a result and not news. */
+.fb-shell .fbw-cnt.fbw-already {
+  color: var(--text-3);
 }
 
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
@@ -27877,4 +27897,127 @@ button.wf-sigpill {
   .task-acts .task-runbtn.running svg {
     animation: none;
   }
+}
+
+/* A RE-READING of the note: an event in the thread, not something the owner said. The
+   pass used to persist the whole framed note again, so a corrected note appeared twice in
+   its own conversation. Ruled rather than bubbled — it is the thread's own voice. */
+.fb-shell .fb-reread {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-reread::before,
+.fb-shell .fb-reread::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* WHAT CHANGED, on the face of the turn — the ledger promoted out of the Worked
+   disclosure (DESIGN.md "the ledger is not a disclosure"). A card, not a rung: it sits
+   above the activity strip with its own ground, because it is the turn's receipt and
+   the strip below it is navigation. Quiet enough to read under the answer, never a
+   second heading competing with it. */
+.fb-shell .fb-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  list-style: none;
+}
+.fb-shell .fb-ledger-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+  min-height: 22px;
+}
+.fb-shell .fb-ledger-row .ent-dot {
+  flex: none;
+  /* baseline-aligned row, so the dot needs nudging onto the text's optical centre */
+  transform: translateY(1px);
+}
+.fb-shell .fb-ledger-txt {
+  flex: 1;
+  color: var(--text);
+  /* his own sentence, wrapped rather than clipped: a statement cut at the card edge is
+     the one thing this card exists to show him whole */
+  overflow-wrap: anywhere;
+}
+/* what became of it — the same word the expanded rung uses, in the same tinted-pill
+   recipe, so one write never reads two ways on one screen */
+.fb-shell .fb-ledger-verb {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.fb-shell .fb-ledger-row.fbw-replaced .fb-ledger-verb {
+  background: var(--steel-tint);
+}
+.fb-shell .fb-ledger-row.fbw-held .fb-ledger-verb {
+  background: var(--amber-tint);
+}
+.fb-shell .fb-ledger-rest {
+  min-height: 0;
+}
+/* the overflow, which opens the steps view rather than growing this card — a quiet
+   control in the "+N more" register the entity chips already use. Its 44px target is its
+   own IN-FLOW box, not a bleed: the activity strip sits directly under this card and a
+   pseudo-element reaching down for the last 12px would win the hit test over the Worked
+   chip, which is the mistake `button.chip-ask` was already caught making on a wrapping
+   row. A ledger's last line is cheap to make tall; a Worked chip that opens the wrong
+   thing is not. */
+.fb-shell .fb-ledger-more {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+/* a resolve's own headline on the collapsed step row — how many records it made and
+   how many it matched. The step's count-chip slot, so it truncates with the row. */
+.fb-shell .fbw-cnt.fbw-ents {
+  color: var(--text-3);
+}
+/* a newly MINTED entity, marked on its chip: "did you make a new Boss, or match the one
+   I have?" is the whole of what a note introducing something asks. */
+.fb-shell .entity-chip .ent-new-tag {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text-2);
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* why a write did not go live, or what the graph noticed going ahead — the sentence
+   that had only ever existed inside the result the model reads. */
+.fb-shell .fbw-why {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--amber);
 }

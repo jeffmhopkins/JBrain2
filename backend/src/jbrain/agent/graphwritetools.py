@@ -127,7 +127,7 @@ from jbrain.agent.contracts import EntityRef, FactWriteRef, write_status
 from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
-from jbrain.analysis.entities import ResolvedEntity, normalize_alias
+from jbrain.analysis.entities import ResolvedEntity, live_entity_by_id, normalize_alias
 from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
@@ -1121,6 +1121,10 @@ class NoteGraphWriter:
                 lines.append(line)
                 if write is not None:
                     writes.append(write)
+                # Same grounding as `close_reading` — see `_ground`. This verb is the one
+                # a reply turn reaches for the extra thing the owner just told it, so a
+                # turn that used it alone had nothing in the corpus but old facts.
+                self._ground(write, touched)
                 refs.extend(touched)
         if clamped:
             lines.append(
@@ -1278,6 +1282,30 @@ class NoteGraphWriter:
                     self.reading.mark_incomplete()
                 else:
                     writes.append(write)
+                    # **The statement this write COMMITTED, hung on the entities it is
+                    # about.** `EntityRef.facts` IS the reflexion grounding corpus
+                    # (`loop._grounding_corpus`), and its own docstring says why it
+                    # exists: an answer drawn from the graph "would otherwise verify
+                    # against an empty corpus and every claim would score 0 … instead of
+                    # being falsely flagged 'not in your notes'".
+                    #
+                    # A note pass is that case at its purest and nobody had noticed. It
+                    # retrieves NO note sources — the note is turn 0, not a search result
+                    # — so the corpus was the entity's name and its OLD facts, and the
+                    # agent's report of what it had just recorded matched none of it.
+                    # EVERY write turn failed grounding, and the owner got an amber
+                    # "unverified — not grounded in your notes" on the one statement in
+                    # the system that can be checked perfectly: the write path is holding
+                    # its `fact_id`. He read that badge exactly as written and asked
+                    # whether the write had happened at all.
+                    #
+                    # A committed statement, attested to a chunk of his own note, is the
+                    # best-grounded claim anywhere in this app. This is not softening the
+                    # check; it is handing it the evidence it was missing. Done HERE
+                    # because `_assert_one` returns each write beside the entities it
+                    # touched, and that is the only place the two are together —
+                    # `FactWriteRef` carries no entity id.
+                    self._ground(write, touched)
                 refs.extend(touched)
         self.reading.union(
             title=title,
@@ -1297,10 +1325,74 @@ class NoteGraphWriter:
             )
         lines.append(f"close_reading: {self.reading_budget.remaining} calls left this note")
         return ToolOutput(
-            "\n".join(lines), entities=tuple(refs), facts=tuple(writes), truncated=clamped
+            "\n".join(lines),
+            entities=tuple(refs),
+            facts=tuple(writes),
+            truncated=clamped,
         )
 
     # --- correct_fact ----------------------------------------------------------
+
+    async def carry_over(self, entity_ids: Sequence[uuid.UUID]) -> list[Handle]:
+        """Seed this writer with entities THIS CONVERSATION already resolved, so a second
+        reading of the note does not have to ask who they are again.
+
+        A write cannot address an entity without a handle (`lookup` refuses anything
+        else, and that refusal is what keeps `resolve_entity` the only minting path), and
+        the handle table is built empty per pass. So every pass re-resolved every subject
+        — including a pass whose own previous answer, replayed directly above it, names
+        the thing. The owner saw it and said so: *"Seems like we've had multiple tool
+        calls for the same thing when we access it in different sessions on the same
+        note."* The ratified design had this (`B3-GRAPH-TOOLS.md`: "the agent asserts
+        against known entities with ZERO resolve calls"); it was lost when
+        `graph_context.py` went with `integrate_note` in R4. The carrier is the
+        conversation's own tool-call ledger, which both turn paths already write.
+
+        **Nothing here mints.** Every id comes from a call this conversation already made
+        and is followed through `live_entity_by_id` to its survivor, so an entity merged
+        away since arrives as the row it was folded into and one deleted outright is
+        skipped. The view is read on `self._read_ctx` — the conversation's own narrowed
+        scopes — so an entity since moved out of scope is simply not carried.
+
+        **It seeds the SURFACE index too, and that is a decision.** A name this
+        conversation resolved keeps resolving to what this conversation decided, even if
+        a second entity has since made that name ambiguous elsewhere. The ambiguity
+        refusal exists to stop the model GUESSING among candidates it has never chosen
+        between; here it already chose — possibly by asking the owner. Re-litigating that
+        on every pass is the amnesia this removes."""
+        carried: list[Handle] = []
+        for entity_id in entity_ids:
+            if self._handle_for(entity_id) is not None:
+                continue
+            async with scoped_session(self._maker, self._read_ctx) as reads:
+                live = await live_entity_by_id(reads, entity_id)
+                if live is None:
+                    continue
+                # On the conversation's OWN narrowed session, like every other read in
+                # this writer: RLS is the enforcement, so an entity since moved out of
+                # scope returns nothing here and is simply not carried.
+                row = (
+                    await reads.execute(
+                        text(
+                            "SELECT canonical_name, kind, domain_code FROM app.entities"
+                            " WHERE id = :eid"
+                        ),
+                        {"eid": str(live.id)},
+                    )
+                ).first()
+            if row is None or not row.canonical_name:
+                continue
+            carried.append(
+                self.adopt(
+                    entity_id=uuid.UUID(str(live.id)),
+                    subject_id=live.subject_id,
+                    surface=str(row.canonical_name),
+                    name=str(row.canonical_name),
+                    kind=str(row.kind or _DEFAULT_KIND),
+                    domain=str(row.domain_code or ""),
+                )
+            )
+        return carried
 
     def adopt(
         self,
@@ -1379,11 +1471,49 @@ class NoteGraphWriter:
                 )
         lines = [line.replace("facts[0]", "correct_fact", 1)]
         lines.append(f"correct_fact: {self.correct_budget.remaining} calls left this note")
+        # Same grounding as `close_reading` — see `_ground`, and this verb is the reason
+        # that helper is shared. A correction's corpus is the entity's OLD facts, which are
+        # exactly the value the owner just DISPUTED, so "I've updated it to 60 inches"
+        # scored zero against them and wore the amber badge on the one turn where he had
+        # personally supplied the truth.
+        self._ground(write, touched)
         return ToolOutput(
             "\n".join(lines),
             entities=tuple(touched),
             facts=(write,) if write is not None else (),
         )
+
+    @staticmethod
+    def _ground(write: FactWriteRef | None, touched: Sequence[EntityRef]) -> None:
+        """Hang a committed statement on the entities it touched, so the grounding check
+        can see it.
+
+        `EntityRef.facts` IS the grounding corpus (`agent/loop._grounding_corpus`), and a
+        note pass retrieves NO sources — the note is turn 0, not a search result — so the
+        corpus was the entity's name and its OLD facts. The agent's report of what it had
+        just recorded matched none of that, so EVERY write turn failed grounding and the
+        owner got an amber "unverified — not grounded in your notes" on the one statement
+        in the system that can be checked perfectly: the write path is holding its
+        `fact_id`. He read that badge exactly as written and asked whether the write had
+        happened at all.
+
+        A committed statement, attested to a chunk of his own note, is the best-grounded
+        claim anywhere in this app. This is not softening the check; it is handing it the
+        evidence it was missing.
+
+        SHARED BY ALL THREE WRITE VERBS, which is a review finding rather than tidiness.
+        It lived inside `close_reading` alone, and the badge the owner actually saw comes
+        from the STREAMING path — a `/chat` reply turn — whose tool set is `assert_fact`,
+        `correct_fact` AND `close_reading`. So his correction turn ("the size was
+        different") called `correct_fact`, grounded against the entity's OLD facts, which
+        are literally the value he had just disputed, and the badge was unchanged. The fix
+        has to sit wherever a write and the entities it touched are together — which is
+        only ever at these three call sites, because `FactWriteRef` carries no entity id.
+        """
+        if write is None or not write.label:
+            return
+        for ref in touched:
+            ref.facts.append(write.label)
 
     async def _assert_one(
         self,
@@ -1717,6 +1847,15 @@ class NoteGraphWriter:
                 # owner's diff quote the same "before".
                 replaced="; ".join(write.replaced) or None,
                 from_attachment=from_attachment,
+                # The write path's own word for what it noticed. `attribute_collision`
+                # is the one that reaches the screen: the value on file DISAGREED, and
+                # the new one is live because it is NEWER, not because anything decided
+                # between them. It has always been in the free-text result the model
+                # reads and nowhere the owner could see it.
+                # `or None`: the write path spells "no reason" as `""`
+                # (`pipeline.py`'s `decision.review_kind or ""`), and an empty string on
+                # the wire is a value the renderer would have to know to treat as absent.
+                hold_reason=write.hold_reason or None,
             ),
             refs,
         )
@@ -1888,6 +2027,13 @@ def _entity_ref(handle: Handle) -> EntityRef:
         entity_id=str(handle.entity.id),
         label=handle.label,
         domain=handle.domain,  # type: ignore[arg-type]  # a domain code from the row
+        # The same two facts `_resolved_line` has always told the MODEL — whether this
+        # minted the entity, and what kind of thing it is — now told to the owner too.
+        # Without `created` his screen cannot distinguish "I made a new record for Boss"
+        # from "I matched Boss to the one you already have", which on a note introducing
+        # something new is the whole of what he wants to know.
+        created=handle.entity.created,
+        entity_kind=handle.kind or None,
     )
 
 

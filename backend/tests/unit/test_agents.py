@@ -923,9 +923,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # (v9 was the O15 ruling: the persona set the bar for asking at "I cannot proceed"
         # and told the model a REPLACED result was routine, which between them would have
         # vetoed the ask that ruling requires.)
+        # v11 names the two absences that made a note about Jeff's own dog resolve one
+        # surface and record `Boss.hasName -> "Boss"`: he is himself an ENTITY ("Me") and
+        # most notes join him to the thing they name, and resolving a name already stores
+        # what the thing is called. Bumps `facts.prompt_version`, which is the point —
+        # this is a calibration change, not a wording tidy.
         "note_ingest": (
-            "agent-note-ingest-v10",
-            "33fedfedde320521572e76dc0d653ec570203ec1ba57161002b89b0c16d68656",
+            "agent-note-ingest-v11",
+            "fcb61d282f5c42faf892fb5e201e7d52dc20cd1526ed98d5323b746987b840ad",
         ),
     }
     assert set(pins) == AGENT_NAMES

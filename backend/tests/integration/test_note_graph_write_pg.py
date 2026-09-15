@@ -192,6 +192,257 @@ async def test_resolving_the_same_surface_twice_returns_the_same_handle(maker, t
 
 
 @pytest.mark.asyncio
+async def test_a_later_pass_can_be_handed_what_an_earlier_one_resolved(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The owner: *"Seems like we've had multiple tool calls for the same thing when we
+    access it in different sessions on the same note."*
+
+    He is right and it was forced. A write cannot address an entity without a handle
+    (`lookup` refuses anything else — that refusal is what keeps `resolve_entity` the only
+    minting path) and the handle table is built empty per pass, so every pass re-resolved
+    an entity its own previous answer had just named. `carry_over` seeds it from ids this
+    conversation already committed. Nothing here mints: the second writer resolves NOTHING
+    and still writes.
+
+    The ratified design had it (`B3-GRAPH-TOOLS.md`: "the agent asserts against known
+    entities with ZERO resolve calls"); it was lost when `graph_context.py` went with
+    `integrate_note` in R4."""
+    note_id = await _note(maker, tmp_path, body="Mabel is my cat. Mabel is a tabby.")
+    first = await _writer(maker, note_id)
+    resolved = await first.resolve_entity(
+        {"entities": [{"surface": "Mabel", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(resolved, ToolOutput)
+    (ref,) = resolved.entities
+
+    later = await _writer(maker, note_id)
+    # Before: the name is not an address on a fresh writer — this is the refusal the
+    # owner was watching the agent work around, once per pass.
+    assert later.lookup("Mabel") is None
+
+    carried = await later.carry_over([uuid.UUID(ref.entity_id)])
+    assert [h.name for h in carried] == ["Mabel"]
+    assert later.lookup("Mabel") is not None
+
+    out = await later.close_reading(
+        {
+            "title": "Mabel",
+            "tags": ["cat"],
+            "facts": [
+                {
+                    "subject": "Mabel",
+                    "predicate": "coat",
+                    "object": "tabby",
+                    "quote": "Mabel is a tabby.",
+                    "statement": "Mabel is a tabby.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    assert write.status == "written"
+    # And it is the SAME record, not a second Mabel — carry_over adopts, never mints.
+    assert {r.entity_id for r in out.entities} == {ref.entity_id}
+    # Idempotent on the entity: carrying twice does not mint e2 for one thing.
+    assert await later.carry_over([uuid.UUID(ref.entity_id)]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_write_grounds_the_report_of_itself(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The amber "unverified — not grounded in your notes" badge, at its root.
+
+    `EntityRef.facts` IS the reflexion grounding corpus (`loop._grounding_corpus`). A note
+    pass retrieves no note sources — the note is turn 0, not a search result — so the
+    corpus was the entity's name and its OLD facts, and the agent's report of what it had
+    just recorded matched none of it. Every write turn failed grounding, and the owner got
+    "unverified" stamped on the one statement the system can check perfectly: the write
+    path is holding its `fact_id`. He read it as written and asked whether the write had
+    happened at all.
+
+    So the committed statement rides back on the entities it is about."""
+    note_id = await _note(maker, tmp_path, body="Rufus is a black Labrador retriever.")
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Rufus", "kind": "animal"}]}, _ctx())
+
+    out = await writer.close_reading(
+        {
+            "title": "Rufus",
+            "tags": ["dog"],
+            "facts": [
+                {
+                    "subject": "Rufus",
+                    "predicate": "breed",
+                    "object": "black Labrador retriever",
+                    "quote": "Rufus is a black Labrador retriever.",
+                    "statement": "Rufus is a black Labrador retriever.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    grounds = [text for ref in out.entities for text in ref.facts]
+    assert write.label in grounds, (
+        "the turn's own report of this write has nothing in the corpus to match"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_owners_CORRECTION_grounds_its_own_report_too(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The half the first fix missed, and the half the owner actually met.
+
+    The amber badge is emitted by the STREAMING path — a `/chat` reply turn — and a reply
+    turn's verbs are `assert_fact`, `correct_fact` AND `close_reading`. Grounding only
+    `close_reading` left the correction turn exactly as it was: its corpus is the entity's
+    OLD facts, which are the very value he just disputed, so "I've updated it to 60
+    inches" matched nothing and wore "unverified" on the one turn where the truth came
+    from him personally. That is owner report #3's path end to end."""
+    note_id = await _note(maker, tmp_path, body='The television is 58" across.')
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Telly", "kind": "device"}]}, _ctx())
+    await writer.close_reading(
+        {
+            "title": "Telly",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "Telly",
+                    "predicate": "size",
+                    "object": '58"',
+                    "quote": 'The television is 58" across.',
+                    "statement": "The television is 58 inches across.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+
+    out = await writer.correct_fact(
+        {
+            "entity": "Telly",
+            "predicate": "size",
+            "qualifier": "",
+            "object": '60"',
+            "statement": "The television is 60 inches across.",
+            "when": "",
+        }
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    grounds = [text for ref in out.entities for text in ref.facts]
+    assert write.label in grounds, (
+        "a correction's report has nothing in the corpus but the value it just replaced"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_contradicted_supersession_carries_its_reason_to_the_owner(maker, tmp_path) -> None:  # noqa: F811
+    """`hold_reason` on the wire — `attribute_collision`, the one that matters on screen.
+
+    The value on file DISAGREED, and the new one is live because it is NEWER, not because
+    anything adjudicated between them. The write path says exactly that in the free-text
+    result the MODEL reads; until this field it reached the owner NOWHERE, so a
+    contradicted update rendered identically to a clean one. A conversation write files no
+    review card either, so that sentence was his only possible notice."""
+    note_id = await _note(maker, tmp_path, body='My tv is 58". Actually the tv is 60".')
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "tv", "kind": "thing"}]}, _ctx())
+
+    await writer.close_reading(
+        {
+            "title": "TV size",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "hasSizeInches",
+                    "object": "58",
+                    "quote": 'My tv is 58".',
+                    "statement": 'The tv is 58".',
+                }
+            ],
+        },
+        _ctx(),
+    )
+    # A second pass, which must resolve again before it can write — a fresh writer's
+    # handle table is empty, so `subject: "tv"` alone is refused. That is the shape the
+    # owner sees as the agent re-asking who something is.
+    later = await _writer(maker, note_id)
+    await later.resolve_entity({"entities": [{"surface": "tv", "kind": "thing"}]}, _ctx())
+    second = await later.close_reading(
+        {
+            "title": "TV size",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "tv",
+                    "predicate": "hasSizeInches",
+                    "object": "60",
+                    "quote": 'Actually the tv is 60".',
+                    "statement": 'The tv is 60".',
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(second, ToolOutput)
+    (write,) = second.facts
+    assert write.status == "replaced"
+    assert write.hold_reason == "attribute_collision", (
+        "the owner has no other channel for 'your notes disagreed about this'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_entity_ref_says_whether_it_MINTED_the_record_or_matched_one(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """`created` on the wire, which is the only way the owner's screen can tell "I made a
+    new record for Boss" from "I matched Boss to the one you already have".
+
+    The write path has always known this and has always said so IN THE RESULT TEXT the
+    MODEL reads (`_resolved_line`'s "new entity" / "already known"). It reached the owner
+    nowhere, so a note that introduced something new rendered exactly like one that did
+    not — and "did it actually add the entity to the database?" is the question he asked
+    about this surface. `entity_kind` rides along for the same reason; note it is NOT the
+    ref's own `kind`, which is the discriminator and always the literal "entity"."""
+    note_id = await _note(maker, tmp_path)
+    writer = await _writer(maker, note_id)
+
+    first = await writer.resolve_entity(
+        {"entities": [{"surface": "Boss", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(first, ToolOutput)
+    (minted,) = first.entities
+    assert minted.created is True
+    assert minted.entity_kind is not None
+    assert minted.kind == "entity"  # the discriminator, not the animal
+
+    # A SECOND writer, because the first one's handle table would short-circuit on its
+    # own surface — this is the next pass over the same note, which is when the owner
+    # sees "already on file" instead of "new".
+    again = await (await _writer(maker, note_id)).resolve_entity(
+        {"entities": [{"surface": "Boss", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(again, ToolOutput)
+    (matched,) = again.entities
+    assert matched.entity_id == minted.entity_id
+    assert matched.created is False
+
+
+@pytest.mark.asyncio
 async def test_a_blank_surface_is_a_line_not_a_crash_and_the_rest_still_land(
     maker,  # noqa: F811
     tmp_path,
