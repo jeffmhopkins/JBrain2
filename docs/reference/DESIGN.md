@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-14
+> **Status:** Living · **Last verified:** 2026-09-15
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -111,7 +111,15 @@ accent as the glyph color — one tint formula, no per-type `-tint` tokens.
 
 - System font stack: `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`.
 - Scale: 12 (micro/labels) · 14 (secondary) · 16 (body, inputs) · 18 (card
-  titles) · 22 (screen titles) · 28 (wordmark/hero). Line-height 1.4.
+  titles) · 22 (screen titles) · 28 (wordmark/hero). Line-height 1.4. Two 20px
+  steps sit above body for prose read at length: `--fs-editor` (the
+  focused-writer page) and `--fs-chat`.
+- **A conversation and the note it is about read at the SAME size**
+  (`--fs-chat`, on both `.bubble` and `.fb-turn0-body`). They did not: the
+  bubble carried a raw `15px` while turn 0 took `--fs-secondary`, so the
+  agent's restatement rendered 43% larger than the owner's own words — the
+  inverse of "notes are the sole sources of truth". A size token, not a raw
+  px, is also the only way the chat answers Settings → Text size.
 - Weights: 400 body, 500 titles/buttons, 700 wordmark only.
 - Section headers (e.g. KNOWLEDGE, AUTHORING): 12px, uppercase, letter-spacing
   0.08em, `--text-3`.
@@ -126,6 +134,16 @@ accent as the glyph color — one tint formula, no per-type `-tint` tokens.
   optional `0 1px 2px rgba(0,0,0,.06)` in light.
 - Touch targets ≥ 44×44px; compact-variant rows may reduce to 36px height but
   never shrink tap areas below 44px including padding.
+- **The 44px floor never rides `--font-scale`.** Padding expressed in `em` of a
+  scaled font shrinks the tap target when the owner lowers Text size — the mode
+  row, the app's primary navigation, computed to ~37px at the 0.75 default and
+  ~34.6px at 65%. Thin the control in `em` above the floor; declare the floor in
+  px.
+- **A control that pulls its layout box back must be spaced off its HIT area.**
+  `.icon-btn` bleeds 8px past its box via `margin: -8px`, so a 14px flex gap left
+  the composer's paperclip and send overlapping by 2px — and a near-miss on
+  attach sends the note. Leave ≥ 8px of dead space between two 44px targets.
+  `backend/tests/unit/test_tap_targets.py` gates both rules.
 
 ## Core components
 
