@@ -53,6 +53,15 @@ one hole in this paragraph's reasoning and it is a crash, not an exception — n
 here can close it. Closing it means the claim and the append sharing a transaction, which
 means the repo giving up owning the append's, and that is a bigger change than this wave.
 
+0204's unprompted ADDITION takes the thread by the other door (`reopen`, from `settled`)
+and so inherits this same window, with one consequence of its own: the note's thread
+reads *analysing* in the PWA for the whole `STALE_CONVERSATION` before the reclaim, where
+before it simply stayed settled and lost his words. Only on a process death — an ordinary
+exception in the append returns an `OwnerReply` with `claimed` set, and `/chat` runs
+`close_owner_reply` on it, which settles the thread on the way out. Named here rather than
+engineered around because the ordering is forced: the hold has to commit BEFORE the append
+enqueues the re-reading, or the re-reading is exactly what it was added to stand off.
+
 **Why only text the OWNER TYPED may become a block.** Not every `/chat` turn carries owner
 prose. `ChatRequest.proposal_outcome` and `.deferred_outcome` mark a turn whose `message` the
 SERVER wrote — an enact summary ("Enacted 1 of 1 — 1 approved…"), a finished off-turn
