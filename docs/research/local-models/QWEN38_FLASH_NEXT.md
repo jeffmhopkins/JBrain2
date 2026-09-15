@@ -35,11 +35,15 @@ Five reasons, each a number below:
    (reuse `ctx_other`, split the CUDA-graph changes out) `[WEB]`. Every good Strix
    Halo number published so far comes from a fork (`strix-halo-flash-next`,
    `EngramHalo.cpp`), not from a build this repo's gateway would ever produce.
-3. **The good numbers are ROCm/HIP; this box serves Vulkan by design.** The runbook's
-   Phase 3 picks Vulkan/RADV precisely because it "needs only `/dev/dri`; no ROCm
-   setup" `[REPO]` `docs/runbooks/STRIX_HALO_SETUP.md`. PR #28243 reports **7.6%
-   degradation** on Vulkan `[WEB]`. There is exactly one promising Vulkan MTP
-   datapoint, single-source and unreplicated (§3).
+3. **Every *MTP* number is a ROCm fork; the Vulkan story is better than that implies.**
+   The runbook's Phase 3 picks Vulkan/RADV because it "needs only `/dev/dri`; no ROCm
+   setup" `[REPO]` `docs/runbooks/STRIX_HALO_SETUP.md`, and Vulkan turns out to be
+   competitive-to-better *without* MTP: **27.16 tok/s at tg128** on direct Vulkan (§3F),
+   against 15.3–21.9 on the ROCm sweeps, and one head-to-head where Vulkan beat ROCm
+   6.43x (§3E, partial-offload, treat with care). What Vulkan lacks is **MTP** — PR
+   #28243 reports 7.6% degradation there `[WEB]`, and the one Vulkan MTP datapoint
+   (§3C) is single-source and unreplicated. So the backend is not the blocker;
+   speculation on that backend is.
 4. **MTP's speedup is not monotonic — it goes negative at the depths this box works
    at.** Same rig, same build: +MTP is **38.5 tok/s at 3.4k** but **15.0 tok/s at
    26k**, *below* that rig's own 16.8 baseline `[WEB]`. "The 32K regression is real"
@@ -145,7 +149,7 @@ Unsloth's GGUF repo `[WEB]`. Sizes as published; shard counts not stated.
 | UD-IQ1_S | 72.5 | 1-bit; quality unproven for this family |
 | UD-IQ1_M | 74.5 | 1-bit; unsloth claims 80% top-1 |
 | UD-Q2_K_XL | 78.9 | 2-bit |
-| **UD-IQ3_XXS** | **82** | **the only quant with real slack (§4)** |
+| **UD-IQ3_XXS** | **82** | **only rung with real slack (§4) — but UNMEASURED (§3.1)** |
 | UD-Q3_K_XL | 90 | ~7 GB slack — too tight |
 | **UD-IQ4_XS** | **93.7** | the community default; ~1.5 GB slack `[DERIVED]` |
 | UD-Q4_K_XL | 111 | over ceiling |
@@ -212,10 +216,50 @@ the deepest point, contradicting A and B) to want a second run before it is trus
 Different OS and memory manager, so it transfers poorly, but it is the one report at
 full native context.
 
+**E. soothill** — UD-Q4_K_XL (111 GB, i.e. over this box's ceiling), **ROCm vs Vulkan
+head-to-head**, no MTP ("this GGUF does not contain the required MTP tensors") `[WEB]`.
+At an 8-layer partial offload: **Vulkan 11.50 tok/s generation vs ROCm 1.79** — the
+author's "6.43x faster." Tuned to 40 layers and two slots on Vulkan: 15.56 tok/s single
+generation, 24.30 aggregate across two requests, 109.55 prefill, serving 256k context.
+The ROCm figure is bad enough to look misconfigured rather than representative, and the
+whole run is partial-offload because the quant does not fit — so read this as *Vulkan is
+viable*, not as a clean backend benchmark.
+
+**F. strix-halo-guide** — UD-IQ4_XS, **direct Vulkan**, build b10687, kernel 7.0.0-30,
+2026-08-30 `[WEB]`: **27.16 tok/s at tg128**, no MTP. The guide's own caveat is worth
+repeating: Flash-Next "passed only a separate arithmetic smoke; vision, tools, long
+context, server behavior and broad quality remain unqualified."
+
+### 3.1 What was NOT tested — read this before trusting §6 or §7
+
+Two gaps that the sections below depend on, stated plainly because the numbers above
+invite a confidence they do not earn:
+
+1. **Nobody measured `UD-IQ3_XXS` — the rung this dossier recommends.** Every
+   measurement above is `UD-IQ4_XS` (A, D, F), `AD-4.27bpw` (B), `ROCmFP4-FAST` (C) or
+   `UD-Q4_K_XL` (E). The strix-halo-guide quant list omits IQ3_XXS from testing outright
+   `[WEB]`. One search result attributes "39.3 tok/s" to IQ3_XXS in an EngramHalo "RAM
+   mode"; the README's actual sentence is "24.4 → 39.3 tok/s on code" and **names no
+   quant** `[WEB]`, so that attribution is not supported and is not used here.
+   **§4's recommendation of IQ3_XXS is memory arithmetic alone** — 82 GB leaves 13.2 GB
+   of slack where 93.7 GB leaves 1.5 — with **zero measured speed or quality behind it.**
+   Directionally a 3-bit rung should decode somewhat faster than 4-bit (fewer bytes read
+   per token on a bandwidth-bound box) and score somewhat worse; neither has been
+   quantified for this model, and with only 6B active params the speed delta is likely
+   modest.
+2. **There is no head-to-head against `gpt-oss-120b` at any quant.** Every comparison in
+   this dossier sets someone else's published Flash-Next number against **this repo's**
+   recorded ~31 tok/s for gpt-oss (`local_catalog.py:585`) — different rigs, builds,
+   backends, quants and days. That is enough to establish the *shape* of the gap, and
+   not enough to size it. The §7 spike exists to replace it.
+
 ### What this adds up to
 
 - **Baseline (no MTP), the only configuration mainline llama.cpp can serve today:
-  15.3–21.9 tok/s** — i.e. **0.49–0.71x** of `gpt-oss-120b` `[DERIVED]`.
+  15.3–21.9 tok/s on ROCm forks, but 27.16 tok/s on direct Vulkan at tg128 (F)** — so
+  **0.49–0.88x** of `gpt-oss-120b` `[DERIVED]`, and the top of that range is the
+  backend this box actually serves. Shallow-depth and single-run, so not a rebuttal to
+  the ROCm sweeps — but it is the most encouraging non-MTP number published.
 - **With MTP on a fork: 15.0–47.1 tok/s**, workload- and depth-dependent, best on
   code/structured output, worst on prose and at ≥26k depth.
 - Prefill is healthy (291–450 tok/s) and is *not* the problem.
@@ -298,10 +342,14 @@ that sink it, not the memory.
    … a ~20-30 min rebuild." That is the cost of one narrow patch. `EngramHalo.cpp` /
    `strix-halo-qwen4exp` are *forks* with their own kernels — a different maintenance
    class, and one that would sit directly across the auto-update path.
-3. **Vulkan vs ROCm.** The runbook picks Vulkan/RADV on purpose. Adopting Flash-Next at
-   speed currently means adopting ROCm, which is a change to Phase 3 of the owner's
-   setup — and the owner has no terminal (CLAUDE.md #10), so it must be an update-script
-   path, not a host step.
+3. **Vulkan vs ROCm — softer than it first looked.** The runbook picks Vulkan/RADV on
+   purpose, and the evidence does *not* say ROCm is required for a usable serve: §3F
+   measures 27.16 tok/s at tg128 on direct Vulkan, and §3E's author concludes Vulkan
+   "turned Qwen3.8 Flash Next from an interesting experiment into a usable concurrent
+   256K-context service on AMD Strix Halo" `[WEB]`. The ROCm dependency is specifically
+   **MTP's**. If MTP lands with working Vulkan kernels, Phase 3 never changes; if it
+   only ever works on HIP, adopting it means a ROCm path in the update script — never a
+   host step, since the owner has no terminal (CLAUDE.md #10).
 4. **MTP is a serving *mode*, not a model — this repo learned that already.**
    `qwen3.8-27b-mtp` is in `RETIRED_IDS` precisely because "MTP turned out to be a
    serving MODE of the Q4 entry rather than a model" `[REPO]` `local_catalog.py:1118-1124`.
@@ -345,7 +393,7 @@ on `gpt-oss-120b`'s evidence.
 globbed (§1.1), the §1 sampling split, `kv_gb_per_128k≈3.5`,
 `native_context_window=262144`. Nothing routes to it by default, so the first load is
 the measurement — exactly the pattern the catalog already uses for the unmeasured Q8
-sibling (`local_catalog.py:684-686`). **Even this waits**, because at 82 GB it evicts
+sibling (`local_catalog.py:684-686`). **Even this waits** — and note §3.1: no one has measured this rung — because at 82 GB it evicts
 every co-resident the moment it is loaded, and until MTP is real the thing it evicts
 them for is slower than what it displaced.
 
@@ -362,7 +410,10 @@ Revisit when **both** hold:
    else on gfx1151, or spiked here. KYmidnight's Vulkan numbers (§3C) are the only
    evidence today and want replication.
 
-Then spike, in this order: `UD-IQ3_XXS` + MTP sidecar, sole tenant, **output validated
+Then spike, in this order: **`UD-IQ3_XXS` *and* `UD-IQ4_XS`, measured against each
+other** — §3.1 means the choice between them is currently arithmetic, and if IQ4_XS's
+quality is materially better the 1.5 GB budget question is worth reopening rather than
+conceding — each with the MTP sidecar, sole tenant, **output validated
 against a known-good transcript above 1k prompt tokens** (§3's silent-garbage failure
 mode), measured at 1k / 13k / 32k depth, with `reasoning_effort` pinned low. Compare
 against `gpt-oss-120b`'s ~31 tok/s on the same box, same day. Load the projector in the
@@ -392,4 +443,7 @@ are actually reclaimed on a box that cannot `rm` them (CLAUDE.md #10).
 - [EasiiX/Qwen3.8-Flash-Next-MTP-Strix-Halo-GGUF](https://huggingface.co/EasiiX/Qwen3.8-Flash-Next-MTP-Strix-Halo-GGUF) — MTP sidecar, flags
 - [EngramHalo.cpp: Qwen 3.8 Flash Next at 38 t/s on Strix Halo](https://sleepingrobots.com/dreams/engramhalo-qwen38-flash-next-strix-halo/) — measurement B
 - [Running Qwen 3.8 Flash Next on Strix Halo: 125B at 20 t/s](https://sleepingrobots.com/dreams/qwen38-flash-next-strix-halo/) — mmap/n-gram split, PPL ratio
+- [Qwen3.8 Flash Next: ROCm vs Vulkan on Strix Halo — Soot / Silicon](https://www.soothill.io/blog/2026/08/27/qwen38-flash-next-rocm-vulkan-strix-halo/) — measurement E
+- [AMD Strix Halo Models: Benchmarks, Flash-Next & Memory Fit](https://strixhaloguide.com/strix-halo-models/) — measurement F, and the quant list omitting IQ3_XXS (§3.1)
+- [Aristo94/EngramHalo.cpp](https://github.com/Aristo94/EngramHalo.cpp) — the "24.4 → 39.3 tok/s on code" claim, which names no quant (§3.1)
 - [Artificial Analysis — Qwen3.8-Flash-Next vs gpt-oss-120b](https://artificialanalysis.ai/models/comparisons/qwen3-8-flash-next-vs-gpt-oss-120b) — quality benchmarks
