@@ -213,7 +213,7 @@ describe("FullBrainSurface", () => {
     // The collapsed row names the write AND its domain in words — no tap needed to
     // see that a health fact was written.
     const row = await screen.findByRole("button", { name: /Recorded what the note says/ });
-    expect(row).toHaveTextContent("1 written · health");
+    expect(row).toHaveTextContent("1 recorded · health");
     // Expanding it shows what changed.
     fireEvent.click(row);
     expect(screen.getByText("entities modified")).toBeInTheDocument();

@@ -96,14 +96,19 @@ from jbrain.agent.readtools import build_entity_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.transcript_store import AgentTranscript, TurnRecord
 from jbrain.analysis.clarify import (
     PassReading,
     bind_turn_writes,
     record_turn_writes,
     settle_conversation,
 )
-from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
+from jbrain.analysis.noteframe import (
+    FRAME_OPEN,
+    OWN_NOTE_ABOUT,
+    THIRD_PARTY_ABOUT,
+    framed_note,
+)
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.prompt import prompt_block
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -112,6 +117,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import emr_owned
 from jbrain.ingest.extract import KIND_TEXT_LAYER, CachedExtract, Segment, image_segments
 from jbrain.llm import LlmRouter, UserMessage
+from jbrain.llm.types import AssistantMessage, LlmMessage
 from jbrain.models.note_conversation import (
     NOTE_TURN_WALL_CLOCK,
     NoteConversationRepo,
@@ -130,6 +136,22 @@ log = structlog.get_logger()
 
 NOTE_CONVERSE_KIND = "note_converse"
 """The worker dispatch key + the `ActionSpec.handler` binding."""
+
+#: How many of a thread's own turns ride back into a RE-READING. The whole note is
+#: re-framed every pass, so this is context about what was already said and recorded,
+#: not the note itself — and the oldest turn it drops is the previous reading of the
+#: same note the new frame is about to restate.
+REPLAYED_TURNS = 12
+
+#: The line that opens a re-reading, outside the note's fence. It says why the pass is
+#: happening, because the model's own prior answer is sitting directly above it and
+#: without this the note reads as having been sent twice.
+REREAD_LEAD = (
+    "This note has changed since you last read it — the owner added to it, or an"
+    " attachment finished being read. Below is the note AS IT NOW STANDS, in full."
+    " Read it again from the top: record what it says now, and where it now says"
+    " something different from what you recorded before, say so."
+)
 
 NOTE_CONVERSE_AGENT = "note_ingest"
 """The persona (D16, migration 0192). Hardcoded, never a parameter: the closed
@@ -471,12 +493,41 @@ class NoteConverseRunner:
         if note is None:
             return None
 
+        # ONE note, ONE conversation — for the note's whole life, not per reading.
+        #
+        # A note gets read again whenever its text moves: the owner adds to it, an
+        # attachment finishes OCR, he edits the body. Every one of those used to open a
+        # SECOND conversation, because `live_for_note` only guards the live pair and a
+        # finished thread is not in it. `thread_for_note` returns the NEWEST, so the note
+        # screen then showed the new thread and the owner's own — the first pass and the
+        # reply he typed into it — became unreachable. He reported it exactly: "I then
+        # said the size was different, and went back into the conversation, and the
+        # original conversation was gone?"
+        #
+        # The second READING is not the problem and is not removed: it is the only thing
+        # that retracts a fact his correction took away (a reading re-derives the whole
+        # note, the settle releases what it did not restate, and the reply turn cannot do
+        # it — `api/agent.py` passes `reading=None` because the writer is unreachable at
+        # that seam). What is removed is the second CONVERSATION. The reading now happens
+        # in the thread he is already looking at.
         async with scoped_session(self.maker, owner_ctx) as s:
+            # `live_for_note` FIRST, and not because it answers the same question
+            # `thread_for_note` does: it is the call that reclaims this note's abandoned
+            # `running` passes. `Ops -> Update` quiesces the worker with a `stop -t 30`,
+            # so a pass can die mid-turn holding the note's one live slot — and on a box
+            # with no terminal (CLAUDE.md #10) an unreclaimed thread takes that note out
+            # of the pipeline permanently and silently. `thread_for_note` reclaims
+            # nothing by design (it is a read for a screen), so reaching for it alone
+            # here would drop the reclaim on the floor.
             if await self.conversations.live_for_note(s, note_id) is not None:
                 # The dispatcher's dedup arm normally catches this; a re-delivered event
                 # that slipped past it is a skip, not a failure.
                 log.info("note_converse.already_live", note_id=note_id)
                 return None
+            # Now the newest thread in ANY state — including one the line above just
+            # reclaimed to `failed`, which is a thread this note should carry on in
+            # rather than abandon beside a new one.
+            existing = await self.conversations.thread_for_note(s, note_id)
 
         # W4's two narrowings, both halves, in that order. Neither is exclusive of the
         # other and a note can be BOTH: an approved intake submission enacting into a
@@ -507,6 +558,45 @@ class NoteConverseRunner:
         # note_ingest thread sitting in the owner's chat list, removable only by a
         # compensating delete that can itself fail. Here the rollback takes both, so
         # there is no cleanup path to get wrong and none to leave silent.
+        if existing is not None:
+            # The note has been read before: reopen ITS thread and read it again there.
+            # `reopen` is a compare-and-swap, and the one-live index is still the
+            # authority the read above cannot be — losing either is "somebody else is
+            # reading this note", which is a skip. Nothing of the owner's is lost by
+            # losing it: his words are already on the note.
+            try:
+                async with scoped_session(self.maker, owner_ctx) as s:
+                    won = await self.conversations.reopen(s, existing.session_id)
+                    if won:
+                        # Stamped with the body this pass is about to read, so the next
+                        # reader can tell whether the note moved under this reading.
+                        await self.conversations.set_body_sha(
+                            s, existing.session_id, note_body_sha(note.body)
+                        )
+                        # And RE-STAMPED with the note's scopes as they now stand. The
+                        # turn itself takes freshly computed `read_scopes`, but the
+                        # OWNER'S REPLY turn does not — `api/agent.py` reads
+                        # `session.domain_scopes` off the row and narrows RLS with it.
+                        # A note's domain is movable from the note screen, and every
+                        # re-read used to mint a fresh session, so the stamp self-healed.
+                        # Resuming means it no longer does: a note moved general → health
+                        # would leave its own thread unable to read back what the pass
+                        # just wrote, and health → general would leave a health scope
+                        # standing on a note that is not health any more (CLAUDE.md #3).
+                        await self.sessions.set_domain_scopes(
+                            s, existing.session_id, list(read_scopes)
+                        )
+            except IntegrityError:
+                won = False
+            if not won:
+                log.info("note_converse.lost_reopen", note_id=note_id)
+                return None
+            prior = await self.transcript.load(owner_ctx, existing.session_id)
+            await self._run_turn(
+                owner_ctx, profile, note, existing.session_id, read_scopes, prior=prior
+            )
+            return None
+
         try:
             async with scoped_session(self.maker, owner_ctx) as s:
                 session = await self.sessions.create_on(
@@ -537,6 +627,8 @@ class NoteConverseRunner:
         note: NoteInfo,
         session_id: str,
         read_scopes: Sequence[str],
+        *,
+        prior: Sequence[TurnRecord] = (),
     ) -> None:
         # Same fence, same nonce, one word about whose text it is (D10). The nonce is
         # drawn FROM THE BODY, so a submitter cannot predict the delimiter and cannot
@@ -547,6 +639,21 @@ class NoteConverseRunner:
             captured=capture_line(note),
             about=THIRD_PARTY_ABOUT if is_third_party(note.provenance) else OWN_NOTE_ABOUT,
         )
+        # A RE-READING, in the thread that already read this note once. The note is
+        # re-framed whole rather than diffed: `close_reading` re-derives the entire note
+        # every pass and the settle releases what the new reading does not restate
+        # (constraint 6), so handing it only the new sentences would retract everything
+        # the note still says.
+        #
+        # MODEL-FACING ONLY, and that separation is load-bearing rather than tidy. The
+        # lead-in sits outside the fence, where the clock block sits, because it is the
+        # channel's words and not the note's — but `turn_0` is also what `_record`
+        # persists, and the PWA strips the fence for display with a regex ANCHORED at the
+        # start of the turn (`frontend/src/agent/noteFrame.ts`). A prefix makes that match
+        # fail, and a failed match renders the whole ten-line injection header, the nonce
+        # and the end marker as an ordinary bubble attributed to the OWNER — the exact
+        # thing `noteFrame` exists to prevent, on every note read more than once.
+        asked = f"{REREAD_LEAD}\n\n{turn_0}" if prior else turn_0
         run_id = await self.runlog.start(
             owner_ctx, session_id=session_id, prompt_version=profile.version
         )
@@ -554,7 +661,29 @@ class NoteConverseRunner:
         # prepend) so "last Tuesday" in a note resolves without a tool the persona does
         # not have. Only the note is recorded as the user turn: the clock is scaffolding,
         # not something the owner said.
-        conversation = [UserMessage(text=now_block(None)), UserMessage(text=turn_0)]
+        conversation: list[LlmMessage] = [UserMessage(text=now_block(None))]
+        # The thread's own history, text-only — the same shape `/chat` replays a session
+        # in (`api/agent.py`), tool calls not re-sent. Capped to the most recent turns:
+        # every pass re-frames the WHOLE note, so an uncapped replay grows the prompt
+        # without bound on a note the owner keeps coming back to, and the oldest turn it
+        # would drop is the previous reading of the same note that is being re-framed
+        # directly below.
+        for record in list(prior)[-REPLAYED_TURNS:]:
+            # A prior USER turn of this thread is a previous framing of THIS NOTE — body
+            # plus up to `MAX_ATTACHMENT_TEXT_CHARS` of attachment text. Replaying those
+            # is the worst of both: the prompt grows by a whole note per past reading, and
+            # the model is handed the note's SUPERSEDED text as a user message directly
+            # above its current one, which is the confusion the lead-in is trying to
+            # undo. The note is re-framed whole below; what is worth carrying back is what
+            # was SAID about it.
+            if record.role == "user" and record.content.startswith(FRAME_OPEN):
+                continue
+            conversation.append(
+                UserMessage(text=record.content)
+                if record.role == "user"
+                else AssistantMessage(text=record.content)
+            )
+        conversation.append(UserMessage(text=asked))
 
         status, stop_reason, steps, cost = "error", "error", 0, 0
         state = "failed"

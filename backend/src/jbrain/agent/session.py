@@ -196,6 +196,29 @@ class AgentSessionRepo:
         await session.refresh(row)
         return _info(row)
 
+    async def set_domain_scopes(
+        self, session: AsyncSession, session_id: str, domain_scopes: Sequence[str]
+    ) -> None:
+        """Re-stamp a session's domain scopes, on the caller's already-scoped
+        transaction.
+
+        `domain_scopes` is an RLS NARROWING, not a label: `read_context` builds an
+        owner-scoped context from it and `api/agent.py` reads it off the row for the
+        owner's reply turn. It is fixed at creation, which is right while a session is
+        about one thing — and a NOTE conversation is reopened for the note's next
+        reading (`analysis/converse.py`), so if the note's domain moved in between, the
+        stamp is stale. Before conversations were resumable every re-read minted a fresh
+        session and the staleness could not arise; this is what replaces that.
+
+        Deliberately narrow: no `title`, no `agent`, nothing else. The only thing that
+        goes stale across a resume is the firewall stamp, and a general-purpose session
+        mutator is a bigger door than this needs."""
+        await session.execute(
+            update(AgentSession)
+            .where(AgentSession.id == uuid.UUID(session_id))
+            .values(domain_scopes=list(domain_scopes))
+        )
+
     async def list(self, ctx: SessionContext) -> list[AgentSessionInfo]:
         # Each card carries its turn count, a resume preview (the latest turn,
         # clamped), and how many Proposals it has staged — three correlated

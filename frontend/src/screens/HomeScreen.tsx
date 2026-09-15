@@ -179,7 +179,12 @@ export function HomeScreen({
       fb.close();
       setEntrySession(null);
       setEntryNote(noteId);
-      setSeg({ row: "main", mode: "entry" });
+      // The ROW is preserved. Entry exists on both rows, so hardcoding `main` here
+      // silently swapped the owner's other two tabs (Medical / Financial -> Research /
+      // Brain) as a side effect of opening a note — and the back chevron never swapped
+      // them back. DESIGN.md sanctions the morph, but only as something HE does by
+      // tapping Entry again; a navigation action has no business spending it.
+      setSeg((prev) => ({ row: prev.row, mode: "entry" }));
     },
     [fb.close],
   );
@@ -264,7 +269,11 @@ export function HomeScreen({
   useEffect(() => {
     if (!openSession) return;
     const mode = modeForAgent(openSession.agent);
-    setSeg({ row: "main", mode });
+    // Entry exists on BOTH rows, so a handoff landing on it must keep the row the owner
+    // chose — the same rule `openNoteConversation` follows, and the same silent tab swap
+    // if it does not. Research and Full Brain live on `main` alone, so those still force
+    // it: there is no sub-row seat for them to keep.
+    setSeg((prev) => ({ row: mode === "entry" ? prev.row : "main", mode }));
     if (mode === "entry") {
       // Entry's controller is OFF until a note conversation is open, so `requestOpen`
       // alone would reach a disabled hook and the surface would stay on the notes list.
@@ -407,6 +416,7 @@ export function HomeScreen({
         <NoteConversation
           fb={fb}
           noThread={noThread}
+          analysing={thread.analysing}
           onOpenNote={onOpenNoteById}
           onOpenEntity={onOpenEntity}
           onProposalEnacted={() => void notes.refresh()}
@@ -510,9 +520,11 @@ export function HomeScreen({
         conversation={conversational}
         placeholder={
           noteOpen
-            ? noThread
-              ? "No thread yet — open the note above"
-              : "Reply about this note…"
+            ? thread.analysing
+              ? "Reading this note…"
+              : noThread
+                ? "No thread yet — open the note above"
+                : "Reply about this note…"
             : undefined
         }
         onConversation={(body, files) => {

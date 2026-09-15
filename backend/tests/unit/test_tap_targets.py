@@ -99,3 +99,80 @@ def test_a_question_candidate_is_a_44px_box() -> None:
 def test_a_questions_typed_field_is_44px_tall() -> None:
     """The field a no-candidate question gets, and the one "Something else" reveals."""
     assert re.search(r"min-height:\s*44px", _rule(".fb-shell .fb-q-input"))
+
+
+def test_the_answers_action_row_clears_the_floor() -> None:
+    """The Thought / Worked chips and the copy and play controls at the foot of an
+    answer — four adjacent controls that were 22-25px tall.
+
+    This row is the ONE path to both the thinking trace and what the turn wrote to the
+    graph, and the owner reported not being able to see either ("when first analysing
+    the note, I can't see the thinking trace"; "I don't see how it actually added the
+    entity to the database"). A control that small on the only road to the answer is
+    part of that. `.fb-act-play` is also the LONG-PRESS target that arms auto-play — a
+    gesture asked of a 25px box.
+
+    ⟲ **The chip reaches the floor through a transparent bleed, and the other two
+    directly, and the difference is not stylistic.** `.fb-act-copy` and `.fb-act-play`
+    paint nothing (`background: none; border: none`), so a 44px box on the button IS a
+    44px hit area and nothing else. `.fb-act-chip` paints: `.fb-act-think.on` and
+    `.fb-act-work.on` tint its background and show its border, so the same declaration
+    there would have drawn a 44px capsule around 12px of text on every answer in the app.
+    A gate that only asserted `min-height` on all three would have passed over exactly
+    that — the failure this file's own docstring names, "a gate that asserts a
+    declaration is not a gate that establishes the property named in its own comment"."""
+    for selector in (".fb-shell .fb-act-copy", ".fb-shell .fb-act-play"):
+        assert re.search(r"min-height:\s*44px", _rule(selector)), selector
+    # The painted one: small chrome, 44px of reachable box centred on it.
+    chip = _rule(".fb-shell .fb-act-chip")
+    assert re.search(r"position:\s*relative", chip)
+    assert not re.search(r"min-height:\s*44px", chip), "a painted chip must not BE 44px"
+    bleed = _rule(".fb-shell .fb-act-chip::before")
+    assert re.search(r"height:\s*44px", bleed)
+    assert re.search(r"transform:\s*translateY\(-50%\)", bleed)
+
+
+def test_the_mode_row_clears_the_floor_at_every_text_size() -> None:
+    """The app's PRIMARY navigation. Its padding is expressed in `em` of a scaled font,
+    so at the shipped 0.75 default it computed to ~37px and at 65% to ~34.6px: lowering
+    the text size was shrinking every tap target with it. The 44px floor is absolute and
+    must not ride `--font-scale`, so the rule needs a `min-height` in px and not padding
+    alone."""
+    seg = _rule(".seg")
+    assert re.search(r"min-height:\s*44px", seg)
+
+
+def test_the_icon_button_is_a_44px_box_that_does_not_crowd_its_neighbour() -> None:
+    """`.icon-btn` is the top bar's glyph button AND the composer's paperclip and send.
+    It was 8px of padding around a 22-24px glyph — 38px, or 40px in the composer.
+
+    The second half is the one the first pass of this gate would have missed: the rule
+    pulls its layout box back with `margin: -8px`, so the hit area bleeds 8px past what
+    the flex `gap` spaces. At `gap: 14px` the paperclip's and send's 44px boxes
+    OVERLAPPED by 2px, and a near-miss on attach does not no-op — it sends the note. The
+    gap has to clear twice the bleed with room to spare."""
+    btn = _rule(".icon-btn")
+    assert re.search(r"min-width:\s*44px", btn)
+    assert re.search(r"min-height:\s*44px", btn)
+    bleed_m = re.search(r"margin:\s*-(\d+)px", btn)
+    assert bleed_m is not None, ".icon-btn no longer pulls its layout box back"
+    bleed = int(bleed_m.group(1))
+    for row in (".foot-icons", ".top-bar-right"):
+        gap_m = re.search(r"gap:\s*(\d+)px", _rule(row))
+        assert gap_m is not None, f"{row} declares no gap"
+        gap = int(gap_m.group(1))
+        assert gap - 2 * bleed >= 8, f"{row}: {gap - 2 * bleed}px between hit areas"
+
+
+def test_the_older_notes_pill_is_a_button_with_a_buttons_floor() -> None:
+    """DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px — 9px of text
+    in 5px of padding — and it is the only control in the empty upper half of the home
+    screen.
+
+    Through a bleed, like `.fb-act-chip` and for its reason: this pill is tinted and
+    rounded, so a 44px box would draw a fat lozenge rather than a bigger target."""
+    pill = _rule(".older-pill")
+    assert re.search(r"position:\s*relative", pill)
+    bleed = _rule(".older-pill::before")
+    assert re.search(r"height:\s*44px", bleed)
+    assert re.search(r"transform:\s*translateY\(-50%\)", bleed)

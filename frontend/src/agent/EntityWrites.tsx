@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 import { edgePath } from "../analysis/format";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ClaimDiffView } from "../review/blocks/ClaimDiff";
-import { domainWord, writeVerb } from "./entityWrites";
+import { domainWord, writeVerb, writeWord } from "./entityWrites";
 import type { FactWrite } from "./types";
 
 /** The domain of a write, as a dot AND its name. The word is not decoration: colour
@@ -45,7 +45,7 @@ function WriteRow({ fact }: { fact: FactWrite }): ReactNode {
   return (
     <li className={`fbw-row fbw-${verb}`}>
       <div className="fbw-head">
-        <span className="fbw-verb">{verb}</span>
+        <span className="fbw-verb">{writeWord(verb)}</span>
         <DomainTag domain={fact.domain} />
         {fact.from_attachment && <span className="fbw-src">from a photo</span>}
       </div>
@@ -56,7 +56,7 @@ function WriteRow({ fact }: { fact: FactWrite }): ReactNode {
             before={fact.replaced as string}
             after={fact.value ?? fact.label}
             afterLabel="now"
-            arrowLabel="↓ replaced by this note"
+            arrowLabel="↓ this note updated it — the old value is kept as history"
           />
         </>
       ) : path !== null && fact.value !== undefined ? (

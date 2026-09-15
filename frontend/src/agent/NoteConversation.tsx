@@ -26,6 +26,12 @@ export interface NoteConversationProps {
   fb: FullBrain;
   /** True once the lookup has answered that this note has no conversation at all. */
   noThread: boolean;
+  /** A pass is reading this note RIGHT NOW. It outranks `noThread`, which is the state
+   * this surface used to show for the whole of the first pass — "the box reads a note
+   * once it has indexed it", said while the box was reading it. The pass runs in the
+   * worker and streams nothing, so there is no trace to show; what there is to show is
+   * that it is happening, which is what the owner was asking for. */
+  analysing?: boolean | undefined;
   /** A Worked-block source card opens the cited note's own screen. */
   onOpenNote?: ((noteId: string) => void) | undefined;
   /** A response entity chip opens the entity page above home. */
@@ -49,9 +55,22 @@ export interface NoteConversationProps {
   onOpenThisNote?: (() => void) | undefined;
 }
 
+/** What there is to say while an unattended pass runs. Deliberately no timer and no
+ * percentage: the pass publishes no progress (`analysis/converse.py` runs it in the
+ * worker and emits no span), so any number here would be invented. */
+function ReadingNote(): ReactNode {
+  return (
+    <span className="fb-reading-note">
+      <span className="fb-reading-dot" aria-hidden="true" />
+      Reading this note…
+    </span>
+  );
+}
+
 export function NoteConversation({
   fb,
   noThread,
+  analysing = false,
   onOpenNote,
   onOpenEntity,
   readAloud,
@@ -69,7 +88,9 @@ export function NoteConversation({
         readAloud={readAloud}
         modelLoad={modelLoad}
         noSessionText={
-          noThread ? (
+          analysing ? (
+            <ReadingNote />
+          ) : noThread ? (
             <>
               No conversation yet — the box reads a note once it has indexed it, and the thread
               opens here.
@@ -83,7 +104,17 @@ export function NoteConversation({
             "Opening this note's conversation…"
           )
         }
-        emptyText="Say something about this note — it reads the note with you."
+        emptyText={
+          // A thread EXISTS but has no turns yet: the pass opened its conversation and is
+          // still working. The transcript is written in one go when the turn ends, so this
+          // is the whole of the first pass as seen from here — and inviting him to chat
+          // into it would be the same denial `noSessionText` used to make.
+          analysing ? (
+            <ReadingNote />
+          ) : (
+            "Say something about this note — it reads the note with you."
+          )
+        }
       />
       <ProposalsAside fb={fb} onProposalEnacted={onProposalEnacted} />
     </div>

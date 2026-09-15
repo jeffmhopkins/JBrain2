@@ -31,7 +31,7 @@ import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
 import { type AskedQuestion, type SentOutcome, askStep, sentAnswers, sentOutcomes } from "./asked";
 import { attachmentKind } from "./attachmentKind";
-import { stepWriteState, writePhrase } from "./entityWrites";
+import { stepWriteState, turnWriteSummary, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { noteDomain, unframeNote } from "./noteFrame";
@@ -127,7 +127,7 @@ interface TranscriptProps extends Props {
    * that surface can offer the one thing there IS to do with such a note: open it. */
   noSessionText?: ReactNode;
   /** What it says when a session is open but has no turns. */
-  emptyText?: string;
+  emptyText?: ReactNode;
 }
 
 interface Props {
@@ -1437,6 +1437,7 @@ function ActivityLine({
   const steps = tools.map(toolStep);
   const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
   const failCount = steps.filter((s) => s.ok === false).length;
+  const writeSummary = turnWriteSummary(steps);
   const label = thinking
     ? "Thinking…"
     : ms !== null
@@ -1482,7 +1483,18 @@ function ActivityLine({
             <span className="fb-act-lab">Worked</span>
             <span className="fb-act-count">
               {" · "}
-              {steps.length} step{steps.length === 1 ? "" : "s"}
+              {/* What landed leads; the step count follows it. A turn that wrote to the
+                  owner's graph and reported only "1 step" is why he could not tell his
+                  entities had been recorded. */}
+              {writeSummary !== undefined ? (
+                <span className="fb-worked-wrote">{writeSummary}</span>
+              ) : (
+                <>
+                  {steps.length} step{steps.length === 1 ? "" : "s"}
+                </>
+              )}
+              {writeSummary !== undefined &&
+                ` · ${steps.length} step${steps.length === 1 ? "" : "s"}`}
               {sourceCount > 0 && ` · ${sourceCount} source${sourceCount === 1 ? "" : "s"}`}
               {failCount > 0 && <span className="fb-worked-fail"> · {failCount} failed</span>}
             </span>

@@ -57,7 +57,9 @@ describe("the entity-modified rung", () => {
     const diff = screen.getByLabelText("before and after");
     expect(within(diff).getByText("Sunset District")).toBeInTheDocument();
     // A write that already landed must not read as still pending.
-    expect(within(diff).getByText("↓ replaced by this note")).toBeInTheDocument();
+    expect(
+      within(diff).getByText("↓ this note updated it — the old value is kept as history"),
+    ).toBeInTheDocument();
     expect(within(diff).queryByText("↓ proposed")).toBeNull();
   });
 

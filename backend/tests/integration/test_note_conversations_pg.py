@@ -243,6 +243,43 @@ async def test_notes_inbox_lists_a_first_pass_but_marks_it_live(
     assert row.live is True and row.questions == []
 
 
+async def test_notes_inbox_shows_no_question_on_a_thread_being_read_again(
+    maker: async_sessionmaker, owner: SessionContext
+) -> None:
+    """A thread being READ AGAIN must not advertise the question the owner already
+    answered.
+
+    Since one note keeps one conversation, a re-reading reopens THIS row rather than
+    opening a new one — so a thread that asked, was answered, settled and is now being
+    re-read passes back through `running` with its old `ask_owner` still the last
+    succeeded one on the ledger. Only a waiting thread holds an open set: `ask_owner`
+    ends its turn and parks the thread, so `running` is by construction not waiting."""
+    repo = NoteConversationRepo()
+    note = await seed_note(maker, owner)
+    sid = await seed_session(maker, owner)
+    async with scoped_session(maker, owner) as s:
+        await repo.start(s, session_id=sid, note_id=note, body_sha="sha")
+        await repo.record_tool_call(
+            s, sid, name="ask_owner", args={"question": "which tv?"}, ok=True, domains=[]
+        )
+        await repo.set_state(s, sid, "waiting_on_owner")
+
+    # While it waits, the question is exactly what the row is for.
+    async with scoped_session(maker, owner) as s:
+        assert {r.session_id: r for r in await repo.notes_inbox(s)}[sid].questions == ["which tv?"]
+
+    # He answers, it settles, and the note is read again in the same thread.
+    async with scoped_session(maker, owner) as s:
+        assert await repo.claim_waiting(s, sid)
+        await repo.set_state(s, sid, "settled")
+        assert await repo.reopen(s, sid)
+
+    async with scoped_session(maker, owner) as s:
+        row = {r.session_id: r for r in await repo.notes_inbox(s)}[sid]
+    assert row.live is True
+    assert row.questions == []
+
+
 async def test_notes_inbox_drops_a_settled_thread_and_a_deleted_note(
     maker: async_sessionmaker, owner: SessionContext
 ) -> None:
