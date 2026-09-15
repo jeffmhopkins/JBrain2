@@ -486,6 +486,23 @@ export interface ReplyPair {
  * A LIST rather than a map, because a question string is not a key: two rows of one set
  * can ask the same words (`ask_owner` does not dedupe them), and a map made both rows
  * replay the second answer. */
+/** The half of a reply turn that is NOT an answer — what he typed beside his taps.
+ *
+ * `owner_turn_text` composes a mixed send as the pairs first and the typed words last,
+ * and the frozen block renders every pair itself (each question with the answer he
+ * gave). So this is the only part of such a turn the block has no row for, and the only
+ * part his bubble should carry. Split by the same `\n\n` chunking and the same
+ * `PAIR_CHUNK` the reader uses, so "is this chunk a pair?" has exactly one answer in
+ * this file. */
+export function typedAside(text: string): string {
+  return text
+    .split("\n\n")
+    .filter((chunk) => !PAIR_CHUNK.test(pairTrim(chunk)))
+    .map((chunk) => pairTrim(chunk))
+    .filter((chunk) => chunk !== "")
+    .join("\n\n");
+}
+
 export function answersFromReply(text: string): ReplyPair[] {
   const pairs: ReplyPair[] = [];
   for (const chunk of text.split("\n\n")) {

@@ -749,26 +749,51 @@ class NoteGraphWriter:
 
     async def _load_note(self, session: AsyncSession) -> list[_ChunkRef]:
         """The note's paragraph chunks — the citation anchors and the haystack a quote
-        is checked against. Loaded once per conversation: a re-ingest replaces them, and
-        a re-ingest opens a NEW conversation."""
-        if self._chunks is None:
-            rows = (
-                await session.execute(
-                    select(Chunk.id, Chunk.text, Chunk.attachment_id)
-                    .where(Chunk.note_id == self._target.note_id, Chunk.granularity == PARAGRAPH)
-                    .order_by(Chunk.seq)
-                )
-            ).all()
-            self._chunks = [_ChunkRef(id=r.id, text=r.text) for r in rows]
-            self._note_text = _norm("\n".join(c.text for c in self._chunks))
-            # Attestation joins every chunk, so a quote may legitimately span the body
-            # and an attachment; this joins only the attachment ones, so such a quote
-            # matches NEITHER index and goes unmarked. Under-claiming "from a photo" is
-            # the safe direction — over-claiming would put a provenance on the chip that
-            # the note does not support.
-            self._attachment_text = _norm(
-                "\n".join(r.text for r in rows if r.attachment_id is not None)
+        is checked against.
+
+        RE-READ ON EVERY CALL, and the cache that used to sit here is a shipped
+        data-loss bug rather than a missed optimisation. Its docstring gave the reason
+        it was safe: *"Loaded once per conversation: a re-ingest replaces them, and a
+        re-ingest opens a NEW conversation."* 0204 made the second half false — a
+        re-reading now RESUMES the note's one conversation — and the first half then
+        cites chunk ids the re-ingest has already deleted:
+
+            IntegrityError: insert or update on table "entity_mentions" violates
+            foreign key constraint "entity_mentions_chunk_id_fkey"
+            DETAIL: Key is not present in table "chunks".
+
+        `_assert_one`'s per-element `except` swallows that, so the owner's fact is
+        silently lost and the model is told only `not recorded (internal)` — which it
+        reported to him as the system rejecting his entry, and then asked him which
+        predicate name to use. He met it on the note where he said "give her a color of
+        white".
+
+        The staleness is not only the ids. `_note_text` is the attestation haystack, and
+        the words that trigger this race are the ones the owner JUST added — so a quote
+        from his new block could not be found in a cache taken before it existed, and a
+        fact quoting him failed attestation for the same reason. Re-reading fixes both.
+
+        The cost is one indexed SELECT per write call, which is what correctness is worth
+        here: a cache whose invalidation condition is "a different conversation object
+        exists" cannot be made true again by anything this class controls.
+        """
+        rows = (
+            await session.execute(
+                select(Chunk.id, Chunk.text, Chunk.attachment_id)
+                .where(Chunk.note_id == self._target.note_id, Chunk.granularity == PARAGRAPH)
+                .order_by(Chunk.seq)
             )
+        ).all()
+        self._chunks = [_ChunkRef(id=r.id, text=r.text) for r in rows]
+        self._note_text = _norm("\n".join(c.text for c in self._chunks))
+        # Attestation joins every chunk, so a quote may legitimately span the body
+        # and an attachment; this joins only the attachment ones, so such a quote
+        # matches NEITHER index and goes unmarked. Under-claiming "from a photo" is
+        # the safe direction — over-claiming would put a provenance on the chip that
+        # the note does not support.
+        self._attachment_text = _norm(
+            "\n".join(r.text for r in rows if r.attachment_id is not None)
+        )
         return self._chunks
 
     def _attests(self, quote: str) -> bool:

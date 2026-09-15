@@ -28062,3 +28062,15 @@ button.wf-sigpill {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* ONE ANSWER of his, in his own bubble. The turn text records an answered set as
+   `Q: …/A: …` pairs so the frozen block can read them back (`asked.answersFromReply`);
+   that is a storage shape, and rendering it verbatim re-printed the agent's question at
+   him inside his own bubble, under the card already showing it. */
+.fb-shell .fb-answer-line {
+  margin: 0;
+  line-height: 1.5;
+}
+.fb-shell .fb-answer-line + .fb-answer-line {
+  margin-top: 8px;
+}

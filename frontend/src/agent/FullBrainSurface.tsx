@@ -29,7 +29,15 @@ import { ProposalsPanel } from "./ProposalsPanel";
 import { QuestionBlock } from "./QuestionBlock";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
-import { type AskedQuestion, type SentOutcome, askStep, sentAnswers, sentOutcomes } from "./asked";
+import {
+  type AskedQuestion,
+  type SentOutcome,
+  answersFromReply,
+  askStep,
+  sentAnswers,
+  sentOutcomes,
+  typedAside,
+} from "./asked";
 import { attachmentKind } from "./attachmentKind";
 import {
   entityPhrase,
@@ -881,6 +889,25 @@ function Bubble({
     // the owner said. It used to persist the whole framed note again, so a corrected
     // note showed up twice in its own conversation — once as captured, once as re-read —
     // and the second copy said nothing his own reply had not.
+    // AN ANSWERED QUESTION SET, which the turn text records as `Q: …\nA: …` pairs
+    // (`clarify.owner_turn_text`) so the frozen block can read its answers back out
+    // (`answersFromReply`). That is a STORAGE shape and it was rendered verbatim, so the
+    // owner's own bubble re-printed the agent's question at him — directly under the
+    // question card already showing it, with what he said buried inside the echo.
+    //
+    // The block above is the complete record of the pairs: it shows each question with
+    // the answer he gave. So the pairs are ITS to render, and the bubble keeps only the
+    // half the block has no row for — anything he typed BESIDE his answers. Rendering
+    // the pairs here too is not a smaller version of the same bug, it is the same bug:
+    // the first attempt at this printed each answer a second time, under the row that
+    // already had it.
+    const pairs = answersFromReply(message.text);
+    const typed = pairs.length > 0 ? typedAside(message.text) : null;
+    // A turn that was ONLY taps has nothing left for the bubble to say, and drops out
+    // entirely — but only when it also carries no attachment. Returning early here would
+    // skip the bubble below, and with it the `att-chips` a photo sent alongside his
+    // answers rides in; losing his file to a rendering rule is not a tidier screen.
+    if (typed === "" && attachments.length === 0) return null;
     // Matched WHOLE, never by prefix: this branch sees every user message in every
     // session, so `startsWith` turned any message of his that happened to open with the
     // marker into a channel event with the marker stripped — his words, wearing the
@@ -916,7 +943,9 @@ function Bubble({
             ))}
           </div>
         )}
-        {message.text}
+        {/* `typed` is the aside from an answered set (the block renders the pairs); null
+            means this turn carried no pairs at all, so the text is his whole message. */}
+        {typed === null ? message.text : typed}
       </div>
     );
   }

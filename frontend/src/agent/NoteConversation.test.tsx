@@ -315,15 +315,17 @@ describe("the reply turn", () => {
       { question_id: "qf2011e6f", answer: "amlodipine" },
       { question_id: "q38035b59", answer: "Dr. Ray Chen" },
     ]);
-    // The BUBBLE is the whole turn — the same rendering `clarify.owner_turn_text`
-    // persists, so a reload replays it byte for byte.
+    // The BUBBLE carries the half the block has no row for: what he typed BESIDE his
+    // answers. ⟲ It used to render the whole turn text verbatim — every `Q:`/`A:` pair
+    // included — which is a storage shape (`clarify.owner_turn_text`, read back by
+    // `answersFromReply`), so his own bubble re-printed the agent's questions at him
+    // directly under the block already showing them. He reported it on the Lucy thread.
     await waitFor(() =>
       expect(document.querySelector(".bubble.me")?.textContent).toBe(
-        "Q: What's the medication called?\nA: amlodipine\n\n" +
-          "Q: Which Dr. Chen?\nA: Dr. Ray Chen\n\n" +
-          "also the dinner is cancelled",
+        "also the dinner is cancelled",
       ),
     );
+    expect(screen.queryByText(/^Q: /)).toBeNull();
     // And the BLOCK, frozen against that text, shows what was actually answered.
     await waitFor(() => expect(document.querySelector(".fb-qblock-done")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Dr\. Ray Chen/ })).toHaveAttribute(
@@ -344,14 +346,22 @@ describe("the reply turn", () => {
     );
   });
 
-  it("shows the owner's turn as the Q/A rendering the server records", async () => {
+  it("gives a taps-only turn no bubble, because the block already is its record", async () => {
+    // ⟲ This asserted the bubble showed `Q: Which Dr. Chen?\nA: Dr. Alice Chen` — the
+    // turn text verbatim. That text exists so the frozen block can read its answers back
+    // out (`answersFromReply`); rendering it as well printed the question twice on one
+    // screen, the second time in the owner's own voice.
+    //
+    // A turn that was only taps has nothing the block does not already show, so it adds
+    // no bubble. What it answered is in the block, against the question it answered.
     await openThread(deps());
     fireEvent.click(screen.getByRole("button", { name: /Dr\. Alice Chen/ }));
     fireEvent.click(screen.getByRole("button", { name: "send" }));
-    await waitFor(() =>
-      expect(document.querySelector(".bubble.me")?.textContent).toBe(
-        "Q: Which Dr. Chen?\nA: Dr. Alice Chen",
-      ),
+    await waitFor(() => expect(document.querySelector(".fb-qblock-done")).toBeInTheDocument());
+    expect(document.querySelector(".bubble.me")).toBeNull();
+    expect(screen.getByRole("button", { name: /Dr\. Alice Chen/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
   });
 
@@ -503,8 +513,11 @@ describe("the reply turn", () => {
       vi.useRealTimers();
     }
     // The owner's turn stays on screen, and the block stays frozen over the set the note
-    // now holds the answers to.
-    expect(document.querySelectorAll(".bubble.me")).toHaveLength(1);
+    // now holds the answers to. ⟲ This counted one `.bubble.me`: the send was taps-only,
+    // so the bubble was the turn text rendered verbatim — the question echoed back at
+    // him. A taps-only turn has no bubble now, and the FROZEN BLOCK is what keeps the
+    // turn on screen, which is what this test was always really about.
+    expect(document.querySelectorAll(".bubble.me")).toHaveLength(0);
     expect(document.querySelector(".fb-qblock-done")).not.toBeNull();
     expect(screen.getByText("3 questions · 1 answered, 2 still open")).toBeInTheDocument();
     // And nothing is handed back to be re-sent against a question set that has closed.
