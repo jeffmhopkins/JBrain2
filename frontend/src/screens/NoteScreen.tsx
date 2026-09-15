@@ -28,6 +28,7 @@ import { TopBar } from "../components/TopBar";
 import { FileIcon, ImageIcon, MoreIcon, PlusIcon } from "../components/icons";
 import { awaitingImageCount } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
+import { parseNote } from "../notes/noteBlocks";
 import type { MoveTarget } from "../notes/useNoteActions";
 import type { StreamAttachment, StreamItem, SyncStatus } from "../notes/useNotes";
 
@@ -88,11 +89,37 @@ export function noteViewFromSearch(result: SearchResult): NoteViewSource {
 /** A note body rendered as rich text — headings, **bold**, and bulleted/numbered
  * lists read as formatting rather than raw `**`/`-`/`1.` markup. Reuses the safe
  * assistant Markdown renderer (React nodes, no innerHTML), so a captured recipe or a
- * structured note looks the way it was written. */
+ * structured note looks the way it was written.
+ *
+ * The dated blocks appended after the body (`notes/compose.py`) are rendered as what
+ * they ARE — what he came back and added, and when — rather than as the raw
+ * `[addition 2026-09-15 01:24 UTC]` line the composed text carries for the next
+ * reading. Here, unlike the stream row, the stamp is worth its space: this is where he
+ * reads the note whole and "when did I say that?" is a real question. */
 function BodyParagraphs({ body }: { body: string }) {
+  const { body: authored, blocks } = parseNote(body);
   return (
     <div className="note-view-body">
-      <Markdown text={body} />
+      <Markdown text={authored} />
+      {blocks.map((block, i) => (
+        <section
+          // The stamp is minute-resolution, so two additions in one minute would collide
+          // on it alone; the index disambiguates them and is stable because blocks are
+          // append-only and never reordered.
+          key={`${block.at}-${i}`}
+          className={`note-block note-block-${block.kind}`}
+        >
+          <h3 className="note-block-when">
+            {block.kind === "addition" ? "Added" : "Answered"} · {block.at}
+          </h3>
+          {block.question !== undefined && block.question !== "" && (
+            // The agent's question, quoted as the agent's — it is the only text in a
+            // note's body that he did not write, so it must not read as his.
+            <p className="note-block-q">{block.question}</p>
+          )}
+          <Markdown text={block.answer} />
+        </section>
+      ))}
     </div>
   );
 }

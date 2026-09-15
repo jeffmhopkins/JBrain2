@@ -28021,3 +28021,44 @@ button.wf-sigpill {
   line-height: 1.45;
   color: var(--amber);
 }
+
+/* WHAT HE CAME BACK AND ADDED. A composed note carries dated block markers in its own
+   text (`backend/src/jbrain/notes/compose.py`) because that text is what the next
+   reading reads; rendering it verbatim showed him
+   `[addition 2026-09-15 01:24 UTC]` in his own note. These are the two surfaces that
+   render those blocks as what they are. */
+
+/* the stream row's quiet count — the preview now reads as one continuous note, so this
+   is the only thing saying he came back to it */
+.note-added {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* the note screen, where the stamp earns its space: this is where he reads a note
+   whole, and "when did I say that?" is a real question */
+.note-view-body .note-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.note-view-body .note-block-when {
+  margin: 0 0 6px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* the agent's question — the only text in a note's body he did not write, so it is set
+   apart rather than reading as his own sentence */
+.note-view-body .note-block-q {
+  margin: 0 0 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
