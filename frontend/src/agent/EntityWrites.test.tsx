@@ -67,9 +67,7 @@ describe("the entity-modified rung", () => {
   });
 
   it("calls a fact it found already on file exactly that, never 'recorded'", () => {
-    render(
-      <EntityWrites facts={[fact({ outcome: "already" })]} truncated={false} />,
-    );
+    render(<EntityWrites facts={[fact({ outcome: "already" })]} truncated={false} />);
     expect(screen.getByText("already on file")).toBeInTheDocument();
     expect(screen.queryByText("recorded")).not.toBeInTheDocument();
   });
