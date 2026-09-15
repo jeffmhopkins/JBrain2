@@ -25088,6 +25088,15 @@ button.task-band:active {
    is where the owner is, and this is the reference, not the destination. */
 .note-btn {
   color: var(--text-2);
+  /* DESIGN.md's 44px floor, spelled out because `.icon-btn` does not meet it: 8px padding
+     + a 22px glyph is 38, and the rule is explicit that a compact row may shrink to 36px
+     of HEIGHT but never the tap area. The whole bar shares that shortfall (task #36); this
+     is a NEW control and the ONLY door from an open conversation to the note's record —
+     the analysis table and both no-terminal re-run levers sit behind it — so it does not
+     inherit the debt. `.icon-btn`'s -8px margin still pulls the visual box back, so the
+     glyph sits where the cluster expects it and only the hit area grows. */
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .sdr-note {
