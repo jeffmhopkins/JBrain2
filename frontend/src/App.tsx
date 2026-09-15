@@ -338,6 +338,10 @@ export function App() {
    * owner's ruling of 2026-09-14 — a note conversation is loaded in the main view, not in
    * a layer above it). */
   function openNoteConversation(noteId: string) {
+    // Leave a return marker for the card this drops (the review inbox, Search), the same
+    // one a Tasks session handoff leaves: back then climbs conversation → notes list →
+    // that card, instead of ending on home with the list the owner came from gone.
+    if (card !== null) setSessionBackTo(card);
     setNoteView(null);
     setCard(null);
     setLauncherOpen(false);
