@@ -206,6 +206,56 @@ async def test_the_fold_refuses_to_delete_a_fork_that_committed_facts(
     assert await _alive(maker, note_id) == [mine, wrote_too]
 
 
+async def test_the_fold_refuses_to_delete_a_fork_that_is_waiting_on_the_owner(
+    maker: async_sessionmaker, run_upgrade: object
+) -> None:
+    """A fork sitting `waiting_on_owner` holds a question the notes tab is pointing at.
+    Deleting it drops that question with no trace — the edge `_ALLOWED_SOURCES` makes a
+    caller spell `abandon_question` out loud for, taken silently by a migration."""
+    pid = await _owner_principal(maker)
+    note_id = await _note(maker, "the roof needs looking at")
+    mine = await _conversation(maker, pid, note_id, minutes=0, wrote=True)
+    asking = await _conversation(maker, pid, note_id, minutes=6)
+    async with scoped_session(maker, OWNER) as s:
+        await NoteConversationRepo().reopen(s, asking)
+        await NoteConversationRepo().set_state(s, asking, "waiting_on_owner")
+
+    run_upgrade()  # type: ignore[operator]
+
+    assert await _alive(maker, note_id) == [mine, asking]
+
+
+async def test_the_fold_refuses_to_delete_a_fork_the_owner_typed_into(
+    maker: async_sessionmaker, run_upgrade: object
+) -> None:
+    """The thread he typed in is the thing this migration exists to give back, so
+    deleting one would be the complaint being fixed, in miniature. A fork born of a
+    re-ingest and never spoken to has one exchange; anything more is a conversation."""
+    pid = await _owner_principal(maker)
+    note_id = await _note(maker, "the roof needs looking at")
+    mine = await _conversation(maker, pid, note_id, minutes=0, wrote=True)
+    spoken_to = await _conversation(maker, pid, note_id, minutes=6)
+    async with scoped_session(maker, OWNER) as s:
+        for role, content in [
+            ("user", "the note"),
+            ("assistant", "recorded it"),
+            ("user", "actually it is the south fence"),
+            ("assistant", "updated"),
+        ]:
+            # `seq` is GENERATED ALWAYS — the database owns the ordering.
+            await s.execute(
+                text(
+                    "INSERT INTO app.agent_turns (id, session_id, role, content, tools)"
+                    " VALUES (gen_random_uuid(), CAST(:s AS uuid), :r, :c, '[]'::jsonb)"
+                ),
+                {"s": spoken_to, "r": role, "c": content},
+            )
+
+    run_upgrade()  # type: ignore[operator]
+
+    assert await _alive(maker, note_id) == [mine, spoken_to]
+
+
 async def test_the_fold_leaves_an_unforked_note_entirely_alone(
     maker: async_sessionmaker, run_upgrade: object
 ) -> None:

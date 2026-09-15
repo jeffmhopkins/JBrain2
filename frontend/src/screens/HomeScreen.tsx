@@ -269,7 +269,11 @@ export function HomeScreen({
   useEffect(() => {
     if (!openSession) return;
     const mode = modeForAgent(openSession.agent);
-    setSeg({ row: "main", mode });
+    // Entry exists on BOTH rows, so a handoff landing on it must keep the row the owner
+    // chose — the same rule `openNoteConversation` follows, and the same silent tab swap
+    // if it does not. Research and Full Brain live on `main` alone, so those still force
+    // it: there is no sub-row seat for them to keep.
+    setSeg((prev) => ({ row: mode === "entry" ? prev.row : "main", mode }));
     if (mode === "entry") {
       // Entry's controller is OFF until a note conversation is open, so `requestOpen`
       // alone would reach a disabled hook and the surface would stay on the notes list.

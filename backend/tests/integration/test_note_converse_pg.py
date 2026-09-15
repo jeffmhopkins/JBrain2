@@ -79,6 +79,7 @@ from jbrain.analysis.clarify import (
     reply_profile_for_session,
 )
 from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, REREAD_LEAD, NoteConverseRunner
+from jbrain.analysis.noteframe import FRAME_OPEN
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
@@ -92,6 +93,7 @@ from jbrain.models.note_conversation import (
 )
 from jbrain.models.owner_prefs import OwnerPrefsRepo
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.notes.service import NoteUpdate
 from jbrain.tasks.runner import ExecutedTurn
 from tests.conftest import docker_available
 from tests.integration.test_note_conversation_rls import owner_ctx
@@ -615,12 +617,32 @@ async def test_a_settled_conversation_is_REOPENED_for_the_next_reading(
     assert len(rows) == 1
     assert rows[0].sid == first.sid
     assert rows[0].state == "settled"
+    # And the note is INTEGRATED after the resumed pass. If a resume ever returned
+    # without reaching `_mark_integrated`, `backfill_pending_integration` would re-enqueue
+    # `note_converse` for this note every 300s forever — each run reopening the thread,
+    # re-reading the note and billing a model turn, with nothing on screen to say why.
+    async with scoped_session(maker, owner) as s:
+        integration = (
+            await s.execute(
+                text("SELECT integration_state FROM app.notes WHERE id = CAST(:n AS uuid)"),
+                {"n": note_id},
+            )
+        ).scalar_one()
+    assert integration == "integrated"
+
     # And the reading really ran a second time in that one thread, rather than being
     # skipped: both passes are on the record.
     turns = await _turns(maker, owner, first.sid)
     assert len([role for role, _ in turns if role == "assistant"]) == 2
-    # The second reading's user turn is the note re-framed, and it says why.
-    assert any(role == "user" and REREAD_LEAD in content for role, content in turns)
+    # And the RECORDED user turn is the bare framed note, with no lead-in on it. The PWA
+    # strips the fence with a regex anchored at the start of the turn
+    # (`frontend/src/agent/noteFrame.ts`); anything in front makes that match fail, and a
+    # failed match renders the ten-line injection header, the nonce and the end marker as
+    # an ordinary bubble attributed to the OWNER. The lead-in is model-facing only.
+    for role, content in turns:
+        if role == "user":
+            assert content.startswith(FRAME_OPEN), "a prefix breaks the PWA's fence strip"
+            assert REREAD_LEAD not in content
 
 
 async def test_the_owners_addition_is_read_in_HIS_thread_and_not_a_new_one(
@@ -679,6 +701,7 @@ async def test_a_re_reading_carries_the_thread_it_is_resuming(
     assert second.conversations, "the resumed pass never reached the model"
     sent = second.conversations[-1]
     text = "\n".join(getattr(m, "text", "") for m in sent)
+    # The MODEL is told why it is reading again — on the message, not on the record.
     assert REREAD_LEAD in text
     # The whole note, re-framed — not a diff. `close_reading` re-derives the entire note
     # and the settle releases what the reading does not restate, so a diff would retract
@@ -686,6 +709,54 @@ async def test_a_re_reading_carries_the_thread_it_is_resuming(
     assert "the roof needs looking at" in text
     # And the first pass's own answer rode back in as history.
     assert len(sent) > 2
+    # But NOT its framing of the same note. A prior user turn of this thread is a previous
+    # copy of the whole note (body plus up to MAX_ATTACHMENT_TEXT_CHARS of attachment
+    # text), so replaying it grows the prompt by a whole note per past reading and hands
+    # the model the note's superseded text directly above its current one.
+    texts = [getattr(m, "text", "") for m in sent]
+    # Exactly one framing of the note in the whole prompt — this pass's. It does not
+    # START with the fence because the lead-in is in front of it; a message that does is
+    # a REPLAYED turn, since the recorded ones are bare.
+    assert sum(FRAME_OPEN in t for t in texts) == 1
+    assert not any(t.startswith(FRAME_OPEN) for t in texts), "a past framing rode back in"
+
+
+async def test_a_resumed_thread_is_re_stamped_with_the_notes_CURRENT_scopes(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`agent_sessions.domain_scopes` is an RLS narrowing, not a label: the owner's reply
+    turn reads it off the row (`api/agent.py`) and narrows on it. It is stamped at
+    creation, and the owner can move a note's domain from the note screen.
+
+    Before conversations were resumable every re-read minted a fresh session, so the
+    stamp self-healed. It no longer does — so the reopen re-stamps. Without this, a note
+    moved general -> health leaves its own thread unable to read back what the pass just
+    wrote, and health -> general leaves a health scope standing on a note that is not
+    health any more (CLAUDE.md #3)."""
+    note_id = await _note(maker, owner, "the roof needs looking at")
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    sid = (await _conversation(maker, owner, note_id))[0].sid
+
+    async with scoped_session(maker, owner) as s:
+        before = (
+            await s.execute(
+                text("SELECT domain_scopes FROM app.agent_sessions WHERE id = CAST(:s AS uuid)"),
+                {"s": sid},
+            )
+        ).scalar_one()
+    assert "health" not in before
+
+    await SqlNotesRepo(maker).update_note(owner, note_id, NoteUpdate(domain="health"))
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+
+    async with scoped_session(maker, owner) as s:
+        after = (
+            await s.execute(
+                text("SELECT domain_scopes FROM app.agent_sessions WHERE id = CAST(:s AS uuid)"),
+                {"s": sid},
+            )
+        ).scalar_one()
+    assert "health" in after, "the thread kept the scopes of a domain the note has left"
 
 
 async def test_a_note_being_read_right_now_is_not_reopened_under_the_live_pass(

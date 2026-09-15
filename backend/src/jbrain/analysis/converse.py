@@ -103,7 +103,12 @@ from jbrain.analysis.clarify import (
     record_turn_writes,
     settle_conversation,
 )
-from jbrain.analysis.noteframe import OWN_NOTE_ABOUT, THIRD_PARTY_ABOUT, framed_note
+from jbrain.analysis.noteframe import (
+    FRAME_OPEN,
+    OWN_NOTE_ABOUT,
+    THIRD_PARTY_ABOUT,
+    framed_note,
+)
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.analysis.prompt import prompt_block
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -568,6 +573,19 @@ class NoteConverseRunner:
                         await self.conversations.set_body_sha(
                             s, existing.session_id, note_body_sha(note.body)
                         )
+                        # And RE-STAMPED with the note's scopes as they now stand. The
+                        # turn itself takes freshly computed `read_scopes`, but the
+                        # OWNER'S REPLY turn does not — `api/agent.py` reads
+                        # `session.domain_scopes` off the row and narrows RLS with it.
+                        # A note's domain is movable from the note screen, and every
+                        # re-read used to mint a fresh session, so the stamp self-healed.
+                        # Resuming means it no longer does: a note moved general → health
+                        # would leave its own thread unable to read back what the pass
+                        # just wrote, and health → general would leave a health scope
+                        # standing on a note that is not health any more (CLAUDE.md #3).
+                        await self.sessions.set_domain_scopes(
+                            s, existing.session_id, list(read_scopes)
+                        )
             except IntegrityError:
                 won = False
             if not won:
@@ -579,11 +597,6 @@ class NoteConverseRunner:
             )
             return None
 
-        # ONE transaction for the session row and the conversation row that gives it
-        # meaning (see `start`'s docstring): a session opened in a transaction of its own
-        # would survive the index's refusal as an orphan — an empty note_ingest thread in
-        # the owner's chat list, removable only by a compensating delete that can itself
-        # fail. The rollback takes both.
         try:
             async with scoped_session(self.maker, owner_ctx) as s:
                 session = await self.sessions.create_on(
@@ -626,17 +639,21 @@ class NoteConverseRunner:
             captured=capture_line(note),
             about=THIRD_PARTY_ABOUT if is_third_party(note.provenance) else OWN_NOTE_ABOUT,
         )
-        if prior:
-            # A RE-READING, in the thread that already read this note once. The note is
-            # re-framed whole rather than diffed: `close_reading` re-derives the entire
-            # note every pass and the settle releases what the new reading does not
-            # restate (constraint 6), so handing it only the new sentences would retract
-            # everything the note still says.
-            #
-            # The lead-in sits OUTSIDE the fence, where the clock block sits, because it
-            # is the channel's own words and not the note's — inside it, a note could
-            # forge one.
-            turn_0 = f"{REREAD_LEAD}\n\n{turn_0}"
+        # A RE-READING, in the thread that already read this note once. The note is
+        # re-framed whole rather than diffed: `close_reading` re-derives the entire note
+        # every pass and the settle releases what the new reading does not restate
+        # (constraint 6), so handing it only the new sentences would retract everything
+        # the note still says.
+        #
+        # MODEL-FACING ONLY, and that separation is load-bearing rather than tidy. The
+        # lead-in sits outside the fence, where the clock block sits, because it is the
+        # channel's words and not the note's — but `turn_0` is also what `_record`
+        # persists, and the PWA strips the fence for display with a regex ANCHORED at the
+        # start of the turn (`frontend/src/agent/noteFrame.ts`). A prefix makes that match
+        # fail, and a failed match renders the whole ten-line injection header, the nonce
+        # and the end marker as an ordinary bubble attributed to the OWNER — the exact
+        # thing `noteFrame` exists to prevent, on every note read more than once.
+        asked = f"{REREAD_LEAD}\n\n{turn_0}" if prior else turn_0
         run_id = await self.runlog.start(
             owner_ctx, session_id=session_id, prompt_version=profile.version
         )
@@ -652,12 +669,21 @@ class NoteConverseRunner:
         # would drop is the previous reading of the same note that is being re-framed
         # directly below.
         for record in list(prior)[-REPLAYED_TURNS:]:
+            # A prior USER turn of this thread is a previous framing of THIS NOTE — body
+            # plus up to `MAX_ATTACHMENT_TEXT_CHARS` of attachment text. Replaying those
+            # is the worst of both: the prompt grows by a whole note per past reading, and
+            # the model is handed the note's SUPERSEDED text as a user message directly
+            # above its current one, which is the confusion the lead-in is trying to
+            # undo. The note is re-framed whole below; what is worth carrying back is what
+            # was SAID about it.
+            if record.role == "user" and record.content.startswith(FRAME_OPEN):
+                continue
             conversation.append(
                 UserMessage(text=record.content)
                 if record.role == "user"
                 else AssistantMessage(text=record.content)
             )
-        conversation.append(UserMessage(text=turn_0))
+        conversation.append(UserMessage(text=asked))
 
         status, stop_reason, steps, cost = "error", "error", 0, 0
         state = "failed"

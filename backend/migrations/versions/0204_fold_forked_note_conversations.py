@@ -11,12 +11,16 @@ The code fix stops new forks. This heals the ones already on the box.
 
 **What it deletes, and what it refuses to.** For each note with more than one
 conversation it keeps the OLDEST — the one holding the note's history — and deletes
-newer ones ONLY where the ledger shows they committed nothing: no `fact_ids` on any
+newer ones that are ENDED (`settled`/`failed`), carry no more than the one exchange a
+re-ingest produces, and whose ledger shows they committed nothing — no `fact_ids` on any
 successful call. A fork that DID write is left exactly where it is. Deleting it would
 strand the facts it committed from the conversation that vouches for them, and a
 duplicate thread the owner can still reach is a far smaller problem than a fact whose
 provenance has been deleted out from under it. Those, if any exist, stay for a human
-decision.
+decision — and note what that leaves: since `thread_for_note` returns the newest, the code
+will from then on resume THAT fork and the original stays unreachable. The fold cannot
+close that case without deciding which conversation owns a fact, which is not a
+migration's call to make.
 
 Deletion is of the `agent_sessions` row, not the `note_conversations` side row, which
 is `analysis/purge.py:_purge_conversations`' rule and for its reason: erasing the side
@@ -37,7 +41,7 @@ depends_on = None
 # empty array and a NULL alike, so a call that wrote nothing does not protect a fork.
 _DOOMED = """
     WITH ranked AS (
-        SELECT session_id, note_id,
+        SELECT session_id, note_id, state,
                row_number() OVER (
                    PARTITION BY note_id ORDER BY created_at ASC, session_id ASC
                ) AS rank
@@ -46,6 +50,19 @@ _DOOMED = """
     SELECT r.session_id
       FROM ranked r
      WHERE r.rank > 1
+       -- ENDED only. A fork sitting `waiting_on_owner` holds a question the notes tab is
+       -- pointing at, and deleting it drops that question with no trace — the edge
+       -- `_ALLOWED_SOURCES` makes a caller spell `abandon_question` out loud for. A
+       -- `running` one is a pass in flight. Neither is this migration's to take.
+       AND r.state IN ('settled', 'failed')
+       -- And nothing the owner typed into. His words survive on the note as a
+       -- clarification block either way (0193's FK is ON DELETE SET NULL), but the THREAD
+       -- he typed in is exactly what this migration exists to give back, so deleting one
+       -- would be the complaint being fixed, in miniature. A fork born of a re-ingest and
+       -- never spoken to has one exchange: the framing and the answer.
+       AND (
+           SELECT count(*) FROM app.agent_turns t2 WHERE t2.session_id = r.session_id
+       ) <= 2
        AND NOT EXISTS (
            SELECT 1 FROM app.note_conversation_tool_calls t
             WHERE t.session_id = r.session_id

@@ -11,13 +11,22 @@ import type { ToolStep } from "./toolSummary";
 import type { FactWrite } from "./types";
 
 function fact(over: Partial<FactWrite> = {}): FactWrite {
-  return {
+  const base: FactWrite = {
     fact_id: over.fact_id ?? `f${Math.random()}`,
     label: "Me lives_in Marina District",
     domain: "general",
     status: "written",
     ...over,
   };
+  // A turn persisted by the write path carries the RAW outcome too, and the two can
+  // disagree in the one direction that matters: `outcome: "already"` reduces to
+  // `status: "written"`. A case that sets `outcome` is asking for that shape, so the
+  // default `status` is dropped rather than left to contradict it.
+  if (over.outcome !== undefined && over.status === undefined) {
+    const { status: _status, ...rest } = base;
+    return rest as FactWrite;
+  }
+  return base;
 }
 
 function step(over: Partial<ToolStep> & { name: string }): ToolStep {
@@ -151,16 +160,47 @@ describe("what a whole turn did to the graph", () => {
     expect(turnWriteSummary(steps)).toBe("updated 1 fact");
   });
 
+  it("does not call a re-reading's unchanged facts 'recorded'", () => {
+    // The trap a review caught. `OUTCOME_STATUS` folds `already` into `written`, which is
+    // right for the expanded rung — the fact IS on file — and wrong for this headline.
+    // A re-reading restates the WHOLE note, so on the pass after the owner corrects one
+    // value every other fact comes back `already`, and the reduction would announce
+    // "recorded 12 facts" for a turn that changed one.
+    const steps = [
+      step({
+        name: "close_reading",
+        facts: [
+          fact({ outcome: "already" }),
+          fact({ outcome: "already" }),
+          fact({ outcome: "replaced", replaced: 'My tv is 58".' }),
+        ],
+      }),
+    ];
+    expect(turnWriteSummary(steps)).toBe("updated 1 fact");
+  });
+
+  it("says nothing at all when a re-reading changed nothing", () => {
+    // The step count is then the honest headline. A turn that restated the note without
+    // altering it must not claim otherwise.
+    const steps = [step({ name: "close_reading", facts: [fact({ outcome: "already" })] })];
+    expect(turnWriteSummary(steps)).toBeUndefined();
+  });
+
+  it("speaks the same word the expanded rung does for a held write", () => {
+    const steps = [step({ name: "close_reading", facts: [fact({ status: "held" })] })];
+    expect(turnWriteSummary(steps)).toBe("not recorded 1 fact");
+  });
+
   it("counts across every write step of the turn, and pluralises", () => {
     const steps = [
       step({ name: "close_reading", facts: [fact(), fact()] }),
       step({ name: "assert_fact", facts: [fact({ status: "held" })] }),
     ];
-    expect(turnWriteSummary(steps)).toBe("recorded 2 facts · held 1 fact");
+    expect(turnWriteSummary(steps)).toBe("recorded 2 facts · not recorded 1 fact");
   });
 
   it("says nothing for a turn that only read, so a search keeps its step count", () => {
-    expect(turnWriteSummary([step({ name: "search_notes" })])).toBeUndefined();
+    expect(turnWriteSummary([step({ name: "search" })])).toBeUndefined();
   });
 
   it("ignores a failed write — it wrote nothing whatever its arguments claimed", () => {

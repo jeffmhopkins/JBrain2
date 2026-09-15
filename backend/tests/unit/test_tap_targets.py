@@ -110,13 +110,26 @@ def test_the_answers_action_row_clears_the_floor() -> None:
     the note, I can't see the thinking trace"; "I don't see how it actually added the
     entity to the database"). A control that small on the only road to the answer is
     part of that. `.fb-act-play` is also the LONG-PRESS target that arms auto-play — a
-    gesture asked of a 25px box."""
-    for selector in (
-        ".fb-shell .fb-act-chip",
-        ".fb-shell .fb-act-copy",
-        ".fb-shell .fb-act-play",
-    ):
+    gesture asked of a 25px box.
+
+    ⟲ **The chip reaches the floor through a transparent bleed, and the other two
+    directly, and the difference is not stylistic.** `.fb-act-copy` and `.fb-act-play`
+    paint nothing (`background: none; border: none`), so a 44px box on the button IS a
+    44px hit area and nothing else. `.fb-act-chip` paints: `.fb-act-think.on` and
+    `.fb-act-work.on` tint its background and show its border, so the same declaration
+    there would have drawn a 44px capsule around 12px of text on every answer in the app.
+    A gate that only asserted `min-height` on all three would have passed over exactly
+    that — the failure this file's own docstring names, "a gate that asserts a
+    declaration is not a gate that establishes the property named in its own comment"."""
+    for selector in (".fb-shell .fb-act-copy", ".fb-shell .fb-act-play"):
         assert re.search(r"min-height:\s*44px", _rule(selector)), selector
+    # The painted one: small chrome, 44px of reachable box centred on it.
+    chip = _rule(".fb-shell .fb-act-chip")
+    assert re.search(r"position:\s*relative", chip)
+    assert not re.search(r"min-height:\s*44px", chip), "a painted chip must not BE 44px"
+    bleed = _rule(".fb-shell .fb-act-chip::before")
+    assert re.search(r"height:\s*44px", bleed)
+    assert re.search(r"transform:\s*translateY\(-50%\)", bleed)
 
 
 def test_the_mode_row_clears_the_floor_at_every_text_size() -> None:
@@ -154,5 +167,12 @@ def test_the_icon_button_is_a_44px_box_that_does_not_crowd_its_neighbour() -> No
 def test_the_older_notes_pill_is_a_button_with_a_buttons_floor() -> None:
     """DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px — 9px of text
     in 5px of padding — and it is the only control in the empty upper half of the home
-    screen."""
-    assert re.search(r"min-height:\s*44px", _rule(".older-pill"))
+    screen.
+
+    Through a bleed, like `.fb-act-chip` and for its reason: this pill is tinted and
+    rounded, so a 44px box would draw a fat lozenge rather than a bigger target."""
+    pill = _rule(".older-pill")
+    assert re.search(r"position:\s*relative", pill)
+    bleed = _rule(".older-pill::before")
+    assert re.search(r"height:\s*44px", bleed)
+    assert re.search(r"transform:\s*translateY\(-50%\)", bleed)

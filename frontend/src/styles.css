@@ -186,7 +186,9 @@ h3 {
   display: flex;
   align-items: center;
   /* Same arithmetic as `.foot-icons`: the note button's hit area bleeds 8px and the
-     vitals control pulls 12px back, so 18px left them touching. */
+     vitals control pulls 12px back, so 18px left them touching. The cluster does spread —
+     a 44px box inside a -8px margin has a 28px layout footprint where a 22px glyph had
+     22 — and that is the cost of the floor, not something this gap compensates for. */
   gap: 28px;
   color: var(--text-2);
 }
@@ -450,8 +452,10 @@ button.vitals:focus-visible {
 
 .older-pill {
   align-self: center;
-  /* DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px. */
-  min-height: 44px;
+  /* DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px. A bleed rather
+     than a `min-height`, for `.fb-act-chip`'s reason: this pill is tinted and rounded, so
+     a 44px box would draw a fat lozenge around 9px of text rather than a bigger target. */
+  position: relative;
   font-size: var(--fs-micro);
   padding: 5px 14px;
   border: none;
@@ -459,6 +463,14 @@ button.vitals:focus-visible {
   background: var(--steel-tint);
   color: var(--steel);
   margin-top: 8px;
+}
+.older-pill::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 
 .note-wrap {
@@ -9665,9 +9677,13 @@ button.small {
   align-items: center;
   gap: 6px;
   /* The floor, on the one control between the owner and both the thinking trace and
-     what the turn wrote. The pill's own chrome stays small — the padding draws it — but
-     the BOX a thumb has to find is 44px. */
-  min-height: 44px;
+     what the turn wrote. Through a transparent bleed (`::before` below) rather than a
+     `min-height` on the button, because THIS button paints: `.fb-act-think.on` and
+     `.fb-act-work.on` tint its background and show its border, so a 44px box would make
+     the selected chip a 44px capsule around 12px of text, on every answer in the app.
+     The row is already 44px tall from `.fb-act-copy`/`.fb-act-play`, which are
+     transparent and can carry the floor directly, so this costs no extra height. */
+  position: relative;
   padding: 3px 9px;
   border-radius: 999px;
   background: none;
@@ -9679,6 +9695,18 @@ button.small {
   text-align: left;
   cursor: pointer;
   transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+/* The 44px a thumb has to find, centred on the pill and drawing nothing. It bleeds
+   vertically into the answer's own text, which is not tappable — the trade DESIGN.md's
+   floor asks for, and safe here because `.fb-activity` is `nowrap`, so no second row of
+   controls can be underneath it. */
+.fb-shell .fb-act-chip::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 .fb-shell .fb-act-think {
   flex: none;
@@ -9734,6 +9762,13 @@ button.small {
 }
 .fb-shell .fb-worked-fail {
   color: var(--rose);
+}
+/* What the turn actually wrote. Louder than the step count it replaces — it inherits
+   `.fb-act-count`'s dimmed `--text-3`, and the one thing this chip exists to surface
+   must not be the quietest text on it. */
+.fb-shell .fb-worked-wrote {
+  color: var(--text-2);
+  font-weight: 500;
 }
 /* the copy action: pinned to the far right; a glyph + "Copy" label, a brief green
    confirm that swaps to a check + "Copied". */
@@ -25172,13 +25207,12 @@ button.task-band:active {
    is where the owner is, and this is the reference, not the destination. */
 .note-btn {
   color: var(--text-2);
-  /* DESIGN.md's 44px floor, spelled out because `.icon-btn` does not meet it: 8px padding
-     + a 22px glyph is 38, and the rule is explicit that a compact row may shrink to 36px
-     of HEIGHT but never the tap area. The whole bar shares that shortfall (task #36); this
-     is a NEW control and the ONLY door from an open conversation to the note's record —
-     the analysis table and both no-terminal re-run levers sit behind it — so it does not
-     inherit the debt. `.icon-btn`'s -8px margin still pulls the visual box back, so the
-     glyph sits where the cluster expects it and only the hit area grows. */
+  /* ⟲ Restated rather than removed: `.icon-btn` now carries the same floor itself, so
+     this is no longer the one control in the bar that clears it. It stays because this is
+     the ONLY door from an open conversation to the note's record — the analysis table and
+     both no-terminal re-run levers sit behind it — and a control that important should
+     not depend on a shared base rule staying right. `.icon-btn`'s -8px margin pulls the
+     visual box back, so the glyph sits where the cluster expects it. */
   min-width: 44px;
   min-height: 44px;
 }

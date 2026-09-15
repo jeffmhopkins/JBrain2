@@ -87,6 +87,53 @@ describe("which conversation a note has", () => {
     await waitFor(() => expect(result.current.analysing).toBe(true));
   });
 
+  it("a dropped request does not end the watch or unsay what it knows", async () => {
+    // The regression this hook shipped and a review caught: the failure arm blanked
+    // every field, so `analysing` went false, the interval was cleared and never
+    // re-armed, and the screen fell back to "No conversation yet" over a LIVE thread —
+    // permanently, on one dropped request out of a poll running twice a second.
+    let fail = false;
+    const lookup = vi.fn(async () => {
+      if (fail) throw new Error("radio dropped");
+      return thread("running");
+    });
+    const { result } = renderHook(() => useNoteSession("n1", lookup));
+    await waitFor(() => expect(result.current.analysing).toBe(true));
+
+    fail = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    expect(result.current.analysing).toBe(true);
+    expect(result.current.sessionId).toBe("s1");
+
+    // And the poll is still alive, so it recovers on its own.
+    fail = false;
+    const before = lookup.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    expect(lookup.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("gives up watching a note whose thread never arrives", async () => {
+    // A note can legitimately never get one — the worker quiesced by Ops → Update, a
+    // dropped `note.ingested` — and an unbounded watch polls it every two seconds for as
+    // long as the screen is open.
+    const lookup = vi.fn(async () => null);
+    const { result } = renderHook(() => useNoteSession("n1", lookup));
+    await waitFor(() => expect(result.current.pending).toBe(true));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(130_000);
+    });
+    const spent = lookup.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(lookup).toHaveBeenCalledTimes(spent);
+  });
+
   it("a failed lookup never claims a pass is running", async () => {
     // A spinner that resolves only when the server recovers is worse than the plain
     // "no conversation" this degrades to.

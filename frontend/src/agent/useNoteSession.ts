@@ -21,6 +21,14 @@ import { type NoteThreadOut, api } from "../api/client";
  * working" becomes "here is what it found" without polling being the expensive part. */
 const RUNNING_POLL_MS = 2000;
 
+/** How long to keep watching a note that has NO thread yet before giving up and showing
+ * the static copy. A thread normally appears within a pass or two of the note being
+ * ingested, but it can legitimately never arrive — the worker quiesced by Ops → Update, a
+ * dropped `note.ingested`, a note older than note conversations — and an unbounded watch
+ * would poll that note every two seconds for as long as the screen is open. A pass in
+ * flight is NOT capped: that one is known to be running and known to end. */
+const PENDING_WATCH_MS = 120_000;
+
 /** The thread states the route reports (`models/note_conversation.py`). `running` and
  * `waiting_on_owner` are the live pair; a pass is only IN FLIGHT on the first. */
 export type NoteThreadState = "running" | "waiting_on_owner" | "settled" | "failed" | null;
@@ -72,11 +80,14 @@ export function useNoteSession(
           pending: threadState === null,
         });
       } catch {
-        // A note with no thread is the ordinary case this answers null for, and a failed
-        // lookup is indistinguishable from it as far as this hook can tell. Keep
-        // `analysing` false: claiming a pass is running on the strength of a failed read
-        // would show a spinner that never resolves.
-        if (alive()) setState({ ...BLANK, looked: true });
+        // ADDITIVE, and that is the whole of it: a dropped request is not evidence that
+        // the thread vanished. Blanking here (which this did) clobbered `sessionId` and
+        // `analysing`, so `watching` went false, the interval was cleared and never
+        // re-armed, and the screen fell back to "No conversation yet — the box reads a
+        // note once it has indexed it" — the exact sentence this hook exists to stop —
+        // over a live, streaming thread, permanently, on one dropped request out of a
+        // poll running twice a second on a phone.
+        if (alive()) setState((prev) => ({ ...prev, looked: true }));
       }
     },
     [lookup],
@@ -106,7 +117,15 @@ export function useNoteSession(
     if (noteId === null || !watching) return;
     let stale = false;
     const alive = (): boolean => !stale;
+    // The cap applies to the PENDING watch only, and is re-armed whenever the reason for
+    // watching changes — so a note that goes pending → running gets the uncapped watch a
+    // live pass deserves.
+    const until = state.analysing ? Number.POSITIVE_INFINITY : Date.now() + PENDING_WATCH_MS;
     const timer = window.setInterval(() => {
+      if (Date.now() > until) {
+        window.clearInterval(timer);
+        return;
+      }
       if (document.visibilityState === "hidden") return;
       void read(noteId, alive);
     }, RUNNING_POLL_MS);
@@ -114,7 +133,7 @@ export function useNoteSession(
       stale = true;
       window.clearInterval(timer);
     };
-  }, [noteId, watching, read]);
+  }, [noteId, watching, state.analysing, read]);
 
   return state;
 }

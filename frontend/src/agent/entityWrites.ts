@@ -175,12 +175,32 @@ export function turnWriteSummary(steps: readonly ToolStep[]): string | undefined
     .filter((s) => WRITE_TOOLS.has(s.name) && s.ok !== false)
     .flatMap((s) => s.facts);
   if (facts.length === 0) return undefined;
-  const tally = tallyWrites(facts);
+  let recorded = 0;
+  let updated = 0;
+  let notRecorded = 0;
+  for (const fact of facts) {
+    // The RAW outcome, not `factStatus`'s reduction. `OUTCOME_STATUS` folds `already`,
+    // `closed` and `historical` into `written`, which is right for the expanded rung —
+    // each of those IS on file — and wrong for this headline. A re-reading restates the
+    // WHOLE note (`analysis/converse.py`), so on the pass after the owner corrects one
+    // value, every other fact comes back `already` and the reduction would announce
+    // "recorded 12 facts" for a turn that changed one. What this line is for is whether
+    // anything landed; a fact that was already on file, unchanged, is not news.
+    const outcome = fact.outcome ?? fact.status;
+    if (outcome === "replaced") updated += 1;
+    else if (outcome === "held") notRecorded += 1;
+    else if (outcome === "written" || outcome === "promoted") recorded += 1;
+  }
   const parts: string[] = [];
   const noun = (n: number): string => `${n} fact${n === 1 ? "" : "s"}`;
-  if (tally.written > 0) parts.push(`recorded ${noun(tally.written)}`);
-  if (tally.replaced > 0) parts.push(`updated ${noun(tally.replaced)}`);
-  if (tally.held > 0) parts.push(`held ${noun(tally.held)}`);
+  if (recorded > 0) parts.push(`recorded ${noun(recorded)}`);
+  if (updated > 0) parts.push(`updated ${noun(updated)}`);
+  // `writeWord`, not a fourth spelling of the same state: the collapsed chip said "held"
+  // while expanding the same turn said "not recorded".
+  if (notRecorded > 0) parts.push(`${writeWord("held")} ${noun(notRecorded)}`);
+  // Undefined when a re-reading changed nothing — the step count is then the honest
+  // headline, and a turn that restated the note without altering it should not claim
+  // otherwise.
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
