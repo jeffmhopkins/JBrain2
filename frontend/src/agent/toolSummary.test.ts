@@ -265,3 +265,43 @@ describe("the note-conversation write tools", () => {
     expect(step.truncated).toBe(false);
   });
 });
+
+describe("the entities a step touched, each once", () => {
+  it("collapses the per-fact repeats the wire really sends", () => {
+    // `close_reading` emits an `EntityRef` per touched handle PER FACT
+    // (`graphwritetools._assert_one` returns `[subject, object]`, and the loop does
+    // `refs.extend(touched)`), so eight facts about two entities ship sixteen refs. The
+    // write path unions them into a set and never noticed; every UI consumer does —
+    // `EntityChips` keys on `entity_id`, so the repeats were duplicate React keys and a
+    // chip wall naming Boss eight times.
+    const me = {
+      kind: "entity" as const,
+      entity_id: "e1",
+      label: "Me",
+      domain: "general" as const,
+    };
+    const boss = {
+      kind: "entity" as const,
+      entity_id: "e2",
+      label: "Boss",
+      domain: "general" as const,
+    };
+    const step = toolStep(tool({ name: "close_reading", entities: [me, boss, me, boss, me] }));
+    expect(step.entities).toEqual([me, boss]);
+  });
+
+  it("keeps the first ref, which is well defined", () => {
+    // `created` is a property of the HANDLE and a handle lives for the whole pass, so
+    // every ref naming one entity within a step carries the same value. There is nothing
+    // to reconcile — which is why first-wins is a rule and not a coin toss.
+    const first = {
+      kind: "entity" as const,
+      entity_id: "e1",
+      label: "Boss",
+      domain: "general" as const,
+      created: true,
+    };
+    const step = toolStep(tool({ name: "resolve_entity", entities: [first, { ...first }] }));
+    expect(step.entities).toEqual([first]);
+  });
+});

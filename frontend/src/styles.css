@@ -9620,6 +9620,13 @@ button.small {
 .fb-shell .fbw-row .fact-edge {
   font-size: 12px;
 }
+/* the edge BEHIND the statement, which now leads (DESIGN.md). Demoted deliberately: it
+   is the address of the fact, not the fact, and at equal weight the two read as the same
+   sentence said twice. */
+.fb-shell .fbw-row .fbw-edge {
+  font-size: 11px;
+  opacity: 0.75;
+}
 .fb-shell .fbw-stmt {
   font-size: 12px;
   color: var(--text-2);

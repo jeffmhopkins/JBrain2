@@ -674,39 +674,45 @@ async def record_owner_reply(
             # Hence no per-question claim, no new table, no migration.
             #
             # Only a WAITING thread has a set to consume. An unprompted addition has no
-            # set — it takes the thread by the other door (`reopen`, below), which is
-            # refused on `running`: that state is the worker's own live pass, and not
-            # this turn's to take or to end.
+            # set — it takes the thread by the other door (`reopen`, AFTER this block),
+            # which is refused on `running`: that state is the worker's own live pass,
+            # and not this turn's to take or to end.
             if waiting:
                 if not await repo.claim_waiting(s, session_id):
                     return None
                 claimed = True
-            else:
-                # An unprompted addition into a SETTLED thread still has to HOLD it while
-                # its turn runs. The append below enqueues the note's re-reading, and the
-                # worker will happily start it while this turn is still streaming. Both
-                # then land in the same thread by completion time, so the owner's
-                # screenshot showed a re-read ABOVE the reply that caused it. Reopening
-                # here makes the live slot mean what it says: the re-reading's own
-                # `reopen` finds the thread live, skips, and the reconciler re-drives it
-                # once this turn has closed and released it.
-                #
-                # `claimed` is what the winner of EITHER door sets, because it is one
-                # question — "did this turn take the thread, and so owe it a close?" —
-                # and `close_owner_reply` is the answer. It is NOT "a question set was
-                # consumed": nothing downstream asks that, and giving the field that
-                # second meaning is how this turn came to hold a thread it never released.
-                #
-                # A compare-and-swap, and NEVER allowed to cost the append: this whole
-                # block is wrapped, and a refusal — the one-live index, a `failed` row,
-                # anything — falls through to exactly the old behaviour. Losing the
-                # owner's typed words to a state transition would be strictly worse than
-                # the out-of-order turn it is fixing.
-                with contextlib.suppress(Exception):
-                    claimed = await repo.reopen(s, session_id)
     except Exception as exc:  # noqa: BLE001 — a reply the engine cannot file is still a reply
         log.warning("note_reply.claim_failed", session_id=session_id, error=repr(exc))
         return None
+
+    if not waiting:
+        # An unprompted addition into a SETTLED thread still has to HOLD it while its turn
+        # runs. The append below enqueues the note's re-reading, and the worker will
+        # happily start it while this turn is still streaming. Both then land in the same
+        # thread by completion time, so the owner's screenshot showed a re-read ABOVE the
+        # reply that caused it. Reopening makes the live slot mean what it says: the
+        # re-reading's own `reopen` finds the thread live, skips, and the reconciler
+        # re-drives it once this turn has closed and released it.
+        #
+        # `claimed` is what the winner of EITHER door sets, because it is one question —
+        # "did this turn take the thread, and so owe it a close?" — and `close_owner_reply`
+        # is the answer. It is NOT "a question set was consumed": nothing downstream asks
+        # that, and giving the field that second meaning is how this turn came to hold a
+        # thread it never released.
+        #
+        # ITS OWN SESSION, and the suppress OUTSIDE it — both load-bearing, and the second
+        # is a review finding rather than style. This ran inside the read's transaction
+        # with the suppress around the call alone, which does not do what it says: a
+        # DBAPI-level failure in the UPDATE (the one-live `IntegrityError`, a statement
+        # timeout, a deadlock) was swallowed here but left the transaction DEACTIVATED,
+        # and `scoped_session`'s commit on exit then raised `PendingRollbackError` from
+        # outside the suppress — into the `except` above, which returns None. No pairing,
+        # no append, no re-ingest, no notice: the owner's typed words dropped by exactly
+        # the state transition the comment promised would never cost them. Wrapping the
+        # whole `async with` is what makes "falls through to the old behaviour" true.
+        with contextlib.suppress(Exception):
+            async with scoped_session(maker, ctx) as s2:
+                claimed = await repo.reopen(s2, session_id)
 
     if waiting and not open_set:
         # `ask_owner` writes the ledger row and the state in one transaction, and `_fit`
@@ -754,9 +760,12 @@ async def record_owner_reply(
             dropped=[a for _, a in pairs] + additions + dropped,
         )
     if clarified is None:
-        # The note is gone (soft-deleted). Nothing can be appended to it, and a turn that
-        # claimed the thread has already put it back in `running`, so nothing holds the
-        # note's live slot.
+        # The note is gone (soft-deleted). Nothing can be appended to it. ⟲ This used to
+        # read "a turn that claimed the thread has already put it back in `running`, so
+        # nothing holds the note's live slot", which is backwards — `running` IS the hold.
+        # It holds, and `close_owner_reply` releases it on the way out of the turn, which
+        # is the same release every other path gets. A soft-deleted note has no re-reading
+        # to stand off anyway, so the hold costs nothing here either way.
         log.info("note_reply.note_gone", session_id=session_id, note_id=note_id)
         return OwnerReply(
             answered=pairs,

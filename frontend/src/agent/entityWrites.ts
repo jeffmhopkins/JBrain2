@@ -303,10 +303,19 @@ export interface LedgerRow {
  * a second late. */
 export function ledgerRows(steps: readonly ToolStep[]): LedgerRow[] {
   const rows: LedgerRow[] = [];
+  // ACROSS steps, not only within one. `toolStep` already gives each step its entities
+  // once; a minted entity is then reported AGAIN by every later step that touches it,
+  // because `created` belongs to the handle and the handle lives for the whole pass. So a
+  // note introducing the owner's dog resolves `Me` and `Boss` (two rows) and then names
+  // them in `close_reading` (two more) — and on a LEDGER_CAP of four, the one row that is
+  // actually the receipt, the fact itself, was pushed behind "+N more": back behind the
+  // tap this card exists to remove, on the very first pass, which is the pass he reported.
+  const minted = new Set<string>();
   for (const step of steps) {
     if (step.ok !== true) continue;
     for (const e of step.entities) {
-      if (e.created === true) {
+      if (e.created === true && !minted.has(e.entity_id)) {
+        minted.add(e.entity_id);
         rows.push({ key: `e:${e.entity_id}`, text: e.label, face: "new", domain: e.domain });
       }
     }

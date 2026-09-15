@@ -296,6 +296,57 @@ async def test_a_write_grounds_the_report_of_itself(
 
 
 @pytest.mark.asyncio
+async def test_the_owners_CORRECTION_grounds_its_own_report_too(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The half the first fix missed, and the half the owner actually met.
+
+    The amber badge is emitted by the STREAMING path — a `/chat` reply turn — and a reply
+    turn's verbs are `assert_fact`, `correct_fact` AND `close_reading`. Grounding only
+    `close_reading` left the correction turn exactly as it was: its corpus is the entity's
+    OLD facts, which are the very value he just disputed, so "I've updated it to 60
+    inches" matched nothing and wore "unverified" on the one turn where the truth came
+    from him personally. That is owner report #3's path end to end."""
+    note_id = await _note(maker, tmp_path, body='The television is 58" across.')
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Telly", "kind": "device"}]}, _ctx())
+    await writer.close_reading(
+        {
+            "title": "Telly",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "Telly",
+                    "predicate": "size",
+                    "object": '58"',
+                    "quote": 'The television is 58" across.',
+                    "statement": "The television is 58 inches across.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+
+    out = await writer.correct_fact(
+        {
+            "entity": "Telly",
+            "predicate": "size",
+            "qualifier": "",
+            "object": '60"',
+            "statement": "The television is 60 inches across.",
+            "when": "",
+        }
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    grounds = [text for ref in out.entities for text in ref.facts]
+    assert write.label in grounds, (
+        "a correction's report has nothing in the corpus but the value it just replaced"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_contradicted_supersession_carries_its_reason_to_the_owner(maker, tmp_path) -> None:  # noqa: F811
     """`hold_reason` on the wire — `attribute_collision`, the one that matters on screen.
 

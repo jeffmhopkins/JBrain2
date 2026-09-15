@@ -1121,6 +1121,10 @@ class NoteGraphWriter:
                 lines.append(line)
                 if write is not None:
                     writes.append(write)
+                # Same grounding as `close_reading` — see `_ground`. This verb is the one
+                # a reply turn reaches for the extra thing the owner just told it, so a
+                # turn that used it alone had nothing in the corpus but old facts.
+                self._ground(write, touched)
                 refs.extend(touched)
         if clamped:
             lines.append(
@@ -1301,9 +1305,7 @@ class NoteGraphWriter:
                     # because `_assert_one` returns each write beside the entities it
                     # touched, and that is the only place the two are together —
                     # `FactWriteRef` carries no entity id.
-                    for ref in touched:
-                        if write.label:
-                            ref.facts.append(write.label)
+                    self._ground(write, touched)
                 refs.extend(touched)
         self.reading.union(
             title=title,
@@ -1469,11 +1471,49 @@ class NoteGraphWriter:
                 )
         lines = [line.replace("facts[0]", "correct_fact", 1)]
         lines.append(f"correct_fact: {self.correct_budget.remaining} calls left this note")
+        # Same grounding as `close_reading` — see `_ground`, and this verb is the reason
+        # that helper is shared. A correction's corpus is the entity's OLD facts, which are
+        # exactly the value the owner just DISPUTED, so "I've updated it to 60 inches"
+        # scored zero against them and wore the amber badge on the one turn where he had
+        # personally supplied the truth.
+        self._ground(write, touched)
         return ToolOutput(
             "\n".join(lines),
             entities=tuple(touched),
             facts=(write,) if write is not None else (),
         )
+
+    @staticmethod
+    def _ground(write: FactWriteRef | None, touched: Sequence[EntityRef]) -> None:
+        """Hang a committed statement on the entities it touched, so the grounding check
+        can see it.
+
+        `EntityRef.facts` IS the grounding corpus (`agent/loop._grounding_corpus`), and a
+        note pass retrieves NO sources — the note is turn 0, not a search result — so the
+        corpus was the entity's name and its OLD facts. The agent's report of what it had
+        just recorded matched none of that, so EVERY write turn failed grounding and the
+        owner got an amber "unverified — not grounded in your notes" on the one statement
+        in the system that can be checked perfectly: the write path is holding its
+        `fact_id`. He read that badge exactly as written and asked whether the write had
+        happened at all.
+
+        A committed statement, attested to a chunk of his own note, is the best-grounded
+        claim anywhere in this app. This is not softening the check; it is handing it the
+        evidence it was missing.
+
+        SHARED BY ALL THREE WRITE VERBS, which is a review finding rather than tidiness.
+        It lived inside `close_reading` alone, and the badge the owner actually saw comes
+        from the STREAMING path — a `/chat` reply turn — whose tool set is `assert_fact`,
+        `correct_fact` AND `close_reading`. So his correction turn ("the size was
+        different") called `correct_fact`, grounded against the entity's OLD facts, which
+        are literally the value he had just disputed, and the badge was unchanged. The fix
+        has to sit wherever a write and the entities it touched are together — which is
+        only ever at these three call sites, because `FactWriteRef` carries no entity id.
+        """
+        if write is None or not write.label:
+            return
+        for ref in touched:
+            ref.facts.append(write.label)
 
     async def _assert_one(
         self,

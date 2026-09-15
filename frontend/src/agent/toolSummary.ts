@@ -459,6 +459,30 @@ function noteSource(summary: string): SourceRef[] {
   return [{ noteId: m[1], domain: m[2], text: stripMarks(body) || "(empty note)" }];
 }
 
+/** The entities a step touched, each ONCE.
+ *
+ * The wire repeats them, by design on the backend's side: `close_reading` emits an
+ * `EntityRef` per touched handle PER FACT (`graphwritetools._assert_one` returns
+ * `[subject, object]` and the loop `refs.extend(touched)`), so eight facts about the
+ * owner and his dog ship sixteen refs naming two entities. The write path has no reason
+ * to care — `NoteConversationRepo.writes()` unions them into a set, which is why nothing
+ * noticed — but every UI consumer does: `EntityChips` keys on `entity_id`, so repeats are
+ * duplicate React keys and a chip wall that says "Boss" eight times, and the turn ledger
+ * counted each repeat as another record created.
+ *
+ * First occurrence wins, which is well-defined: `created` is a property of the HANDLE and
+ * a handle lives for the whole pass, so every ref for one entity within a step carries the
+ * same value.
+ */
+function uniqueEntities(refs: EntityRef[] | undefined): EntityRef[] {
+  if (refs === undefined || refs.length < 2) return refs ?? [];
+  const seen = new Map<string, EntityRef>();
+  for (const ref of refs) {
+    if (!seen.has(ref.entity_id)) seen.set(ref.entity_id, ref);
+  }
+  return [...seen.values()];
+}
+
 export function toolStep(t: ToolActivity): ToolStep {
   let sources: SourceRef[];
   if (t.sources && t.sources.length > 0) {
@@ -479,7 +503,7 @@ export function toolStep(t: ToolActivity): ToolStep {
     inline: inlineArg(t.name, t.args),
     sources,
     webSources: t.webSources ?? [],
-    entities: t.entities ?? [],
+    entities: uniqueEntities(t.entities),
     facts: t.facts ?? [],
     truncated: t.truncated === true,
     args: t.args,

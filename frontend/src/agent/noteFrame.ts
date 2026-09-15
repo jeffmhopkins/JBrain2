@@ -34,6 +34,15 @@ const OPEN = /^\[CAPTURED NOTE #([0-9a-f]{4,}) — [^\n]*\]\n/;
  * put two copies of the owner's note in his own conversation. A sentinel, not prose:
  * threads already on the box are stored with it. */
 export const REREAD_MARK = "[re-read]";
+/** The WHOLE turn a re-reading records (`analysis/converse._reread_marker`), matched
+ * exactly rather than by prefix.
+ *
+ * A prefix test ran against every user message in every session — Full Brain, jerv, a
+ * note thread — so an owner message that merely began "[re-read]" rendered as a channel
+ * event with the marker stripped: his own words, restyled as the system's. The sentence
+ * is fixed and server-written, so equality is both tighter and simpler.
+ * `test_reread_marker_contract.py` pins the two spellings together. */
+export const REREAD_TURN = `${REREAD_MARK} the note changed, so it was read again`;
 /** The optional capture line, matched on its CONTENT and not only its label.
  *
  * `framed_note` emits this line only when it has a capture time, and its default is

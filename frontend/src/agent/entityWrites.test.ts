@@ -219,6 +219,52 @@ describe("what a whole turn did to the graph", () => {
     expect(turnWriteSummary(steps)).toBe("recorded 2 facts · not recorded 1 fact");
   });
 
+  it("counts a minted entity ONCE, however many facts go on to name it", () => {
+    // The shape the backend really emits, which the first version of the test above did
+    // not: `close_reading` returns an `EntityRef` per touched handle PER FACT, and
+    // `created` belongs to the HANDLE, so it stays true for the whole pass. Two facts
+    // about Me and Boss ship four more refs, all `created`.
+    //
+    // Uncaught, that filled the card with "Me added / Boss added / Me added / Boss added"
+    // and pushed the fact — the actual receipt — behind "+1 more", on the FIRST pass,
+    // which is the one he reported. (A carried-over handle has `created: false`, so a
+    // re-read never showed it.)
+    const me = {
+      kind: "entity" as const,
+      entity_id: "e1",
+      label: "Me",
+      domain: "general" as const,
+      created: true,
+    };
+    const boss = {
+      kind: "entity" as const,
+      entity_id: "e2",
+      label: "Boss",
+      domain: "general" as const,
+      created: true,
+    };
+    const steps = [
+      step({ name: "resolve_entity", entities: [me, boss] }),
+      step({
+        name: "close_reading",
+        entities: [me, boss, me, boss],
+        facts: [
+          fact({ fact_id: "a", label: "Boss is Jeff's dog." }),
+          fact({ fact_id: "b", label: "Boss is a labrador." }),
+        ],
+      }),
+    ];
+    expect(ledgerRows(steps)).toEqual([
+      { key: "e:e1", text: "Me", face: "new", domain: "general" },
+      { key: "e:e2", text: "Boss", face: "new", domain: "general" },
+      { key: "f:a", text: "Boss is Jeff's dog.", face: "written", domain: "general" },
+      { key: "f:b", text: "Boss is a labrador.", face: "written", domain: "general" },
+    ]);
+    // And every row addresses a distinct thing, so nothing renders on a duplicate key.
+    const keys = ledgerRows(steps).map((r) => r.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it("says nothing for a turn that only read, so a search keeps its step count", () => {
     expect(turnWriteSummary([step({ name: "search" })])).toBeUndefined();
   });

@@ -41,7 +41,7 @@ import {
 } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
-import { REREAD_MARK, noteDomain, unframeNote } from "./noteFrame";
+import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -881,10 +881,14 @@ function Bubble({
     // the owner said. It used to persist the whole framed note again, so a corrected
     // note showed up twice in its own conversation — once as captured, once as re-read —
     // and the second copy said nothing his own reply had not.
-    if (message.text.startsWith(REREAD_MARK)) {
+    // Matched WHOLE, never by prefix: this branch sees every user message in every
+    // session, so `startsWith` turned any message of his that happened to open with the
+    // marker into a channel event with the marker stripped — his words, wearing the
+    // system's voice.
+    if (message.text.trim() === REREAD_TURN) {
       return (
         <p className="fb-reread">
-          <span>{message.text.slice(REREAD_MARK.length).trim()}</span>
+          <span>{message.text.trim().slice(REREAD_MARK.length).trim()}</span>
         </p>
       );
     }
