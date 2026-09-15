@@ -407,6 +407,9 @@ export interface FullBrain {
    * the list if needed, and opens it once loaded — suppressing the mode's auto-open
    * of the latest chat in the meantime so the targeted session isn't clobbered. */
   requestOpen: (id: string) => void;
+  /** Re-read the active chat's stored transcript now — for a surface that learns from
+   * somewhere else that a turn it could not watch has landed. */
+  reloadTranscript: () => void;
   /** Close the open conversation and show none (Entry's back to the notes list). */
   close: () => void;
   rename: (id: string, title: string) => void;
@@ -690,6 +693,25 @@ export function useFullBrain(
     return () => {
       stale = true;
     };
+  }, [enabled, activeId, getTranscript, setSessionMessages]);
+
+  /** Re-read the active chat's stored transcript NOW.
+   *
+   * The id-keyed effect above fires on open and on switch, and a note conversation does
+   * neither while it is being written: its session is opened once, the unattended pass
+   * runs in the WORKER with nothing streaming to this client, and the transcript is
+   * written in one go when the turn ends. So the owner sat on an open, empty thread
+   * watching the GPU work and saw nothing appear — "until I backed out of the
+   * conversation and went into it", which changed `activeId` and re-fired the effect.
+   *
+   * The same guard as both effects above: a turn streaming live into this chat's buffer
+   * is not in the stored transcript yet, so reloading would wipe it. */
+  const reloadTranscript = useCallback(() => {
+    if (!enabled || activeId === null) return;
+    if (activeId === turnSessionRef.current) return;
+    getTranscript(activeId)
+      .then((turns) => setSessionMessages(activeId, () => turns.map(fromTurn)))
+      .catch(() => {});
   }, [enabled, activeId, getTranscript, setSessionMessages]);
 
   // Reconcile the active chat on RESUME from the background. A PWA that was backgrounded
@@ -1429,6 +1451,7 @@ export function useFullBrain(
     startFresh,
     open,
     requestOpen,
+    reloadTranscript,
     close,
     rename: (id, title) => void rename(id, title).catch(() => {}),
     remove: (id) => void remove(id).catch(() => {}),

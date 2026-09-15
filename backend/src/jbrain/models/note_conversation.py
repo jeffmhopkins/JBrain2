@@ -330,11 +330,20 @@ class NoteThread:
     """One note's conversation, as the PWA needs it to OPEN that conversation: which
     session to resume and which persona tab hosts it (`modeForAgent` — a handoff that
     lands on the wrong tab shows an empty chat). `state` rides along so the screen can
-    say whether the thread is asking him something."""
+    say whether the thread is asking him something.
+
+    `updated_at` is what tells a screen the thread MOVED. Every way this conversation
+    gains turns is one the PWA cannot watch — the unattended pass runs in the worker, and
+    so does the re-reading an owner's reply triggers — so the screen polls, and polling
+    on `state` alone misses a pass that starts and finishes between two polls (settled →
+    running → settled reads `settled` both times). Only a state change bumps this
+    (`set_state`, `claim_waiting`, `reopen`), which is exactly the set of moments a
+    thread's transcript can have grown."""
 
     session_id: str
     agent: str
     state: str
+    updated_at: datetime
 
 
 class NoteConversationToolCall(Base):
@@ -656,7 +665,7 @@ class NoteConversationRepo:
         row = (
             await session.execute(
                 text(
-                    "SELECT c.session_id, c.state, s.agent"
+                    "SELECT c.session_id, c.state, c.updated_at, s.agent"
                     "  FROM app.note_conversations c"
                     "  JOIN app.agent_sessions s ON s.id = c.session_id"
                     " WHERE c.note_id = :note"
@@ -668,7 +677,12 @@ class NoteConversationRepo:
         ).first()
         if row is None:
             return None
-        return NoteThread(session_id=str(row.session_id), agent=row.agent, state=row.state)
+        return NoteThread(
+            session_id=str(row.session_id),
+            agent=row.agent,
+            state=row.state,
+            updated_at=row.updated_at,
+        )
 
     async def list_in_state(
         self, session: AsyncSession, state: str, *, limit: int = 50

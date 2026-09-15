@@ -1294,11 +1294,23 @@ local append with an amber "pending sync" chip until the outbox clears.
     the top bar's right cluster (beside the vitals readout, like the radio
     icon, and present only while a note conversation is open) opens the note
     view layer with the body, the record and the files.
-  - **No Sessions panel and no lateral swipe on Entry.** Two pickers for one
-    surface would be two answers to *which conversation am I in*, and the
-    lateral gesture is Full-Brain-side (below). The **Proposals** panel does
+  - **No Sessions panel on Entry.** Two pickers for one surface would be two
+    answers to *which conversation am I in*. The **Proposals** panel does
     mount, because a note turn can draw the navigational *Review proposal*
     chip and that chip has exactly one destination.
+  - **The lateral swipe works here too, and means the same two things.**
+    ⟲ Entry was excluded until 2026-09-15, when the owner asked for it:
+    *"While in a note conversation, the omnibox top bar swipe right should
+    bring you back to the note list, and a swipe left should pull up the note
+    specifics the same as … the icon up top."* Right reaches the **picker**
+    (here the notes list, which IS Entry's picker) and left reaches the
+    **detail** about the conversation you are in (here the note's own record)
+    — the same two meanings the gesture carries in Full Brain and Research,
+    so this makes it consistent rather than giving Entry a gesture of its own.
+    Entry's two targets are NAVIGATION rather than panels: nothing slides
+    half-open, each fires its top-bar twin (the back chevron, the note icon),
+    and the bar stays the discoverable way to reach both. An open Proposals
+    panel takes the back-swipe first.
   - A note the box has not read yet has **no conversation to open**: the
     column says so and offers *open the note*, the composer says *"No thread
     yet — open the note above"*, and a send is refused out loud (a toast)
