@@ -127,7 +127,7 @@ from jbrain.agent.contracts import EntityRef, FactWriteRef, write_status
 from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
-from jbrain.analysis.entities import ResolvedEntity, normalize_alias
+from jbrain.analysis.entities import ResolvedEntity, live_entity_by_id, normalize_alias
 from jbrain.analysis.extraction import (
     ExtractedFact,
     ExtractedMention,
@@ -1330,6 +1330,67 @@ class NoteGraphWriter:
         )
 
     # --- correct_fact ----------------------------------------------------------
+
+    async def carry_over(self, entity_ids: Sequence[uuid.UUID]) -> list[Handle]:
+        """Seed this writer with entities THIS CONVERSATION already resolved, so a second
+        reading of the note does not have to ask who they are again.
+
+        A write cannot address an entity without a handle (`lookup` refuses anything
+        else, and that refusal is what keeps `resolve_entity` the only minting path), and
+        the handle table is built empty per pass. So every pass re-resolved every subject
+        — including a pass whose own previous answer, replayed directly above it, names
+        the thing. The owner saw it and said so: *"Seems like we've had multiple tool
+        calls for the same thing when we access it in different sessions on the same
+        note."* The ratified design had this (`B3-GRAPH-TOOLS.md`: "the agent asserts
+        against known entities with ZERO resolve calls"); it was lost when
+        `graph_context.py` went with `integrate_note` in R4. The carrier is the
+        conversation's own tool-call ledger, which both turn paths already write.
+
+        **Nothing here mints.** Every id comes from a call this conversation already made
+        and is followed through `live_entity_by_id` to its survivor, so an entity merged
+        away since arrives as the row it was folded into and one deleted outright is
+        skipped. The view is read on `self._read_ctx` — the conversation's own narrowed
+        scopes — so an entity since moved out of scope is simply not carried.
+
+        **It seeds the SURFACE index too, and that is a decision.** A name this
+        conversation resolved keeps resolving to what this conversation decided, even if
+        a second entity has since made that name ambiguous elsewhere. The ambiguity
+        refusal exists to stop the model GUESSING among candidates it has never chosen
+        between; here it already chose — possibly by asking the owner. Re-litigating that
+        on every pass is the amnesia this removes."""
+        carried: list[Handle] = []
+        for entity_id in entity_ids:
+            if self._handle_for(entity_id) is not None:
+                continue
+            async with scoped_session(self._maker, self._read_ctx) as reads:
+                live = await live_entity_by_id(reads, entity_id)
+                if live is None:
+                    continue
+                # On the conversation's OWN narrowed session, like every other read in
+                # this writer: RLS is the enforcement, so an entity since moved out of
+                # scope returns nothing here and is simply not carried.
+                row = (
+                    await reads.execute(
+                        text(
+                            "SELECT canonical_name, kind, domain_code FROM app.entities"
+                            " WHERE id = :eid"
+                        ),
+                        {"eid": str(live.id)},
+                    )
+                ).first()
+            if row is None or not row.canonical_name:
+                continue
+            carried.append(
+                self.adopt(
+                    entity_id=uuid.UUID(str(live.id)),
+                    subject_id=live.subject_id,
+                    surface=str(row.canonical_name),
+                    name=str(row.canonical_name),
+                    kind=str(row.kind or _DEFAULT_KIND),
+                    domain=str(row.domain_code or ""),
+                )
+            )
+        return carried
 
     def adopt(
         self,

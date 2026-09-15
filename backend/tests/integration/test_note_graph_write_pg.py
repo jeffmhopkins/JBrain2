@@ -192,6 +192,66 @@ async def test_resolving_the_same_surface_twice_returns_the_same_handle(maker, t
 
 
 @pytest.mark.asyncio
+async def test_a_later_pass_can_be_handed_what_an_earlier_one_resolved(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The owner: *"Seems like we've had multiple tool calls for the same thing when we
+    access it in different sessions on the same note."*
+
+    He is right and it was forced. A write cannot address an entity without a handle
+    (`lookup` refuses anything else — that refusal is what keeps `resolve_entity` the only
+    minting path) and the handle table is built empty per pass, so every pass re-resolved
+    an entity its own previous answer had just named. `carry_over` seeds it from ids this
+    conversation already committed. Nothing here mints: the second writer resolves NOTHING
+    and still writes.
+
+    The ratified design had it (`B3-GRAPH-TOOLS.md`: "the agent asserts against known
+    entities with ZERO resolve calls"); it was lost when `graph_context.py` went with
+    `integrate_note` in R4."""
+    note_id = await _note(maker, tmp_path, body="Mabel is my cat. Mabel is a tabby.")
+    first = await _writer(maker, note_id)
+    resolved = await first.resolve_entity(
+        {"entities": [{"surface": "Mabel", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(resolved, ToolOutput)
+    (ref,) = resolved.entities
+
+    later = await _writer(maker, note_id)
+    # Before: the name is not an address on a fresh writer — this is the refusal the
+    # owner was watching the agent work around, once per pass.
+    assert later.lookup("Mabel") is None
+
+    carried = await later.carry_over([uuid.UUID(ref.entity_id)])
+    assert [h.name for h in carried] == ["Mabel"]
+    assert later.lookup("Mabel") is not None
+
+    out = await later.close_reading(
+        {
+            "title": "Mabel",
+            "tags": ["cat"],
+            "facts": [
+                {
+                    "subject": "Mabel",
+                    "predicate": "coat",
+                    "object": "tabby",
+                    "quote": "Mabel is a tabby.",
+                    "statement": "Mabel is a tabby.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    assert write.status == "written"
+    # And it is the SAME record, not a second Mabel — carry_over adopts, never mints.
+    assert {r.entity_id for r in out.entities} == {ref.entity_id}
+    # Idempotent on the entity: carrying twice does not mint e2 for one thing.
+    assert await later.carry_over([uuid.UUID(ref.entity_id)]) == []
+
+
+@pytest.mark.asyncio
 async def test_a_write_grounds_the_report_of_itself(
     maker,  # noqa: F811
     tmp_path,

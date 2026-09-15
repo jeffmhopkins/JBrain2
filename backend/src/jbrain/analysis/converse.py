@@ -86,6 +86,7 @@ from jbrain.agent.agents import (
 from jbrain.agent.asktools import build_ask_owner_handlers
 from jbrain.agent.clock import build_clock_handlers, now_block
 from jbrain.agent.graphwritetools import (
+    Handle,
     NoteGraphWriter,
     NoteTarget,
     NoteToolset,
@@ -142,6 +143,22 @@ NOTE_CONVERSE_KIND = "note_converse"
 #: not the note itself — and the oldest turn it drops is the previous reading of the
 #: same note the new frame is about to restate.
 REPLAYED_TURNS = 12
+
+
+def _already_holding(carried: Sequence[Handle]) -> str:
+    """What this conversation already resolved, handed to a re-reading as handles it
+    HOLDS rather than as names it must go and look up again.
+
+    Outside the note's fence, where the clock block and the re-read lead-in sit: this is
+    the channel's own statement about the conversation, not the note's text, and a note
+    must never be able to forge one."""
+    lines = "\n".join(f"  {h.handle}  {h.name}" for h in carried)
+    return (
+        "You already resolved these in this conversation, and you still hold them —"
+        " use them directly as the subject or object of a fact. Do NOT resolve them"
+        f" again:\n{lines}"
+    )
+
 
 #: The line that opens a re-reading, outside the note's fence. It says why the pass is
 #: happening, because the model's own prior answer is sitting directly above it and
@@ -713,6 +730,18 @@ class NoteConverseRunner:
             if self.executor_for_note is not None:
                 tools = self.executor_for_note(note, read_scopes)
             executor = self.executor if tools is None else tools.executor
+            if prior and tools is not None:
+                # A RE-READING holds what this conversation already resolved. Without
+                # this the handle table starts empty every pass, so the model must
+                # re-resolve an entity its own answer — replayed directly above — has
+                # just named. The owner saw that and called it what it looks like:
+                # multiple tool calls for the same thing. `carry_over` mints nothing;
+                # every id comes off this conversation's own ledger.
+                async with scoped_session(self.maker, owner_ctx) as s:
+                    known = await self.conversations.writes(s, session_id)
+                carried = await tools.writer.carry_over(sorted(known.entities))
+                if carried:
+                    conversation.append(UserMessage(text=_already_holding(carried)))
             async with asyncio.timeout(NOTE_TURN_WALL_CLOCK.total_seconds()):
                 executed = await executor.run_turn(
                     profile=profile,
