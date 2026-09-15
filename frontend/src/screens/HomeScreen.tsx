@@ -179,7 +179,12 @@ export function HomeScreen({
       fb.close();
       setEntrySession(null);
       setEntryNote(noteId);
-      setSeg({ row: "main", mode: "entry" });
+      // The ROW is preserved. Entry exists on both rows, so hardcoding `main` here
+      // silently swapped the owner's other two tabs (Medical / Financial -> Research /
+      // Brain) as a side effect of opening a note — and the back chevron never swapped
+      // them back. DESIGN.md sanctions the morph, but only as something HE does by
+      // tapping Entry again; a navigation action has no business spending it.
+      setSeg((prev) => ({ row: prev.row, mode: "entry" }));
     },
     [fb.close],
   );

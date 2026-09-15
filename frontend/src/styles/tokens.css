@@ -73,6 +73,15 @@
   --fs-screen: calc(22px * var(--font-scale));
   --fs-hero: calc(28px * var(--font-scale));
   --fs-editor: calc(20px * var(--font-scale)); /* focused-writer edit page */
+  /* The conversation's reading size — an answer's prose AND the note it is about, which
+     must be the SAME size. They were not: the bubble carried a raw `15px` and turn 0
+     `--fs-secondary` (10.5px at the default), so on a system whose founding rule is that
+     notes are the sole source of truth, the machine's restatement rendered 43% larger
+     than the owner's own words. 20px is the step `--fs-editor` already uses for prose a
+     person reads at length, and it keeps the bubble at exactly the 15px it has always
+     rendered — the raw value is what is being removed here, not the size. It is a token
+     so the chat finally answers Settings → Text size, which a raw px never did. */
+  --fs-chat: calc(20px * var(--font-scale));
 
   /* Shape */
   --r-input: 12px;

@@ -92,6 +92,12 @@ h3 {
 .icon-btn {
   background: none;
   border: none;
+  /* 44px of hit area around whatever glyph it wraps (DESIGN.md's floor). The negative
+     margin keeps the LAYOUT box the size of the glyph, so raising the floor does not
+     push the bar's contents apart — but it also means neighbours must be spaced off the
+     real hit area, not the glyph (see `.foot-icons` / `.top-bar-right`). */
+  min-width: 44px;
+  min-height: 44px;
   padding: 8px;
   margin: -8px;
   color: var(--text-2);
@@ -114,9 +120,13 @@ h3 {
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 56px;
+  /* `min-height`, not `height`: `box-sizing: border-box` is global (top of this
+     file), so a fixed 56px had the safe-area inset subtracted FROM it rather than
+     added to it — on a notched iPhone the content box computed to 0 and the bar's
+     contents were saved only by the flex auto-floor, jammed against its lower edge. */
+  min-height: 56px;
   padding: 0 16px;
-  padding-top: env(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top, 0px);
   flex: none;
 }
 
@@ -161,13 +171,23 @@ h3 {
 .screen-title {
   font-size: var(--fs-title);
   font-weight: 500;
+  /* A note's title is its own first words, so it is arbitrarily long. Without this it
+     cannot shrink as a flex item (`min-width: auto`) and either wraps the bar to two
+     lines or pushes the vitals cluster off the right edge at 390px. `.session-title`
+     has carried exactly this treatment since it shipped; Entry's bar never got it. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .top-bar-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 18px;
+  /* Same arithmetic as `.foot-icons`: the note button's hit area bleeds 8px and the
+     vitals control pulls 12px back, so 18px left them touching. */
+  gap: 28px;
   color: var(--text-2);
 }
 
@@ -430,6 +450,8 @@ button.vitals:focus-visible {
 
 .older-pill {
   align-self: center;
+  /* DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px. */
+  min-height: 44px;
   font-size: var(--fs-micro);
   padding: 5px 14px;
   border: none;
@@ -564,6 +586,11 @@ button.vitals:focus-visible {
 
 .note-body {
   font-size: var(--fs-note);
+  /* The note's own paragraph breaks. Without this HTML collapses them to spaces, so
+     every multi-paragraph note read as one run-on line — and an appended block ran
+     straight into the sentence before it, which is what the owner reported as the
+     addition looking "clunky". Composes with `-webkit-line-clamp` on `.note-body-clamp`. */
+  white-space: pre-wrap;
 }
 
 .note-chips {
@@ -770,7 +797,11 @@ button.chip-ask {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  /* em so the control thins along with the text-size setting */
+  /* em so the control thins along with the text-size setting — ABOVE the floor, never
+     through it. At the shipped 0.75 default this row computed to ~37px, and at 65% to
+     ~34.6px: lowering the text size was shrinking the app's primary navigation below a
+     thumb. The floor is absolute and does not scale. */
+  min-height: 44px;
   padding: 0.85em 0;
   font-size: var(--fs-note);
   font-weight: 500;
@@ -887,7 +918,10 @@ button.chip-ask {
 
 .foot-icons {
   display: flex;
-  gap: 14px;
+  /* `.icon-btn` bleeds 8px past its layout box on each side, so a 14px gap left the two
+     44px hit areas overlapping by 2px — and a near-miss on the paperclip SENDS the note.
+     24px puts 8px of dead space between them. */
+  gap: 24px;
   align-items: center;
 }
 
@@ -9047,11 +9081,20 @@ button.small {
   gap: 10px;
   min-height: 0;
 }
+/* Pins a short thread to the bottom, the way `.stream-inner` pins a short stream —
+   `margin-top: auto` on the first child rather than `justify-content: flex-end` on the
+   scroller, which breaks scrolling back up. Without it the notes list hung its content
+   off the BOTTOM of the screen and a note's conversation off the TOP, so opening a note
+   threw everything from one end to the other — the opposite of the owner's ruling that
+   picking a note should feel like picking another conversation. */
+.fb-shell .fb-chat > *:first-child {
+  margin-top: auto;
+}
 .fb-shell .bubble {
   max-width: 80%;
   padding: 11px 14px;
   border-radius: 16px;
-  font-size: 15px;
+  font-size: var(--fs-chat);
   line-height: 1.45;
   white-space: pre-wrap;
   /* A long unbreakable token — a bare URL, an id — wraps inside the bubble
@@ -9621,13 +9664,16 @@ button.small {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 25px;
+  /* The floor, on the one control between the owner and both the thinking trace and
+     what the turn wrote. The pill's own chrome stays small — the padding draws it — but
+     the BOX a thumb has to find is 44px. */
+  min-height: 44px;
   padding: 3px 9px;
   border-radius: 999px;
   background: none;
   border: 1px solid transparent;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   color: var(--text-2);
   text-align: left;
@@ -9697,7 +9743,8 @@ button.small {
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 25px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 3px 8px;
   border-radius: 8px;
   background: none;
@@ -9734,7 +9781,9 @@ button.small {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 25px;
+  /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box. */
+  min-width: 44px;
+  min-height: 44px;
   padding: 3px;
   border-radius: 8px;
   background: none;
@@ -27581,7 +27630,8 @@ button.wf-sigpill {
   letter-spacing: 0.04em;
 }
 .fb-shell .fb-turn0-body {
-  font-size: var(--fs-secondary);
+  /* The note reads at the SAME size as the answer about it — never smaller. */
+  font-size: var(--fs-chat);
   /* The note's own line breaks are part of it; the frame's are gone with the frame. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -27773,4 +27823,24 @@ button.wf-sigpill {
 }
 .omnibox .omni-carry-n {
   font-weight: 650;
+}
+
+/* DESIGN.md Motion: "Honor `prefers-reduced-motion: reduce` by disabling all
+   non-essential animation." These eight were omissions rather than decisions — each has a
+   sibling state already covered in an existing reduce block (`.fb-status.live`'s mark is
+   guarded while `.fb-status.waiting`'s was not, and so on). Derived by parsing every
+   `animation:` declaration in this file against every reduce block, not by reading. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-drp-step.active .fb-drp-dot,
+  .fb-shell .fb-genprev-img.fb-genprev-fade,
+  .fb-shell .fb-genprev-bar i.fb-genprev-indet,
+  .jl-tab-live,
+  .loc-digest-recompute.spin span,
+  .presence-toast,
+  .task-dot.running,
+  .task-rd.running,
+  .task-bd.running,
+  .task-acts .task-runbtn.running svg {
+    animation: none;
+  }
 }
