@@ -9002,6 +9002,41 @@ button.small {
   font-size: var(--fs-secondary);
 }
 
+/* The unattended pass, while it runs. The worker publishes no progress, so this says
+   only that it is happening — the honest statement, and the one the surface used to
+   deny. */
+.fb-shell .fb-reading-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+
+.fb-shell .fb-reading-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: fb-reading-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes fb-reading-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-reading-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* transcript */
 .fb-shell .fb-chat {
   flex: 1;

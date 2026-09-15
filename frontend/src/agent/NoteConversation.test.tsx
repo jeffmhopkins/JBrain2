@@ -120,7 +120,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
  * and the omnibox that is its one submit — including the carry strip the composer derives
  * from the hook. (The omnibox itself is stood in for here; `HomeScreen.note.test.tsx`
  * proves the real one is what the screen mounts.) */
-function Thread({ d }: { d: FullBrainDeps }) {
+function Thread({ d, analysing = false }: { d: FullBrainDeps; analysing?: boolean }) {
   const fb = useFullBrain("entry", d);
   const [text, setText] = useState("");
   // A note thread is never auto-opened — Entry opens exactly what it is asked for — so it
@@ -130,7 +130,7 @@ function Thread({ d }: { d: FullBrainDeps }) {
   const answered = answeredCount(fb.openQuestions, fb.answers);
   return (
     <>
-      <NoteConversation fb={fb} noThread={false} />
+      <NoteConversation fb={fb} noThread={false} analysing={analysing} />
       {/* A TEXTAREA, as the real composer is (`Omnibox.tsx`): an `<input>` drops the
           newlines out of whatever is typed into it, so the quoted-question reply this
           channel's sanitiser exists for could not be typed into the harness at all. */}
@@ -208,6 +208,34 @@ describe("turn 0", () => {
     await waitFor(() => expect(screen.getByText("remind me?")).toBeInTheDocument());
     expect(document.querySelector(".fb-turn0")).toBeNull();
     expect(document.querySelector(".bubble.me")).toBeInTheDocument();
+  });
+});
+
+describe("while the box is still reading the note", () => {
+  it("says it is reading, rather than that it has not read it", async () => {
+    // The unattended pass runs in the worker and writes its transcript in one go at the
+    // end, so a thread that EXISTS but has no turns yet is the whole of the first pass as
+    // seen from here. It used to invite him to chat into it, which is the same denial the
+    // no-thread copy made: "No conversation yet — the box reads a note once it has
+    // indexed it", said while the box was reading it.
+    const d = deps({ getTranscript: vi.fn(async (): Promise<TranscriptTurn[]> => []) });
+    render(<Thread d={d} analysing={true} />);
+    await waitFor(() => expect(screen.getByText("Reading this note…")).toBeInTheDocument());
+    expect(document.body.textContent).not.toContain("No conversation yet");
+    expect(document.body.textContent).not.toContain("Say something about this note");
+  });
+
+  it("gives way to the transcript the moment the pass lands", async () => {
+    const d = deps({
+      getTranscript: vi.fn(
+        async (): Promise<TranscriptTurn[]> => [
+          { role: "assistant", content: "Recorded the TV's size.", tools: [] },
+        ],
+      ),
+    });
+    render(<Thread d={d} analysing={false} />);
+    await waitFor(() => expect(screen.getByText("Recorded the TV's size.")).toBeInTheDocument());
+    expect(screen.queryByText("Reading this note…")).toBeNull();
   });
 });
 

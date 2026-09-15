@@ -407,6 +407,7 @@ export function HomeScreen({
         <NoteConversation
           fb={fb}
           noThread={noThread}
+          analysing={thread.analysing}
           onOpenNote={onOpenNoteById}
           onOpenEntity={onOpenEntity}
           onProposalEnacted={() => void notes.refresh()}
@@ -510,9 +511,11 @@ export function HomeScreen({
         conversation={conversational}
         placeholder={
           noteOpen
-            ? noThread
-              ? "No thread yet — open the note above"
-              : "Reply about this note…"
+            ? thread.analysing
+              ? "Reading this note…"
+              : noThread
+                ? "No thread yet — open the note above"
+                : "Reply about this note…"
             : undefined
         }
         onConversation={(body, files) => {

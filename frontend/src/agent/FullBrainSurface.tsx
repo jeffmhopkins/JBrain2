@@ -127,7 +127,7 @@ interface TranscriptProps extends Props {
    * that surface can offer the one thing there IS to do with such a note: open it. */
   noSessionText?: ReactNode;
   /** What it says when a session is open but has no turns. */
-  emptyText?: string;
+  emptyText?: ReactNode;
 }
 
 interface Props {
