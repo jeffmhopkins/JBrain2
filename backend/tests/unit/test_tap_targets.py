@@ -141,9 +141,13 @@ def test_the_icon_button_is_a_44px_box_that_does_not_crowd_its_neighbour() -> No
     btn = _rule(".icon-btn")
     assert re.search(r"min-width:\s*44px", btn)
     assert re.search(r"min-height:\s*44px", btn)
-    bleed = int(re.search(r"margin:\s*-(\d+)px", btn).group(1))
+    bleed_m = re.search(r"margin:\s*-(\d+)px", btn)
+    assert bleed_m is not None, ".icon-btn no longer pulls its layout box back"
+    bleed = int(bleed_m.group(1))
     for row in (".foot-icons", ".top-bar-right"):
-        gap = int(re.search(r"gap:\s*(\d+)px", _rule(row)).group(1))
+        gap_m = re.search(r"gap:\s*(\d+)px", _rule(row))
+        assert gap_m is not None, f"{row} declares no gap"
+        gap = int(gap_m.group(1))
         assert gap - 2 * bleed >= 8, f"{row}: {gap - 2 * bleed}px between hit areas"
 
 
