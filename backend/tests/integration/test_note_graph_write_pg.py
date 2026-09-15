@@ -192,6 +192,50 @@ async def test_resolving_the_same_surface_twice_returns_the_same_handle(maker, t
 
 
 @pytest.mark.asyncio
+async def test_a_write_grounds_the_report_of_itself(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The amber "unverified — not grounded in your notes" badge, at its root.
+
+    `EntityRef.facts` IS the reflexion grounding corpus (`loop._grounding_corpus`). A note
+    pass retrieves no note sources — the note is turn 0, not a search result — so the
+    corpus was the entity's name and its OLD facts, and the agent's report of what it had
+    just recorded matched none of it. Every write turn failed grounding, and the owner got
+    "unverified" stamped on the one statement the system can check perfectly: the write
+    path is holding its `fact_id`. He read it as written and asked whether the write had
+    happened at all.
+
+    So the committed statement rides back on the entities it is about."""
+    note_id = await _note(maker, tmp_path, body="Rufus is a black Labrador retriever.")
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Rufus", "kind": "animal"}]}, _ctx())
+
+    out = await writer.close_reading(
+        {
+            "title": "Rufus",
+            "tags": ["dog"],
+            "facts": [
+                {
+                    "subject": "Rufus",
+                    "predicate": "breed",
+                    "object": "black Labrador retriever",
+                    "quote": "Rufus is a black Labrador retriever.",
+                    "statement": "Rufus is a black Labrador retriever.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(out, ToolOutput)
+    (write,) = out.facts
+    grounds = [text for ref in out.entities for text in ref.facts]
+    assert write.label in grounds, (
+        "the turn's own report of this write has nothing in the corpus to match"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_contradicted_supersession_carries_its_reason_to_the_owner(maker, tmp_path) -> None:  # noqa: F811
     """`hold_reason` on the wire — `attribute_collision`, the one that matters on screen.
 

@@ -1278,6 +1278,32 @@ class NoteGraphWriter:
                     self.reading.mark_incomplete()
                 else:
                     writes.append(write)
+                    # **The statement this write COMMITTED, hung on the entities it is
+                    # about.** `EntityRef.facts` IS the reflexion grounding corpus
+                    # (`loop._grounding_corpus`), and its own docstring says why it
+                    # exists: an answer drawn from the graph "would otherwise verify
+                    # against an empty corpus and every claim would score 0 … instead of
+                    # being falsely flagged 'not in your notes'".
+                    #
+                    # A note pass is that case at its purest and nobody had noticed. It
+                    # retrieves NO note sources — the note is turn 0, not a search result
+                    # — so the corpus was the entity's name and its OLD facts, and the
+                    # agent's report of what it had just recorded matched none of it.
+                    # EVERY write turn failed grounding, and the owner got an amber
+                    # "unverified — not grounded in your notes" on the one statement in
+                    # the system that can be checked perfectly: the write path is holding
+                    # its `fact_id`. He read that badge exactly as written and asked
+                    # whether the write had happened at all.
+                    #
+                    # A committed statement, attested to a chunk of his own note, is the
+                    # best-grounded claim anywhere in this app. This is not softening the
+                    # check; it is handing it the evidence it was missing. Done HERE
+                    # because `_assert_one` returns each write beside the entities it
+                    # touched, and that is the only place the two are together —
+                    # `FactWriteRef` carries no entity id.
+                    for ref in touched:
+                        if write.label:
+                            ref.facts.append(write.label)
                 refs.extend(touched)
         self.reading.union(
             title=title,
@@ -1297,7 +1323,10 @@ class NoteGraphWriter:
             )
         lines.append(f"close_reading: {self.reading_budget.remaining} calls left this note")
         return ToolOutput(
-            "\n".join(lines), entities=tuple(refs), facts=tuple(writes), truncated=clamped
+            "\n".join(lines),
+            entities=tuple(refs),
+            facts=tuple(writes),
+            truncated=clamped,
         )
 
     # --- correct_fact ----------------------------------------------------------

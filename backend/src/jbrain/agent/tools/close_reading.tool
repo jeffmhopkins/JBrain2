@@ -1,6 +1,6 @@
 ---
 name: close_reading
-version: 3
+version: 4
 permission: mutate
 mutating: true
 side_effecting: true
@@ -31,8 +31,11 @@ params:
           subject:
             type: string
             description: >-
-              The entity this fact is about, as the handle resolve_entity gave you
-              ("e1"), or the exact name you resolved.
+              The entity this fact is about. Prefer the NAME you resolved — "Boss",
+              "Me" — over the handle; both work here, and the name is what a person
+              reading this back can recognise. Keep the handles ("e1", "e2") for the
+              `object` side, where they are the only way to say you mean the entity
+              rather than a word that looks like it.
           predicate:
             type: string
             description: >-

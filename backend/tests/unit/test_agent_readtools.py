@@ -1,6 +1,7 @@
 """The read-only tools: result formatting, RLS-scope passthrough to the
 services, and the shipped sidecars bound + pinned to their versions."""
 
+import json
 from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
@@ -1037,10 +1038,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "8dd7afd8d4d1155738a89578c80da4416835d3f289a29cbfb10ecb55c0947295",
         ),
+        # v3 names the two things whose ABSENCE made a note about the owner's own dog
+        # resolve one surface and record `Boss.hasName -> "Boss"` — two calls to store
+        # that Boss is called Boss. (1) Jeff is an ENTITY, resolved as "Me": most notes
+        # are about him or about something of his, and the fact the note is making is the
+        # one that joins them; the old prose said only "never a role word", which rules
+        # out "my dog" and left nothing to attach it to. (2) Resolving a name already
+        # stores what the thing is called, so a `hasName` fact about the name just
+        # resolved records nothing — and it was the whole of what the owner could see the
+        # pass do. This is a CALIBRATION change: description text is the lever
+        # (TOOL_SURFACE.md), so the rewrite is the behaviour change.
         "resolve_entity.tool": (
             "resolve_entity",
-            2,
-            "07c0b3a3be360d97705a033ed9768f964baa1f842f8f505f3105d01a223b4f08",
+            3,
+            "58c10a98e444d5d33f965d83137c6dc01ae6b80e8511eac36f7e9dea03f45832",
         ),
         # v2 is `distinguish` plus the current-facts half of the result
         # (`AGENT_INGEST_REWRITE.md` R1/§3.4), and the bump is the point: both are ACI
@@ -1050,10 +1061,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v3 is the O15 ruling, the same paragraph assert_fact v5 gains: a replacement
         # that resolved a DISAGREEMENT is not housekeeping, and asking the owner about it
         # is the pass's obligation.
+        # v4 asks `subject` for the NAME rather than the handle. Both have always
+        # worked — `NoteGraphWriter.lookup` is `by_name=True` for a subject, "a subject is
+        # an entity by definition" — and the handle is the one the model was told to
+        # prefer, so the owner's own arguments block read `subject: "e1"`. The `object`
+        # side keeps handles: there a handle is the only way to say "I mean the entity"
+        # rather than a word that looks like one.
         "close_reading.tool": (
             "close_reading",
-            3,
-            "30c22f0c8de329096cf2f40b7fad23c4b0a191211ef0037ab6d4b5c8ccb84ba6",
+            4,
+            "2df6498746c848e8791c0a04df0f26d6f607d579593fd842c4a3ee7c4694498a",
         ),
         # The on-reply half (D8): reachable only from a turn the owner sent, and each
         # force-supersedes or folds, so the wording is the contract for what a reply may
@@ -1673,10 +1690,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # blocks nothing. Naming the second reason here is the point — this sidecar is
         # where the bar is calibrated, so leaving it unamended would have made the write
         # line's obligation argue with the tool's own instructions.
+        # v4 rewords `blocks`: it invited tool syntax ("the resolve call you are stuck
+        # on"), the model duly wrote `resolve_entity("Dr. Chen")`, and `QuestionBlock`
+        # renders that line VERBATIM to the owner. The field is read by a person.
         "ask_owner.tool": (
             "ask_owner",
-            3,
-            "6aba939100de9bf45f0aeb0b1e3f232b80234adfb8e43409de00f0367e8dc8fa",
+            4,
+            "8592785e2e5b47bdb8811c8dd8ab8a0fe09dbd1cd1fb829349a9185a3209877b",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
@@ -1850,3 +1870,37 @@ def test_jmolt_can_actually_reach_its_scratchpad_tools() -> None:
 
     for name in ("scratch_list", "scratch_read", "scratch_write", "scratch_manage"):
         assert name in JMOLT_TOOLS, f"jmolt cannot call {name}"
+
+
+def test_the_write_tools_tell_the_model_the_owner_is_an_entity() -> None:
+    """The absence this closes, in the owner's own words: *"the agent's tools seem to
+    work, but they don't really make sense to me when looking at the tool usage for what
+    they are accomplishing."*
+
+    For "My dogs name is Boss" the pass resolved ONE surface and recorded
+    `Boss.hasName -> "Boss"` — two calls to store that Boss is called Boss. Both halves
+    of why are prose, which is why prose is what this pins: `resolve_entity` said only
+    "never a role word", which rules out "my dog" and left the note's actual subject —
+    Jeff — unresolvable and unmentioned; and nothing said that resolving a name already
+    records the name, so spending a fact on it looked like work.
+
+    A digest pin (above) proves a sidecar CHANGED. It cannot prove it still says the
+    thing, and the thing is the behaviour."""
+    resolve = load_tool(TOOLS_DIR / "resolve_entity.tool")
+    body = resolve.description or ""
+    assert '"Me"' in body, "the owner must be resolvable, or a note about his dog has no subject"
+    assert "hasName" in body, "resolving a name already records it; the model has to be told"
+
+    surface = resolve.spec.params["properties"]["entities"]["items"]["properties"]["surface"]
+    assert "Me" in surface["description"], "the role-word rule must carve out the owner"
+
+    # And the subject of a fact asks for the NAME, so the owner's arguments block stops
+    # reading `subject: "e1"`. Both have always worked; the handle was the one asked for.
+    reading = load_tool(TOOLS_DIR / "close_reading.tool")
+    subject = reading.spec.params["properties"]["facts"]["items"]["properties"]["subject"]
+    assert "NAME" in subject["description"]
+
+    # Constraint 8 — no JSON-Schema `enum` may reach a sidecar, at any depth: it
+    # segfaults the gpt-oss harmony grammar.
+    for tool in (resolve, reading, load_tool(TOOLS_DIR / "ask_owner.tool")):
+        assert "enum" not in json.dumps(tool.spec.params), tool.spec.name
