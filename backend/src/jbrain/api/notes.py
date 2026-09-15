@@ -345,6 +345,11 @@ class NoteThreadOut(BaseModel):
     session_id: str
     agent: str
     state: str
+    #: When the thread last MOVED. The note screen polls this route because every way a
+    #: note conversation gains turns is one the PWA cannot watch — the unattended pass
+    #: runs in the worker, and so does the re-reading an owner's reply triggers — and
+    #: polling on `state` alone misses a pass that starts and finishes between two polls.
+    updated_at: datetime
 
 
 @router.get("/notes/{note_id}/thread")
@@ -378,7 +383,12 @@ async def note_thread(
     thread = await _note_thread(maker, ctx, note_id)
     if thread is None:
         return None
-    return NoteThreadOut(session_id=thread.session_id, agent=thread.agent, state=thread.state)
+    return NoteThreadOut(
+        session_id=thread.session_id,
+        agent=thread.agent,
+        state=thread.state,
+        updated_at=thread.updated_at,
+    )
 
 
 @router.delete("/notes/{note_id}/clarifications/{clarification_id}")

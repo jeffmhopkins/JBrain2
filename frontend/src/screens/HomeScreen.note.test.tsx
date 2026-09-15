@@ -154,7 +154,12 @@ function threadDeps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
   });
 }
 
-const FOUND: NoteThreadOut = { session_id: "s1", agent: "note_ingest", state: "waiting_on_owner" };
+const FOUND: NoteThreadOut = {
+  session_id: "s1",
+  agent: "note_ingest",
+  state: "waiting_on_owner",
+  updated_at: "2026-09-15T08:05:00Z",
+};
 
 function controller(items: StreamItem[]): NotesController {
   return {
@@ -373,6 +378,16 @@ describe("a follow-up", () => {
   });
 });
 
+/** A committed horizontal drag across the omnibox's mode row — the gesture target
+ * (`.omnibox .seg-row`), which is what the owner calls "the omnibox top bar". Positive
+ * dx is rightward. */
+function swipe(dx: number): void {
+  const row = document.querySelector(".omnibox .seg-row");
+  if (row === null) throw new Error("the omnibox's mode row is not mounted");
+  fireEvent.touchStart(row, { touches: [{ clientX: 160, clientY: 40 }] });
+  fireEvent.touchEnd(row, { changedTouches: [{ clientX: 160 + dx, clientY: 44 }] });
+}
+
 describe("back, at every level", () => {
   it("returns from the conversation to the notes list", async () => {
     home();
@@ -396,6 +411,48 @@ describe("back, at every level", () => {
     // top bar — the conversation records decisions, that screen is the current head.
     fireEvent.click(screen.getByRole("button", { name: "Open the note" }));
     expect(h.onOpenNoteById).toHaveBeenCalledWith("n1");
+  });
+
+  it("swipes right on the omnibox's mode row back to the notes list", async () => {
+    // The owner's ruling of 2026-09-15: *"While in a note conversation, the omnibox top
+    // bar swipe right should bring you back to the note list"*. Right is the PICKER
+    // direction in every other mode (it opens Full Brain's Sessions panel), and Entry's
+    // picker is the notes list.
+    home();
+    tapEntry();
+    tapNote(NOTE);
+    await screen.findByLabelText("Conversation");
+
+    swipe(120);
+    expect(screen.getByText(OTHER.body)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Conversation")).not.toBeInTheDocument();
+  });
+
+  it("swipes left on the same row to the note's own record", async () => {
+    // *"…and a swipe left should pull up the note specifics the same as … the icon up
+    // top"*. Left is the DETAIL direction, and it fires the top bar's own note button
+    // rather than inventing a second destination.
+    const h = home();
+    tapEntry();
+    tapNote(NOTE);
+    await screen.findByLabelText("Conversation");
+
+    swipe(-120);
+    expect(h.onOpenNoteById).toHaveBeenCalledWith("n1");
+    // And it did NOT also leave the conversation: the record opens above it.
+    expect(screen.queryByText(OTHER.body)).not.toBeInTheDocument();
+  });
+
+  it("does not leave the conversation on a tap, or on a short drag across the row", async () => {
+    // The row is also how the owner changes mode, so a gesture that fired on a tap would
+    // make the mode row unusable.
+    home();
+    tapEntry();
+    tapNote(NOTE);
+    await screen.findByLabelText("Conversation");
+
+    swipe(8);
+    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
   });
 
   it("goes back to the list when the mode row is tapped, not to the last note", async () => {

@@ -12,8 +12,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NoteThreadOut } from "../api/client";
 import { useNoteSession } from "./useNoteSession";
 
+let moved = 0;
+
+/** A thread reading. `updated_at` advances on every build, because the server bumps it on
+ * every state change — a fixture that held it still would let a stale-stamp bug pass. */
 function thread(state: string): NoteThreadOut {
-  return { session_id: "s1", agent: "note_ingest", state };
+  moved += 1;
+  return {
+    session_id: "s1",
+    agent: "note_ingest",
+    state,
+    updated_at: new Date(Date.UTC(2026, 8, 15, 0, 0, moved)).toISOString(),
+  };
 }
 
 beforeEach(() => {
@@ -33,17 +43,41 @@ describe("which conversation a note has", () => {
     expect(result.current.sessionId).toBe("s1");
   });
 
-  it("a settled thread is not analysing and is not polled", async () => {
+  it("keeps watching a SETTLED thread, because it is not finished being written to", async () => {
+    // ⟲ This used to assert one read ever — "a finished thread does not change on its
+    // own" — and that is false for a note. The owner replies, the append re-ingests the
+    // note, and the re-reading lands in this same thread from the worker with nothing
+    // streaming to this client. He reported it: the conversation only caught up "after I
+    // had left the conversation and went back into it". Slower than a live pass, and not
+    // zero.
     const lookup = vi.fn(async () => thread("settled"));
     const { result } = renderHook(() => useNoteSession("n1", lookup));
     await waitFor(() => expect(result.current.looked).toBe(true));
     expect(result.current.analysing).toBe(false);
     expect(result.current.pending).toBe(false);
+
+    const opened = lookup.mock.calls.length;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(11_000);
     });
-    // One read, ever: a finished thread does not change on its own.
-    expect(lookup).toHaveBeenCalledTimes(1);
+    const spent = lookup.mock.calls.length - opened;
+    // Two ticks in eleven seconds — the settled cadence, not the live one.
+    expect(spent).toBeGreaterThanOrEqual(1);
+    expect(spent).toBeLessThanOrEqual(3);
+  });
+
+  it("reports a NEW movement stamp, which is what tells a screen to re-read the thread", async () => {
+    // `state` alone cannot carry this: a re-reading moves settled → running → settled, so
+    // a poll landing either side of it reads `settled` both times. Only `updated_at`
+    // separates "nothing happened" from "a whole pass happened while you watched".
+    const lookup = vi.fn(async () => thread("settled"));
+    const { result } = renderHook(() => useNoteSession("n1", lookup));
+    await waitFor(() => expect(result.current.movedAt).not.toBe(""));
+    const first = result.current.movedAt;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_000);
+    });
+    expect(result.current.movedAt).not.toBe(first);
   });
 
   it("polls a running pass until it lands, then stops", async () => {
@@ -64,11 +98,12 @@ describe("which conversation a note has", () => {
     });
     await waitFor(() => expect(result.current.analysing).toBe(false));
 
+    // It drops to the settled cadence rather than stopping — see the case above.
     const settled = lookup.mock.calls.length;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(4_000);
     });
-    expect(lookup).toHaveBeenCalledTimes(settled);
+    expect(lookup.mock.calls.length - settled).toBeLessThanOrEqual(1);
   });
 
   it("watches a note that has no thread YET — the half he sees first", async () => {

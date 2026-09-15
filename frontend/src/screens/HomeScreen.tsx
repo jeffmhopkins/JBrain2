@@ -171,6 +171,24 @@ export function HomeScreen({
     if (entrySessionId !== null) fb.requestOpen(entrySessionId);
   }, [entrySessionId]);
 
+  // A pass that landed while he was WATCHING. The unattended read runs in the worker with
+  // nothing streaming to this client and writes its transcript in one go at the end, so
+  // the controller's own reload — which fires on open and on switch — never re-fires: the
+  // session was opened once, before there was anything in it. He reported exactly that:
+  // *"after the GPU calmed nothing happened, until I backed out of the conversation and
+  // went into it"*, backing out being the thing that changed the id.
+  //
+  // `thread.movedAt` is the signal, not `thread.state`: a re-reading moves the thread
+  // settled → running → settled, so a poll that lands either side of it reads `settled`
+  // both times and a state-keyed reload would sleep through the very turn it is for.
+  // Only a state change bumps `updated_at`, which is exactly the set of moments this
+  // thread gains turns.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stamp is the trigger, not a read.
+  useEffect(() => {
+    if (!noteOpen || thread.sessionId === null) return;
+    fb.reloadTranscript();
+  }, [noteOpen, thread.sessionId, thread.movedAt]);
+
   // Open a note's conversation in Entry. `fb.close()` first: until the lookup answers
   // there is no session to ask for, and leaving the last one open would show the PREVIOUS
   // note's thread under this note's name for a whole round trip.
@@ -558,15 +576,38 @@ export function HomeScreen({
         contextUsage={conversational && fb.active ? fb.usage : null}
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
-        // Full Brain / Research only: a horizontal swipe across the omnibox shuttles
-        // the lateral panels (right→Sessions, left→Proposals; the opposite swipe
-        // sends the open one back). The transcript itself no longer swipes. Entry has no
-        // Sessions panel to shuttle — its picker is the notes list one back-tap away —
-        // and DESIGN.md keeps the gesture Full-Brain-side, so the note conversation
-        // leaves it alone entirely and reaches Proposals by the transcript's own chip.
+        // A horizontal swipe across the omnibox, in EVERY conversation mode. The two
+        // directions mean one thing each, and the same thing everywhere: right reaches
+        // the PICKER — which conversation am I in — and left reaches the DETAIL about
+        // the one I am in. The opposite swipe sends an open panel back.
+        //
+        // ⟲ Entry was excluded, on the reasoning that its picker was "one back-tap away"
+        // so the gesture had nothing to shuttle. The owner reversed it on 2026-09-15:
+        // *"While in a note conversation, the omnibox top bar swipe right should bring
+        // you back to the note list, and a swipe left should pull up the note specifics
+        // the same as … the icon up top"*. The mapping he asked for is the one the other
+        // modes already have — his picker IS the notes list, and the note's record is
+        // what the detail side holds — so this is the gesture becoming consistent rather
+        // than Entry growing one of its own.
+        //
+        // The two Entry targets are NAVIGATION, not panels: there is nothing to slide
+        // half-open, so each fires its top-bar twin (the back chevron, the note icon)
+        // and the bar stays the discoverable way to do both.
         onLateralSwipe={
-          conversational && !noteOpen
+          conversational
             ? (dx) => {
+                if (noteOpen) {
+                  // An open Proposals panel takes the back-swipe first — closing what is
+                  // over the conversation before leaving the conversation is the same
+                  // precedence the other modes have.
+                  if (fb.panel !== "none") {
+                    if (dx > 0) fb.setPanel("none");
+                    return;
+                  }
+                  if (dx > 0) closeNoteConversation();
+                  else if (entryNote !== null && onOpenNoteById) onOpenNoteById(entryNote);
+                  return;
+                }
                 if (fb.panel === "none") fb.setPanel(dx > 0 ? "sessions" : "proposals");
                 else if (fb.panel === "sessions" && dx < 0) fb.setPanel("none");
                 else if (fb.panel === "proposals" && dx > 0) fb.setPanel("none");

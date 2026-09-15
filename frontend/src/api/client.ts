@@ -1165,6 +1165,10 @@ export interface NoteThreadOut {
   /** The persona hosting it, so the handoff lands on the tab that shows it. */
   agent: string;
   state: string;
+  /** When the thread last MOVED — the signal that its transcript may have grown. Only a
+   * state change bumps it, which is exactly the set of moments a note conversation gains
+   * turns: the unattended pass, the re-reading a reply triggers, and the reply itself. */
+  updated_at: string;
 }
 
 export interface NotesPage {

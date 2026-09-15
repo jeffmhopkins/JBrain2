@@ -838,12 +838,27 @@ def test_the_thread_route_hands_back_the_notes_conversation_whatever_state(
     c, repo, _ = client
     note_id = _indexed_note(c, repo)
 
+    moved = datetime(2026, 9, 15, 8, 5, tzinfo=UTC)
+
     async def _settled(*_a: object, **_k: object) -> NoteThread:
-        return NoteThread(session_id="sess-note", agent="note_ingest", state="settled")
+        return NoteThread(
+            session_id="sess-note", agent="note_ingest", state="settled", updated_at=moved
+        )
 
     monkeypatch.setattr(notes_api, "_note_thread", _settled)
     body = c.get(f"/api/notes/{note_id}/thread").json()
-    assert body == {"session_id": "sess-note", "agent": "note_ingest", "state": "settled"}
+    assert body == {
+        "session_id": "sess-note",
+        "agent": "note_ingest",
+        "state": "settled",
+        # The stamp the note screen polls on. `state` alone cannot tell it a whole pass
+        # ran between two polls (settled -> running -> settled reads `settled` both
+        # times), so the route has to carry when the thread last moved.
+        # Pydantic's `Z` form, not `isoformat`'s `+00:00`. Spelled literally because the
+        # PWA compares this as an opaque STRING — a same-instant change of spelling would
+        # read as a thread that moved, and reload the transcript on every poll.
+        "updated_at": "2026-09-15T08:05:00Z",
+    }
 
 
 def test_the_thread_route_is_null_for_a_note_with_no_conversation(
