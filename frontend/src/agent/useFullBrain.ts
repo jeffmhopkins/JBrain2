@@ -86,29 +86,46 @@ export class AttachmentUploadError extends Error {
   }
 }
 
-/** The two conversation tabs and the agents each owns. Full Brain is the Curator
- * (your knowledge base, full domain access) plus the note conversations the ingest
- * engine opens; Research is Jerv (web), Teacher (study tutor), or the Archivist
- * (Gmail organizer) — none read your notes. A null mode means the surface is off
- * screen (Entry / capture modes), so the controller does no network work. */
-export type ConvMode = "research" | "fullbrain";
+/** The three conversation tabs and the agents each owns. Full Brain is the Curator
+ * (your knowledge base, full domain access); Research is Jerv (web), Teacher (study
+ * tutor), or the Archivist (Gmail organizer) — none read your notes; **Entry** hosts
+ * the note conversations the ingest engine opens, one per note. A null mode means no
+ * conversation is on screen (Entry showing its notes list, or a capture sub-mode), so
+ * the controller does no network work.
+ *
+ * ⟲ `note_ingest` moved off Full Brain on 2026-09-14, when the owner settled where a
+ * note conversation lives: *"I want you to keep the one omnibox just like jerv. The
+ * difference is the default view of entry would be notes. And when you select a note,
+ * it basically loads a conversation the same as if I had swiped left inside of jerv and
+ * picked a different conversation."* A note thread is an Entry conversation; listing it
+ * on Full Brain as well would put the same chat behind two tabs and make the Chats panel
+ * a second picker for a surface whose picker is the notes list. */
+export type ConvMode = "research" | "fullbrain" | "entry";
 /** Which agents' sessions a tab LISTS. `note_ingest` is here and not in
  * NEW_AGENT_OPTIONS: an ingested note opens its own thread (backend
- * `analysis/converse.py`, AGENT_INGEST_CONVERSATION_PLAN.md W2) and that thread is
- * the whole of what the wave delivers — off this list the owner pays for a turn they
- * would need a debug token to read. It sits on Full Brain because it is a
- * conversation about the owner's own notes, and every Research agent is defined by
- * reading none of them. Listing only: the notes tab that will POINT at these is W3
- * (D4), and this is not it. */
+ * `analysis/converse.py`, AGENT_INGEST_CONVERSATION_PLAN.md W2) and a person never
+ * starts one by hand. */
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
   research: ["jerv", "teacher", "archivist", "jmolt_observer"],
-  fullbrain: ["curator", "note_ingest"],
+  fullbrain: ["curator"],
+  entry: ["note_ingest"],
+};
+/** Tabs that open ONE conversation by id and never pick one themselves. Entry's picker
+ * is the notes list: the owner taps a note, the surface resolves that note's session and
+ * opens it. So the mode-resolve effect must not land on "the newest note conversation",
+ * auto-create anything, or fall back to the Chats picker — an Entry with no note tapped
+ * is not a conversation at all, it is the list. */
+const TARGETED_ONLY: Record<ConvMode, boolean> = {
+  research: false,
+  fullbrain: false,
+  entry: true,
 };
 /** The tab that HOSTS a persona. A handoff (a Tasks run, a notes-tab redirect) has a
  * session id and its agent, and must flip to the right tab before opening it — an
  * unknown persona lands in Research, where every non-owner-data agent lives. Derived
  * from MODE_AGENTS so a persona cannot be listed on one tab and opened on another. */
 export function modeForAgent(agent: string): ConvMode {
+  if (MODE_AGENTS.entry.includes(agent)) return "entry";
   return MODE_AGENTS.fullbrain.includes(agent) ? "fullbrain" : "research";
 }
 
@@ -121,9 +138,16 @@ export function modeForAgent(agent: string): ConvMode {
 const NEW_AGENT_OPTIONS: Record<ConvMode, readonly string[]> = {
   research: ["jerv", "teacher", "archivist", "jmolt_observer"],
   fullbrain: ["curator"],
+  // Entry's conversations are the ingest engine's; there is nothing to start here.
+  entry: [],
 };
-/** The agent a re-click / empty-state start spins up for each tab. */
-const NEW_AGENT: Record<ConvMode, string> = { research: "jerv", fullbrain: "curator" };
+/** The agent a re-click / empty-state start spins up for each tab. Entry has none —
+ * `startFresh` and the auto-create both refuse it (TARGETED_ONLY). */
+const NEW_AGENT: Record<ConvMode, string> = {
+  research: "jerv",
+  fullbrain: "curator",
+  entry: "",
+};
 /** The owner holds every scope, so a fresh Curator reads the whole brain; Jerv
  * (and Teacher) read no owner data, so they start with an empty firewall scope. */
 const ALL_DOMAINS = ["general", "health", "finance", "location"];
@@ -383,6 +407,8 @@ export interface FullBrain {
    * the list if needed, and opens it once loaded — suppressing the mode's auto-open
    * of the latest chat in the meantime so the targeted session isn't clobbered. */
   requestOpen: (id: string) => void;
+  /** Close the open conversation and show none (Entry's back to the notes list). */
+  close: () => void;
   rename: (id: string, title: string) => void;
   remove: (id: string) => void;
   archive: (id: string) => void;
@@ -575,6 +601,9 @@ export function useFullBrain(
     // A targeted open is pending — let the fulfill effect open it; don't auto-open
     // (or auto-create) this mode's latest chat over the top of it.
     if (pendingOpenRef.current !== null) return;
+    // Entry opens one note conversation by id or none at all — never the newest note
+    // thread, never a fresh one, and never the Chats picker over the notes list.
+    if (TARGETED_ONLY[mode]) return;
     const latest = latestForMode(sessions, mode);
     if (latest) {
       if (latest.id !== activeRef.current?.id) open(latest);
@@ -1192,7 +1221,7 @@ export function useFullBrain(
   // of the mode's default agent (so a repeated tap doesn't pile up blanks); else
   // spin up a fresh chat — Curator with full domain access, or a new Jerv.
   function startFresh(): void {
-    if (!mode) return;
+    if (!mode || TARGETED_ONLY[mode]) return;
     const empty = active && messages.length === 0 && (active.turn_count ?? 0) === 0;
     if (empty && active.agent === NEW_AGENT[mode]) {
       setPanel("none");
@@ -1201,6 +1230,15 @@ export function useFullBrain(
     void create(newSessionBody(mode))
       .then(open)
       .catch(() => {});
+  }
+
+  /** Close whatever is open without opening anything else — Entry's back out of a note
+   * conversation to the notes list. Drops any pending targeted open too, so a slow
+   * lookup cannot re-open the note the owner has just left. */
+  function close(): void {
+    pendingOpenRef.current = null;
+    setActive(null);
+    setPanel("none");
   }
 
   function open(session: AgentSession): void {
@@ -1220,6 +1258,11 @@ export function useFullBrain(
 
   function requestOpen(id: string): void {
     pendingOpenRef.current = id;
+    // Asking for a DIFFERENT chat blanks the open one at once: while the requested
+    // session loads, the surface must not go on showing the conversation the owner just
+    // navigated away from — on Entry that is the previous note's thread under the new
+    // note's name, which reads as the wrong note's answers.
+    if (activeRef.current !== null && activeRef.current.id !== id) setActive(null);
     const found = sessions.find((s) => s.id === id);
     if (found) {
       pendingOpenRef.current = null;
@@ -1386,6 +1429,7 @@ export function useFullBrain(
     startFresh,
     open,
     requestOpen,
+    close,
     rename: (id, title) => void rename(id, title).catch(() => {}),
     remove: (id) => void remove(id).catch(() => {}),
     archive: (id) => void archive(id).catch(() => {}),

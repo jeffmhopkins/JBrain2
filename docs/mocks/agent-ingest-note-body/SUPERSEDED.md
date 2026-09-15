@@ -3,17 +3,18 @@
 > **Status:** Superseded · **Scrapped:** 2026-09-08 · never presented to the owner, never merged.
 >
 > ⟲ **Its scrapping premise — "the note screen does not change" — was reversed by the owner
-> on 2026-09-14.** The note screen changes a great deal: its tabs are now **Thread · Note ·
-> Files** and it opens on the conversation
-> (`docs/mocks/agent-ingest/README.md`, variant A). In his own words, after using the
-> shipped hand-off: *"When I click on the note, it should basically open up as a normal
-> agent conversation same as jerv… When I go to do a follow-up, it shouldn't open in the
-> brain chat. It should open up right there in the note entry chat."* What survives is
+> on 2026-09-14.** The note screen changes: its tabs are **Note · Files** and the Analysis
+> tab folded into `Note`. The conversation, though, does live elsewhere after all — not on
+> the conversations surface this round assumed, but on **Entry**, whose default view is the
+> notes list and whose main view becomes the selected note's thread
+> (`docs/mocks/agent-ingest/README.md`, *Where it ended up*). In his own words: *"I want you
+> to keep the one omnibox just like jerv. The difference is the default view of entry would
+> be notes. And when you select a note, it basically loads a conversation the same as if I
+> had swiped left inside of jerv and picked a different conversation."* What survives is
 > **why this round was scrapped anyway**: it asked the note screen to grow a *bespoke*
 > ingest rendering — a Record tab, an as-captured toggle, prose-woven clarifications — and
-> the answer built instead is the ORDINARY agent transcript, mounted on the note screen.
-> The question below is still the wrong question; the answer it assumed (the conversation
-> lives elsewhere) is the part that is now false.
+> the answer built instead is the ORDINARY agent transcript. The question below is still the
+> wrong question.
 
 **The question was wrong.** These three variants redesign the **note screen** with a
 bespoke ingest treatment. A note conversation is an ordinary agent conversation — the same
@@ -26,10 +27,10 @@ appended clarification blocks were always a *storage* decision — they keep the
 and re-derivable from notes alone — and the existing note view already renders appended text
 as text.
 
-*(Since 2026-09-14 that conversation is hosted BY the note screen, on a `Thread` tab, and
-the Analysis tab's content folded into `Note`. Neither is a bespoke ingest rendering: the
-Thread tab mounts the shipped `AgentTranscript`, and `Note` gained the existing Analysis
-component unchanged.)*
+*(Since 2026-09-14 that conversation is hosted by **Entry** — tap a note in the list and it
+loads in the main view — and the Analysis tab's content folded into the note screen's `Note`
+tab. Neither is a bespoke ingest rendering: Entry mounts the shipped `AgentTranscript`, and
+`Note` gained the existing Analysis component unchanged.)*
 
 **Two findings from this round carry forward into the tool-component round**, and are the
 reason these files are kept rather than deleted:

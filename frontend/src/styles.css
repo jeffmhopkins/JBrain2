@@ -5187,72 +5187,15 @@ button.small {
   margin: 0;
 }
 
-/* The note screen's chrome — the domain/date head and the Thread · Note · Files tab row
-   — lifted OUT of the scrolling body. The Thread tab is a chat surface: its transcript
-   scrolls inside its own box under a pinned composer, so there is no single scrolling
-   column left for the chrome to ride, and the way back to the note's own text must not be
-   something you scroll a conversation to find. */
+/* The note screen's chrome — the domain/date head and the Note · Files tab row — lifted
+   OUT of the scrolling body, so the way between the note's text and its files is never
+   something you have to scroll a long analysis to find. */
 .note-view-chrome {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 8px 16px 12px;
-}
-
-/* The Thread tab: the shipped agent transcript (.fb-shell scopes every rule it draws
-   with) filling the screen under the chrome, with its composer pinned to the bottom
-   edge. `hidden` must be spelled out — .fb-shell sets `display: flex`, which outranks
-   the UA stylesheet's [hidden] rule. */
-.note-thread[hidden] {
-  display: none;
-}
-
-.note-thread .dock {
-  background: transparent;
-}
-
-/* The omnibox's body gutter assumes the segment row above it supplies the top edge;
-   this composer has no mode row (it would offer to navigate away from the note being
-   read), so it carries its own. */
-.note-thread-composer {
-  padding-top: 12px;
-}
-
-/* The composer's accent. `--mode` is normally set by the omnibox's active segment; with
-   no segment row it has to be stated, and steel is the Brain register a note
-   conversation belongs to. */
-.note-thread .omnibox {
-  --mode: var(--steel);
-  --mode-tint: var(--steel-tint);
-}
-
-/* The foot's microcopy: where a reply goes — the one thing the shipped hand-off got
-   wrong. `.composer-foot` pushes its children right, so this claims the free space. */
-.note-thread-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-right: auto;
-  min-width: 0;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-}
-
-.note-thread-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: var(--r-pill);
-  background: var(--steel);
-}
-
-/* The Thread tab's open-question count. Amber — the open-ask register the stream chip
-   and the inbox already use — against the neutral Files count beside it, so the two
-   numbers on one row do not read as the same kind of thing. */
-.tab-count-ask {
-  background: var(--amber-tint);
-  color: var(--amber);
 }
 
 /* "What this note says": the former Analysis tab, folded under the note's own text.
@@ -9042,6 +8985,23 @@ button.small {
   text-align: center;
   line-height: 1.5;
 }
+/* The one thing there is to DO with a note the box has not read yet: open the note. A
+   real control inside the empty state, so that state is not only something to read.
+   `--text-2` and its own border, deliberately — it must not inherit the surrounding
+   `--text-3`, which sits under the 4.5:1 floor (issue #25), and 44px because it is a tap
+   target with the whole column to itself. */
+.fb-shell .fb-empty-action {
+  display: block;
+  margin: 14px auto 0;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+
 /* transcript */
 .fb-shell .fb-chat {
   flex: 1;
@@ -25121,6 +25081,22 @@ button.task-band:active {
    for one fact, one of them animated, in a row whose whole job is to be glanceable. */
 .sdr-btn {
   color: var(--steel);
+}
+
+/* The note button in the top bar's right cluster: the door from a note's conversation to
+   the note itself. Quiet (`--text-2`, the readout register beside it) — the conversation
+   is where the owner is, and this is the reference, not the destination. */
+.note-btn {
+  color: var(--text-2);
+  /* DESIGN.md's 44px floor, spelled out because `.icon-btn` does not meet it: 8px padding
+     + a 22px glyph is 38, and the rule is explicit that a compact row may shrink to 36px
+     of HEIGHT but never the tap area. The whole bar shares that shortfall (task #36); this
+     is a NEW control and the ONLY door from an open conversation to the note's record —
+     the analysis table and both no-terminal re-run levers sit behind it — so it does not
+     inherit the debt. `.icon-btn`'s -8px margin still pulls the visual box back, so the
+     glyph sits where the cluster expects it and only the hit area grows. */
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .sdr-note {

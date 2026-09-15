@@ -733,55 +733,39 @@ never waits: vision runs after sync.
 
 **Note view** (settled in the Phase 2 review; Attachments tab settled in a
 later three-way review — **manifest** won over gallery and inline-viewer
-designs; the tab row reworked **2026-09-14** when the owner ruled that a
-note screen IS its conversation): entry-stream bubbles clamp at **3
-lines**; tapping opens the **note view layer** (slide-up tree level) with
-a **Thread / Note / Files tab split**, **opening on Thread**.
+designs; the tab row reworked **2026-09-14**): entry-stream bubbles clamp
+at **3 lines**; tapping a row **loads that note's conversation into
+Entry's main view** (see *Entry is a conversation surface* below), and the
+note view layer is the note's **record**, reached from that conversation —
+a **Note / Files tab split**, **opening on Note**.
 
-**The tab row and the default are binding** (`docs/mocks/agent-ingest/a-note-thread.html`,
-variant A). Before this the screen opened on `Analysis` — a facts table
-with no transcript — and a note's conversation was reached from home's
-conversation surface through an *Add a thought* button. The owner, having
-used it: *"When I click on the note, it should basically open up as a
-normal agent conversation same as jerv… When I go to do a follow-up, it
-shouldn't open in the brain chat. It should open up right there in the
-note entry chat."* The head + tab row are **pinned above the tab body**,
-because Thread gives the transcript its own scroll box under a pinned
-composer and the way back to the note's text must not be something you
-scroll a conversation to find. **Swipe-down-to-close is off on Thread**
-for the same reason — a downward drag there is reading back through the
-conversation; the back arrow is the way out.
+⟲ **THE NOTE SCREEN IS NOT THE CONVERSATION'S HOST.** For one release it
+was: tabs `Thread · Note · Files`, Thread by default, with a composer of
+its own on the tab. The owner rejected that build on **2026-09-14**, with
+a screenshot — *"This is still not presenting right? You should use the
+same omnibox as everything else, but the conversation of the main view
+should change to the note and then have the ability to go back to the note
+list by hitting back on the top left"* — and then settled the whole shape
+in one sentence:
 
-- *Thread tab* (default): **the note's own agent conversation**, rendered
-  with the **shipped transcript** — the same `AgentTranscript` the home
-  conversation surface mounts (`frontend/src/agent/FullBrainSurface.tsx`),
-  so turn 0 is the frozen note, and the violet Thought chip, the steel
-  Worked chip, the live phase line, the step rows and the inert question
-  block are one definition with two hosts. **Never a bespoke ingest
-  view.** Its **composer is inline on the tab** and is the thread's one
-  submit (the §3b contract below, carry strip included); a follow-up is a
-  turn in *this* thread and never navigates to home. The composer has no
-  mode row — on a note screen that would offer to navigate away from the
-  note being read — so it states its own accent (steel, the Brain
-  register) and carries the mock's microcopy, *"replying into this note's
-  thread"*. A note whose first pass has not run says so in the empty
-  state rather than offering a conversation that isn't there. The session
-  is opened by id over `GET /notes/{id}/thread`; it is still one
-  `AgentSession` and still listed on the Full Brain **Chats** panel, so a
-  settled thread stays resumable from the conversations surface too (D1).
-  The tab label carries an **amber count pill** when the thread is parked on
-  questions (the mock's own affordance) — the amber open-ask register the
-  stream chip and the inbox use, against the neutral Files count beside it,
-  and the only thing that says *it is asking you something* while the owner
-  is reading the other two tabs. The **Proposals panel** mounts here too:
-  `prefs_write` is on the note persona's on-reply allowlist and `owner-prefs`
-  is not an inline kind, so a note turn can draw the navigational *Review
-  proposal* chip, whose only destination is that panel. It pins to this
-  screen's own shell and registers a back layer while open, so Back closes
-  the panel, not the note beneath it. The **Sessions** panel does not: the
-  screen is one note's one thread, and a session picker on it would be a way
-  to navigate to some other note's conversation from inside this one.
-- *Note tab*: the markdown body, the clarification eraser, **and the
+> *"I want you to keep the one omnibox just like jerv. The difference is
+> the default view of entry would be notes. And when you select a note, it
+> basically loads a conversation the same as if I had swiped left inside of
+> jerv and picked a different conversation."*
+
+So the conversation lives where every other conversation lives: the home
+surface, under the one omnibox. This screen keeps everything a transcript
+cannot hold — the body, the eraser, the record with its re-run controls,
+the files — and is **one tap from the conversation**, on the top bar's
+note button. Its ⋯ carries **open the conversation**, the way back for a
+note reached from Search, an entity mention or a cited source card.
+
+The head + tab row stay **pinned above the tab body**, so the way between
+the note's text and its files is never something you scroll a long record
+to find. Swipe-down-to-close works on both tabs again (there is no
+transcript here to scroll back through).
+
+- *Note tab* (default): the markdown body, the clarification eraser, **and the
   record** — everything the Analysis tab used to show, folded in whole
   under a **`What this note says`** rule. Thread took Analysis's slot;
   its content was not dropped, because the transcript records *decisions*
@@ -795,12 +779,12 @@ conversation; the back arrow is the way out.
   (amber-tint), **move domain**, and **delete** (rose, tap-again confirm
   "tap again — deletes this note"); the ⋯ hides for not-yet-synced
   outbox notes. ⟲ **The "Add a thought" row is gone** (2026-09-14): it
-  existed only because the conversation lived on another surface, and the
-  Thread tab is that door now — one tap, and what he types there is
-  appended to the note as his own words and read again with it, exactly
-  as before. O16's gap (the stream's ask chip appears only while a thread
-  is WAITING, so the moment he most wants to speak had no door) is closed
-  by the tab, not by a button.
+  existed only because the conversation lived on another surface, and
+  tapping the note in Entry's list is that door now — what he types into
+  the thread is appended to the note as his own words and read again with
+  it, exactly as before. O16's gap (the stream's ask chip appears only
+  while a thread is WAITING, so the moment he most wants to speak had no
+  door) is closed by the row's own tap, not by a button.
   Above the record and **only when the note has any**, a
   collapsed **"What you've added"** disclosure with a count pill: the note's
   D6 clarification blocks, each with a rose tap-again **erase**. Both block
@@ -816,7 +800,7 @@ conversation; the back arrow is the way out.
   entirely on a note that was never asked about and never added to, which is
   nearly every note — so the note screen is unchanged for it, as D6 requires.
 - *Files tab* (named `Attachments` until 2026-09-14; the mock's word is
-  Files and the tab row has to fit three) — the **canonical attachment
+  Files) — the **canonical attachment
   manager** (the editor keeps its quick paperclip for capture-time adds).
   The tab label carries a count pill. Layout is a **manifest**: a one-line summary
   (`N files · total size · how many searchable / indexing / awaiting ocr`),
@@ -898,7 +882,8 @@ former "note sheet", upgraded.
 **The record + entity pages** (settled in the Phase 3 three-way review as
 the *Analysis tab* — **graph-forward** won over a dense dossier and soft
 cards; it is the Note tab's `What this note says` section since
-2026-09-14 and its rendering did not change): it renders facts as
+2026-09-14, and again when the conversation left it that evening; its
+rendering did not change either time): it renders facts as
 **literal property-graph edges grouped by subject node** (`me.blood_pressure → 128/82 mmHg`,
 `appt:patel-follow-up.scheduled_time → Sep 2026 ±`), predicate paths in
 monospace; subject headers double as entity navigation. Tapping a fact
@@ -990,9 +975,9 @@ becomes a second surface where it happens.
   first** so the list drains from the top. A row carries the note it came from, what is
   being asked, how long it has waited, how much the agent already committed, and a kind
   chip (`question` / `approval`). Tapping it **opens the conversation**, which since
-  2026-09-14 means **opening the note** — a note screen opens on its own thread, and the
-  note layer stacks above this card so back climbs to the inbox. A row about **no** note
-  (a staged `owner_prefs` approval) still opens its session on the conversation surface,
+  2026-09-14 means **loading that note's thread into Entry's main view** — the card and
+  launcher drop to reveal it, and back returns to the notes list. A row about **no** note
+  (a staged `owner_prefs` approval) still opens its session on the Full Brain surface,
   because there is no note to open. There are no
   answer controls, and the wire agrees — `GET /api/review/notes` returns no item id and
   there is no endpoint an inbox row could answer through. Answer chips on the row were
@@ -1262,6 +1247,44 @@ local append with an amber "pending sync" chip until the outbox clears.
   big), segments 15px/500, footer 14px, destination row 15px.
 - Research / Full Brain sends hand off to the (Phase 4) conversation
   surface; in Phase 1 they explain themselves via toast.
+- **Entry is a conversation surface too, once a note is open** (settled by
+  the owner, **2026-09-14**, after he rejected two builds that put the
+  conversation on the note screen instead: *"I want you to keep the one
+  omnibox just like jerv. The difference is the default view of entry
+  would be notes. And when you select a note, it basically loads a
+  conversation the same as if I had swiped left inside of jerv and picked
+  a different conversation."*). So:
+  - **The notes list is Entry's session picker** — the structural twin of
+    Full Brain's Sessions panel, and what Entry shows by default. With no
+    note selected the box still CAPTURES: Entry is where a new note is
+    written, and nothing about that changed.
+  - **Tapping a note loads its conversation into the main view**, rendered
+    with the shipped `AgentTranscript` — turn 0 the frozen note, the
+    violet Thought chip, the steel Worked chip, the live phase line, the
+    step rows, the question block. Never a bespoke ingest view.
+  - **The omnibox is the same omnibox**, mode row and all: the send is a
+    turn in the open note's thread (carry strip included), the placeholder
+    reads *"Reply about this note…"*, and Stop, the context meter and the
+    per-turn read-aloud control behave exactly as they do in the other two
+    conversation modes. **There is no second composer anywhere in the app.**
+  - **Back, top left, returns to the notes list** — the top bar carries
+    the thread's name behind a back chevron instead of the session title
+    that opens a picker, because Entry's picker is the list behind that
+    arrow. A tap on any mode-row segment also returns to the list: Entry's
+    default view is the notes list every time it is entered.
+  - **The note itself is one tap from its conversation** — a note button in
+    the top bar's right cluster (beside the vitals readout, like the radio
+    icon, and present only while a note conversation is open) opens the note
+    view layer with the body, the record and the files.
+  - **No Sessions panel and no lateral swipe on Entry.** Two pickers for one
+    surface would be two answers to *which conversation am I in*, and the
+    lateral gesture is Full-Brain-side (below). The **Proposals** panel does
+    mount, because a note turn can draw the navigational *Review proposal*
+    chip and that chip has exactly one destination.
+  - A note the box has not read yet has **no conversation to open**: the
+    column says so and offers *open the note*, the composer says *"No thread
+    yet — open the note above"*, and a send is refused out loud (a toast)
+    with the typed words handed back, never swallowed.
 - **Conversation-surface foot** (added post-Phase-1): a live context-window
   meter fills the foot's left, with the action icons hard right. When the open
   conversation has a **per-conversation model pick** (below), a small mode-tinted
@@ -1569,11 +1592,16 @@ There is no bespoke ingest view and no second idiom for the same information.
   **amber**, the open-ask register, never rose: rose is the MEDICAL domain and the row
   already wears its domain as a dot. A settled note wears no chip at all; "analyzed" is the
   quiet end state, and only the waiting state earns one.
-- **The chip and the row open the same screen.** ⟲ This used to read *"the chip is the
-  door; the row is not"* — the row opened the note screen and the chip opened the thread on
-  the conversation surface. The owner reversed that on **2026-09-14**: *"it shouldn't open
-  in the brain chat. It should open up right there in the note entry chat."* The note screen
-  **does** change and **does** gain a tab; it opens on `Thread`, so a note has one
+- **The chip and the row open the same thing: the note's conversation, in Entry's main
+  view.** ⟲ Twice corrected on **2026-09-14**. It used to read *"the chip is the door; the
+  row is not"* — the row opened the note screen, the chip opened the thread on the Brain
+  surface. The owner struck that (*"it shouldn't open in the brain chat. It should open up
+  right there in the note entry chat"*), it was rebuilt as a `Thread` tab ON the note
+  screen, and he struck that too, in the sentence that settles it: *"I want you to keep the
+  one omnibox just like jerv. The difference is the default view of entry would be notes.
+  And when you select a note, it basically loads a conversation the same as if I had swiped
+  left inside of jerv and picked a different conversation."* So the row and the chip both
+  **select the note**, and the conversation loads where the list was. A note has one
   destination and the chip is no longer a second door — it is the label that says why to
   walk through this one. The chip stays a full **44px box** rather than reverting to a
   small drawing: it shares a **wrapping** row with the attachment links, and an out-of-flow
@@ -1597,10 +1625,11 @@ There is no bespoke ingest view and no second idiom for the same information.
   deliberate exception to the inline-component rule below, where `InlineProposal` posts its
   own outcome: there the enact IS the event, here three answers that each posted would cost
   three turns and three re-reads of the note.
-- **The composer's send is the one submit**, inside a thread as everywhere else. (On the
-  Thread tab that composer is the tab's own, not the omnibox; the contract and the strip are
-  identical, and the closing sentence about the mode row applies only to the omnibox — the
-  note screen has tabs, not modes, and its way back is the back arrow.) A carry strip
+- **The composer's send is the one submit**, inside a thread as everywhere else — and that
+  composer is **the omnibox**, the same one every other mode uses. ⟲ For one release it was
+  a composer of its own on a note-screen tab; the owner deleted that (*"You should use the
+  same omnibox as everything else"*, 2026-09-14), so there is one composer in the app. A
+  carry strip
   above the input reads `2 of 3 answered — rides with your next send`, and at zero
   `0 of 3 answered — answer above, or just reply` (the 0-state names both affordances,
   because at that point neither has been used) — the same shape as the calendar handoff's
@@ -1608,8 +1637,8 @@ There is no bespoke ingest view and no second idiom for the same information.
   paired to its question, beside whatever free text is in the box; the turn's own text
   carries **both halves**, the `Q:`/`A:` pairs and then the typed words, so the transcript
   is a complete record of what the owner did. The destination row gives way inside a
-  conversation mode; **the mode row does not**, since it is the app's primary navigation and
-  the only way back to capture.
+  conversation mode; **the mode row does not**, since it is the app's primary navigation,
+  the only way back to capture, and — on Entry — a way back to the notes list.
 - **Typed words beside a tap are NOT filed as an answer.** Free text sent alone answers the
   oldest open question — with nothing else in the send there is only one thing it could be
   answering. Beside any tapped answer it is an aside: it rides the turn for the agent to
@@ -1665,10 +1694,14 @@ There is no bespoke ingest view and no second idiom for the same information.
   the owner's words still on screen.
 - **The chip is not permanent, and the thread does not expire.** The stream shows the last
   two days, so a note parked longer than that scrolls off it and loses its chip — the ask
-  itself is untouched (`ask_owner` promises no nagging and no deadline), and both the review
-  inbox's notes tab and the Chats panel still list the waiting thread. The stream is the
-  recent view, not the backlog; a door that never closes belongs to the two surfaces that
-  are a list of open things.
+  itself is untouched (`ask_owner` promises no nagging and no deadline), and the review
+  inbox's notes tab still lists every waiting thread. The stream is the recent view, not the
+  backlog; a door that never closes belongs to the surface that is a list of open things.
+  ⟲ The **Chats panel** is no longer the other one: a note conversation is an ENTRY
+  conversation since 2026-09-14 (`useFullBrain.MODE_AGENTS`), so Full Brain's picker no
+  longer lists it — that would be the same chat behind two pickers, on the tab the owner
+  said it should not open in. An older note's thread is reached through the note: Search →
+  the note → **⋯ open the conversation**.
 
 ## Agent tool views (registered components, never bespoke markup)
 

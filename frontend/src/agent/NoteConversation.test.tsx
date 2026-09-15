@@ -1,11 +1,12 @@
 // The note's own thread, end to end (AGENT_INGEST_REWRITE §3b, mock
 // docs/mocks/agent-ingest-thread/note-thread.html): turn 0 with its fence off, the
-// question block, and the ONE send that carries every answer as one turn.
+// question block, and the ONE send that carries every answer as one turn — in the host
+// that draws it, which since 2026-09-14 is Entry's main view (`NoteConversation`).
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { FullBrainSurface } from "./FullBrainSurface";
+import { NoteConversation } from "./NoteConversation";
 import { answeredCount } from "./asked";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
@@ -115,19 +116,21 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
   };
 }
 
-/** The home screen's two halves: the transcript, and the omnibox that is its one submit
- * — including the carry strip the composer derives from the hook. */
+/** The two halves of Entry with a note open: the note's conversation in the main view,
+ * and the omnibox that is its one submit — including the carry strip the composer derives
+ * from the hook. (The omnibox itself is stood in for here; `HomeScreen.note.test.tsx`
+ * proves the real one is what the screen mounts.) */
 function Thread({ d }: { d: FullBrainDeps }) {
-  const fb = useFullBrain("fullbrain", d);
+  const fb = useFullBrain("entry", d);
   const [text, setText] = useState("");
-  // A note thread is never auto-opened — `note_ingest` is off the new-chat picker — so
-  // it is reached by id, the way the stream chip and the notes-tab row both reach it.
+  // A note thread is never auto-opened — Entry opens exactly what it is asked for — so it
+  // is reached by id, the way a tapped note row and the notes-tab row both reach it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the handoff fires once
   useEffect(() => fb.requestOpen("s1"), []);
   const answered = answeredCount(fb.openQuestions, fb.answers);
   return (
     <>
-      <FullBrainSurface fb={fb} />
+      <NoteConversation fb={fb} noThread={false} />
       {/* A TEXTAREA, as the real composer is (`Omnibox.tsx`): an `<input>` drops the
           newlines out of whatever is typed into it, so the quoted-question reply this
           channel's sanitiser exists for could not be typed into the harness at all. */}

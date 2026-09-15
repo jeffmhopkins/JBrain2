@@ -6,22 +6,27 @@
 > the record.
 >
 > ⟲ **Its premise is half false since 2026-09-14.** This round was scrapped on the ruling
-> that *"the note screen does not change"*; the owner reversed that, and the note screen is
-> now **Thread · Note · Files**, opening on the conversation
-> (`docs/mocks/agent-ingest/README.md`). What was right, and is what shipped, is that the
-> note screen gets **no bespoke ingest rendering**: the Thread tab mounts the same
-> `AgentTranscript` a jerv chat does, and the Analysis tab's content moved into `Note`
-> unchanged rather than being redesigned into a Record tab. Everything below still stands
-> as a redesign that was not built.
+> that *"the note screen does not change"*; the owner reversed that. The note screen DOES
+> change — it is **Note · Files** now, the Analysis tab folded into `Note` — but it is not
+> the conversation's host either: that is **Entry**, whose default view is the notes list
+> and whose main view becomes the selected note's thread
+> (`docs/mocks/agent-ingest/README.md`, *Where it ended up*). What was right, and is what
+> shipped, is that the note screen gets **no bespoke ingest rendering**: the conversation
+> mounts the same `AgentTranscript` a jerv chat does, and the Analysis tab's content moved
+> into `Note` unchanged rather than being redesigned into a Record tab. Everything below
+> still stands as a redesign that was not built.
 > **Last verified:** 2026-09-14.
 
 ## What was "already settled" here — and is not any more
 
 > ⟲ Everything in this section was reversed on **2026-09-14**. It is kept verbatim because
 > it is the clearest statement of the belief that produced the shipped miss: a note screen
-> with a button that handed the owner off to another surface. The note screen now IS the
-> thread, and a variant that *"gave it a `Thread` tab"* — dismissed two paragraphs down as
-> re-litigating a ratified decision — is what was built.
+> with a button that handed the owner off to another surface. What replaced it is not the
+> `Thread` tab this section dismisses two paragraphs down — that was built and rejected the
+> same day — but **Entry**: its default view is the notes list, and selecting a note loads
+> that note's conversation into the main view under the one omnibox. This section's
+> sentence *"one conversation type means one place to find it"* survives intact; what it got
+> wrong is which place.
 
 **The conversation does not live on the note screen.** The authority is
 `docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md` **D1** — *"one agent, one conversation

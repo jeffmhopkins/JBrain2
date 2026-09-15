@@ -7,16 +7,16 @@
 > The spec written out of it is that plan's **§3b**, and the build is its **R3f** wave
 > (backed by **R1c**, the batched ask).
 >
-> **Where that interaction now happens changed on 2026-09-14** and nothing in this spec did.
-> The owner reversed the companion gate: a note conversation is reached by **tapping the
-> note**, on the note screen's `Thread` tab (`docs/mocks/agent-ingest/README.md`, variant
-> A), not from home's conversation surface. Items 1–5 below are unaffected, and item 2 is
-> the point of the reversal rather than a casualty of it — the transcript is the normal
-> agent paradigm because the note screen mounts the SHIPPED transcript component. Two
-> consequences for the prose below: the composer that is "the one submit" is **the Thread
-> tab's inline composer**, not the omnibox, and the paragraph about the omnibox's MODE ROW
-> is void on this surface — the note screen has tabs, not modes, and its way back to
-> capture is the back arrow.
+> **Where that interaction now happens changed on 2026-09-14** — twice — and nothing in this
+> spec did. A note conversation is reached by **tapping the note**, and since the evening's
+> second correction it loads into **Entry's main view**: the notes list is Entry's session
+> picker, and the composer is the app's ONE omnibox
+> (`docs/mocks/agent-ingest/README.md`, *Where it ended up*). Items 1–5 below are unaffected,
+> and item 2 is the point of the reversals rather than a casualty of them — the transcript is
+> the normal agent paradigm because Entry mounts the SHIPPED transcript component. **The
+> prose below stands as written, omnibox and all**: the composer that is "the one submit" is
+> the omnibox again, mode row included, and the mode row's paragraph is live — on Entry it is
+> also the way back to the notes list.
 > **Last verified:** 2026-09-14.
 
 ## What it settles
@@ -29,9 +29,9 @@
 3. **The question block is inert.** Selecting a candidate or typing an answer is local
    state; it cannot start a turn.
 4. **The composer's send is the only submit.** One send is one user turn carrying every
-   answer plus any typed text. Three answers cost one turn, not three. (Read "omnibox"
-   below as "the Thread tab's composer" since 2026-09-14; the contract is identical and the
-   carry strip is the same strip.)
+   answer plus any typed text. Three answers cost one turn, not three. ("Omnibox" means the
+   omnibox: it was the Thread tab's own composer for one evening on 2026-09-14, and the
+   owner deleted that — *"You should use the same omnibox as everything else."*)
 5. It is the artefact that decided **O9** (batched asks) and opened **O11** (partial send)
    and **O12** (draft state).
 

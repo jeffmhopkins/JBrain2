@@ -1,13 +1,10 @@
 // Shared conversation-controller stubs for tests that mount a surface which OWNS a
-// `useFullBrain` but is not about it — chiefly `NoteScreen`, whose Thread tab is the
-// default and stays mounted behind the other two. Without these the note-screen suites
-// would put `/agent/sessions`, `/agent/proposals` and the capability probe on every fetch
-// stub in the file, for a conversation none of those tests exercises.
+// `useFullBrain` but is not about all of it — chiefly the Entry note conversation, whose
+// suite cares about one thread and not about sessions, proposals or the capability probe.
 
 import { vi } from "vitest";
 import type { ChatEvent, ChatRequest, TranscriptTurn } from "../agent/types";
 import type { FullBrainDeps } from "../agent/useFullBrain";
-import type { NoteThreadOut } from "../api/client";
 
 /** A controller whose every dependency answers empty. Override what a test is about. */
 export function stubFullBrainDeps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
@@ -40,12 +37,4 @@ export function stubFullBrainDeps(over: Partial<FullBrainDeps> = {}): FullBrainD
     })),
     ...over,
   };
-}
-
-/** The NoteScreen props that make its Thread tab inert: no conversation, no network. */
-export function inertThread(): {
-  fbDeps: FullBrainDeps;
-  lookupThread: (noteId: string) => Promise<NoteThreadOut | null>;
-} {
-  return { fbDeps: stubFullBrainDeps(), lookupThread: vi.fn(async () => null) };
 }

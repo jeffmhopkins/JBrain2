@@ -850,9 +850,9 @@ empty. What the join costs is one request beside the stream's own poll (20 s, fo
 only, and only while the stream is on screen); what it buys is that the chip and the notes
 tab cannot disagree about what is waiting. The chip is also a `<button>`, because I2 (ii)
 made it the way in — and the lifecycle chip yields to it, since a pass that has asked has
-stopped and "analyzing…" is no longer what is happening. (Since the 2026-09-14 reversal it
-opens the NOTE SCREEN rather than the thread on another surface; it stays a button, for the
-44px reason `test_tap_targets.py` gates.)
+stopped and "analyzing…" is no longer what is happening. (Since the 2026-09-14 reversals it
+SELECTS THE NOTE, loading its conversation into Entry's main view — the same thing the row's
+own tap does; it stays a button, for the 44px reason `test_tap_targets.py` gates.)
 
 **Where the mock overrules the code, and where it does not:**
 
@@ -946,6 +946,41 @@ the record (the former Analysis tab, folded WHOLE into `Note` under *What this n
 re-run button and all), the attachments (`Files`), the edit path and the ⋯ menu, and the
 clarification eraser. **What (ii)'s reasoning got right survives**: the note is the front
 door. It is simply the front door to the conversation as well.
+
+⟲⟲ **AND THE THIRD SHAPE IS NOT IT EITHER — the owner corrected it again the same day,
+2026-09-14, and this is the settled answer.** He used the `Thread · Note · Files` build and
+sent a screenshot:
+
+> *"This is still not presenting right? **You should use the same omnibox as everything
+> else**, but **the conversation of the main view should change to the note** and then have
+> **the ability to go back to the note list by hitting back on the top left**."*
+
+Asked where the attachments and the facts should live if the note screen is not the host, he
+did not pick from the options — he reframed the whole thing, and this sentence is the spec:
+
+> *"**I want you to keep the one omnibox just like jerv. The difference is the default view
+> of entry would be notes. And when you select a note, it basically loads a conversation the
+> same as if I had swiped left inside of jerv and picked a different conversation.**"*
+
+**Decided: ENTRY IS THE HOST.** Entry becomes a conversation surface exactly as Research and
+Full Brain are. The notes list is its **session picker** — the structural twin of the
+Sessions panel — and is what Entry shows by default; selecting a note loads that note's
+conversation into the main view (`agent/NoteConversation.tsx`, mounting the same
+`AgentTranscript`); the composer is **the omnibox**, unchanged, mode row intact; back, top
+left, returns to the list. The note screen survives as the note's RECORD (`Note · Files`),
+reached from the conversation by the top bar's note button, with **open the conversation**
+in its ⋯ for a note reached from Search. The bespoke Thread-tab composer is deleted.
+
+What was wrong with the third shape, in his words, is that it grew a second composer and
+buried the conversation one level down a tree. What survives from it whole: the transcript
+is the shipped one, `AgentTranscript` has one definition, and the five no-terminal things
+are all still reachable — now one tap from the conversation instead of one tab.
+
+`note_ingest` moves off Full Brain's `MODE_AGENTS` group onto a third `ConvMode`, `entry`,
+which is **targeted-only**: it opens the one conversation it is asked for and never lands on
+the newest note thread, starts one, or falls back to the Chats picker. The cost — the one
+(ii) named in reverse — is that the Chats panel no longer lists note threads; an old thread
+is reached through its note, which is the front door this whole argument kept returning to.
 
 ### I3 — Turn 0: the note, frozen
 
@@ -1516,7 +1551,7 @@ that assert the open rows read as open.
 | Live-phase labels for the ingest verbs | **Shipped** — the three verbs rode R1; R3f added its gate over §3's tool sets and the five labels that gate demanded (I4) |
 | Turn-0 renderer that strips the fence | **Shipped** — R3f, `agent/noteFrame.ts` (I3) |
 | Stream chip's waiting state + the conversation state reaching the notes list | **Shipped** — R3f, joined client-side off `/api/review/notes` rather than widening `NoteOut` (I1) |
-| Where a stream tap lands, and how the note screen stays reachable | **Decided (ii)**, shipped, then ⟲ **REVERSED by the owner 2026-09-14** — the note screen opens ON the thread (`Thread · Note · Files`), and the chip opens the note screen too (I2) |
+| Where a stream tap lands, and how the note screen stays reachable | **Decided (ii)**, shipped, then ⟲ **REVERSED TWICE by the owner on 2026-09-14** — the row and the chip both select the note, and **Entry's main view becomes that note's conversation**, under the one omnibox; the note screen is its record, one tap away (I2) |
 | The question block — render, candidates, local answer state, answered/frozen state | **Shipped** — R3f, `agent/QuestionBlock.tsx` + `agent/asked.ts`; its inertness is pinned by a test that taps and asserts no request (I6/I9) |
 | The carry strip + the structured-answer send | **Shipped** — R3f fills R1c's `ChatRequest.answers` (I7) |
 | Batched `ask_owner` and the multi-pair clarification append | **Shipped** — R1c. No per-question claim was needed: O11 (ii) makes the unanswered question a sentence, not state (I8) |
@@ -2679,9 +2714,10 @@ the owner rather than CI, and the first one he sees at all.
 
 *What landed, against §3b's closing table.* **I2 was decided (ii)** and recorded as such
 in its own entry: the row's tap keeps the NOTE SCREEN and the chip is the tap target that
-opens the thread. ⟲ **The owner reversed that on 2026-09-14** — the note screen gained a
-`Thread` tab and opens on it, so both taps land on the note. I2's entry carries the
-reversal in full. **I3** — `agent/noteFrame.ts` strips the matched nonce pair for display
+opens the thread. ⟲ **The owner reversed that twice on 2026-09-14** — first onto a `Thread`
+tab on the note screen, then off it again and onto **Entry**, whose main view becomes the
+selected note's conversation under the one omnibox. Both taps land on the note either way.
+I2's entry carries both reversals in full. **I3** — `agent/noteFrame.ts` strips the matched nonce pair for display
 only and `FullBrainSurface` renders turn 0 as a ruled, labelled, frozen block in the
 NOTE'S domain colour (read off the thread session's own read scopes), never by unfencing
 the message. **I6** — `agent/QuestionBlock.tsx` plus `agent/asked.ts`, which parses the
@@ -2893,9 +2929,9 @@ incomplete-ledger sweep the gate exists to prevent. `narrow_for_unprompted_reply
 renamed `narrow_for_unlanded_reply` and keeps its job over the residue. Persona v10.
 In the PWA: originally **Add a thought** on the Note tab over `GET /notes/{id}/thread`,
 because the ask chip only ever appeared while a thread was waiting; ⟲ **that button was
-deleted on 2026-09-14 and the route it used is now what the note screen's `Thread` tab
-opens the session by** — the owner reversed where a note conversation is reached (§3b I2's
-⟲ below). The eraser (now "What you've added") renders both shapes. It sits after R6 in this list and before it in no sense — it
+deleted on 2026-09-14 and the route it used is now how a tapped note finds its session** —
+the owner reversed where a note conversation is reached, twice, ending on Entry's main view
+(§3b I2's ⟲⟲ below). The eraser (now "What you've added") renders both shapes. It sits after R6 in this list and before it in no sense — it
 is the answer to a question the owner asked while reading R5's output, not a step R5
 depended on.
 
@@ -3394,9 +3430,11 @@ unprompted text into the CORRECTION path.*
    eraser lists both shapes. ⟲ **The door it opened was wrong and the owner said so on
    2026-09-14**: *"It just has me to add on the conversation with another button… When I
    click on the note, it should basically open up as a normal agent conversation same as
-   jerv."* The button is deleted; the note screen's **Thread** tab is the door, opening the
-   same route's session in place. O16's requirement is unchanged and better met — a plain
-   thought is now just the next turn in the conversation you are already looking at.
+   jerv."* The button is deleted; **tapping the note in Entry's list** is the door, and the
+   same route is how that tap finds the session. (A second correction that evening moved
+   the host off the note screen and onto Entry itself — §3b I2's ⟲⟲.) O16's requirement is
+   unchanged and better met — a plain thought is now just the next turn in the conversation
+   you are already looking at.
 4. **Constraint 5 is untouched.** `supersession.decide()` gains no model-facing verb and
    the model may retire nothing it could not retire before. What the addition changes is
    the SOURCE TEXT behind a write the reply turn could always make: `correct_fact` at an
@@ -3575,12 +3613,15 @@ In the PR whose wave makes each false, per `DOC_LIFECYCLE.md` transition 5.
   other settled surface in that doc cites one. The inbox/notes-list half is still R4's.
 - **`docs/mocks/agent-ingest/README.md`** — its settled gate said the thread is reached
   from the conversations surface and the note screen does not change. ⟲ **The owner
-  reversed that half on 2026-09-14** (see I2's ⟲): the gate now records **variant A** as
-  built — the note screen's tab row is `Thread · Note · Files` and it opens on the
-  conversation. D1's substance is untouched: one `AgentSession`, the same agent, loop and
-  memory as chat, still listed on the Chats panel and therefore still resumable from the
-  conversations surface. The scrapped follow-on round's `SUPERSEDED.md` and README carry
-  the same reversal, since their scrapping premise was *"the note screen does not change"*.
+  reversed that half on 2026-09-14, twice** (see I2's ⟲ and ⟲⟲). The gate's first reversal
+  recorded **variant A** — the note screen's own `Thread · Note · Files` — and he rejected
+  that build the same day for the shape that stands: **Entry's main view is the selected
+  note's conversation**, under the one omnibox, with the note screen as its record. D1's
+  substance is untouched: one `AgentSession`, the same agent, loop and memory as chat. What
+  did change is which tab lists it — `note_ingest` is an **Entry** conversation now, not a
+  Full Brain one, because Entry's notes list is its picker. The scrapped follow-on round's
+  `SUPERSEDED.md` and README carry the same reversals, since their scrapping premise was
+  *"the note screen does not change"*.
 - **`docs/reference/ARCHITECTURE.md`**, **`docs/ROADMAP.md`** — Phase 2/3 no longer
   describe a two-stage extract→integrate pipeline.
 - **`docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`** — bucket (d) of §5 is its tier-1

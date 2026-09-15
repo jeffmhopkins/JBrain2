@@ -476,8 +476,9 @@ export function ReviewScreen({
   onOpenNote,
   onOpenConversation,
 }: {
-  /** Open the note a notes row is about — its screen opens on that note's conversation,
-   * which is where every interaction about a note happens (owner's ruling, 2026-09-14). */
+  /** Open the CONVERSATION of the note a notes row is about — it loads in the main view
+   * on Entry, which is where every interaction about a note happens (owner's ruling,
+   * 2026-09-14). */
   onOpenNote?: (noteId: string) => void;
   /** Open a session directly, for the one notes row that is about no note: a staged
    * `owner_prefs` approval. */

@@ -248,6 +248,16 @@ export const FileIcon = (p: IconProps) => (
   </Icon>
 );
 
+// A note: the page with its ruled lines. The top bar's door from a note's conversation
+// back to the note itself (lucide `file-text`).
+export const NoteIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+    <path d="M14 2v6h6" />
+    <path d="M8 13h8M8 17h5" />
+  </Icon>
+);
+
 export const ImageIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

@@ -122,9 +122,10 @@ export function resolveSelectionClamp(
 }
 
 interface TranscriptProps extends Props {
-  /** What the column says when no session is open yet. On the note screen that is a
-   * note whose first pass has not started, which is a different sentence entirely. */
-  noSessionText?: string;
+  /** What the column says when no session is open yet. On Entry that is a note whose first
+   * pass has not started, which is a different sentence entirely — and a `ReactNode`, so
+   * that surface can offer the one thing there IS to do with such a note: open it. */
+  noSessionText?: ReactNode;
   /** What it says when a session is open but has no turns. */
   emptyText?: string;
 }
