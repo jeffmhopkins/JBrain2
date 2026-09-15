@@ -27878,3 +27878,22 @@ button.wf-sigpill {
     animation: none;
   }
 }
+
+/* A RE-READING of the note: an event in the thread, not something the owner said. The
+   pass used to persist the whole framed note again, so a corrected note appeared twice in
+   its own conversation. Ruled rather than bubbled — it is the thread's own voice. */
+.fb-shell .fb-reread {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-reread::before,
+.fb-shell .fb-reread::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}

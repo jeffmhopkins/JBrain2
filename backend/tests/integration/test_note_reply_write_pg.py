@@ -1180,7 +1180,15 @@ async def test_an_unprompted_addition_reaches_a_reply_turn_that_corrects_a_fact(
     )
     assert reply is not None
     assert reply.additions == ["Actually Kaiya's dentist is Dr. Ashcote, not Dr. Patel."]
-    assert reply.claimed is False, "an unprompted addition must not claim a question set"
+    # No question was consumed — there was none to consume. `claimed` is not that: it is
+    # "this turn took the thread live and owes it a close", and an unprompted addition
+    # does take it, so that the re-reading its own append just queued cannot start on top
+    # of the turn still writing into the thread.
+    assert reply.answered == [] and reply.unanswered == []
+    assert reply.claimed is True, "the addition must hold the thread its turn writes into"
+    async with scoped_session(maker, owner_ctx) as s:
+        held = await NoteConversationRepo().get(s, session_id)
+    assert held is not None and held.state == "running"
     note = await SqlNotesRepo(maker).get_note(owner_ctx, note_id)
     assert note is not None and "Dr. Ashcote" in note.body
     async with scoped_session(maker, owner_ctx) as s:

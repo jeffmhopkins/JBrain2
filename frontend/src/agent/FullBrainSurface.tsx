@@ -34,7 +34,7 @@ import { attachmentKind } from "./attachmentKind";
 import { stepWriteState, turnWriteSummary, writePhrase } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
-import { noteDomain, unframeNote } from "./noteFrame";
+import { REREAD_MARK, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -870,6 +870,17 @@ function Bubble({
     // guard attributed to them, above their own sentence. Strip the frame HERE and show
     // the note as what it is — frozen, labelled, ruled in its own domain's colour — and
     // never by unfencing the message, which the model must keep seeing whole.
+    // A RE-READING of the note, which is an event in the thread rather than something
+    // the owner said. It used to persist the whole framed note again, so a corrected
+    // note showed up twice in its own conversation — once as captured, once as re-read —
+    // and the second copy said nothing his own reply had not.
+    if (message.text.startsWith(REREAD_MARK)) {
+      return (
+        <p className="fb-reread">
+          <span>{message.text.slice(REREAD_MARK.length).trim()}</span>
+        </p>
+      );
+    }
     const framed = unframeNote(message.text);
     if (framed) {
       const color = noteDomainCode ? (DOMAIN_COLOR[noteDomainCode] ?? null) : null;

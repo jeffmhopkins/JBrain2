@@ -29,6 +29,11 @@
  * header quotes its own closing marker ("…the line [END CAPTURED NOTE #…]…"), so the
  * bracket that ends it is the LAST one on the line. */
 const OPEN = /^\[CAPTURED NOTE #([0-9a-f]{4,}) — [^\n]*\]\n/;
+/** How a RE-READING's own user turn is recorded (`analysis/converse.REREAD_MARK`) — a
+ * marker rather than the note again, because persisting the framed note a second time
+ * put two copies of the owner's note in his own conversation. A sentinel, not prose:
+ * threads already on the box are stored with it. */
+export const REREAD_MARK = "[re-read]";
 /** The optional capture line, matched on its CONTENT and not only its label.
  *
  * `framed_note` emits this line only when it has a capture time, and its default is

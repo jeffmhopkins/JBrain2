@@ -1002,6 +1002,10 @@ def test_chat_persists_proposal_and_entity_chips(
 
     step = transcript.recorded[-1]["tools"][0]
     assert step["proposal"] == {"proposal_id": "p1", "kind": "correction"}
+    # `created` and `entity_kind` ride the ref because the PWA has to tell "I made a new
+    # record for Boss" from "I matched the Boss you already have" — the write path has
+    # always known it and told only the model. A persisted step carries them, so a thread
+    # reopened days later reads the same way it did live.
     assert step["entities"] == [
         {
             "kind": "entity",
@@ -1010,6 +1014,8 @@ def test_chat_persists_proposal_and_entity_chips(
             "domain": "general",
             "aliases": [],
             "facts": [],
+            "created": False,
+            "entity_kind": None,
         }
     ]
 

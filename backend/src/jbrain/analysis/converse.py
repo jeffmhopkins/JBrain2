@@ -160,6 +160,18 @@ def _already_holding(carried: Sequence[Handle]) -> str:
     )
 
 
+#: How a re-reading's own user turn is RECORDED — a marker, not the note again. The PWA
+#: matches on this prefix to draw it as a rule rather than a bubble, so it is a sentinel
+#: and not prose: changing it changes what already-persisted threads render as.
+REREAD_MARK = "[re-read]"
+
+
+def _reread_marker() -> str:
+    """The turn the transcript keeps for a re-reading. Short by design: the note has not
+    changed identity, only content, and the content is on the note screen one tap away."""
+    return f"{REREAD_MARK} the note changed, so it was read again"
+
+
 #: The line that opens a re-reading, outside the note's fence. It says why the pass is
 #: happening, because the model's own prior answer is sitting directly above it and
 #: without this the note reads as having been sent twice.
@@ -762,7 +774,16 @@ class NoteConverseRunner:
             # first, a `_record` that raised left `settled` + `done` with an empty
             # transcript and an empty ledger, which reads as "the agent decided this note
             # says nothing" and arms a retraction of the note's entire graph.
-            await self._record(owner_ctx, session_id, run_id, turn_0, executed)
+            # RECORDED as a marker on a re-reading, never as the note again. The
+            # model is sent the whole note (`asked`, above) because `close_reading`
+            # re-derives all of it — but persisting that as the user turn put a SECOND
+            # copy of the owner's note in his own conversation, once as captured and once
+            # as re-read, and the second copy tells him nothing his reply had not already
+            # said. The transcript is the record of the CONVERSATION; the note is turn 0
+            # and it is already there.
+            await self._record(
+                owner_ctx, session_id, run_id, _reread_marker() if prior else turn_0, executed
+            )
             status = "done"
             # A clean turn settles; a turn `ask_owner` ended waits; everything else —
             # truncated, out of budget, too many tool errors — fails. Constraint 6: the
