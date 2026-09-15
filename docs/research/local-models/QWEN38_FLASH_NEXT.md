@@ -70,9 +70,41 @@ genuinely attractive option — an opt-in, non-`recommended` catalog entry at
 | MoE | 512 experts, 10 routed + 1 shared | `[WEB]` |
 | N-gram embedding | 20,000,000 bigrams/trigrams, injected at layer 2 | `[WEB]` |
 | Context | **262,144** native, extensible to 1M | `[WEB]` |
-| Modality | text + **image + video** in | `[WEB]` |
+| Modality | text + **image** in (card also claims video) | `[WEB]`, §1.1 |
 | License | `qwen-community-1.0` | `[WEB]` |
 | llama.cpp arch id | **`qwen4exp`**, merged 2026-08-27 (PR #27742) | `[WEB]` |
+
+### 1.1 Vision — verified, and it ships as a real GGUF projector
+
+**Yes, and it is served, not just claimed on the card.** Unsloth's GGUF repo carries
+`mmproj-F16.gguf` (**904 MB**) and `mmproj-BF16.gguf` (**908 MB**), both added under an
+"Add vision" commit `[WEB]`. The projector **pairs with any quant** in the ladder — it is
+a separate download, not baked into a weight rung — and llama.cpp takes it via
+`--mmproj` (or fetches it automatically under `-hf`) `[WEB]`. bartowski, AtomicChat and
+OrcaRouter publish compatible projectors too, so this is not one vendor's experiment.
+
+Three things this repo should note:
+
+1. **The exact-name trap applies verbatim.** Both `mmproj-BF16.gguf` and
+   `mmproj-F16.gguf` are present, so a `mmproj*F16.gguf` glob matches **both** — the
+   precise hazard the catalog already documents on the Qwen3.8 27B entry, which names
+   its projector exactly for this reason `[REPO]` `local_catalog.py:673-676`. Any entry
+   here inherits `mmproj_include="mmproj-F16.gguf"`, spelled out, not globbed.
+2. **Vision is cheap in GTT, on top of an already-tight budget.** ~0.9 GB projector plus
+   the CLIP attention workspace, which this repo measures rather than guesses: **0.23
+   GiB** at the served 2048-token floor and **0.47 GiB** at llama.cpp's 4096 ceiling,
+   with flash attention on `[DERIVED]` from `vision_attn_buffer_gb`
+   (`local_catalog.py:208-226`). Call it **~1.4 GB all-in** — it does not change §4's
+   verdict, but it comes off UD-IQ4_XS's 1.5 GB of slack entirely.
+3. **Video is a model-card claim, not a verified llama.cpp path.** The card lists image
+   *and* video in `[WEB]`; what is demonstrably served through `--mmproj` is **image**.
+   Treat video as unverified here. Nothing in this repo consumes video-in today, so it
+   costs the decision nothing either way.
+
+**Unverified and worth a question in any spike:** whether the vision path and
+`--spec-type draft-mtp` coexist cleanly. Every published Strix Halo MTP measurement in
+§3 is text-only, and MTP builds a second `llama_context` against the same model
+(`local_catalog.py:80-88` `[REPO]`). Nobody has published the pair running together.
 
 Two architectural facts drive everything below.
 
@@ -243,10 +275,11 @@ That is the optimistic reading, and it carries two caveats this repo must not gl
 catalog explicitly designs for ("co-resides beside gpt-oss-120b with room"). At 82–94 GB
 booked, Flash-Next is a **sole tenant**.
 
-**The honest counter-argument, and it is a good one:** Flash-Next is *multimodal*. It
-could retire `gpt-oss-120b` **and** `qwen3-vl-30b` at once — 59 + 32 = **91 GB** of
-catalog weight today `[DERIVED]` versus 82–94 GB for one model that does both, at 262k
-context instead of 131k, with a smaller KV term. On footprint alone that trade is
+**The honest counter-argument, and it is a good one:** Flash-Next is *multimodal*, and
+§1.1 verifies that as a shipped GGUF projector rather than a card claim. It could retire
+`gpt-oss-120b` **and** `qwen3-vl-30b` at once — 59 + 32 = **91 GB** of catalog weight
+today `[DERIVED]` versus 82–94 GB plus ~1.4 GB of projector and CLIP workspace (§1.1) for
+one model that does both, at 262k context instead of 131k, with a smaller KV term. On footprint alone that trade is
 roughly neutral-to-favourable. It is the *speed* (§3) and the *fork dependency* (§5)
 that sink it, not the memory.
 
@@ -308,7 +341,8 @@ on `gpt-oss-120b`'s evidence.
 
 **The cheap option, when the time comes:** add one non-`recommended` catalog entry at
 `UD-IQ3_XXS` — `hybrid_thinking=True`, `reasoning_format="deepseek"`, `recurrent=True`,
-`supports_vision=True`, the §1 sampling split, `kv_gb_per_128k≈3.5`,
+`supports_vision=True`, `mmproj_include="mmproj-F16.gguf"` spelled out rather than
+globbed (§1.1), the §1 sampling split, `kv_gb_per_128k≈3.5`,
 `native_context_window=262144`. Nothing routes to it by default, so the first load is
 the measurement — exactly the pattern the catalog already uses for the unmeasured Q8
 sibling (`local_catalog.py:684-686`). **Even this waits**, because at 82 GB it evicts
@@ -331,7 +365,9 @@ Revisit when **both** hold:
 Then spike, in this order: `UD-IQ3_XXS` + MTP sidecar, sole tenant, **output validated
 against a known-good transcript above 1k prompt tokens** (§3's silent-garbage failure
 mode), measured at 1k / 13k / 32k depth, with `reasoning_effort` pinned low. Compare
-against `gpt-oss-120b`'s ~31 tok/s on the same box, same day.
+against `gpt-oss-120b`'s ~31 tok/s on the same box, same day. Load the projector in the
+same run and confirm vision and `--spec-type draft-mtp` coexist (§1.1) — no published
+measurement covers the pair.
 
 If it clears, the follow-on question is the interesting one and should be planned
 deliberately rather than fallen into: **retire `gpt-oss-120b` and `qwen3-vl-30b`
@@ -348,6 +384,7 @@ are actually reclaimed on a box that cannot `rm` them (CLAUDE.md #10).
 - [Qwen/Qwen3.8-Flash-Next — Hugging Face](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) — architecture, params, sampling, context
 - [Qwen3.8-Flash-Next — qwen.ai blog](https://qwen.ai/blog?id=qwen3.8-flash-next) — release
 - [unsloth/Qwen3.8-Flash-Next-GGUF](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) — quant ladder and sizes
+- [unsloth/Qwen3.8-Flash-Next-GGUF — file tree](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/tree/main) — the `mmproj-F16` / `mmproj-BF16` projectors (§1.1)
 - [Qwen3.8-Flash-Next: How to Run Locally — Unsloth docs](https://unsloth.ai/docs/models/qwen3.8-next) — RAM guidance, MTP branch, reasoning_effort
 - [llama.cpp discussion #27950 — Flash-Next on Strix Halo, 17 → 47 tok/s](https://github.com/ggml-org/llama.cpp/discussions/27950) — measurements A and C, validation caveats
 - [llama.cpp PR #27742 — model: add Qwen3.8-Flash-Next (qwen4exp)](https://github.com/ggml-org/llama.cpp/pull/27742) — mainline base support
