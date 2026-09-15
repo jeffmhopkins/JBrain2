@@ -56,9 +56,12 @@ const STEP_LABELS: Record<string, string> = {
   resolve_entity: "Resolved who the note means",
   assert_fact: "Recorded what the note says",
   // `close_reading` is the whole-note reading (AGENT_INGEST_REWRITE R1), not one more
-  // fact — the label says "read", because what it recorded is everything the note says
-  // and the difference is what the settle acts on.
-  close_reading: "Read the whole note",
+  // fact — the reading is everything the note says, and that whole-note scope is what
+  // the settle acts on. The label has to carry BOTH halves: an earlier one said only
+  // "Read the whole note", and a read verb over the one call that writes the owner's
+  // graph is why he could not tell his entities had been recorded at all. `status.ts`
+  // has always said "Recording" for the live phase; these two must agree.
+  close_reading: "Read the note and recorded what it says",
   ask_owner: "Asked you a question",
   prefs_read: "Read your standing instructions",
   prefs_write: "Staged a standing instruction",

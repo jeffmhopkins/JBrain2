@@ -36,6 +36,13 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   // this it renders `none`, which reads as "not a write tool" rather than "it failed
   // to change anything", the one outcome the owner most needs to see.
   "correct_fact",
+  // The whole-note reading (AGENT_INGEST_REWRITE R1) — the verb that actually writes a
+  // note's graph, and the one omitted here until the owner reported that he could not
+  // tell his facts had landed. Without it `stepWriteState` returned `none` for every
+  // `close_reading` that wrote nothing, so the one call responsible for his entities
+  // rendered as "not a write tool" — the exact misreading the `correct_fact` line above
+  // was added to prevent.
+  "close_reading",
 ]);
 
 /** The domain of a write, NAMED — D3's "never colour alone" is an accessibility and
@@ -144,12 +151,12 @@ export function writePhrase(step: ToolStep): string | undefined {
   if (state === "writing") return "writing…";
   if (state === "failed") return step.truncated ? "failed · truncated" : "failed";
   if (state === "nothing")
-    return step.truncated ? "nothing written · truncated" : "nothing written";
+    return step.truncated ? "nothing recorded · truncated" : "nothing recorded";
   const tally = tallyWrites(step.facts);
   const parts: string[] = [];
-  if (tally.written > 0) parts.push(plural(tally.written, "written"));
-  if (tally.replaced > 0) parts.push(plural(tally.replaced, "replaced"));
-  if (tally.held > 0) parts.push(plural(tally.held, "held"));
+  if (tally.written > 0) parts.push(plural(tally.written, "recorded"));
+  if (tally.replaced > 0) parts.push(plural(tally.replaced, "updated"));
+  if (tally.held > 0) parts.push(plural(tally.held, "not recorded"));
   // The domain is part of the headline, not only of the expanded detail: a health write
   // has to be legible as a health write without a tap.
   parts.push(writeDomains(step.facts).join(" + "));
@@ -158,7 +165,42 @@ export function writePhrase(step: ToolStep): string | undefined {
   return parts.join(" · ");
 }
 
+/** What a whole TURN did to the graph, for the collapsed chip — "recorded 2 facts",
+ * "updated 1 fact". A turn that changed the owner's database must not be summarised by
+ * a step count: the count is how hard the agent worked, and what he is looking for is
+ * whether anything landed. Undefined when the turn wrote nothing at all, so a pure
+ * read turn keeps the plain step count it has always had. */
+export function turnWriteSummary(steps: readonly ToolStep[]): string | undefined {
+  const facts = steps
+    .filter((s) => WRITE_TOOLS.has(s.name) && s.ok !== false)
+    .flatMap((s) => s.facts);
+  if (facts.length === 0) return undefined;
+  const tally = tallyWrites(facts);
+  const parts: string[] = [];
+  const noun = (n: number): string => `${n} fact${n === 1 ? "" : "s"}`;
+  if (tally.written > 0) parts.push(`recorded ${noun(tally.written)}`);
+  if (tally.replaced > 0) parts.push(`updated ${noun(tally.replaced)}`);
+  if (tally.held > 0) parts.push(`held ${noun(tally.held)}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
 /** The verb for ONE write, as its chip reads. */
 export function writeVerb(fact: FactWrite): string {
   return factStatus(fact);
+}
+
+/** The owner's word for a write state. `WriteStatus` is the write path's OWN vocabulary
+ * and stays exactly as it is — it mirrors `contracts._WRITE_STATUS` and a rename there
+ * would be a contract change. This is the rendering, and it is separate because the two
+ * audiences are: "written" is what the writer did, "recorded" is what the owner asked
+ * the box for; "replaced" reads as deletion when the old row is in fact kept as history,
+ * so the write says "updated" and the diff says where the old value went. */
+const WRITE_WORD: Record<string, string> = {
+  written: "recorded",
+  replaced: "updated",
+  held: "not recorded",
+};
+
+export function writeWord(status: string): string {
+  return WRITE_WORD[status] ?? status;
 }

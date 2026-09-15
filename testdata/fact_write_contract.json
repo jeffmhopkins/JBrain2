@@ -43,7 +43,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "written",
-        "phrase": "1 replaced \u00b7 1 held \u00b7 general + health"
+        "phrase": "1 updated \u00b7 1 not recorded \u00b7 general + health"
       }
     },
     {
@@ -77,7 +77,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "written",
-        "phrase": "1 written \u00b7 health \u00b7 from a photo"
+        "phrase": "1 recorded \u00b7 health \u00b7 from a photo"
       }
     },
     {
@@ -111,7 +111,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "written",
-        "phrase": "1 written \u00b7 general \u00b7 truncated"
+        "phrase": "1 recorded \u00b7 general \u00b7 truncated"
       }
     },
     {
@@ -217,7 +217,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "written",
-        "phrase": "5 written \u00b7 1 replaced \u00b7 1 held \u00b7 general"
+        "phrase": "5 recorded \u00b7 1 updated \u00b7 1 not recorded \u00b7 general"
       }
     },
     {
@@ -238,7 +238,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "nothing",
-        "phrase": "nothing written"
+        "phrase": "nothing recorded"
       }
     }
   ],
@@ -261,7 +261,7 @@
     ],
     "expect": {
       "state": "written",
-      "phrase": "1 written \u00b7 1 held \u00b7 general + health"
+      "phrase": "1 recorded \u00b7 1 not recorded \u00b7 general + health"
     }
   }
 }

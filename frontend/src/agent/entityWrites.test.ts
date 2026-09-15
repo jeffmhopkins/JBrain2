@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { domainWord, stepWriteState, tallyWrites, writeDomains, writePhrase } from "./entityWrites";
+import {
+  domainWord,
+  stepWriteState,
+  tallyWrites,
+  turnWriteSummary,
+  writeDomains,
+  writePhrase,
+} from "./entityWrites";
 import type { ToolStep } from "./toolSummary";
 import type { FactWrite } from "./types";
 
@@ -46,7 +53,18 @@ describe("the seven D3 states", () => {
   it("a write tool that wrote nothing says so — silence would read as 'not a write'", () => {
     const s = step({ name: "assert_fact", facts: [] });
     expect(stepWriteState(s)).toBe("nothing");
-    expect(writePhrase(s)).toBe("nothing written");
+    expect(writePhrase(s)).toBe("nothing recorded");
+  });
+
+  it("close_reading is a write tool — a reading that recorded nothing has to say so", () => {
+    // The verb that actually writes a note's graph. It was missing from `WRITE_TOOLS`,
+    // so this step reported `none` — "not a write tool" — and the owner, looking at the
+    // one call responsible for his entities, was shown no write rung at all and a step
+    // labelled "Read the whole note". He reported it as "I don't see how it actually
+    // added the entity to the database".
+    const s = step({ name: "close_reading", facts: [] });
+    expect(stepWriteState(s)).toBe("nothing");
+    expect(writePhrase(s)).toBe("nothing recorded");
   });
 
   it("a resolve that minted entities and no facts leaves the chips to speak", () => {
@@ -73,7 +91,7 @@ describe("the seven D3 states", () => {
         fact({ fact_id: "d", status: "held" }),
       ],
     });
-    expect(writePhrase(s)).toBe("2 written · 1 replaced · 1 held · general");
+    expect(writePhrase(s)).toBe("2 recorded · 1 updated · 1 not recorded · general");
     expect(tallyWrites(s.facts)).toEqual({ written: 2, replaced: 1, held: 1, fromPhoto: 0 });
   });
 
@@ -82,18 +100,18 @@ describe("the seven D3 states", () => {
       name: "assert_fact",
       facts: [fact({ from_attachment: true, domain: "health" })],
     });
-    expect(writePhrase(s)).toBe("1 written · health · from a photo");
+    expect(writePhrase(s)).toBe("1 recorded · health · from a photo");
   });
 
   it("says truncated, so a partial batch is never shown as a whole one", () => {
     const s = step({ name: "assert_fact", facts: [fact()], truncated: true });
-    expect(writePhrase(s)).toBe("1 written · general · truncated");
+    expect(writePhrase(s)).toBe("1 recorded · general · truncated");
     // And on the two states that carry no write list either.
     expect(writePhrase(step({ name: "assert_fact", ok: false, truncated: true }))).toBe(
       "failed · truncated",
     );
     expect(writePhrase(step({ name: "assert_fact", truncated: true }))).toBe(
-      "nothing written · truncated",
+      "nothing recorded · truncated",
     );
   });
 });
@@ -118,5 +136,35 @@ describe("the domain is named, never colour alone", () => {
   it("a health write is legible as a health write without expanding the step", () => {
     const s = step({ name: "assert_fact", facts: [fact({ domain: "health" })] });
     expect(writePhrase(s)).toContain("health");
+  });
+});
+
+describe("what a whole turn did to the graph", () => {
+  it("names what landed, so a turn that wrote is never summarised as a step count", () => {
+    const steps = [
+      step({ name: "resolve_entity", entities: [] }),
+      step({
+        name: "close_reading",
+        facts: [fact({ status: "replaced", replaced: 'My tv is 58".' })],
+      }),
+    ];
+    expect(turnWriteSummary(steps)).toBe("updated 1 fact");
+  });
+
+  it("counts across every write step of the turn, and pluralises", () => {
+    const steps = [
+      step({ name: "close_reading", facts: [fact(), fact()] }),
+      step({ name: "assert_fact", facts: [fact({ status: "held" })] }),
+    ];
+    expect(turnWriteSummary(steps)).toBe("recorded 2 facts · held 1 fact");
+  });
+
+  it("says nothing for a turn that only read, so a search keeps its step count", () => {
+    expect(turnWriteSummary([step({ name: "search_notes" })])).toBeUndefined();
+  });
+
+  it("ignores a failed write — it wrote nothing whatever its arguments claimed", () => {
+    const steps = [step({ name: "close_reading", ok: false, facts: [fact()] })];
+    expect(turnWriteSummary(steps)).toBeUndefined();
   });
 });
