@@ -473,6 +473,14 @@ function noteSource(summary: string): SourceRef[] {
  * First occurrence wins, which is well-defined: `created` is a property of the HANDLE and
  * a handle lives for the whole pass, so every ref for one entity within a step carries the
  * same value.
+ *
+ * DO NOT MOVE THIS TO THE BACKEND. The repeats are not waste there: `graphwritetools._ground`
+ * hangs each committed statement on the refs of the fact it came from, and `loop._grounding_corpus`
+ * reads those refs server-side, before the wire. Deduping upstream would keep the first ref
+ * and drop the statements hanging on the rest — silently restoring the amber "unverified"
+ * badge on every write past the first, which is the defect `_ground` exists to fix. The
+ * duplication carries information right up to the point where it stops doing so, and that
+ * point is here.
  */
 function uniqueEntities(refs: EntityRef[] | undefined): EntityRef[] {
   if (refs === undefined || refs.length < 2) return refs ?? [];
