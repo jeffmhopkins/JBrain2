@@ -121,6 +121,18 @@ class EntityRef(BaseModel):
     # name only) and for the related-object chips read_entity also returns; the same
     # prose is already in the tool result the PWA shows, so this copies nothing new.
     facts: list[str] = Field(default_factory=list)
+    # Whether this ref MINTED the entity or matched one already on file. The write path
+    # has always known (`handle.entity.created`) and has always said so to the MODEL
+    # ("new entity" / "already known", `graphwritetools._resolved_line`) — and never to
+    # the owner, who has no other way to tell. Without it the screen cannot say "I made a
+    # new record for Boss" rather than "I matched Boss to the one you already have",
+    # which for a note about a new thing is the single most useful sentence available.
+    # False for every read ref (`find_entity`/`read_entity`/`relate` never mint).
+    created: bool = False
+    # The entity's own kind — person, thing, animal, place. NOT `kind` above, which is
+    # this ref's DISCRIMINATOR and is always the literal "entity"; two different things
+    # that would collide under one name.
+    entity_kind: str | None = None
 
 
 WriteStatus = Literal["written", "replaced", "held"]
@@ -200,6 +212,15 @@ class FactWriteRef(BaseModel):
     # than the note's own prose. Decided from the provenance of the chunk the fact's
     # quote was attested against, never inferred from the tool name or the model's word.
     from_attachment: bool = False
+    # Why the write path held back, or what it noticed while going ahead — the write
+    # path's own word (`FactWrite.hold_reason`). `attribute_collision` is the one that
+    # matters on screen: the value on file DISAGREED, and this one is live because it is
+    # NEWER, not because anything adjudicated between them. The write path says so in the
+    # free-text result the MODEL reads; until now it reached the owner nowhere, so a
+    # contradicted supersession rendered identically to a clean one. Since a conversation
+    # write files no review card, that sentence was his only possible notice and he never
+    # got it.
+    hold_reason: str | None = None
 
 
 class NoteRef(BaseModel):

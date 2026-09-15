@@ -1717,6 +1717,15 @@ class NoteGraphWriter:
                 # owner's diff quote the same "before".
                 replaced="; ".join(write.replaced) or None,
                 from_attachment=from_attachment,
+                # The write path's own word for what it noticed. `attribute_collision`
+                # is the one that reaches the screen: the value on file DISAGREED, and
+                # the new one is live because it is NEWER, not because anything decided
+                # between them. It has always been in the free-text result the model
+                # reads and nowhere the owner could see it.
+                # `or None`: the write path spells "no reason" as `""`
+                # (`pipeline.py`'s `decision.review_kind or ""`), and an empty string on
+                # the wire is a value the renderer would have to know to treat as absent.
+                hold_reason=write.hold_reason or None,
             ),
             refs,
         )
@@ -1888,6 +1897,13 @@ def _entity_ref(handle: Handle) -> EntityRef:
         entity_id=str(handle.entity.id),
         label=handle.label,
         domain=handle.domain,  # type: ignore[arg-type]  # a domain code from the row
+        # The same two facts `_resolved_line` has always told the MODEL — whether this
+        # minted the entity, and what kind of thing it is — now told to the owner too.
+        # Without `created` his screen cannot distinguish "I made a new record for Boss"
+        # from "I matched Boss to the one you already have", which on a note introducing
+        # something new is the whole of what he wants to know.
+        created=handle.entity.created,
+        entity_kind=handle.kind or None,
     )
 
 

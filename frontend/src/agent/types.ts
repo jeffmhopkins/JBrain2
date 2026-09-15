@@ -23,6 +23,15 @@ export interface EntityRef {
    * them to ground a fact-value answer; the UI doesn't render them (the same prose is
    * already in the Worked step). Empty for find_entity/relate and related-object chips. */
   facts?: string[];
+  /** Whether this ref MINTED the entity or matched one already on file. The write path
+   * has always known it and has always said so to the MODEL ("new entity" / "already
+   * known"); it reached the owner nowhere, so the screen could not distinguish "I made a
+   * new record for Boss" from "I matched Boss to the one you already have" — which on a
+   * note introducing something new is the whole of what he wants to know. */
+  created?: boolean;
+  /** The entity's own kind — person, thing, animal, place. NOT `kind` above, which is
+   * this ref's discriminator and is always the literal "entity". */
+  entity_kind?: string;
 }
 export interface NoteRef {
   kind: "note";
@@ -64,6 +73,13 @@ export interface FactWrite {
   /** D12: committed from an attachment (a photo, an OCR'd page) rather than the note's
    * own prose. Marked by the write path, never inferred from the tool name. */
   from_attachment?: boolean;
+  /** Why the write path held back, or what it noticed going ahead.
+   * `"attribute_collision"` is the one that matters on screen: the value on file
+   * DISAGREED, and this one is live because it is NEWER — not because anything decided
+   * between them. It has only ever existed inside the free-text result the MODEL reads,
+   * so a contradicted supersession has rendered identically to a clean one, and a
+   * conversation write files no review card to catch it either. */
+  hold_reason?: string;
 }
 export type CitationRef = FactRef | EntityRef | NoteRef;
 

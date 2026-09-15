@@ -192,6 +192,102 @@ async def test_resolving_the_same_surface_twice_returns_the_same_handle(maker, t
 
 
 @pytest.mark.asyncio
+async def test_a_contradicted_supersession_carries_its_reason_to_the_owner(maker, tmp_path) -> None:  # noqa: F811
+    """`hold_reason` on the wire — `attribute_collision`, the one that matters on screen.
+
+    The value on file DISAGREED, and the new one is live because it is NEWER, not because
+    anything adjudicated between them. The write path says exactly that in the free-text
+    result the MODEL reads; until this field it reached the owner NOWHERE, so a
+    contradicted update rendered identically to a clean one. A conversation write files no
+    review card either, so that sentence was his only possible notice."""
+    note_id = await _note(maker, tmp_path, body='My tv is 58". Actually the tv is 60".')
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "tv", "kind": "thing"}]}, _ctx())
+
+    await writer.close_reading(
+        {
+            "title": "TV size",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "hasSizeInches",
+                    "object": "58",
+                    "quote": 'My tv is 58".',
+                    "statement": 'The tv is 58".',
+                }
+            ],
+        },
+        _ctx(),
+    )
+    # A second pass, which must resolve again before it can write — a fresh writer's
+    # handle table is empty, so `subject: "tv"` alone is refused. That is the shape the
+    # owner sees as the agent re-asking who something is.
+    later = await _writer(maker, note_id)
+    await later.resolve_entity({"entities": [{"surface": "tv", "kind": "thing"}]}, _ctx())
+    second = await later.close_reading(
+        {
+            "title": "TV size",
+            "tags": ["tv"],
+            "facts": [
+                {
+                    "subject": "tv",
+                    "predicate": "hasSizeInches",
+                    "object": "60",
+                    "quote": 'Actually the tv is 60".',
+                    "statement": 'The tv is 60".',
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert isinstance(second, ToolOutput)
+    (write,) = second.facts
+    assert write.status == "replaced"
+    assert write.hold_reason == "attribute_collision", (
+        "the owner has no other channel for 'your notes disagreed about this'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_entity_ref_says_whether_it_MINTED_the_record_or_matched_one(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """`created` on the wire, which is the only way the owner's screen can tell "I made a
+    new record for Boss" from "I matched Boss to the one you already have".
+
+    The write path has always known this and has always said so IN THE RESULT TEXT the
+    MODEL reads (`_resolved_line`'s "new entity" / "already known"). It reached the owner
+    nowhere, so a note that introduced something new rendered exactly like one that did
+    not — and "did it actually add the entity to the database?" is the question he asked
+    about this surface. `entity_kind` rides along for the same reason; note it is NOT the
+    ref's own `kind`, which is the discriminator and always the literal "entity"."""
+    note_id = await _note(maker, tmp_path)
+    writer = await _writer(maker, note_id)
+
+    first = await writer.resolve_entity(
+        {"entities": [{"surface": "Boss", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(first, ToolOutput)
+    (minted,) = first.entities
+    assert minted.created is True
+    assert minted.entity_kind is not None
+    assert minted.kind == "entity"  # the discriminator, not the animal
+
+    # A SECOND writer, because the first one's handle table would short-circuit on its
+    # own surface — this is the next pass over the same note, which is when the owner
+    # sees "already on file" instead of "new".
+    again = await (await _writer(maker, note_id)).resolve_entity(
+        {"entities": [{"surface": "Boss", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(again, ToolOutput)
+    (matched,) = again.entities
+    assert matched.entity_id == minted.entity_id
+    assert matched.created is False
+
+
+@pytest.mark.asyncio
 async def test_a_blank_surface_is_a_line_not_a_crash_and_the_rest_still_land(
     maker,  # noqa: F811
     tmp_path,

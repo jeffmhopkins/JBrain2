@@ -22,7 +22,8 @@
             "qualifier": null,
             "value": "Marina District",
             "replaced": "Jeff lives in Noe Valley",
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "22222222-2222-2222-2222-222222222222",
@@ -34,7 +35,8 @@
             "qualifier": null,
             "value": "O-negative",
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           }
         ],
         "truncated": false,
@@ -68,7 +70,8 @@
             "qualifier": "a1c",
             "value": "5.4",
             "replaced": null,
-            "from_attachment": true
+            "from_attachment": true,
+            "hold_reason": null
           }
         ],
         "truncated": false,
@@ -102,7 +105,8 @@
             "qualifier": null,
             "value": "Tuesdays",
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           }
         ],
         "truncated": true,
@@ -136,7 +140,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "51555555-5555-5555-5555-555555555555",
@@ -148,7 +153,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "52555555-5555-5555-5555-555555555555",
@@ -160,7 +166,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "53555555-5555-5555-5555-555555555555",
@@ -172,7 +179,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "54555555-5555-5555-5555-555555555555",
@@ -184,7 +192,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "55555555-5555-5555-5555-555555555555",
@@ -196,7 +205,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           },
           {
             "fact_id": "56555555-5555-5555-5555-555555555555",
@@ -208,7 +218,8 @@
             "qualifier": null,
             "value": null,
             "replaced": null,
-            "from_attachment": false
+            "from_attachment": false,
+            "hold_reason": null
           }
         ],
         "truncated": false,
