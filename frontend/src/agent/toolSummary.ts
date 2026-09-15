@@ -242,8 +242,11 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   resolve_entity: ["entities"],
   assert_fact: ["facts"],
   // The reading's legible target is its TITLE — the one line the owner would recognise
-  // the note by — with the facts behind it, elementwise, as the second piece.
-  close_reading: ["title", "facts"],
+  // the note by. ⟲ `facts` used to follow it, elementwise, and what that actually put on
+  // the row was the batch's SUBJECT HANDLES: "e1, e1, e2 +3". A handle is the model's
+  // private name for an entity for the length of one pass; on screen it is noise sitting
+  // exactly where the owner looks to see what the call was about.
+  close_reading: ["title"],
   // One ask carries the whole SET (R1c), so its legible target is an ARRAY too — each
   // element renders as its own question text through BATCH_ELEMENT_KEYS below.
   ask_owner: ["questions"],

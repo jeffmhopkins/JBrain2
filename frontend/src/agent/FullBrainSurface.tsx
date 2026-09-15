@@ -31,7 +31,14 @@ import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
 import { type AskedQuestion, type SentOutcome, askStep, sentAnswers, sentOutcomes } from "./asked";
 import { attachmentKind } from "./attachmentKind";
-import { stepWriteState, turnWriteSummary, writePhrase } from "./entityWrites";
+import {
+  entityPhrase,
+  ledgerRows,
+  ledgerWord,
+  stepWriteState,
+  turnWriteSummary,
+  writePhrase,
+} from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { REREAD_MARK, noteDomain, unframeNote } from "./noteFrame";
@@ -1468,6 +1475,7 @@ function ActivityLine({
     // the panel's content (reasoning ⇄ steps), selecting the open chip closes it. With
     // a single body the open height and bottom spacing are identical for either view.
     <div className={`fb-act-foot${bare ? " bare" : ""}`}>
+      <TurnLedger steps={steps} onOpenSteps={() => setOpen("work")} />
       <div className="fb-activity">
         {hasReasoning && (
           <button
@@ -1913,6 +1921,59 @@ function ProposalChip({
 // wall; the cap keeps the step calm on a phone with every entity still one tap away.
 const ENTITY_CHIP_CAP = 6;
 
+// How many ledger lines show on the face of a turn before the rest defer to the steps
+// view. Four is what fits above the fold on a phone beside the chips; a long reading's
+// twelve writes would otherwise push the owner's own next message off the screen.
+const LEDGER_CAP = 4;
+
+// WHAT CHANGED, on the face of the turn (DESIGN.md — "the ledger is not a disclosure").
+// The owner's report is the whole of why this is not inside the Worked pulldown: *"I
+// don't see how it actually added the entity to the database, the conversation kinda
+// looks like after that actually took place?"* The agent said what it had recorded, the
+// graph agreed with it, and the only evidence on screen was a step count behind two
+// taps. Prose is a claim; this is the receipt, and it is the one thing on a note turn
+// that must not need finding.
+//
+// Only CHANGES — a re-reading is mostly facts already on file, and listing those would
+// bury the one line that is news. The count of them is the turn's summary's job.
+function TurnLedger({
+  steps,
+  onOpenSteps,
+}: {
+  steps: readonly ToolStep[];
+  onOpenSteps: () => void;
+}): ReactNode {
+  const rows = ledgerRows(steps);
+  if (rows.length === 0) return null;
+  const shown = rows.slice(0, LEDGER_CAP);
+  const rest = rows.length - shown.length;
+  return (
+    <ul className="fb-ledger">
+      {shown.map((row) => (
+        <li key={row.key} className={`fb-ledger-row fbw-${row.face}`}>
+          <span
+            className="ent-dot"
+            aria-hidden="true"
+            style={{ background: DOMAIN_COLOR[row.domain] ?? "var(--text-3)" }}
+          />
+          <span className="fb-ledger-txt">{row.text}</span>
+          <span className="fb-ledger-verb">{ledgerWord(row.face)}</span>
+        </li>
+      ))}
+      {rest > 0 && (
+        <li className="fb-ledger-row fb-ledger-rest">
+          {/* Not a second expander: the steps view already holds every write with its
+              domain, its diff and the reason it was held, so the overflow goes there
+              rather than growing a list that duplicates it. */}
+          <button type="button" className="fb-ledger-more" onClick={onOpenSteps}>
+            +{rest} more
+          </button>
+        </li>
+      )}
+    </ul>
+  );
+}
+
 // The entities a step resolved, as a tappable chip grid capped at ENTITY_CHIP_CAP —
 // the overflow reveals in place on tap (the same disclosure register as "raw
 // result"/"show all lines"), so the wall never leads but nothing is lost.
@@ -1932,7 +1993,7 @@ function EntityChips({
         <button
           key={e.entity_id}
           type="button"
-          className="entity-chip"
+          className={`entity-chip${e.created === true ? " ent-new" : ""}`}
           onClick={() => onOpenEntity?.(e.entity_id)}
         >
           <span
@@ -1940,6 +2001,13 @@ function EntityChips({
             style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
           />
           {e.label}
+          {/* Whether the box MADE this record or matched one the owner already had. The
+              write path has always known it and has always told the model; it reached
+              the owner nowhere, so a note introducing his dog rendered identically to a
+              note mentioning him again — and "did you make a new Boss?" is the whole of
+              what he wants to know there. Undefined on a ref persisted before the field
+              existed, which marks nothing rather than guessing. */}
+          {e.created === true && <span className="ent-new-tag">new</span>}
         </button>
       ))}
       {overflowing && (
@@ -1988,7 +2056,11 @@ function StepRow({
   // over a call still running would be a lie the owner cannot tell from the truth.
   const hasWrites = writes !== "none" && writes !== "writing" && writes !== "failed";
   const writeNote = writePhrase(step);
-  const hasArgs = step.args != null && Object.keys(step.args).length > 0;
+  const entityNote = entityPhrase(step);
+  const stepArgs =
+    step.args != null && Object.keys(step.args).length > 0
+      ? (step.args as Record<string, unknown>)
+      : undefined;
   const summary = step.summary?.trim();
   // The verbatim raw payload is worth a rung only when a friendly result (source
   // cards, entity links, or web source cards) stands in for it; otherwise the text
@@ -2031,16 +2103,25 @@ function StepRow({
         {writeNote !== undefined && (
           <span className={`fb-step-cnt fbw-cnt fbw-${writes}`}>{writeNote}</span>
         )}
+        {/* A resolve writes no FACT, so it has no write phrase — and carried no mark at
+            all, which left the one call that creates the owner's records reading as a
+            call that did nothing. What it did is the cast: how many records it made and
+            how many it matched. */}
+        {writeNote === undefined && entityNote !== undefined && (
+          <span className="fb-step-cnt fbw-cnt fbw-ents">{entityNote}</span>
+        )}
         <ChevronGlyph className="fb-step-caret" />
       </button>
       <div className="fb-step-detail">
         <div className="fb-step-di">
           {hasWrites && <EntityWrites facts={step.facts} truncated={step.truncated} />}
-          {hasArgs && <ArgsList args={step.args as Record<string, unknown>} />}
           {isErr ? (
             <>
               <div className="fb-res-lab">error</div>
               <div className="fb-res-txt err">{summary || "the tool returned an error"}</div>
+              {/* A failed call is exactly where the arguments matter — what it was asked
+                  to do is half of why it did not. */}
+              <SentBlock args={stepArgs} text={undefined} />
             </>
           ) : hasSources ? (
             <>
@@ -2050,13 +2131,13 @@ function StepRow({
                   <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
                 ))}
               </div>
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : hasEntities ? (
             <>
               <div className="fb-res-lab">result</div>
               <EntityChips entities={step.entities} onOpenEntity={onOpenEntity} />
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : hasWebSources ? (
             <>
@@ -2066,14 +2147,17 @@ function StepRow({
                   <WebSourceCard key={w.url} src={w} />
                 ))}
               </div>
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : summary ? (
             <>
               <div className="fb-res-lab">result</div>
               <div className="fb-res-txt">{summary}</div>
+              <SentBlock args={stepArgs} text={undefined} />
             </>
-          ) : null}
+          ) : (
+            <SentBlock args={stepArgs} text={undefined} />
+          )}
         </div>
       </div>
     </div>
@@ -2096,13 +2180,24 @@ function ArgsList({ args }: { args: Record<string, unknown> }): ReactNode {
   );
 }
 
-// The raw result rung: the verbatim backend text in a clamped monospace inset,
-// with copy and a "show all lines" grow for a long payload.
-function RawBlock({ text }: { text: string }): ReactNode {
+// The machine rung of a step: what the agent SENT and, where a friendly result stands
+// in for it, what came back verbatim. One disclosure for both halves — ⟲ the arguments
+// used to render unconditionally, above the result, so every step opened onto a JSON
+// dump of its own request before the owner reached what it did; the raw payload was a
+// second toggle beside it. Neither is what he opens a step for: the writes are, and they
+// now lead. This is where a reader who wants the machine's own words goes, once.
+function SentBlock({
+  args,
+  text,
+}: {
+  args: Record<string, unknown> | undefined;
+  text: string | undefined;
+}): ReactNode {
   const [open, setOpen] = useState(false);
   const [full, setFull] = useState(false);
   const [copied, setCopied] = useState(false);
-  const clean = text.replace(/<\/?mark>/g, "");
+  if (args === undefined && text === undefined) return null;
+  const clean = (text ?? "").replace(/<\/?mark>/g, "");
   const overflowing = clean.split("\n").length > 6;
 
   function copy(): void {
@@ -2119,9 +2214,10 @@ function RawBlock({ text }: { text: string }): ReactNode {
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        {open ? "hide raw" : "raw result"}
+        {open ? "hide what the agent sent" : "what the agent sent"}
       </button>
-      {open && (
+      {open && args !== undefined && <ArgsList args={args} />}
+      {open && text !== undefined && (
         <div className="fb-raw">
           <pre className={`fb-raw-pre${full ? " full" : ""}`}>{clean}</pre>
           <button type="button" className="fb-raw-copy" aria-label="copy raw result" onClick={copy}>

@@ -228,7 +228,7 @@
       "expect": {
         "tool": "assert_fact",
         "state": "written",
-        "phrase": "5 recorded \u00b7 1 updated \u00b7 1 not recorded \u00b7 general"
+        "phrase": "4 recorded \u00b7 1 updated \u00b7 1 not recorded \u00b7 1 already on file \u00b7 general"
       }
     },
     {

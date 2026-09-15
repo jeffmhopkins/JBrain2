@@ -22,7 +22,8 @@ export type StepWriteState =
   | "nothing"
   | "written"
   | "replaced"
-  | "held";
+  | "held"
+  | "already";
 
 /** The tools whose steps are graph writes. A step of any other tool has no write rung
  * at all, so a read tool never grows an empty "wrote nothing" line. Kept as a name set
@@ -105,16 +106,20 @@ export interface WriteTally {
   written: number;
   replaced: number;
   held: number;
+  /** Facts this call found ALREADY on file and left alone. Counted apart from `written`
+   * — the contract folds them together (`factStatus`), the screen must not. */
+  already: number;
   /** D12 — writes that came from an attachment rather than the note's own prose. */
   fromPhoto: number;
 }
 
 export function tallyWrites(facts: readonly FactWrite[]): WriteTally {
-  const tally: WriteTally = { written: 0, replaced: 0, held: 0, fromPhoto: 0 };
+  const tally: WriteTally = { written: 0, replaced: 0, held: 0, already: 0, fromPhoto: 0 };
   for (const f of facts) {
-    const status = factStatus(f);
-    if (status === "replaced") tally.replaced += 1;
-    else if (status === "held") tally.held += 1;
+    const face = writeVerb(f);
+    if (face === "replaced") tally.replaced += 1;
+    else if (face === "held") tally.held += 1;
+    else if (face === "already") tally.already += 1;
     else tally.written += 1;
     if (f.from_attachment) tally.fromPhoto += 1;
   }
@@ -133,8 +138,11 @@ export function stepWriteState(step: ToolStep): StepWriteState {
   if (step.facts.length === 0 && step.entities.length > 0) return "none";
   if (step.facts.length === 0) return "nothing";
   const tally = tallyWrites(step.facts);
-  if (tally.replaced > 0 && tally.written === 0 && tally.held === 0) return "replaced";
-  if (tally.held > 0 && tally.written === 0 && tally.replaced === 0) return "held";
+  // A call that changed NOTHING — every fact of it already on file — is the ordinary
+  // shape of a re-reading, and it gets its own headline so it stops reading as a write.
+  if (tally.already > 0 && tally.written + tally.replaced + tally.held === 0) return "already";
+  if (tally.replaced > 0 && tally.written + tally.held + tally.already === 0) return "replaced";
+  if (tally.held > 0 && tally.written + tally.replaced + tally.already === 0) return "held";
   return "written";
 }
 
@@ -157,6 +165,7 @@ export function writePhrase(step: ToolStep): string | undefined {
   if (tally.written > 0) parts.push(plural(tally.written, "recorded"));
   if (tally.replaced > 0) parts.push(plural(tally.replaced, "updated"));
   if (tally.held > 0) parts.push(plural(tally.held, "not recorded"));
+  if (tally.already > 0) parts.push(plural(tally.already, "already on file"));
   // The domain is part of the headline, not only of the expanded detail: a health write
   // has to be legible as a health write without a tap.
   parts.push(writeDomains(step.facts).join(" + "));
@@ -178,6 +187,7 @@ export function turnWriteSummary(steps: readonly ToolStep[]): string | undefined
   let recorded = 0;
   let updated = 0;
   let notRecorded = 0;
+  let reconfirmed = 0;
   for (const fact of facts) {
     // The RAW outcome, not `factStatus`'s reduction. `OUTCOME_STATUS` folds `already`,
     // `closed` and `historical` into `written`, which is right for the expanded rung —
@@ -189,6 +199,7 @@ export function turnWriteSummary(steps: readonly ToolStep[]): string | undefined
     const outcome = fact.outcome ?? fact.status;
     if (outcome === "replaced") updated += 1;
     else if (outcome === "held") notRecorded += 1;
+    else if (outcome === "already") reconfirmed += 1;
     else if (outcome === "written" || outcome === "promoted") recorded += 1;
   }
   const parts: string[] = [];
@@ -198,14 +209,53 @@ export function turnWriteSummary(steps: readonly ToolStep[]): string | undefined
   // `writeWord`, not a fourth spelling of the same state: the collapsed chip said "held"
   // while expanding the same turn said "not recorded".
   if (notRecorded > 0) parts.push(`${writeWord("held")} ${noun(notRecorded)}`);
-  // Undefined when a re-reading changed nothing — the step count is then the honest
-  // headline, and a turn that restated the note without altering it should not claim
-  // otherwise.
-  return parts.length > 0 ? parts.join(" · ") : undefined;
+  // A pass that changed nothing has an ANSWER, and it is not silence. Falling through to
+  // the step count here left the owner's second reading of a note headlined "1 step",
+  // which tells him neither that it ran nor that it agreed with what was already there.
+  // Said out loud, a re-reading that confirms the note is a result he can accept.
+  if (parts.length === 0) {
+    return reconfirmed > 0 ? `nothing new · ${noun(reconfirmed)} re-confirmed` : undefined;
+  }
+  // Alongside real changes the re-confirmations are the tail, not the news — they say
+  // what the pass did with the rest of the note, so "updated 1 fact" cannot be read as
+  // "the other eleven are gone".
+  if (reconfirmed > 0) parts.push(`${noun(reconfirmed)} unchanged`);
+  return parts.join(" · ");
 }
 
-/** The verb for ONE write, as its chip reads. */
-export function writeVerb(fact: FactWrite): string {
+/** What a resolve did to the owner's cast, for the collapsed row — "2 new · 1 already
+ * known". `stepWriteState` calls a mint-only step `none` on purpose (it wrote no FACT,
+ * and claiming it wrote nothing over the entities it shipped would be false), and the
+ * cost of that was a `resolve_entity` row with no mark at all: the one call that creates
+ * the owner's records read as a call that did nothing. This is that row's headline.
+ *
+ * Undefined for a step that resolved no entities, and for one whose refs predate
+ * `created` — a count of entities with no answer to "new or already mine?" is the step
+ * count again, in a costlier form. */
+export function entityPhrase(step: ToolStep): string | undefined {
+  if (step.entities.length === 0 || step.ok !== true) return undefined;
+  const known = step.entities.filter((e) => e.created !== undefined);
+  if (known.length === 0) return undefined;
+  const made = known.filter((e) => e.created === true).length;
+  const matched = known.length - made;
+  const parts: string[] = [];
+  if (made > 0) parts.push(`${made} new`);
+  if (matched > 0) parts.push(`${matched} already known`);
+  return parts.join(" · ");
+}
+
+/** What the owner is shown a write BECAME — the three contract states plus `already`.
+ *
+ * `factStatus` stays the contract reduction and must: it mirrors `contracts._WRITE_STATUS`,
+ * and `already` IS `written` there, because the fact is on file either way. On screen the
+ * two are not the same event at all. A re-reading restates the whole note, so after the
+ * owner corrects one value every other fact comes back `already`, and rendering those as
+ * "recorded" told him the box had just written twelve facts it had in fact only re-read.
+ * The face is where that distinction lives; the status is where the graph's is. */
+export type WriteFace = WriteStatus | "already";
+
+export function writeVerb(fact: FactWrite): WriteFace {
+  if (fact.outcome === "already") return "already";
   return factStatus(fact);
 }
 
@@ -219,8 +269,59 @@ const WRITE_WORD: Record<string, string> = {
   written: "recorded",
   replaced: "updated",
   held: "not recorded",
+  // Not "recorded": this pass wrote nothing here, it found the value already on file and
+  // left it. Saying "recorded" over it is the sentence that made a re-reading look like
+  // twelve new writes.
+  already: "already on file",
 };
 
 export function writeWord(status: string): string {
   return WRITE_WORD[status] ?? status;
+}
+
+/** One line of the turn's ledger — what changed, in the owner's words. */
+export interface LedgerRow {
+  key: string;
+  /** The sentence itself: a fact's statement, or a newly created entity's name. */
+  text: string;
+  /** `new` is an entity this turn MINTED, which is a change to his graph with no fact
+   * of its own — the record now exists. The rest are a write's face. */
+  face: WriteFace | "new";
+  domain: string;
+}
+
+/** What a turn CHANGED, as lines, for the card that renders on the face of the turn
+ * rather than two taps inside it (DESIGN.md, "the ledger is not a disclosure").
+ *
+ * Only changes. A fact already on file is what a re-reading is mostly made of, and a
+ * ledger that listed all of them would bury the one line that is news under eleven that
+ * are not — the count of those belongs in the turn's summary (`turnWriteSummary`), which
+ * is where it says "nothing new" when there is none.
+ *
+ * A step still in flight or failed contributes nothing: neither has a settled answer to
+ * what changed, and a line that appears and then retracts is worse than one that arrives
+ * a second late. */
+export function ledgerRows(steps: readonly ToolStep[]): LedgerRow[] {
+  const rows: LedgerRow[] = [];
+  for (const step of steps) {
+    if (step.ok !== true) continue;
+    for (const e of step.entities) {
+      if (e.created === true) {
+        rows.push({ key: `e:${e.entity_id}`, text: e.label, face: "new", domain: e.domain });
+      }
+    }
+    if (!WRITE_TOOLS.has(step.name)) continue;
+    for (const f of step.facts) {
+      const face = writeVerb(f);
+      if (face === "already") continue;
+      rows.push({ key: `f:${f.fact_id}`, text: f.label, face, domain: f.domain });
+    }
+  }
+  return rows;
+}
+
+/** The word a ledger row's face reads as. `new` is the entity case and says what
+ * happened rather than naming the state — "added" is a record that did not exist. */
+export function ledgerWord(face: LedgerRow["face"]): string {
+  return face === "new" ? "added" : writeWord(face);
 }
