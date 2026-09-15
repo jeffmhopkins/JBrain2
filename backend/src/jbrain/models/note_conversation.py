@@ -129,11 +129,24 @@ _ALLOWED_SOURCES: dict[str, frozenset[str]] = {
     "running": frozenset({"running", "waiting_on_owner"}),
     "waiting_on_owner": frozenset({"running", "waiting_on_owner"}),
     # Constraint 6 sweeps only on a turn that ended cleanly and NOT awaiting the owner,
-    # so `settled` is reachable from `running` alone. Terminal after that: a retry opens
-    # a fresh conversation rather than reviving a finished one.
+    # so `settled` is reachable from `running` alone.
     "settled": frozenset({"running", "settled"}),
     "failed": frozenset({"running", "failed"}),
 }
+
+#: The ended states a note's ONE conversation can be reopened from, for the note's next
+#: reading (`reopen` below). `settled` and `failed` were terminal here until the owner
+#: reported the cost of that: a note re-read after he added to it got a SECOND
+#: conversation, `thread_for_note` returns the newest, and his own thread — the first
+#: pass and the reply he typed into it — became unreachable from the note screen.
+#:
+#: The comment that used to sit above, "a retry opens a fresh conversation rather than
+#: reviving a finished one", was written at W2, before the sweep, the reply turn and the
+#: unprompted addition existed, and it was never what protected the sweep. That is the
+#: `reading` gate in `analysis/clarify.settle_conversation`, which refuses to retract
+#: anything without a reading in hand — a re-settle over a fresh reading is the mechanism
+#: working, which is exactly what a re-read is for.
+REOPENABLE: frozenset[str] = frozenset({"settled", "failed"})
 
 # The loop stop reason `ask_owner` ends a turn with (`agent/asktools.py`), and the ONLY
 # producer of `waiting_on_owner` — the state W2 shipped with no producer at all. It lives
@@ -689,6 +702,14 @@ class NoteConversationRepo:
         the inbox shows and the row the reply consumes can be different sets, so the
         owner answers one question and their words are filed against another.
 
+        `AND c.state = 'waiting_on_owner'` is the same rule applied to the THREAD rather
+        than the call. Only a waiting thread holds an open set: `ask_owner` ends its turn
+        and parks the thread, so a `running` one is by construction not waiting on an
+        answer. Without it a thread being READ AGAIN — which since one-note-one-
+        conversation is the same row, reopened, rather than a new one — shows the
+        questions it asked and the owner already answered, for the length of the
+        re-reading.
+
         `committed` counts distinct fact ids over the thread's SUCCEEDED calls, so it
         counts what the write path reported rather than a number invented from the
         arguments the model sent — over BOTH turn paths, since W4c/1 put the owner's
@@ -705,7 +726,7 @@ class NoteConversationRepo:
                     " (SELECT t.args"
                     "    FROM app.note_conversation_tool_calls t"
                     "   WHERE t.session_id = c.session_id AND t.name = 'ask_owner'"
-                    "     AND t.ok"
+                    "     AND t.ok AND c.state = 'waiting_on_owner'"
                     "   ORDER BY t.seq DESC LIMIT 1) AS ask_args,"
                     " (SELECT count(DISTINCT f) FROM app.note_conversation_tool_calls t2,"
                     "         unnest(t2.fact_ids) AS f"
@@ -759,6 +780,33 @@ class NoteConversationRepo:
             .where(
                 NoteConversation.session_id == uuid.UUID(session_id),
                 NoteConversation.state == "waiting_on_owner",
+            )
+            .values(state="running", updated_at=func.now())
+            .returning(NoteConversation.session_id)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def reopen(self, session: AsyncSession, session_id: str) -> bool:
+        """Reopen an ENDED conversation for another reading of its note. True for the
+        caller that won it, False for everyone else.
+
+        A compare-and-swap for `claim_waiting`'s reason, not for tidiness: `set_state`
+        would legitimately match a row another pass had already reopened (its allowed
+        source set for `running` contains `running`) and report success to both, and two
+        passes reading one note is the defect this whole change exists to remove.
+
+        The one-live partial index (migration 0191) is still the authority the read
+        cannot be: two reopens that both pass this UPDATE's WHERE cannot both commit,
+        because a note has at most one LIVE conversation and this moves a row INTO that
+        set. The loser gets an `IntegrityError`, which the caller treats as "somebody
+        else is reading this note" — a skip, never an error. That direction is safe here
+        in a way it is NOT on the owner's reply path: nothing of his is lost by losing
+        this race, because the words that matter are already on the note."""
+        stmt = (
+            update(NoteConversation)
+            .where(
+                NoteConversation.session_id == uuid.UUID(session_id),
+                NoteConversation.state.in_(sorted(REOPENABLE)),
             )
             .values(state="running", updated_at=func.now())
             .returning(NoteConversation.session_id)

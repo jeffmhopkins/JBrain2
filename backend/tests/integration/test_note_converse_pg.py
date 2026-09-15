@@ -74,10 +74,11 @@ from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.clarify import (
     close_owner_reply,
+    record_owner_reply,
     record_reply_writes,
     reply_profile_for_session,
 )
-from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, NoteConverseRunner
+from jbrain.analysis.converse import NOTE_CONVERSE_AGENT, REREAD_LEAD, NoteConverseRunner
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.ownership import EMR_DESTINATION, PDF_MEDIA_TYPE
@@ -590,18 +591,118 @@ async def test_a_second_run_neither_opens_a_second_conversation_nor_raises(
     assert orphans == 0
 
 
-async def test_a_settled_conversation_releases_the_note_for_a_fresh_pass(
+async def test_a_settled_conversation_is_REOPENED_for_the_next_reading(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """`settled` is not live (0191), so re-ingesting a note after a finished pass opens
-    a NEW thread rather than being refused forever."""
+    """ONE note, ONE conversation — for the note's whole life.
+
+    ⟲ **This case used to assert the opposite** (`[r.state for r in rows] == ["settled",
+    "settled"]`, two distinct session ids), because `settled` released the note and a
+    re-read opened a fresh thread. That is what the owner hit: he added to a note, the
+    re-ingest opened a second conversation, `thread_for_note` returns the NEWEST, and the
+    thread holding the first pass AND the reply he had just typed became unreachable from
+    the note screen — *"I then said the size was different, and went back into the
+    conversation, and the original conversation was gone?"*
+
+    The second READING still happens; it is the only thing that retracts a fact his
+    correction removed. It happens HERE, in the thread he is looking at."""
     note_id = await _note(maker, owner, "the roof needs looking at")
     await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    first = (await _conversation(maker, owner, note_id))[0]
     await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
 
     rows = await _conversation(maker, owner, note_id)
-    assert [r.state for r in rows] == ["settled", "settled"]
-    assert len({r.sid for r in rows}) == 2
+    assert len(rows) == 1
+    assert rows[0].sid == first.sid
+    assert rows[0].state == "settled"
+    # And the reading really ran a second time in that one thread, rather than being
+    # skipped: both passes are on the record.
+    turns = await _turns(maker, owner, first.sid)
+    assert len([role for role, _ in turns if role == "assistant"]) == 2
+    # The second reading's user turn is the note re-framed, and it says why.
+    assert any(role == "user" and REREAD_LEAD in content for role, content in turns)
+
+
+async def test_the_owners_addition_is_read_in_HIS_thread_and_not_a_new_one(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The defect as the owner met it, end to end.
+
+    He added to a note whose pass had already settled. `append_clarifications` enqueued
+    the re-ingest in its own transaction, that re-ingest reached `note_converse`, and
+    because `settled` is not a live state nothing stopped a SECOND conversation opening.
+    `thread_for_note` returns the newest, so the note screen showed the new thread and
+    the one he had typed into — first pass and reply both — was gone from the screen:
+    *"I then said the size was different, and went back into the conversation, and the
+    original conversation was gone?"*
+
+    Note what is NOT asserted away: the re-reading still runs. It is the only thing that
+    retracts a fact the correction removed."""
+    note_id = await _note(maker, owner, 'My tv is 58"')
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    mine = (await _conversation(maker, owner, note_id))[0]
+
+    reply = await record_owner_reply(
+        maker,
+        SqlNotesRepo(maker),
+        owner,
+        session_id=mine.sid,
+        agent=NOTE_CONVERSE_AGENT,
+        message='Change the size to 60"',
+    )
+    assert reply is not None and reply.clarified
+
+    # The re-ingest's pass, which is what used to fork.
+    second = FakeTurn()
+    await _runner(maker, owner, second).note_converse({"note_id": note_id})
+
+    rows = await _conversation(maker, owner, note_id)
+    assert len(rows) == 1, "the note grew a second conversation"
+    assert rows[0].sid == mine.sid, "the owner's own thread is not the one on screen"
+    # And the pass really read his addition, in his thread.
+    assert second.conversations, "the re-reading never reached the model"
+    text_sent = "\n".join(getattr(m, "text", "") for m in second.conversations[-1])
+    assert 'Change the size to 60"' in text_sent
+
+
+async def test_a_re_reading_carries_the_thread_it_is_resuming(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """The resumed pass sees what was already said and recorded, and is told the note
+    changed — without that, its own prior answer sits directly above a note that looks
+    like it was simply sent twice."""
+    note_id = await _note(maker, owner, "the roof needs looking at")
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    second = FakeTurn()
+    await _runner(maker, owner, second).note_converse({"note_id": note_id})
+
+    assert second.conversations, "the resumed pass never reached the model"
+    sent = second.conversations[-1]
+    text = "\n".join(getattr(m, "text", "") for m in sent)
+    assert REREAD_LEAD in text
+    # The whole note, re-framed — not a diff. `close_reading` re-derives the entire note
+    # and the settle releases what the reading does not restate, so a diff would retract
+    # everything the note still says.
+    assert "the roof needs looking at" in text
+    # And the first pass's own answer rode back in as history.
+    assert len(sent) > 2
+
+
+async def test_a_note_being_read_right_now_is_not_reopened_under_the_live_pass(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """`reopen` moves a row INTO the live set, so the one-live index (0191) is still the
+    authority a read cannot be. A live thread is skipped before it is reached."""
+    note_id = await _note(maker, owner, "the roof needs looking at")
+    await _runner(maker, owner, FakeTurn()).note_converse({"note_id": note_id})
+    rows = await _conversation(maker, owner, note_id)
+    async with scoped_session(maker, owner) as s:
+        await NoteConversationRepo().reopen(s, rows[0].sid)
+
+    second = FakeTurn()
+    await _runner(maker, owner, second).note_converse({"note_id": note_id})
+    assert second.conversations == [], "billed a turn over a live pass"
+    assert len(await _conversation(maker, owner, note_id)) == 1
 
 
 async def test_the_tool_call_ledger_records_a_call_and_binds_it_to_its_turn(
@@ -886,11 +987,12 @@ async def test_a_conversation_stranded_running_by_a_killed_worker_is_reclaimed(
     executor = FakeTurn()
     await _runner(maker, owner, executor).note_converse({"note_id": note_id})
 
+    # ⟲ The reclaim used to be followed by a SECOND conversation. One note keeps one
+    # thread now, so the stranded one is reclaimed and then RESUMED in place: the note
+    # comes back into the pipeline without the owner losing the thread it was read in.
     states = {r.sid: r.state for r in await _conversation(maker, owner, note_id)}
-    assert states[stranded] == "failed"  # reclaimed, never resurrected
-    assert len(states) == 2
-    assert sorted(states.values()) == ["failed", "settled"]  # and a fresh pass really ran
-    assert len(executor.conversations) == 1
+    assert states == {stranded: "settled"}
+    assert len(executor.conversations) == 1  # and a fresh pass really ran
 
 
 async def test_a_slow_pass_is_not_reclaimed_out_from_under_itself(
