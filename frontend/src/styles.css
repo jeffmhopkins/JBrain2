@@ -27975,6 +27975,18 @@ button.wf-sigpill {
 .fb-shell .fb-ledger-rest {
   min-height: 0;
 }
+/* With a ledger above it the activity strip drops its own rule. That rule exists to
+   separate the ANSWER from the strip; the ledger card carries its own border and now
+   sits between the two, so drawing both stacked two separators a few pixels apart and
+   left the rule reading as an orphaned line under the card. The card IS the break. */
+.fb-shell .fb-act-foot.has-ledger .fb-activity {
+  border-top: 0;
+  padding-top: 0;
+}
+/* and the card takes over the breathing room the rule's padding used to give */
+.fb-shell .fb-act-foot.has-ledger .fb-ledger {
+  margin-bottom: 6px;
+}
 /* the overflow, which opens the steps view rather than growing this card — a quiet
    control in the "+N more" register the entity chips already use. Its 44px target is its
    own IN-FLOW box, not a bleed: the activity strip sits directly under this card and a

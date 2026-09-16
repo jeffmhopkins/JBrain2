@@ -550,6 +550,26 @@ describe("FullBrainSurface", () => {
 
     // The turn's own headline says what landed, not how many steps it took.
     expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("recorded 1 fact");
+    // And the activity strip drops its own rule: the ledger card has a border and sits
+    // between the answer and the strip, so keeping both stacked two separators a few
+    // pixels apart and left the rule orphaned under the card.
+    expect(document.querySelector(".fb-act-foot.has-ledger")).not.toBeNull();
+  });
+
+  it("keeps the strip's rule on a turn with no ledger, where it is the only break", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: { query: "x" } };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "2 notes" };
+      yield { type: "text_delta", text: "Found two." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "find" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(screen.getByText("Found two.")).toBeInTheDocument());
+    expect(document.querySelector(".fb-ledger")).toBeNull();
+    expect(document.querySelector(".fb-act-foot.has-ledger")).toBeNull();
   });
 
   it("swaps the live fan for ONE synthesis card on settle (supersedes incremental rosters)", async () => {
