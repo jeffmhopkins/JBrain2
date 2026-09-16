@@ -279,6 +279,67 @@ async def test_the_wipe_deletes_a_dated_fact_and_its_temporal_token(
     assert await _count(maker, "SELECT count(*) FROM app.entities") == 0
 
 
+async def test_the_wipe_takes_pending_work_keyed_on_a_deleted_note(
+    maker: async_sessionmaker, run_upgrade: object, migration: ModuleType
+) -> None:
+    """The half of the wipe that 0202 wrote and did not have.
+
+    0202 deleted jobs by naming `integrate_note` and `note_extract`. The first had been
+    retired by 0200 a release earlier; the second has never been a job kind in this repo.
+    The clause matched nothing, and "measured zero on the box" was trivially true of kinds
+    nothing can produce — so a note saved between the backup and the update would leave a
+    queued `ingest_note` pointed at a row this migration deletes, failing on every poll
+    until it burned `max_attempts`. Worse, its undispatched `note.created` event would
+    re-enqueue it after the restart even if the job itself had gone.
+
+    History still stays: a finished job and a dispatched event both record something that
+    happened, and pending work that is not about a note is none of this migration's
+    business."""
+    if migration.revision == "0202":
+        pytest.skip("0202's clause named kinds that never matched; the payload rule is 0205's")
+    principal = await _principal(maker)
+    repo = SqlNotesRepo(maker)
+    note, _ = await repo.create_note(
+        OWNER, client_id=f"wipe-{uuid.uuid4()}", domain="general", destination=None, body="pending"
+    )
+    queued, done, unrelated = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    pending_event, dispatched_event = uuid.uuid4(), uuid.uuid4()
+    async with scoped_session(maker, OWNER) as s:
+        for job_id, kind, payload, status in (
+            (queued, "ingest_note", f'{{"note_id": "{note.id}"}}', "queued"),
+            (done, "ingest_note", f'{{"note_id": "{note.id}"}}', "done"),
+            (unrelated, "embed_research_report", '{"report_id": "r1"}', "queued"),
+        ):
+            await s.execute(
+                text(
+                    "INSERT INTO app.jobs (id, kind, payload, status, principal_id, domain_code)"
+                    " VALUES (:id, :k, CAST(:p AS jsonb), :s, :pr, 'general')"
+                ),
+                {"id": job_id, "k": kind, "p": payload, "s": status, "pr": principal},
+            )
+        for event_id, dispatched in ((pending_event, None), (dispatched_event, "now()")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.events"
+                    " (id, type, payload, domain_code, principal_id, dispatched_at)"
+                    f" VALUES (:id, 'note.created', CAST(:p AS jsonb), 'general', :pr,"
+                    f" {dispatched or 'NULL'})"
+                ),
+                {"id": event_id, "p": f'{{"note_id": "{note.id}"}}', "pr": principal},
+            )
+
+    run_upgrade()  # type: ignore[operator]
+
+    gone = await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=queued)
+    assert gone == 0, "the queued job names a note this migration deleted"
+    assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=done) == 1
+    assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=unrelated) == 1
+    stale = await _count(maker, "SELECT count(*) FROM app.events WHERE id = :i", i=pending_event)
+    assert stale == 0, "an undispatched note.created would re-enqueue the job after restart"
+    kept = await _count(maker, "SELECT count(*) FROM app.events WHERE id = :i", i=dispatched_event)
+    assert kept == 1, "a dispatched event is history"
+
+
 async def test_the_wipe_order_satisfies_every_blocking_constraint(
     maker: async_sessionmaker, migration: ModuleType
 ) -> None:
@@ -329,8 +390,12 @@ async def test_no_kept_table_can_block_the_wipe(
     a resolution (`list_items.source_note_id` SET NULL, `agent_episode_refs` and
     `place_share` CASCADE), which is why 0202 ran. Nothing made that true on purpose, and
     a new feature that FKs `notes` and forgets `ondelete` would make it false silently —
-    on the box, never in CI, where these tables are empty and no key is ever tested."""
-    wipe = list(migration._WIPE)
+    on the box, never in CI, where these tables are empty and no key is ever tested.
+
+    `agent_sessions` is checked with the set although it is not IN it: the migration
+    deletes the note threads' rows from it by hand, so a blocking key into it aborts the
+    run exactly as one into `notes` would."""
+    wipe = [*migration._WIPE, "agent_sessions"]
     async with scoped_session(maker, OWNER) as s:
         blockers = (
             await s.execute(
@@ -358,9 +423,14 @@ async def test_no_kept_table_can_block_the_wipe(
     )
 
 
-def test_the_repeat_wipes_exactly_what_the_first_one_did() -> None:
-    """0205 is a deliberate copy of 0202, and both are frozen. This can only fail if
-    someone edits a shipped migration — which is the bug, not the signal. It exists so
-    that the copy is checkable rather than merely asserted in a docstring."""
-    first, repeat = (_load(name) for name in _RESETS)
-    assert repeat._WIPE == first._WIPE
+def test_every_reset_wipes_exactly_what_the_first_one_did() -> None:
+    """Each reset is a deliberate copy of 0202's `_WIPE`, and every shipped one is frozen,
+    so this exists to make the copy checkable rather than merely asserted in a docstring.
+
+    Written over ALL of `_RESETS`, not the two that exist today: the runbook tells the
+    next person to add their migration to that tuple, and a two-way unpack would greet
+    them with a `ValueError` instead of a verdict. A reset that legitimately needs a
+    different set changes this test on purpose — that is the point of the speed bump."""
+    first, *rest = (_load(name) for name in _RESETS)
+    for repeat in rest:
+        assert repeat._WIPE == first._WIPE

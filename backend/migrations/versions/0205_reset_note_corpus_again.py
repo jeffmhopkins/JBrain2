@@ -32,6 +32,14 @@ what their keys declare; children before parents throughout, with `facts` before
 `temporal_tokens` because `facts.temporal_token_id` is NO ACTION; no sequences reset,
 because these tables key on `gen_random_uuid()`.
 
+**The one place this is NOT a copy** is the pending-work cleanup after `_WIPE`. 0202
+deleted jobs by naming two kinds, and both were wrong: `integrate_note` had been retired
+by 0200 a release earlier, and `note_extract` has never been a job kind here at all — so
+the statement read as protection and deleted nothing, and "measured zero on the box" was
+trivially true of kinds nothing can produce. This one keys on the payload instead, and
+also takes the undispatched `note.created` events that would re-enqueue the same doomed
+work after the restart. Found by review, not by the box.
+
 `canonical_predicates` goes again, and comes back on its own: every one of the 121 rows on
 the box reads `origin = 'seed'`, and the worker re-seeds the shipped registry (`embed.py`)
 at startup — which the update that runs this migration performs anyway. What it does clear
@@ -128,14 +136,34 @@ def upgrade() -> None:
     for table in _WIPE:
         op.execute(f"DELETE FROM app.{table}")
 
-    # Queued or running work whose subject is about to stop existing. `app.jobs` is KEPT
-    # as history — a `done` row records something that happened — but an undispatched
-    # `integrate_note` names a note that will be gone, and the worker would fail it on
-    # every poll. Measured zero on the box; a correct rule regardless, since a job could
-    # be enqueued between the backup and the deploy.
+    # Queued or running work whose SUBJECT is about to stop existing. `app.jobs` is KEPT
+    # as history — a `done` row records something that happened — but a job still waiting
+    # on a note, a chunk or an attachment names something this statement's siblings have
+    # just deleted, and the worker would fail it on every poll until it burned
+    # `max_attempts`.
+    #
+    # Keyed on the PAYLOAD, not on a list of kinds, because 0202's list of kinds was
+    # already wrong when it ran and nothing noticed: `integrate_note` had been retired by
+    # 0200 one release earlier, and `note_extract` has never been a job kind in this repo
+    # at all. The clause read as protection and was a no-op. The live note-bearing kinds
+    # are `ingest_note`, `embed_note` and `note_converse` (`worker.py`), and naming those
+    # would rot again the next time the producer is renamed — which this rewrite has now
+    # done twice. Every job about a note carries its id; nothing that survives this
+    # migration carries one.
     op.execute(
-        "DELETE FROM app.jobs WHERE kind IN ('integrate_note', 'note_extract')"
-        " AND status IN ('queued', 'running')"
+        "DELETE FROM app.jobs WHERE status IN ('queued', 'running')"
+        " AND (jsonb_exists(payload, 'note_id') OR jsonb_exists(payload, 'chunk_id')"
+        " OR jsonb_exists(payload, 'attachment_id'))"
+    )
+
+    # And the events that would RE-ENQUEUE that work. `note.created` is what drives
+    # ingestion (`api/notes.py` emits it; the dispatcher resolves it to `ingest_note`),
+    # and undispatched rows are scanned again after the restart this update performs — so
+    # a note saved between the backup and the update would come back as a doomed job even
+    # with the job itself deleted above. A DISPATCHED event is history and stays; only
+    # pending work goes.
+    op.execute(
+        "DELETE FROM app.events WHERE dispatched_at IS NULL AND jsonb_exists(payload, 'note_id')"
     )
 
 

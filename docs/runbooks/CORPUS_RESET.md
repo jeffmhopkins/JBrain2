@@ -48,6 +48,13 @@ the `agent_sessions` rows behind those threads.
    live schema which tables outside the set hold a foreign key into it (see
    `test_no_kept_table_can_block_the_wipe` for the query). A new feature that FKs
    `notes` and forgets `ondelete` would abort the whole update, on the box only.
+   Copy the **pending-work** statements too, and copy them as they are: they
+   delete queued jobs and undispatched events by what their payload NAMES, not by
+   job kind. 0202 named two kinds — one retired a release earlier, one that never
+   existed — so it read as protection and deleted nothing, and the measurement
+   that seemed to confirm it ("zero on the box") was trivially true of kinds
+   nothing can produce. A note saved between the backup and the update is the
+   case these statements exist for.
 3. **Add it to `_RESETS`** in `backend/tests/integration/test_reset_corpus_pg.py`.
    Every test there runs against every reset. This is not ceremony: CI runs
    migrations against an EMPTY schema, where a wrong statement order never trips
