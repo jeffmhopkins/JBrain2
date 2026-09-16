@@ -497,3 +497,37 @@ describe("AttachmentsTab manifest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("the blocks he added after the fact", () => {
+  const ADDED =
+    'My tv is 58"\n\n[addition 2026-09-15 01:24 UTC]\nActually it\'s 60"' +
+    "\n\n[clarification 2026-09-15 02:00 UTC]\nQ: Which room?\nA: The den";
+
+  it("dates each block instead of printing its raw marker", () => {
+    // Here, unlike the stream row, the stamp earns its space: this is where he reads
+    // the note whole and "when did I say that?" is a real question. What it must not
+    // be is the composed text's own machine syntax.
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    expect(screen.queryByText(/\[addition/)).toBeNull();
+    expect(screen.queryByText(/\[clarification/)).toBeNull();
+    expect(screen.getByText(/Added · 2026-09-15 01:24 UTC/)).toBeInTheDocument();
+    expect(screen.getByText(/Answered · 2026-09-15 02:00 UTC/)).toBeInTheDocument();
+  });
+
+  it("keeps his words, and the body he first wrote", () => {
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    expect(screen.getByText(/My tv is 58"/)).toBeInTheDocument();
+    expect(screen.getByText(/Actually it's 60"/)).toBeInTheDocument();
+    expect(screen.getByText("The den")).toBeInTheDocument();
+  });
+
+  it("sets the agent's question apart from his own sentences", () => {
+    // The only text in a note's body he did not write, so it must not read as his.
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    const q = screen.getByText("Which room?");
+    expect(q).toHaveClass("note-block-q");
+    // And no bare `Q:` / `A:` labels survive into what he reads.
+    expect(screen.queryByText(/^Q: /)).toBeNull();
+    expect(screen.queryByText(/^A: /)).toBeNull();
+  });
+});

@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from jbrain.agent.graphwritetools import NoteGraphWriter, NoteTarget
 from jbrain.agent.loop import ToolContext, ToolOutput
@@ -293,6 +293,102 @@ async def test_a_write_grounds_the_report_of_itself(
     assert write.label in grounds, (
         "the turn's own report of this write has nothing in the corpus to match"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_write_survives_the_re_ingest_its_own_conversation_triggered(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The owner's fact, lost to a foreign key, on the note where he said "give her a
+    color of white".
+
+    `_load_note` cached the note's chunks for the life of the WRITER, and its reason was
+    "a re-ingest opens a NEW conversation". 0204 made that false — a re-reading resumes
+    the note's one conversation — so a writer that outlives a re-ingest holds chunk ids
+    the re-ingest has deleted. `entity_mentions.chunk_id` is a foreign key, so the insert
+    raises, `_assert_one`'s per-element `except` swallows it, and the owner is told only
+    `not recorded (internal)`. Live, the model relayed that to him as the system
+    rejecting his entry and asked him which predicate name to use.
+
+    The re-ingest here is the real one — `ingest()` again, which is what
+    `append_clarifications` queues — so the chunk ids genuinely change underneath a
+    writer that has already read them."""
+    note_id = await _note(maker, tmp_path, body="I have a bird named Lucy.")
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Lucy", "kind": "animal"}]}, _ctx())
+    # The writer has now READ the note's chunks once.
+    await writer.close_reading(
+        {
+            "title": "Lucy",
+            "tags": ["bird"],
+            "facts": [
+                {
+                    "subject": "Lucy",
+                    "predicate": "species",
+                    "object": "budgerigar",
+                    "quote": "I have a bird named Lucy.",
+                    "statement": "Lucy is a budgerigar.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        before = {
+            r[0]
+            for r in (
+                await s.execute(
+                    text("SELECT id FROM app.chunks WHERE note_id = :n"), {"n": note_id}
+                )
+            ).all()
+        }
+
+    # He adds to the note; the append queues the re-ingest, which REPLACES the chunks
+    # while this writer is still mid-conversation. The body change is made directly
+    # rather than through `append_clarifications` because what is under test is the
+    # CHUNK rewrite, and going through the composer would drag a conversation row and
+    # its state machine into a test about a foreign key.
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = CAST(:n AS uuid)"),
+            {
+                "b": "I have a bird named Lucy.\n\nNo, you should give her a color of white",
+                "n": note_id,
+            },
+        )
+    await ingest(maker, note_id, tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        after = {
+            r[0]
+            for r in (
+                await s.execute(
+                    text("SELECT id FROM app.chunks WHERE note_id = :n"), {"n": note_id}
+                )
+            ).all()
+        }
+    assert before != after, "the re-ingest did not actually replace the chunks"
+
+    out = await writer.assert_fact(
+        {
+            "facts": [
+                {
+                    "subject": "Lucy",
+                    "predicate": "color",
+                    "object": "white",
+                    "quote": "No, you should give her a color of white",
+                    "statement": "Lucy is white.",
+                }
+            ]
+        },
+        _ctx(),
+    )
+    assert isinstance(out, ToolOutput)
+    assert "internal" not in str(out).lower(), str(out)
+    assert len(out.facts) == 1, f"the owner's fact was dropped: {out}"
+    # And the quote attests: the words are in the block he just added, which a cache
+    # taken before it existed could not contain either.
+    assert out.facts[0].label == "Lucy is white."
 
 
 @pytest.mark.asyncio

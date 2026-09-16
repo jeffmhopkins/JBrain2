@@ -445,6 +445,46 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("never echoes the agent's question back inside the owner's own bubble", async () => {
+    // The turn text records an answered set as `Q: …/A: …` so the frozen block can read
+    // its answers back out (`clarify.owner_turn_text` ↔ `asked.answersFromReply`). That
+    // is a storage shape. Rendered verbatim it printed the agent's question a second
+    // time on one screen — in the owner's voice, under the card already showing it.
+    //
+    // Outside a note thread there is no block, and that is exactly why the pairs must
+    // not be dropped on the floor here: a turn carrying only pairs renders nothing, so
+    // what this asserts is the narrow claim — the LABELS never reach him — plus that a
+    // typed aside still does.
+    const turn =
+      "Q: Which description of Lucy's species is correct?\nA: The color is white" +
+      "\n\nand she is not a parrot";
+    render(
+      <Harness
+        d={deps({
+          getTranscript: vi.fn(
+            async (): Promise<TranscriptTurn[]> => [
+              { role: "user", content: turn, tools: [] },
+              {
+                role: "assistant",
+                content: "Both agree — Lucy is a white budgerigar.",
+                tools: [],
+              },
+            ],
+          ),
+        })}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The typed aside is his, and survives.
+    await waitFor(() =>
+      expect(document.querySelector(".bubble.me")?.textContent).toBe("and she is not a parrot"),
+    );
+    // The question is not re-printed at him, and neither are the channel's own labels.
+    expect(screen.queryByText(/Which description of Lucy/)).toBeNull();
+    expect(screen.queryByText(/^Q: /)).toBeNull();
+    expect(screen.queryByText(/^A: /)).toBeNull();
+  });
+
   it("puts WHAT CHANGED on the face of the turn, with no tap at all", async () => {
     // The owner's report: *"I don't see how it actually added the entity to the database,
     // the conversation kinda looks like after that actually took place?"* The agent said

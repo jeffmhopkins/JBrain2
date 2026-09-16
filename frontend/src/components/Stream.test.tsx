@@ -222,3 +222,27 @@ describe("a note whose thread is waiting on an answer", () => {
     expect(screen.queryByRole("button", { name: /question/ })).not.toBeInTheDocument();
   });
 });
+
+describe("a note he came back and added to", () => {
+  const ADDED = 'My tv is 58"\n\n[addition 2026-09-15 01:24 UTC]\nActually it\'s 60"';
+
+  it("spends the clamp on his words, not on the block marker", () => {
+    // The reported defect, in the surface he reported it on: a composed note carries
+    // dated markers in its own text, and rendering that verbatim put
+    // `[addition 2026-09-15 01:24 UTC]` in the two lines the row has — cutting off
+    // before the sentence he typed. He called it "additions show like poop".
+    renderStream([item({ body: ADDED })]);
+    expect(screen.queryByText(/\[addition/)).toBeNull();
+    expect(screen.getByText(/Actually it's 60"/)).toBeInTheDocument();
+  });
+
+  it("still says he came back, because the preview now reads as one note", () => {
+    renderStream([item({ body: ADDED })]);
+    expect(screen.getByText("1 added since")).toBeInTheDocument();
+  });
+
+  it("says nothing about additions on a note that has none", () => {
+    renderStream([item({ body: "just a note" })]);
+    expect(screen.queryByText(/added since/)).toBeNull();
+  });
+});

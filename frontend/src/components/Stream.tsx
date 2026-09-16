@@ -8,6 +8,7 @@ import { attachmentUrl } from "../api/client";
 import { groupByDay, isWithinLastDays, relativeTime } from "../notes/grouping";
 import { type LifecycleSource, lifecycleChip } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_LABEL } from "../notes/modes";
+import { parseNote, previewText } from "../notes/noteBlocks";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import type { NoteThread, NoteThreads } from "../notes/useNoteThreads";
 import type { StreamItem } from "../notes/useNotes";
@@ -89,6 +90,7 @@ function NoteRow({
   const [confirming, setConfirming] = useState(false);
   const dragged = useRef(false);
   const bodyRef = useRef<HTMLSpanElement>(null);
+  const added = parseNote(item.body).blocks.length;
   const [clamped, setClamped] = useState(false);
 
   // Truncation affordance: only show "more" when the clamp actually cut text.
@@ -218,10 +220,22 @@ function NoteRow({
               <span className="note-by-assistant"> · assistant</span>
             )}
           </span>
+          {/* The WORDS, never the machine syntax. A composed note carries dated
+              block markers in its text (`notes/compose.py`), and rendering that
+              verbatim spent both lines of a clamped row on
+              `[addition 2026-09-15 01:24 UTC]` and cut off before the sentence he
+              had actually typed. The stamps are not lost — the note screen dates
+              every block — they are just not what a two-line preview is for. */}
           <span className="note-body note-body-clamp" ref={bodyRef}>
-            {item.body}
+            {previewText(item.body)}
           </span>
           {clamped && <span className="note-more">more</span>}
+          {added > 0 && (
+            // Quiet, and counted rather than hidden: the preview now reads as one
+            // continuous note, so without this there is nothing saying he came back
+            // to it — which is the thing a stamp was badly doing.
+            <span className="note-added">{added} added since</span>
+          )}
         </button>
         {(item.attachments.length > 0 ||
           item.pending ||
