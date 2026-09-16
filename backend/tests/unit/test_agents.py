@@ -928,9 +928,15 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # most notes join him to the thing they name, and resolving a name already stores
         # what the thing is called. Bumps `facts.prompt_version`, which is the point —
         # this is a calibration change, not a wording tidy.
+        #
+        # v12 says the handles and predicates are the MODEL'S, not Jeff's. He was told
+        # "I've recorded that you have a pet rat — entity e2 — and linked it to you
+        # (entity e1) with the fact hasPet", which is the addressing layer read aloud at
+        # the one person who cannot look any of it up. The panel under the answer already
+        # shows him exactly what landed; the sentences are for the meaning.
         "note_ingest": (
-            "agent-note-ingest-v11",
-            "fcb61d282f5c42faf892fb5e201e7d52dc20cd1526ed98d5323b746987b840ad",
+            "agent-note-ingest-v12",
+            "4a9df3b633e334c19e60bb1b9cc47f1058359fc59f825649f24e3ee4be19eac4",
         ),
     }
     assert set(pins) == AGENT_NAMES
