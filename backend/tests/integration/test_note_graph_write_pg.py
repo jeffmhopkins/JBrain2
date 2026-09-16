@@ -252,6 +252,75 @@ async def test_a_later_pass_can_be_handed_what_an_earlier_one_resolved(
 
 
 @pytest.mark.asyncio
+async def test_a_carried_handle_is_still_told_what_is_ON_FILE(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:
+    """The cost of carrying handles without carrying what they know — found on the
+    owner's Susan note, where four passes over one sentence produced FOUR predicates.
+
+        breed → tabby        (retracted)
+        coatPattern → tabby  (active)
+        type → cat           (retracted)
+        species → cat        (active)
+
+    `carry_over` seeds the handle table so a resumed pass need not re-resolve. But
+    `resolve_entity` answers a name it already holds with the terse "already resolved this
+    note" and NO on-file block — right for a repeat inside one pass, where the model read
+    those facts seconds ago, and wrong for a carried handle, which was never shown them at
+    all. Unable to see it had already used `coatPattern`, the next pass chose `type`, and
+    the one after chose `species`; the settle sweep retracted each abandoned predicate
+    behind it, so the graph churned instead of converging.
+
+    A carried handle therefore still earns its on-file block — once."""
+    note_id = await _note(maker, tmp_path, body="Mopsy is my cat. Mopsy is a tabby.")
+    first = await _writer(maker, note_id)
+    resolved = await first.resolve_entity(
+        {"entities": [{"surface": "Mopsy", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(resolved, ToolOutput)
+    (ref,) = resolved.entities
+    await first.close_reading(
+        {
+            "title": "Mopsy",
+            "tags": ["cat"],
+            "facts": [
+                {
+                    "subject": "Mopsy",
+                    "predicate": "coatPattern",
+                    "object": "tabby",
+                    "quote": "Mopsy is a tabby.",
+                    "statement": "Mopsy is a tabby.",
+                }
+            ],
+        },
+        _ctx(),
+    )
+
+    # The next pass: a fresh writer that carries the handle rather than re-resolving.
+    later = await _writer(maker, note_id)
+    assert await later.carry_over([uuid.UUID(ref.entity_id)])
+
+    again = await later.resolve_entity(
+        {"entities": [{"surface": "Mopsy", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(again, ToolOutput)
+    text_out = str(again)
+    # The predicate it already used is in front of it, so it has something to reuse.
+    assert "coatPattern" in text_out, text_out
+    assert "Mopsy is a tabby." in text_out, text_out
+
+    # And the debt is paid ONCE: a second resolve in the same pass gets the terse line,
+    # because by then the model HAS read them.
+    third = await later.resolve_entity(
+        {"entities": [{"surface": "Mopsy", "kind": "animal"}]}, _ctx()
+    )
+    assert isinstance(third, ToolOutput)
+    assert "already resolved this note" in str(third)
+    assert "coatPattern" not in str(third)
+
+
+@pytest.mark.asyncio
 async def test_a_write_grounds_the_report_of_itself(
     maker,  # noqa: F811
     tmp_path,

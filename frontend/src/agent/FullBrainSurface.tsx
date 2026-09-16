@@ -40,6 +40,7 @@ import {
 } from "./asked";
 import { attachmentKind } from "./attachmentKind";
 import {
+  type LedgerRow,
   entityPhrase,
   ledgerRows,
   ledgerWord,
@@ -1489,6 +1490,7 @@ function ActivityLine({
   const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
   const failCount = steps.filter((s) => s.ok === false).length;
   const writeSummary = turnWriteSummary(steps);
+  const ledger = ledgerRows(steps);
   const label = thinking
     ? "Thinking…"
     : ms !== null
@@ -1507,8 +1509,12 @@ function ActivityLine({
     // The two segments are a segmented control over ONE panel: selecting a chip swaps
     // the panel's content (reasoning ⇄ steps), selecting the open chip closes it. With
     // a single body the open height and bottom spacing are identical for either view.
-    <div className={`fb-act-foot${bare ? " bare" : ""}`}>
-      <TurnLedger steps={steps} onOpenSteps={() => setOpen("work")} />
+    // `has-ledger` drops the activity strip's top rule. The rule separates the ANSWER
+    // from the strip, and the ledger card — which has its own border — now sits between
+    // them, so drawing both stacks two separators and leaves the rule looking orphaned
+    // under the card.
+    <div className={`fb-act-foot${bare ? " bare" : ""}${ledger.length > 0 ? " has-ledger" : ""}`}>
+      <TurnLedger rows={ledger} onOpenSteps={() => setOpen("work")} />
       <div className="fb-activity">
         {hasReasoning && (
           <button
@@ -1970,13 +1976,12 @@ const LEDGER_CAP = 4;
 // Only CHANGES — a re-reading is mostly facts already on file, and listing those would
 // bury the one line that is news. The count of them is the turn's summary's job.
 function TurnLedger({
-  steps,
+  rows,
   onOpenSteps,
 }: {
-  steps: readonly ToolStep[];
+  rows: readonly LedgerRow[];
   onOpenSteps: () => void;
 }): ReactNode {
-  const rows = ledgerRows(steps);
   if (rows.length === 0) return null;
   const shown = rows.slice(0, LEDGER_CAP);
   const rest = rows.length - shown.length;
