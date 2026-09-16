@@ -637,6 +637,18 @@ class Handle:
     """Whether the entity's own domain is inside the conversation's read scopes. False
     withholds its canonical name from the result text — the write still lands."""
 
+    carried: bool = False
+    """Seeded by `carry_over` from a PRIOR pass rather than resolved in this one.
+
+    It decides whether `resolve_entity` still reports WHAT IS ON FILE. A name resolved
+    earlier in the same pass needs no repeat — the model read those facts a few seconds
+    ago — but a carried handle was never shown them at all, and the terse line cost the
+    owner real data: the model, unable to see it had already used `coatPattern` for "she
+    is a tabby cat", chose `type` on the next pass and `species` on the one after. One
+    sentence became `breed`, `coatPattern`, `type` and `species` across four passes, the
+    settle sweep retracting each abandoned predicate behind it. Carrying the handles
+    without carrying what they KNOW is half a memory."""
+
     @property
     def label(self) -> str:
         """How the model is told to think of this entity: its canonical name when the
@@ -857,7 +869,21 @@ class NoteGraphWriter:
                     continue
                 known = self.lookup(surface)
                 if known is not None:
-                    rows.append(f"{known.handle}  {known.label} — already resolved this note")
+                    if known.carried:
+                        # Carried from a PREVIOUS pass: the handle is not new to the
+                        # writer, but its facts are new to this model, so it takes the
+                        # `Handle` branch and `_fill_on_file` tells it what the graph
+                        # already holds. Without this a resumed pass re-invents a
+                        # predicate per reading.
+                        #
+                        # The debt is paid ONCE — cleared here, so a second call in the
+                        # same pass gets the terse line the repeat case deserves. The
+                        # model has now read those facts, and re-listing them every call
+                        # is the token cost `already resolved this note` exists to avoid.
+                        self._remember(replace(known, carried=False))
+                        rows.append(known)
+                    else:
+                        rows.append(f"{known.handle}  {known.label} — already resolved this note")
                     refs.append(_entity_ref(known))
                     continue
                 kind = _KIND_HINTS.get(_text(item, "kind", "type").casefold(), _DEFAULT_KIND)
@@ -1415,6 +1441,10 @@ class NoteGraphWriter:
                     name=str(row.canonical_name),
                     kind=str(row.kind or _DEFAULT_KIND),
                     domain=str(row.domain_code or ""),
+                    # Marked, so this pass's first `resolve_entity` still reports what is
+                    # ON FILE for it. Carrying the handle without carrying what it knows
+                    # is what let one sentence become four predicates across four passes.
+                    carried=True,
                 )
             )
         return carried
@@ -1428,6 +1458,7 @@ class NoteGraphWriter:
         name: str,
         kind: str,
         domain: str,
+        carried: bool = False,
     ) -> Handle:
         """Register an entity the caller resolved ELSEWHERE as a handle of this writer.
 
@@ -1452,6 +1483,7 @@ class NoteGraphWriter:
             name=name,
             domain=domain,
             visible=domain in self._read_scopes,
+            carried=carried,
         )
         self._remember(handle)
         return handle
