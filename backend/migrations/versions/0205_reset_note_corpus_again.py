@@ -138,30 +138,44 @@ def upgrade() -> None:
 
     # Queued or running work whose SUBJECT is about to stop existing. `app.jobs` is KEPT
     # as history — a `done` row records something that happened — but a job still waiting
-    # on a note, a chunk or an attachment names something this statement's siblings have
+    # on a note or on a note's attachment names something this statement's siblings have
     # just deleted, and the worker would fail it on every poll until it burned
     # `max_attempts`.
     #
     # Keyed on the PAYLOAD, not on a list of kinds, because 0202's list of kinds was
     # already wrong when it ran and nothing noticed: `integrate_note` had been retired by
     # 0200 one release earlier, and `note_extract` has never been a job kind in this repo
-    # at all. The clause read as protection and was a no-op. The live note-bearing kinds
-    # are `ingest_note`, `embed_note` and `note_converse` (`worker.py`), and naming those
-    # would rot again the next time the producer is renamed — which this rewrite has now
-    # done twice. Every job about a note carries its id; nothing that survives this
-    # migration carries one.
+    # at all. The clause read as protection and was a no-op. The live kinds are
+    # `ingest_note`, `embed_note` and `note_converse` on the note, `ocr_attachment` and
+    # its transcribe/video siblings on the attachment — and naming those would rot again
+    # the next time the producer is renamed, which this rewrite has now done twice.
+    #
+    # Two keys, because a job reaches the corpus by one or the other: a note directly, or
+    # a note's attachment (`app.attachments.note_id` is NOT NULL, so no attachment here
+    # belongs to anything else — a chat's files live in `turn_attachments`, which stays).
+    # `jsonb_exists` rather than the `?` operator: the tests run this on psycopg and the
+    # deploy's `migrate` runs it on asyncpg, and the function form cannot develop an
+    # escaping difference between the two. Neither payload column is GIN-indexed, so the
+    # form costs nothing.
+    #
+    # One knock-on the owner may notice: `run_steps.job_id` is ON DELETE SET NULL, so an
+    # audit run-log step for an in-flight ingest keeps its row and loses its link to the
+    # job. The run log is KEPT; only the pointer to a deleted job goes.
     op.execute(
         "DELETE FROM app.jobs WHERE status IN ('queued', 'running')"
-        " AND (jsonb_exists(payload, 'note_id') OR jsonb_exists(payload, 'chunk_id')"
-        " OR jsonb_exists(payload, 'attachment_id'))"
+        " AND (jsonb_exists(payload, 'note_id') OR jsonb_exists(payload, 'attachment_id'))"
     )
 
-    # And the events that would RE-ENQUEUE that work. `note.created` is what drives
-    # ingestion (`api/notes.py` emits it; the dispatcher resolves it to `ingest_note`),
-    # and undispatched rows are scanned again after the restart this update performs — so
+    # And the events that would RE-ENQUEUE that work. `note.created` drives ingestion and
+    # `note.ingested` drives `note_converse` — the note's only graph producer — and the
+    # dispatcher scans undispatched rows again after the restart this update performs, so
     # a note saved between the backup and the update would come back as a doomed job even
-    # with the job itself deleted above. A DISPATCHED event is history and stays; only
-    # pending work goes.
+    # with the job itself deleted above. The reconcilers cannot bring it back:
+    # `backfill_pending_notes` and its siblings all select FROM `app.notes`, which is
+    # empty by now, so a pending event was the one remaining route.
+    #
+    # By payload again, not by type: `resolution.changed` drives a sweep the wipe keeps,
+    # and it carries an `item_id`, not a note. A DISPATCHED event is history and stays.
     op.execute(
         "DELETE FROM app.events WHERE dispatched_at IS NULL AND jsonb_exists(payload, 'note_id')"
     )

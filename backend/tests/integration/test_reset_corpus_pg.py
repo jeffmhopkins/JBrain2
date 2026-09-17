@@ -302,11 +302,15 @@ async def test_the_wipe_takes_pending_work_keyed_on_a_deleted_note(
     note, _ = await repo.create_note(
         OWNER, client_id=f"wipe-{uuid.uuid4()}", domain="general", destination=None, body="pending"
     )
-    queued, done, unrelated = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    queued, running, done, unrelated = (uuid.uuid4() for _ in range(4))
     pending_event, dispatched_event = uuid.uuid4(), uuid.uuid4()
     async with scoped_session(maker, OWNER) as s:
         for job_id, kind, payload, status in (
             (queued, "ingest_note", f'{{"note_id": "{note.id}"}}', "queued"),
+            # A job reaches the corpus by a note OR by a note's attachment, and
+            # `running` is a status the clause must take as well as `queued` — one
+            # seeded row short and either arm could be deleted with the suite still green.
+            (running, "ocr_attachment", f'{{"attachment_id": "{uuid.uuid4()}"}}', "running"),
             (done, "ingest_note", f'{{"note_id": "{note.id}"}}', "done"),
             (unrelated, "embed_research_report", '{"report_id": "r1"}', "queued"),
         ):
@@ -332,6 +336,8 @@ async def test_the_wipe_takes_pending_work_keyed_on_a_deleted_note(
 
     gone = await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=queued)
     assert gone == 0, "the queued job names a note this migration deleted"
+    orphan = await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=running)
+    assert orphan == 0, "a running job on a note's attachment is doomed the same way"
     assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=done) == 1
     assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=unrelated) == 1
     stale = await _count(maker, "SELECT count(*) FROM app.events WHERE id = :i", i=pending_event)
