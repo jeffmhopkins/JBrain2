@@ -1,8 +1,13 @@
-"""Migration 0202 against real Postgres: the wipe takes the corpus and spares the keepers.
+"""The reset migrations against real Postgres: the wipe takes the corpus, spares the keepers.
 
-CI cannot catch a mistake in this migration. It runs against an EMPTY schema there, where
+Every test here runs against EACH reset migration (`_RESETS`) — 0202, and 0205 repeating it
+at the owner's second request. A repeat is a copy of a list of table names, which is the
+shape that rots quietly: a table renamed or a constraint added between one reset and the
+next breaks the later file and nothing says so.
+
+CI cannot catch a mistake in these migrations. It runs them against an EMPTY schema, where
 a wrong statement order never trips a foreign key and a statement that deletes too much
-deletes nothing. The only place 0202 is ever exercised with rows in the tables is the
+deletes nothing. The only place a reset is ever exercised with rows in the tables is the
 owner's box, once, irreversibly — so it is exercised here instead.
 
 What this pins is the reason 0202 uses DELETE where the plan said
@@ -46,15 +51,26 @@ pytestmark = [
 ]
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-_PATH = BACKEND_ROOT / "migrations" / "versions" / "0202_reset_note_corpus.py"
+
+#: EVERY reset migration, so a repeat gets the same proof the first one got rather than
+#: riding on the fact that it was copied. The owner has now asked for this twice, and a
+#: copy is exactly the shape that rots: `_WIPE` names tables by string, so a table renamed
+#: or a constraint added between one reset and the next breaks the later file silently.
+_RESETS = ("0202_reset_note_corpus.py", "0205_reset_note_corpus_again.py")
 
 
-def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("migration_0202_pg", _PATH)
+def _load(filename: str) -> ModuleType:
+    path = BACKEND_ROOT / "migrations" / "versions" / filename
+    spec = importlib.util.spec_from_file_location(f"migration_{filename[:4]}_pg", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(params=_RESETS)
+def migration(request: pytest.FixtureRequest) -> ModuleType:
+    return _load(request.param)
 
 
 @pytest.fixture
@@ -65,7 +81,11 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
 
 
 @pytest.fixture
-def run_upgrade(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # noqa: F811
+def run_upgrade(
+    _pg_cluster: _Cluster,  # noqa: F811
+    database_url: str,  # noqa: F811
+    migration: ModuleType,
+) -> Iterator[object]:
     """Invoke `upgrade()` the way alembic does — a real connection bound to the `op`
     proxy — rather than reimplementing its SQL here, which would test the test.
 
@@ -79,7 +99,7 @@ def run_upgrade(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  
         with engine.begin() as conn:
             ctx = MigrationContext.configure(conn)
             with Operations.context(ctx):
-                _migration().upgrade()
+                migration.upgrade()
 
     yield _run
     engine.dispose()
@@ -201,11 +221,11 @@ async def test_the_wipe_runs_clean_on_an_already_empty_corpus(
     assert await _count(maker, "SELECT count(*) FROM app.facts") == 0
 
 
-def test_the_downgrade_refuses_rather_than_lying() -> None:
+def test_the_downgrade_refuses_rather_than_lying(migration: ModuleType) -> None:
     """A `downgrade()` that silently did nothing would read, to someone under pressure,
     as a rollback that worked. The rows are gone; the backup is the way back."""
     with pytest.raises(RuntimeError, match="no downgrade"):
-        _migration().downgrade()
+        migration.downgrade()
 
 
 async def test_the_wipe_deletes_a_dated_fact_and_its_temporal_token(
@@ -259,8 +279,75 @@ async def test_the_wipe_deletes_a_dated_fact_and_its_temporal_token(
     assert await _count(maker, "SELECT count(*) FROM app.entities") == 0
 
 
+async def test_the_wipe_takes_pending_work_keyed_on_a_deleted_note(
+    maker: async_sessionmaker, run_upgrade: object, migration: ModuleType
+) -> None:
+    """The half of the wipe that 0202 wrote and did not have.
+
+    0202 deleted jobs by naming `integrate_note` and `note_extract`. The first had been
+    retired by 0200 a release earlier; the second has never been a job kind in this repo.
+    The clause matched nothing, and "measured zero on the box" was trivially true of kinds
+    nothing can produce — so a note saved between the backup and the update would leave a
+    queued `ingest_note` pointed at a row this migration deletes, failing on every poll
+    until it burned `max_attempts`. Worse, its undispatched `note.created` event would
+    re-enqueue it after the restart even if the job itself had gone.
+
+    History still stays: a finished job and a dispatched event both record something that
+    happened, and pending work that is not about a note is none of this migration's
+    business."""
+    if migration.revision == "0202":
+        pytest.skip("0202's clause named kinds that never matched; the payload rule is 0205's")
+    principal = await _principal(maker)
+    repo = SqlNotesRepo(maker)
+    note, _ = await repo.create_note(
+        OWNER, client_id=f"wipe-{uuid.uuid4()}", domain="general", destination=None, body="pending"
+    )
+    queued, running, done, unrelated = (uuid.uuid4() for _ in range(4))
+    pending_event, dispatched_event = uuid.uuid4(), uuid.uuid4()
+    async with scoped_session(maker, OWNER) as s:
+        for job_id, kind, payload, status in (
+            (queued, "ingest_note", f'{{"note_id": "{note.id}"}}', "queued"),
+            # A job reaches the corpus by a note OR by a note's attachment, and
+            # `running` is a status the clause must take as well as `queued` — one
+            # seeded row short and either arm could be deleted with the suite still green.
+            (running, "ocr_attachment", f'{{"attachment_id": "{uuid.uuid4()}"}}', "running"),
+            (done, "ingest_note", f'{{"note_id": "{note.id}"}}', "done"),
+            (unrelated, "embed_research_report", '{"report_id": "r1"}', "queued"),
+        ):
+            await s.execute(
+                text(
+                    "INSERT INTO app.jobs (id, kind, payload, status, principal_id, domain_code)"
+                    " VALUES (:id, :k, CAST(:p AS jsonb), :s, :pr, 'general')"
+                ),
+                {"id": job_id, "k": kind, "p": payload, "s": status, "pr": principal},
+            )
+        for event_id, dispatched in ((pending_event, None), (dispatched_event, "now()")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.events"
+                    " (id, type, payload, domain_code, principal_id, dispatched_at)"
+                    f" VALUES (:id, 'note.created', CAST(:p AS jsonb), 'general', :pr,"
+                    f" {dispatched or 'NULL'})"
+                ),
+                {"id": event_id, "p": f'{{"note_id": "{note.id}"}}', "pr": principal},
+            )
+
+    run_upgrade()  # type: ignore[operator]
+
+    gone = await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=queued)
+    assert gone == 0, "the queued job names a note this migration deleted"
+    orphan = await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=running)
+    assert orphan == 0, "a running job on a note's attachment is doomed the same way"
+    assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=done) == 1
+    assert await _count(maker, "SELECT count(*) FROM app.jobs WHERE id = :i", i=unrelated) == 1
+    stale = await _count(maker, "SELECT count(*) FROM app.events WHERE id = :i", i=pending_event)
+    assert stale == 0, "an undispatched note.created would re-enqueue the job after restart"
+    kept = await _count(maker, "SELECT count(*) FROM app.events WHERE id = :i", i=dispatched_event)
+    assert kept == 1, "a dispatched event is history"
+
+
 async def test_the_wipe_order_satisfies_every_blocking_constraint(
-    maker: async_sessionmaker,
+    maker: async_sessionmaker, migration: ModuleType
 ) -> None:
     """Derive the rule from the schema instead of re-reading the list.
 
@@ -270,7 +357,7 @@ async def test_the_wipe_order_satisfies_every_blocking_constraint(
     DELETE; CASCADE and SET NULL resolve themselves) and asserts `_WIPE` is a valid order
     for all of them. It fails on a constraint added years from now by someone who never
     reads this file."""
-    wipe = list(_migration()._WIPE)
+    wipe = list(migration._WIPE)
     position = {t: i for i, t in enumerate(wipe)}
     async with scoped_session(maker, OWNER) as s:
         pairs = (
@@ -295,3 +382,61 @@ async def test_the_wipe_order_satisfies_every_blocking_constraint(
         f" {parent} at {position[parent]} and {child} at {position[child]}"
         for child, parent in wrong
     )
+
+
+async def test_no_kept_table_can_block_the_wipe(
+    maker: async_sessionmaker, migration: ModuleType
+) -> None:
+    """The other half of the ordering rule, and the one nothing checked.
+
+    Ordering inside the set only matters if the set can be emptied at all. A table the
+    wipe KEEPS that holds a NO ACTION / RESTRICT key into it cannot be ordered around —
+    its row blocks the parent's delete outright, aborts the migration, and takes every
+    `Ops -> Update` on the release with it. Today all three keepers that reach in declare
+    a resolution (`list_items.source_note_id` SET NULL, `agent_episode_refs` and
+    `place_share` CASCADE), which is why 0202 ran. Nothing made that true on purpose, and
+    a new feature that FKs `notes` and forgets `ondelete` would make it false silently —
+    on the box, never in CI, where these tables are empty and no key is ever tested.
+
+    `agent_sessions` is checked with the set although it is not IN it: the migration
+    deletes the note threads' rows from it by hand, so a blocking key into it aborts the
+    run exactly as one into `notes` would."""
+    wipe = [*migration._WIPE, "agent_sessions"]
+    async with scoped_session(maker, OWNER) as s:
+        blockers = (
+            await s.execute(
+                text(
+                    "SELECT DISTINCT src.relname, att.attname, tgt.relname"
+                    " FROM pg_constraint c"
+                    " JOIN pg_class src ON src.oid = c.conrelid"
+                    " JOIN pg_class tgt ON tgt.oid = c.confrelid"
+                    " JOIN pg_namespace n ON n.oid = src.relnamespace"
+                    " JOIN unnest(c.conkey) AS k(attnum) ON true"
+                    " JOIN pg_attribute att ON att.attrelid = src.oid AND att.attnum = k.attnum"
+                    " WHERE c.contype = 'f' AND c.confdeltype IN ('a', 'r')"
+                    "   AND n.nspname = 'app'"
+                    "   AND tgt.relname = ANY(:w) AND src.relname <> ALL(:w)"
+                ),
+                {"w": wipe},
+            )
+        ).all()
+
+    assert not blockers, "\n".join(
+        f"app.{child}.{col} is a NO ACTION / RESTRICT key into app.{parent}, which the"
+        f" wipe deletes — so a single {child} row aborts the whole migration. Either give"
+        f" that column an ON DELETE action, or add {child} to _WIPE."
+        for child, col, parent in blockers
+    )
+
+
+def test_every_reset_wipes_exactly_what_the_first_one_did() -> None:
+    """Each reset is a deliberate copy of 0202's `_WIPE`, and every shipped one is frozen,
+    so this exists to make the copy checkable rather than merely asserted in a docstring.
+
+    Written over ALL of `_RESETS`, not the two that exist today: the runbook tells the
+    next person to add their migration to that tuple, and a two-way unpack would greet
+    them with a `ValueError` instead of a verdict. A reset that legitimately needs a
+    different set changes this test on purpose — that is the point of the speed bump."""
+    first, *rest = (_load(name) for name in _RESETS)
+    for repeat in rest:
+        assert repeat._WIPE == first._WIPE
