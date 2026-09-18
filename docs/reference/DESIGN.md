@@ -10,6 +10,16 @@ Components use **tokens only** — no raw hex values outside the token sheet.
 
 1. **Phone-first, one-thumb.** Primary actions live in the bottom half of the
    screen. Touch targets ≥ 44px. Bottom nav is the spine.
+   **44px is a floor on the hit area, not on the painted box, and it never
+   scales** — not with the text-size setting, on any property (`min-width` as
+   much as `min-height`). Where painting it would inflate a row around small
+   type — the turn foot's play/copy buttons, which draw nothing but a glyph and
+   were making a 7.8px label sit in a 48.9px strip at 65% — the control paints
+   to its content and reclaims the floor with a transparent centred overlay.
+   That only works where the overlay has somewhere to overhang and nothing
+   interactive to overlap; the omnibox's `.seg` row has neither, so it keeps a
+   real 44px. `frontend/src/fontScaleCoverage.test.ts` fails the build if a
+   44px floor is ever multiplied by `--font-scale`.
 2. **Minimal / utilitarian.** Near-monochrome surfaces; color is *information*
    (state, domain), never decoration. No gradients, no glass, no shadows
    heavier than a hairline border.

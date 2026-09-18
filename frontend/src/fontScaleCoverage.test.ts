@@ -132,6 +132,46 @@ function unscaledDeclarations(): string[] {
   return found;
 }
 
+/** Every tap-target floor in the sheet, whatever property carries it. */
+function scaledTapTargets(): string[] {
+  const found: string[] = [];
+  for (const { selector, body } of topLevelRules(CSS)) {
+    for (const decl of body.split(";")) {
+      const at = decl.indexOf(":");
+      if (at < 0) continue;
+      const prop = decl.slice(0, at).trim();
+      const value = decl.slice(at + 1).trim();
+      if (!/^(min-)?(width|height)$/.test(prop)) continue;
+      if (/44px\s*\*\s*var\(--font-scale\)/.test(value))
+        found.push(`${selector} { ${prop}: ${value} }`);
+    }
+  }
+  return found;
+}
+
+describe("tap targets", () => {
+  // The first font-scale sweep excluded `min-height: 44px` but not `min-width`, and
+  // shipped two 44px targets scaled to 28.6px wide at 65%. A thumb target is an
+  // absolute; it never multiplies by the text-size setting, on any property.
+  it("never scales a 44px floor by --font-scale", () => {
+    expect(scaledTapTargets()).toEqual([]);
+  });
+
+  // The foot's play/copy buttons give up `min-height` so the strip can follow its type
+  // — the 44px has to survive somewhere, or the control silently shrinks to its glyph.
+  it("keeps the foot buttons' 44px reachable after they stop painting it", () => {
+    const rules = topLevelRules(CSS);
+    const overlay = rules.find(
+      (r) => /fb-act-(play|copy)::after/.test(r.selector) && /height:\s*44px/.test(r.body),
+    );
+    expect(overlay, "foot buttons lost their 44px hit-area overlay").toBeDefined();
+    for (const sel of [".fb-shell .fb-act-play", ".fb-shell .fb-act-copy"]) {
+      const rule = rules.find((r) => r.selector === sel && r.body.includes("min-width"));
+      expect(rule?.body, `${sel} must keep an absolute 44px width`).toMatch(/min-width:\s*44px/);
+    }
+  });
+});
+
 describe("font-scale coverage", () => {
   it("actually read the stylesheet", () => {
     // Without this the checks below are vacuously true on an empty read.
