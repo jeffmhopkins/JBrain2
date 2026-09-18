@@ -225,6 +225,7 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
     assert {
         "gmail_search",
         "gmail_read",
+        "gmail_extract",
         "gmail_list_labels",
         "gmail_create_label",
         "gmail_label",
@@ -854,8 +855,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "47efedc798419f86b1d91e3cf30b8e8e5b8f5b13a2b89adcef48b5812d2164b9",
         ),
         "archivist": (
-            "agent-archivist-v7",
-            "1759d150d170e326f5948d3d1ac60ee35e2e6ef24f9d21d8d7453ffae5e14fcd",
+            "agent-archivist-v8",
+            "ccf2702020cfe5510eb6005b88ade53fac6e36df3c8853afdc3649549535be3c",
         ),
         "research": (
             "agent-research-v17",
