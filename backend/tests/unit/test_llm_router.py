@@ -1072,6 +1072,10 @@ class _RecordingKvStore:
     def __init__(self, dispatched: list | None = None) -> None:
         self.restores: list[tuple[str, str, int, str | None]] = []  # (+ reasoning effort)
         self.noted: list[tuple[str, int]] = []
+        # The identity each note carried — None means the router cleared blind, which is how
+        # a background turn used to retire the owner's unused restore.
+        self.named: list[str | None] = []
+        self.used: list[tuple[str, str | None]] = []
         self.raise_on_restore = False
         # Shared with the FakeLlmClient's call list, so ORDER is assertable: a restore
         # that ran after dispatch would be pure waste — the prefill already happened.
@@ -1086,8 +1090,19 @@ class _RecordingKvStore:
             raise RuntimeError("disk went away")
         return True
 
-    def note_agent_turn(self, served: str, input_tokens: int) -> None:
+    def identity_of(self, served: str, system: str, tools, reasoning_effort: str | None) -> str:
+        """A stand-in fingerprint derived from the same inputs the real one hashes, so a test
+        can assert the router NAMES the identity it ran rather than clearing blind."""
+        return f"{served}|{system}|{len(list(tools))}|{reasoning_effort}"
+
+    def note_agent_turn(
+        self, served: str, input_tokens: int, *, fingerprint: str | None = None
+    ) -> None:
         self.noted.append((served, input_tokens))
+        self.named.append(fingerprint)
+
+    def note_prefix_used(self, served: str, fingerprint: str | None) -> None:
+        self.used.append((served, fingerprint))
 
 
 async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> None:
@@ -1113,6 +1128,15 @@ async def test_an_agent_turn_on_a_local_model_checks_the_disk_prefix_first() -> 
     # The noted size must be the INPUT tokens (the fake splits input=7/output=1 exactly
     # so the wrong field cannot hide).
     assert store.noted == [("gpt-oss-120b", 7)]
+    # And the note must NAME the identity it ran. `agent.turn` is shared with the daily
+    # briefing, deep research and every sub-agent, so a clear that cannot say which prefix it
+    # consumed retires whichever one happens to be outstanding — including the owner's, which
+    # then costs a full prefill on their next message.
+    assert store.named == [
+        store.identity_of(
+            "gpt-oss-120b", "the persona", tools, TASK_REASONING_DEFAULTS.get("agent.turn")
+        )
+    ]
 
 
 async def test_background_tasks_and_cloud_routes_never_touch_the_disk_layer() -> None:
