@@ -1259,7 +1259,7 @@ async def set_auto_restore(
     nothing on its own while the owner is diagnosing it. Read live by the evictor in the api
     process, so it applies to the next turn with no restart."""
     ctx = ctx_for(principal)
-    await store.set_llm_local_auto_restore(ctx, body.enabled)
+    await set_auto_restore_value(store, ctx, enabled=body.enabled)
     return await _snapshot(settings, store, ctx, gateway)
 
 
@@ -1999,6 +1999,18 @@ async def gateway_metrics(
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway metrics failed: {exc}") from exc
     return {"spec": parse_spec_counters(text), "raw": text}
+
+
+async def set_auto_restore_value(
+    store: SqlSettingsStore, ctx: SessionContext, *, enabled: bool
+) -> dict[str, object]:
+    """Set the end-of-turn restore toggle. The owner route's body, callable from the debug
+    surface too — one implementation, so the two cannot drift.
+
+    Read live by the evictor in the api process, so it applies to the next turn with no
+    restart."""
+    await store.set_llm_local_auto_restore(ctx, enabled)
+    return {"auto_restore": enabled, "applies": "on the next turn"}
 
 
 async def kv_prefix_state(

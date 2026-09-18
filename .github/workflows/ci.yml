@@ -5,6 +5,13 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Run the full suite against any ref, on demand. GitHub does not start workflow runs for
+  # pull requests opened through an App, so a PR raised by an assistant carries NO checks at
+  # all — the whole gate has to be re-run by hand locally and asserted in the merge commit,
+  # which is exactly the kind of "trust me" that CI exists to replace. A dispatch is the
+  # supported way back: same jobs, same gates, against the branch you name. It publishes
+  # nothing — the `images` job stays gated on a real `push`.
+  workflow_dispatch:
 
 # A superseded run is wasted minutes by definition: pushing twice to a PR used to leave
 # the first run grinding to completion against a commit nobody will merge. Cancelled per

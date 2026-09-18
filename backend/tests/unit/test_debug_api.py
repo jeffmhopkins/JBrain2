@@ -1682,3 +1682,27 @@ def test_the_kv_prefix_write_routes_need_the_token(debug_client: tuple[TestClien
     client, _ = debug_client
     assert client.delete("/api/debug/llm/kv-prefix").status_code == 401
     assert client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}).status_code == 401
+
+
+def test_auto_restore_is_settable_from_the_debug_surface(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The flag decides whether the WarmKeeper keeps anything warm at all. It had an owner
+    route only, so an assistant holding a debug token could READ it on `GET /api/debug/llm`,
+    measure exactly what it costs, and then not be able to act on the measurement."""
+    client, key = debug_client
+
+    off = client.put("/api/debug/llm/auto-restore", params={"enabled": False}, headers=_auth(key))
+    assert off.status_code == 200
+    assert off.json()["auto_restore"] is False
+    assert _state(client).settings_store.values["llm_local_auto_restore"] is False
+
+    on = client.put("/api/debug/llm/auto-restore", params={"enabled": True}, headers=_auth(key))
+    assert on.json()["auto_restore"] is True
+    assert "next turn" in on.json()["applies"]
+    assert _state(client).settings_store.values["llm_local_auto_restore"] is True
+
+
+def test_the_auto_restore_route_needs_the_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.put("/api/debug/llm/auto-restore", params={"enabled": True}).status_code == 401
