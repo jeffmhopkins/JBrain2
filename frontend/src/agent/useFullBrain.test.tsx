@@ -595,3 +595,88 @@ describe("useFullBrain — live plan-continuation discovery", () => {
     expect(sessionLiveRun).not.toHaveBeenCalled();
   });
 });
+
+// W2 of AGENT_INGEST_CONVERSATION_PLAN.md: an ingested note opens its own agent
+// thread under the `note_ingest` persona. The wave's whole deliverable is that the
+// owner can LOOK at it, so the Full Brain chat list has to carry it — while the tab
+// itself must still land on the Curator, or every captured note hijacks the surface.
+describe("useFullBrain — a note conversation belongs to Entry, and is opened by id", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const withNoteThread = () =>
+    deps({
+      listSessions: vi.fn(async () => [
+        session({
+          id: "N",
+          title: "milk, eggs, call the vet",
+          agent: "note_ingest",
+          domain_scopes: [],
+          last_active_at: "2026-06-09T00:00:00Z",
+        }),
+        session({ id: "A", title: "A", last_active_at: "2026-06-02T00:00:00Z" }),
+      ]),
+    });
+
+  // ⟲ It used to be listed (and opened) on Full Brain. The owner settled on 2026-09-14
+  // that a note conversation loads on ENTRY, out of the notes list — so Full Brain must
+  // not offer the same chat a second time behind a second picker.
+  it("lists the note thread on Entry, not on Full Brain", async () => {
+    const { result } = renderHook(() => useFullBrain("entry", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThan(0));
+    expect(result.current.sessions.map((s) => s.id)).toContain("N");
+
+    const brain = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(brain.result.current.active?.id).toBe("A"));
+    expect(brain.result.current.sessions.map((s) => s.id)).not.toContain("N");
+  });
+
+  // Entry's picker is the notes list, so the controller opens exactly what it is asked
+  // for: no landing on the newest note thread, no fresh session, no Chats panel.
+  it("opens nothing on Entry until a note is picked", async () => {
+    const { result } = renderHook(() => useFullBrain("entry", withNoteThread(), true));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThan(0));
+    expect(result.current.active).toBeNull();
+    expect(result.current.panel).toBe("none");
+  });
+
+  it("does not list it on Research", async () => {
+    const { result } = renderHook(() => useFullBrain("research", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThanOrEqual(0));
+    expect(result.current.sessions.map((s) => s.id)).not.toContain("N");
+  });
+
+  it("lands the tab on the Curator even when a note thread is the newest session", async () => {
+    const { result } = renderHook(() => useFullBrain("fullbrain", withNoteThread()));
+    await waitFor(() => expect(result.current.active).not.toBeNull());
+    expect(result.current.active?.id).toBe("A");
+  });
+
+  it("opens the note thread by id, and `close` gives the list back", async () => {
+    const { result } = renderHook(() => useFullBrain("entry", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThan(0));
+    act(() => result.current.requestOpen("N"));
+    await waitFor(() => expect(result.current.active?.id).toBe("N"));
+    // Back out of the note: nothing open, and nothing auto-opens in its place.
+    act(() => result.current.close());
+    await waitFor(() => expect(result.current.active).toBeNull());
+    expect(result.current.active).toBeNull();
+  });
+
+  it("never offers it in the new-chat picker — the engine opens it, never a person", async () => {
+    const { result } = renderHook(() => useFullBrain("entry", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThan(0));
+    expect(result.current.agentOptions).not.toContain("note_ingest");
+    expect(result.current.agentOptions).toEqual([]);
+  });
+
+  // Asking for a DIFFERENT note blanks the open one at once — a note's conversation must
+  // never render for a beat under the next note's name.
+  it("blanks the open thread the moment another is requested", async () => {
+    const { result } = renderHook(() => useFullBrain("entry", withNoteThread()));
+    await waitFor(() => expect(result.current.sessions.length).toBeGreaterThan(0));
+    act(() => result.current.requestOpen("N"));
+    await waitFor(() => expect(result.current.active?.id).toBe("N"));
+    act(() => result.current.requestOpen("other-note-session"));
+    expect(result.current.active).toBeNull();
+  });
+});

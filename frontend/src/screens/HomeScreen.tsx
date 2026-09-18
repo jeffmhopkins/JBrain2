@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
+import { NoteConversation } from "../agent/NoteConversation";
 import { PlanSheet } from "../agent/PlanSheet";
+import { answeredCount } from "../agent/asked";
 import type { AppointmentRef } from "../agent/types";
-import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
+import {
+  type ConvMode,
+  type FullBrainDeps,
+  modeForAgent,
+  useFullBrain,
+} from "../agent/useFullBrain";
+import { useNoteSession } from "../agent/useNoteSession";
 import { useReadAloud } from "../agent/useReadAloud";
 import { usePlanState } from "../agent/views/registry";
+import type { NoteThreadOut } from "../api/client";
 import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
 import { SdrRadiosSheet } from "../components/SdrRadiosSheet";
@@ -14,6 +23,7 @@ import { useRegisterHomeBack } from "../homeBack";
 import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
+import { useNoteThreads } from "../notes/useNoteThreads";
 import type { NotesController, StreamItem } from "../notes/useNotes";
 import { anyHeld, useSdrSession } from "../sdrSession";
 
@@ -33,6 +43,10 @@ export interface ComposeHandoff {
 interface HomeScreenProps {
   notes: NotesController;
   actions: NoteActions;
+  /** Open a note's own SCREEN (body, files, and what the graph holds from it). The stream
+   * row no longer uses it — a tap there loads the note's conversation into this view — so
+   * it is left for the one row that has no conversation to load: an outbox note that has
+   * not synced and so has no server id yet. */
   onOpenNote: (item: StreamItem) => void;
   /** Open a Full Brain source note by id (from a Worked-block card). */
   onOpenNoteById?: (noteId: string) => void;
@@ -55,8 +69,16 @@ interface HomeScreenProps {
    * Cleared via onOpenSessionConsumed. */
   openSession?: { id: string; agent: string } | null;
   onOpenSessionConsumed?: () => void;
+  /** Open a note's CONVERSATION on the Entry surface (the review inbox's notes row, and
+   * the note screen's own door back into its thread). Cleared via onOpenNoteThreadConsumed.
+   */
+  openNoteThread?: string | null;
+  onOpenNoteThreadConsumed?: () => void;
   /** Injected in tests; defaults to the live API client. */
   fbDeps?: FullBrainDeps;
+  /** Injected in tests; defaults to `GET /notes/{id}/thread` — the one hop from the note
+   * the owner tapped to the conversation it opens. */
+  lookupThread?: ((noteId: string) => Promise<NoteThreadOut | null>) | undefined;
 }
 
 interface Toast {
@@ -79,7 +101,10 @@ export function HomeScreen({
   onComposeConsumed,
   openSession,
   onOpenSessionConsumed,
+  openNoteThread,
+  onOpenNoteThreadConsumed,
   fbDeps,
+  lookupThread,
 }: HomeScreenProps) {
   // The app lands on the Research (jerv) conversation surface, not note entry — the
   // omnibox opens ready to ask, and Entry is one tap left. autoStart (below) opens the
@@ -111,28 +136,124 @@ export function HomeScreen({
       onComposeConsumed?.();
     }
   }, [compose, onComposeConsumed]);
-  const clearDraft = useCallback(() => setPendingDraft(""), []);
   const clearAppt = useCallback(() => setPendingAppt(null), []);
-  // Research and Full Brain are both conversation surfaces, integral to the home
-  // page: the transcript and its lateral panels render in the body while the
-  // omnibox below acts as the composer. The controller only works while a
-  // conversation tab is on screen, and auto-opens that tab's last chat (or starts
-  // a fresh one) on entry.
-  const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
-  const fb = useFullBrain(convMode, fbDeps, true);
+  // ENTRY'S OPEN NOTE CONVERSATION. The notes list is Entry's session picker — the
+  // structural twin of Full Brain's Sessions panel — and tapping a row loads that note's
+  // conversation into this view, exactly as picking a chat out of that panel does (the
+  // owner, 2026-09-14: *"the default view of entry would be notes. And when you select a
+  // note, it basically loads a conversation the same as if I had swiped left inside of
+  // jerv and picked a different conversation."*). Two ways in, one state: the note the
+  // owner tapped (whose session is one lookup away) or a session handed straight in.
+  const [entryNote, setEntryNote] = useState<string | null>(null);
+  const [entrySession, setEntrySession] = useState<string | null>(null);
+  const entryOpen = entryNote !== null || entrySession !== null;
+  const thread = useNoteSession(entryNote, lookupThread);
+  const entrySessionId = entrySession ?? thread.sessionId;
+
+  // Research, Full Brain and — once a note is open — Entry are conversation surfaces,
+  // integral to the home page: the transcript renders in the body while the omnibox below
+  // acts as the composer. The controller only works while a conversation is on screen.
+  // Research and Full Brain auto-open that tab's last chat (or start a fresh one); Entry
+  // NEVER does — it opens the one conversation the tapped note has, or none.
+  const convMode: ConvMode | null =
+    seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : entryOpen ? "entry" : null;
+  const noteOpen = convMode === "entry";
+  // The lookup has answered, and this note has no conversation at all: nothing to reply
+  // into, so the surface says so and offers the note instead.
+  const noThread = entryNote !== null && thread.looked && thread.sessionId === null;
+  const fb = useFullBrain(convMode, fbDeps, !noteOpen);
+
+  // Hand the resolved session to the controller — the same targeted open the Tasks
+  // handoff uses. The id is the trigger and the ONLY dependency: `requestOpen` is
+  // recreated every render, so keying on it would re-fire (and re-list) each one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id is the trigger, not a read.
+  useEffect(() => {
+    if (entrySessionId !== null) fb.requestOpen(entrySessionId);
+  }, [entrySessionId]);
+
+  // A pass that landed while he was WATCHING. The unattended read runs in the worker with
+  // nothing streaming to this client and writes its transcript in one go at the end, so
+  // the controller's own reload — which fires on open and on switch — never re-fires: the
+  // session was opened once, before there was anything in it. He reported exactly that:
+  // *"after the GPU calmed nothing happened, until I backed out of the conversation and
+  // went into it"*, backing out being the thing that changed the id.
+  //
+  // `thread.movedAt` is the signal, not `thread.state`: a re-reading moves the thread
+  // settled → running → settled, so a poll that lands either side of it reads `settled`
+  // both times and a state-keyed reload would sleep through the very turn it is for.
+  // Only a state change bumps `updated_at`, which is exactly the set of moments this
+  // thread gains turns.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stamp is the trigger, not a read.
+  useEffect(() => {
+    if (!noteOpen || thread.sessionId === null) return;
+    fb.reloadTranscript();
+  }, [noteOpen, thread.sessionId, thread.movedAt]);
+
+  // Open a note's conversation in Entry. `fb.close()` first: until the lookup answers
+  // there is no session to ask for, and leaving the last one open would show the PREVIOUS
+  // note's thread under this note's name for a whole round trip.
+  const openNoteConversation = useCallback(
+    (noteId: string) => {
+      fb.close();
+      setEntrySession(null);
+      setEntryNote(noteId);
+      // The ROW is preserved. Entry exists on both rows, so hardcoding `main` here
+      // silently swapped the owner's other two tabs (Medical / Financial -> Research /
+      // Brain) as a side effect of opening a note — and the back chevron never swapped
+      // them back. DESIGN.md sanctions the morph, but only as something HE does by
+      // tapping Entry again; a navigation action has no business spending it.
+      setSeg((prev) => ({ row: prev.row, mode: "entry" }));
+    },
+    [fb.close],
+  );
+  // Back to the notes list — Entry's one way out of a conversation, from the top-left
+  // arrow and from the platform back gesture alike. A NO-OP when no note is open, because
+  // `fb.close()` would otherwise blank whatever chat the other two tabs have on screen:
+  // the mode row calls this on every tap, and a Research re-click that REUSED its open
+  // empty chat (`startFresh`) would come back to an emptied surface with nothing left to
+  // re-open it.
+  const closeNoteConversation = useCallback(() => {
+    if (entryNote === null && entrySession === null) return;
+    fb.close();
+    setEntryNote(null);
+    setEntrySession(null);
+  }, [fb.close, entryNote, entrySession]);
+
+  // The review inbox's notes row (and the note screen's own door back into its thread)
+  // hands a note id in from outside.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id is the trigger, not a read.
+  useEffect(() => {
+    if (!openNoteThread) return;
+    openNoteConversation(openNoteThread);
+    onOpenNoteThreadConsumed?.();
+  }, [openNoteThread, onOpenNoteThreadConsumed]);
+  // The composer seam has two writers — a calendar handoff, and the typed half of a
+  // note-thread send that reached the server not at all — and one consume. Stable, because
+  // the omnibox seeds off this identity and would re-seed on every render otherwise.
+  const consumeRestored = fb.consumeRestoredText;
+  const consumeDraft = useCallback(() => {
+    setPendingDraft("");
+    consumeRestored();
+  }, [consumeRestored]);
 
   // Let the app-level back gesture climb the conversation surface's own layers before it
   // reaches the bare chat: an open Proposal (ProposalTree) sits atop the Proposals panel,
   // which sits atop the chat — so back closes the proposal, then the panel, then stops.
   const proposalOpen = fb.panel === "proposals" && fb.openProposal !== null;
   const panelOpen = fb.panel !== "none";
-  useRegisterHomeBack((panelOpen ? 1 : 0) + (proposalOpen ? 1 : 0), () => {
+  useRegisterHomeBack((panelOpen ? 1 : 0) + (proposalOpen ? 1 : 0) + (entryOpen ? 1 : 0), () => {
     if (proposalOpen) {
       fb.setOpenProposal(null);
       return true;
     }
     if (panelOpen) {
       fb.setPanel("none");
+      return true;
+    }
+    // Deepest of the home surface's own layers: an open note conversation climbs back
+    // to the notes list, the same thing the top-left arrow does.
+    if (entryOpen) {
+      closeNoteConversation();
       return true;
     }
     return false;
@@ -158,14 +279,28 @@ export function HomeScreen({
     readAloud.feed(String(msgs.length - 1), last.text, !last.streaming);
   }, [fb.messages, convMode, readAloud.available, readAloud.autoPlay, readAloud.feed]);
 
-  // A Tasks run → open its session: flip to the conversation tab that hosts the
+  // A Tasks run (or a staged `owner_prefs` approval, which sits in a note conversation
+  // about no note) → open its session: flip to the conversation tab that hosts the
   // session's persona, then open it by id (the controller suppresses the tab's
   // auto-open of the latest chat until the requested one loads).
   // biome-ignore lint/correctness/useExhaustiveDependencies: fb methods are recreated each render; keying on them would re-fire the handoff.
   useEffect(() => {
     if (!openSession) return;
-    setSeg({ row: "main", mode: openSession.agent === "curator" ? "fullbrain" : "research" });
-    fb.requestOpen(openSession.id);
+    const mode = modeForAgent(openSession.agent);
+    // Entry exists on BOTH rows, so a handoff landing on it must keep the row the owner
+    // chose — the same rule `openNoteConversation` follows, and the same silent tab swap
+    // if it does not. Research and Full Brain live on `main` alone, so those still force
+    // it: there is no sub-row seat for them to keep.
+    setSeg((prev) => ({ row: mode === "entry" ? prev.row : "main", mode }));
+    if (mode === "entry") {
+      // Entry's controller is OFF until a note conversation is open, so `requestOpen`
+      // alone would reach a disabled hook and the surface would stay on the notes list.
+      // The session is the state here — this handoff carries no note id.
+      setEntryNote(null);
+      setEntrySession(openSession.id);
+    } else {
+      fb.requestOpen(openSession.id);
+    }
     fb.setPanel("none");
     onOpenSessionConsumed?.();
   }, [openSession, onOpenSessionConsumed]);
@@ -185,9 +320,13 @@ export function HomeScreen({
         (next.mode === "research" || next.mode === "fullbrain") &&
         next.mode === segRef.current.mode;
       if (reclick) fb.startFresh();
+      // The mode row is the app's primary navigation, and Entry's DEFAULT view is the
+      // notes list — so any tap on it lands there rather than on whichever note was last
+      // read. (Entry's own tap still morphs the sub-row; it just drops the note first.)
+      closeNoteConversation();
       setSeg(next);
     },
-    [fb.startFresh],
+    [fb.startFresh, closeNoteConversation],
   );
 
   function showToast(message: string, action?: Toast["action"]) {
@@ -208,8 +347,12 @@ export function HomeScreen({
     [],
   );
 
-  // Research and Full Brain are conversation surfaces; everything else is capture.
-  const conversational = seg.mode === "research" || seg.mode === "fullbrain";
+  // A conversation is on screen — Research, Full Brain, or Entry with a note open;
+  // everything else is capture.
+  const conversational = convMode !== null;
+  // Which stream rows have a thread waiting on an answer. Only polled while the stream is
+  // actually on screen — a conversation tab has no rows to chip.
+  const threads = useNoteThreads(!conversational);
   // The box's in-flight model load, off the same 1 Hz stream the top bar's trace already
   // rides — no second poll, and no way for the chat line and the vitals surface to report
   // different models. Read here rather than in the surface so the conversation surface
@@ -251,22 +394,66 @@ export function HomeScreen({
   // The empty fallback names the tab, and a Teacher chat reads "Teacher".
   const convTitleFallback =
     seg.mode === "research" ? (fb.active?.agent === "teacher" ? "Teacher" : "Research") : "Brain";
-  const fbSession = conversational
-    ? {
-        title: fb.active ? fb.active.title || convTitleFallback : convTitleFallback,
-        onOpen: () => fb.setPanel("sessions"),
-      }
-    : undefined;
+  // Entry's open note conversation owns the bar differently from the other two: the title
+  // is the note's own chat and the slot carries a BACK ARROW, because the way out of a
+  // note is back to the list rather than sideways into a chat picker.
+  const fbSession =
+    conversational && !noteOpen
+      ? {
+          title: fb.active ? fb.active.title || convTitleFallback : convTitleFallback,
+          onOpen: () => fb.setPanel("sessions"),
+        }
+      : undefined;
 
   return (
     <>
       <TopBar
         syncStatus={notes.syncStatus}
         session={fbSession}
+        {...(noteOpen
+          ? {
+              title: fb.active?.title || "Note",
+              onBack: closeNoteConversation,
+              // The note itself — its body, its files, and what the graph holds from it —
+              // one tap from the conversation about it. The conversation is a record of
+              // DECISIONS; that screen is the current head, and it carries the only
+              // no-terminal re-run controls the box has (CLAUDE.md #10).
+              ...(entryNote !== null && onOpenNoteById
+                ? { note: { onOpen: () => onOpenNoteById(entryNote) } }
+                : {}),
+            }
+          : {})}
         onOpenVitals={onOpenVitals}
         radio={anyHeld(sdr) ? { onOpen: () => setSdrSheet(true) } : undefined}
       />
-      {conversational ? (
+      {noteOpen ? (
+        // Entry, with a note selected: that note's conversation in the main view. The
+        // SHIPPED transcript (`AgentTranscript`, one definition, three hosts) with the
+        // Proposals panel behind its chip — and no Sessions panel, because the notes list
+        // this opened from is Entry's picker.
+        <NoteConversation
+          fb={fb}
+          noThread={noThread}
+          analysing={thread.analysing}
+          onOpenNote={onOpenNoteById}
+          onOpenEntity={onOpenEntity}
+          onProposalEnacted={() => void notes.refresh()}
+          onOpenThisNote={
+            entryNote !== null && onOpenNoteById ? () => onOpenNoteById(entryNote) : undefined
+          }
+          readAloud={
+            readAloud.available
+              ? {
+                  playing: readAloud.playing,
+                  autoPlay: readAloud.autoPlay,
+                  onToggle: readAloud.toggle,
+                  onToggleAuto: readAloud.toggleAutoPlay,
+                }
+              : undefined
+          }
+          modelLoad={modelLoad}
+        />
+      ) : conversational ? (
         <FullBrainSurface
           fb={fb}
           onOpenNote={onOpenNoteById}
@@ -307,7 +494,14 @@ export function HomeScreen({
         <Stream
           items={notes.items}
           onOpenSearch={onOpenSearch}
-          onOpenNote={onOpenNote}
+          onOpenNote={(item) =>
+            // The row and its ask chip both LOAD THAT NOTE'S CONVERSATION here, in the
+            // main view — the list is the picker (the owner's ruling, 2026-09-14). An
+            // outbox row that has not synced has no server id and so no conversation to
+            // load; it opens its own screen, which is all there is of it yet.
+            item.id === null ? onOpenNote(item) : openNoteConversation(item.id)
+          }
+          threads={threads}
           onEdit={(item) => {
             if (item.id !== null)
               actions.startEdit({
@@ -337,13 +531,35 @@ export function HomeScreen({
         seg={seg}
         onSegChange={changeSeg}
         onSend={(input) => void notes.send(input)}
+        // ONE omnibox, in every mode. Entry with a note open sends INTO that note's
+        // conversation instead of capturing a new note; the mode row above it is
+        // untouched, because it is the app's primary navigation and the only way back to
+        // capture.
+        conversation={conversational}
+        placeholder={
+          noteOpen
+            ? thread.analysing
+              ? "Reading this note…"
+              : noThread
+                ? "No thread yet — open the note above"
+                : "Reply about this note…"
+            : undefined
+        }
         onConversation={(body, files) => {
           // The omnibox is the conversation surface's composer: a send streams
           // into the transcript above (Research → Jerv/Teacher, Full Brain →
-          // Curator). The appointment pill only rides a Full Brain handoff; staged
-          // files ride as chat attachments. The pill is dropped once a send is
-          // under way, but the box keeps the files itself until the send confirms.
+          // Curator, Entry → the open note's thread). The appointment pill only rides a
+          // Full Brain handoff; staged files ride as chat attachments. The pill is
+          // dropped once a send is under way, but the box keeps the files itself until
+          // the send confirms.
           if (!conversational) return Promise.resolve(false);
+          // A note the box has not read yet has no conversation to send into. Say so —
+          // the words come back to the composer either way, and silence here would read
+          // as the box swallowing the reply.
+          if (noteOpen && !fb.active) {
+            showToast("no conversation yet — the box reads a note once it has indexed it");
+            return Promise.resolve(false);
+          }
           const ok = fb.send(body, {
             ...(pendingAppt ? { appointmentId: pendingAppt.id } : {}),
             ...(files.length ? { files } : {}),
@@ -355,23 +571,62 @@ export function HomeScreen({
         // Conversation surfaces only: the Stop button aborts the live turn, and the
         // context meter shows how full the model's window is getting.
         onStop={conversational ? fb.stop : undefined}
-        contextUsage={conversational ? fb.usage : null}
+        // ...and the meter only once there is a window to fill: on Entry a note whose
+        // thread has not opened would otherwise read "0/262k · 0%" about nothing.
+        contextUsage={conversational && fb.active ? fb.usage : null}
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
-        // Conversation tabs only: a horizontal swipe across the omnibox shuttles
-        // the lateral panels (right→Sessions, left→Proposals; the opposite swipe
-        // sends the open one back). The transcript itself no longer swipes.
+        // A horizontal swipe across the omnibox, in EVERY conversation mode. The two
+        // directions mean one thing each, and the same thing everywhere: right reaches
+        // the PICKER — which conversation am I in — and left reaches the DETAIL about
+        // the one I am in. The opposite swipe sends an open panel back.
+        //
+        // ⟲ Entry was excluded, on the reasoning that its picker was "one back-tap away"
+        // so the gesture had nothing to shuttle. The owner reversed it on 2026-09-15:
+        // *"While in a note conversation, the omnibox top bar swipe right should bring
+        // you back to the note list, and a swipe left should pull up the note specifics
+        // the same as … the icon up top"*. The mapping he asked for is the one the other
+        // modes already have — his picker IS the notes list, and the note's record is
+        // what the detail side holds — so this is the gesture becoming consistent rather
+        // than Entry growing one of its own.
+        //
+        // The two Entry targets are NAVIGATION, not panels: there is nothing to slide
+        // half-open, so each fires its top-bar twin (the back chevron, the note icon)
+        // and the bar stays the discoverable way to do both.
         onLateralSwipe={
           conversational
             ? (dx) => {
+                if (noteOpen) {
+                  // An open Proposals panel takes the back-swipe first — closing what is
+                  // over the conversation before leaving the conversation is the same
+                  // precedence the other modes have.
+                  if (fb.panel !== "none") {
+                    if (dx > 0) fb.setPanel("none");
+                    return;
+                  }
+                  if (dx > 0) closeNoteConversation();
+                  else if (entryNote !== null && onOpenNoteById) onOpenNoteById(entryNote);
+                  return;
+                }
                 if (fb.panel === "none") fb.setPanel(dx > 0 ? "sessions" : "proposals");
                 else if (fb.panel === "sessions" && dx < 0) fb.setPanel("none");
                 else if (fb.panel === "proposals" && dx > 0) fb.setPanel("none");
               }
             : undefined
         }
-        draft={pendingDraft}
-        onConsumeDraft={clearDraft}
+        // The typed half of a send that reached nothing comes back here, beside the
+        // calendar handoff — the block takes its own half back at the same moment
+        // (`useFullBrain.restoredText`). Both hand the composer words the owner still has
+        // to send himself.
+        //
+        // ⟲ **JOINED, not `||`** (R3f's fifth review, finding 5). With two writers on one
+        // seam and one consume, `a || b` masked `b` — and `consumeDraft` then cleared both,
+        // so a restore that landed in the same render as a calendar handoff was dropped
+        // without ever reaching the box. Restored words first: they are the older ones.
+        draft={[conversational ? fb.restoredText : "", pendingDraft]
+          .filter((t) => t !== "")
+          .join("\n\n")}
+        onConsumeDraft={consumeDraft}
         apptRef={pendingAppt}
         onClearApptRef={clearAppt}
         // Capture modes always keep their attach (note attachments). A conversation
@@ -402,6 +657,17 @@ export function HomeScreen({
         // opens the plan popover. A draft shows inline in the chat, so the pill is null then.
         planStatus={pillStatus}
         onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
+        // A note thread's open question block, counted for the carry strip. The strip is
+        // the composer's half of §3b I7: the block fills state, the omnibox send is the
+        // one submit, and one send is one turn carrying every answer plus any typed text.
+        carry={
+          conversational && fb.openQuestions.length > 0
+            ? {
+                answered: answeredCount(fb.openQuestions, fb.answers),
+                total: fb.openQuestions.length,
+              }
+            : null
+        }
       />
       {sdrSheet && (
         // Open on the radio the icon was reflecting; the sheet re-anchors itself if

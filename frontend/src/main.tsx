@@ -12,8 +12,8 @@ import { parseResearchSharePath } from "./research/share";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
 import { JlaunchShareApp } from "./screens/JlaunchShareApp";
 import { ResearchShareApp } from "./screens/ResearchShareApp";
+import { armUpdateChecks } from "./swUpdate";
 import { initTheme } from "./theme";
-import { isForeground } from "./visibility";
 import "./styles/tokens.css";
 import "./styles.css";
 
@@ -21,19 +21,13 @@ import "./styles.css";
 initTheme();
 initFontScale();
 
-// autoUpdate handles relaunches; the hourly check covers a PWA left open for
-// days, so it still converges on the latest deploy without a restart. A
-// backgrounded app skips the check — it reaches the server the next hour it is
-// foreground, so a hidden tab never wakes to hit the server.
-const UPDATE_CHECK_MS = 60 * 60 * 1000;
+// When the app asks whether a new build exists — `swUpdate` carries the reasoning, and
+// the short version is that the hourly timer alone left the owner on the previous bundle
+// for up to an hour after a deploy, reporting a defect that had already shipped.
 registerSW({
   immediate: true,
   onRegisteredSW(_url, registration) {
-    if (registration) {
-      setInterval(() => {
-        if (isForeground()) void registration.update();
-      }, UPDATE_CHECK_MS);
-    }
+    if (registration) armUpdateChecks(registration);
   },
 });
 

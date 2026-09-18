@@ -9,19 +9,48 @@
 // to expand in place); each step is itself a pulldown showing its arguments,
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
+import { EntityWrites } from "./EntityWrites";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
+import { QuestionBlock } from "./QuestionBlock";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
+import {
+  type AskedQuestion,
+  type SentOutcome,
+  answersFromReply,
+  askStep,
+  sentAnswers,
+  sentOutcomes,
+  typedAside,
+} from "./asked";
 import { attachmentKind } from "./attachmentKind";
+import {
+  type LedgerRow,
+  entityPhrase,
+  ledgerRows,
+  ledgerWord,
+  stepWriteState,
+  turnWriteSummary,
+  writePhrase,
+} from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
@@ -108,6 +137,15 @@ export function resolveSelectionClamp(
   return target ? { kind: "clamp", bubble: target } : { kind: "reset" };
 }
 
+interface TranscriptProps extends Props {
+  /** What the column says when no session is open yet. On Entry that is a note whose first
+   * pass has not started, which is a different sentence entirely — and a `ReactNode`, so
+   * that surface can offer the one thing there IS to do with such a note: open it. */
+  noSessionText?: ReactNode;
+  /** What it says when a session is open but has no turns. */
+  emptyText?: ReactNode;
+}
+
 interface Props {
   fb: FullBrain;
   /** Open a source note by id (from a Worked-block card). */
@@ -152,7 +190,17 @@ interface Props {
   modelLoad?: ModelLoad | null | undefined;
 }
 
-export function FullBrainSurface({
+/** The transcript itself — the scrolling column of turns plus the live status line
+ * beneath it. Split out of `FullBrainSurface` so the note screen's Thread tab renders
+ * the SAME agent transcript the home conversation surface does (the violet Thought chip,
+ * the steel Worked chip, the step rows, the question block) instead of a second ingest
+ * rendering of the same turns. `FullBrainSurface` is now this plus the two lateral
+ * panels; a host that has no panels (the note screen) mounts this alone.
+ *
+ * It must be rendered inside a `.fb-shell` — every transcript rule in `styles.css` is
+ * scoped under it, deliberately, so that generic class names cannot collide with the
+ * rest of the app. */
+export function AgentTranscript({
   fb,
   onOpenNote,
   onOpenEntity,
@@ -160,9 +208,10 @@ export function FullBrainSurface({
   readAloud,
   planWaiting,
   modelLoad,
-}: Props): ReactNode {
+  noSessionText = "Choose a session to start asking about your brain.",
+  emptyText = "Talk it out below — full tool access.",
+}: TranscriptProps): ReactNode {
   const chatRef = useRef<HTMLElement | null>(null);
-  const { panel, setPanel } = fb;
 
   // Follow the stream only while the reader is already at the foot — scrolling
   // up to read back stops the view being yanked down by every new token, and
@@ -271,6 +320,10 @@ export function FullBrainSurface({
   // an armed plan continuation take the line over with its interruptible countdown; absent
   // that, the settled turn's own "Answered/Stopped" status shows as before.
   const turnStatus = agentStatus(fb.messages, fb.active?.id);
+  // The note this thread is about, by domain, for turn 0's rule (§3b I3). Read off the
+  // session's own read scopes, which a note conversation sets from its note and nothing
+  // else can widen (`analysis/converse.note_read_scopes`).
+  const threadDomain = noteDomain(fb.active?.domain_scopes);
   const liveStatus =
     turnStatus &&
     (turnStatus.kind === "thinking" ||
@@ -295,78 +348,106 @@ export function FullBrainSurface({
       )
     : null;
 
+  return (
+    <div className="fullbrain">
+      {fb.active ? (
+        <main
+          className="fb-chat"
+          aria-label="Conversation"
+          ref={attachChat}
+          onScroll={onChatScroll}
+        >
+          {fb.messages.map((m, i) => (
+            <Bubble
+              // Transcript is append-only; the positional key is stable.
+              // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
+              key={i}
+              message={m}
+              // A turn that ended on `ask_owner` carries its question block. It is LIVE
+              // only while it is the last turn — a reply after it is what settles the
+              // set, live and on reopen alike (§3b I8/I9) — and a settled block reads
+              // its answers back out of that reply's own Q/A rendering, so nothing the
+              // owner answered lives only in a component.
+              ask={ask(fb.messages, i, fb.answers, fb.setAnswer)}
+              noteDomainCode={threadDomain}
+              onOpenNote={onOpenNote}
+              onOpenEntity={onOpenEntity}
+              onOpenProposal={(id) => {
+                fb.setOpenProposal(id);
+                fb.setPanel("proposals");
+              }}
+              onProposalEnacted={onProposalEnacted}
+              onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
+              onDeferredComplete={(msg) => {
+                void fb.send(msg, { deferredOutcome: true });
+              }}
+              onPlanChanged={fb.reloadSessions}
+              chatBusy={fb.busy}
+              onStop={fb.stop}
+              onOpenSession={fb.requestOpen}
+              // The positional key doubles as the read-aloud turn key (append-only,
+              // so it stays put for the turn's lifetime).
+              audio={
+                readAloud
+                  ? {
+                      playing: readAloud.playing === String(i),
+                      autoPlay: readAloud.autoPlay,
+                      onToggle: () => readAloud.onToggle(String(i), m.text),
+                      onToggleAuto: readAloud.onToggleAuto,
+                    }
+                  : undefined
+              }
+              // The raw keyed capability (not the turn-bound `audio`) so a card inside the
+              // turn — the deep-research report — can play its own text under its own key.
+              readAloud={
+                readAloud ? { playing: readAloud.playing, onToggle: readAloud.onToggle } : undefined
+              }
+            />
+          ))}
+          {fb.messages.length === 0 && <p className="fb-empty">{emptyText}</p>}
+        </main>
+      ) : (
+        <div className="fb-empty">{noSessionText}</div>
+      )}
+
+      {/* The live status sits at the surface's bottom edge, just above the
+          composer — replacing the old in-bubble "…". A live turn (thinking / a
+          tool / answering) always wins; only when the turn has settled does an armed plan
+          continuation take the line over as the interruptible next-step countdown. */}
+      <AgentStatusLine
+        status={loadStatus ?? liveStatus ?? idleStatus}
+        onInterrupt={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onStop}
+        onContinueNow={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onContinue}
+      />
+    </div>
+  );
+}
+
+/** The whole home conversation surface: the transcript plus the two lateral panels
+ * (Sessions right, Proposals left) the omnibox's swipe shuttles. */
+export function FullBrainSurface({
+  fb,
+  onOpenNote,
+  onOpenEntity,
+  onProposalEnacted,
+  readAloud,
+  planWaiting,
+  modelLoad,
+}: Props): ReactNode {
+  const { panel, setPanel } = fb;
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
   // a swipe away on the omnibox — right for Sessions, left for Proposals.
   return (
     <div className="fb-shell">
-      <div className="fullbrain">
-        {fb.active ? (
-          <main
-            className="fb-chat"
-            aria-label="Conversation"
-            ref={attachChat}
-            onScroll={onChatScroll}
-          >
-            {fb.messages.map((m, i) => (
-              <Bubble
-                // Transcript is append-only; the positional key is stable.
-                // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript
-                key={i}
-                message={m}
-                onOpenNote={onOpenNote}
-                onOpenEntity={onOpenEntity}
-                onOpenProposal={(id) => {
-                  fb.setOpenProposal(id);
-                  fb.setPanel("proposals");
-                }}
-                onProposalEnacted={onProposalEnacted}
-                onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
-                onDeferredComplete={(msg) => {
-                  void fb.send(msg, { deferredOutcome: true });
-                }}
-                onPlanChanged={fb.reloadSessions}
-                chatBusy={fb.busy}
-                onStop={fb.stop}
-                onOpenSession={fb.requestOpen}
-                // The positional key doubles as the read-aloud turn key (append-only,
-                // so it stays put for the turn's lifetime).
-                audio={
-                  readAloud
-                    ? {
-                        playing: readAloud.playing === String(i),
-                        autoPlay: readAloud.autoPlay,
-                        onToggle: () => readAloud.onToggle(String(i), m.text),
-                        onToggleAuto: readAloud.onToggleAuto,
-                      }
-                    : undefined
-                }
-                // The raw keyed capability (not the turn-bound `audio`) so a card inside the
-                // turn — the deep-research report — can play its own text under its own key.
-                readAloud={
-                  readAloud
-                    ? { playing: readAloud.playing, onToggle: readAloud.onToggle }
-                    : undefined
-                }
-              />
-            ))}
-            {fb.messages.length === 0 && (
-              <p className="fb-empty">Talk it out below — full tool access.</p>
-            )}
-          </main>
-        ) : (
-          <div className="fb-empty">Choose a session to start asking about your brain.</div>
-        )}
-
-        {/* The live status sits at the surface's bottom edge, just above the
-            omnibox composer — replacing the old in-bubble "…". A live turn (thinking / a
-            tool / answering) always wins; only when the turn has settled does an armed plan
-            continuation take the line over as the interruptible next-step countdown. */}
-        <AgentStatusLine
-          status={loadStatus ?? liveStatus ?? idleStatus}
-          onInterrupt={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onStop}
-          onContinueNow={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onContinue}
-        />
-      </div>
+      <AgentTranscript
+        fb={fb}
+        onOpenNote={onOpenNote}
+        onOpenEntity={onOpenEntity}
+        onProposalEnacted={onProposalEnacted}
+        readAloud={readAloud}
+        planWaiting={planWaiting}
+        modelLoad={modelLoad}
+      />
 
       <aside
         className={`panel left${panel === "sessions" ? " open" : ""}`}
@@ -388,31 +469,49 @@ export function FullBrainSurface({
         />
       </aside>
 
-      <aside
-        className={`panel right${panel === "proposals" ? " open" : ""}`}
-        aria-hidden={panel !== "proposals"}
-      >
-        {fb.openProposal === null ? (
-          <ProposalsPanel
-            proposals={fb.proposals}
-            onOpen={(p) => fb.setOpenProposal(p.id)}
-            onClose={() => setPanel("none")}
-          />
-        ) : (
-          <ProposalTree
-            proposalId={fb.openProposal}
-            onClose={() => fb.setOpenProposal(null)}
-            onEnacted={() => {
-              // Refresh the dependent views (the stream) AND the staged-proposals
-              // list, so an enacted/minted proposal stops showing as still-staged
-              // (an intake-link mints to `enacted` and must drop from the panel).
-              onProposalEnacted?.();
-              fb.reloadProposals();
-            }}
-          />
-        )}
-      </aside>
+      <ProposalsAside fb={fb} onProposalEnacted={onProposalEnacted} />
     </div>
+  );
+}
+
+/** The right-hand Proposals panel, and the open proposal's tree above it. Split out
+ * beside `AgentTranscript` because the transcript's navigational "Review proposal" chip
+ * opens this and nothing else — and a note thread stages one of those (`prefs_write` is
+ * on the `note_ingest` on-reply allowlist and `owner-prefs` is not an `INLINE_KINDS`),
+ * so a host that mounted the transcript without this would draw a chip whose tap did
+ * nothing. It pins to the nearest `.fb-shell`, which is the host's own. */
+export function ProposalsAside({
+  fb,
+  onProposalEnacted,
+}: {
+  fb: FullBrain;
+  onProposalEnacted?: (() => void) | undefined;
+}): ReactNode {
+  return (
+    <aside
+      className={`panel right${fb.panel === "proposals" ? " open" : ""}`}
+      aria-hidden={fb.panel !== "proposals"}
+    >
+      {fb.openProposal === null ? (
+        <ProposalsPanel
+          proposals={fb.proposals}
+          onOpen={(p) => fb.setOpenProposal(p.id)}
+          onClose={() => fb.setPanel("none")}
+        />
+      ) : (
+        <ProposalTree
+          proposalId={fb.openProposal}
+          onClose={() => fb.setOpenProposal(null)}
+          onEnacted={() => {
+            // Refresh the dependent views (the stream) AND the staged-proposals
+            // list, so an enacted/minted proposal stops showing as still-staged
+            // (an intake-link mints to `enacted` and must drop from the panel).
+            onProposalEnacted?.();
+            fb.reloadProposals();
+          }}
+        />
+      )}
+    </aside>
   );
 }
 
@@ -660,6 +759,49 @@ function mdFlags(message: TranscriptMessage): MdFlag[] {
   return v.ungroundedClaims.map((claim, i) => ({ id: `ug-${i}`, claim, reason: FLAG_REASON }));
 }
 
+/** The question block a turn carries, or undefined. Pure, and the whole of the block's
+ * lifecycle: it is LIVE only when it is the last message (see `openQuestions` for why
+ * that, rather than a stop reason, is the test), and a frozen one reads its answers out
+ * of the reply that settled it. */
+function ask(
+  messages: readonly TranscriptMessage[],
+  i: number,
+  draft: Readonly<Record<string, string>>,
+  onAnswer: (questionId: string, answer: string) => void,
+):
+  | {
+      questions: readonly AskedQuestion[];
+      live: boolean;
+      readOnly: boolean;
+      answers: Readonly<Record<string, string>>;
+      sent: Readonly<Record<string, SentOutcome>> | null;
+      onAnswer: (questionId: string, answer: string) => void;
+    }
+  | undefined {
+  const message = messages[i];
+  if (!message || message.role !== "assistant" || message.streaming) return undefined;
+  const { questions, answerable } = askStep(message);
+  if (questions.length === 0) return undefined;
+  const live = i === messages.length - 1;
+  const reply = messages[i + 1];
+  const replyText = reply?.role === "user" ? reply.text : "";
+  return {
+    questions,
+    live,
+    // A LIVE block whose step predates the id echo: shown, never tappable (§3b I9, R3f's
+    // fourth review, finding 2). Only the live one — a frozen block offers nothing to tap
+    // either way, and its rows read out of the reply turn's own text by question STRING,
+    // which a deploy-window step carries exactly as the ledger does.
+    readOnly: live && !answerable,
+    answers: live ? draft : sentAnswers(questions, replyText),
+    // Not just the words — WHICH questions the reply actually answered. A frozen block
+    // that assumes the set was answered tells the owner his open questions were settled,
+    // and the agent's next turn re-asks them (R3f's second review, finding 1).
+    sent: live ? null : sentOutcomes(questions, replyText),
+    onAnswer,
+  };
+}
+
 function Bubble({
   message,
   onOpenNote,
@@ -674,6 +816,8 @@ function Bubble({
   onPlanChanged,
   audio,
   readAloud,
+  ask,
+  noteDomainCode,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -707,6 +851,25 @@ function Bubble({
   readAloud?:
     | { playing: string | null; onToggle: (key: string, markdown: string) => void }
     | undefined;
+  /** This turn ended on an `ask_owner`: its question block, and how it is answered
+   * (§3b I6). `live` means the set is still open — the controls fill LOCAL state and
+   * nothing else; otherwise the owner already replied, `sent` says what that reply did to
+   * each question, and `answers` carries the words it paired.
+   * Absent on every turn that asked nothing, which is every turn outside a note thread. */
+  ask?:
+    | {
+        questions: readonly AskedQuestion[];
+        live: boolean;
+        /** Shown, but with nothing to answer it WITH — a live block built from a step that
+         * predates the id echo (`QuestionBlock`). */
+        readOnly: boolean;
+        answers: Readonly<Record<string, string>>;
+        sent: Readonly<Record<string, SentOutcome>> | null;
+        onAnswer: (questionId: string, answer: string) => void;
+      }
+    | undefined;
+  /** The note's own domain, for the rule down turn 0's left edge. Null = no colour. */
+  noteDomainCode?: string | null | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -718,6 +881,60 @@ function Bubble({
   const shownText = usePacedText(message.text, message.streaming);
   if (message.role === "user") {
     const attachments = message.attachments ?? [];
+    // Turn 0 of a note thread is the note itself, fenced as untrusted data for the model
+    // (§3b I3). Rendered as the owner's own bubble it showed them ten lines of injection
+    // guard attributed to them, above their own sentence. Strip the frame HERE and show
+    // the note as what it is — frozen, labelled, ruled in its own domain's colour — and
+    // never by unfencing the message, which the model must keep seeing whole.
+    // A RE-READING of the note, which is an event in the thread rather than something
+    // the owner said. It used to persist the whole framed note again, so a corrected
+    // note showed up twice in its own conversation — once as captured, once as re-read —
+    // and the second copy said nothing his own reply had not.
+    // AN ANSWERED QUESTION SET, which the turn text records as `Q: …\nA: …` pairs
+    // (`clarify.owner_turn_text`) so the frozen block can read its answers back out
+    // (`answersFromReply`). That is a STORAGE shape and it was rendered verbatim, so the
+    // owner's own bubble re-printed the agent's question at him — directly under the
+    // question card already showing it, with what he said buried inside the echo.
+    //
+    // The block above is the complete record of the pairs: it shows each question with
+    // the answer he gave. So the pairs are ITS to render, and the bubble keeps only the
+    // half the block has no row for — anything he typed BESIDE his answers. Rendering
+    // the pairs here too is not a smaller version of the same bug, it is the same bug:
+    // the first attempt at this printed each answer a second time, under the row that
+    // already had it.
+    const pairs = answersFromReply(message.text);
+    const typed = pairs.length > 0 ? typedAside(message.text) : null;
+    // A turn that was ONLY taps has nothing left for the bubble to say, and drops out
+    // entirely — but only when it also carries no attachment. Returning early here would
+    // skip the bubble below, and with it the `att-chips` a photo sent alongside his
+    // answers rides in; losing his file to a rendering rule is not a tidier screen.
+    if (typed === "" && attachments.length === 0) return null;
+    // Matched WHOLE, never by prefix: this branch sees every user message in every
+    // session, so `startsWith` turned any message of his that happened to open with the
+    // marker into a channel event with the marker stripped — his words, wearing the
+    // system's voice.
+    if (message.text.trim() === REREAD_TURN) {
+      return (
+        <p className="fb-reread">
+          <span>{message.text.trim().slice(REREAD_MARK.length).trim()}</span>
+        </p>
+      );
+    }
+    const framed = unframeNote(message.text);
+    if (framed) {
+      const color = noteDomainCode ? (DOMAIN_COLOR[noteDomainCode] ?? null) : null;
+      return (
+        <div
+          className="fb-turn0"
+          style={color ? ({ "--note-rule": color } as CSSProperties) : undefined}
+        >
+          <p className="fb-turn0-label">
+            the note{framed.captured ? ` · captured ${framed.captured}` : ""}
+          </p>
+          <div className="fb-turn0-body">{framed.body}</div>
+        </div>
+      );
+    }
     return (
       <div className="bubble me">
         {attachments.length > 0 && (
@@ -727,7 +944,9 @@ function Bubble({
             ))}
           </div>
         )}
-        {message.text}
+        {/* `typed` is the aside from an answered set (the block renders the pairs); null
+            means this turn carried no pairs at all, so the text is his whole message. */}
+        {typed === null ? message.text : typed}
       </div>
     );
   }
@@ -1123,6 +1342,25 @@ function Bubble({
   // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
   // down and the persisted `subagent_synthesis` roster card (rendered with the answer's
   // views) takes its place — so a finished fan looks the same live as it does on reopen.
+  // The block sits directly under the turn it belongs to, but OUTSIDE the bubble — the
+  // same placement the sub-agent fan takes, and for the same reason: it is its OWN
+  // object, not part of the answer's prose. It is interactive where the bubble is read,
+  // it freezes on its own, and drawing an amber-ruled block inside the bubble's own
+  // border would be a frame inside a frame. Width is NOT the reason (R3f's review,
+  // finding 3): `.fb-shell .bubble.ai` is already `max-width: 100%` — the 80% cap is on
+  // the owner's own bubble. Only this render path carries the block; the image-split and
+  // analysis-card paths belong to tools a note conversation's tool set does not hold, so
+  // a question can never land in one.
+  const questionBlock = ask ? (
+    <QuestionBlock
+      questions={ask.questions}
+      answers={ask.answers}
+      onAnswer={ask.onAnswer}
+      sent={ask.sent}
+      readOnly={ask.readOnly}
+    />
+  ) : null;
+
   return (
     <>
       <div className="bubble ai">
@@ -1131,6 +1369,7 @@ function Bubble({
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
+      {questionBlock}
       {standaloneFanBlocks}
     </>
   );
@@ -1250,6 +1489,8 @@ function ActivityLine({
   const steps = tools.map(toolStep);
   const sourceCount = steps.reduce((n, s) => n + s.sources.length, 0);
   const failCount = steps.filter((s) => s.ok === false).length;
+  const writeSummary = turnWriteSummary(steps);
+  const ledger = ledgerRows(steps);
   const label = thinking
     ? "Thinking…"
     : ms !== null
@@ -1268,7 +1509,12 @@ function ActivityLine({
     // The two segments are a segmented control over ONE panel: selecting a chip swaps
     // the panel's content (reasoning ⇄ steps), selecting the open chip closes it. With
     // a single body the open height and bottom spacing are identical for either view.
-    <div className={`fb-act-foot${bare ? " bare" : ""}`}>
+    // `has-ledger` drops the activity strip's top rule. The rule separates the ANSWER
+    // from the strip, and the ledger card — which has its own border — now sits between
+    // them, so drawing both stacks two separators and leaves the rule looking orphaned
+    // under the card.
+    <div className={`fb-act-foot${bare ? " bare" : ""}${ledger.length > 0 ? " has-ledger" : ""}`}>
+      <TurnLedger rows={ledger} onOpenSteps={() => setOpen("work")} />
       <div className="fb-activity">
         {hasReasoning && (
           <button
@@ -1295,7 +1541,18 @@ function ActivityLine({
             <span className="fb-act-lab">Worked</span>
             <span className="fb-act-count">
               {" · "}
-              {steps.length} step{steps.length === 1 ? "" : "s"}
+              {/* What landed leads; the step count follows it. A turn that wrote to the
+                  owner's graph and reported only "1 step" is why he could not tell his
+                  entities had been recorded. */}
+              {writeSummary !== undefined ? (
+                <span className="fb-worked-wrote">{writeSummary}</span>
+              ) : (
+                <>
+                  {steps.length} step{steps.length === 1 ? "" : "s"}
+                </>
+              )}
+              {writeSummary !== undefined &&
+                ` · ${steps.length} step${steps.length === 1 ? "" : "s"}`}
               {sourceCount > 0 && ` · ${sourceCount} source${sourceCount === 1 ? "" : "s"}`}
               {failCount > 0 && <span className="fb-worked-fail"> · {failCount} failed</span>}
             </span>
@@ -1703,6 +1960,58 @@ function ProposalChip({
 // wall; the cap keeps the step calm on a phone with every entity still one tap away.
 const ENTITY_CHIP_CAP = 6;
 
+// How many ledger lines show on the face of a turn before the rest defer to the steps
+// view. Four is what fits above the fold on a phone beside the chips; a long reading's
+// twelve writes would otherwise push the owner's own next message off the screen.
+const LEDGER_CAP = 4;
+
+// WHAT CHANGED, on the face of the turn (DESIGN.md — "the ledger is not a disclosure").
+// The owner's report is the whole of why this is not inside the Worked pulldown: *"I
+// don't see how it actually added the entity to the database, the conversation kinda
+// looks like after that actually took place?"* The agent said what it had recorded, the
+// graph agreed with it, and the only evidence on screen was a step count behind two
+// taps. Prose is a claim; this is the receipt, and it is the one thing on a note turn
+// that must not need finding.
+//
+// Only CHANGES — a re-reading is mostly facts already on file, and listing those would
+// bury the one line that is news. The count of them is the turn's summary's job.
+function TurnLedger({
+  rows,
+  onOpenSteps,
+}: {
+  rows: readonly LedgerRow[];
+  onOpenSteps: () => void;
+}): ReactNode {
+  if (rows.length === 0) return null;
+  const shown = rows.slice(0, LEDGER_CAP);
+  const rest = rows.length - shown.length;
+  return (
+    <ul className="fb-ledger">
+      {shown.map((row) => (
+        <li key={row.key} className={`fb-ledger-row fbw-${row.face}`}>
+          <span
+            className="ent-dot"
+            aria-hidden="true"
+            style={{ background: DOMAIN_COLOR[row.domain] ?? "var(--text-3)" }}
+          />
+          <span className="fb-ledger-txt">{row.text}</span>
+          <span className="fb-ledger-verb">{ledgerWord(row.face)}</span>
+        </li>
+      ))}
+      {rest > 0 && (
+        <li className="fb-ledger-row fb-ledger-rest">
+          {/* Not a second expander: the steps view already holds every write with its
+              domain, its diff and the reason it was held, so the overflow goes there
+              rather than growing a list that duplicates it. */}
+          <button type="button" className="fb-ledger-more" onClick={onOpenSteps}>
+            +{rest} more
+          </button>
+        </li>
+      )}
+    </ul>
+  );
+}
+
 // The entities a step resolved, as a tappable chip grid capped at ENTITY_CHIP_CAP —
 // the overflow reveals in place on tap (the same disclosure register as "raw
 // result"/"show all lines"), so the wall never leads but nothing is lost.
@@ -1722,7 +2031,7 @@ function EntityChips({
         <button
           key={e.entity_id}
           type="button"
-          className="entity-chip"
+          className={`entity-chip${e.created === true ? " ent-new" : ""}`}
           onClick={() => onOpenEntity?.(e.entity_id)}
         >
           <span
@@ -1730,6 +2039,13 @@ function EntityChips({
             style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
           />
           {e.label}
+          {/* Whether the box MADE this record or matched one the owner already had. The
+              write path has always known it and has always told the model; it reached
+              the owner nowhere, so a note introducing his dog rendered identically to a
+              note mentioning him again — and "did you make a new Boss?" is the whole of
+              what he wants to know there. Undefined on a ref persisted before the field
+              existed, which marks nothing rather than guessing. */}
+          {e.created === true && <span className="ent-new-tag">new</span>}
         </button>
       ))}
       {overflowing && (
@@ -1769,7 +2085,20 @@ function StepRow({
   const hasSources = step.sources.length > 0;
   const hasEntities = step.entities.length > 0;
   const hasWebSources = step.webSources.length > 0;
-  const hasArgs = step.args != null && Object.keys(step.args).length > 0;
+  // D3: a graph write is expandable to WHAT CHANGED, in the step that made it. The
+  // rung leads the detail (it is the consequence; the arguments are the request), and
+  // renders for a write tool even when nothing landed.
+  const writes = stepWriteState(step);
+  // In flight or failed, there is nothing to expand to yet: the row's own mark and its
+  // phrase already say "writing…" / "failed", and a rung reading "nothing was written"
+  // over a call still running would be a lie the owner cannot tell from the truth.
+  const hasWrites = writes !== "none" && writes !== "writing" && writes !== "failed";
+  const writeNote = writePhrase(step);
+  const entityNote = entityPhrase(step);
+  const stepArgs =
+    step.args != null && Object.keys(step.args).length > 0
+      ? (step.args as Record<string, unknown>)
+      : undefined;
   const summary = step.summary?.trim();
   // The verbatim raw payload is worth a rung only when a friendly result (source
   // cards, entity links, or web source cards) stands in for it; otherwise the text
@@ -1809,15 +2138,28 @@ function StepRow({
             {step.webSources.length} result{step.webSources.length === 1 ? "" : "s"}
           </span>
         )}
+        {writeNote !== undefined && (
+          <span className={`fb-step-cnt fbw-cnt fbw-${writes}`}>{writeNote}</span>
+        )}
+        {/* A resolve writes no FACT, so it has no write phrase — and carried no mark at
+            all, which left the one call that creates the owner's records reading as a
+            call that did nothing. What it did is the cast: how many records it made and
+            how many it matched. */}
+        {writeNote === undefined && entityNote !== undefined && (
+          <span className="fb-step-cnt fbw-cnt fbw-ents">{entityNote}</span>
+        )}
         <ChevronGlyph className="fb-step-caret" />
       </button>
       <div className="fb-step-detail">
         <div className="fb-step-di">
-          {hasArgs && <ArgsList args={step.args as Record<string, unknown>} />}
+          {hasWrites && <EntityWrites facts={step.facts} truncated={step.truncated} />}
           {isErr ? (
             <>
               <div className="fb-res-lab">error</div>
               <div className="fb-res-txt err">{summary || "the tool returned an error"}</div>
+              {/* A failed call is exactly where the arguments matter — what it was asked
+                  to do is half of why it did not. */}
+              <SentBlock args={stepArgs} text={undefined} />
             </>
           ) : hasSources ? (
             <>
@@ -1827,13 +2169,13 @@ function StepRow({
                   <SourceCard key={src.noteId} src={src} onOpen={onOpenNote} />
                 ))}
               </div>
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : hasEntities ? (
             <>
               <div className="fb-res-lab">result</div>
               <EntityChips entities={step.entities} onOpenEntity={onOpenEntity} />
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : hasWebSources ? (
             <>
@@ -1843,14 +2185,17 @@ function StepRow({
                   <WebSourceCard key={w.url} src={w} />
                 ))}
               </div>
-              {rawText && <RawBlock text={rawText} />}
+              <SentBlock args={stepArgs} text={rawText} />
             </>
           ) : summary ? (
             <>
               <div className="fb-res-lab">result</div>
               <div className="fb-res-txt">{summary}</div>
+              <SentBlock args={stepArgs} text={undefined} />
             </>
-          ) : null}
+          ) : (
+            <SentBlock args={stepArgs} text={undefined} />
+          )}
         </div>
       </div>
     </div>
@@ -1873,13 +2218,24 @@ function ArgsList({ args }: { args: Record<string, unknown> }): ReactNode {
   );
 }
 
-// The raw result rung: the verbatim backend text in a clamped monospace inset,
-// with copy and a "show all lines" grow for a long payload.
-function RawBlock({ text }: { text: string }): ReactNode {
+// The machine rung of a step: what the agent SENT and, where a friendly result stands
+// in for it, what came back verbatim. One disclosure for both halves — ⟲ the arguments
+// used to render unconditionally, above the result, so every step opened onto a JSON
+// dump of its own request before the owner reached what it did; the raw payload was a
+// second toggle beside it. Neither is what he opens a step for: the writes are, and they
+// now lead. This is where a reader who wants the machine's own words goes, once.
+function SentBlock({
+  args,
+  text,
+}: {
+  args: Record<string, unknown> | undefined;
+  text: string | undefined;
+}): ReactNode {
   const [open, setOpen] = useState(false);
   const [full, setFull] = useState(false);
   const [copied, setCopied] = useState(false);
-  const clean = text.replace(/<\/?mark>/g, "");
+  if (args === undefined && text === undefined) return null;
+  const clean = (text ?? "").replace(/<\/?mark>/g, "");
   const overflowing = clean.split("\n").length > 6;
 
   function copy(): void {
@@ -1896,9 +2252,10 @@ function RawBlock({ text }: { text: string }): ReactNode {
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        {open ? "hide raw" : "raw result"}
+        {open ? "hide what the agent sent" : "what the agent sent"}
       </button>
-      {open && (
+      {open && args !== undefined && <ArgsList args={args} />}
+      {open && text !== undefined && (
         <div className="fb-raw">
           <pre className={`fb-raw-pre${full ? " full" : ""}`}>{clean}</pre>
           <button type="button" className="fb-raw-copy" aria-label="copy raw result" onClick={copy}>

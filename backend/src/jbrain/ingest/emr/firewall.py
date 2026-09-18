@@ -11,7 +11,10 @@ single parser miss can't plant location whereabouts in the health domain:
   Layer 2 — this guard, run at integration time BEFORE a candidate is lowered to
             an IntegrationIntent: any fact whose predicate is in the location-lock
             set, on a health EMR entity, is routed to a `low_confidence`
-            (`subkind=firewall_address`) review card and NEVER committed.
+            (`subkind=firewall_address`) review card and NEVER committed. The card
+            is filed by `integrate.file_firewall_cards` from the catches the
+            importer returns — a hold the owner is never told about is half a
+            control, so the two halves must stay wired together.
 
 The lock set is deliberately the UNION of the Located-facet predicates
 (`address`, `geo`) and the extraction floor dict (`geocoordinates`, `latitude`,

@@ -22,20 +22,14 @@ from pydantic import BaseModel, ConfigDict, Field
 # not fan an event into a pipeline that writes a different domain.
 Domain = Literal["general", "health", "finance", "location"]
 
-# The unification target for `runs.kind` (§3): the agent loop, the Integrator
-# turn-loop, and a data-defined pipeline all log to the one `runs` table.
+# The unification target for `runs.kind` (§3): the agent loop, a note integration
+# and a data-defined pipeline all log to the one `runs` table.
 RunKind = Literal["agent", "integration", "pipeline"]
 
 # E1's recorded scope choice: an owner/agent trigger narrows to the trigger's
 # scope; a system/scheduled or legitimately-cross-domain pipeline keeps SYSTEM_CTX
 # but records *that it did* on the run (owner-system, not a smuggled escalation).
 RanAs = Literal["scoped", "system"]
-
-# A pin memoizes one stochastic Integrator decision against the text it was made
-# about (analysis/pins.py): which entity a mention is, or the canonical predicate
-# for a key. Mirrors `analysis.pins.DecisionKind` — kept in lockstep so the
-# persisted `resolution_pin` key matches the pure shape exactly.
-DecisionKind = Literal["identity", "predicate_key"]
 
 
 class Event(BaseModel):

@@ -31,10 +31,22 @@ from jbrain.queue import queued_depth
 
 log = structlog.get_logger()
 
-# A margin above the hard turn wall-clock (`_MAX_TURN_WALL_CLOCK_S`, 3600s, in
-# api/agent.py): a genuinely-live detached turn is force-ended and settled by then, so any
-# agent/subagent run still 'running' past this is provably orphaned. Sized above the
-# ceiling + a margin so the periodic sweep can never race a real turn.
+# ⟲ **Sized as a margin above the hard turn wall-clock, and it no longer is one** (R3's
+# fourth review). This comment named that ceiling as 3600s; `_MAX_TURN_WALL_CLOCK_S`
+# (api/agent.py) is `models/agent.TURN_WALL_CLOCK`, which is 7500s, so 3900 sits BELOW the
+# cap rather than above it and the periodic sweep can mark a genuinely-live long turn
+# 'stranded'. What that costs today is bounded: the sweep writes only the run row, nothing
+# in a turn's execution reads it, and `finish()` updates by id with no `status='running'`
+# guard — so a live turn reaped this way reads 'error/stranded' on the Runs surface until
+# it ends and then records its real outcome. What it costs on top of that is an OPTION: a
+# note conversation's stale-pass reclaim cannot key its liveness test on "this session has
+# a running `agent_runs` row" while this number sits under the cap, because the row goes
+# 'error' under a live reply turn (`models/note_conversation.STALE_CONVERSATION`, in full).
+#
+# Left at 3900 deliberately — raising it is a behaviour change to the reaper and belongs
+# with the derivation that fixes it properly (task #24: derive this from `TURN_WALL_CLOCK`
+# the way `STALE_CONVERSATION` already does, so the two cannot drift again), not with a
+# comment correction.
 STRANDED_AFTER_SECONDS = 3900
 # How often the background sweep runs. The boot reaper clears the pre-restart backlog once
 # on startup; this only bounds accumulation between restarts, so it can be infrequent.
@@ -159,10 +171,11 @@ class AgentRunLog:
         table and the frontend RunStatus already carry).
 
         `older_than_seconds` bounds the sweep to rows at least that old: the periodic sweep
-        passes a margin above the hard turn wall-clock so it can never race a genuinely-live
-        detached turn, while the boot reaper passes None — a fresh process owns no prior
-        'running' row, so every one is a pre-restart orphan. Owner/system-scoped like the
-        rest of the log (runs are owner-only RLS). Returns the count closed."""
+        passes `STRANDED_AFTER_SECONDS` — which was sized as a margin above the hard turn
+        wall-clock and is now UNDER it, see the constant — while the boot reaper passes
+        None: a fresh process owns no prior 'running' row, so every one is a pre-restart
+        orphan. Owner/system-scoped like the rest of the log (runs are owner-only RLS).
+        Returns the count closed."""
         clause = ""
         params: dict[str, object] = {}
         if older_than_seconds is not None:
@@ -194,6 +207,8 @@ async def reap_stranded_loop(
     """Sweep stranded agent/subagent runs forever, sleeping `interval_seconds` between
     passes. The boot reaper clears the pre-restart backlog once; this only bounds
     accumulation while the process stays up (a child stranded by a rare double-cancel, say).
+    Its horizon no longer clears the longest legitimate turn — `STRANDED_AFTER_SECONDS` says
+    what that costs and why it is not fixed here.
     A sweep failure is logged and the loop continues (a transient DB hiccup must not kill
     the reaper); cancellation propagates so shutdown can stop it cleanly. Sleeps BEFORE the
     first sweep — the boot reaper already cleared the pre-restart backlog, so nothing needs an

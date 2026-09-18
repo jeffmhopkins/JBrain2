@@ -40,7 +40,7 @@
       {"entity": "Sarah", "predicate": "homeLocation", "status": "superseded"}
     ],
     "review_items": [
-      {"kind": "fact_conflict", "count": 0}
+      {"count": 0}
     ]
   }
 }

@@ -25,6 +25,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     context_window_override: null,
     kv_gb: 0,
     parallel_slots: 1,
+    slots_drop_disk_cache: false,
     image_min_tokens: null,
     image_min_tokens_default: null,
     ...over,
@@ -1102,6 +1103,42 @@ describe("LLMSettingsScreen", () => {
     expect(select.value).toBe("1");
     fireEvent.change(select, { target: { value: "2" } });
     await waitFor(() => expect(putBody).toEqual({ slots: 2 }));
+  });
+
+  it("warns on the models where a second slot costs the saved-to-disk prefix", async () => {
+    // The trade is sound (a plain-recurrent restore can only restore garbage) but it used to
+    // be silent: protecting the prefix quietly deleted the durable copy of it, and the box
+    // grew an empty .kvslots folder that read as "configured". The owner has no terminal and
+    // no other surface that could have told them.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3.8-27b-q4",
+        label: "Qwen3.8 27B",
+        enabled: true,
+        size_gb: 28,
+        disk_gb: 28,
+        slots_drop_disk_cache: true,
+      }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) =>
+        String(input).includes("/api/settings/llm")
+          ? new Response(JSON.stringify(s), { status: 200 })
+          : new Response("{}", { status: 200 }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = await screen.findByLabelText("interactive slot");
+    const title = select.getAttribute("title") ?? "";
+    expect(title).toMatch(/turns OFF the saved-to-disk copy/i);
+    // And it must not repeat the claim this whole change exists to retract.
+    expect(title).not.toMatch(/can't evict|cannot evict/i);
   });
 
   it("queues an un-provisioned model for install and starts its download (no system update)", async () => {

@@ -7,12 +7,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type ReasoningEffort, api } from "../api/client";
 import { freshCoords } from "../location";
 import { isForeground } from "../visibility";
+import { type AskedQuestion, answerList, openAsk, openQuestions, ownerTurnText } from "./asked";
 import { endTurnRate, recordStreamedText } from "./tokenMeter";
 import {
   type TranscriptMessage,
   applyEvent,
   endStream,
   streamingAssistant,
+  unsent,
   userMessage,
 } from "./transcript";
 import type {
@@ -41,6 +43,9 @@ export interface ModelPick {
 // A shared empty transcript so the active chat's `messages` keeps a stable reference
 // when its buffer is absent (no needless re-renders of the conversation).
 const EMPTY_MESSAGES: TranscriptMessage[] = [];
+// Likewise for a thread with no draft: a stable empty map keeps the question block's
+// props steady between renders.
+const EMPTY_ANSWERS: Record<string, string> = {};
 
 /** What a live turn is doing, for the session picker's activity glyph: an image tool
  * mid-flight reads as a render; everything else (reasoning, other tools, answering)
@@ -81,18 +86,68 @@ export class AttachmentUploadError extends Error {
   }
 }
 
-/** The two conversation tabs and the agents each owns. Full Brain is the Curator
- * (your knowledge base, full domain access); Research is Jerv (web), Teacher
- * (study tutor), or the Archivist (Gmail organizer) — none read your notes. A null
- * mode means the surface is off screen (Entry / capture modes), so the controller
- * does no network work. */
-export type ConvMode = "research" | "fullbrain";
+/** The three conversation tabs and the agents each owns. Full Brain is the Curator
+ * (your knowledge base, full domain access); Research is Jerv (web), Teacher (study
+ * tutor), or the Archivist (Gmail organizer) — none read your notes; **Entry** hosts
+ * the note conversations the ingest engine opens, one per note. A null mode means no
+ * conversation is on screen (Entry showing its notes list, or a capture sub-mode), so
+ * the controller does no network work.
+ *
+ * ⟲ `note_ingest` moved off Full Brain on 2026-09-14, when the owner settled where a
+ * note conversation lives: *"I want you to keep the one omnibox just like jerv. The
+ * difference is the default view of entry would be notes. And when you select a note,
+ * it basically loads a conversation the same as if I had swiped left inside of jerv and
+ * picked a different conversation."* A note thread is an Entry conversation; listing it
+ * on Full Brain as well would put the same chat behind two tabs and make the Chats panel
+ * a second picker for a surface whose picker is the notes list. */
+export type ConvMode = "research" | "fullbrain" | "entry";
+/** Which agents' sessions a tab LISTS. `note_ingest` is here and not in
+ * NEW_AGENT_OPTIONS: an ingested note opens its own thread (backend
+ * `analysis/converse.py`, AGENT_INGEST_CONVERSATION_PLAN.md W2) and a person never
+ * starts one by hand. */
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
   research: ["jerv", "teacher", "archivist", "jmolt_observer"],
   fullbrain: ["curator"],
+  entry: ["note_ingest"],
 };
-/** The agent a re-click / empty-state start spins up for each tab. */
-const NEW_AGENT: Record<ConvMode, string> = { research: "jerv", fullbrain: "curator" };
+/** Tabs that open ONE conversation by id and never pick one themselves. Entry's picker
+ * is the notes list: the owner taps a note, the surface resolves that note's session and
+ * opens it. So the mode-resolve effect must not land on "the newest note conversation",
+ * auto-create anything, or fall back to the Chats picker — an Entry with no note tapped
+ * is not a conversation at all, it is the list. */
+const TARGETED_ONLY: Record<ConvMode, boolean> = {
+  research: false,
+  fullbrain: false,
+  entry: true,
+};
+/** The tab that HOSTS a persona. A handoff (a Tasks run, a notes-tab redirect) has a
+ * session id and its agent, and must flip to the right tab before opening it — an
+ * unknown persona lands in Research, where every non-owner-data agent lives. Derived
+ * from MODE_AGENTS so a persona cannot be listed on one tab and opened on another. */
+export function modeForAgent(agent: string): ConvMode {
+  if (MODE_AGENTS.entry.includes(agent)) return "entry";
+  return MODE_AGENTS.fullbrain.includes(agent) ? "fullbrain" : "research";
+}
+
+/** Which agents the new-chat picker OFFERS, per tab — a subset of MODE_AGENTS.
+ * `note_ingest` is deliberately absent: the engine opens a note conversation with a
+ * captured note as turn 0, and a hand-started one would be the persona W3 hands the
+ * graph writes to, running under owner-picked scopes with no note behind it. The
+ * backend refuses it as well (`agents.ENGINE_ONLY_PERSONAS`), so offering it here
+ * would only be a button that 422s. */
+const NEW_AGENT_OPTIONS: Record<ConvMode, readonly string[]> = {
+  research: ["jerv", "teacher", "archivist", "jmolt_observer"],
+  fullbrain: ["curator"],
+  // Entry's conversations are the ingest engine's; there is nothing to start here.
+  entry: [],
+};
+/** The agent a re-click / empty-state start spins up for each tab. Entry has none —
+ * `startFresh` and the auto-create both refuse it (TARGETED_ONLY). */
+const NEW_AGENT: Record<ConvMode, string> = {
+  research: "jerv",
+  fullbrain: "curator",
+  entry: "",
+};
 /** The owner holds every scope, so a fresh Curator reads the whole brain; Jerv
  * (and Teacher) read no owner data, so they start with an empty firewall scope. */
 const ALL_DOMAINS = ["general", "health", "finance", "location"];
@@ -102,9 +157,15 @@ const newSessionBody = (mode: ConvMode): SessionCreate =>
     : { domain_scopes: [], agent: "jerv" };
 
 /** The latest non-archived session whose agent belongs to the mode — what a tab
- * reopens when you switch into it (active or ended, newest by last activity). */
+ * reopens when you switch into it (active or ended, newest by last activity).
+ *
+ * Keyed on the STARTABLE agents, not everything the tab lists: a note conversation
+ * is opened by the ingest engine, so on a busy capture day it is always the newest
+ * Full Brain session, and landing there would mean tapping Full Brain to talk to the
+ * Curator and getting last night's grocery note instead. Note threads are reached
+ * from the chat list (and, in W3, the notes tab) — never by hijacking the tab. */
 function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession | null {
-  const agents = MODE_AGENTS[mode];
+  const agents = NEW_AGENT_OPTIONS[mode];
   return (
     sessions
       .filter((s) => agents.includes(s.agent) && s.status !== "archived")
@@ -196,6 +257,8 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.web_sources?.length ? { webSources: tool.web_sources } : {}),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
+      ...(tool.facts?.length ? { facts: tool.facts } : {}),
+      ...(tool.truncated ? { truncated: true } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
       ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),
@@ -293,6 +356,22 @@ export interface FullBrain {
       deferredOutcome?: boolean;
     },
   ) => Promise<boolean>;
+  /** A note thread's OPEN question set — the questions its last turn ended on (§3b I6),
+   * empty everywhere else. Drives the live question block and the composer's carry strip;
+   * derived from the transcript, so it is right on a reopened thread too. */
+  openQuestions: AskedQuestion[];
+  /** The half-answered block: question id -> the answer picked or typed, not yet sent.
+   * Local state by design — nothing here has posted anything. */
+  answers: Record<string, string>;
+  /** Record one answer of the open set. It changes THIS map and nothing else: no request,
+   * no enqueue, no conversation-state flip (§3b I6). */
+  setAnswer: (questionId: string, answer: string) => void;
+  /** The typed half of a block send that reached the server not at all, for the composer
+   * to take back (the same seam a calendar handoff uses). "" whenever there is none, or
+   * when the chat it belongs to is not the open one. */
+  restoredText: string;
+  /** The composer took it. */
+  consumeRestoredText: () => void;
   /** The active conversation's per-conversation agent-model pick (the omnibox
    * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
    * kept per session in memory, rides every send of that chat, and clears on reload. */
@@ -328,6 +407,11 @@ export interface FullBrain {
    * the list if needed, and opens it once loaded — suppressing the mode's auto-open
    * of the latest chat in the meantime so the targeted session isn't clobbered. */
   requestOpen: (id: string) => void;
+  /** Re-read the active chat's stored transcript now — for a surface that learns from
+   * somewhere else that a turn it could not watch has landed. */
+  reloadTranscript: () => void;
+  /** Close the open conversation and show none (Entry's back to the notes list). */
+  close: () => void;
   rename: (id: string, title: string) => void;
   remove: (id: string) => void;
   archive: (id: string) => void;
@@ -408,6 +492,11 @@ export function useFullBrain(
   // applies it only when the turn's resolved model is reasoning-capable. In-memory only,
   // same "this conversation, this app session" scope as the model pick.
   const [effortOverrides, setEffortOverrides] = useState<Record<string, ReasoningEffort>>({});
+  // A note thread's half-answered question block, per session: question id -> the answer
+  // the owner has picked or typed but not yet sent (§3b I6). Turn-local like the two
+  // picks above — the block is INERT, so this draft is the only thing a tap changes, and
+  // the send that carries it is the one event in the whole interaction.
+  const [answerDrafts, setAnswerDrafts] = useState<Record<string, Record<string, string>>>({});
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // The visible transcript: the active chat's buffer (empty until loaded). A stable
@@ -430,11 +519,24 @@ export function useFullBrain(
   // it on every open/turn and re-pick the session).
   const activeRef = useRef(active);
   activeRef.current = active;
+  // The same trick for a RUNNING turn: its recovery loop closes over the buffer as it was
+  // when the send started, and what it has to know at the end is what the buffer holds now
+  // (did any of this turn actually arrive?).
+  const messagesRef = useRef(messagesBySession);
+  messagesRef.current = messagesBySession;
+  // A send that reached nothing, handed back: the typed half goes to the composer the way
+  // a calendar handoff does, while `answerDrafts` takes the tapped half. Session-scoped, so
+  // a turn that gave up while the owner was reading another chat cannot seed that chat's
+  // box with words meant for this one.
+  const [handedBack, setHandedBack] = useState<{ session: string; text: string } | null>(null);
+  // Stable: the omnibox's seeding effect keys on this identity (`HomeScreen`).
+  const consumeRestoredText = useCallback(() => setHandedBack(null), []);
   // Guards a single auto-create per mode entry against a fast double-fire.
   const creatingFor = useRef<ConvMode | null>(null);
 
-  // Only this mode's agents belong on the tab; the picker creates under them too.
-  const agentOptions = mode ? MODE_AGENTS[mode] : ["curator", "teacher", "jerv"];
+  // Only this mode's agents belong on the tab; the picker offers the subset a person
+  // may START (MODE_AGENTS also lists the engine-opened note conversation).
+  const agentOptions = mode ? NEW_AGENT_OPTIONS[mode] : ["curator", "teacher", "jerv"];
   // A spawned sub-agent child carries its PERSONA as its agent ("research"/"review"/
   // "summarize"), not the tab's spawner agent, so a plain mode filter would drop every
   // child and the SessionsPanel rail would never see them. Keep a child whenever its
@@ -502,6 +604,9 @@ export function useFullBrain(
     // A targeted open is pending — let the fulfill effect open it; don't auto-open
     // (or auto-create) this mode's latest chat over the top of it.
     if (pendingOpenRef.current !== null) return;
+    // Entry opens one note conversation by id or none at all — never the newest note
+    // thread, never a fresh one, and never the Chats picker over the notes list.
+    if (TARGETED_ONLY[mode]) return;
     const latest = latestForMode(sessions, mode);
     if (latest) {
       if (latest.id !== activeRef.current?.id) open(latest);
@@ -590,6 +695,25 @@ export function useFullBrain(
     };
   }, [enabled, activeId, getTranscript, setSessionMessages]);
 
+  /** Re-read the active chat's stored transcript NOW.
+   *
+   * The id-keyed effect above fires on open and on switch, and a note conversation does
+   * neither while it is being written: its session is opened once, the unattended pass
+   * runs in the WORKER with nothing streaming to this client, and the transcript is
+   * written in one go when the turn ends. So the owner sat on an open, empty thread
+   * watching the GPU work and saw nothing appear — "until I backed out of the
+   * conversation and went into it", which changed `activeId` and re-fired the effect.
+   *
+   * The same guard as both effects above: a turn streaming live into this chat's buffer
+   * is not in the stored transcript yet, so reloading would wipe it. */
+  const reloadTranscript = useCallback(() => {
+    if (!enabled || activeId === null) return;
+    if (activeId === turnSessionRef.current) return;
+    getTranscript(activeId)
+      .then((turns) => setSessionMessages(activeId, () => turns.map(fromTurn)))
+      .catch(() => {});
+  }, [enabled, activeId, getTranscript, setSessionMessages]);
+
   // Reconcile the active chat on RESUME from the background. A PWA that was backgrounded
   // mid-plan doesn't remount and its `activeId` doesn't change, so the id-keyed reload above
   // never re-fires — plan-continuation turns that landed while hidden stay missing and a stale
@@ -651,6 +775,14 @@ export function useFullBrain(
     };
   }, [enabled, activeId, active?.plan_status, busy]);
 
+  function clearAnswers(sessionId: string): void {
+    setAnswerDrafts((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _spent, ...rest } = prev;
+      return rest;
+    });
+  }
+
   async function send(
     textRaw: string,
     opts?: {
@@ -662,10 +794,20 @@ export function useFullBrain(
   ): Promise<boolean> {
     const text = textRaw.trim();
     const files = opts?.files ?? [];
+    // The question block's answers ride THIS send (§3b I7): one send is one turn carrying
+    // every answer plus whatever free text is in the box. Narrowed to the set that is
+    // actually open, so a draft left over from a set the thread has moved past cannot
+    // post an id `_pair` would only drop.
+    const ask = openAsk(messages);
+    // ANSWERABLE ones only ride the send: a deploy-window step names its questions
+    // positionally, and `_pair` drops those ids in silence.
+    const asked = ask.answerable ? ask.questions : [];
+    const draft = active ? (answerDrafts[active.id] ?? {}) : {};
+    const answers = answerList(asked, draft);
     // Returns whether the turn actually STARTED — a caller (the inline-approval card)
     // relies on this to know its outcome message was really delivered, not dropped by
     // the single-in-flight-turn guard.
-    if ((!text && files.length === 0) || busy) return false;
+    if ((!text && files.length === 0 && answers.length === 0) || busy) return false;
     // No scope yet — surface the picker rather than chatting against nothing.
     if (!active) {
       setPanel("sessions");
@@ -698,6 +840,28 @@ export function useFullBrain(
     // back, and its own (pre-turn) transcript reload doesn't clobber the live render.
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
+    // What the owner's bubble SAYS. An answers-only send arrives with `message` blank, and
+    // the server renders the Q/A pairs into the turn's own text so the words survive a
+    // failed clarification append (`clarify.owner_turn_text`); mirroring that here is what
+    // keeps the optimistic bubble identical to the one a reload replays.
+    //
+    // Also over a send with NO structured answers, whenever a block is open above it: the
+    // server sanitises that turn's typed half too (a quoted `Q:`/`A:` cannot be allowed to
+    // forge a pair — R3f's second review, finding 3b), so a bubble rendered from the raw
+    // text would differ from the one a reload replays. The condition is the client's
+    // mirror of the server's `reply is not None`: a thread with an open ask above the
+    // composer is a thread the reply path files against.
+    //
+    // ⟲ **Mirrored off `ask.questions`, NOT off the answerable set** (R3f's fifth review,
+    // finding 2). It read `asked.length`, and `asked` is empty on a READ-ONLY thread —
+    // which the plan says every live waiting thread is in on day one. So on exactly the
+    // path read-only was built for, the server sanitised (`record_owner_reply` claims a
+    // `waiting_on_owner` thread whatever the PWA could name) and the client did not: the
+    // owner quoted a question back in words, the bubble showed his `Q:`/`A:` standing and
+    // the reload showed it cut, with the note holding a third thing. Whether the PWA can
+    // NAME the questions has nothing to do with whether the server files the reply.
+    const shownText =
+      answers.length > 0 || ask.questions.length > 0 ? ownerTurnText(text, asked, draft) : text;
     // A deferred-outcome turn is driven by a server-authored system notice, not owner
     // input — so it appends NO user bubble (the answer stands on its own after the analysis
     // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
@@ -705,7 +869,7 @@ export function useFullBrain(
     setSessionMessages(turnSessionId, (ms) =>
       opts?.deferredOutcome
         ? [...ms, streamingAssistant()]
-        : [...ms, userMessage(text, attachments), streamingAssistant()],
+        : [...ms, userMessage(shownText, attachments), streamingAssistant()],
     );
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
@@ -722,6 +886,10 @@ export function useFullBrain(
       ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+      // Structured, never joined prose: a question id pairs each answer with the question
+      // the ledger says is open, and a mispaired answer is a wrong sentence in the owner's
+      // own note. An empty list is omitted and the turn behaves exactly as it always has.
+      ...(answers.length ? { answers } : {}),
       // The owner's per-conversation picks ride every turn of this chat: the model and
       // the reasoning level independently, so either can be set without the other (the
       // backend drops a reasoning level a non-reasoning resolved model can't use).
@@ -739,7 +907,38 @@ export function useFullBrain(
     // for the whole turn (and, on a dropped connection, the multi-minute recovery). The
     // stream and any reconnect recovery run in the background; `busy` stays true until
     // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
-    void runTurn(body, controller, turnSessionId, baseline);
+    //
+    // The block is spent the moment its answers are on a turn: it freezes behind the new
+    // user bubble (it is no longer the last message), and the draft it held is gone so a
+    // second send cannot re-post the same answers against a set that is now closed.
+    //
+    // Spent, but not thrown away. A turn that reaches the server not at all left the block
+    // frozen-and-answered with the draft gone (R3f's review, finding 7), so the owner
+    // re-tapped three candidates against a block claiming he had already answered. The
+    // snapshot rides the turn and comes back if it settles having reached NOTHING.
+    //
+    // ⟲ **What this comment used to say about recovering, and did not check** (R3f's
+    // fourth review, finding 5 — the same paragraph the third review had already deleted
+    // from DESIGN.md and the plan, left here word for word): that the restore is 62
+    // minutes away, the send disabled throughout, and the owner with "no way to send his
+    // answers again for an hour". Driven, it is not: while `busy` the composer's send IS
+    // the Stop button (`Omnibox`, wired to this surface's `stop`), and one tap ends the
+    // wait inside a `RECONCILE_INTERVAL_MS` sleep — ~3 s — rather than at
+    // `RECONCILE_TIMEOUT_MS`, which is the ceiling on being patient, not the cost of
+    // recovering.
+    //
+    // ⟲ **What Stop then DOES is decided by the run id, not by where the loop was**
+    // (R3f's fifth review, finding 4). It used to be a race: a tap landing in the sleep
+    // took `recover()`'s give-up branch and handed everything back, a tap landing inside
+    // `resumeLive` returned through its own abort branch and handed back nothing — and
+    // which one you got said nothing about whether the server had the turn. Both branches
+    // now ride one predicate (`runIdRef.current === null`, see `recover`): no run id means
+    // `/chat` never answered, so the answers reached no note and the whole send comes
+    // back; a run id means `record_owner_reply` already filed them and the turn stays put,
+    // Stopped, with the block frozen over a set the server has closed.
+    const spent = answers.length > 0 ? draft : undefined;
+    if (answers.length > 0) clearAnswers(turnSessionId);
+    void runTurn(body, controller, turnSessionId, baseline, undefined, 0, spent);
     return true;
   }
 
@@ -759,6 +958,8 @@ export function useFullBrain(
     // Reattach mode: the absolute frame offset the seeded snapshot already covers, so the
     // resumed stream picks up AFTER it — no replaying (or missing) a frame. 0 for a fresh POST.
     resumeAfter = 0,
+    // The question-block draft this turn spent, to hand back if the turn reaches nothing.
+    spentAnswers?: Readonly<Record<string, string>>,
   ): Promise<void> {
     // How many SERVER frames we've folded — the offset a reconnect resumes from. Seeded from
     // the reattach snapshot's frame offset (0 for a fresh POST). The synthetic `run` event is
@@ -816,6 +1017,10 @@ export function useFullBrain(
         }
       } catch {
         if (controller.signal.aborted) {
+          // A Stop landing HERE keeps the turn and hands nothing back, and that is not a
+          // second policy: `resumeLive` runs only with a run id, and a run id is proof the
+          // answers are already on the note (see `recover`'s give-up branch, which reaches
+          // the same conclusion through the same predicate).
           setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
           return true;
         }
@@ -850,7 +1055,71 @@ export function useFullBrain(
         }
         if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
       }
-      if (!recovered) setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+      if (!recovered) {
+        // The one outcome that means the turn reached nothing: no live run to ride and no
+        // persisted exchange for the whole recovery window (or a Stop, which ends that
+        // window early). Give the answers back, under anything typed into the block since,
+        // so a retry does not start from blank — and put the THREAD back where the server
+        // still has it.
+        //
+        // ⟲ **Dropping the optimistic exchange is R3f's fourth review, finding 6.** The
+        // third review wrote that the frozen block "reports an outcome it does not itself
+        // produce, and 'the POST reached nothing' is a state it cannot currently see" —
+        // which named a defect as open work. It CAN see it: this is that state, and the
+        // block is frozen for exactly one reason (the ask is no longer the last message,
+        // `asked.openQuestions`). So the user turn that never left the device goes with
+        // the answers, and the block re-arms live, holding them, with the server still
+        // `waiting_on_owner` on the same set — instead of reading "2 answered" about a
+        // send that reached nothing until a transcript reload replaced it.
+        //
+        // Only when NOTHING of the turn arrived, and only for a send the BLOCK made: a
+        // stream that delivered text or a tool step before it dropped is a turn the server
+        // has, whatever the recovery window then failed to reload, and un-sending that
+        // would be the same misreport the other way up. Every other failed send keeps the
+        // errored bubble it has always had — the owner's words stay on screen.
+        //
+        // ⟲ **A RUN ID is the proof, and the buffer is only the corroboration** (R3f's
+        // fifth review, finding 1). `unsent` asks whether the optimistic bubble took a
+        // token, a step, a view or a line of reasoning — which a POST that succeeded and
+        // then lost its socket before the first frame has NOT, so the fourth round's fix
+        // un-sent turns the server had already committed. `X-Run-Id` is minted by
+        // `runlog.start`, and `record_owner_reply` runs BEFORE it (`api/agent.py`): it
+        // claims the wait, flips the thread to `running` and appends the answers to the
+        // note. So a run id means the answers ARE on the note and that question set is
+        // CLOSED — re-arming the block over it would have the owner answer again into
+        // `record_owner_reply`'s `state != "waiting_on_owner"` branch, which returns
+        // `None` and files nothing, while `stop()` has left the thread `running` with no
+        // turn and `useNoteThreads` (`!row.live`) has dropped its chip from the stream.
+        // This is the same invariant `resumeLive`'s abort branch rides — `resumeLive`
+        // only runs with a run id — so the two Stop paths now agree instead of racing:
+        // the draft comes back exactly when no run id was ever minted, whichever branch
+        // the tap lands in (§3b I6).
+        const neverLeft =
+          spentAnswers !== undefined &&
+          runIdRef.current === null &&
+          unsent(messagesRef.current[turnSessionId]);
+        setSessionMessages(turnSessionId, (ms) =>
+          neverLeft
+            ? ms.slice(0, -2)
+            : endStream(ms, controller.signal.aborted ? "stopped" : "error"),
+        );
+        // Gated on the same predicate as the un-send, and not on `spentAnswers` alone:
+        // handing the draft back over a turn the server HAS is the data-loss half of the
+        // same misreport — the second send is discarded in silence by the closed-set
+        // branch above, and the block then reports answers no note received.
+        if (neverLeft) {
+          setAnswerDrafts((prev) => ({
+            ...prev,
+            [turnSessionId]: { ...spentAnswers, ...(prev[turnSessionId] ?? {}) },
+          }));
+        }
+        // The typed half of a MIXED send goes back with the tapped half — the bubble that
+        // held it is gone, so without this the aside beside the answers is the one thing
+        // the hand-back loses.
+        if (neverLeft && body.message.trim() !== "") {
+          setHandedBack({ session: turnSessionId, text: body.message });
+        }
+      }
     };
     try {
       if (resumeRunId) {
@@ -974,7 +1243,7 @@ export function useFullBrain(
   // of the mode's default agent (so a repeated tap doesn't pile up blanks); else
   // spin up a fresh chat — Curator with full domain access, or a new Jerv.
   function startFresh(): void {
-    if (!mode) return;
+    if (!mode || TARGETED_ONLY[mode]) return;
     const empty = active && messages.length === 0 && (active.turn_count ?? 0) === 0;
     if (empty && active.agent === NEW_AGENT[mode]) {
       setPanel("none");
@@ -983,6 +1252,15 @@ export function useFullBrain(
     void create(newSessionBody(mode))
       .then(open)
       .catch(() => {});
+  }
+
+  /** Close whatever is open without opening anything else — Entry's back out of a note
+   * conversation to the notes list. Drops any pending targeted open too, so a slow
+   * lookup cannot re-open the note the owner has just left. */
+  function close(): void {
+    pendingOpenRef.current = null;
+    setActive(null);
+    setPanel("none");
   }
 
   function open(session: AgentSession): void {
@@ -1002,6 +1280,11 @@ export function useFullBrain(
 
   function requestOpen(id: string): void {
     pendingOpenRef.current = id;
+    // Asking for a DIFFERENT chat blanks the open one at once: while the requested
+    // session loads, the surface must not go on showing the conversation the owner just
+    // navigated away from — on Entry that is the previous note's thread under the new
+    // note's name, which reads as the wrong note's answers.
+    if (activeRef.current !== null && activeRef.current.id !== id) setActive(null);
     const found = sessions.find((s) => s.id === id);
     if (found) {
       pendingOpenRef.current = null;
@@ -1114,6 +1397,17 @@ export function useFullBrain(
     });
   }, []);
 
+  // The thread's open question set, derived from the transcript rather than stored: the
+  // questions ARE the `ask_owner` step's recorded args, so a reopened thread needs no
+  // extra wire and no answer state that lives only in a component (§3b I9).
+  const openSet: AskedQuestion[] = openQuestions(messages);
+  const answers = activeId !== null ? (answerDrafts[activeId] ?? EMPTY_ANSWERS) : EMPTY_ANSWERS;
+  const setAnswer = useCallback((questionId: string, answer: string) => {
+    const id = activeRef.current?.id;
+    if (!id) return; // no open thread to scope the draft to
+    setAnswerDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), [questionId]: answer } }));
+  }, []);
+
   return {
     active,
     sessions: visibleSessions,
@@ -1144,6 +1438,11 @@ export function useFullBrain(
           return true; // the stream runs in the background now; any failure settles there
         },
       ),
+    openQuestions: openSet,
+    answers,
+    setAnswer,
+    restoredText: handedBack !== null && handedBack.session === activeId ? handedBack.text : "",
+    consumeRestoredText,
     modelOverride,
     setModelOverride,
     effortOverride,
@@ -1152,6 +1451,8 @@ export function useFullBrain(
     startFresh,
     open,
     requestOpen,
+    reloadTranscript,
+    close,
     rename: (id, title) => void rename(id, title).catch(() => {}),
     remove: (id) => void remove(id).catch(() => {}),
     archive: (id) => void archive(id).catch(() => {}),

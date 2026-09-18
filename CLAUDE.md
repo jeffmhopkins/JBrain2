@@ -55,8 +55,14 @@ archive-on-merge rule — is `docs/DOC_LIFECYCLE.md`, enforced by the `docs` CI 
 11. **Verify with the checks CI runs, from the directory CI runs them in.** This repo
     is five separately-configured packages (`backend`, `supervisor`, `jcode`, `jlaunch`,
     `frontend`), each with its own toolchain config and its own CI job. `backend` is 100
-    columns; every other Python package is ruff's default 88. **`deploy/sdr/` is linted
-    and typechecked by nothing** — it is tested by `supervisor`'s pytest, which loads it
-    by path — so running bare `ruff` over it reformats hand-kept files to the wrong
-    width. And `cd` persists between commands here: prefer `(cd pkg && …)` or absolute
-    paths. See `docs/reference/DEVELOPMENT.md` "Verifying a change".
+    columns; every other Python package is ruff's default 88. **`deploy/sdr/` is LINTED
+    by nothing but TYPECHECKED by `supervisor`'s pyright** (`supervisor/pyproject.toml`
+    puts `../deploy/sdr` in pyright's `include`), and tested by `supervisor`'s pytest,
+    which loads it by path. So running bare `ruff` over it reformats hand-kept files to
+    the wrong width — while an edit there that typechecks nowhere locally still fails
+    CI, and the only way to see it first is `(cd supervisor && uv run pyright)`. Run a
+    package's WHOLE gate set, not the subset you think your change touched: `supervisor`
+    is `ruff check .`, `ruff format --check .`, `pyright`, `pytest`, and a sidecar edit
+    that skipped the third one is exactly how a green local run turned CI red. And `cd`
+    persists between commands here: prefer `(cd pkg && …)` or absolute paths. See
+    `docs/reference/DEVELOPMENT.md` "Verifying a change".

@@ -8,7 +8,9 @@ import { attachmentUrl } from "../api/client";
 import { groupByDay, isWithinLastDays, relativeTime } from "../notes/grouping";
 import { type LifecycleSource, lifecycleChip } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_LABEL } from "../notes/modes";
+import { parseNote, previewText } from "../notes/noteBlocks";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import type { NoteThread, NoteThreads } from "../notes/useNoteThreads";
 import type { StreamItem } from "../notes/useNotes";
 import { ClipIcon, EyeOffIcon, PencilIcon, TrashIcon } from "./icons";
 
@@ -32,6 +34,36 @@ export function IngestChip({ item }: { item: LifecycleSource }) {
   return <span className={`chip chip-${chip.tone}`}>{chip.label}</span>;
 }
 
+/** The waiting-thread chip (AGENT_INGEST_REWRITE §3b I1): a note whose conversation is
+ * parked on an answer carries `N questions` and NOTHING ELSE — no answer control, no
+ * candidate, no verb. The row is a redirect, which is the same ruling `NotesInboxEntry`
+ * enforces on the wire one surface over.
+ *
+ * Amber, not the mock's rose: rose is the MEDICAL domain in this palette (it is the hue
+ * of this very row's own dot), so a rose chip says the same thing twice on a medical note
+ * and something false on a financial one. Amber is the open-ask register the pending
+ * lifecycle chips and the inbox's ask chip already use — and the colour is not the only
+ * carrier, the words are.
+ *
+ * ⟲ **It opens the NOTE SCREEN, the same place the row's own tap goes** — not home's
+ * conversation surface, which is what I2 (ii) wired and what the owner reversed on
+ * 2026-09-14: *"When I go to do a follow-up, it shouldn't open in the brain chat. It
+ * should open up right there in the note entry chat."* The note screen now opens ON its
+ * conversation, so there is exactly one destination and the chip's job is no longer to be
+ * a second door — it is the label that says why to walk through this one. It stays a
+ * 44px button rather than reverting to a `<span>`: it shares a WRAPPING row with the
+ * attachment links, where an out-of-flow hit area takes a neighbour's tap
+ * (`backend/tests/unit/test_tap_targets.py`), and a generous target on a dense day is
+ * worth more than the height it costs. */
+function AskChip({ thread, onOpen }: { thread: NoteThread; onOpen: () => void }) {
+  const n = thread.questions;
+  return (
+    <button type="button" className="chip chip-pending chip-ask" onClick={onOpen}>
+      {n === 0 ? "waiting on you" : `${n} question${n === 1 ? "" : "s"}`}
+    </button>
+  );
+}
+
 interface NoteRowProps {
   item: StreamItem;
   railOpen: boolean;
@@ -40,13 +72,25 @@ interface NoteRowProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
+  /** This note's conversation, when it is waiting on an answer — the chip's state. */
+  thread?: NoteThread | undefined;
 }
 
-function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHide }: NoteRowProps) {
+function NoteRow({
+  item,
+  railOpen,
+  onRailChange,
+  onOpen,
+  onEdit,
+  onDelete,
+  onHide,
+  thread,
+}: NoteRowProps) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [confirming, setConfirming] = useState(false);
   const dragged = useRef(false);
   const bodyRef = useRef<HTMLSpanElement>(null);
+  const added = parseNote(item.body).blocks.length;
   const [clamped, setClamped] = useState(false);
 
   // Truncation affordance: only show "more" when the clamp actually cut text.
@@ -176,12 +220,27 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
               <span className="note-by-assistant"> · assistant</span>
             )}
           </span>
+          {/* The WORDS, never the machine syntax. A composed note carries dated
+              block markers in its text (`notes/compose.py`), and rendering that
+              verbatim spent both lines of a clamped row on
+              `[addition 2026-09-15 01:24 UTC]` and cut off before the sentence he
+              had actually typed. The stamps are not lost — the note screen dates
+              every block — they are just not what a two-line preview is for. */}
           <span className="note-body note-body-clamp" ref={bodyRef}>
-            {item.body}
+            {previewText(item.body)}
           </span>
           {clamped && <span className="note-more">more</span>}
+          {added > 0 && (
+            // Quiet, and counted rather than hidden: the preview now reads as one
+            // continuous note, so without this there is nothing saying he came back
+            // to it — which is the thing a stamp was badly doing.
+            <span className="note-added">{added} added since</span>
+          )}
         </button>
-        {(item.attachments.length > 0 || item.pending || lifecycleChip(item) !== null) && (
+        {(item.attachments.length > 0 ||
+          item.pending ||
+          thread !== undefined ||
+          lifecycleChip(item) !== null) && (
           <div className="note-chips">
             {item.attachments.map((att) =>
               att.id ? (
@@ -201,7 +260,19 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
               ),
             )}
             {item.pending && <span className="chip chip-pending">pending sync</span>}
-            {!item.pending && <IngestChip item={item} />}
+            {/* A waiting thread outranks the lifecycle chip: the pass that asked has
+                stopped, so "analyzing…" is no longer what is happening, and two chips on
+                one row would be the loudest thing in the stream. A SETTLED note wears no
+                chip at all — `lifecycle.ts` makes "analyzed" the quiet end state, and only
+                the waiting state earns one. */}
+            {!item.pending &&
+              (thread !== undefined ? (
+                // Through the row's own tap handler so a chip tap behaves like a row tap
+                // — it closes an open swipe rail instead of navigating out from under it.
+                <AskChip thread={thread} onOpen={onBubbleTap} />
+              ) : (
+                <IngestChip item={item} />
+              ))}
           </div>
         )}
       </div>
@@ -216,9 +287,20 @@ interface StreamProps {
   onEdit: (item: StreamItem) => void;
   onDelete: (id: string) => void;
   onHide: (item: StreamItem) => void;
+  /** Note conversations parked on an answer, by note id — the chip's state (§3b I1).
+   * Absent/empty = no chip is offered. */
+  threads?: NoteThreads | undefined;
 }
 
-export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onDelete, onHide }: StreamProps) {
+export function Stream({
+  items,
+  onOpenSearch,
+  onOpenNote,
+  onEdit,
+  onDelete,
+  onHide,
+  threads,
+}: StreamProps) {
   const scrollerRef = useRef<HTMLElement>(null);
   // One rail open at a time, like every messaging app.
   const [openRailKey, setOpenRailKey] = useState<string | null>(null);
@@ -262,6 +344,7 @@ export function Stream({ items, onOpenSearch, onOpenNote, onEdit, onDelete, onHi
                   onEdit={onEdit}
                   onDelete={onDelete}
                   onHide={onHide}
+                  thread={item.id === null ? undefined : threads?.get(item.id)}
                 />
               ))}
             </div>

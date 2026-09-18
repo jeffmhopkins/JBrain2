@@ -1,7 +1,7 @@
 """The entity.disambiguate eval scoring core — drives the REAL disambiguation
 prompt through a model via the LLM adapter and scores the link decision.
 
-Mirrors `runner.py` (note.extract): `load_disambiguate_cases` reads the corpus
+`load_disambiguate_cases` reads the corpus
 beside this module (`disambiguate_cases/*.json`), `score_disambiguate_cases`
 drives each case through an injected router (the adapter — never a provider SDK)
 and scores it, and `eval_run_from_disambiguate` adapts the results into a

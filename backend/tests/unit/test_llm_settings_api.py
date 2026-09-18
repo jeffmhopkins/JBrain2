@@ -87,11 +87,9 @@ def test_get_defaults_grok_and_low_for_empty_store(
     }
     effort = {t["id"]: t["reasoning_effort"] for t in body["tasks"]}
     assert all(t["provider"] == "grok" for t in body["tasks"])
-    assert effort["integrate.note"] == "high"
     assert effort["fact.adjudicate"] == "high"
     assert effort["wiki.ground"] == "high"
     assert effort["agent.turn"] == "medium"
-    assert effort["note.extract"] == "medium"
     assert effort["video.summarize"] == "medium"
     assert effort["entity.disambiguate"] == "low"
     assert effort["triage.classify"] == "low"
@@ -234,7 +232,7 @@ def test_put_round_trips_effective_values(
         json={
             "tasks": {
                 "agent.turn": {"provider": "grok", "reasoning_effort": "high"},
-                "note.extract": {"provider": "claude", "reasoning_effort": "high"},
+                "correction_note.extract": {"provider": "claude", "reasoning_effort": "high"},
             }
         },
     )
@@ -243,16 +241,16 @@ def test_put_round_trips_effective_values(
     # grok keeps the stored effort; claude is non-reasoning so effort is null.
     assert tasks["agent.turn"]["provider"] == "grok"
     assert tasks["agent.turn"]["reasoning_effort"] == "high"
-    assert tasks["note.extract"]["provider"] == "claude"
-    assert tasks["note.extract"]["reasoning_effort"] is None
+    assert tasks["correction_note.extract"]["provider"] == "claude"
+    assert tasks["correction_note.extract"]["reasoning_effort"] is None
     # Stored shape: claude drops reasoning_effort entirely.
     stored = cast(dict[str, object], store.values["llm_task_overrides"])
     assert stored["agent.turn"] == {"spec": "xai:grok-4.3", "reasoning_effort": "high"}
-    assert stored["note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
+    assert stored["correction_note.extract"] == {"spec": "anthropic:claude-sonnet-4-6"}
     # GET reflects the same effective values.
     got = {t["id"]: t for t in c.get("/api/settings/llm").json()["tasks"]}
     assert got["agent.turn"]["reasoning_effort"] == "high"
-    assert got["note.extract"]["provider"] == "claude"
+    assert got["correction_note.extract"]["provider"] == "claude"
 
 
 def test_put_rejects_unknown_task_provider_and_effort(
@@ -411,7 +409,7 @@ def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
     # Claude with no effort persists too (the other non-grok provider).
     assert (
         c.put(
-            "/api/settings/llm", json={"tasks": {"note.extract": {"provider": "claude"}}}
+            "/api/settings/llm", json={"tasks": {"correction_note.extract": {"provider": "claude"}}}
         ).status_code
         == 200
     )
@@ -1659,3 +1657,62 @@ async def test_warm_identity_builds_matching_restore_and_save_hooks(
     assert calls[0][0] == "restore" and calls[1][0] == "save"
     assert s[:4] == (*r[:3], r[3])  # same served/system/tools/effort identity
     assert s[4] == 37142
+
+
+async def test_prime_still_reports_when_the_counters_cannot_be_read() -> None:
+    """A measurement must never fail the thing it measures: an old llama.cpp build with no
+    prompt-cache counters still gets a timed prime, just without the reuse line."""
+    gw = FakeLocalGateway()
+    gw.fail_metrics = True
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+
+    out = await llm_settings.gateway_prime("qwen3-vl-30b", settings, cast(Any, gw), residency=None)
+
+    assert "reuse" not in out
+    assert isinstance(out["elapsed_ms"], int)
+
+
+async def test_a_cold_prime_still_reports_reuse_from_a_zero_baseline() -> None:
+    """The case the measurement exists for, and the one it could not report.
+
+    Reading `/metrics` on a NON-resident model is refused by design (reaching it would load
+    the model outside the residency budget), so bracketing a cold prime meant the `before`
+    read always failed and the reuse line was dropped — from exactly the prime that answers
+    'did the DISK restore spare the prefill?'. llama-swap starts a fresh llama-server per
+    load, so a non-resident model has no history to subtract: its after-reading IS the delta.
+
+    Caught on the live box, not here: the first fake had no notion of residency, so the
+    original test passed against a gateway that would answer `/metrics` for a cold model."""
+    gw = FakeLocalGateway()  # nothing resident
+    gw.metrics_readings = [
+        "llamacpp:prompt_tokens_cached_total 30545\nllamacpp:prompt_tokens_total 1\n",
+    ]
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+
+    out = await llm_settings.gateway_prime("qwen3-vl-30b", settings, cast(Any, gw), residency=None)
+
+    assert out["reuse"] == {
+        "cached_tokens": 30545,
+        "processed_tokens": 1,
+        "reuse_rate": 1.0,
+    }, "a cold prime must report the restore it just made, not drop the line"
+
+
+async def test_a_warm_prime_subtracts_the_history_it_already_had() -> None:
+    """The other half: an ALREADY-resident model carries counters from every earlier request,
+    so its baseline must be read and subtracted. Zeroing it here would credit this prime with
+    the whole server's lifetime reuse."""
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
+    gw.metrics_readings = [
+        "llamacpp:prompt_tokens_cached_total 61080\nllamacpp:prompt_tokens_total 11\n",
+        "llamacpp:prompt_tokens_cached_total 91625\nllamacpp:prompt_tokens_total 12\n",
+    ]
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+
+    out = await llm_settings.gateway_prime("qwen3-vl-30b", settings, cast(Any, gw), residency=None)
+
+    assert out["reuse"] == {
+        "cached_tokens": 30545,
+        "processed_tokens": 1,
+        "reuse_rate": 1.0,
+    }

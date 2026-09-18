@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-09-04
+> **Status:** Living · **Last verified:** 2026-09-12 — the `sdr` row now carries the two PER-RADIO signal-path settings (tuner gain, upconverter offset). Prior: the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -43,7 +43,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: xAI's Grok Build (`grok`) CLI against on-box models. `grok`'s `/model` switches live between every installed tool-capable model (plan on the reasoner, execute on the coder) via the api's residency-aware jcode proxy (`api.jcode_llm`), which evicts-to-budget and serializes swaps so one model loads at a time — no unified-memory thrash. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |
-| `sdr` | `sdr` | plugging a dongle in + `Ops → Update` | Software-defined radio: `librtlsdr`/`rtl_fm`/`rtl_power` over the USB tuners, `/dev/bus/usb` passed through and each radio selected by SERIAL (devnum moves on every re-plug). Holds one session PER RADIO — APRS on one dongle and the interactive tuner on another run at once — and a second caller for the same radio is told it is busy, naming it, rather than queued. A session or capture that names no serial opens whatever enumerates first, so it conflicts with every radio. **Egress-free** on its own `radio` network (`internal: true`) — only `api` joins it. The update path blacklists and unbinds the kernel DVB driver that otherwise claims the dongle. See `../plans/SDR_RADIO_PLAN.md`. |
+| `sdr` | `sdr` | plugging a dongle in + `Ops → Update` | Software-defined radio: `librtlsdr`/`rtl_fm`/`rtl_power` over the USB tuners, `/dev/bus/usb` passed through and each radio selected by SERIAL (devnum moves on every re-plug). Holds one session PER RADIO — APRS on one dongle and the interactive tuner on another run at once — and a second caller for the same radio is told it is busy, naming it, rather than queued. A session or capture that names no serial opens whatever enumerates first, so it conflicts with every radio. **The signal path is per radio too**, stored on the same `sdr_radios` settings entry as the name and the role: a tuner gain (one of the measured rungs, or `auto`) and an upconverter's offset in Hz. The offset shifts the TUNE only — the dongle is told `f + offset` at `setFrequency` and at `rtl_fm -f`, and every frequency any layer reports back is the owner's. Unset is the behaviour this box has always had: the tuner's own loop while listening or logging, `MEASURING_GAIN_DB` while drawing or surveying, and no shift. **Egress-free** on its own `radio` network (`internal: true`) — only `api` joins it. The update path blacklists and unbinds the kernel DVB driver that otherwise claims the dongle. See `../plans/SDR_RADIO_PLAN.md`. |
 
 **STT model — opt-in, but _not_ profile-guarded:** the `tts-stt` container is
 default-on (read-aloud / Kokoro TTS is always available); it is *not* a compose
@@ -172,6 +172,7 @@ Personas (`backend/src/jbrain/agent/agents.py`, each a `.prompt` sidecar); an
 | **teacher** | Socratic tutor | No tools, no retrieval. |
 | **jerv** | Sandboxed web chatbot (the approved web-egress exception) | Web + weather/hurricane + image/media + `spawn_subagent` + host metrics. **No KB.** |
 | **archivist** | Gmail triage/organizer | `gmail_*` + an owner-only cross-session memory. **No KB**; present only when Gmail is configured. |
+| **note_ingest** | The note conversation — a captured note as turn 0, opened by the `note_converse` action. Never picked by the owner, and now enforced: `ENGINE_ONLY_PERSONAS` keeps it out of `OWNER_AGENTS`, so the session/task routes 422 it. Its threads are listed on the PWA's Full Brain tab | Seven, by a closed allowlist (never the curator wildcard): `resolve_entity` + `close_reading` + `assert_fact` bound to the one note, `ask_owner`, and `find_entity` / `read_entity` / `current_time`. **KB read** narrowed to `(note_domain, 'general')`. |
 | **intake** | Guided-intake interviewer, run by a **non-owner** | **No tools, no KB** — capture is the server's job. |
 | research / review / summarize | The closed sub-agents `jerv` can spawn | Web-only or no tools; always leaves. |
 | research_scout / research_fetch / research_deep | The deep-research gather tiers (scout searches only, fetch opens only, deep may decompose one sub-fan) | Web-only; always leaves. |
@@ -208,14 +209,16 @@ lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 ### Knowledge pipeline (`backend/src/jbrain/analysis/`)
 
 `note saved → extraction (+ attachments) → chunking → embeddings + tsvector →
-pending_integration → integrate_note`. `integrate_note` runs
-**extract → Integrator** (graph-aware LLM judgment against existing
-entities/facts) **→ arbiter** (deterministic: commit vs. hold, enforcing the
-domain/subject firewalls) **→ apply** (layered entity resolution: exact alias →
-relationship hop → embedding → one batched `entity.disambiguate`; fact upsert;
-two-tier predicate canonicalization). **Supersession** retires prior functional
-facts (newest-wins); held / ambiguous / low-confidence / truncated items land in
-the **review inbox**. **Hybrid search** (pgvector dense + FTS, RRF-fused,
+pending_integration → note_converse`. `note_converse` opens an agent conversation
+with the note as turn 0 (body + each attachment's machine-read text, marked) and the
+agent RECORDS what the note means through two write tools — `resolve_entity` and
+`close_reading`. Both commit through the deterministic core: layered entity
+resolution (exact alias → relationship hop → embedding → one batched
+`entity.disambiguate`), fact upsert, the durable predicate-alias collapse, the domain
+floor/ratchet. **Supersession** retires prior functional facts (newest-wins) and what
+it did unasked is reported back to the agent; the deterministic EMR importer, which
+has no agent in the room, files held / ambiguous / low-confidence / truncated items
+into the **review inbox** instead. **Hybrid search** (pgvector dense + FTS, RRF-fused,
 always domain-scoped) backs the `search` tool. See `ANALYSIS.md`, `entity.md`.
 
 ### Workflow engine (`backend/src/jbrain/workflow/`)
@@ -224,8 +227,10 @@ The Phase-5 `event → trigger → pipeline → action → run` spine on Postgre
 `events.py` emits, `dispatcher.py` fans to enabled triggers (fail-closed domain
 auth, registry-only actions), `scheduler.py` is the time-driven twin, `runlog.py`
 is the run log, `automations.py` projects it into the Ops "Workflow" screen with
-enable/disable. Seeded actions: `ingest_note`, `embed_note`, `integrate_note`,
-`ocr_attachment`, `consolidate_predicates`, `sync_predicates`. In-code scheduled
+enable/disable. Seeded actions: `ingest_note`, `embed_note`, `ocr_attachment`,
+`consolidate_predicates`, `sync_predicates` (migration 0200 un-seeded
+`integrate_note` with its producer); `note_converse` and the post-Phase-4 actions
+live in the in-code registry only. In-code scheduled
 **sweeps** (schedules seeded, mostly disabled, Ops-fireable): the reconciler
 backfills, `purge_deleted_artifacts`, `geofence_sweep`, the hygiene trio
 (`entity_hygiene` / `reembed_stale` / `tag_consolidate`), `triage_inbox`, and the

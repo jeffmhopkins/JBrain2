@@ -1,6 +1,6 @@
 # APRS filtering — a station roster, not a packet firehose
 
-> **Status:** Shipped, with the F5 row shape reopened for round 6 · **Last verified:** 2026-09-03 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
+> **Status:** Shipped, with the F5 row shape reopened for round 6 · **Last verified:** 2026-09-10 · **Waves:** F1✅(classifier + derived columns) F2✅(roster + station detail API) F3✅(the stations screen) F4✅(`aprs_recent` v2 + signal level) F5✅(what a packet SAYS — shape D: human readable first) F6✅(the provenance chips + a compact filter row). The GUI gate is **closed** — `../mocks/aprs/e-stations.html`, chosen from `d-filtering.html`'s three shapes, is the binding spec.
 
 `APRS_CONTROL_PLAN.md` P1 shipped a heard log and it works: the box has been
 recording since it came up. This plan is about the log being *readable* — filtering by
@@ -38,6 +38,8 @@ and the chosen one rebuilt on all 184 (`e-stations.html`). The owner's decision:
 - **Recency at the root:** one day / 3 days / 1 week / older.
 - **Kind chips at the root too, filtering the ROSTER** — "show me the stations that
   have sent positions", not "show me position packets".
+- **Provenance chips beside them, in the same row** — direct / gated / rf, the three
+  states the packet row already badges (F6).
 - **Inside a station:** the same kind and recency filters, now over that station's own
   traffic.
 - The owner's callsign is **app-wide Settings**, not an APRS-page field (shipped).
@@ -98,6 +100,30 @@ the relay it reads as somebody else's noise. Filed under the true sender it is s
 Leaving a station drops the chip selection deliberately: inside a station "Weather" means
 *this station's weather*, and at the roster it means *stations that send weather at all*.
 Carrying a selection across that change would silently rewrite what was asked for.
+
+**F6 ✅ — the provenance chips, and the filters made compact.** The roster could always
+*say* how a station reached us and never *filter* on it. `provenance` joins `kinds` as a
+query parameter, on the same `HAVING bool_or(...)` terms and with the same
+unfiltered-over-the-window counts (`provenance_stations`).
+
+**Three states, not two.** `direct`, `gated` and `rf` are exclusive *per packet* — that is
+`classify`'s own construction, and it is exactly what the packet row draws as its badge —
+so a two-state gated/not-gated filter could not name a station heard only through a
+digipeater, which on this band is most of the roster. *Per station* they are not exclusive:
+a roster row covers a range, so a chip means "sent at least one frame that arrived this
+way", two chips in the row are a union, and the counts overlap and may sum past the station
+total. A station heard both ways is genuinely in both, so its row now names every way it
+arrived (`heard`) alongside the way its newest frame did — without that, a row returned by
+the Direct chip could read "gated via N4TDX" and contradict the chip that returned it.
+
+The screen paid for the new chips by getting **smaller**: the two filter rows are the
+compact variant `DESIGN.md` sanctions (36px painted, 44px live via an out-of-flow hit pad,
+since a negative margin cannot escape the segmented pill's clip and would pull two wrapped
+chip rows through each other), and the provenance chips share the kind chips' row rather
+than adding a fourth strip of chrome above a list that is the point of the screen. The
+screen's own tab row moved onto `.seg-row`/`.seg` at the same time — the control the job
+row inside a radio already uses — keeping `role="tab"`, because sharing an appearance is
+not sharing a role.
 
 **F4 ✅ — `aprs_recent` v2 and signal level.** The tool gains station/kind/since/until/
 summarize (tool `version` bump + digest re-pin at `tests/unit/test_agent_readtools.py`),

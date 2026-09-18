@@ -9,6 +9,7 @@ from sqlalchemy import (
     Double,
     Float,
     ForeignKey,
+    Identity,
     Integer,
     Text,
     func,
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 from jbrain.models.analysis import NoteAnalysis
 from jbrain.models.core import Base
 
-# The note→graph Integrator lifecycle (docs/archive/INTEGRATOR_PLAN.md §4). Mirrored in
+# The note→graph lifecycle (docs/archive/INTEGRATOR_PLAN.md §4). Mirrored in
 # migration 0029's CHECK constraint — keep the two in sync.
 INTEGRATION_STATES = frozenset(
     {"pending_integration", "integrating", "integrated", "stale", "skipped"}
@@ -39,8 +40,8 @@ class Note(Base):
     # 'indexed' means chunked + FTS-searchable; embeddings arrive in Step 3.
     ingest_state: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # The note→graph Integrator lifecycle (INTEGRATION_STATES). An indexed note
-    # is 'pending_integration' until the integrate_note job runs and commits it.
+    # The note→graph lifecycle (INTEGRATION_STATES). An indexed note is
+    # 'pending_integration' until a note_converse pass ends on it (`_mark_integrated`).
     integration_state: Mapped[str] = mapped_column(
         Text, default="pending_integration", server_default="pending_integration"
     )
@@ -51,14 +52,23 @@ class Note(Base):
     # this many attachments are present (docs/reference/ANALYSIS.md "Analysis gating").
     # 0 = no wait (a plain note, or a client that does not send the hint).
     attachments_expected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    # Phase-6 wiki dirty bit (mark-and-sweep): false at create/edit, set true once a wiki
-    # build has incorporated the note. The builder targets wiki_built = false notes.
+    # VESTIGIAL. The wiki's mark-and-sweep dirty bit is `entities.wiki_built`, which is
+    # what the builder selects on and what 0046's triggers flip. This column has no
+    # reader in the backend or the PWA; writing it re-dirties nothing.
     wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Capture location: owner-eyes metadata, excluded from Phase 7 scoped views.
     latitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Double, nullable=True)
     location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When the SERVER received the row (migration 0190). `created_at` above is the
+    # CLIENT's capture time — the offline outbox flushes later, so a note can arrive
+    # long after it was captured. Anything timing the note's ARRIVAL (the reconciler's
+    # attachment settle window) must read this, never created_at, which a backdated
+    # flush puts past the window the instant it lands. Server-stamped, never settable.
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     # Client's capture-time UTC offset in minutes east of UTC; lets the
     # extraction anchor be the note's LOCAL date even though created_at
     # round-trips through timestamptz as a UTC instant.
@@ -79,15 +89,89 @@ class Note(Base):
     wiki_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.wiki_revisions.id", ondelete="SET NULL"), nullable=True
     )
-    # Whether note.extract has produced this note's note_analysis row — the
-    # API's "analysis done" signal for the lifecycle chip. A correlated EXISTS
-    # (the has_extracts pattern) so list/get serialization needs no second
-    # query; the row only appears when the integrate_note job commits.
+    # Whether a producer has stamped this note's note_analysis row — the API's
+    # "analysis done" signal for the lifecycle chip. A correlated EXISTS (the
+    # has_extracts pattern) so list/get serialization needs no second query.
+    # Since R3 the row's usual author is the note CONVERSATION: `close_reading`
+    # carries the title and tags and `clarify.settle_conversation` stamps them on
+    # every pass ending that read the note, `waiting_on_owner` included — because
+    # NO row is what makes this false forever, which is a permanently amber chip
+    # and a re-run button polling an analyzed_at that never moves (CLAUDE.md #10).
+    # `emr_parse` stamps it through `settle_note`.
     analyzed: Mapped[bool] = column_property(
         select(NoteAnalysis.note_id).where(NoteAnalysis.note_id == id).exists()
     )
 
-    attachments: Mapped[list["Attachment"]] = relationship(lazy="selectin")
+    # Ordered like `clarifications` below, and for the same reason: every reader of the
+    # note walks this list in order. `analysis.converse.note_text` spends ONE shared
+    # machine-read-text budget down it, so without an ORDER BY which document gets
+    # truncated is whatever the planner returns — and a producer whose settle retracts
+    # what a reading did not restate would then retract and re-assert across passes.
+    # `created_at` alone does not settle it: several attachments posted in one request
+    # share a server timestamp, so `id` breaks the tie into a total order.
+    attachments: Mapped[list["Attachment"]] = relationship(
+        lazy="selectin", order_by="(Attachment.created_at, Attachment.id)"
+    )
+    # Owner answers appended to this note (D6, migration 0193). Eager like
+    # attachments because EVERY reader of the note's text needs them: the body a
+    # reader sees is `compose_body(note.body, note.clarifications)`, never the raw
+    # column. Ordered by seq so composition is deterministic.
+    clarifications: Mapped[list["NoteClarification"]] = relationship(
+        lazy="selectin", order_by="NoteClarification.seq"
+    )
+
+
+#: A block that pairs a question the agent ASKED with the owner's answer (D6, the only
+#: shape migration 0193 had).
+CLARIFICATION_ANSWER = "answer"
+#: A block the owner wrote UNPROMPTED — his own words, no question (migration 0203, O16
+#: option 1 of `docs/plans/AGENT_INGEST_REWRITE.md`, which calls it an addendum). Same
+#: row, same composition, same chunking; what differs is that there is nothing to pair it
+#: with, which is why `question` is nullable and `kind` says which shape a row is.
+CLARIFICATION_ADDITION = "addition"
+
+
+class NoteClarification(Base):
+    """One appended, timestamped clarification block (D6, migrations 0193 and 0203).
+
+    The note's `body` column stays exactly as its author wrote it — a clarification
+    never rewrites it, and an owner body edit never destroys clarifications, because
+    they are different rows. `jbrain.notes.compose.compose_body` joins them at read
+    time, appending AFTER the body so the offsets into the note's text cannot shift —
+    `app.chunks.char_start`/`char_end`, and the chunk-relative spans on
+    `app.entity_mentions` built from them. `app.facts` has no span columns at all; it
+    cites a chunk by id, which is `ingest.carryover`'s job to preserve.
+
+    Immutable after insert: 0193 grants only `UPDATE (domain_code)`, for the domain
+    carry when a note moves domain — and a trigger makes that carry mandatory, since
+    the block's domain must equal its note's.
+    """
+
+    __tablename__ = "note_clarifications"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.notes.id", ondelete="CASCADE")
+    )
+    # DB-generated (GENERATED ALWAYS AS IDENTITY): a global sequence, so two answers
+    # racing onto the same note still get a total order.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True))
+    #: `answer` or `addition` — which of the two block shapes this row is. Postgres ties
+    #: it to `question` (0203's CHECK), so a reader may switch on it rather than infer
+    #: the shape from a NULL.
+    kind: Mapped[str] = mapped_column(Text, server_default=CLARIFICATION_ANSWER)
+    #: NULL on an `addition`: nobody asked, so there is no question to pair (0203).
+    question: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer: Mapped[str] = mapped_column(Text)
+    # The conversation the answer came from (D1); NULL once that session is purged.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    # Duplicated from the note so the RLS policy needs no join (the 0002 attachment
+    # idiom); `update_note` carries it on a domain move.
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AttachmentExtract(Base):

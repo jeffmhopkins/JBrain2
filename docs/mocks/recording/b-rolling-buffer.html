@@ -1,0 +1,334 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B — The rolling buffer: catch what already happened</title>
+<style>
+/* Tokens lifted verbatim from frontend/src/styles/tokens.css so a mock cannot
+   drift from the app it is a spec for. */
+:root {
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+  --scrim: rgba(14, 15, 17, 0.6);
+  --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f;
+  --accent: var(--steel); --ok: var(--green); --warn: var(--amber); --danger: var(--rose);
+  --steel-tint: rgba(127,167,201,.13); --amber-tint: rgba(201,163,106,.13);
+  --rose-tint: rgba(207,138,143,.13); --green-tint: rgba(143,188,154,.13);
+}
+:root[data-theme=light] {
+  --bg: #f6f7f8; --surface: #ffffff; --surface-2: #eef0f2; --border: #d8dbdf;
+  --text: #16181c; --text-2: #55595f; --text-3: #85898f;
+  --scrim: rgba(0,0,0,.35); --steel-tint: rgba(127,167,201,.18); --green-tint: rgba(143,188,154,.18);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 400 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.phone { max-width: 390px; margin: 0 auto; width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
+.note { padding: 14px 16px; color: var(--text-2); font-size: 13px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+.note b { color: var(--text); font-weight: 600; }
+.theme { position: fixed; top: 10px; right: 10px; z-index: 9; min-height: 32px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font: inherit; font-size: 12px; }
+.swap { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.swap button { flex: 1; min-height: 44px; border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+.swap button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.pane { display: none; flex: 1; flex-direction: column; }
+.pane.on { display: flex; }
+#listen { justify-content: flex-end; }
+.sheet { background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; }
+.grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 6px; }
+.title { padding: 2px 16px 4px; font-size: 17px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+.title span { font-size: 11px; color: var(--text-3); font-weight: 400; font-variant-numeric: tabular-nums; }
+.readout { padding: 4px 16px 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 30px;
+  font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.readout small { font-size: 13px; color: var(--text-3); margin-left: 6px; letter-spacing: 0; }
+.lbl { padding: 10px 16px 5px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em;
+  display: flex; justify-content: space-between; }
+.lbl b { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
+
+/* ---- the buffer strip: the whole idea ---- */
+.buf { margin: 0 16px; height: 84px; border: 1px solid var(--border); border-radius: 10px;
+  background: #0a0c10; position: relative; overflow: hidden; touch-action: none; }
+:root[data-theme=light] .buf { background: #0e1218; }
+.buf .lv { position: absolute; bottom: 0; width: 2px; background: var(--text-3); }
+.buf .lv.hot { background: var(--steel); }
+.buf .sel { position: absolute; top: 0; bottom: 0; background: rgba(143,188,154,.15);
+  border-left: 2px solid var(--ok); border-right: 2px solid var(--ok); }
+.buf .grip { position: absolute; top: 0; bottom: 0; width: 30px; margin-left: -15px; touch-action: none; cursor: ew-resize; }
+.buf .grip::after { content: ""; position: absolute; left: 11px; top: 50%; margin-top: -13px;
+  width: 8px; height: 26px; border-radius: 3px; background: var(--ok); }
+.buf .grip:focus-visible::after { box-shadow: 0 0 0 4px var(--green-tint); }
+.buf .now { position: absolute; top: 0; bottom: 0; right: 0; width: 2px; background: var(--danger); opacity: .8; }
+.buf .cap { position: absolute; top: 5px; left: 8px; font-size: 9px; color: var(--text-3); letter-spacing: .05em; }
+.buf .cap.r { left: auto; right: 8px; }
+.axis { display: flex; justify-content: space-between; padding: 4px 16px 0; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.save { display: flex; gap: 8px; padding: 10px 16px 8px; }
+.save .go { flex: 2; min-height: 54px; border-radius: 12px; border: 1px solid var(--ok);
+  background: var(--green-tint); color: var(--text); font: inherit; font-size: 15px; font-weight: 500; }
+.save .go small { display: block; font-size: 11px; color: var(--text-2); font-weight: 400; font-variant-numeric: tabular-nums; }
+.save .roll { flex: 1; min-height: 54px; border-radius: 12px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.save .roll[aria-pressed=true] { border-color: var(--danger); background: var(--rose-tint); color: var(--text); }
+.save .roll small { display: block; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mem { display: flex; gap: 6px; padding: 0 16px 10px; align-items: center; }
+.mem span { font-size: 11px; color: var(--text-3); flex: none; }
+.mem button { min-height: 40px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12px; }
+.mem button[aria-pressed=true] { border-color: var(--accent); background: var(--steel-tint); color: var(--text); }
+.hint { padding: 0 16px 18px; font-size: 12px; color: var(--text-3); }
+.toast { margin: 0 16px 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--green-tint); font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 10px; }
+.toast.on { display: flex; }
+.toast button { min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+
+/* ---- library ---- */
+.hdr { padding: 14px 16px 6px; font-size: 22px; font-weight: 600; }
+.disk { margin: 0 16px 4px; font-size: 12px; color: var(--text-2); display: flex; justify-content: space-between; }
+.bar { margin: 6px 16px 14px; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.day { padding: 12px 16px 6px; font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .09em; }
+.row { margin: 0 16px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.row > .top { display: flex; align-items: center; gap: 11px; padding: 11px 12px; width: 100%; min-height: 56px;
+  background: transparent; border: 0; color: var(--text); font: inherit; text-align: left; }
+.play { width: 38px; height: 38px; flex: none; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); display: grid; place-items: center; font-size: 13px; }
+.row[data-play=true] .play { border-color: var(--accent); background: var(--steel-tint); color: var(--accent); }
+.who { flex: 1; min-width: 0; }
+.who b { display: block; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+/* Scoped to a class, not `.who span`: an element+class selector outranks `.chip`,
+   which quietly turned the mode badge and the MHz unit into full-width blocks. */
+.who .prev { font-size: 12px; color: var(--text-2); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.who .unit { font-size: 11px; color: var(--text-3); }
+.meta { text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+.chip { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; vertical-align: 1px; }
+.chip.caught { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok); }
+.prog { height: 3px; background: var(--surface-2); display: none; }
+.row[data-play=true] .prog { display: block; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<button class="theme" id="theme" type="button">Light</button>
+<div class="phone">
+  <div class="note"><b>B &mdash; The rolling buffer.</b> The box is <b>always holding the last two minutes</b> of whatever you are listening to. The main control is not &ldquo;start recording&rdquo; &mdash; it is <b>&ldquo;save what just happened&rdquo;</b>.<br><br>This is the shape the hobby actually has. A number station starts before you find it; a repeater exchange is over in nine seconds; the interesting thing on shortwave is <em>always</em> already in the past by the time your thumb arrives. A record button asks you to predict; a buffer does not.<br><br><b>It costs about a megabyte.</b> The sidecar already encodes 64&nbsp;kbps MP3, so two minutes of it is 960&nbsp;kB of RAM &mdash; and the strip below draws the audio level across that window, so you can <em>see</em> the transmission and drag a selection around it.</div>
+  <div class="swap" role="tablist">
+    <button id="t-listen" role="tab" aria-pressed="true" type="button">Listen</button>
+    <button id="t-lib" role="tab" aria-pressed="false" type="button">Recordings</button>
+  </div>
+
+  <div class="pane on" id="listen">
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="title">Listen <span id="clock">23:46:12</span></div>
+      <div class="readout">5.000<small>MHz &middot; AM 6k &middot; WWV</small></div>
+      <div class="lbl">Last two minutes <b id="selInfo">selected 0:42 &middot; 336 kB</b></div>
+      <div class="buf" id="buf">
+        <div class="cap">2:00 ago</div><div class="cap r">now</div>
+      </div>
+      <div class="axis"><span>&minus;2:00</span><span>drag either edge to choose</span><span>now</span></div>
+      <div class="save">
+        <button class="go" id="go" type="button">Save selection<small id="goSub">0:42 &middot; 336 kB</small></button>
+        <button class="roll" id="roll" type="button" aria-pressed="false">Keep<small>rolling</small></button>
+      </div>
+      <div class="mem">
+        <span>Buffer</span>
+        <button type="button" data-min="1">1 min<br><small style="color:var(--text-3);font-size:10px">480 kB</small></button>
+        <button type="button" data-min="2" aria-pressed="true">2 min<br><small style="color:var(--text-3);font-size:10px">960 kB</small></button>
+        <button type="button" data-min="5">5 min<br><small style="color:var(--text-3);font-size:10px">2.4 MB</small></button>
+      </div>
+      <div class="toast" id="toast"><span id="toastText">Caught &mdash; 0:42</span><button type="button" id="toastGo">Open</button></div>
+      <p class="hint"><b style="color:var(--text-2);font-weight:500">Keep rolling</b> is the ordinary record button for when you <em>do</em> know in advance &mdash; a net that runs an hour, a band opening you want the whole of. It writes straight through instead of waiting to be asked.</p>
+    </div>
+  </div>
+
+  <div class="pane" id="lib">
+    <div class="hdr">Recordings</div>
+    <div class="disk"><span>1.9 GB of 8 GB</span><span>oldest kept 90 days</span></div>
+    <div class="bar"><i style="width:24%"></i></div>
+    <div id="list"></div>
+  </div>
+</div>
+<script>
+const BPS = 8000; // 64 kbps mono MP3 — listen.py AUDIO_BITRATE_BPS
+const fmtSize = b => b >= 1048576 ? (b/1048576).toFixed(1) + " MB" : Math.round(b/1024) + " kB";
+const fmtDur = s => Math.floor(s/60) + ":" + String(Math.floor(s%60)).padStart(2, "0");
+
+const CLIPS = [
+  { day: "Today", f: "5.000", mode: "AM 6k", at: "23:12", secs: 38, caught: true,
+    tx: "At the tone, twenty-three hours twelve minutes Coordinated Universal Time. Beep." },
+  { day: "Today", f: "146.940", mode: "NFM 12.5k", at: "18:03", secs: 9, caught: true,
+    tx: "…full quieting into the repeater. Seventy-three." },
+  { day: "Today", f: "162.550", mode: "NFM 16k", at: "19:12", secs: 186, caught: false,
+    tx: "…coastal flood advisory remains in effect until two AM Eastern time." },
+  { day: "Yesterday", f: "4.625", mode: "USB 3.1k", at: "02:11", secs: 51, caught: true,
+    tx: "…buzzer. Repeating tone, approximately twenty-five per minute. No voice." },
+  { day: "Yesterday", f: "7.200", mode: "LSB 2.4k", at: "21:40", secs: 415, caught: false,
+    tx: "…net control standing by for check-ins, any station with traffic please come now." },
+];
+
+// --- the buffer strip -------------------------------------------------------------
+// A level history with two real transmissions in it, so the selection has something to
+// be around. Widths are percentages of the window so changing buffer length just relabels.
+const buf = document.getElementById("buf");
+const N = 118;
+let levels = [];
+function fill() {
+  levels = [];
+  for (let i = 0; i < N; i++) {
+    const t = i / N;
+    // Two bursts: one near the middle, one just ended.
+    const a = t > 0.30 && t < 0.46 ? 1 : 0;
+    const b = t > 0.74 && t < 0.95 ? 1 : 0;
+    const speech = (a || b) ? 0.45 + Math.random() * 0.5 : 0.04 + Math.random() * 0.06;
+    levels.push(speech);
+  }
+}
+fill();
+
+let selA = 0.74, selB = 0.95, dragging = null, bufMin = 2;
+function drawBuf() {
+  const w = buf.clientWidth || 358;
+  let html = '<div class="cap">' + bufMin + ':00 ago</div><div class="cap r">now</div>';
+  levels.forEach((v, i) => {
+    const x = i / N;
+    const hot = x >= selA && x <= selB;
+    html += `<div class="lv${hot ? " hot" : ""}" style="left:${(x * 100).toFixed(2)}%;height:${(v * 68).toFixed(1)}px"></div>`;
+  });
+  html += `<div class="sel" style="left:${(selA*100).toFixed(2)}%;width:${((selB-selA)*100).toFixed(2)}%"></div>`;
+  html += `<div class="grip" tabindex="0" role="slider" aria-label="Selection start" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(selA*100)}" data-h="a" style="left:${(selA*100).toFixed(2)}%"></div>`;
+  html += `<div class="grip" tabindex="0" role="slider" aria-label="Selection end" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(selB*100)}" data-h="b" style="left:${(selB*100).toFixed(2)}%"></div>`;
+  html += '<div class="now"></div>';
+  buf.innerHTML = html;
+  const secs = (selB - selA) * bufMin * 60;
+  const text = `${fmtDur(secs)} · ${fmtSize(secs * BPS)}`;
+  document.getElementById("selInfo").textContent = "selected " + text;
+  document.getElementById("goSub").textContent = text;
+}
+drawBuf();
+addEventListener("resize", drawBuf);
+
+function at(e) {
+  const r = buf.getBoundingClientRect();
+  return Math.min(1, Math.max(0, ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width));
+}
+buf.addEventListener("pointerdown", e => {
+  const grip = e.target.closest(".grip");
+  dragging = grip ? grip.dataset.h : null;
+  if (!dragging) { // tapping the strip moves the nearer edge — no hunting for a handle
+    const x = at(e);
+    dragging = Math.abs(x - selA) < Math.abs(x - selB) ? "a" : "b";
+  }
+  buf.setPointerCapture(e.pointerId);
+  move(e);
+});
+function move(e) {
+  if (!dragging) return;
+  const x = at(e);
+  if (dragging === "a") selA = Math.min(x, selB - 0.03); else selB = Math.max(x, selA + 0.03);
+  drawBuf();
+}
+buf.addEventListener("pointermove", move);
+buf.addEventListener("pointerup", () => { dragging = null; });
+buf.addEventListener("keydown", e => {
+  const grip = e.target.closest(".grip"); if (!grip) return;
+  const step = e.shiftKey ? 0.05 : 0.01;
+  const d = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+  if (!d) return;
+  e.preventDefault();
+  if (grip.dataset.h === "a") selA = Math.max(0, Math.min(selA + d, selB - 0.03));
+  else selB = Math.min(1, Math.max(selB + d, selA + 0.03));
+  drawBuf();
+  buf.querySelector(`.grip[data-h="${grip.dataset.h}"]`).focus();
+});
+
+// --- save + keep rolling ----------------------------------------------------------
+const toast = document.getElementById("toast");
+document.getElementById("go").addEventListener("click", () => {
+  const secs = Math.round((selB - selA) * bufMin * 60);
+  document.getElementById("toastText").textContent = `Caught — ${fmtDur(secs)}, ${fmtSize(secs*BPS)}`;
+  toast.classList.add("on");
+  CLIPS.unshift({ day: "Today", f: "5.000", mode: "AM 6k", at: document.getElementById("clock").textContent.slice(0,5),
+    secs, caught: true, tx: "Transcribing…" });
+  draw();
+});
+const roll = document.getElementById("roll");
+let rolling = false, rollT = null, rollFrom = 0;
+roll.addEventListener("click", () => {
+  rolling = !rolling;
+  roll.setAttribute("aria-pressed", String(rolling));
+  if (rolling) {
+    rollFrom = Date.now();
+    roll.innerHTML = 'Stop<small id="rollSub">0:00</small>';
+    rollT = setInterval(() => {
+      const s = (Date.now() - rollFrom) / 1000;
+      roll.querySelector("small").textContent = fmtDur(s);
+    }, 250);
+  } else {
+    clearInterval(rollT);
+    const s = Math.max(1, Math.round((Date.now() - rollFrom) / 1000));
+    roll.innerHTML = 'Keep<small>rolling</small>';
+    CLIPS.unshift({ day: "Today", f: "5.000", mode: "AM 6k", at: "now", secs: s, caught: false, tx: "Transcribing…" });
+    draw();
+    document.getElementById("toastText").textContent = `Saved — ${fmtDur(s)}, ${fmtSize(s*BPS)}`;
+    toast.classList.add("on");
+  }
+});
+document.querySelectorAll(".mem button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".mem button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+  bufMin = Number(b.dataset.min);
+  drawBuf();
+}));
+
+// a clock, so "now" is not a static word
+setInterval(() => {
+  const d = new Date();
+  document.getElementById("clock").textContent = d.toTimeString().slice(0, 8);
+}, 1000);
+
+// --- library ----------------------------------------------------------------------
+const list = document.getElementById("list");
+function draw() {
+  let html = "", day = "";
+  CLIPS.forEach((c, i) => {
+    if (c.day !== day) { day = c.day; html += `<div class="day">${day}</div>`; }
+    html += `<div class="row" data-play="false">
+      <button class="top" type="button">
+        <span class="play" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/></svg></span>
+        <span class="who"><b>${c.f} <span class="unit">MHz</span>
+          <span class="chip">${c.mode}</span>${c.caught ? '<span class="chip caught">caught</span>' : ""}</b>
+          <span class="prev">${c.tx}</span></span>
+        <span class="meta">${c.at}<br>${fmtDur(c.secs)} &middot; ${fmtSize(c.secs*BPS)}</span>
+      </button><div class="prog"><i></i></div></div>`;
+  });
+  list.innerHTML = html;
+}
+draw();
+let playing = null, playT = null;
+list.addEventListener("click", e => {
+  const row = e.target.closest(".row"); if (!row) return;
+  clearInterval(playT);
+  if (playing === row) { row.dataset.play = "false"; playing = null; return; }
+  if (playing) playing.dataset.play = "false";
+  playing = row; row.dataset.play = "true";
+  const fill = row.querySelector(".prog i"); let p = 0;
+  playT = setInterval(() => {
+    p += 2; fill.style.width = p + "%";
+    if (p >= 100) { clearInterval(playT); row.dataset.play = "false"; fill.style.width = "0"; playing = null; }
+  }, 60);
+});
+
+// --- panes + theme ----------------------------------------------------------------
+const panes = { listen: document.getElementById("listen"), lib: document.getElementById("lib") };
+const tabs = { listen: document.getElementById("t-listen"), lib: document.getElementById("t-lib") };
+function show(w) { for (const k in panes) { panes[k].classList.toggle("on", k === w); tabs[k].setAttribute("aria-pressed", String(k === w)); } if (w === "listen") drawBuf(); }
+tabs.listen.addEventListener("click", () => show("listen"));
+tabs.lib.addEventListener("click", () => show("lib"));
+document.getElementById("toastGo").addEventListener("click", () => show("lib"));
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  themeBtn.textContent = light ? "Light" : "Dark";
+});
+</script>

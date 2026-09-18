@@ -1,4 +1,5 @@
-"""Parsing and validation of the note.extract JSON payload.
+"""The `Extraction` value objects, the parse that builds them, and the write-path
+helpers the graph commit runs on.
 
 Strict on structure (a payload that isn't the documented shape is a permanent
 job failure — the adapter already spent its one re-ask), lenient on individual
@@ -186,10 +187,31 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
 }  # fmt: skip
 
 
+# Separators a predicate spelling may carry between words. The table above is keyed
+# on the SEPARATOR-FREE lowercase form because the spelling a writer uses is not part
+# of what a predicate MEANS: `bloodPressure`, `blood_pressure` and `Blood Pressure`
+# are one predicate, and the floor must not be dodgeable by choosing a different one.
+# This matters now that a model writes predicates through `assert_fact` rather than
+# only through the deleted note.extract prompt (which taught camelCase): the agent's
+# snake_case `blood_pressure` used to miss the table entirely and land a clinical fact
+# in the note's domain (AGENT_INGEST_CONVERSATION_PLAN.md D18 — the agent's domain choice IS
+# its predicate choice, so the predicate lookup is what has to hold).
+_PREDICATE_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
 def domain_floor(predicate: str) -> str | None:
     """The minimum (restricted) domain a clearly-sensitive predicate forces, or
-    None for predicates the model is left to classify on its own."""
-    return _DOMAIN_BY_PREDICATE.get(predicate.lower())
+    None for predicates the model is left to classify on its own.
+
+    Matched separator- and case-insensitively, and a DOTTED path falls back to its
+    base segment (`bloodPressure.systolic` floors exactly as `bloodPressure` does):
+    a qualifier of a sensitive predicate is at least as sensitive as the predicate
+    it qualifies. Both rules only ever ADD a floor, never remove one."""
+    key = _PREDICATE_SEPARATORS.sub("", predicate).lower()
+    floor = _DOMAIN_BY_PREDICATE.get(key)
+    if floor is None and "." in key:
+        floor = _DOMAIN_BY_PREDICATE.get(key.split(".", 1)[0])
+    return floor
 
 
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
@@ -999,67 +1021,4 @@ def parse_extraction(
         facts=facts,
         tokens=tokens,
         dropped_facts=dropped_facts,
-    )
-
-
-def merge_extractions(parts: list[Extraction]) -> Extraction:
-    """Reduce per-group extractions (chunk-level map-reduce) into one note-level
-    Extraction.
-
-    Each group was extracted with its OWN fact budget, so a long note yields
-    facts proportional to its content instead of clipping at one note-wide cap.
-    The reduce reuses the very machinery that reconciles facts across NOTES:
-    union the mentions and tokens, re-run the deterministic object binding over
-    the FULL mention set (so a relationship whose object entity was named in a
-    different group still links instead of orphaning), then dedup on the
-    structural identity key so a property restated across groups collapses to
-    one. dropped_facts sums each group's own truncation so the note-level
-    review card still reflects a hit budget.
-
-    A single part passes through untouched — the common short-note path stays
-    byte-identical to the pre-map-reduce pipeline.
-    """
-    if len(parts) == 1:
-        return parts[0]
-
-    title = next((p.title for p in parts if p.title), "")
-
-    tags: list[str] = []
-    for part in parts:
-        for tag in part.tags:
-            if tag not in tags:
-                tags.append(tag)
-
-    mentions: list[ExtractedMention] = []
-    seen_mentions: set[str] = set()
-    for part in parts:
-        for mention in part.mentions:
-            if mention.name not in seen_mentions:
-                seen_mentions.add(mention.name)
-                mentions.append(mention)
-
-    facts = [fact for part in parts for fact in part.facts]
-    # Re-bind objects across the FULL mention set, then collapse cross-group
-    # restatements — the same two passes parse_extraction runs per group, now
-    # over the union so a cross-group edge links and a cross-group duplicate
-    # dedups.
-    facts = link_relationship_objects(facts, mentions)
-    facts = dedup_facts(facts)
-
-    tokens: list[ExtractedToken] = []
-    seen_tokens: set[tuple[str, str]] = set()
-    for part in parts:
-        for token in part.tokens:
-            key = (token.phrase, token.resolved_start.isoformat())
-            if key not in seen_tokens:
-                seen_tokens.add(key)
-                tokens.append(token)
-
-    return Extraction(
-        title=title,
-        tags=tags[:MAX_TAGS],
-        mentions=mentions,
-        facts=facts,
-        tokens=tokens,
-        dropped_facts=sum(part.dropped_facts for part in parts),
     )

@@ -121,6 +121,106 @@ class EntityRef(BaseModel):
     # name only) and for the related-object chips read_entity also returns; the same
     # prose is already in the tool result the PWA shows, so this copies nothing new.
     facts: list[str] = Field(default_factory=list)
+    # Whether this ref MINTED the entity or matched one already on file. The write path
+    # has always known (`handle.entity.created`) and has always said so to the MODEL
+    # ("new entity" / "already known", `graphwritetools._resolved_line`) — and never to
+    # the owner, who has no other way to tell. Without it the screen cannot say "I made a
+    # new record for Boss" rather than "I matched Boss to the one you already have",
+    # which for a note about a new thing is the single most useful sentence available.
+    # False for every read ref (`find_entity`/`read_entity`/`relate` never mint).
+    created: bool = False
+    # The entity's own kind — person, thing, animal, place. NOT `kind` above, which is
+    # this ref's DISCRIMINATOR and is always the literal "entity"; two different things
+    # that would collide under one name.
+    entity_kind: str | None = None
+
+
+WriteStatus = Literal["written", "replaced", "held"]
+
+# `analysis.pipeline`'s seven write outcomes, reduced to D3's three per-fact states.
+# The rung renders from THIS, so the map is the thing that decides whether a fact
+# `decide()` refused to make live is shown to the owner as live — the single failure
+# `ask_owner.tool` and the persona prompt both exist to surface. Kept as an explicit
+# table, not a startswith or a truthiness test, because every silent default here
+# defaults in the dangerous direction.
+_WRITE_STATUS: dict[str, WriteStatus] = {
+    "written": "written",
+    "already": "written",  # same identity key and value: live, refreshed in place
+    "closed": "written",  # supplied an open interval's end — a change that landed
+    "historical": "written",  # recorded as history; a newer value was already on file
+    "promoted": "written",  # had been held, now live
+    "replaced": "replaced",
+    "held": "held",
+}
+
+
+def write_status(outcome: str) -> WriteStatus:
+    """D3's per-fact state for one write-path outcome.
+
+    An outcome this table does not know reads as `held`, and that asymmetry is the
+    point: calling a live fact held understates what happened and the owner can see it
+    is wrong; calling a HELD fact written tells them the graph says something it does
+    not, which is the one thing this rung exists to make impossible. A new outcome word
+    therefore fails safe until someone adds it here."""
+    return _WRITE_STATUS.get(outcome, "held")
+
+
+class FactWriteRef(BaseModel):
+    """One fact row a WRITE tool actually wrote, as the tool reports it back.
+
+    Distinct from `FactRef` (a citation pointer): this says a write LANDED, and it
+    carries the domain because that is what the write path decided — the note's
+    domain floored by the predicate and ratcheted — not what the model asked for.
+    The note conversation's ledger stores these ids as `fact_ids`
+    (docs/plans/AGENT_INGEST_CONVERSATION_PLAN.md constraint 6: the whole-note settle
+    sweep retracts every non-pinned fact of the note NOT in that set, so an empty one
+    is a retraction armed), and the D3 rung renders the whole of this — the state in
+    words, the domain in words, the edge, and a supersession's before→after.
+
+    Every field below is REPORTED BY THE WRITE PATH. None of it is the model's account
+    of what it asked for, which is what makes the rung a record rather than an echo."""
+
+    fact_id: str
+    label: str
+    domain: Domain
+    # What the write did, in `analysis.pipeline`'s vocabulary (written / already /
+    # replaced / held / closed / historical / promoted). A plain string, not a Literal:
+    # the write path owns the vocabulary and this model only carries it. Kept beside
+    # `status` rather than replaced by it — the reduction is lossy and this is the
+    # precise word, which the ledger and a debug read still want.
+    outcome: str = "written"
+    # D3's three per-fact states, derived from `outcome` by `write_status`. The renderer
+    # reads this, so the mapping happens once, here, under test — not in four call sites.
+    #
+    # REQUIRED, deliberately, and the only required field on this model that has an
+    # obvious default. A default of "written" is a silent claim that a fact is live, and
+    # an emitter that forgets to set it would make every HELD fact read as written with
+    # nothing failing anywhere — which is exactly how the rung shipped in the first
+    # place. Pydantic refusing to build the ref is the cheapest possible version of that
+    # bug: it is a startup error in the write path, not a lie on the owner's screen.
+    status: WriteStatus
+    # The graph EDGE, so a write renders in the `predicate → value` form the entity page
+    # and the review inbox already use, instead of a second form invented for this rung.
+    # Absent when the write path had no edge to report; `label` is the fallback.
+    predicate: str | None = None
+    qualifier: str | None = None
+    value: str | None = None
+    # The statement(s) this write superseded, joined as `_write_line` joins them — the
+    # "before" half of the shipped diff. Only ever set alongside `status="replaced"`.
+    replaced: str | None = None
+    # D12: the fact was committed from an ATTACHMENT (a photo, an OCR'd page) rather
+    # than the note's own prose. Decided from the provenance of the chunk the fact's
+    # quote was attested against, never inferred from the tool name or the model's word.
+    from_attachment: bool = False
+    # Why the write path held back, or what it noticed while going ahead — the write
+    # path's own word (`FactWrite.hold_reason`). `attribute_collision` is the one that
+    # matters on screen: the value on file DISAGREED, and this one is live because it is
+    # NEWER, not because anything adjudicated between them. The write path says so in the
+    # free-text result the MODEL reads; until now it reached the owner nowhere, so a
+    # contradicted supersession rendered identically to a clean one. Since a conversation
+    # write files no review card, that sentence was his only possible notice and he never
+    # got it.
+    hold_reason: str | None = None
 
 
 class NoteRef(BaseModel):
@@ -261,6 +361,24 @@ class ToolResultEvent(BaseModel):
     proposal: ProposalRef | None = None
     # Entities a tool resolved this turn (find_entity), surfaced as tappable chips.
     entities: list[EntityRef] = Field(default_factory=list)
+    # Fact rows a WRITE tool wrote this turn (the note conversation's graph tools).
+    # Empty for every read tool. Carried on the event rather than derived from the
+    # summary text so the ledger records what LANDED, never what the model asked for.
+    facts: list[FactWriteRef] = Field(default_factory=list)
+    # The call took only a PREFIX of what it was given — a batch clamped to the tool's
+    # per-call cap. D3 makes the step say so out loud, because a short list shown as if
+    # it were the whole one is how "I recorded that" becomes false without anything
+    # failing. False for every tool that takes no batch.
+    truncated: bool = False
+    # The arguments AS THE TOOL RECORDED THEM, where those differ from what the model
+    # sent — the transcript step's `args` are replaced with these. Only `ask_owner` sets
+    # it, and the reason is that it MINTS the question ids server-side (`asktools._asked`)
+    # and stores them on the ledger, while the step the PWA reads is the model's raw
+    # arguments, which carry no ids at all. The block then offered positional ids
+    # (`asked.ts`'s `q${i+1}` fallback) that `clarify._pair` dropped as unknown, so every
+    # tapped answer was discarded on every real send. None for every other tool, which
+    # leaves its step exactly as it was.
+    args: dict[str, Any] | None = None
 
 
 class ToolViewEvent(BaseModel):

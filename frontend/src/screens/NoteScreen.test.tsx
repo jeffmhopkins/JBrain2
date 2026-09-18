@@ -62,6 +62,9 @@ const INDEXED: StreamItem = {
   ],
 };
 
+/** The note's RECORD — Note and Files. The conversation about it is not here any more
+ * (the owner's ruling of 2026-09-14): it loads on the Entry surface, covered by
+ * `HomeScreen.note.test.tsx`. */
 function setup(
   source = noteViewFromItem(ITEM),
   resolve: (id: string) => Promise<StreamItem | null> = vi.fn(async () => null),
@@ -250,12 +253,12 @@ describe("NoteScreen", () => {
     expect(screen.getByText("first paragraph")).toBeInTheDocument();
     expect(screen.getByText("second paragraph")).toBeInTheDocument();
     expect(screen.queryByText("lab-orders.pdf")).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("1");
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveTextContent("1");
   });
 
-  it("Attachments tab: summary + manifest rows with per-file status chips", () => {
+  it("Files tab: summary + manifest rows with per-file status chips", () => {
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     // OCR'd images count as searchable; only the pending one awaits OCR.
     expect(
@@ -275,14 +278,14 @@ describe("NoteScreen", () => {
 
   it("images show the indexing chip while the note itself is still indexing", () => {
     setup(noteViewFromItem({ ...INDEXED, ingestState: "processing" }));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     expect(screen.getAllByText("indexing…").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("ocr queued…")).not.toBeInTheDocument();
   });
 
   it("⋯ opens the file sheet with an open link; remove needs the tap-again confirm", async () => {
     const { onRemoveAttachment } = setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     fireEvent.click(screen.getByRole("button", { name: "Actions for lab-orders.pdf" }));
 
     const open = screen.getByText("open").closest("a");
@@ -300,7 +303,7 @@ describe("NoteScreen", () => {
 
   it("add files uploads through the handler and appends a manifest row", async () => {
     const { onAddAttachment } = setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -309,13 +312,13 @@ describe("NoteScreen", () => {
 
     await waitFor(() => expect(screen.getByText("notes.txt")).toBeInTheDocument());
     expect(onAddAttachment).toHaveBeenCalledWith("n1", file);
-    expect(screen.getByRole("tab", { name: /Attachments/ })).toHaveTextContent("5");
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveTextContent("5");
   });
 
-  it("Analysis tab: title, tags, and facts as edges grouped by subject", async () => {
+  it("the Note tab carries the record: title, tags, and facts as edges grouped by subject", async () => {
     stubAnalysisFetch(ANALYSIS);
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
     expect(await screen.findByText("Dr. Patel visit — BP 128/82")).toBeInTheDocument();
     expect(screen.getByText("blood-pressure")).toBeInTheDocument();
@@ -347,7 +350,7 @@ describe("NoteScreen", () => {
   it("tapping a fact expands its citation with the source words highlighted", async () => {
     stubAnalysisFetch(ANALYSIS);
     const { onOpenEntity } = setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
 
     const row = await screen.findByRole("button", { name: /blood_pressure/ });
     expect(row).toHaveAttribute("aria-expanded", "false");
@@ -380,7 +383,7 @@ describe("NoteScreen", () => {
       temporal_tokens: [],
     });
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(
       await screen.findByText("analysis runs after indexing — nothing here yet."),
     ).toBeInTheDocument();
@@ -399,7 +402,7 @@ describe("NoteScreen", () => {
     // INDEXED carries receipt.png with an empty vision cache: the backend
     // gates analysis on it, and the tab says so over the mid-flight card.
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: "Analysis" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Note" }));
     expect(
       await screen.findByText(
         "waiting on image analysis — facts extract once every source below is in.",
@@ -461,12 +464,12 @@ describe("NoteScreen", () => {
     await waitFor(() => expect(screen.getByText("second paragraph")).toBeInTheDocument());
     expect(resolve).toHaveBeenCalledWith("n1");
     expect(screen.queryByText("loading the full note…")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     expect(screen.getByText("lab-orders.pdf")).toBeInTheDocument();
   });
 });
 
-// ===== pure manifest (extract viewing lives in the Analysis tab now) =====
+// ===== pure manifest (extract viewing lives in the Note tab's record now) =====
 
 describe("AttachmentsTab manifest", () => {
   it("rows are inert manifest entries — no expansion affordances, no fetches", () => {
@@ -475,7 +478,7 @@ describe("AttachmentsTab manifest", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     setup(noteViewFromItem(INDEXED));
-    fireEvent.click(screen.getByRole("tab", { name: /Attachments/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
 
     // Neither image nor pdf rows expand: no role, no caret, no aria state.
     for (const filename of ["whiteboard.jpg", "lab-orders.pdf"]) {
@@ -492,5 +495,39 @@ describe("AttachmentsTab manifest", () => {
     expect(document.querySelector(".x-inner")).toBeNull();
     expect(screen.queryByText(/pdfs carry their own text layer/)).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the blocks he added after the fact", () => {
+  const ADDED =
+    'My tv is 58"\n\n[addition 2026-09-15 01:24 UTC]\nActually it\'s 60"' +
+    "\n\n[clarification 2026-09-15 02:00 UTC]\nQ: Which room?\nA: The den";
+
+  it("dates each block instead of printing its raw marker", () => {
+    // Here, unlike the stream row, the stamp earns its space: this is where he reads
+    // the note whole and "when did I say that?" is a real question. What it must not
+    // be is the composed text's own machine syntax.
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    expect(screen.queryByText(/\[addition/)).toBeNull();
+    expect(screen.queryByText(/\[clarification/)).toBeNull();
+    expect(screen.getByText(/Added · 2026-09-15 01:24 UTC/)).toBeInTheDocument();
+    expect(screen.getByText(/Answered · 2026-09-15 02:00 UTC/)).toBeInTheDocument();
+  });
+
+  it("keeps his words, and the body he first wrote", () => {
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    expect(screen.getByText(/My tv is 58"/)).toBeInTheDocument();
+    expect(screen.getByText(/Actually it's 60"/)).toBeInTheDocument();
+    expect(screen.getByText("The den")).toBeInTheDocument();
+  });
+
+  it("sets the agent's question apart from his own sentences", () => {
+    // The only text in a note's body he did not write, so it must not read as his.
+    setup(noteViewFromItem({ ...ITEM, body: ADDED }));
+    const q = screen.getByText("Which room?");
+    expect(q).toHaveClass("note-block-q");
+    // And no bare `Q:` / `A:` labels survive into what he reads.
+    expect(screen.queryByText(/^Q: /)).toBeNull();
+    expect(screen.queryByText(/^A: /)).toBeNull();
   });
 });

@@ -2088,3 +2088,66 @@ def test_a_driver_that_will_not_take_a_bandwidth_is_a_finding_free_answer() -> N
 
     assert rung["supported"] is False
     assert "automatic" in rung
+
+
+# --- the upconverter -----------------------------------------------------------------
+#
+# ONE PLACE PUTS THE OFFSET ON, and nothing takes it off. A Ham It Up mixes the band up
+# by its crystal, so to hear 7.200 MHz the dongle tunes 132.200 — and the whole risk of
+# the feature is a layer that reports the second number as if it were the first. These
+# tests pin the seam: `setFrequency` gets the shifted value, and everything a caller can
+# read gets the one they asked for.
+
+
+UP = 125_000_000
+HF = 7_200_000
+
+
+def test_the_offset_reaches_the_hardware_and_nothing_else() -> None:
+    driver = _FakeDriver()
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=HF, upconverter_hz=UP
+    ) as rig:
+        tuned = [call for call in driver.log if call[0] == "setFrequency"]
+
+        # The dongle is told 132.200 MHz...
+        assert tuned[-1][4] == float(HF + UP)
+        # ...and every reader is told 7.200. `center_hz` is what stamps `Buffer`, which
+        # is what labels a `Frame`, which is what draws the axis and names a peak.
+        assert rig.center_hz == HF
+
+
+def test_a_retune_through_a_converter_shifts_again_and_reports_again() -> None:
+    """The second tuning is where a "shift it at the caller" design goes wrong: the
+    first call remembers to add the offset and the retune path forgets, or adds it to a
+    value that already carries it and lands 125 MHz higher still."""
+    driver = _FakeDriver()
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=HF, upconverter_hz=UP
+    ) as rig:
+        rig.retune(center_hz=14_200_000, settle_s=0.0)
+
+        assert [c[4] for c in driver.log if c[0] == "setFrequency"][-1] == float(
+            14_200_000 + UP
+        )
+        assert rig.center_hz == 14_200_000
+
+
+def test_no_converter_tunes_exactly_what_it_is_asked_for() -> None:
+    """The default, and the one that must be byte-identical to what shipped: a radio
+    nobody has configured behaves as it always did."""
+    driver = _FakeDriver()
+    with radio.Radio.open(driver=driver, rate_hz=RATE, center_hz=HF) as rig:
+        assert [c[4] for c in driver.log if c[0] == "setFrequency"][-1] == float(HF)
+        assert rig.center_hz == HF
+
+
+def test_a_negative_offset_is_no_offset_rather_than_a_downward_shift() -> None:
+    """Nothing in front of this radio mixes DOWN, and a stored negative would otherwise
+    tune below the floor and report a frequency the dongle never saw."""
+    driver = _FakeDriver()
+    with radio.Radio.open(
+        driver=driver, rate_hz=RATE, center_hz=CENTER, upconverter_hz=-UP
+    ) as rig:
+        assert rig.upconverter_hz == 0
+        assert [c[4] for c in driver.log if c[0] == "setFrequency"][-1] == float(CENTER)

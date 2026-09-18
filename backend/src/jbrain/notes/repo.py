@@ -2,6 +2,7 @@
 domain filtering is enforced by Postgres, not by these methods."""
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select, update
@@ -10,14 +11,28 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis.purge import purge_note_artifacts
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
+from jbrain.ingest.chunker import PARAGRAPH
+from jbrain.ingest.extract import KIND_TEXT_LAYER
+from jbrain.models.notes import (
+    CLARIFICATION_ADDITION,
+    CLARIFICATION_ANSWER,
+    Attachment,
+    AttachmentExtract,
+    Chunk,
+    Note,
+    NoteClarification,
+)
+from jbrain.notes.compose import compose_body, strip_clarifications
 from jbrain.notes.service import (
     AttachmentInfo,
+    ClarificationInfo,
+    ClarificationsAltered,
     ExtractInfo,
     NoteInfo,
     NoteUpdate,
     UnknownDomain,
 )
+from jbrain.queue import enqueue_on
 
 
 def _attachment_info(a: Attachment) -> AttachmentInfo:
@@ -38,7 +53,9 @@ def _note_info(n: Note) -> NoteInfo:
         client_id=n.client_id,
         domain=n.domain_code,
         destination=n.destination,
-        body=n.body,
+        # The note's TEXT, not the body column: D6's clarification blocks are appended
+        # here so the existing note view renders them as text with no frontend change.
+        body=compose_body(n.body, n.clarifications),
         created_at=n.created_at,
         tz_offset_minutes=n.tz_offset_minutes,
         ingest_state=n.ingest_state,
@@ -146,7 +163,17 @@ class SqlNotesRepo:
                 if note is None:
                     return None
                 if changes.body is not None:
-                    note.body = changes.body
+                    # The editor loads what `_note_info` served — body + clarification
+                    # blocks — and PATCHes the whole string back, so an untouched save
+                    # would otherwise bake the blocks into the body column and double
+                    # them on the next read. Remove exactly the suffix this note's own
+                    # rows compose to; a body that merely LOOKS like it carries a block
+                    # (pasted from a clarified note, or typed) is left whole, because a
+                    # note must never be truncatable by its own text.
+                    stripped = strip_clarifications(changes.body, note.clarifications)
+                    if stripped is None:
+                        raise ClarificationsAltered(note_id)
+                    note.body = stripped
                 if changes.domain is not None and changes.domain != note.domain_code:
                     note.domain_code = changes.domain
                     # Attachments duplicate the note's domain (0002 invariant)
@@ -155,6 +182,14 @@ class SqlNotesRepo:
                     await session.execute(
                         update(Attachment)
                         .where(Attachment.note_id == note.id)
+                        .values(domain_code=changes.domain)
+                    )
+                    # Clarifications duplicate it for the same reason (0193's policy
+                    # takes no join). Left behind they would be invisible to the
+                    # note's own domain scope — the note moves, its answers do not.
+                    await session.execute(
+                        update(NoteClarification)
+                        .where(NoteClarification.note_id == note.id)
                         .values(domain_code=changes.domain)
                     )
                 if changes.clear_destination:
@@ -170,6 +205,148 @@ class SqlNotesRepo:
                 return _note_info(note)
         except IntegrityError as exc:
             raise UnknownDomain(changes.domain or "") from exc
+
+    async def append_clarification(
+        self,
+        ctx: SessionContext,
+        note_id: str,
+        *,
+        question: str,
+        answer: str,
+        session_id: str | None = None,
+    ) -> NoteInfo | None:
+        return await self.append_clarifications(
+            ctx, note_id, pairs=[(question, answer)], session_id=session_id
+        )
+
+    async def append_clarifications(
+        self,
+        ctx: SessionContext,
+        note_id: str,
+        *,
+        pairs: Sequence[tuple[str, str]] = (),
+        additions: Sequence[str] = (),
+        session_id: str | None = None,
+    ) -> NoteInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            if not pairs and not additions:
+                # Nothing was appended, so the note's text did not change: flipping
+                # `ingest_state` and queueing a re-ingest here would re-chunk a note
+                # nobody edited. A reply whose every answer was dropped lands here.
+                return _note_info(note)
+            # Answers first, then the owner's unprompted words — the order
+            # `clarify.owner_turn_text` renders the same turn in, and the order he did
+            # them in: he taps, then types beside the taps.
+            for question, answer in pairs:
+                session.add(
+                    NoteClarification(
+                        note_id=note.id,
+                        kind=CLARIFICATION_ANSWER,
+                        question=question,
+                        answer=answer,
+                        session_id=uuid.UUID(session_id) if session_id else None,
+                        domain_code=note.domain_code,
+                    )
+                )
+            for addition in additions:
+                session.add(
+                    NoteClarification(
+                        note_id=note.id,
+                        kind=CLARIFICATION_ADDITION,
+                        question=None,
+                        answer=addition,
+                        session_id=uuid.UUID(session_id) if session_id else None,
+                        domain_code=note.domain_code,
+                    )
+                )
+            # The note's TEXT changed even though its body did not, so its chunks and
+            # embeddings are as stale as after an edit — and the graph derived from
+            # them with it. Same reset `update_note` does. ONCE for the whole set, which
+            # is the point of taking pairs: a caller looping over the one-pair wrapper
+            # would flip the state and enqueue an `ingest_note` per answer, and N
+            # re-ingests of one note is exactly the cost the batched ask exists to remove.
+            note.ingest_state = "pending"
+            # `updated_at` is deliberately NOT stamped: the body is frozen (D6) and
+            # nothing edited it. The append is a new row, not a revision.
+            #
+            # The re-ingest is enqueued HERE, in the same transaction, rather than left
+            # to the caller. Every other write path enqueues from its own API handler
+            # (api/notes.py:244,302,325) and `create_note` carries a standing FUTURE
+            # note that a new path can silently forget to — which is exactly how
+            # proposal-enacted notes never indexed. This path has no HTTP route to hang
+            # the enqueue off (W3's `ask_owner` tool is the caller), so the choice was
+            # "in the transaction" or "nowhere reliable". In the transaction also means
+            # a rolled-back append queues no work, and a committed one cannot fail to.
+            await enqueue_on(session, "ingest_note", {"note_id": str(note.id)})
+            await session.flush()
+            await session.refresh(note)
+            return _note_info(note)
+
+    async def list_clarifications(
+        self, ctx: SessionContext, note_id: str
+    ) -> list[ClarificationInfo] | None:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            return [
+                ClarificationInfo(
+                    id=str(c.id),
+                    seq=c.seq,
+                    kind=c.kind,
+                    question=c.question,
+                    answer=c.answer,
+                    created_at=c.created_at,
+                )
+                for c in note.clarifications
+            ]
+
+    async def delete_clarification(
+        self, ctx: SessionContext, note_id: str, clarification_id: str
+    ) -> NoteInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            note = (
+                await session.execute(
+                    select(Note).where(Note.id == note_id, Note.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            removed = (
+                await session.execute(
+                    delete(NoteClarification)
+                    .where(
+                        NoteClarification.id == clarification_id,
+                        # The note predicate as well as the id: an id from ANOTHER note
+                        # must not be deletable through this note's route, and RLS only
+                        # narrows by domain.
+                        NoteClarification.note_id == note.id,
+                    )
+                    .returning(NoteClarification.id)
+                )
+            ).scalar_one_or_none()
+            if removed is None:
+                return None
+            # The note's text shrank, so its chunks, embeddings and the graph derived
+            # from them are stale — the same reset and the same in-transaction enqueue
+            # the append does. A redaction whose old chunk stayed in the search index
+            # would not be one.
+            note.ingest_state = "pending"
+            await enqueue_on(session, "ingest_note", {"note_id": str(note.id)})
+            await session.flush()
+            await session.refresh(note)
+            return _note_info(note)
 
     async def delete_note(self, ctx: SessionContext, note_id: str) -> bool:
         async with scoped_session(self._maker, ctx) as session:
@@ -282,7 +459,21 @@ class SqlNotesRepo:
                         select(AttachmentExtract)
                         .where(AttachmentExtract.attachment_id == attachment_id)
                         # ocr first, then caption — the expansion's reading order.
-                        .order_by(AttachmentExtract.kind.desc(), AttachmentExtract.created_at)
+                        # `created_at` alone is a TIE, not an order: one OCR job writes
+                        # every page in a single transaction and `now()` is the
+                        # transaction timestamp, so all its rows share it. The anchor
+                        # and id break that tie so the same rows come back in the same
+                        # order every read — which is what lets `converse.note_text`
+                        # promise a byte-identical reading. It is stability, not page
+                        # order: "page 10" still sorts before "page 2" (task #28). The
+                        # tiebreak cannot change WHICH row chunks, because `_prefer_ocr`
+                        # is order-independent.
+                        .order_by(
+                            AttachmentExtract.kind.desc(),
+                            AttachmentExtract.created_at,
+                            AttachmentExtract.source_anchor,
+                            AttachmentExtract.id,
+                        )
                     )
                 )
                 .scalars()
@@ -296,6 +487,34 @@ class SqlNotesRepo:
                     confidence=r.confidence,
                     created_at=r.created_at,
                     words=r.words,
+                    source_anchor=r.source_anchor,
                 )
                 for r in rows
             ]
+
+    async def list_text_layer(self, ctx: SessionContext, note_id: str) -> dict[str, str]:
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    select(Chunk.attachment_id, Chunk.text)
+                    .where(
+                        Chunk.note_id == uuid.UUID(note_id),
+                        Chunk.granularity == PARAGRAPH,
+                        Chunk.source_kind == KIND_TEXT_LAYER,
+                        Chunk.attachment_id.is_not(None),
+                    )
+                    # `seq` is the extractor's own order (a PDF's pages in order), so
+                    # rejoining on it reads the document the way it was written.
+                    .order_by(Chunk.seq)
+                )
+            ).all()
+        by_attachment: dict[str, list[str]] = {}
+        for attachment_id, chunk_text in rows:
+            by_attachment.setdefault(str(attachment_id), []).append(chunk_text)
+        # Blank-line joined, which is the document's own paragraph breaks for most
+        # splits but NOT all of them: `paragraph_chunks` also cuts any span longer than
+        # `PARAGRAPH_MAX` (at a sentence break where there is one), so a dense page —
+        # most lab-report and statement pages — reads back with a blank line it never
+        # had. Cosmetic rather than lossy: the seam lands between sentences and no words
+        # move, and the alternative, rejoining on nothing, welds real paragraphs together.
+        return {att: "\n\n".join(texts) for att, texts in by_attachment.items()}

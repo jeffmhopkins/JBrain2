@@ -41,7 +41,10 @@ function daysAgo(days: number): Date {
   return d;
 }
 
-function renderStream(items: StreamItem[]) {
+function renderStream(
+  items: StreamItem[],
+  threads?: Map<string, { sessionId: string; agent: string; questions: number }>,
+) {
   const handlers = {
     onOpenSearch: vi.fn(),
     onOpenNote: vi.fn(),
@@ -49,7 +52,7 @@ function renderStream(items: StreamItem[]) {
     onDelete: vi.fn(),
     onHide: vi.fn(),
   };
-  render(<Stream items={items} {...handlers} />);
+  render(<Stream items={items} {...handlers} threads={threads} />);
   return handlers;
 }
 
@@ -174,5 +177,72 @@ describe("Stream", () => {
     renderStream([note]);
     swipeLeft(screen.getByRole("button", { name: /still local/ }));
     expect(screen.queryByRole("button", { name: "edit" })).not.toBeInTheDocument();
+  });
+});
+
+// The stream's half of AGENT_INGEST_REWRITE §3b I1/I2.
+describe("a note whose thread is waiting on an answer", () => {
+  const thread = { sessionId: "s7", agent: "note_ingest", questions: 3 };
+  const waiting = (id: string) => new Map([[id, thread]]) as Map<string, typeof thread>;
+
+  it("carries a chip with the count, and no verb", () => {
+    const note = item({ analyzed: false });
+    renderStream([note], waiting(note.id as string));
+    const chip = screen.getByRole("button", { name: "3 questions" });
+    expect(chip).toHaveClass("chip-pending"); // amber — rose is the medical domain here
+    // A redirect and nothing else: no answer control, no candidate, no verb.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("outranks the lifecycle chip — the pass that asked has stopped", () => {
+    const note = item({ analyzed: false, ingestState: "indexed" });
+    renderStream([note], waiting(note.id as string));
+    expect(screen.queryByText("analyzing…")).not.toBeInTheDocument();
+  });
+
+  // ⟲ The chip used to open home's conversation surface (I2, decided (ii)). The owner
+  // reversed that on 2026-09-14 — "it shouldn't open in the brain chat, it should open up
+  // right there in the note entry chat" — and the note screen now opens ON the thread, so
+  // chip and row have one destination between them.
+  it("opens the NOTE from the chip as well as from the row", () => {
+    const note = item({ analyzed: false });
+    const h = renderStream([note], waiting(note.id as string));
+
+    fireEvent.click(screen.getByRole("button", { name: "3 questions" }));
+    expect(h.onOpenNote).toHaveBeenCalledWith(note);
+
+    h.onOpenNote.mockClear();
+    fireEvent.click(screen.getByText(note.body));
+    expect(h.onOpenNote).toHaveBeenCalledWith(note);
+  });
+
+  it("leaves a settled note with no chip at all", () => {
+    const note = item({ analyzed: true });
+    renderStream([note], new Map());
+    expect(screen.queryByRole("button", { name: /question/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("a note he came back and added to", () => {
+  const ADDED = 'My tv is 58"\n\n[addition 2026-09-15 01:24 UTC]\nActually it\'s 60"';
+
+  it("spends the clamp on his words, not on the block marker", () => {
+    // The reported defect, in the surface he reported it on: a composed note carries
+    // dated markers in its own text, and rendering that verbatim put
+    // `[addition 2026-09-15 01:24 UTC]` in the two lines the row has — cutting off
+    // before the sentence he typed. He called it "additions show like poop".
+    renderStream([item({ body: ADDED })]);
+    expect(screen.queryByText(/\[addition/)).toBeNull();
+    expect(screen.getByText(/Actually it's 60"/)).toBeInTheDocument();
+  });
+
+  it("still says he came back, because the preview now reads as one note", () => {
+    renderStream([item({ body: ADDED })]);
+    expect(screen.getByText("1 added since")).toBeInTheDocument();
+  });
+
+  it("says nothing about additions on a note that has none", () => {
+    renderStream([item({ body: "just a note" })]);
+    expect(screen.queryByText(/added since/)).toBeNull();
   });
 });

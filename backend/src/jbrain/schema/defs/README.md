@@ -19,10 +19,16 @@ types/*.yaml    per-type definitions composing facets + type-specific predicates
 > Storage accepts any predicate. Shape validation may reject a malformed
 > `value_json`; predicate-name validation may never reject anything.
 
-The registry is **soft**: it supplies (a) preferred predicate spellings for the
-`note.extract` prompt digest and (b) `renamed_from` targets that nightly
-consolidation normalizes drift toward. It is never a storage gate — that would
-resurrect the controlled ontology `docs/reference/ANALYSIS.md` rejects.
+The registry is **soft**: it supplies (a) the canonical spelling a written predicate is
+normalized to — `SchemaRegistry.normalize_predicate`, reached through
+`decompose_predicate`, which also recovers a qualifier a model folded into the dotted
+path. Every fact-writing path calls it before the identity key is read:
+`agent.graphwritetools` (the agent's `assert_fact`/`correct_fact`, the R4 producer),
+`agent.replytools.correct_fact`, and `analysis.extraction` for what the deterministic
+parsers mine. They converge on `AnalysisPipeline.commit_facts`, which is the seam the
+rows actually land through. And (b) `renamed_from` targets that nightly consolidation
+normalizes drift toward. It is never a storage gate — that would resurrect the
+controlled ontology `docs/reference/ANALYSIS.md` rejects.
 
 ## Runtime
 

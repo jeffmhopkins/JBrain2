@@ -12,6 +12,7 @@ import pymupdf
 import pytest
 from sqlalchemy import text
 
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.db.session import scoped_session
 from jbrain.ingest.emr.import_handler import EMR_PARSE_SPEC
 from jbrain.ingest.emr.intake_handler import EMR_IMPORT_SPEC
@@ -37,7 +38,13 @@ pytestmark = [
 
 
 def _registry():  # noqa: ANN202
-    return build_registry((*ACTION_SPECS, PURGE_ACTION, EMR_IMPORT_SPEC, EMR_PARSE_SPEC))
+    # NOTE_CONVERSE_SPEC is here because migration 0194 binds a further pipeline to
+    # note.ingested — the same event these EMR triggers ride. Without the spec the
+    # dispatcher cannot resolve it and every note.ingested tick errors out before it
+    # reaches the EMR triggers at all.
+    return build_registry(
+        (*ACTION_SPECS, PURGE_ACTION, EMR_IMPORT_SPEC, EMR_PARSE_SPEC, NOTE_CONVERSE_SPEC)
+    )
 
 
 async def _records_note(maker, *, body: str) -> str:  # noqa: F811

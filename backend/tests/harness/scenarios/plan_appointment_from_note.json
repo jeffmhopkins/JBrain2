@@ -1,6 +1,6 @@
 {
   "name": "a plainly-worded appointment note becomes its own appointment entity",
-  "description": "Field-observed regression (grok-4.3, note-extract-v11): the note 'I have an appointment tomorrow at the dentist at 1300' extracted as Me -scheduledTime-> the dentist (kind event), so NO appointment entity existed and the calendar projection found nothing. v12 teaches the model that a scheduled appointment is its OWN entity (kind 'appointment') that OWNS a date-valued scheduledTime STATE fact — value_json.start + temporal — never a relationship hung off the author or the place. This scenario pins that corrected shape: one provisional appointment entity with exactly one active scheduledTime state fact at the resolved time.",
+  "description": "Field-observed regression (grok-4.3, note-extract-v11): the note 'I have an appointment tomorrow at the dentist at 1300' extracted as Me -scheduledTime-> the dentist (kind event), so NO appointment entity existed and the calendar projection found nothing. v12 teaches the model that a scheduled appointment is its OWN entity (kind 'appointment') that OWNS a date-valued scheduledTime STATE fact — value_json.start + temporal — never a relationship hung off the author or the place. This scenario pins that corrected shape: one provisional appointment entity with exactly one active scheduledTime state fact at the resolved time. TOOL-PATH NOTE: the entity kind asserted here was 'appointment' before the W3 re-point and is now 'Event'. resolve_entity canonicalizes the declared word through _KIND_HINTS, so what is stored is the registry spelling. Stricter, not weaker.",
   "steps": [
     {
       "domain": "general",
@@ -21,7 +21,7 @@
   ],
   "expect": {
     "entities": [
-      {"name": "dentist appointment", "kind": "appointment", "status": "provisional"}
+      {"name": "dentist appointment", "kind": "Event", "status": "provisional"}
     ],
     "facts": [
       {"entity": "dentist appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-14T13:00:00", "status": "active", "count": 1}

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest import mock
 
@@ -3492,3 +3494,387 @@ class TestWhichRadioIsDrawing:
         tuner = self._tuner(monkeypatch, [listening, watching])
 
         assert tuner.drawing() is watching
+
+
+# -- filter bandwidth ----------------------------------------------------------------
+
+
+def _idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Session that never opens a radio: the fields under test are set before any
+    engine starts, and starting one here would only test the fake."""
+    _instant(monkeypatch)
+    monkeypatch.setattr(listen.shutil, "which", lambda _n: "/usr/bin/fake")
+    monkeypatch.setattr(listen.subprocess, "Popen", _FakeProc)
+
+
+def test_a_session_defaults_to_the_modes_widest_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that never mentions bandwidth gets exactly what it always got."""
+    _idle(monkeypatch)
+    session = listen.Session(5_000_000, "am", None)
+    session.stop()
+    assert session.bandwidth_hz == listen.bandwidths_for("am")[0] == 8_000
+    info = session.info()
+    assert info.bandwidth_hz == 8_000
+    # The ladder travels WITH the session: a PWA holding its own copy would offer
+    # widths a redeployed box had stopped accepting.
+    assert info.bandwidths_hz == (8_000, 6_000, 4_000, 3_000)
+    assert info.as_dict()["bandwidths_hz"] == [8_000, 6_000, 4_000, 3_000]
+    # ...and the BOUNDS the presets sit inside. The drag runs anywhere in the range, so
+    # the client needs the range and not just the menu — from the box, for the same
+    # reason it does not hold its own ladder.
+    assert (info.bandwidth_min_hz, info.bandwidth_max_hz) == demod.BANDWIDTH_RANGE_HZ[
+        "am"
+    ]
+    assert info.bandwidth_step_hz == demod.BANDWIDTH_STEP_HZ
+
+
+def test_a_width_outside_the_range_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refused, never clamped.
+
+    Clamping would leave the radio listening at a width other than the one on screen,
+    and a filter doing something other than what the owner believes is exactly the
+    failure this control exists to end.
+
+    Inside the range anything on the grid is allowed, because the owner drags the
+    passband edge on the picture: "narrower than that station" is a position, not one of
+    four menu entries."""
+    _idle(monkeypatch)
+    low, high = demod.BANDWIDTH_RANGE_HZ["am"]
+    ok = listen.Session(5_000_000, "am", None, bandwidth_hz=5_000)
+    ok.stop()
+    assert ok.bandwidth_hz == 5_000, "a width no preset names must still be allowed"
+    with pytest.raises(listen.SdrError) as bad:
+        listen.Session(5_000_000, "am", None, bandwidth_hz=high + 1_000)
+    assert str(high) in str(bad.value)
+    with pytest.raises(listen.SdrError, match="multiple"):
+        listen.Session(5_000_000, "am", None, bandwidth_hz=low + 50)
+    # Anything that is not a number: the value comes off a JSON body, so a list or a
+    # dict reaches this function as readily as an int does, and `int()` of one raises
+    # TypeError rather than the sentence the owner needs.
+    for junk in ("wide", [8000], {"hz": 8000}, object()):
+        with pytest.raises(listen.SdrError):
+            listen.Session(5_000_000, "am", None, bandwidth_hz=junk)  # type: ignore[arg-type]
+    # `True` is an `int` to Python and would otherwise sail through as 1 Hz, refused for
+    # the wrong reason and with a message naming a width nobody asked for.
+    with pytest.raises(listen.SdrError, match="not a filter width"):
+        listen.Session(5_000_000, "am", None, bandwidth_hz=True)  # type: ignore[arg-type]
+
+
+def test_a_spectrum_session_reports_no_bandwidth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stare tunes to a SPAN, so there is no channel for a filter to be.
+
+    Zero rather than the mode's default, so a client can tell "no filter here" from
+    "the narrowest one" and put no bandwidth control on a screen that cannot use it."""
+    _idle(monkeypatch)
+    sweep = listen.Sweep.of(
+        144_000_000, 144_200_000, 25_000, 60, capture=(2_400_000, 512)
+    )
+    # The engine stubbed out: a spectrum session needs SoapySDR, and what is under test
+    # is what `info()` REPORTS, which is decided before anything opens a radio.
+    monkeypatch.setattr(listen.Session, "_start_pipeline", lambda self: None)
+    # ...and the health check that follows it, which has no engine to confirm.
+    monkeypatch.setattr(listen.Session, "_confirm_started", lambda self: None)
+    session = listen.Session(
+        0, "fm", None, purpose=listen.PURPOSE_SPECTRUM, sweep=sweep
+    )
+    info = session.info()
+    assert info.bandwidth_hz == 0
+    assert info.bandwidths_hz == ()
+    assert (info.bandwidth_min_hz, info.bandwidth_max_hz) == (0, 0)
+
+
+def test_the_width_survives_a_retune_and_resets_on_a_mode_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A narrow filter is a decision about a crowded BAND, not about one station.
+
+    Re-picking it at every step of the dial would make it useless exactly where it is
+    needed. But the ladders differ per mode, so carrying a width into a mode with no
+    such rung would refuse an ordinary mode-button press — which is not where the owner
+    asked for anything about bandwidth — so a mode change falls back to that mode's
+    default instead."""
+    _idle(monkeypatch)
+    session = listen.Session(5_000_000, "am", None, bandwidth_hz=4_000)
+    # `_restart` stubbed to just apply: this is about which width the rules choose, and
+    # rebuilding a pipeline around it would only exercise the fake process.
+    with mock.patch.object(listen.Session, "_restart", lambda self, apply: apply()):
+        session.tune(5_010_000)
+        assert session.bandwidth_hz == 4_000, "the width should follow the dial"
+        session.tune(5_010_000, "usb")
+        assert session.bandwidth_hz == listen.bandwidths_for("usb")[0] == 3_100
+        # ...and an explicit width still wins over both rules.
+        session.tune(5_010_000, "usb", 1_800)
+        assert session.bandwidth_hz == 1_800
+
+
+def test_bandwidths_for_comes_from_the_demodulator() -> None:
+    """One source of truth. A copy in `listen` would be a second place to forget a rung,
+    and the failure would be a control offering a width the box then refuses."""
+    for mode, ladder in demod.BANDWIDTH_HZ.items():
+        assert listen.bandwidths_for(mode) == tuple(ladder)
+
+
+def _spectrum(bins: int = 512, bin_hz: float = 93.75):
+    """One row of the channel's own spectrum, the shape `_tuning_frame` crops."""
+    return SimpleNamespace(
+        at=0.0,
+        bins=bins,
+        bin_hz=bin_hz,
+        start_hz=100_000_000 - bins / 2 * bin_hz,
+        db=np.zeros(bins),
+        headroom_db=0.0,
+        clipped_share=0.0,
+    )
+
+
+def test_a_wider_view_span_keeps_more_of_the_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The zoom, through the path a real frame takes.
+
+    Driven via `_publish_channel` rather than by calling the cropper directly, because
+    the thing that can break is the WIRING: the stored span reaching the crop at all. A
+    test passing the span in by hand still passes when `_publish_channel` ignores it
+    and falls back to the chain's default reach — exactly the bug that would make
+    the zoom do nothing on the box.
+
+    Twice the span keeps twice the row, and the passband it reports is untouched —
+    zooming changes how much spectrum is drawn AROUND the filter, never the filter."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        drawn: list[Any] = []
+        monkeypatch.setattr(session, "_publish_frame", drawn.append)
+        passband = (-8_000.0, 8_000.0)
+        # The reach the CHAIN was built with, which the span must override.
+        reach = 8_000.0
+
+        session.set_view_span(8_000)
+        session._publish_channel(_spectrum(), passband, reach)
+        session.set_view_span(16_000)
+        session._publish_channel(_spectrum(), passband, reach)
+
+        narrow, wide = drawn
+        assert (wide.stop_hz - wide.start_hz) == pytest.approx(
+            2 * (narrow.stop_hz - narrow.start_hz), rel=0.02
+        )
+        # ...and not the chain's own 4x reach default, or the span never arrived.
+        assert (narrow.stop_hz - narrow.start_hz) < 4 * reach
+        assert narrow.passband_hz == wide.passband_hz == 16_000.0
+    finally:
+        session.stop()
+
+
+def test_setting_the_view_span_rebuilds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The property the tap-to-cycle control rests on.
+
+    A bandwidth change replaces the demodulator, which is a click in the audio and worth
+    paying once for selectivity. A zoom must not: it stores one number and the frame
+    is cropped to it. If this ever starts replacing the chain, the label must stop being
+    tappable — so the two are pinned together here."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        before = session._demod
+        session.set_view_span(8_000)
+        assert session.view_span_hz == 8_000
+        assert session._demod is before, "a zoom must not replace the chain"
+        assert session.info().view_span_hz == 8_000
+    finally:
+        session.stop()
+
+
+def test_a_view_span_the_mode_does_not_offer_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ladder rather than a range, unlike the bandwidth: a magnification has no
+    equivalent of "narrower than that station" to place by eye, so there is nothing
+    between the rungs worth reaching."""
+    _idle(monkeypatch)
+    session = listen.Session(99_300_000, "fm", None)
+    try:
+        with pytest.raises(listen.SdrError, match="draws"):
+            session.set_view_span(9_000)
+        with pytest.raises(listen.SdrError, match="not a picture width"):
+            session.set_view_span("wide")  # type: ignore[arg-type]
+        # ...and the refusal left the picture where it was.
+        assert session.view_span_hz == 0.0
+    finally:
+        session.stop()
+
+
+# --- the upconverter, end to end -----------------------------------------------------
+#
+# THE ONE PROPERTY WORTH PROTECTING: the offset reaches the hardware and nothing else.
+# A Ham It Up mixes the band up by its crystal, so to hear 7.200 MHz the dongle tunes
+# 132.200 — and a layer that reported the second number would produce a picture, a
+# recording and a heard log all labelled 125 MHz wrong, with nothing in any of them
+# looking unusual. These tests are written so that a regression fails LOUDLY here rather
+# than quietly on the air.
+
+UPCONVERTER_HZ = 125_000_000
+DIAL_HZ = 7_200_000
+
+
+class TestTheConverterShiftsTheTuneAndNothingElse:
+    def test_the_direct_path_and_a_converter_are_alternatives(self) -> None:
+        """Direct sampling is what reaches HF with no converter, and it powers the tuner
+        DOWN. With a converter the dongle is asked for a VHF frequency, so the R820T2 is
+        back in circuit — which is the whole reason a gain control exists on HF at all.
+        Choosing both would feed the ADC from the antenna while the converter's output
+        went nowhere: silence, with nothing to say why."""
+        assert listen.direct_for(DIAL_HZ) is True
+        assert listen.direct_for(DIAL_HZ, UPCONVERTER_HZ) is False
+        assert listen.direct_for(146_940_000) is False
+
+    def test_the_demodulator_flags_follow_the_TUNE_not_the_dial(self) -> None:
+        with_converter = listen.demod_args("am", "30", DIAL_HZ, UPCONVERTER_HZ)
+        bare = listen.demod_args("am", "30", DIAL_HZ)
+
+        # Bare: the ADC branch, and no `-g`, because there is no tuner to set.
+        assert "direct2" in bare and "-g" not in bare
+        # Through the converter: the tuner is in circuit, so neither applies.
+        assert "direct2" not in with_converter
+        assert with_converter[with_converter.index("-g") + 1] == "30"
+
+    def test_only_the_f_argument_carries_the_offset(self, tuner) -> None:
+        """The seam, on the subprocess engine. `-f` is the one number that reaches the
+        hardware; `session.frequency_hz` is the one every reader gets."""
+        info = tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            session = tuner.find(info.session_id)
+            assert session is not None
+            argv = session._rtl_cmd()
+
+            assert argv[argv.index("-f") + 1] == str(DIAL_HZ + UPCONVERTER_HZ)
+            assert session.frequency_hz == DIAL_HZ
+        finally:
+            tuner.stop()
+
+    def test_nothing_a_caller_reads_is_ever_the_shifted_frequency(self, tuner) -> None:
+        """THE REGRESSION TEST. Every frequency on the wire is checked against the dial,
+        and the shifted value is asserted absent from the whole payload — so a new field
+        that leaked it fails here even though no existing assertion names it."""
+        info = tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            body = info.as_dict()
+
+            assert body["frequency_hz"] == DIAL_HZ
+            assert body["upconverter_hz"] == UPCONVERTER_HZ
+            # The tune appears NOWHERE in what a client reads. Searched rather than
+            # asserted field by field, because the next field to carry it has not been
+            # written yet.
+            assert str(DIAL_HZ + UPCONVERTER_HZ) not in json.dumps(body)
+        finally:
+            tuner.stop()
+
+    def test_the_radio_is_opened_with_the_offset_rather_than_a_shifted_centre(
+        self, iq_tuner, monkeypatch
+    ) -> None:
+        """On the I/Q engine the shift belongs to `radio.Radio`, which applies it at
+        `setFrequency` and reports the dial back. Handing a shifted centre in here
+        instead would put it on `Buffer.center_hz`, and from there on every frame's
+        `start_hz`, every peak, and the waterfall's axis."""
+        seen: list[dict[str, Any]] = []
+        original = listen.radio.Radio.open
+
+        def _open(**kwargs: Any) -> Any:
+            seen.append(dict(kwargs))
+            return original(**kwargs)
+
+        monkeypatch.setattr(listen.radio.Radio, "open", staticmethod(_open))
+        info = iq_tuner.start(DIAL_HZ, "am", None, upconverter_hz=UPCONVERTER_HZ)
+        try:
+            assert seen[0]["upconverter_hz"] == UPCONVERTER_HZ
+            # Within the demodulator's own LO dodge, which is a few hundred kHz and has
+            # nothing to do with the converter.
+            assert abs(seen[0]["center_hz"] - DIAL_HZ) < 1_000_000
+            assert seen[0]["direct"] is False
+            assert info.frequency_hz == DIAL_HZ
+        finally:
+            iq_tuner.stop()
+
+    def test_a_converter_admits_the_band_direct_sampling_folds(self) -> None:
+        """18.1 MHz is refused bare — the ADC's second Nyquist zone hands back 10.7 —
+        and is an ordinary tuning at 143.1 through a converter."""
+        with pytest.raises(listen.SdrError):
+            listen.validate(18_100_000, "usb")
+
+        assert listen.validate(18_100_000, "usb", UPCONVERTER_HZ) == "usb"
+
+    def test_a_converter_that_puts_the_tune_out_of_range_is_refused_naming_both(
+        self,
+    ) -> None:
+        with pytest.raises(listen.SdrError) as refused:
+            listen.validate(1_700_000_000, "fm", UPCONVERTER_HZ)
+
+        said = str(refused.value)
+        assert "1700000000" in said and "1825000000" in said
+
+
+class TestWhatAStoredGainDoes:
+    def test_unset_is_exactly_what_the_box_did_before_the_setting_existed(self) -> None:
+        """Bit for bit: the tuner's own loop while listening or logging APRS, and
+        `MEASURING_GAIN_DB` while drawing or surveying. A radio nobody has configured
+        must not change behaviour because a field was added to it."""
+        for purpose in (listen.PURPOSE_LISTEN, listen.PURPOSE_APRS):
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, None
+            assert session.tuner_gain_db is None, purpose
+
+        for purpose in listen.SWEEPING:
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, None
+            assert session.tuner_gain_db == listen.MEASURING_GAIN_DB, purpose
+
+    def test_a_stored_gain_reaches_every_purpose(self) -> None:
+        """The owner chose this over "spectrum stays pinned at 30": one antenna chain
+        has one right gain, and a setting that applied to three purposes out of four is
+        a setting nobody can reason about."""
+        for purpose in listen.PURPOSES:
+            session = listen.Session.__new__(listen.Session)
+            session.purpose, session.gain = purpose, "10"
+            assert session.tuner_gain_db == 10.0, purpose
+
+    def test_auto_is_the_radios_own_loop_on_every_purpose_including_a_picture(
+        self,
+    ) -> None:
+        """The one request `gain=None` cannot express: absent already means "whatever
+        this purpose does by default", and for a picture that default is 30 dB. An owner
+        asking for automatic on a waterfall is asking for exactly that to stop."""
+        session = listen.Session.__new__(listen.Session)
+        session.purpose, session.gain = listen.PURPOSE_SPECTRUM, listen.GAIN_AUTO
+
+        assert session.tuner_gain_db is None
+
+    def test_auto_sends_no_g_flag_because_that_is_what_rtl_fm_does_by_default(
+        self,
+    ) -> None:
+        assert "-g" not in listen.demod_args("fm", listen.GAIN_AUTO, 146_940_000)
+
+
+def test_a_shortwave_row_says_there_was_no_gain_stage_rather_than_naming_one() -> None:
+    """The recurring failure in this subsystem, closed on the wire.
+
+    A measuring session asks for `MEASURING_GAIN_DB` whatever the band, and below 24 MHz
+    with no converter `set_gain` returns early and `-g` writes to a chip that is not
+    listening — so stamping 30 dB on the row put a number on every shortwave picture
+    that reads like a measurement and is fiction."""
+    session = listen.Session.__new__(listen.Session)
+    session.purpose, session.gain = listen.PURPOSE_SPECTRUM, None
+    session.frequency_hz, session.upconverter_hz = 7_200_000, 0
+
+    assert session.tuner_bypassed is True
+    # ...and the gain it would otherwise have claimed is still the one it asked for, so
+    # the peak finder keeps working down there (it gates on a FIXED gain, not on a
+    # reported one).
+    assert session.tuner_gain_db == listen.MEASURING_GAIN_DB
+
+    session.upconverter_hz = UPCONVERTER_HZ
+    assert session.tuner_bypassed is False

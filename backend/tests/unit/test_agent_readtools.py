@@ -1,6 +1,7 @@
 """The read-only tools: result formatting, RLS-scope passthrough to the
 services, and the shipped sidecars bound + pinned to their versions."""
 
+import json
 from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
@@ -831,6 +832,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # The note conversation's `ask_owner` — always wired (the note_conversations
+        # table always exists), reachable only by the `note_ingest` allowlist and kept
+        # out of curator's wildcard by NEVER_DEFAULT.
+        "ask_owner",
         # jmolt's scratchpad tools are `web`-classed (jmolt-only), always wired (the
         # jmolt_scratch table always exists), like archivist memory above.
         "scratch_list",
@@ -932,6 +937,15 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "propose_correction",
         "make_intake_link",
         "propose_merge",
+        "correct_fact",
+        "merge_entities",
+        # The note persona's graph writes. On THIS registry because the owner's reply
+        # into a note thread is an ordinary /chat turn and this is the registry it
+        # consults — they were dropped here for a wave, which left the reply turn
+        # allowlisted for two tools it was never offered. Reachable by `note_ingest`
+        # alone: both are in NEVER_DEFAULT and in no other profile's allowlist.
+        "resolve_entity",
+        "assert_fact",
         "lookup_medication",
         "lookup_condition",
         "geocode_reverse",
@@ -950,6 +964,17 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # may name the chat it is in, and the handler refuses one that already has a name
         # (jbrain.agent.sessiontools). Not in `web`: it touches no network.
         "name_session",
+        # The note persona's standing instructions (AGENT_INGEST_CONVERSATION_PLAN D15).
+        # Registered — a handler must exist for the sidecar — but reachable by nobody:
+        # both are in NEVER_DEFAULT and in no profile's allowlist, so registration here
+        # is the binding, not a grant (asserted in test_agent_prefstools.py).
+        "prefs_read",
+        "prefs_write",
+        # The note conversation's whole-note reading (`AGENT_INGEST_REWRITE.md` R1),
+        # bound on this registry for the same reason `resolve_entity`/`assert_fact` are:
+        # the owner's REPLY into a note thread is an ordinary /chat turn, and a name
+        # allowlisted with no sidecar here is a verb the reply turn can never dispatch.
+        "close_reading",
         *web,
     }
     assert registry.names() == shipped
@@ -969,10 +994,30 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "find_when_at",
         "save_place",
     }
+    # The standing-instruction tools are `read`/`sensitive`, not `web`, so only
+    # NEVER_DEFAULT keeps them out of the wildcard's set — which is the whole reason
+    # they are in it (AGENT_INGEST_CONVERSATION_PLAN constraint 9). The on-reply pair is
+    # here for the same reason and a sharper one: they are bound on the chat registry,
+    # because the owner's reply IS a chat turn (D8), so NEVER_DEFAULT is the only thing
+    # standing between a force-supersede and the curator's wildcard.
+    never_default = {
+        "prefs_read",
+        "prefs_write",
+        "correct_fact",
+        "merge_entities",
+        # And the graph writes, now that this registry binds them for the reply turn
+        # (D8). Dropping their sidecars used to be the outer lock; NEVER_DEFAULT is what
+        # replaced it, so a regression here hands `assert_fact` to curator's wildcard.
+        "resolve_entity",
+        "assert_fact",
+        "close_reading",
+    }
     # The web tools are the opt-in `web` class: never offered to the default
     # knowledge agent (allow=None), regardless of scope — only jerv allowlists them.
-    assert {t.name for t in registry.schemas_for({"general"})} == shipped - location - web
-    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web
+    assert {t.name for t in registry.schemas_for({"general"})} == (
+        shipped - location - web - never_default
+    )
+    assert {t.name for t in registry.schemas_for({"location"})} == shipped - web - never_default
     # jerv's allowlist surfaces exactly the web tools and nothing else.
     assert {t.name for t in registry.schemas_for(set(), web)} == web
 
@@ -980,6 +1025,69 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
 def test_sidecars_pinned_to_their_versions() -> None:
     """Editing a tool's behavior must be a deliberate version bump (the CI guard)."""
     pins = {
+        # The note conversation's graph writes (AGENT_INGEST_CONVERSATION_PLAN.md W3).
+        # These two descriptions are the model's whole instruction on how to record a
+        # note's meaning — the batch shape, the handle discipline, the quote rule — so a
+        # silent edit to either is a behaviour change to every note the box ingests.
+        # v4 is R1b: the model's own `confidence` field is DELETED (§3.3/O3b), and the
+        # hold clause is rewritten from advice into the pass's obligation, because the
+        # review card that used to be filed beside it is gone.
+        # v5 is the O15 ruling: an attribute collision now makes the NEWEST value live
+        # instead of parking both sides, so a replacement can be the resolution of a real
+        # disagreement rather than housekeeping. The prose names that result and makes
+        # asking the owner about it the pass's obligation — the only notice he gets.
+        "assert_fact.tool": (
+            "assert_fact",
+            5,
+            "8dd7afd8d4d1155738a89578c80da4416835d3f289a29cbfb10ecb55c0947295",
+        ),
+        # v3 names the two things whose ABSENCE made a note about the owner's own dog
+        # resolve one surface and record `Boss.hasName -> "Boss"` — two calls to store
+        # that Boss is called Boss. (1) Jeff is an ENTITY, resolved as "Me": most notes
+        # are about him or about something of his, and the fact the note is making is the
+        # one that joins them; the old prose said only "never a role word", which rules
+        # out "my dog" and left nothing to attach it to. (2) Resolving a name already
+        # stores what the thing is called, so a `hasName` fact about the name just
+        # resolved records nothing — and it was the whole of what the owner could see the
+        # pass do. This is a CALIBRATION change: description text is the lever
+        # (TOOL_SURFACE.md), so the rewrite is the behaviour change.
+        "resolve_entity.tool": (
+            "resolve_entity",
+            3,
+            "58c10a98e444d5d33f965d83137c6dc01ae6b80e8511eac36f7e9dea03f45832",
+        ),
+        # v2 is `distinguish` plus the current-facts half of the result
+        # (`AGENT_INGEST_REWRITE.md` R1/§3.4), and the bump is the point: both are ACI
+        # changes to a version-pinned sidecar.
+        # v2 is R1b's half of the same rewrite: one channel, so the hold clause states
+        # what the pass owes rather than what it might do.
+        # v3 is the O15 ruling, the same paragraph assert_fact v5 gains: a replacement
+        # that resolved a DISAGREEMENT is not housekeeping, and asking the owner about it
+        # is the pass's obligation.
+        # v4 asks `subject` for the NAME rather than the handle. Both have always
+        # worked — `NoteGraphWriter.lookup` is `by_name=True` for a subject, "a subject is
+        # an entity by definition" — and the handle is the one the model was told to
+        # prefer, so the owner's own arguments block read `subject: "e1"`. The `object`
+        # side keeps handles: there a handle is the only way to say "I mean the entity"
+        # rather than a word that looks like one.
+        "close_reading.tool": (
+            "close_reading",
+            4,
+            "2df6498746c848e8791c0a04df0f26d6f607d579593fd842c4a3ee7c4694498a",
+        ),
+        # The on-reply half (D8): reachable only from a turn the owner sent, and each
+        # force-supersedes or folds, so the wording is the contract for what a reply may
+        # do to the graph.
+        "correct_fact.tool": (
+            "correct_fact",
+            2,
+            "becabce6a226ac12c43a1970dc139058727ce13e8044c8fbb90cf6c78fb661b0",
+        ),
+        "merge_entities.tool": (
+            "merge_entities",
+            1,
+            "2f39f5cc71d59ea54595e1afb5a2d1be3e927754f283e4737fcad516eb831030",
+        ),
         "aprs_recent.tool": (
             "aprs_recent",
             3,
@@ -1575,6 +1683,34 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
         ),
+        "prefs_read.tool": (
+            "prefs_read",
+            1,
+            "a8a1430a8f357bf43ea7fca4de79079e7d5f479f2d552b8459e88e24a6fb9ae6",
+        ),
+        "prefs_write.tool": (
+            "prefs_write",
+            1,
+            "b1dc0865b1ab23ba75003028e516adca6f3de47e0863ac06ba97626ffeca5419",
+        ),
+        # v2 is R1c's batch: the one `question` string becomes a question SET, and the
+        # prose is rewritten with it — it said "Record ONE question" and "Ask once",
+        # which is now the opposite of the behaviour. Description text IS the calibration
+        # lever (TOOL_SURFACE.md), so the rewrite is the behaviour change, not a footnote
+        # to it.
+        # v3 is the O15 ruling: the bar ("you genuinely cannot settle it") would otherwise
+        # have VETOED the ask that ruling requires, because a newest-wins supersession
+        # blocks nothing. Naming the second reason here is the point — this sidecar is
+        # where the bar is calibrated, so leaving it unamended would have made the write
+        # line's obligation argue with the tool's own instructions.
+        # v4 rewords `blocks`: it invited tool syntax ("the resolve call you are stuck
+        # on"), the model duly wrote `resolve_entity("Dr. Chen")`, and `QuestionBlock`
+        # renders that line VERBATIM to the owner. The field is read by a person.
+        "ask_owner.tool": (
+            "ask_owner",
+            4,
+            "8592785e2e5b47bdb8811c8dd8ab8a0fe09dbd1cd1fb829349a9185a3209877b",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).
@@ -1747,3 +1883,37 @@ def test_jmolt_can_actually_reach_its_scratchpad_tools() -> None:
 
     for name in ("scratch_list", "scratch_read", "scratch_write", "scratch_manage"):
         assert name in JMOLT_TOOLS, f"jmolt cannot call {name}"
+
+
+def test_the_write_tools_tell_the_model_the_owner_is_an_entity() -> None:
+    """The absence this closes, in the owner's own words: *"the agent's tools seem to
+    work, but they don't really make sense to me when looking at the tool usage for what
+    they are accomplishing."*
+
+    For "My dogs name is Boss" the pass resolved ONE surface and recorded
+    `Boss.hasName -> "Boss"` — two calls to store that Boss is called Boss. Both halves
+    of why are prose, which is why prose is what this pins: `resolve_entity` said only
+    "never a role word", which rules out "my dog" and left the note's actual subject —
+    Jeff — unresolvable and unmentioned; and nothing said that resolving a name already
+    records the name, so spending a fact on it looked like work.
+
+    A digest pin (above) proves a sidecar CHANGED. It cannot prove it still says the
+    thing, and the thing is the behaviour."""
+    resolve = load_tool(TOOLS_DIR / "resolve_entity.tool")
+    body = resolve.description or ""
+    assert '"Me"' in body, "the owner must be resolvable, or a note about his dog has no subject"
+    assert "hasName" in body, "resolving a name already records it; the model has to be told"
+
+    surface = resolve.spec.params["properties"]["entities"]["items"]["properties"]["surface"]
+    assert "Me" in surface["description"], "the role-word rule must carve out the owner"
+
+    # And the subject of a fact asks for the NAME, so the owner's arguments block stops
+    # reading `subject: "e1"`. Both have always worked; the handle was the one asked for.
+    reading = load_tool(TOOLS_DIR / "close_reading.tool")
+    subject = reading.spec.params["properties"]["facts"]["items"]["properties"]["subject"]
+    assert "NAME" in subject["description"]
+
+    # Constraint 8 — no JSON-Schema `enum` may reach a sidecar, at any depth: it
+    # segfaults the gpt-oss harmony grammar.
+    for tool in (resolve, reading, load_tool(TOOLS_DIR / "ask_owner.tool")):
+        assert "enum" not in json.dumps(tool.spec.params), tool.spec.name

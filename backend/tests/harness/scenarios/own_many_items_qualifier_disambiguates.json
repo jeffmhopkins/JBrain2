@@ -1,6 +1,6 @@
 {
   "name": "a per-item qualifier keeps distinct owned items from colliding",
-  "description": "The working counterpart to own_many_items_collide_on_predicate. When the model coins a per-item qualifier (owns.Civic, owns.kayak), the identity key (subject, entity, predicate, qualifier) differs per item, so the two state-kind Me.owns edges land on separate keys -- neither supersedes, no review. This is the load-bearing reason the prompt must steer owns to a per-item qualifier (or the pipeline must key on the object). Pins the behaviour a fix for the collision gap must preserve.",
+  "description": "The working counterpart to own_many_items_collide_on_predicate. When the model coins a per-item qualifier (owns.Civic, owns.kayak), the identity key (subject, entity, predicate, qualifier) differs per item, so the two state-kind Me.owns edges land on separate keys -- neither supersedes, no review. This is the load-bearing reason the prompt must steer owns to a per-item qualifier (or the pipeline must key on the object). Pins the behaviour a fix for the collision gap must preserve. TOOL-PATH NOTE: this file's NAME is the property it no longer asserts. The two owns facts asserted qualifier='Civic' and qualifier='Kayak' before the W3 re-point; the tool has no qualifier field. They still do not collide, because both qualifiers named the OBJECT entity and a non-functional predicate keys on its object -- so read this file as 'many items do not collide on one predicate', by object rather than by qualifier. The name is kept because two ratified docs cite the scenarios by filename.",
   "steps": [
     {
       "domain": "general",
@@ -39,8 +39,8 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "owns", "qualifier": "Civic", "value_contains": "Civic", "status": "active", "chained": false},
-      {"entity": "Me", "predicate": "owns", "qualifier": "Kayak", "value_contains": "kayak", "status": "active", "chained": false}
+      {"entity": "Me", "predicate": "owns", "value_contains": "Civic", "status": "active", "chained": false},
+      {"entity": "Me", "predicate": "owns", "value_contains": "kayak", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"entity": "Me", "predicate": "owns", "status": "superseded"}

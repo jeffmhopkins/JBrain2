@@ -49,7 +49,7 @@ def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
     Renders the bare datum from value_json (a recognized shape, else the first
     string leaf of an unhandled shape), and falls back to the statement when
     value_json carries no datum. NEVER empty: a choice button / value cell must
-    always show something, so the statement is the floor (the note.extract prompt
+    always show something, so the statement is the floor (a reading's own prompt
     is what keeps value_json a bare datum; this only renders what is stored)."""
     return _structured_label(value_json) or statement
 
@@ -192,20 +192,5 @@ def inference_display(*, statement: str, reasons: list[str], snippet: str | None
         "outcomes": {
             "accept": "the fact is recorded and pinned — reprocessing won't drop it.",
             "reject": "the fact is discarded.",
-        },
-    }
-
-
-def confirm_entity_display(*, name: str, kind: str, snippet: str | None = None) -> dict[str, Any]:
-    """confirm_entity card fields: an entity crossed the corroboration bar but its
-    identity is contested (a live namesake), so promotion is held for a human/agent
-    rather than auto-cementing a possibly-wrong identity. accept confirms it;
-    reject leaves it provisional. Both ride the generic accept/reject footer."""
-    return {
-        "summary": f"is this {kind.lower()} “{name}” a single, confirmed entity?",
-        "snippet": snippet,
-        "outcomes": {
-            "accept": "the entity is confirmed — it survives note deletion and isn't auto-purged.",
-            "reject": "left provisional — it stays purge-eligible and is never re-proposed.",
         },
     }

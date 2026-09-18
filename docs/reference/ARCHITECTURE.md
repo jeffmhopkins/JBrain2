@@ -111,9 +111,10 @@ visitor may read.
 ```
 note saved → event → extraction (attachments) → multi-granularity chunking
   → embeddings + tsvector → pending_integration
-  → integrate_note: extract → Integrator agent (graph-aware judgment,
-    emits an IntegrationIntent) → arbiter (plan_intent validates + weighs;
-    apply_intent commits deterministically) → facts & entities (cited, firewalled)
+  → note_converse: the note is turn 0 of an agent conversation about it. The
+    agent resolves entities and closes a READING of the note through tools;
+    the deterministic core commits it (domain floor/ratchet, per-kind
+    supersession, citation anchoring) → facts & entities (cited, firewalled)
 ```
 
 - **Chunks** are multi-granularity (paragraph-level for precision,
@@ -123,10 +124,11 @@ note saved → event → extraction (attachments) → multi-granularity chunking
   if quality demands.
 - **Facts** carry `superseded_by` chains. Conflicts resolve newest-wins
   automatically and the pair lands in the review inbox with both citations.
-  Superseded facts stay queryable for citation integrity. The Integrator agent
-  *proposes* resolutions/facts/supersessions; the deterministic arbiter
-  *commits* them, enforcing the domain/subject firewalls and validating identity
-  links before any write.
+  Superseded facts stay queryable for citation integrity. The AGENT says what the
+  note means; the deterministic core *commits* it, enforcing the domain/subject
+  firewalls and validating identity links before any write — `supersession.decide()`
+  is never a model-facing verb, and what it did unasked comes back as the tool's
+  result for the agent to act on.
 
 ## Wiki
 

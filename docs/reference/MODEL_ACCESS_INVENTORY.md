@@ -1,6 +1,19 @@
 # Model-access inventory
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-08-23 (rows re-verified) · **Known stale since
+>
+> **Citation form:** the KV prompt-cache rows (§A.1d W11-W13, §B.5) cite a SYMBOL, not a
+> `file:line`. All nine of their line numbers had rotted by 2026-09-18, silently, because a
+> line number is a volatile counter and CLAUDE.md #9 says not to hardcode one in prose. A
+> symbol survives every edit that does not rename it, and a rename is a grep away.
+> 2026-09-11:** every row quoting `note.extract` or `integrate.note` names a task that no longer
+> exists. R4 of `../plans/AGENT_INGEST_REWRITE.md` deleted both prompts with the producer that
+> called them and removed the two routes from `llm/router.py` and the owner's Settings screen.
+> Those rows are wrong, not merely shifted — do not cite them; the rest of the inventory was not
+> re-walked for this wave, and its line numbers move with any deletion this size. The same wave
+> deleted `scripts/prompt-eval.sh`, `scripts/grok-eval.sh`, `backend/evals/run.py`,
+> `backend/evals/audit.py`, `backend/tests/eval/` and `backend/src/jbrain/evals/runner.py` with
+> their corpora, so §5.4's real-Grok eval rows describe files that no longer exist either.
 
 > **What this is.** A factual inventory of every place in this tree that loads, unloads, admits,
 > warms, evicts, measures, or *demands* a model — across all five things that consume this box's
@@ -522,9 +535,9 @@ chokepoint, A13 never was a gate (its row says so), and A14 is the CLI's own
 | W8 | `backend/src/jbrain/llm/residency.py:243-253` | `    def note_evicted(self, served_names: Iterable[str]) -> None:` … `                self._displaced.add(name)` / `                self._prefix_lost(name)` | coordinator | callers: `main.py:747` `                on_evicted=app.state.residency.note_evicted,`; `jcode.py:167` | api |
 | W9 | `backend/src/jbrain/llm/warm_keeper.py:104-113` | `    def note_prefix_lost(self, served_model: str) -> None:` … `        if self._primed is not None and self._primed[0] == served_model:` / `            self._primed = None` | wired `main.py:455` `            on_prefix_lost=_prefix_lost_notifier(app),` → `main.py:245-248` `    def notify(served_model: str) -> None:` / `        keeper = getattr(app.state, "warm_keeper", None)` / `        if keeper is not None:` / `            keeper.note_prefix_lost(served_model)` | — | api |
 | W10 | `backend/src/jbrain/llm/prefill.py:54` + `router.py:761-766` | `SlotsReader = Callable[[str], Awaitable[list[dict[str, object]]]]` ; `            prefill.watch(` / `                probe,` / `                model,` / `                prompt_chars=prompt_chars,` / `                on_progress=publish if probe is not None else None,` / `            ) as streaming,` | `main.py:481` `            slots_probe=app.state.local_gateway.slots,`; `worker.py:574` `        slots_probe=llm_gateway.slots,` | reads only; `slots` runs A17 | api + worker |
-| W11 | `backend/src/jbrain/llm/kv_prefix.py:198` | `    async def save_after_prime(` — persist the freshly primed slot's KV state to disk, only when the slot's `n_prompt_tokens` exactly equals the prime's own token count (v1 saved garbage; the module docstring is the post-mortem). Caller: `warm_keeper.py:243` | `KvPrefixStore` — api only, `main.py:494` `        app.state.kv_prefix = KvPrefixStore(app.state.local_gateway, settings.local_models_dir)` | best-effort, never raises | api |
-| W12 | `backend/src/jbrain/llm/kv_prefix.py:340` | `    async def restore_if_lost(` — stream the saved slot back (~2 s vs ~60 s prefill) when the primed prefix is missing. Callers: the keeper's tick and prime (`warm_keeper.py:171`, `:219`), the router before an `agent.turn` (`router.py:402`), and — added #1195 — the load-time warm hook: `_warm_identity` (`api/llm_settings.py:1536-1571`) wires it as `before_warm`, so a Load's prime meets a restored cache instead of re-prefilling | as W11 | conservative threshold gate: a slot holding at least a prefix-sized cache is never wiped | api |
-| W13 | `backend/src/jbrain/llm/kv_prefix.py:123` | `def _fingerprint(` — sha256 over the rendered launch line + system text + tool schema + `reasoning_effort` (effort keyed in by #1195: it is part of the RENDERED prompt, so it must move the filename). A stale file is never matched again and ages out of the byte budget (see §B.5 `MAX_STORE_BYTES`) | module fn | identity, not a gate | api |
+| W11 | `llm/kv_prefix.py` → `KvPrefixStore.save_after_prime` | `    async def save_after_prime(` — persist the freshly primed slot's KV state to disk, only when the slot's `n_prompt_tokens` exactly equals the prime's own token count (v1 saved garbage; the module docstring is the post-mortem). Caller: `warm_keeper.WarmKeeper.reconcile_once` | `KvPrefixStore` — api only, `main.create_app` builds the one instance, with the owner's patch setting and disk budget | best-effort, never raises | api |
+| W12 | `llm/kv_prefix.py` → `KvPrefixStore.restore_if_lost` | `    async def restore_if_lost(` — stream the saved slot back (~2 s vs ~60 s prefill) when the primed prefix is missing. Callers: the keeper's tick and prime (`warm_keeper.WarmKeeper.reconcile_once`), the router before an `agent.turn` (`router.LlmRouter._ensure_agent_prefix`), and — added #1195 — the load-time warm hook: `api/llm_settings._warm_identity` wires it as `before_warm`, so a Load's prime meets a restored cache instead of re-prefilling | as W11 | conservative threshold gate: a slot holding at least a prefix-sized cache is never wiped | api |
+| W13 | `llm/kv_prefix.py` → `_fingerprint` | `def _fingerprint(` — sha256 over the rendered launch line + system text + tool schema + `reasoning_effort` (effort keyed in by #1195: it is part of the RENDERED prompt, so it must move the filename). A stale file is never matched again and ages out of the byte budget (see §B.5 `MAX_STORE_BYTES`) | module fn | identity, not a gate | api |
 
 ### 1e. RESIDENCY-STATE READS (`running()` and friends)
 
@@ -1812,7 +1825,7 @@ listed above with their `file:line`; reconciling them is out of scope for this i
 | `deploy/update-inner.sh:265` | `QUIESCE_KEEP="db api supervisor proxy cloudflared"` | `update-inner.sh:259-264` |
 | `backend/src/jbrain/ops_metrics.py:52` | `_SAMPLE_INTERVAL_SECONDS = 30` | (host-metrics sampling cadence) |
 | `backend/src/jbrain/image_gen/liveness.py:52` | `        ttl_s: float = 30.0,` | `liveness.py:10-13`: `One cached bool with a short TTL keeps the per-turn cost at zero on the hot path` … |
-| `backend/src/jbrain/llm/kv_prefix.py:96` | `MAX_STORE_BYTES = 25 * 1024**3` | `kv_prefix.py:91-95` (abbrev.): `# The whole \`.kvslots\` tree's disk allowance — the trade the owner chose on 2026-08-23` / `# (25 GiB of hard drive for prompt caches; changing it is a release, there is no knob).` — a DISK budget, not memory: LRU by mtime, least-recently-USED slot file evicted first (`kv_prefix.py:304-338`); files are ~2.2 GiB each. See §A.1d W11–W13 for the save/restore behaviour |
+| `llm/kv_prefix.py` → `MAX_STORE_BYTES` | `MAX_STORE_BYTES = 25 * 1024**3` (the DEFAULT; the live value is the owner's `llm_kv_prefix_budget_gb` setting) | its own comment, abbrev.: `# The whole \`.kvslots\` tree's disk allowance — the trade the owner chose on 2026-08-23` / `# (25 GiB of hard drive for prompt caches; changing it is a release, there is no knob).` — no longer true: `PUT /api/debug/llm/kv-prefix/budget` sets it, and `DELETE /api/debug/llm/kv-prefix` clears the store. — a DISK budget, not memory: LRU by mtime, least-recently-USED slot file evicted first (`KvPrefixStore._prune_to_budget`); files are ~1.1 GiB each, MEASURED on the box 2026-09-18 (the ~2.2 GiB this row used to claim was an estimate). See §A.1d W11–W13 for the save/restore behaviour |
 | `deploy/docker-compose.yml:418` | `      - ./local-models/.kvslots:/models/.kvslots` | `docker-compose.yml:411-417` (abbrev.): `      # The ONE writable carve-out in the otherwise read-only weights mount: llama-server` / `      # saves/restores KV-slot files here (jbrain.llm.kv_prefix, --slot-save-path).` … `      # The api holds the tree to its 25 GiB budget through its own rw mount` |
 
 ---
@@ -3907,9 +3920,14 @@ the already-resident branch return before it. So the predicted-vs-measured serie
 catalog is meant to be corrected from is **missing exactly the loads that took a shortcut** —
 which matters to any wave proposing "measure instead of predict".
 
-## G7 — `dbless_coordinator` is a sanctioned half-wired gate
+## G7 — `dbless_coordinator` is a sanctioned half-wired gate — ⟲ **GONE 2026-09-11**
 
 `ResidencyWiring`'s whole premise is that a half-wired coordinator should be a type error. The
-DB-less path builds one with no window sizing, no operator floor, no code-mode hold and no
-cross-process lock. Its docstring is honest about it, but it is an exemption from the invariant
-the type exists to enforce, and it is the kind of thing cited as precedent for the next one.
+DB-less path built one with no window sizing, no operator floor, no code-mode hold and no
+cross-process lock. Its docstring was honest about it, but it was an exemption from the
+invariant the type exists to enforce, and the kind of thing cited as precedent for the next one.
+
+It had exactly two callers, `scripts/prompt-eval.sh` and `scripts/grok-eval.sh`, and R4 of
+`../plans/AGENT_INGEST_REWRITE.md` deleted both with the prompt they scored. The function went
+with them, so the exemption is closed by subtraction: every coordinator on the box is now
+fully wired, and a future DB-less process has to argue for the gap on its own merits.

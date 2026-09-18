@@ -1891,7 +1891,11 @@ function LlmModelRow({
           className="llm-local-ctx-select"
           value={String(m.parallel_slots)}
           disabled={!editable || isBusy}
-          title="A second slot keeps this model's chat prefix warm in its own KV cache, so background jobs and chat-titling can't evict it — the first message after a restart stays instant. Doubles the model's KV cost."
+          title={
+            m.slots_drop_disk_cache
+              ? "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server falls back to the least-recently-used one, which is the idle prefix slot — so it buys headroom, not immunity. On THIS model it also turns OFF the saved-to-disk copy of the prefix (the speculative decoding it needs is dropped above one slot, and a restore without it would restore garbage), so a restart pays the full ~2 min read again. Doubles the model's KV cost."
+              : "A second slot gives this model's chat prefix somewhere of its own to sit, so a background job is less likely to take it. It does NOT reserve the slot — llama-server routes by longest matching prefix and otherwise to the least-recently-used slot, which is the idle prefix slot — so it buys headroom, not immunity. The saved-to-disk copy is what actually makes a lost prefix cheap (~100 ms). Doubles the model's KV cost."
+          }
           onChange={(e) => {
             const v = Number(e.target.value);
             // 1 is the default (single slot) — store null so no redundant override row persists.

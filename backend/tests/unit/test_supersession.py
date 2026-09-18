@@ -408,15 +408,69 @@ def test_rejoining_a_former_employer_opens_a_new_interval() -> None:
     assert d.supersede_ids == []  # closed history kept; new open interval beside it
 
 
-# --- attribute: hold both, never auto-supersede ----------------------------
+# --- attribute: newest wins by rule, and the owner is told ------------------
+# The owner's ruling on AGENT_INGEST_REWRITE §8 O15. This branch used to park BOTH sides
+# in `pending_review`, and nothing on the box could retire either row: the key stayed
+# permanently contested, every later assert on it was held or refreshed, and the graph
+# served no value at all. So the newest STATEMENT goes live, the heads it displaces are
+# chained as history, and the result line carries the ask (test_agent_graphwritetools).
 
 
-def test_attribute_collision_holds_both_sides() -> None:
+def test_attribute_collision_makes_the_newest_value_live() -> None:
     old = view(kind="attribute", statement="born 1980-05-02", valid_from=None)
     d = decide(cand(kind="attribute", statement="born 1981-05-02", valid_from=None), [old])
-    assert d.insert and d.insert_status == "pending_review"
-    assert d.hold_ids == ["old-1"]
+    assert d.insert and d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]  # kept as history, never lost
+    assert d.hold_ids == []  # nothing is parked: that WAS the deadlock
     assert d.review_kind == "attribute_collision"
+    assert d.conflicting_id == "old-1"
+
+
+def test_re_asserting_the_live_attribute_value_does_not_re_park_it() -> None:
+    """The other half of the deadlock: once the newest value is live, restating it is an
+    idempotent refresh — it neither chains a twin nor flags anything. Under the old branch
+    the re-assert hit the short-circuit on a HELD row and left it held (`STILL_HELD`)."""
+    live = view(id="live", kind="attribute", statement="born 1981-05-02", valid_from=None)
+    history = view(
+        id="history",
+        kind="attribute",
+        statement="born 1980-05-02",
+        valid_from=None,
+        status="superseded",
+    )
+    d = decide(
+        cand(kind="attribute", statement="born 1981-05-02", valid_from=None, reported_at=T2),
+        [live, history],
+    )
+    assert d.refresh_id == "live"
+    assert not d.insert and d.review_kind is None
+
+
+def test_attribute_newest_is_the_newest_STATEMENT_not_the_newest_value() -> None:
+    """An attribute's `when` is routinely the value itself, so validity order would rank
+    two birthdays by which birthday they claim: correcting 1990 to 1985 would make the
+    correction LOSE. The newest report wins instead."""
+    old = view(kind="attribute", statement="born 1990-03-03", valid_from=T2, reported_at=T0)
+    d = decide(
+        cand(kind="attribute", statement="born 1985-11-12", valid_from=T0, reported_at=T1),
+        [old],
+    )
+    assert d.insert_status == "active"
+    assert d.supersede_ids == ["old-1"]
+
+
+def test_an_older_attribute_statement_lands_as_history() -> None:
+    """Newest-wins cuts both ways, which is what makes a corpus rebuild order-independent:
+    re-reading an OLDER note after a newer one must not flip the live value."""
+    newer = view(
+        id="newer", kind="attribute", statement="born 1985-11-12", valid_from=None, reported_at=T2
+    )
+    d = decide(
+        cand(kind="attribute", statement="born 1990-03-03", valid_from=None, reported_at=T0),
+        [newer],
+    )
+    assert d.insert and d.insert_status == "superseded"
+    assert d.insert_superseded_by == "newer"
     assert d.supersede_ids == []
 
 
@@ -425,7 +479,91 @@ def test_attribute_collision_with_pinned_winner_leaves_it_active() -> None:
     d = decide(cand(kind="attribute", statement="born 1981-05-02", valid_from=None), [old])
     assert d.insert_status == "pending_review"
     assert d.hold_ids == []  # the pinned human decision stays active
+    assert d.supersede_ids == []  # ... and newest-wins does not reach it
     assert d.review_kind == "attribute_collision"
+    assert d.conflicting_id == "old-1"
+
+
+def test_a_pin_that_is_no_longer_the_newest_head_still_blocks_newest_wins() -> None:
+    """The pin guard reads EVERY head, not just the newest one. A pinned value with a
+    held row dated after it (the shape the pinned branch itself produces) would otherwise
+    fall through to newest-wins and supersede the owner's own decision — the auto-overwrite
+    the module's second invariant forbids."""
+    pin = view(
+        id="pin",
+        kind="attribute",
+        statement="born 1980-05-02",
+        valid_from=None,
+        reported_at=T0,
+        pinned=True,
+    )
+    held = view(
+        id="held",
+        kind="attribute",
+        statement="born 1981-05-02",
+        valid_from=None,
+        reported_at=T1,
+        status="pending_review",
+    )
+    d = decide(
+        cand(kind="attribute", statement="born 1999-09-09", valid_from=None, reported_at=T2),
+        [pin, held],
+    )
+    assert d.insert_status == "pending_review"
+    assert d.supersede_ids == [] and d.hold_ids == []
+    assert d.conflicting_id == "pin"
+
+
+def test_a_held_attribute_head_is_superseded_not_left_contesting_the_key() -> None:
+    """A row already in `pending_review` is a LIVE head to `decide()`, so leaving it there
+    would keep the key contested forever. Newest-wins retires it with the rest."""
+    held = view(
+        id="held",
+        kind="attribute",
+        statement="born 1980-05-02",
+        valid_from=None,
+        reported_at=T0,
+        status="pending_review",
+    )
+    active = view(
+        id="active", kind="attribute", statement="born 1981-05-02", valid_from=None, reported_at=T1
+    )
+    d = decide(
+        cand(kind="attribute", statement="born 1999-09-09", valid_from=None, reported_at=T2),
+        [held, active],
+    )
+    assert d.insert_status == "active"
+    assert sorted(d.supersede_ids) == ["active", "held"]
+    assert d.hold_ids == []
+
+
+def test_an_unreadable_attribute_value_still_does_not_overwrite_a_confident_one() -> None:
+    """The guard newest-wins newly needs: while this branch held everything, a blurry read
+    was parked by the collision itself. Both write sidecars promise a low-weight value that
+    disagrees with a confident one is HELD, so the floor has to be explicit now."""
+    old = view(kind="attribute", statement="born 1980-05-02", valid_from=None, confidence=0.9)
+    d = decide(
+        cand(kind="attribute", statement="born 1981-05-02", valid_from=None, self_confidence=0.2),
+        [old],
+    )
+    assert d.insert_status == "pending_review"
+    assert d.supersede_ids == [] and d.hold_ids == []
+    assert d.review_kind == "low_confidence"
+
+
+def test_a_hypothetical_attribute_value_never_becomes_the_live_one() -> None:
+    """ "Maybe her birthday is in March" is not a claim about what is true, so it cannot be
+    the newest VALUE however new the statement is (the _IRREALIS guard, as on state)."""
+    old = view(kind="attribute", statement="born 1980-05-02", valid_from=None)
+    d = decide(
+        cand(
+            kind="attribute", statement="born 1981-05-02", valid_from=None, assertion="hypothetical"
+        ),
+        [old],
+    )
+    assert d.insert_status == "pending_review"
+    assert d.supersede_ids == [] and d.hold_ids == []
+    assert d.review_kind == "fact_conflict"
 
 
 # --- preference: newest-wins by reported_at, low-urgency flag ---------------
@@ -891,3 +1029,119 @@ def test_correction_supersedes_all_active_heads() -> None:
     )
     assert d.insert and d.insert_pinned is True
     assert set(d.supersede_ids) == {"h1", "h2"}
+
+
+# --- settled review decisions survive a rebuild ---------------------------
+# The rebuild sweep (analysis/rebuild.py) spares the facts a settled review card names,
+# INCLUDING the retracted loser, which no supersession walk can reach (resolving a card
+# writes no chain edge — analysis/repo.py). Sparing keeps the card servable; these tests
+# pin the other half: re-deriving the loser's value from the unchanged note text must
+# refresh that retracted row, NOT insert a fresh active twin beside the pinned winner
+# and re-flag it. Without this, one rebuild files one collision card per settled
+# decision, corpus-wide — the flood the exemption exists to prevent.
+
+
+def test_rederived_value_of_a_retracted_loser_refreshes_it_not_reflags_the_pin() -> None:
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1980-01-01", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.refresh_id == "loser"
+    assert d.review_kind is None
+    assert not d.insert
+
+
+def test_retracted_twin_match_requires_the_same_validity() -> None:
+    """A retracted value re-asserted with NEW validity is a genuine transition (the
+    owner moved back), not a re-extraction of the same reading — it must NOT be
+    swallowed as a refresh of the retracted row."""
+    winner = view(id="winner", kind="state", statement="lives at 99 Pine Ave", pinned=True)
+    loser = view(id="loser", kind="state", statement="lives at 12 Oak St", status="retracted")
+    d = decide(
+        cand(kind="state", statement="lives at 12 Oak St", valid_from=T2, reported_at=T2),
+        [winner, loser],
+    )
+    assert d.refresh_id is None
+
+
+def test_a_retracted_row_still_never_satisfies_a_live_read() -> None:
+    """The guard must not resurrect retracted rows into the live set: a candidate with a
+    DIFFERENT value still collides with the pinned head exactly as before."""
+    winner = view(id="winner", kind="attribute", statement="born 1980-02-02", pinned=True)
+    loser = view(id="loser", kind="attribute", statement="born 1980-01-01", status="retracted")
+    d = decide(
+        cand(kind="attribute", statement="born 1999-09-09", valid_from=T0, reported_at=T0),
+        [winner, loser],
+    )
+    assert d.review_kind == "attribute_collision"
+    assert d.conflicting_id == "winner"
+
+
+def test_a_rejected_inference_does_not_come_back_without_a_pinned_head() -> None:
+    """A `low_confidence_inference` REJECT retracts the held row and pins NOTHING
+    (analysis/repo.py), so the pinned-head arm cannot fire for it. Re-deriving the same
+    value from the unchanged note then mints a fresh ACTIVE row beside the row the owner
+    rejected, with no card filed — the value comes back and nobody is told. The
+    resolution's own `{"action": "retracted"}` effect is the evidence that this
+    retraction was a decision (analysis/purge.py `decision_retracted_fact_ids`)."""
+    rejected = view(
+        id="rejected",
+        kind="attribute",
+        statement="headquarters is Portland",
+        status="retracted",
+        decision_retracted=True,
+    )
+    d = decide(
+        cand(
+            kind="attribute",
+            statement="headquarters is Portland",
+            valid_from=T0,
+            reported_at=T0,
+        ),
+        [rejected],
+    )
+    assert d.refresh_id == "rejected"
+    assert not d.insert and d.review_kind is None
+
+
+def test_a_machine_retracted_row_still_resurrects() -> None:
+    """The other side of the same discriminator: a row retracted because a re-extraction
+    dropped its key carries no decision, so the value coming back MUST go live again
+    (`test_retracted_rows_are_ignored`). Identical shape to the case above but for the
+    one flag, so the flag is doing the work and not the retracted status."""
+    dropped = view(
+        id="dropped",
+        kind="attribute",
+        statement="headquarters is Portland",
+        status="retracted",
+    )
+    d = decide(
+        cand(
+            kind="attribute",
+            statement="headquarters is Portland",
+            valid_from=T0,
+            reported_at=T0,
+        ),
+        [dropped],
+    )
+    assert d.refresh_id is None
+    assert d.insert
+
+
+def test_a_decision_retracted_row_still_needs_the_same_value_and_validity() -> None:
+    """`decision_retracted` widens WHICH retracted rows can absorb a re-derived twin, not
+    WHAT counts as one: a different value, or the same value at a new validity, still
+    falls through to the ordinary path."""
+    rejected = view(
+        id="rejected",
+        kind="state",
+        statement="lives at 12 Oak St",
+        status="retracted",
+        decision_retracted=True,
+    )
+    moved_back = cand(kind="state", statement="lives at 12 Oak St", valid_from=T2, reported_at=T2)
+    assert decide(moved_back, [rejected]).refresh_id is None
+    other = cand(kind="state", statement="lives at 99 Pine Ave", valid_from=T0, reported_at=T0)
+    assert decide(other, [rejected]).refresh_id is None

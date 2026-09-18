@@ -1,4 +1,16 @@
-> **Status:** Research · **Last verified:** 2026-09-08
+> **Status:** Research · **Last verified:** 2026-09-09
+>
+> **§1.1 is superseded by what W3/T4 actually built.** Two of its designs did not
+> ship, and neither difference was recorded when the re-point merged. (a) The harness
+> does **not** replay an N-turn `FakeLlmClient` through the real `AgentLoop`;
+> `runner._tool_calls` calls the two write handlers directly, so `max_steps`, the
+> per-conversation budgets, the tool sidecars' schemas and the grammar they compile to
+> are all **outside** the 75 scenarios. (b) `expect{}` did **not** survive verbatim:
+> the tool surface has no `assertion`, `kind`, `qualifier`, structured `value_json` or
+> `confidence`, so ~20 assertions were rewritten and 26 scenarios are now strict-xfail.
+> `backend/tests/harness/README.md` is the current, true account. The scenarios remain
+> behaviour-preservation evidence for the WRITE PATH; they are no longer evidence about
+> the loop.
 
 # X5 — Testing and evaluating an agentic ingest
 
@@ -56,10 +68,10 @@ multi-turn, human-in-the-loop agent honest under the same CI gates
 
 | Asset | Where | Fate |
 |---|---|---|
-| 75 scenario JSON files | `backend/tests/harness/scenarios/` (75 files) | **Reshaped** — `expect{}` survives verbatim, `steps[].extraction`/`intent` become a transcript |
+| 75 scenario JSON files | `backend/tests/harness/scenarios/` (75 files) | **Reshaped — but `expect{}` did NOT survive verbatim.** `steps[].extraction` stayed; `intent` went; ~20 assertions were rewritten and 26 files are strict-xfail (README's two tables) |
 | `Snapshot`/`FactRow`/`ReviewRow`/`EntityRow` + `check()` | `backend/tests/harness/scenario.py:89-156`, `:159` | **Survives untouched** — asserts the graph, not the input |
 | `_compile_intent` (faithful-default intent) | `backend/tests/harness/runner.py:85-154` | **Dies** — there is no intent |
-| `_integrator` (two scripted model calls) | `backend/tests/harness/runner.py:53-62` | **Reshaped** into an N-turn `FakeLlmClient(turns=…)` router |
+| `_integrator` (two scripted model calls) | `backend/tests/harness/runner.py:53-62` | **Not built as designed.** Shipped as `_tool_calls`, which calls the write handlers directly — no router, no `AgentLoop`, so the loop is untested by the corpus |
 | `_seed_note` / `_snapshot` | `backend/tests/harness/runner.py:219-304` | **Survives** — same note seeding, same graph read-back |
 | `xfail(strict)` known-gap encoding | `backend/tests/integration/test_harness_scenarios.py:30-38` | **Survives** — still the right mechanism for a known-open agent failure mode |
 | Per-scenario `TRUNCATE` at *setup* | `backend/tests/integration/test_harness_scenarios.py:60-76` | **Survives** — will need the new conversation/question tables added to the list |
@@ -559,7 +571,7 @@ scenarios. Column 3 is what happens if §0.1 is followed (the tool calls `decide
 | R1 | **Per-kind supersession floors** — a `measurement` accumulates at a new instant, an `event` never supersedes | `test_supersession.py:77,84,92,102`; `hist_backdated_measurement_insert.json` | **Unchanged** — `decide()` is the tool's engine; scenario ports to a transcript |
 | R2 | **Preference keys on `reported_at`, not validity** — a retrospectively-phrased preference still supersedes | `test_supersession.py:434,444`; `hist_preference_retrospective_still_supersedes.json` | Unchanged. **Watch:** the agent must not "helpfully" pass `valid_from: 2015` as the supersession key — the tool takes `valid_from` as *data* and `decide()` owns the key choice |
 | R3 | **Retrospective note does not displace the current state** | `test_supersession.py:131`; `hist_retrospective_closes_open_interval.json`, `hist_era_childhood_coexists.json` | Unchanged |
-| R4 | **Attribute collision holds both sides** (two birthdays → conflict card, not a silent overwrite) | `test_supersession.py:414,423`; `adv_two_birthdays_attribute_collision.json` | Unchanged. **New risk:** the agent may resolve the conflict *in conversation* before writing, hiding a real contradiction. Needs a red case: a note stating two birthdays must still leave a card, not a confident single write |
+| R4 | ⟲ **Attribute collision: the NEWEST value wins** (two birthdays → newest live, older chained as history, and the pass must ask the owner) | `test_supersession.py` attribute block; `adv_two_birthdays_attribute_collision.json` | ⟲ **Changed by the owner's ruling on `AGENT_INGEST_REWRITE.md` §8 O15.** This row read "holds both sides … not a silent overwrite"; holding both was the deadlock he overruled, because nothing on the box could retire either row. The risk it named INVERTS: the supersession is never silent — `decide()` still emits `attribute_collision`, which is what makes the write result carry the obligation to ask. What still needs a red case is the agent settling the contradiction in conversation and never asking |
 | R5 | **Low-confidence never auto-supersedes**; pinned rows are never flipped | `test_supersession.py:186,202,209,143,277`; `own_disputed_low_confidence.json` | Unchanged — but the confidence input is now a model self-report. `weight.effective_weight` (`weight.py:74-87`) already caps it; assert the tool routes through it |
 | R6 | **Set-valued contradiction is symmetric in arrival order** | `test_supersession.py:507,525,540,553` | Unchanged |
 | R7 | **Unit equivalence** — 182 lb vs 82.6 kg is not a conflict; a real change is | `test_supersession.py:618,627,635,646,658`; `adv_unit_change_false_conflict.json` | Unchanged — `values_equal` (`supersession.py:348`) stays inside the tool |

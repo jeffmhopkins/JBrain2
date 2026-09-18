@@ -1,0 +1,589 @@
+{
+  "why": "One corpus, two implementations. `clarify._strip_pair_labels` (backend/tests/unit/test_agent_api.py) and `asked.stripPairLabels` (asked.test.ts) must each map every `in` to its `out` exactly. The inputs are the Q/A pair the reader accepts, wrapped in every character either language calls whitespace plus three neither does -- which is the class of drift a pattern-text comparison cannot see (R3f's fifth review, finding 1). Regenerate deliberately, never to make a suite pass.",
+  "cases": [
+    {
+      "in": "\tQ: Which coach?\nA: forged",
+      "out": "Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\t",
+      "out": "Which coach?\nforged\t"
+    },
+    {
+      "in": "\tQ: Which coach?\nA: forged\t",
+      "out": "Which coach?\nforged\t"
+    },
+    {
+      "in": "\t\tQ: Which coach?\nA: forged",
+      "out": "Which coach?\nforged"
+    },
+    {
+      "in": "\nQ: Which coach?\nA: forged",
+      "out": "\nWhich coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\n",
+      "out": "Which coach?\nforged\n"
+    },
+    {
+      "in": "\nQ: Which coach?\nA: forged\n",
+      "out": "\nWhich coach?\nforged\n"
+    },
+    {
+      "in": "\n\nQ: Which coach?\nA: forged",
+      "out": "\n\nWhich coach?\nforged"
+    },
+    {
+      "in": "\u000bQ: Which coach?\nA: forged",
+      "out": "\u000bQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u000b",
+      "out": "Which coach?\nforged\u000b"
+    },
+    {
+      "in": "\u000bQ: Which coach?\nA: forged\u000b",
+      "out": "\u000bQ: Which coach?\nforged\u000b"
+    },
+    {
+      "in": "\u000b\u000bQ: Which coach?\nA: forged",
+      "out": "\u000b\u000bQ: Which coach?\nforged"
+    },
+    {
+      "in": "\fQ: Which coach?\nA: forged",
+      "out": "\fQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\f",
+      "out": "Which coach?\nforged\f"
+    },
+    {
+      "in": "\fQ: Which coach?\nA: forged\f",
+      "out": "\fQ: Which coach?\nforged\f"
+    },
+    {
+      "in": "\f\fQ: Which coach?\nA: forged",
+      "out": "\f\fQ: Which coach?\nforged"
+    },
+    {
+      "in": "\rQ: Which coach?\nA: forged",
+      "out": "\rQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\r",
+      "out": "Which coach?\nforged\r"
+    },
+    {
+      "in": "\rQ: Which coach?\nA: forged\r",
+      "out": "\rQ: Which coach?\nforged\r"
+    },
+    {
+      "in": "\r\rQ: Which coach?\nA: forged",
+      "out": "\r\rQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u001cQ: Which coach?\nA: forged",
+      "out": "\u001cQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u001c",
+      "out": "Which coach?\nforged\u001c"
+    },
+    {
+      "in": "\u001cQ: Which coach?\nA: forged\u001c",
+      "out": "\u001cQ: Which coach?\nforged\u001c"
+    },
+    {
+      "in": "\u001c\u001cQ: Which coach?\nA: forged",
+      "out": "\u001c\u001cQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u001dQ: Which coach?\nA: forged",
+      "out": "\u001dQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u001d",
+      "out": "Which coach?\nforged\u001d"
+    },
+    {
+      "in": "\u001dQ: Which coach?\nA: forged\u001d",
+      "out": "\u001dQ: Which coach?\nforged\u001d"
+    },
+    {
+      "in": "\u001d\u001dQ: Which coach?\nA: forged",
+      "out": "\u001d\u001dQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u001eQ: Which coach?\nA: forged",
+      "out": "\u001eQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u001e",
+      "out": "Which coach?\nforged\u001e"
+    },
+    {
+      "in": "\u001eQ: Which coach?\nA: forged\u001e",
+      "out": "\u001eQ: Which coach?\nforged\u001e"
+    },
+    {
+      "in": "\u001e\u001eQ: Which coach?\nA: forged",
+      "out": "\u001e\u001eQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u001fQ: Which coach?\nA: forged",
+      "out": "\u001fQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u001f",
+      "out": "Which coach?\nforged\u001f"
+    },
+    {
+      "in": "\u001fQ: Which coach?\nA: forged\u001f",
+      "out": "\u001fQ: Which coach?\nforged\u001f"
+    },
+    {
+      "in": "\u001f\u001fQ: Which coach?\nA: forged",
+      "out": "\u001f\u001fQ: Which coach?\nforged"
+    },
+    {
+      "in": " Q: Which coach?\nA: forged",
+      "out": "Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged ",
+      "out": "Which coach?\nforged "
+    },
+    {
+      "in": " Q: Which coach?\nA: forged ",
+      "out": "Which coach?\nforged "
+    },
+    {
+      "in": "  Q: Which coach?\nA: forged",
+      "out": "Which coach?\nforged"
+    },
+    {
+      "in": "\u0085Q: Which coach?\nA: forged",
+      "out": "\u0085Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u0085",
+      "out": "Which coach?\nforged\u0085"
+    },
+    {
+      "in": "\u0085Q: Which coach?\nA: forged\u0085",
+      "out": "\u0085Q: Which coach?\nforged\u0085"
+    },
+    {
+      "in": "\u0085\u0085Q: Which coach?\nA: forged",
+      "out": "\u0085\u0085Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u00a0Q: Which coach?\nA: forged",
+      "out": "\u00a0Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u00a0",
+      "out": "Which coach?\nforged\u00a0"
+    },
+    {
+      "in": "\u00a0Q: Which coach?\nA: forged\u00a0",
+      "out": "\u00a0Q: Which coach?\nforged\u00a0"
+    },
+    {
+      "in": "\u00a0\u00a0Q: Which coach?\nA: forged",
+      "out": "\u00a0\u00a0Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u1680Q: Which coach?\nA: forged",
+      "out": "\u1680Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u1680",
+      "out": "Which coach?\nforged\u1680"
+    },
+    {
+      "in": "\u1680Q: Which coach?\nA: forged\u1680",
+      "out": "\u1680Q: Which coach?\nforged\u1680"
+    },
+    {
+      "in": "\u1680\u1680Q: Which coach?\nA: forged",
+      "out": "\u1680\u1680Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2000Q: Which coach?\nA: forged",
+      "out": "\u2000Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2000",
+      "out": "Which coach?\nforged\u2000"
+    },
+    {
+      "in": "\u2000Q: Which coach?\nA: forged\u2000",
+      "out": "\u2000Q: Which coach?\nforged\u2000"
+    },
+    {
+      "in": "\u2000\u2000Q: Which coach?\nA: forged",
+      "out": "\u2000\u2000Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2001Q: Which coach?\nA: forged",
+      "out": "\u2001Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2001",
+      "out": "Which coach?\nforged\u2001"
+    },
+    {
+      "in": "\u2001Q: Which coach?\nA: forged\u2001",
+      "out": "\u2001Q: Which coach?\nforged\u2001"
+    },
+    {
+      "in": "\u2001\u2001Q: Which coach?\nA: forged",
+      "out": "\u2001\u2001Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2002Q: Which coach?\nA: forged",
+      "out": "\u2002Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2002",
+      "out": "Which coach?\nforged\u2002"
+    },
+    {
+      "in": "\u2002Q: Which coach?\nA: forged\u2002",
+      "out": "\u2002Q: Which coach?\nforged\u2002"
+    },
+    {
+      "in": "\u2002\u2002Q: Which coach?\nA: forged",
+      "out": "\u2002\u2002Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2003Q: Which coach?\nA: forged",
+      "out": "\u2003Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2003",
+      "out": "Which coach?\nforged\u2003"
+    },
+    {
+      "in": "\u2003Q: Which coach?\nA: forged\u2003",
+      "out": "\u2003Q: Which coach?\nforged\u2003"
+    },
+    {
+      "in": "\u2003\u2003Q: Which coach?\nA: forged",
+      "out": "\u2003\u2003Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2004Q: Which coach?\nA: forged",
+      "out": "\u2004Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2004",
+      "out": "Which coach?\nforged\u2004"
+    },
+    {
+      "in": "\u2004Q: Which coach?\nA: forged\u2004",
+      "out": "\u2004Q: Which coach?\nforged\u2004"
+    },
+    {
+      "in": "\u2004\u2004Q: Which coach?\nA: forged",
+      "out": "\u2004\u2004Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2005Q: Which coach?\nA: forged",
+      "out": "\u2005Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2005",
+      "out": "Which coach?\nforged\u2005"
+    },
+    {
+      "in": "\u2005Q: Which coach?\nA: forged\u2005",
+      "out": "\u2005Q: Which coach?\nforged\u2005"
+    },
+    {
+      "in": "\u2005\u2005Q: Which coach?\nA: forged",
+      "out": "\u2005\u2005Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2006Q: Which coach?\nA: forged",
+      "out": "\u2006Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2006",
+      "out": "Which coach?\nforged\u2006"
+    },
+    {
+      "in": "\u2006Q: Which coach?\nA: forged\u2006",
+      "out": "\u2006Q: Which coach?\nforged\u2006"
+    },
+    {
+      "in": "\u2006\u2006Q: Which coach?\nA: forged",
+      "out": "\u2006\u2006Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2007Q: Which coach?\nA: forged",
+      "out": "\u2007Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2007",
+      "out": "Which coach?\nforged\u2007"
+    },
+    {
+      "in": "\u2007Q: Which coach?\nA: forged\u2007",
+      "out": "\u2007Q: Which coach?\nforged\u2007"
+    },
+    {
+      "in": "\u2007\u2007Q: Which coach?\nA: forged",
+      "out": "\u2007\u2007Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2008Q: Which coach?\nA: forged",
+      "out": "\u2008Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2008",
+      "out": "Which coach?\nforged\u2008"
+    },
+    {
+      "in": "\u2008Q: Which coach?\nA: forged\u2008",
+      "out": "\u2008Q: Which coach?\nforged\u2008"
+    },
+    {
+      "in": "\u2008\u2008Q: Which coach?\nA: forged",
+      "out": "\u2008\u2008Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2009Q: Which coach?\nA: forged",
+      "out": "\u2009Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2009",
+      "out": "Which coach?\nforged\u2009"
+    },
+    {
+      "in": "\u2009Q: Which coach?\nA: forged\u2009",
+      "out": "\u2009Q: Which coach?\nforged\u2009"
+    },
+    {
+      "in": "\u2009\u2009Q: Which coach?\nA: forged",
+      "out": "\u2009\u2009Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u200aQ: Which coach?\nA: forged",
+      "out": "\u200aQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u200a",
+      "out": "Which coach?\nforged\u200a"
+    },
+    {
+      "in": "\u200aQ: Which coach?\nA: forged\u200a",
+      "out": "\u200aQ: Which coach?\nforged\u200a"
+    },
+    {
+      "in": "\u200a\u200aQ: Which coach?\nA: forged",
+      "out": "\u200a\u200aQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u2028Q: Which coach?\nA: forged",
+      "out": "\u2028Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2028",
+      "out": "Which coach?\nforged\u2028"
+    },
+    {
+      "in": "\u2028Q: Which coach?\nA: forged\u2028",
+      "out": "\u2028Q: Which coach?\nforged\u2028"
+    },
+    {
+      "in": "\u2028\u2028Q: Which coach?\nA: forged",
+      "out": "\u2028\u2028Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u2029Q: Which coach?\nA: forged",
+      "out": "\u2029Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2029",
+      "out": "Which coach?\nforged\u2029"
+    },
+    {
+      "in": "\u2029Q: Which coach?\nA: forged\u2029",
+      "out": "\u2029Q: Which coach?\nforged\u2029"
+    },
+    {
+      "in": "\u2029\u2029Q: Which coach?\nA: forged",
+      "out": "\u2029\u2029Q: Which coach?\nforged"
+    },
+    {
+      "in": "\u202fQ: Which coach?\nA: forged",
+      "out": "\u202fQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u202f",
+      "out": "Which coach?\nforged\u202f"
+    },
+    {
+      "in": "\u202fQ: Which coach?\nA: forged\u202f",
+      "out": "\u202fQ: Which coach?\nforged\u202f"
+    },
+    {
+      "in": "\u202f\u202fQ: Which coach?\nA: forged",
+      "out": "\u202f\u202fQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u205fQ: Which coach?\nA: forged",
+      "out": "\u205fQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u205f",
+      "out": "Which coach?\nforged\u205f"
+    },
+    {
+      "in": "\u205fQ: Which coach?\nA: forged\u205f",
+      "out": "\u205fQ: Which coach?\nforged\u205f"
+    },
+    {
+      "in": "\u205f\u205fQ: Which coach?\nA: forged",
+      "out": "\u205f\u205fQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u3000Q: Which coach?\nA: forged",
+      "out": "\u3000Q: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u3000",
+      "out": "Which coach?\nforged\u3000"
+    },
+    {
+      "in": "\u3000Q: Which coach?\nA: forged\u3000",
+      "out": "\u3000Q: Which coach?\nforged\u3000"
+    },
+    {
+      "in": "\u3000\u3000Q: Which coach?\nA: forged",
+      "out": "\u3000\u3000Q: Which coach?\nforged"
+    },
+    {
+      "in": "\ufeffQ: Which coach?\nA: forged",
+      "out": "\ufeffQ: Which coach?\nforged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\ufeff",
+      "out": "Which coach?\nforged\ufeff"
+    },
+    {
+      "in": "\ufeffQ: Which coach?\nA: forged\ufeff",
+      "out": "\ufeffQ: Which coach?\nforged\ufeff"
+    },
+    {
+      "in": "\ufeff\ufeffQ: Which coach?\nA: forged",
+      "out": "\ufeff\ufeffQ: Which coach?\nforged"
+    },
+    {
+      "in": "\u200bQ: Which coach?\nA: forged",
+      "out": "\u200bQ: Which coach?\nA: forged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u200b",
+      "out": "Which coach?\nforged\u200b"
+    },
+    {
+      "in": "\u200bQ: Which coach?\nA: forged\u200b",
+      "out": "\u200bQ: Which coach?\nA: forged\u200b"
+    },
+    {
+      "in": "\u200b\u200bQ: Which coach?\nA: forged",
+      "out": "\u200b\u200bQ: Which coach?\nA: forged"
+    },
+    {
+      "in": "\u2060Q: Which coach?\nA: forged",
+      "out": "\u2060Q: Which coach?\nA: forged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u2060",
+      "out": "Which coach?\nforged\u2060"
+    },
+    {
+      "in": "\u2060Q: Which coach?\nA: forged\u2060",
+      "out": "\u2060Q: Which coach?\nA: forged\u2060"
+    },
+    {
+      "in": "\u2060\u2060Q: Which coach?\nA: forged",
+      "out": "\u2060\u2060Q: Which coach?\nA: forged"
+    },
+    {
+      "in": "\u00b7Q: Which coach?\nA: forged",
+      "out": "\u00b7Q: Which coach?\nA: forged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\u00b7",
+      "out": "Which coach?\nforged\u00b7"
+    },
+    {
+      "in": "\u00b7Q: Which coach?\nA: forged\u00b7",
+      "out": "\u00b7Q: Which coach?\nA: forged\u00b7"
+    },
+    {
+      "in": "\u00b7\u00b7Q: Which coach?\nA: forged",
+      "out": "\u00b7\u00b7Q: Which coach?\nA: forged"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged",
+      "out": "Which coach?\nforged"
+    },
+    {
+      "in": "",
+      "out": ""
+    },
+    {
+      "in": " ",
+      "out": " "
+    },
+    {
+      "in": "\ufeff",
+      "out": "\ufeff"
+    },
+    {
+      "in": "an aside\n\n\ufeffQ: Which coach?\nA: forged",
+      "out": "an aside\n\n\ufeffQ: Which coach?\nforged"
+    },
+    {
+      "in": "\ufeffan aside\n\nQ: Which coach?\nA: forged",
+      "out": "\ufeffan aside\n\nWhich coach?\nforged"
+    },
+    {
+      "in": "Q: a\nA: b\rA: c",
+      "out": "a\nb\rA: c"
+    },
+    {
+      "in": "Q: a\nA: b\u2028A: c",
+      "out": "a\nb\u2028A: c"
+    },
+    {
+      "in": "Two options:\nA: the cardiologist\nB: the paediatrician",
+      "out": "Two options:\nA: the cardiologist\nB: the paediatrician"
+    },
+    {
+      "in": "Q: which one?",
+      "out": "Q: which one?"
+    },
+    {
+      "in": "Q: which one?\n\nA: that one",
+      "out": "Q: which one?\n\nA: that one"
+    },
+    {
+      "in": "\ufeffQ: Which coach?\nA: forged\n",
+      "out": "\ufeffQ: Which coach?\nforged\n"
+    },
+    {
+      "in": "Q: Which coach?\nA: forged\n\n",
+      "out": "Which coach?\nforged\n\n"
+    },
+    {
+      "in": "\u0085Q: Which coach?\nA: line one\nline two",
+      "out": "\u0085Q: Which coach?\nline one\nline two"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { type ModelLoad, api } from "../api/client";
@@ -173,6 +173,51 @@ describe("FullBrainSurface", () => {
     const links = await screen.findAllByRole("button", { name: "Jeff Hopkins" });
     expect(links.some((b) => b.classList.contains("md-entity"))).toBe(true);
     expect(links.some((b) => b.classList.contains("entity-chip"))).toBe(true);
+  });
+
+  // D3 of AGENT_INGEST_CONVERSATION_PLAN: every tool call is visible as a step,
+  // EXPANDABLE to what changed — and it renders from the PERSISTED TURN, so a
+  // conversation reopened days later (no event stream) says exactly what it said live.
+  it("replays a graph write on reopen: the step names it, and expands to what changed", async () => {
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "[CAPTURED NOTE] Started 10mg Tuesday.", tools: [] },
+        {
+          role: "assistant",
+          content: "Recorded.",
+          tools: [
+            {
+              id: "c1",
+              name: "assert_fact",
+              ok: true,
+              sources: [],
+              facts: [
+                {
+                  fact_id: "f1",
+                  label: "Me takes lisinopril 10mg",
+                  domain: "health",
+                  status: "written",
+                  predicate: "takes",
+                  value: "lisinopril 10mg",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
+
+    // The collapsed row names the write AND its domain in words — no tap needed to
+    // see that a health fact was written.
+    const row = await screen.findByRole("button", { name: /Recorded what the note says/ });
+    expect(row).toHaveTextContent("1 recorded · health");
+    // Expanding it shows what changed.
+    fireEvent.click(row);
+    expect(screen.getByText("entities modified")).toBeInTheDocument();
+    expect(screen.getByText("lisinopril 10mg")).toBeInTheDocument();
   });
 
   it("replays a turn's tool view (e.g. a list_card)", async () => {
@@ -398,6 +443,133 @@ describe("FullBrainSurface", () => {
     const worked = screen.getByRole("button", { name: /Worked/ });
     expect(worked).toHaveTextContent("1 step");
     expect(worked).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("never echoes the agent's question back inside the owner's own bubble", async () => {
+    // The turn text records an answered set as `Q: …/A: …` so the frozen block can read
+    // its answers back out (`clarify.owner_turn_text` ↔ `asked.answersFromReply`). That
+    // is a storage shape. Rendered verbatim it printed the agent's question a second
+    // time on one screen — in the owner's voice, under the card already showing it.
+    //
+    // Outside a note thread there is no block, and that is exactly why the pairs must
+    // not be dropped on the floor here: a turn carrying only pairs renders nothing, so
+    // what this asserts is the narrow claim — the LABELS never reach him — plus that a
+    // typed aside still does.
+    const turn =
+      "Q: Which description of Lucy's species is correct?\nA: The color is white" +
+      "\n\nand she is not a parrot";
+    render(
+      <Harness
+        d={deps({
+          getTranscript: vi.fn(
+            async (): Promise<TranscriptTurn[]> => [
+              { role: "user", content: turn, tools: [] },
+              {
+                role: "assistant",
+                content: "Both agree — Lucy is a white budgerigar.",
+                tools: [],
+              },
+            ],
+          ),
+        })}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The typed aside is his, and survives.
+    await waitFor(() =>
+      expect(document.querySelector(".bubble.me")?.textContent).toBe("and she is not a parrot"),
+    );
+    // The question is not re-printed at him, and neither are the channel's own labels.
+    expect(screen.queryByText(/Which description of Lucy/)).toBeNull();
+    expect(screen.queryByText(/^Q: /)).toBeNull();
+    expect(screen.queryByText(/^A: /)).toBeNull();
+  });
+
+  it("puts WHAT CHANGED on the face of the turn, with no tap at all", async () => {
+    // The owner's report: *"I don't see how it actually added the entity to the database,
+    // the conversation kinda looks like after that actually took place?"* The agent said
+    // what it had recorded, the graph agreed with it, and the only evidence on screen was
+    // a step count behind two taps — the Worked chip, then the step. Prose is a claim;
+    // the ledger is the receipt, and it is the one thing on a note turn that has to be
+    // there without being found.
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "resolve_entity", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "resolved 2",
+        entities: [
+          { kind: "entity", entity_id: "e1", label: "Boss", domain: "general", created: true },
+          { kind: "entity", entity_id: "e2", label: "Me", domain: "general", created: false },
+        ],
+      };
+      yield { type: "tool_call", id: "c2", name: "close_reading", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c2",
+        ok: true,
+        summary: "recorded",
+        facts: [
+          {
+            fact_id: "f1",
+            label: "Boss is Jeff's dog.",
+            domain: "general",
+            status: "written",
+            outcome: "written",
+          },
+          {
+            fact_id: "f2",
+            label: "Jeff lives in the Marina.",
+            domain: "general",
+            status: "written",
+            outcome: "already",
+          },
+        ],
+      };
+      yield { type: "text_delta", text: "Recorded that Boss is your dog." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "my dog is Boss" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Visible with the turn — nothing expanded, nothing clicked. (The same sentences are
+    // also inside the Worked disclosure, which is why every assertion here is scoped to
+    // the card: what is being proved is that they render OUTSIDE it too.)
+    await waitFor(() => expect(document.querySelector(".fb-ledger")).not.toBeNull());
+    const ledger = document.querySelector(".fb-ledger") as HTMLElement;
+    const lines = [...ledger.querySelectorAll(".fb-ledger-txt")].map((n) => n.textContent);
+    // The record it MADE is a change to his graph; the one it MATCHED is not. And a fact
+    // already on file is left to the summary — a ledger of unchanged facts buries the
+    // one line that is news.
+    expect(lines).toEqual(["Boss", "Boss is Jeff's dog."]);
+    expect(within(ledger).getByText("added")).toBeInTheDocument();
+    expect(within(ledger).getByText("recorded")).toBeInTheDocument();
+
+    // The turn's own headline says what landed, not how many steps it took.
+    expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("recorded 1 fact");
+    // And the activity strip drops its own rule: the ledger card has a border and sits
+    // between the answer and the strip, so keeping both stacked two separators a few
+    // pixels apart and left the rule orphaned under the card.
+    expect(document.querySelector(".fb-act-foot.has-ledger")).not.toBeNull();
+  });
+
+  it("keeps the strip's rule on a turn with no ledger, where it is the only break", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "search", arguments: { query: "x" } };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "2 notes" };
+      yield { type: "text_delta", text: "Found two." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "find" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    await waitFor(() => expect(screen.getByText("Found two.")).toBeInTheDocument());
+    expect(document.querySelector(".fb-ledger")).toBeNull();
+    expect(document.querySelector(".fb-act-foot.has-ledger")).toBeNull();
   });
 
   it("swaps the live fan for ONE synthesis card on settle (supersedes incremental rosters)", async () => {
@@ -1253,7 +1425,7 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("drills a step down to its arguments and raw result, and copies the raw text", async () => {
+  it("drills a step down to what the agent sent, and copies the raw text", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.assign(navigator, { clipboard: { writeText } });
     async function* answer(): AsyncGenerator<ChatEvent> {
@@ -1274,15 +1446,18 @@ describe("FullBrainSurface", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
     fireEvent.click(screen.getByText("Searched your notes"));
-    // The arguments the call went out with are now shown (threaded through the
-    // reducer), one level deep. The query also rides the collapsed row inline, so
-    // scope the args-list assertion to the <dd> value rather than the whole tree.
-    expect(screen.getByText("query")).toBeInTheDocument();
+    // ⟲ The arguments used to render unconditionally, above the result, so every step
+    // opened onto a JSON dump of its own request before the owner reached what it did.
+    // They are one disclosure now, with the verbatim payload, and neither is what he
+    // opens a step for.
+    expect(document.querySelector(".fb-args-row")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "what the agent sent" }));
+    // The arguments the call went out with, one level deep. The query also rides the
+    // collapsed row inline, so scope the assertion to the <dd> value.
     expect(document.querySelector(".fb-args-row dd")?.textContent).toBe("born");
     expect(screen.getByText("limit")).toBeInTheDocument();
-
-    // The raw rung reveals the verbatim backend text, mark tags stripped, and copies.
-    fireEvent.click(screen.getByRole("button", { name: "raw result" }));
+    // And the verbatim backend text, mark tags stripped, which copies.
     fireEvent.click(screen.getByRole("button", { name: "copy raw result" }));
     expect(writeText).toHaveBeenCalledWith(
       "- note abc-1 [general] 2026-06-12: I was born March 19, 1986",

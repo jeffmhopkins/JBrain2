@@ -92,6 +92,12 @@ h3 {
 .icon-btn {
   background: none;
   border: none;
+  /* 44px of hit area around whatever glyph it wraps (DESIGN.md's floor). The negative
+     margin keeps the LAYOUT box the size of the glyph, so raising the floor does not
+     push the bar's contents apart — but it also means neighbours must be spaced off the
+     real hit area, not the glyph (see `.foot-icons` / `.top-bar-right`). */
+  min-width: 44px;
+  min-height: 44px;
   padding: 8px;
   margin: -8px;
   color: var(--text-2);
@@ -114,9 +120,13 @@ h3 {
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 56px;
+  /* `min-height`, not `height`: `box-sizing: border-box` is global (top of this
+     file), so a fixed 56px had the safe-area inset subtracted FROM it rather than
+     added to it — on a notched iPhone the content box computed to 0 and the bar's
+     contents were saved only by the flex auto-floor, jammed against its lower edge. */
+  min-height: 56px;
   padding: 0 16px;
-  padding-top: env(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top, 0px);
   flex: none;
 }
 
@@ -161,13 +171,25 @@ h3 {
 .screen-title {
   font-size: var(--fs-title);
   font-weight: 500;
+  /* A note's title is its own first words, so it is arbitrarily long. Without this it
+     cannot shrink as a flex item (`min-width: auto`) and either wraps the bar to two
+     lines or pushes the vitals cluster off the right edge at 390px. `.session-title`
+     has carried exactly this treatment since it shipped; Entry's bar never got it. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .top-bar-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 18px;
+  /* Same arithmetic as `.foot-icons`: the note button's hit area bleeds 8px and the
+     vitals control pulls 12px back, so 18px left them touching. The cluster does spread —
+     a 44px box inside a -8px margin has a 28px layout footprint where a 22px glyph had
+     22 — and that is the cost of the floor, not something this gap compensates for. */
+  gap: 28px;
   color: var(--text-2);
 }
 
@@ -430,6 +452,10 @@ button.vitals:focus-visible {
 
 .older-pill {
   align-self: center;
+  /* DESIGN.md Buttons: "All 12px radius, 44px min height." It was ~22px. A bleed rather
+     than a `min-height`, for `.fb-act-chip`'s reason: this pill is tinted and rounded, so
+     a 44px box would draw a fat lozenge around 9px of text rather than a bigger target. */
+  position: relative;
   font-size: var(--fs-micro);
   padding: 5px 14px;
   border: none;
@@ -437,6 +463,14 @@ button.vitals:focus-visible {
   background: var(--steel-tint);
   color: var(--steel);
   margin-top: 8px;
+}
+.older-pill::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 
 .note-wrap {
@@ -564,6 +598,11 @@ button.vitals:focus-visible {
 
 .note-body {
   font-size: var(--fs-note);
+  /* The note's own paragraph breaks. Without this HTML collapses them to spaces, so
+     every multi-paragraph note read as one run-on line — and an appended block ran
+     straight into the sentence before it, which is what the owner reported as the
+     addition looking "clunky". Composes with `-webkit-line-clamp` on `.note-body-clamp`. */
+  white-space: pre-wrap;
 }
 
 .note-chips {
@@ -600,6 +639,48 @@ button.vitals:focus-visible {
   cursor: pointer;
 }
 
+/* The stream's waiting-thread chip (AGENT_INGEST_REWRITE §3b I1/I2). A button, because
+   it is the tap target that opens the note's conversation — the row's own tap still
+   opens the NOTE SCREEN, which is the only no-terminal way to the Analysis tab, the
+   attachments, the edit path and the clarification eraser. It keeps chip-pending's amber:
+   rose is the medical domain, and this row already wears its domain as a dot.
+
+   DESIGN.md's 44px minimum is binding, and it matters more here than almost anywhere: a
+   `.chip` is 3px of padding around 9px of text — 18.6px of box at the default text size —
+   and this one sits INSIDE a row whose own tap opens the note screen, so a near-miss does
+   not no-op, it opens the wrong screen.
+
+   The BOX grows, the way `.fb-q-opt` grows and NOT the way the vitals chart's out-of-flow
+   hit area does (R3f's second review, finding 2). The bleeding pseudo-element was right
+   for a chart, which has no tappable siblings; here `.note-chips` is `flex-wrap: wrap`
+   and holds the attachment links BEFORE this chip. On one line the arithmetic held. On
+   two it did not: 18.6 + 6 + 18.6 = 43.2px of content stretched to the row's 44px floor
+   gives ~19px lines, so the wrapped chip's centre sat at y≈34.5 and a 44px pseudo spanned
+   y≈12.5–56.5 — over the bottom third of line 1. Being absolutely positioned on a
+   relative button, it painted above the static flex items and WON THE HIT TEST: a tap
+   near the bottom of an attachment chip opened the thread instead of the attachment,
+   reachable at ~400px with two ordinary filenames. That is the builder's own argument for
+   `.fb-q-opt` — "the candidates WRAP, so a tap near the edge lands on the wrong one" —
+   and this row wraps too.
+
+   The cost, stated rather than denied: the chip's own drawing is no longer untouched, and
+   a WRAPPED chips row now grows to ~68px instead of claiming 44 and overlapping itself. A
+   single-line row is unchanged — it was already floored at 44px by the rule below, which
+   is where the ~27px every waiting row pays has always come from. */
+button.chip-ask {
+  font: inherit;
+  font-size: var(--fs-micro);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 16px;
+  justify-content: center;
+  cursor: pointer;
+}
+.note-chips:has(.chip-ask) {
+  /* The short attachment chips centre against the tall one they share a line with. */
+  align-items: center;
+}
+
 /* The calendar handoff's appointment pill — the agent reference, in the attach
    row, in the steel of the Full Brain mode it rides into. */
 .chip-appt {
@@ -620,7 +701,12 @@ button.vitals:focus-visible {
 
 .dock {
   flex: none;
-  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  /* Scaled like the rest of the omnibox. #1420 skipped this declaration whole because of
+     the env() in the shorthand, which left an 8px gutter above the box while everything
+     around it thinned — and that gutter is half of what sits under the status line.
+     The safe-area inset is a physical device measurement and stays absolute. */
+  padding: calc(8px * var(--font-scale)) calc(12px * var(--font-scale))
+    calc(10px * var(--font-scale) + env(safe-area-inset-bottom));
   background: var(--bg);
 }
 
@@ -645,16 +731,16 @@ button.vitals:focus-visible {
 .omnibox-body {
   display: flex;
   flex-direction: column;
-  padding: 0 14px 14px;
+  padding: 0 calc(14px * var(--font-scale)) calc(14px * var(--font-scale));
 }
 
 .edit-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 6px 12px;
+  gap: calc(8px * var(--font-scale));
+  margin-bottom: calc(10px * var(--font-scale));
+  padding: calc(6px * var(--font-scale)) calc(12px * var(--font-scale));
   border-radius: var(--r-input);
   background: var(--amber-tint);
   color: var(--amber);
@@ -666,7 +752,7 @@ button.vitals:focus-visible {
 .edit-cancel {
   background: none;
   border: none;
-  padding: 4px 6px;
+  padding: calc(4px * var(--font-scale)) calc(6px * var(--font-scale));
   color: var(--amber);
   text-decoration: underline;
   font-size: var(--fs-secondary);
@@ -679,7 +765,7 @@ button.vitals:focus-visible {
 
 .conv-empty {
   margin: auto;
-  padding: 10px 18px;
+  padding: calc(10px * var(--font-scale)) calc(18px * var(--font-scale));
   border-radius: var(--r-card);
   background: var(--mode-tint);
   color: var(--text-2);
@@ -727,8 +813,12 @@ button.vitals:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  /* em so the control thins along with the text-size setting */
+  gap: calc(8px * var(--font-scale));
+  /* em so the control thins along with the text-size setting — ABOVE the floor, never
+     through it. At the shipped 0.75 default this row computed to ~37px, and at 65% to
+     ~34.6px: lowering the text size was shrinking the app's primary navigation below a
+     thumb. The floor is absolute and does not scale. */
+  min-height: 44px;
   padding: 0.85em 0;
   font-size: var(--fs-note);
   font-weight: 500;
@@ -757,11 +847,22 @@ button.vitals:focus-visible {
   display: inline-flex;
 }
 
+/* The tab glyph is drawn at 18px by the component, but a fixed glyph is what kept
+   the segment row from thinning with the text-size setting: at 75% the label fell
+   to 11.25px while the icon held 18px, so the row read as chrome wrapped around
+   tiny type. Sizing it in em (1.2 × --fs-note = the same 18px at 100%) lets the
+   icon, the label and the row's 0.85em padding shrink together.
+   `.onbox-tabs` overrides this on its own line below. */
+.seg-ic svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+
 .dest-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 4px 0;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(12px * var(--font-scale)) calc(4px * var(--font-scale)) 0;
   font-size: var(--fs-note);
   color: var(--text-2);
   flex: none;
@@ -770,6 +871,13 @@ button.vitals:focus-visible {
 .dest-ic {
   display: inline-flex;
   color: var(--mode);
+}
+
+/* Same em sizing as .seg-ic — the destination glyph sets this row's height, so a
+   fixed 18px would hold the row (and the composer floor derived from it) open. */
+.dest-ic svg {
+  width: 1.2em;
+  height: 1.2em;
 }
 
 .dest-path {
@@ -781,6 +889,10 @@ button.vitals:focus-visible {
   min-width: 0;
   width: auto;
   font-size: var(--fs-note);
+  /* The global select padding is a flat 10px/14px, and this select is what sets
+     the destination row's height — so without a scaled override here the row
+     (and the composer floor that stands in for it) barely thins at 75%. */
+  padding: calc(10px * var(--font-scale)) calc(14px * var(--font-scale));
 }
 
 .dest-new {
@@ -797,19 +909,21 @@ button.vitals:focus-visible {
   /* JS grows this to fit; min-height is the two-line floor (border-box, so the
      min includes the top padding). Hidden overflow keeps the box, not the
      field, in charge of scrolling. */
-  min-height: calc(2 * 1.4em + 14px);
+  min-height: calc(2 * 1.4em + 14px * var(--font-scale));
   overflow: hidden;
   color: var(--text);
   font-size: var(--fs-composer);
   line-height: 1.4;
-  padding: 14px 6px 0;
+  padding: calc(14px * var(--font-scale)) calc(6px * var(--font-scale)) 0;
   border-radius: 0;
 }
 
 /* No destination row to occupy space — hand that height back to the field so
-   the overall box keeps the same minimum across every mode. */
+   the overall box keeps the same minimum across every mode. The handed-back
+   height has to travel with the text-size setting like the row it stands in
+   for; left at a flat 38px it was the void under the placeholder at 75%. */
 .omnibox:not(:has(.dest-row)) .composer-input {
-  min-height: calc(2 * 1.4em + 14px + 38px);
+  min-height: calc(2 * 1.4em + (14px + 38px) * var(--font-scale));
 }
 
 .composer-input::placeholder {
@@ -823,16 +937,16 @@ button.vitals:focus-visible {
 .staged-files {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 6px 0;
+  gap: calc(6px * var(--font-scale));
+  padding: calc(6px * var(--font-scale)) calc(6px * var(--font-scale)) 0;
   flex: none;
 }
 
 .composer-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 6px 0;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(6px * var(--font-scale)) 0;
   color: var(--text-2);
   font-size: var(--fs-secondary);
   flex: none;
@@ -845,7 +959,10 @@ button.vitals:focus-visible {
 
 .foot-icons {
   display: flex;
-  gap: 14px;
+  /* `.icon-btn` bleeds 8px past its layout box on each side, so a 14px gap left the two
+     44px hit areas overlapping by 2px — and a near-miss on the paperclip SENDS the note.
+     24px puts 8px of dead space between them. */
+  gap: calc(24px * var(--font-scale));
   align-items: center;
 }
 
@@ -854,13 +971,13 @@ button.vitals:focus-visible {
 .model-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4px * var(--font-scale));
   flex: none;
   max-width: 45%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  padding: 2px 8px;
+  padding: calc(2px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 999px;
   background: var(--mode-tint);
   color: var(--mode);
@@ -886,7 +1003,7 @@ button.vitals:focus-visible {
 .ctx-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   /* grow into the foot's free space; min-width:0 lets it shrink rather than push
      the label onto a second line on a narrow box */
   flex: 1;
@@ -903,8 +1020,8 @@ button.vitals:focus-visible {
   /* stretch across the meter; the label beside it is flex:none, so the bar takes
      whatever width is left */
   flex: 1;
-  min-width: 24px;
-  height: 4px;
+  min-width: calc(24px * var(--font-scale));
+  height: calc(4px * var(--font-scale));
   border-radius: var(--r-pill);
   background: var(--surface-2);
   overflow: hidden;
@@ -1169,6 +1286,56 @@ button.vitals:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* Gain and Upconverter are <fieldset>s so the group's name is its <legend> — the
+   segmented control is a set of buttons, and a plain label would name only whichever
+   one the pointer happened to be over. The browser's own fieldset chrome is dropped:
+   this card's fields are flush blocks, not boxes inside boxes. */
+fieldset.settings-field {
+  border: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+fieldset.settings-field > legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+/* A line under a control saying what the setting will actually do — Settings → Radios
+   uses them for gain and the upconverter. ALWAYS present rather than only in the bad
+   state: a caption that appears when something is wrong teaches the reader to ignore
+   captions (docs/mocks/radio-settings/README.md). */
+.settings-note {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  margin: 6px 0 0;
+}
+/* A choice the measurements argue against — auto, 0 dB, 40 dB, a converter inline —
+   reads louder than one they support, without becoming an error: every one of them is
+   a legal setting the owner may want. */
+.settings-note.warn {
+  color: var(--text);
+}
+/* A setting that is not doing anything recedes instead. */
+.settings-note.off {
+  color: var(--text-3);
+}
+
+/* The upconverter's MHz field: a short number beside its unit, not a full-width input —
+   a frequency offset is three or four digits. */
+.settings-offset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.settings-offset input {
+  width: 8em;
 }
 
 /* jmolt's review queue: staged writes the owner releases or discards while autonomy is
@@ -2792,9 +2959,11 @@ button.vitals:focus-visible {
 .onbox-tabs {
   margin: 12px 16px 0;
 }
+/* Same em treatment as .seg-ic above, at this row's own 15px draw size (1em of
+   --fs-note), so the home-card and settings tab rows thin with the setting too. */
 .onbox-tabs .seg-ic svg {
-  width: 15px;
-  height: 15px;
+  width: 1em;
+  height: 1em;
   display: block;
 }
 .onbox-list {
@@ -5025,6 +5194,9 @@ button.small {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The head and tab row live in .note-view-chrome above, so this scroller starts at
+     the tab body — its own top gutter would double the chrome's bottom one. */
+  padding-top: 0;
 }
 
 .note-view-head {
@@ -5032,10 +5204,6 @@ button.small {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  /* The scroller is itself the flex column (.screen-body.note-view), so the
-     head and tab bar must not shrink — a tall Analysis tab would otherwise
-     squeeze their height instead of scrolling. */
-  flex-shrink: 0;
 }
 
 .domain-pill {
@@ -5072,8 +5240,8 @@ button.small {
   border: 1px solid var(--border);
   border-radius: var(--r-seg);
   overflow: hidden;
-  /* Keep its height regardless of how tall the tab body grows (see
-     .note-view-head); the sibling .seg-row guards the same way. */
+  /* Keep its height regardless of how tall the chrome column gets; the sibling
+     .seg-row guards the same way. */
   flex: none;
 }
 
@@ -5094,6 +5262,147 @@ button.small {
   color: var(--text-3);
   font-size: var(--fs-secondary);
   margin: 0;
+}
+
+/* The note screen's chrome — the domain/date head and the Note · Files tab row — lifted
+   OUT of the scrolling body, so the way between the note's text and its files is never
+   something you have to scroll a long analysis to find. */
+.note-view-chrome {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 16px 12px;
+}
+
+/* "What this note says": the former Analysis tab, folded under the note's own text.
+   A rule separates the two readings — what you wrote, then what the graph holds
+   because of it. */
+.note-record {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* The record's own heading. `--text-2`, not `.section-header`'s `--text-3`: text-3 sits
+   under the 4.5:1 floor (issue #25) and this wave adds no new use of it — and the rule
+   that introduces a whole section should read a step above the sub-headers inside it. */
+.note-record > .section-header {
+  color: var(--text-2);
+}
+
+/* "What you've added": the D6 clarification eraser, at the foot of the Note tab
+   (AGENT_INGEST_CONVERSATION_PLAN D6 — W2's "the wave that ships the writer ships the
+   eraser"). It lists BOTH block shapes since 0203 — answers he gave, and what he added
+   unprompted — because either can carry something he wants out again. Quiet by construction: collapsed, and absent for a note with no blocks,
+   which is nearly every note. The blocks themselves still render as prose in the body
+   above — D6 changes no screen — this is only where their ids become reachable. */
+
+.clar-panel {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.clar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  text-align: left;
+}
+
+.clar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.clar-hint {
+  margin: 4px 0 10px;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+.clar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clar-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+}
+
+.clar-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clar-q {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-a {
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+
+.clar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.clar-when {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The tap-again confirm every destructive act in the app uses (DESIGN.md "Note view").
+   Erasing re-drives ingestion and, unlike a note delete, is not even soft — so the
+   armed label spells out the consequence rather than saying "tap again" alone. */
+.clar-erase {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.clar-erase.clar-armed {
+  border-color: var(--rose);
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+
+.clar-erase:disabled {
+  opacity: 0.5;
 }
 
 /* Attachments tab: manifest list (docs/reference/DESIGN.md "Note view"). */
@@ -6569,6 +6878,79 @@ button.small {
   padding-right: 4px;
   color: var(--text-3);
   font-size: var(--fs-title);
+}
+
+/* ----- Notes tab (AGENT_INGEST_CONVERSATION_PLAN D4; binding mock
+   docs/mocks/agent-ingest-inbox/a-inbox-holds.html) — a row is a REDIRECT. It reuses
+   the shipped .rrow2/.rrow-open/.rrow-chev row shell wholesale; what is different is
+   only WHAT it carries, because the answer controls the reviewed draft had were
+   removed by the ruling. ----- */
+.nrow-src {
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+/* the note as captured — quoted, so it reads as the owner's words rather than the
+   agent's, and clamped so a long note cannot push the question off the row. */
+.nrow-quote {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.nrow-quote::before {
+  content: "“";
+}
+.nrow-quote::after {
+  content: "”";
+}
+.nrow-ask {
+  font-size: var(--fs-note);
+  color: var(--text);
+  line-height: 1.5;
+}
+.nrow-ask-more {
+  margin-left: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.nrow-meta {
+  flex-wrap: wrap;
+}
+.nchip {
+  font-size: var(--fs-micro);
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.nchip-ok {
+  background: var(--green-tint);
+  color: var(--text);
+}
+.nchip-work {
+  background: var(--steel-tint);
+  color: var(--text);
+}
+.nchip-ask {
+  background: var(--amber-tint);
+  color: var(--text);
+}
+/* the decided log's way back into the wiki tab — the same quiet sentence register the
+   empty lanes use, not a third segment (the two tabs are the ruling). */
+.rdecided-link {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  background: none;
+  border: none;
+  text-align: center;
+  cursor: pointer;
 }
 
 /* A thin brand rail flags inference rows so the list carries intentional
@@ -8674,27 +9056,89 @@ button.small {
 .fb-shell .fb-empty,
 .fb-shell .panel-empty {
   margin: auto;
-  padding: 24px;
+  padding: calc(24px * var(--font-scale));
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-secondary);
   text-align: center;
   line-height: 1.5;
 }
+/* The one thing there is to DO with a note the box has not read yet: open the note. A
+   real control inside the empty state, so that state is not only something to read.
+   `--text-2` and its own border, deliberately — it must not inherit the surrounding
+   `--text-3`, which sits under the 4.5:1 floor (issue #25), and 44px because it is a tap
+   target with the whole column to itself. */
+.fb-shell .fb-empty-action {
+  display: block;
+  margin: calc(14px * var(--font-scale)) auto 0;
+  min-height: 44px;
+  padding: 0 calc(18px * var(--font-scale));
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+
+/* The unattended pass, while it runs. The worker publishes no progress, so this says
+   only that it is happening — the honest statement, and the one the surface used to
+   deny. */
+.fb-shell .fb-reading-note {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(8px * var(--font-scale));
+  color: var(--text-2);
+}
+
+.fb-shell .fb-reading-dot {
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
+  border-radius: 50%;
+  background: var(--green);
+  animation: fb-reading-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes fb-reading-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-reading-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* transcript */
 .fb-shell .fb-chat {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px 4px;
+  padding: calc(8px * var(--font-scale)) calc(16px * var(--font-scale))
+    calc(4px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10px * var(--font-scale));
   min-height: 0;
+}
+/* Pins a short thread to the bottom, the way `.stream-inner` pins a short stream —
+   `margin-top: auto` on the first child rather than `justify-content: flex-end` on the
+   scroller, which breaks scrolling back up. Without it the notes list hung its content
+   off the BOTTOM of the screen and a note's conversation off the TOP, so opening a note
+   threw everything from one end to the other — the opposite of the owner's ruling that
+   picking a note should feel like picking another conversation. */
+.fb-shell .fb-chat > *:first-child {
+  margin-top: auto;
 }
 .fb-shell .bubble {
   max-width: 80%;
-  padding: 11px 14px;
+  padding: calc(11px * var(--font-scale)) calc(14px * var(--font-scale));
   border-radius: 16px;
-  font-size: 15px;
+  font-size: var(--fs-chat);
   line-height: 1.45;
   white-space: pre-wrap;
   /* A long unbreakable token — a bare URL, an id — wraps inside the bubble
@@ -8714,15 +9158,15 @@ button.small {
 .att-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 7px;
+  gap: calc(6px * var(--font-scale));
+  margin-bottom: calc(7px * var(--font-scale));
 }
 .att-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 170px;
-  padding: 5px 9px;
+  gap: calc(6px * var(--font-scale));
+  max-width: calc(170px * var(--font-scale));
+  padding: calc(5px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: var(--r-input);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -8762,7 +9206,7 @@ button.small {
   border-bottom-left-radius: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
 }
 
 /* rich text in an assistant answer (agent/markdown.tsx) — and the research-library
@@ -8771,7 +9215,7 @@ button.small {
 .rl-md .md {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   min-width: 0;
 }
 /* `.plan-sheet` is in the markdown scope because the omnibox plan popover renders the same
@@ -8783,17 +9227,17 @@ button.small {
   line-height: 1.45;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-h {
-  margin: 2px 0 0;
-  font-size: 15px;
+  margin: calc(2px * var(--font-scale)) 0 0;
+  font-size: var(--fs-note);
   font-weight: 600;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-ul,
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-ol {
   margin: 0;
-  padding-left: 20px;
+  padding-left: calc(20px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: calc(3px * var(--font-scale));
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-code {
   font-family: var(--font-mono);
@@ -8801,25 +9245,26 @@ button.small {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 5px;
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--font-scale));
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-pre {
   margin: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-input);
-  padding: 10px 12px;
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
   overflow-x: auto;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-pre code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   line-height: 1.5;
   white-space: pre;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-quote {
   margin: 0;
-  padding: 2px 0 2px 12px;
+  padding: calc(2px * var(--font-scale)) 0 calc(2px * var(--font-scale))
+    calc(12px * var(--font-scale));
   border-left: 2px solid var(--border);
   color: var(--text-2);
 }
@@ -8834,12 +9279,12 @@ button.small {
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 13px;
+  font-size: var(--fs-head);
   line-height: 1.4;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-table th,
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-table td {
-  padding: 6px 10px;
+  padding: calc(6px * var(--font-scale)) calc(10px * var(--font-scale));
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--border);
@@ -8880,7 +9325,7 @@ button.small {
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-math-wrap {
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 2px 0;
+  padding: calc(2px * var(--font-scale)) 0;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-math-block {
   display: block;
@@ -8907,7 +9352,7 @@ button.small {
   border: none;
   border-bottom: 1.5px dotted var(--text-3);
   background: none;
-  padding: 0 0 1px;
+  padding: 0 0 calc(1px * var(--font-scale));
   font: inherit;
   font-weight: 600;
   color: var(--text);
@@ -8921,16 +9366,16 @@ button.small {
 /* a tappable [^n] source citation superscript */
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-cite {
   vertical-align: super;
-  margin-left: 1px;
+  margin-left: calc(1px * var(--font-scale));
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-cite button {
   font: inherit;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   line-height: 1;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 3px;
+  min-width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
+  padding: 0 calc(3px * var(--font-scale));
   border: none;
   border-radius: 5px;
   background: var(--steel-tint);
@@ -8942,7 +9387,7 @@ button.small {
    and matchable to the roster. The favicon is served on-box (no third-party load); a
    load failure drops the icon and keeps the number, so the link is never lost. */
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-webcite {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   line-height: 1;
 }
@@ -8950,10 +9395,10 @@ button.small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px 0 3px;
+  gap: calc(3px * var(--font-scale));
+  min-width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
+  padding: 0 calc(4px * var(--font-scale)) 0 calc(3px * var(--font-scale));
   border-radius: 5px;
   background: var(--steel-tint);
   color: var(--steel);
@@ -8963,8 +9408,8 @@ button.small {
   font-variant-numeric: tabular-nums;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-favicon {
-  width: 11px;
-  height: 11px;
+  width: calc(11px * var(--font-scale));
+  height: calc(11px * var(--font-scale));
   border-radius: 3px;
   object-fit: contain;
   display: block;
@@ -8976,7 +9421,7 @@ button.small {
   display: inline-flex;
   align-items: center;
   vertical-align: -2px;
-  margin-left: 3px;
+  margin-left: calc(3px * var(--font-scale));
   color: var(--steel);
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-place:hover {
@@ -9002,28 +9447,28 @@ button.small {
 .fb-shell .proposal-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   align-self: flex-start;
-  margin-bottom: 8px;
-  padding: 7px 11px;
+  margin-bottom: calc(8px * var(--font-scale));
+  padding: calc(7px * var(--font-scale)) calc(11px * var(--font-scale));
   border: none;
   border-radius: 11px;
   background: var(--steel-tint);
   color: var(--steel);
   font: inherit;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 600;
   cursor: pointer;
 }
 .fb-shell .proposal-chip .tw-ic {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   flex: none;
   color: var(--steel);
 }
 .fb-shell .proposal-chip .tw-chev {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--font-scale));
+  height: calc(13px * var(--font-scale));
   flex: none;
   opacity: 0.7;
 }
@@ -9048,12 +9493,12 @@ button.small {
 }
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-flag {
   vertical-align: super;
-  margin-left: 1px;
-  font-size: 10px;
+  margin-left: calc(1px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   line-height: 1;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 3px;
+  min-width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
+  padding: 0 calc(3px * var(--font-scale));
   border: none;
   border-radius: 5px;
   background: var(--amber-tint);
@@ -9067,19 +9512,19 @@ button.small {
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-flag-note {
   display: inline-block;
   white-space: normal;
-  margin-left: 6px;
-  padding: 3px 8px;
+  margin-left: calc(6px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 8px;
   background: var(--amber-tint);
   color: var(--amber);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   vertical-align: middle;
 }
 /* the graceful fallback row: an end-of-bubble flag when a claim couldn't anchor
    in the prose */
 :is(.fb-shell, .jcode-bubble, .rl-md, .plan-sheet) .md-flag-fallback {
-  margin: 6px 0 0;
+  margin: calc(6px * var(--font-scale)) 0 0;
 }
 
 /* neutral "general knowledge" provenance note: a calm footer under an answer the
@@ -9089,9 +9534,9 @@ button.small {
 .fb-shell .fb-genknow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0 0;
-  padding: 3px 9px;
+  gap: calc(6px * var(--font-scale));
+  margin: calc(6px * var(--font-scale)) 0 0;
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   width: fit-content;
   border-radius: var(--r-pill);
   background: var(--steel-tint);
@@ -9100,8 +9545,8 @@ button.small {
   font-weight: 500;
 }
 .fb-shell .fb-genknow-ic {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--font-scale));
+  height: calc(13px * var(--font-scale));
   flex: none;
   fill: none;
   stroke: var(--steel);
@@ -9115,25 +9560,25 @@ button.small {
 .fb-shell .toolwork-ents {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
 }
 .fb-shell .entity-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: calc(6px * var(--font-scale));
+  padding: calc(5px * var(--font-scale)) calc(10px * var(--font-scale));
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   cursor: pointer;
 }
 .fb-shell .entity-chip .ent-dot {
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
   border-radius: 999px;
   flex: none;
 }
@@ -9144,6 +9589,109 @@ button.small {
   background: transparent;
   color: var(--text-3);
   font-weight: 400;
+}
+
+/* the "entity modified" rung (AGENT_INGEST_CONVERSATION_PLAN D3) — what a write tool
+   actually did to the graph, inside the step that did it. Same 23px result gutter and
+   same weights as the step's other rungs: this is the Worked block's register, not a
+   card of its own. */
+.fb-shell .fbw-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--font-scale));
+  margin: 0;
+  padding: 0 0 0 calc(23px * var(--font-scale));
+  list-style: none;
+}
+.fb-shell .fbw-row {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4px * var(--font-scale));
+}
+.fb-shell .fbw-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--font-scale));
+  font-size: calc(10.5px * var(--font-scale));
+}
+/* what became of the write. Tinted ground with the label in --text (the shipped
+   seg-active recipe), never an accent-coloured word on its own — the WORD is what
+   carries the state, the tint only reinforces it. */
+.fb-shell .fbw-verb {
+  padding: calc(2px * var(--font-scale)) calc(8px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.fb-shell .fbw-row.fbw-replaced .fbw-verb {
+  background: var(--steel-tint);
+}
+.fb-shell .fbw-row.fbw-held .fbw-verb {
+  background: var(--amber-tint);
+}
+/* found already on file and left alone. No tint — nothing about the graph happened, and
+   a green pill over it is the sentence "recorded" wearing a different word. */
+.fb-shell .fbw-row.fbw-already .fbw-verb,
+.fb-shell .fb-ledger-row.fbw-already .fb-ledger-verb {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+/* the domain, as a dot AND its name — D3's "never colour alone" is the firewall being
+   legible, so the word is not optional decoration beside the dot. */
+.fb-shell .fbw-dom {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--font-scale));
+  color: var(--text-2);
+}
+.fb-shell .fbw-src {
+  color: var(--text-3);
+}
+.fb-shell .fbw-row .fact-edge {
+  font-size: var(--fs-micro);
+}
+/* the edge BEHIND the statement, which now leads (DESIGN.md). Demoted deliberately: it
+   is the address of the fact, not the fact, and at equal weight the two read as the same
+   sentence said twice. */
+.fb-shell .fbw-row .fbw-edge {
+  font-size: calc(11px * var(--font-scale));
+  opacity: 0.75;
+}
+.fb-shell .fbw-stmt {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.fb-shell .fbw-row .rdiff {
+  margin-top: calc(3px * var(--font-scale));
+}
+.fb-shell .fbw-trunc {
+  padding-left: calc(23px * var(--font-scale));
+  margin-top: calc(6px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
+  color: var(--amber);
+}
+/* the row's own one-line summary of the write — the step's count-chip slot, so it
+   truncates with the row rather than wrapping it on a phone. */
+.fb-shell .fbw-cnt {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fbw-cnt.fbw-held {
+  color: var(--amber);
+}
+.fb-shell .fbw-cnt.fbw-failed {
+  color: var(--rose);
+}
+/* a call that changed nothing — every fact of it already on file, which is the ordinary
+   shape of a re-reading. Muted, because it is a result and not news. */
+.fb-shell .fbw-cnt.fbw-already {
+  color: var(--text-3);
 }
 
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
@@ -9157,8 +9705,8 @@ button.small {
    the bubble, so a closed panel adds no column gap and the line stays tight to the card
    foot; negative margins snug it to the answer above and the card's padding below. */
 .fb-shell .fb-act-foot {
-  margin-top: -6px;
-  margin-bottom: -6px;
+  margin-top: calc(-6px * var(--font-scale));
+  margin-bottom: calc(-6px * var(--font-scale));
 }
 .fb-shell .fb-act-foot.bare {
   /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
@@ -9167,32 +9715,51 @@ button.small {
 .fb-shell .fb-activity {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   flex-wrap: nowrap;
   border-top: 1px solid var(--border);
-  padding-top: 6px;
+  padding-top: calc(6px * var(--font-scale));
 }
 .fb-shell .fb-act-foot.bare .fb-activity {
   border-top: none;
-  padding-top: 2px;
+  padding-top: calc(2px * var(--font-scale));
 }
 /* a chip — thinking and worked share this shape; selected chips tint to their register */
 .fb-shell .fb-act-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 25px;
-  padding: 3px 9px;
+  gap: calc(6px * var(--font-scale));
+  /* The floor, on the one control between the owner and both the thinking trace and
+     what the turn wrote. Through a transparent bleed (`::before` below) rather than a
+     `min-height` on the button, because THIS button paints: `.fb-act-think.on` and
+     `.fb-act-work.on` tint its background and show its border, so a 44px box would make
+     the selected chip a 44px capsule around 12px of text, on every answer in the app.
+     The row is already 44px tall from `.fb-act-copy`/`.fb-act-play`, which are
+     transparent and can carry the floor directly, so this costs no extra height. */
+  position: relative;
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: 999px;
   background: none;
   border: 1px solid transparent;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   color: var(--text-2);
   text-align: left;
   cursor: pointer;
   transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+/* The 44px a thumb has to find, centred on the pill and drawing nothing. It bleeds
+   vertically into the answer's own text, which is not tappable — the trade DESIGN.md's
+   floor asks for, and safe here because `.fb-activity` is `nowrap`, so no second row of
+   controls can be underneath it. */
+.fb-shell .fb-act-chip::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 .fb-shell .fb-act-think {
   flex: none;
@@ -9208,8 +9775,8 @@ button.small {
 }
 .fb-shell .fb-act-ic,
 .fb-shell .fb-act-chip .tw-ic {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--font-scale));
+  height: calc(13px * var(--font-scale));
   flex: none;
 }
 .fb-shell .fb-act-think .fb-act-ic {
@@ -9231,7 +9798,7 @@ button.small {
 .fb-shell .fb-act-lab {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   flex: none;
 }
 .fb-shell .fb-act-count {
@@ -9249,6 +9816,13 @@ button.small {
 .fb-shell .fb-worked-fail {
   color: var(--rose);
 }
+/* What the turn actually wrote. Louder than the step count it replaces — it inherits
+   `.fb-act-count`'s dimmed `--text-3`, and the one thing this chip exists to surface
+   must not be the quietest text on it. */
+.fb-shell .fb-worked-wrote {
+  color: var(--text-2);
+  font-weight: 500;
+}
 /* the copy action: pinned to the far right; a glyph + "Copy" label, a brief green
    confirm that swaps to a check + "Copied". */
 .fb-shell .fb-act-copy {
@@ -9256,14 +9830,15 @@ button.small {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 5px;
-  min-height: 25px;
-  padding: 3px 8px;
+  gap: calc(5px * var(--font-scale));
+  min-width: 44px;
+  min-height: 0;
+  padding: calc(3px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 8px;
   background: none;
   border: none;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 500;
   color: var(--text-3);
   cursor: pointer;
@@ -9272,8 +9847,8 @@ button.small {
   color: var(--steel);
 }
 .fb-shell .fb-act-copy .fb-act-ic {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
   flex: none;
   color: currentColor;
 }
@@ -9285,17 +9860,34 @@ button.small {
    copy clears its own (the row gap alone spaces the pair) and squares up its padding. */
 .fb-shell .fb-act-copy.compact {
   margin-left: 0;
-  padding: 3px;
+  padding: calc(3px * var(--font-scale));
   gap: 0;
+  min-width: 0;
+  /* Pull the glyph to the end of its target so the row actually ends where the row
+     ends. Left-aligned, the copy glyph sat 33px in from the right edge at 65% — invisible
+     while the foot was 48.9px tall, but once the strip dropped to 22.1px that inset was
+     the only thing left to look at, and the pair read as mis-spaced rather than aligned.
+     The 44px box is the TAP TARGET and stays: two adjacent 44px targets cannot also sit
+     glyph-to-glyph, so the space between the two icons is that target's footprint, not
+     slack to be closed. `.fb-act-play` takes the same end alignment below. */
+  justify-content: flex-end;
 }
 .fb-shell .fb-act-play {
   flex: none;
   margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 25px;
-  padding: 3px;
+  /* End-aligned to match compact copy beside it, so the two glyphs share one rhythm
+     rather than one sitting centred in its target and the other pinned to the edge. */
+  justify-content: flex-end;
+  /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box.
+     The 44px WIDTH box is gone: it was the only thing holding the two glyphs 39px
+     apart, and the pair is meant to read as one cluster at the row's end. The width
+     comes back on the overlay below, taken OUTWARD into the empty half of the row
+     rather than from between the icons. */
+  min-width: 0;
+  min-height: 0;
+  padding: calc(3px * var(--font-scale));
   border-radius: 8px;
   background: none;
   border: none;
@@ -9314,6 +9906,42 @@ button.small {
 .fb-shell .fb-act-play.auto {
   color: var(--violet);
 }
+/* 44px is a HIT-AREA rule (DESIGN.md principle 1), not a painting one — and these two
+   buttons paint nothing but a glyph. Carried on `min-height` it was also the tallest
+   thing in the foot row, so the row took the floor's height rather than its own type's:
+   at 65% a 7.8px "Thought" label sat in a 48.9px strip, on every turn. The floor moves
+   to a centred overlay instead, so the strip follows the type — 48.9 -> 22.1px at 65%.
+   `min-width` still holds the width, so the target stays 44px wide; its HEIGHT measures
+   44px at 100%, 40 at 75% and 38 at 65%, because an overlay on a 22px row has to
+   overhang and the dock paints over the last few px under the final turn. That is the
+   honest cost, and still well above the 25px this control carried before the floor
+   existed. The overhang above reaches the answer's last line, which carries no tap of
+   its own. */
+.fb-shell .fb-act-play,
+.fb-shell .fb-act-copy {
+  position: relative;
+}
+.fb-shell .fb-act-play::after,
+.fb-shell .fb-act-copy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
+}
+/* With the glyphs paired, each painted box is only ~13px wide, so the overlay takes its
+   width from the side that is empty: play reaches left into the row's blank middle, copy
+   right into the bubble's own padding. Inward each stops short of the 8.5px between them,
+   so the two never overlap and a tap is never ambiguous. */
+.fb-shell .fb-act-play::after {
+  left: calc(-34px * var(--font-scale));
+  right: calc(-3px * var(--font-scale));
+}
+.fb-shell .fb-act-copy::after {
+  left: calc(-3px * var(--font-scale));
+  right: calc(-18px * var(--font-scale));
+}
+
 /* the long-press target shouldn't trigger the OS text-selection / callout while held. */
 .fb-shell .fb-act-play {
   -webkit-user-select: none;
@@ -9322,14 +9950,14 @@ button.small {
   touch-action: manipulation;
 }
 .fb-shell .fb-act-play .fb-act-ic {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   flex: none;
   color: currentColor;
 }
 .fb-shell .fb-act-pulse {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--font-scale));
+  height: calc(6px * var(--font-scale));
   flex: none;
   border-radius: 50%;
   background: var(--violet);
@@ -9366,13 +9994,13 @@ button.small {
   display: block;
 }
 .fb-shell .fb-thinking-trace {
-  margin: 2px 0 6px;
-  padding: 9px 11px;
-  max-height: 200px;
+  margin: calc(2px * var(--font-scale)) 0 calc(6px * var(--font-scale));
+  padding: calc(9px * var(--font-scale)) calc(11px * var(--font-scale));
+  max-height: calc(200px * var(--font-scale));
   overflow: auto;
   background: var(--violet-tint);
   border-radius: 10px;
-  font: 12.5px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: calc(12.5px * var(--font-scale)) / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-2);
   white-space: pre-wrap;
 }
@@ -9382,14 +10010,14 @@ button.small {
 .fb-shell .fb-think-tool {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 4px 0;
+  gap: calc(6px * var(--font-scale));
+  margin: calc(4px * var(--font-scale)) 0;
   min-width: 0;
 }
 .fb-shell .fb-think-mark {
   flex: none;
   color: var(--green);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
 }
 .fb-shell .fb-think-tool.bad .fb-think-mark {
   color: var(--rose);
@@ -9413,15 +10041,15 @@ button.small {
 .fb-shell .fb-steps {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 4px;
+  gap: calc(2px * var(--font-scale));
+  padding-top: calc(4px * var(--font-scale));
 }
 
 /* Sub-agent fan — the in-chat accordion below jerv's bubble (docs/reference/DESIGN.md
    "Sub-agent spawning surfaces", layout A). Persona is a NEUTRAL tag; semantic
    colour is confined to the glyph: steel=running, green=done, rose=failed. */
 .fb-shell .fb-sa {
-  margin: 8px 0 2px;
+  margin: calc(8px * var(--font-scale)) 0 calc(2px * var(--font-scale));
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   background: var(--surface-2);
@@ -9445,8 +10073,8 @@ button.small {
 .fb-shell .fb-sa-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
+  gap: calc(8px * var(--font-scale));
+  padding: calc(9px * var(--font-scale)) calc(12px * var(--font-scale));
   border-bottom: 1px solid var(--border);
 }
 .fb-shell .fb-sa-spark {
@@ -9457,26 +10085,26 @@ button.small {
   font-weight: 500;
 }
 .fb-shell .fb-sa-h-c {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
 }
 .fb-shell .fb-sa-stop {
   margin-left: auto;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--rose);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 2px 9px;
+  padding: calc(2px * var(--font-scale)) calc(9px * var(--font-scale));
   background: transparent;
   cursor: pointer;
 }
 .fb-shell .fb-sa-budget {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: calc(7px * var(--font-scale));
+  padding: calc(7px * var(--font-scale)) calc(12px * var(--font-scale));
   border-bottom: 1px solid var(--border);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   color: var(--text-3);
 }
 .fb-shell .fb-sa-budget-txt {
@@ -9484,7 +10112,7 @@ button.small {
 }
 .fb-shell .fb-sa-track {
   flex: 1;
-  height: 4px;
+  height: calc(4px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface);
   overflow: hidden;
@@ -9511,7 +10139,7 @@ button.small {
   border-bottom: none;
 }
 .fb-shell .fb-sa-row.sub {
-  margin-left: 18px;
+  margin-left: calc(18px * var(--font-scale));
 }
 /* Feeding-waves live grouping: a wave-header divider and the text feed edge, matching
    the final synthesis card's Direction-1 language (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md). */
@@ -9525,17 +10153,19 @@ button.small {
   border-bottom: none;
 }
 .fb-shell .fb-sa-wh {
-  padding: 6px 12px 4px;
-  font-size: 10px;
+  padding: calc(6px * var(--font-scale)) calc(12px * var(--font-scale))
+    calc(4px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
   background: var(--bg);
 }
 .fb-shell .fb-sa-fed {
-  padding: 0 12px 6px 30px;
-  margin-top: -2px;
-  font-size: 10px;
+  padding: 0 calc(12px * var(--font-scale)) calc(6px * var(--font-scale))
+    calc(30px * var(--font-scale));
+  margin-top: calc(-2px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   color: var(--violet, #a493c9);
 }
 .fb-shell .fb-sa-line {
@@ -9543,9 +10173,9 @@ button.small {
   /* Top-align: the label may wrap to two lines and owns the row, so the glyph, status,
      and caret sit against its first line rather than centring on a tall block. */
   align-items: flex-start;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   width: 100%;
-  padding: 9px 12px;
+  padding: calc(9px * var(--font-scale)) calc(12px * var(--font-scale));
   background: transparent;
   border: none;
   cursor: pointer;
@@ -9567,8 +10197,8 @@ button.small {
 }
 .fb-shell .fb-sa-ptag {
   flex: none;
-  font-size: 10px;
-  padding: 1px 7px;
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
   border-radius: 999px;
   font-weight: 500;
   background: var(--surface);
@@ -9579,17 +10209,17 @@ button.small {
    detail, off the collapsed row. */
 .fb-shell .fb-sa-persona {
   display: inline-block;
-  margin-bottom: 8px;
+  margin-bottom: calc(8px * var(--font-scale));
 }
 .fb-shell .fb-sa-st {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-2);
-  max-width: 108px;
+  max-width: calc(108px * var(--font-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: none;
-  margin-top: 4px; /* align with the label's first line (row top-aligns) */
+  margin-top: calc(4px * var(--font-scale)); /* align with the label's first line (row top-aligns) */
 }
 .fb-shell .fb-sa-st.fail {
   color: var(--rose);
@@ -9605,10 +10235,10 @@ button.small {
   flex: none;
   display: inline-flex;
   align-items: center;
-  margin-top: 4px; /* align with the label's first line (row top-aligns) */
+  margin-top: calc(4px * var(--font-scale)); /* align with the label's first line (row top-aligns) */
 }
 .fb-shell .fb-sa-ctx-txt {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -9621,14 +10251,14 @@ button.small {
 }
 .fb-shell .fb-sa-car {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   flex: none;
-  margin-top: 4px; /* align with the label's first line (row top-aligns) */
+  margin-top: calc(4px * var(--font-scale)); /* align with the label's first line (row top-aligns) */
 }
 /* thin per-row bar: indeterminate sweep while running, solid once settled */
 .fb-shell .fb-sa-bar {
-  height: 3px;
-  margin: 0 12px 8px;
+  height: calc(3px * var(--font-scale));
+  margin: 0 calc(12px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface);
   overflow: hidden;
@@ -9665,8 +10295,9 @@ button.small {
    left padding rather than tabbed in under the label — a deep indent only steals width from
    the monospace trace, more so once the fan is nested in the research timeline. */
 .fb-shell .fb-sa-detail {
-  padding: 0 12px 10px 12px;
-  font-size: 12px;
+  padding: 0 calc(12px * var(--font-scale)) calc(10px * var(--font-scale))
+    calc(12px * var(--font-scale));
+  font-size: var(--fs-micro);
   color: var(--text-2);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -9679,40 +10310,40 @@ button.small {
    Mirrors the main answer's "Thinking" register — the BrainGlyph toggle in violet over a
    violet-tint monospace box that auto-scrolls as tokens arrive. */
 .fb-shell .fb-sa-trace-wrap {
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--font-scale));
 }
 .fb-shell .fb-sa-trace-tog {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 0;
+  gap: calc(5px * var(--font-scale));
+  padding: calc(2px * var(--font-scale)) 0;
   border: 0;
   background: none;
   color: var(--violet);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 500;
   cursor: pointer;
 }
 .fb-shell .fb-sa-trace-car {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale));
 }
 .fb-shell .fb-sa-trace-ic {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--font-scale));
+  height: calc(13px * var(--font-scale));
 }
 .fb-shell .fb-sa-trace-c {
   color: var(--text-3);
   font-weight: 400;
 }
 .fb-shell .fb-sa-trace {
-  margin-top: 4px;
-  padding: 8px 10px;
+  margin-top: calc(4px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
   border-radius: 10px;
   background: var(--violet-tint);
-  font: 12px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-micro) / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-2);
   white-space: pre-wrap;
-  max-height: 200px;
+  max-height: calc(200px * var(--font-scale));
   overflow: auto;
 }
 /* A tool call injected inline in the trace: its own line (a flex block breaks the prose
@@ -9720,14 +10351,14 @@ button.small {
 .fb-shell .fb-sa-trace-tool {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 4px 0;
+  gap: calc(6px * var(--font-scale));
+  margin: calc(4px * var(--font-scale)) 0;
   min-width: 0;
 }
 .fb-shell .fb-sa-trace-mark {
   flex: none;
   color: var(--green);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
 }
 .fb-shell .fb-sa-trace-tool.bad .fb-sa-trace-mark {
   color: var(--rose);
@@ -9750,10 +10381,10 @@ button.small {
    whole fan open. `white-space: normal` undoes the detail block's pre-wrap — the Markdown
    lays out its own blocks — and the first/last-child margin resets keep the box tight. */
 .fb-shell .fb-sa-sum {
-  margin-top: 6px;
-  max-height: 240px;
+  margin-top: calc(6px * var(--font-scale));
+  max-height: calc(240px * var(--font-scale));
   overflow: auto;
-  padding: 8px 10px;
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
   border-radius: 10px;
   background: var(--surface-2);
   color: var(--text);
@@ -9773,9 +10404,9 @@ button.small {
 /* The "open sub-agent session" link inside an expanded child — its run persisted a
    transcript, so this opens the child's own conversation. */
 .fb-shell .fb-sa-open {
-  margin-top: 6px;
-  padding: 4px 0;
-  font-size: 11px;
+  margin-top: calc(6px * var(--font-scale));
+  padding: calc(4px * var(--font-scale)) 0;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 500;
   color: var(--steel);
   background: transparent;
@@ -9784,8 +10415,8 @@ button.small {
 }
 .fb-shell .fb-sa-more {
   width: 100%;
-  padding: 8px 12px;
-  font-size: 11px;
+  padding: calc(8px * var(--font-scale)) calc(12px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
   color: var(--steel);
   background: transparent;
   border: none;
@@ -9799,11 +10430,11 @@ button.small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  font-size: 13px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
+  font-size: var(--fs-head);
   /* nudge onto the label's first line now that the row top-aligns */
-  margin-top: 3px;
+  margin-top: calc(3px * var(--font-scale));
 }
 .fb-shell .fb-sa-g.done {
   color: var(--green);
@@ -9813,19 +10444,19 @@ button.small {
 }
 .fb-shell .fb-sa-g.run,
 .fb-shell .fb-sa-g.queued {
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
 }
 .fb-shell .fb-sa-g.run i {
-  width: 4px;
-  height: 4px;
+  width: calc(4px * var(--font-scale));
+  height: calc(4px * var(--font-scale));
   border-radius: 50%;
   background: var(--steel);
   animation: fb-sa-bounce 1s infinite;
 }
 /* Queued: the same dots, STATIC and dim — a waiting child reads as idle, not active. */
 .fb-shell .fb-sa-g.queued i {
-  width: 4px;
-  height: 4px;
+  width: calc(4px * var(--font-scale));
+  height: calc(4px * var(--font-scale));
   border-radius: 50%;
   background: var(--steel);
   opacity: 0.3;
@@ -9882,10 +10513,10 @@ button.small {
 .fb-shell .fb-step-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   width: 100%;
-  min-height: 38px;
-  padding: 5px 8px;
+  min-height: calc(38px * var(--font-scale));
+  padding: calc(5px * var(--font-scale)) calc(8px * var(--font-scale));
   background: none;
   border: none;
   font: inherit;
@@ -9894,8 +10525,8 @@ button.small {
   cursor: pointer;
 }
 .fb-shell .fb-step-row .tw-ic {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   flex: none;
   color: var(--steel);
 }
@@ -9905,14 +10536,14 @@ button.small {
 /* the fallback dot for a tool with no dedicated glyph — a small centered mark,
    not the full 15px icon box (which would render as a big muted disc) */
 .fb-shell .fb-step-row .tw-bullet {
-  width: 7px;
-  height: 7px;
-  margin: 0 4px;
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
+  margin: 0 calc(4px * var(--font-scale));
   background: var(--steel);
 }
 .fb-shell .fb-step-lab {
   flex: 1;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale));
   color: var(--text);
 }
 /* a web tool shows its target inline after the label — the label yields its
@@ -9924,15 +10555,15 @@ button.small {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .fb-shell .fb-step-mark {
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
   flex: none;
   border-radius: 999px;
   background: var(--green);
@@ -9945,12 +10576,12 @@ button.small {
   animation: fb-breathe 1.5s ease-in-out infinite;
 }
 .fb-shell .fb-step-cnt {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
 }
 .fb-shell .fb-step-caret {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
   flex: none;
   color: var(--text-2);
   transition: transform 0.16s ease-out;
@@ -9971,47 +10602,47 @@ button.small {
   overflow: hidden;
 }
 .fb-shell .fb-step.open .fb-step-di {
-  padding-bottom: 6px;
+  padding-bottom: calc(6px * var(--font-scale));
 }
 
 /* arguments — a flat one-level key/value list, monospace values */
 .fb-shell .fb-args {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 12px;
-  margin: 2px 0 8px;
-  padding-left: 23px;
+  gap: calc(2px * var(--font-scale)) calc(12px * var(--font-scale));
+  margin: calc(2px * var(--font-scale)) 0 calc(8px * var(--font-scale));
+  padding-left: calc(23px * var(--font-scale));
 }
 .fb-shell .fb-args-row {
   display: contents;
 }
 .fb-shell .fb-args dt {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
 }
 .fb-shell .fb-args dd {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--text-2);
   font-family: var(--font-mono);
   word-break: break-word;
 }
 .fb-shell .fb-res-lab {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding-left: 23px;
-  margin-bottom: 4px;
+  padding-left: calc(23px * var(--font-scale));
+  margin-bottom: calc(4px * var(--font-scale));
 }
 .fb-shell .fb-res-txt {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-2);
   line-height: 1.45;
-  padding-left: 23px;
+  padding-left: calc(23px * var(--font-scale));
   /* a long result scrolls within its own pane rather than running the step
      on forever — the expansion stays a glanceable height (the screenshot's
      web_fetch summary was the offender). */
-  max-height: 220px;
+  max-height: calc(220px * var(--font-scale));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -10021,19 +10652,19 @@ button.small {
 
 /* the raw result rung — clamped monospace inset with copy + show-all */
 .fb-shell .fb-raw-wrap {
-  padding-left: 23px;
-  margin-top: 7px;
+  padding-left: calc(23px * var(--font-scale));
+  margin-top: calc(7px * var(--font-scale));
 }
 .fb-shell .fb-raw-toggle {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 3px 10px;
+  min-height: calc(28px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(10px * var(--font-scale));
   background: none;
   border: 1px solid var(--border);
   border-radius: 999px;
   font: inherit;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--text-2);
   cursor: pointer;
 }
@@ -10043,27 +10674,28 @@ button.small {
 }
 .fb-shell .fb-raw {
   position: relative;
-  margin-top: 8px;
+  margin-top: calc(8px * var(--font-scale));
 }
 .fb-shell .fb-raw-pre {
   margin: 0;
-  padding: 8px 40px 8px 12px;
+  padding: calc(8px * var(--font-scale)) calc(40px * var(--font-scale))
+    calc(8px * var(--font-scale)) calc(12px * var(--font-scale));
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   line-height: 1.5;
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 150px;
+  max-height: calc(150px * var(--font-scale));
   overflow: hidden;
 }
 .fb-shell .fb-raw-pre.full {
   /* "show all lines" lifts the 150px clamp but still scrolls within a bounded
      pane rather than expanding without limit. */
-  max-height: 360px;
+  max-height: calc(360px * var(--font-scale));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -10071,8 +10703,8 @@ button.small {
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 30px;
-  height: 30px;
+  width: calc(30px * var(--font-scale));
+  height: calc(30px * var(--font-scale));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -10087,26 +10719,26 @@ button.small {
   border-color: var(--steel);
 }
 .fb-shell .fb-raw-copy .tw-ic {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
 }
 .fb-shell .fb-raw-more {
   display: block;
-  margin-top: 6px;
-  padding: 2px;
+  margin-top: calc(6px * var(--font-scale));
+  padding: calc(2px * var(--font-scale));
   background: none;
   border: none;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--steel);
   cursor: pointer;
 }
 .fb-shell .tw-bullet {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--font-scale));
+  height: calc(6px * var(--font-scale));
   border-radius: 999px;
   background: var(--text-3);
-  margin: 0 4px;
+  margin: 0 calc(4px * var(--font-scale));
 }
 @media (prefers-reduced-motion: reduce) {
   .fb-shell .fb-act-body,
@@ -10123,15 +10755,15 @@ button.small {
 .fb-shell .toolwork-srcs {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding-left: 23px;
+  gap: calc(5px * var(--font-scale));
+  padding-left: calc(23px * var(--font-scale));
 }
 .fb-shell .toolwork-card {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: calc(9px * var(--font-scale));
   width: 100%;
-  padding: 6px 10px;
+  padding: calc(6px * var(--font-scale)) calc(10px * var(--font-scale));
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-2);
@@ -10147,22 +10779,22 @@ button.small {
   border-color: var(--steel);
 }
 .fb-shell .toolwork-card .tw-dot {
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
   border-radius: 999px;
   flex: none;
 }
 .fb-shell .toolwork-card .tw-text {
   flex: 1;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fb-shell .toolwork-card .tw-chev {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
   flex: none;
   color: var(--text-2);
 }
@@ -10177,8 +10809,8 @@ button.small {
   border-color: var(--steel);
 }
 .fb-shell .toolwork-card .tw-favicon {
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--font-scale));
+  height: calc(16px * var(--font-scale));
   border-radius: 4px;
   object-fit: contain;
   flex: none;
@@ -10189,7 +10821,7 @@ button.small {
   justify-content: center;
   background: var(--steel-tint);
   color: var(--steel);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   font-weight: 700;
 }
 .fb-shell .toolwork-card .tw-web-title {
@@ -10200,7 +10832,7 @@ button.small {
 }
 .fb-shell .toolwork-card .tw-web-host {
   display: block;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10216,15 +10848,22 @@ button.small {
   max-width: 100%;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px 8px;
-  font-size: 12.5px;
+  gap: calc(8px * var(--font-scale));
+  /* Sits between the last turn and the omnibox, so its padding is what centres it there.
+     Above it sits the chat's own 4px floor, below it the dock's 8px gutter, so the two
+     sides only match when this padding makes up the 4px difference: 6 over 2 puts 10px
+     on each side at every text size. Measured 6.5 above against 13.2 below at 65% before
+     (the dock's gutter was unscaled then), which read as belonging to the turn rather
+     than sitting between it and the box. */
+  padding: calc(6px * var(--font-scale)) calc(16px * var(--font-scale))
+    calc(2px * var(--font-scale));
+  font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
   color: var(--text-2);
 }
 .fb-shell .fb-status-mark {
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--font-scale));
+  height: calc(7px * var(--font-scale));
   flex: none;
   border-radius: 999px;
   background: var(--steel);
@@ -10256,7 +10895,7 @@ button.small {
 .fb-shell .fb-status-time {
   flex: none;
   font-variant-numeric: tabular-nums;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   font-weight: 500;
   color: var(--text-3);
 }
@@ -10287,14 +10926,14 @@ button.small {
 .fb-shell .fb-status-stop,
 .fb-shell .fb-status-go {
   flex: none;
-  margin-left: 2px;
-  padding: 2px 10px;
+  margin-left: calc(2px * var(--font-scale));
+  padding: calc(2px * var(--font-scale)) calc(10px * var(--font-scale));
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   font-weight: 600;
   cursor: pointer;
 }
@@ -10347,11 +10986,11 @@ button.small {
 
 /* composer */
 .fb-shell .fb-composer {
-  margin: 0 16px 16px;
+  margin: 0 calc(16px * var(--font-scale)) calc(16px * var(--font-scale));
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
-  padding: 10px;
+  padding: calc(10px * var(--font-scale));
   flex: none;
 }
 .fb-shell .fb-composer textarea {
@@ -10360,7 +10999,7 @@ button.small {
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 16px;
+  font-size: var(--fs-body);
   resize: none;
   min-height: 44px;
   outline: none;
@@ -10369,11 +11008,11 @@ button.small {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 4px 0;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(6px * var(--font-scale)) calc(4px * var(--font-scale)) 0;
 }
 .fb-shell .fb-hint {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 .fb-shell .fb-foot button {
@@ -10381,9 +11020,9 @@ button.small {
   background: var(--steel-tint);
   color: var(--steel);
   border-radius: 10px;
-  width: 38px;
-  height: 34px;
-  font-size: 16px;
+  width: calc(38px * var(--font-scale));
+  height: calc(34px * var(--font-scale));
+  font-size: var(--fs-body);
 }
 .fb-shell .fb-foot button:disabled {
   opacity: 0.4;
@@ -10428,11 +11067,11 @@ button.small {
   overflow: hidden;
 }
 .fb-shell .panel-bar {
-  height: 56px;
+  height: calc(56px * var(--font-scale));
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 14px;
+  gap: calc(12px * var(--font-scale));
+  padding: 0 calc(14px * var(--font-scale));
   border-bottom: 1px solid var(--border);
   flex: none;
 }
@@ -10440,11 +11079,11 @@ button.small {
   border: none;
   background: none;
   color: var(--text-2);
-  font-size: 26px;
+  font-size: calc(26px * var(--font-scale));
   line-height: 1;
 }
 .fb-shell .panel-bar .ttl {
-  font-size: 17px;
+  font-size: var(--fs-composer);
   font-weight: 600;
   /* Clamp to one line with an ellipsis: a long proposal title must never wrap and
      break mid-word (the old "…adf3)a"). min-width:0 lets it shrink in the flex bar. */
@@ -10456,26 +11095,27 @@ button.small {
 }
 .fb-shell .panel-bar .sub {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 .fb-shell .panel-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: calc(14px * var(--font-scale)) calc(16px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10px * var(--font-scale));
 }
 /* The chat picker pins New chat + the Today/Older/Archived segments + search,
    and scrolls only the row list beneath them. */
 .fb-shell .panel-top {
   flex: none;
-  padding: 12px 16px 10px;
+  padding: calc(12px * var(--font-scale)) calc(16px * var(--font-scale))
+    calc(10px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10px * var(--font-scale));
   border-bottom: 1px solid var(--border);
 }
 .fb-shell .panel-list {
@@ -10485,7 +11125,8 @@ button.small {
      (the classic flex-column scroll trap — long chat histories ran off-screen). */
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 16px 20px;
+  padding: calc(12px * var(--font-scale)) calc(16px * var(--font-scale))
+    calc(20px * var(--font-scale));
   display: flex;
   flex-direction: column;
 }
@@ -10495,12 +11136,12 @@ button.small {
   --mode-tint: var(--steel-tint);
 }
 .fb-shell .seg-n {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
   background: var(--surface-2);
   border-radius: 999px;
-  padding: 1px 7px;
-  min-width: 18px;
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
+  min-width: calc(18px * var(--font-scale));
   text-align: center;
 }
 .fb-shell .seg-on .seg-n {
@@ -10508,20 +11149,20 @@ button.small {
   color: var(--steel);
 }
 .fb-shell .sect {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
-  margin: 4px 2px 0;
+  margin: calc(4px * var(--font-scale)) calc(2px * var(--font-scale)) 0;
 }
 .fb-shell .row {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 13px 14px;
+  padding: calc(13px * var(--font-scale)) calc(14px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   text-align: left;
   color: var(--text);
   font: inherit;
@@ -10563,11 +11204,11 @@ button.small {
   overflow: hidden;
 }
 .fb-shell .session-rail .rail-btn {
-  width: 96px;
+  width: calc(96px * var(--font-scale));
 }
 /* Four actions (rename · scope · archive · delete) split the same RAIL_WIDTH. */
 .fb-shell .session-rail.rail-4 .rail-btn {
-  width: 48px;
+  width: calc(48px * var(--font-scale));
 }
 .fb-shell .rail-archive {
   background: var(--steel-tint);
@@ -10596,34 +11237,35 @@ button.small {
 .fb-shell .sa-rail-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 2px 0 0 16px;
-  padding: 4px 2px;
+  gap: calc(6px * var(--font-scale));
+  margin: calc(2px * var(--font-scale)) 0 0 calc(16px * var(--font-scale));
+  padding: calc(4px * var(--font-scale)) calc(2px * var(--font-scale));
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
   text-align: left;
 }
 .fb-shell .sa-rail-kids,
 .fb-shell .sa-node-grail {
-  margin: 2px 0 4px 21px;
+  margin: calc(2px * var(--font-scale)) 0 calc(4px * var(--font-scale))
+    calc(21px * var(--font-scale));
   border-left: 1px solid var(--border);
-  padding-left: 12px;
+  padding-left: calc(12px * var(--font-scale));
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
 }
 .fb-shell .sa-node-grail {
-  margin-left: 8px;
+  margin-left: calc(8px * var(--font-scale));
 }
 .fb-shell .sa-node-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   width: 100%;
-  padding: 6px 4px;
+  padding: calc(6px * var(--font-scale)) calc(4px * var(--font-scale));
   background: none;
   border: none;
   cursor: pointer;
@@ -10632,10 +11274,10 @@ button.small {
 }
 .fb-shell .sa-node-glyph {
   flex: none;
-  width: 14px;
+  width: calc(14px * var(--font-scale));
   text-align: center;
   color: var(--green);
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 .fb-shell .sa-node-glyph.failed {
   color: var(--rose);
@@ -10655,12 +11297,12 @@ button.small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-head);
 }
 .fb-shell .sa-ptag {
   flex: none;
-  font-size: 10px;
-  padding: 1px 7px;
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
   border-radius: 999px;
   font-weight: 500;
   background: var(--surface-2);
@@ -10669,7 +11311,7 @@ button.small {
 }
 .fb-shell .sa-node-st {
   flex: none;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   color: var(--text-2);
 }
 .fb-shell .session-tap {
@@ -10784,7 +11426,7 @@ button.small {
 .fb-shell .m-title {
   flex: 1;
   min-width: 0;
-  font-size: 14.5px;
+  font-size: calc(14.5px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10796,7 +11438,7 @@ button.small {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
 }
 .fb-shell .m-meta .stat.staged {
   margin-left: 0;
@@ -10806,44 +11448,45 @@ button.small {
   color: var(--text-3);
 }
 .fb-shell .session-rename {
-  width: calc(100% - 22px);
-  margin: 5px 11px;
+  /* 22px is the 11px side margins below, doubled — it has to travel with them. */
+  width: calc(100% - 22px * var(--font-scale));
+  margin: calc(5px * var(--font-scale)) calc(11px * var(--font-scale));
   background: var(--surface-2);
   border: 1px solid var(--steel);
   border-radius: 9px;
   color: var(--text);
   font: inherit;
-  font-size: 15px;
-  padding: 7px 9px;
+  font-size: var(--fs-note);
+  padding: calc(7px * var(--font-scale)) calc(9px * var(--font-scale));
   outline: none;
 }
 .fb-shell .row .r-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: calc(8px * var(--font-scale));
+  font-size: var(--fs-note);
   min-width: 0;
   flex-wrap: wrap;
 }
 .fb-shell .row .r-sub {
-  font-size: 13px;
+  font-size: var(--fs-head);
   color: var(--text-2);
 }
 .fb-shell .row .r-meta {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   display: flex;
-  gap: 10px;
+  gap: calc(10px * var(--font-scale));
   align-items: center;
 }
 .fb-shell .pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
 }
 .fb-shell .pill {
-  font-size: 11px;
-  padding: 3px 9px;
+  font-size: calc(11px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-2);
@@ -10893,25 +11536,25 @@ button.small {
 
 /* the compact row's trailing meta: turn count and the staged badge */
 .fb-shell .r-turns {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
 }
 .fb-shell .stat.staged {
-  font-size: 11px;
-  padding: 3px 9px;
+  font-size: calc(11px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: 999px;
   background: var(--steel-tint);
   color: var(--steel);
 }
 .fb-shell .badge {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   font-weight: 600;
   color: var(--bg);
   background: var(--steel);
   border-radius: 999px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
+  min-width: calc(20px * var(--font-scale));
+  height: calc(20px * var(--font-scale));
+  padding: 0 calc(6px * var(--font-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -10921,9 +11564,9 @@ button.small {
 .fb-shell .lead,
 .sheet .lead {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-head);
   line-height: 1.5;
-  margin-bottom: 12px;
+  margin-bottom: calc(12px * var(--font-scale));
 }
 .sheet .session-title {
   width: 100%;
@@ -10931,24 +11574,24 @@ button.small {
   background: var(--surface-2);
   color: var(--text);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
   font: inherit;
-  margin-bottom: 12px;
+  margin-bottom: calc(12px * var(--font-scale));
 }
 .sheet .domain-opts {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
 }
 .sheet .opt {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
   text-align: left;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 12px;
-  padding: 11px 13px;
+  padding: calc(11px * var(--font-scale)) calc(13px * var(--font-scale));
   color: var(--text-2);
 }
 .sheet .opt.on {
@@ -10957,10 +11600,10 @@ button.small {
   color: var(--text);
 }
 .sheet .opt .opt-t {
-  font-size: 15px;
+  font-size: var(--fs-note);
 }
 .sheet .opt .opt-d {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -10971,29 +11614,29 @@ button.small {
 .sheet .agent-opts {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 14px;
+  gap: calc(8px * var(--font-scale));
+  margin-bottom: calc(14px * var(--font-scale));
 }
 .sheet .agent-opt {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: calc(12px * var(--font-scale));
   text-align: left;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 14px;
-  padding: 12px;
+  padding: calc(12px * var(--font-scale));
   color: var(--text);
 }
 .sheet .agent-opt .agent-opt-ico {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: calc(34px * var(--font-scale));
+  height: calc(34px * var(--font-scale));
   border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--fs-note);
   font-weight: 600;
   background: var(--surface-2);
   color: var(--text-2);
@@ -11003,26 +11646,26 @@ button.small {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
 }
 .sheet .agent-opt .agent-opt-t {
-  font-size: 15px;
+  font-size: var(--fs-note);
 }
 .sheet .agent-opt .agent-opt-d {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   line-height: 1.35;
 }
 .sheet .agent-opt .agent-opt-check {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--font-scale));
+  height: calc(22px * var(--font-scale));
   border-radius: 999px;
   border: 1.5px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--fs-head);
   color: transparent;
 }
 .sheet .agent-opt.curator.on {
@@ -11062,8 +11705,8 @@ button.small {
   color: var(--green);
 }
 .sheet .reads-summary.agent-nodata {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: calc(12px * var(--font-scale));
+  padding: calc(12px * var(--font-scale));
   border: 1px dashed var(--border);
   border-radius: 12px;
   color: var(--text-2);
@@ -11071,12 +11714,12 @@ button.small {
 
 .sheet .start {
   width: 100%;
-  margin-top: 14px;
+  margin-top: calc(14px * var(--font-scale));
   border: none;
   background: var(--steel-tint);
   color: var(--steel);
   border-radius: 12px;
-  padding: 13px;
+  padding: calc(13px * var(--font-scale));
   font: inherit;
   font-weight: 600;
 }
@@ -11088,42 +11731,42 @@ button.small {
    preset pills, and the per-domain grid only when Custom is asked for. */
 .sheet .start-big {
   width: 100%;
-  margin-top: 4px;
+  margin-top: calc(4px * var(--font-scale));
   border: none;
   background: var(--steel);
   color: var(--bg);
   border-radius: 14px;
-  padding: 15px;
+  padding: calc(15px * var(--font-scale));
   font: inherit;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
 }
 .sheet .start-big:disabled {
   opacity: 0.4;
 }
 .sheet .start-big .start-main {
-  font-size: 17px;
+  font-size: var(--fs-composer);
   font-weight: 600;
 }
 .sheet .start-big .start-hint {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   opacity: 0.8;
 }
 .sheet .or {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
   text-align: center;
-  margin: 14px 0 10px;
+  margin: calc(14px * var(--font-scale)) 0 calc(10px * var(--font-scale));
 }
 .sheet .presets {
   display: flex;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: calc(4px * var(--font-scale));
   scrollbar-width: none;
 }
 .sheet .presets::-webkit-scrollbar {
@@ -11131,8 +11774,8 @@ button.small {
 }
 .sheet .preset {
   flex: none;
-  font-size: 13px;
-  padding: 9px 15px;
+  font-size: var(--fs-head);
+  padding: calc(9px * var(--font-scale)) calc(15px * var(--font-scale));
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface-2);
@@ -11145,26 +11788,26 @@ button.small {
   color: var(--text);
 }
 .sheet .reads-summary {
-  font-size: 13px;
+  font-size: var(--fs-head);
   color: var(--text-2);
   line-height: 1.45;
-  margin: 14px 2px 0;
+  margin: calc(14px * var(--font-scale)) calc(2px * var(--font-scale)) 0;
 }
 .sheet .reads-summary b {
   color: var(--text);
   font-weight: 500;
 }
 .sheet .domain-opts {
-  margin-top: 12px;
+  margin-top: calc(12px * var(--font-scale));
 }
 .sheet .session-title {
-  margin-top: 14px;
+  margin-top: calc(14px * var(--font-scale));
   margin-bottom: 0;
 }
 .sheet .writes-note {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
-  margin-top: 10px;
+  margin-top: calc(10px * var(--font-scale));
   line-height: 1.5;
 }
 
@@ -11172,7 +11815,7 @@ button.small {
 .fb-shell .tool-view {
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
   background: var(--surface-2);
 }
 /* The transcript brings its own card chrome (border/radius/surface); drop the
@@ -11191,10 +11834,10 @@ button.small {
 .fb-shell .tv-syn-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   font-size: var(--fs-secondary);
   font-weight: 500;
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--font-scale));
 }
 .fb-shell .tv-syn-ic {
   color: var(--green);
@@ -11203,19 +11846,19 @@ button.small {
   color: var(--rose);
 }
 .fb-shell .tv-syn-child {
-  padding: 6px 0;
+  padding: calc(6px * var(--font-scale)) 0;
   border-top: 1px solid var(--border);
 }
 /* The row + its open-session link sit side by side; the row flexes, the icon is fixed. */
 .fb-shell .tv-syn-rowwrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
 }
 .fb-shell .tv-syn-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px * var(--font-scale));
   flex: 1;
   min-width: 0;
   padding: 0;
@@ -11232,8 +11875,8 @@ button.small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: calc(24px * var(--font-scale));
+  height: calc(24px * var(--font-scale));
   padding: 0;
   border: 0;
   border-radius: 7px;
@@ -11246,18 +11889,18 @@ button.small {
   color: var(--text);
 }
 .fb-shell .tv-syn-open svg {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
 }
 .fb-shell .tv-syn-car {
   flex: none;
   color: var(--text-3);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
 }
 .fb-shell .tv-syn-mark {
   flex: none;
   color: var(--green);
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 .fb-shell .tv-syn-mark.bad {
   color: var(--rose);
@@ -11269,23 +11912,23 @@ button.small {
 }
 /* Feeding-waves grouping: a wave header divider, and the text feed edge. */
 .fb-shell .tv-syn-wave + .tv-syn-wave {
-  margin-top: 4px;
+  margin-top: calc(4px * var(--font-scale));
 }
 .fb-shell .tv-syn-wh {
-  margin: 8px 0 4px;
-  font-size: 10px;
+  margin: calc(8px * var(--font-scale)) 0 calc(4px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
 }
 .fb-shell .tv-syn-fed {
-  margin: 2px 0 0 19px;
-  font-size: 10px;
+  margin: calc(2px * var(--font-scale)) 0 0 calc(19px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   color: var(--violet, #a493c9);
 }
 .fb-shell .tv-syn-skip {
-  margin: 3px 0 0 19px;
-  font-size: 12px;
+  margin: calc(3px * var(--font-scale)) 0 0 calc(19px * var(--font-scale));
+  font-size: var(--fs-micro);
   color: var(--amber, #c9a36a);
 }
 .fb-shell .tv-syn-clbl {
@@ -11298,8 +11941,8 @@ button.small {
 }
 .fb-shell .tv-syn-ptag {
   flex: none;
-  font-size: 10px;
-  padding: 1px 7px;
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
   border-radius: 999px;
   font-weight: 500;
   background: var(--surface);
@@ -11307,8 +11950,8 @@ button.small {
   border: 1px solid var(--border);
 }
 .fb-shell .tv-syn-sum {
-  margin: 4px 0 0 19px;
-  font-size: 12px;
+  margin: calc(4px * var(--font-scale)) 0 0 calc(19px * var(--font-scale));
+  font-size: var(--fs-micro);
   color: var(--text-2);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -11319,11 +11962,11 @@ button.small {
 .fb-shell .tv-dr-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   flex-wrap: wrap;
 }
 .fb-shell .tv-dr-cap {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
@@ -11338,14 +11981,14 @@ button.small {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(2px * var(--font-scale));
 }
 .fb-shell .tv-dr-act {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: calc(26px * var(--font-scale));
+  height: calc(26px * var(--font-scale));
   padding: 0;
   border: 0;
   border-radius: 7px;
@@ -11365,22 +12008,22 @@ button.small {
   color: var(--amber, #c9a36a);
 }
 .fb-shell .tv-dr-act svg {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
 }
 /* The report-body disclosure (collapsed by default), a touch of room above it. */
 .fb-shell .tv-dr-report-toggle {
-  margin-top: 2px;
+  margin-top: calc(2px * var(--font-scale));
 }
 .fb-shell .tv-dr-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  margin: 6px 0 8px;
+  gap: calc(5px * var(--font-scale));
+  margin: calc(6px * var(--font-scale)) 0 calc(8px * var(--font-scale));
 }
 .fb-shell .tv-dr-chip {
-  font-size: 10px;
-  padding: 1px 7px;
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-2);
@@ -11396,9 +12039,9 @@ button.small {
   color: var(--text);
 }
 .fb-shell .tv-dr-roster {
-  margin-top: 8px;
+  margin-top: calc(8px * var(--font-scale));
   border-top: 1px solid var(--border);
-  padding-top: 6px;
+  padding-top: calc(6px * var(--font-scale));
 }
 .fb-shell .tv-dr-rtoggle {
   padding: 0;
@@ -11406,23 +12049,23 @@ button.small {
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 .fb-shell .tv-dr-row {
-  padding: 5px 0;
+  padding: calc(5px * var(--font-scale)) 0;
 }
 .fb-shell .tv-stat .tv-stat-value {
-  font-size: 22px;
+  font-size: var(--fs-screen);
   font-weight: 600;
 }
 .fb-shell .tv-stat .tv-stat-unit {
-  font-size: 13px;
+  font-size: var(--fs-head);
   color: var(--text-3);
-  margin-left: 4px;
+  margin-left: calc(4px * var(--font-scale));
 }
 .fb-shell .tv-stat .tv-stat-label {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-2);
 }
 .fb-shell .tv-stat.tone-good {
@@ -11437,12 +12080,12 @@ button.small {
 .fb-shell .tv-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-head);
 }
 .fb-shell .tv-table th,
 .fb-shell .tv-table td {
   text-align: left;
-  padding: 5px 8px;
+  padding: calc(5px * var(--font-scale)) calc(8px * var(--font-scale));
   border-bottom: 1px solid var(--border);
 }
 .fb-shell .tv-table th {
@@ -11452,55 +12095,55 @@ button.small {
 .fb-shell .tv-citation-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
 }
 .fb-shell .tv-cite {
-  font-size: 11px;
-  padding: 3px 9px;
+  font-size: calc(11px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-2);
 }
 .fb-shell .tv-citations-title {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--font-scale));
 }
 
 /* list_card — the owner's checklist, full-bleed rows inside the view card */
 .fb-shell .tv-list-head {
-  font-size: 13px;
+  font-size: var(--fs-head);
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--font-scale));
 }
 .fb-shell .tv-list-items {
   list-style: none;
-  margin: 0 -12px -10px; /* full-bleed the rows to the card edges */
+  margin: 0 calc(-12px * var(--font-scale)) calc(-10px * var(--font-scale)); /* full-bleed the rows to the card edges */
   padding: 0;
 }
 .fb-shell .tv-list-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 12px;
+  gap: calc(9px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(12px * var(--font-scale));
   border-top: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--fs-head);
 }
 .fb-shell .tv-list-check {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 5px; /* a comfortable tap target around the 15px box */
-  margin: -5px 0;
+  padding: calc(5px * var(--font-scale)); /* a comfortable tap target around the 15px box */
+  margin: calc(-5px * var(--font-scale)) 0;
   border: none;
   background: none;
   cursor: pointer;
 }
 .fb-shell .tv-list-box {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   flex: none;
   border: 1.5px solid var(--text-3);
   border-radius: 4px;
@@ -11512,9 +12155,9 @@ button.small {
 .fb-shell .tv-list-row.checked .tv-list-box::after {
   content: "";
   display: block;
-  width: 4px;
-  height: 8px;
-  margin: 1px auto;
+  width: calc(4px * var(--font-scale));
+  height: calc(8px * var(--font-scale));
+  margin: calc(1px * var(--font-scale)) auto;
   border: solid #0e0f11;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
@@ -11524,8 +12167,8 @@ button.small {
   text-decoration: line-through;
 }
 .fb-shell .tv-list-empty {
-  padding: 8px 0 0;
-  font-size: 12px;
+  padding: calc(8px * var(--font-scale)) 0 0;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -11534,18 +12177,18 @@ button.small {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
 }
 .fb-shell .tv-appt-title {
-  font-size: 13px;
+  font-size: var(--fs-head);
   font-weight: 600;
 }
 .fb-shell .tv-appt-status {
   flex: none;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 2px 8px;
+  padding: calc(2px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 999px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -11564,15 +12207,15 @@ button.small {
   color: var(--text-3);
 }
 .fb-shell .tv-appt-when {
-  font-size: 13px;
-  margin-top: 3px;
+  font-size: var(--fs-head);
+  margin-top: calc(3px * var(--font-scale));
 }
 .fb-shell .tv-appt-loc,
 .fb-shell .tv-appt-repeat,
 .fb-shell .tv-appt-with {
-  font-size: 12px;
+  font-size: var(--fs-micro);
   color: var(--text-2);
-  margin-top: 2px;
+  margin-top: calc(2px * var(--font-scale));
 }
 
 /* location_map / place_card — the first Leaflet-dependent tool-views (Option B,
@@ -11675,40 +12318,40 @@ button.small {
 }
 /* the segments list = the text render of the gap-split trail */
 .fb-shell .loc-segs {
-  margin-top: 10px;
+  margin-top: calc(10px * var(--font-scale));
 }
 .fb-shell .loc-segs-head {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale));
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-3);
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--font-scale));
 }
 .fb-shell .loc-seg {
   display: flex;
-  gap: 10px;
-  padding: 8px 0;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) 0;
   border-bottom: 1px solid var(--border);
 }
 .fb-shell .loc-seg:last-child {
   border-bottom: 0;
 }
 .fb-shell .loc-seg-knob {
-  width: 9px;
-  height: 9px;
-  margin-top: 4px;
+  width: calc(9px * var(--font-scale));
+  height: calc(9px * var(--font-scale));
+  margin-top: calc(4px * var(--font-scale));
   flex: none;
   border-radius: 50%;
   background: var(--location);
 }
 .fb-shell .loc-seg-title {
-  font-size: 13px;
+  font-size: var(--fs-head);
   font-weight: 500;
 }
 .fb-shell .loc-seg-meta {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--text-3);
-  margin-top: 1px;
+  margin-top: calc(1px * var(--font-scale));
 }
 .fb-shell .loc-seg.gap .loc-seg-knob {
   background: var(--amber);
@@ -12591,8 +13234,8 @@ button.small {
   top: 8px;
   right: 8px;
   display: flex;
-  width: 28px;
-  height: 28px;
+  width: calc(28px * var(--font-scale));
+  height: calc(28px * var(--font-scale));
   align-items: center;
   justify-content: center;
   border-radius: 8px;
@@ -12601,8 +13244,8 @@ button.small {
   opacity: 0.85;
 }
 .fb-shell .tv-genimg-expand svg {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   fill: none;
   stroke: #fff;
   stroke-width: 2;
@@ -12610,32 +13253,32 @@ button.small {
   stroke-linejoin: round;
 }
 .fb-shell .tv-genimg-cap {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--text-3);
-  padding: 7px 2px 1px;
+  padding: calc(7px * var(--font-scale)) calc(2px * var(--font-scale)) calc(1px * var(--font-scale));
 }
 
 /* Live generation preview — "image-as-progress" (docs/mocks/image-gen-live A):
    the preview fills the final image slot and sharpens (blur → 0) as sampling
    advances; a slim bottom bar + a corner Stop. */
 .fb-shell .fb-genprev {
-  margin: 4px 0 2px;
+  margin: calc(4px * var(--font-scale)) 0 calc(2px * var(--font-scale));
 }
 /* Live phase status for a multi-step tool (analyze_video) — replaced by its card. */
 .fb-shell .fb-toolstatus {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin: 6px 0 2px;
-  padding: 10px 12px;
+  gap: calc(9px * var(--font-scale));
+  margin: calc(6px * var(--font-scale)) 0 calc(2px * var(--font-scale));
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   font-size: var(--fs-secondary);
 }
 .fb-shell .fb-toolstatus-spin {
-  width: 14px;
-  height: 14px;
+  width: calc(14px * var(--font-scale));
+  height: calc(14px * var(--font-scale));
   flex: 0 0 auto;
   border-radius: var(--r-pill);
   border: 2px solid var(--steel-tint);
@@ -12649,7 +13292,7 @@ button.small {
 }
 .fb-shell .fb-toolstatus-bar {
   flex: 0 0 64px;
-  height: 4px;
+  height: calc(4px * var(--font-scale));
   border-radius: var(--r-pill);
   background: var(--surface-2);
   overflow: hidden;
@@ -12666,7 +13309,7 @@ button.small {
    written. */
 .fb-shell .fb-drp {
   display: block;
-  margin: 4px 0 2px;
+  margin: calc(4px * var(--font-scale)) 0 calc(2px * var(--font-scale));
   /* No card chrome of its own: this HOSTS the sub-agent fan (its own bordered card) and
      sits inside the answer bubble, so a border + fill here would frame-inside-a-frame
      against both. The rail carries the structure. Reset the bubble's prose text flow
@@ -12693,11 +13336,11 @@ button.small {
      monospace fan trace would push the column — and the whole card — off the right edge.
      minmax(0, …) lets it shrink so the fan's own overflow handling clips instead. */
   grid-template-columns: 16px minmax(0, 1fr);
-  column-gap: 9px;
+  column-gap: calc(9px * var(--font-scale));
   align-items: start;
   position: relative;
-  padding-bottom: 3px;
-  font-size: 13px;
+  padding-bottom: calc(3px * var(--font-scale));
+  font-size: var(--fs-head);
   color: var(--text-3);
 }
 /* The rail: a hairline between this stage's dot and the next, steel once the stage is done
@@ -12708,7 +13351,7 @@ button.small {
   left: 7px;
   top: 20px;
   bottom: 0;
-  width: 2px;
+  width: calc(2px * var(--font-scale));
   background: var(--border);
 }
 .fb-shell .fb-drp-step:last-child::before {
@@ -12719,9 +13362,9 @@ button.small {
 }
 .fb-shell .fb-drp-dot {
   grid-column: 1;
-  width: 15px;
-  height: 15px;
-  margin-top: 3px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
+  margin-top: calc(3px * var(--font-scale));
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -12729,14 +13372,14 @@ button.small {
   border-radius: var(--r-pill);
   border: 1.5px solid var(--border);
   background: var(--surface);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale));
   line-height: 1;
   color: var(--steel);
 }
 .fb-shell .fb-drp-name {
   grid-column: 2;
   min-width: 0;
-  padding: 4px 0 5px;
+  padding: calc(4px * var(--font-scale)) 0 calc(5px * var(--font-scale));
   align-self: center;
 }
 /* Done: steel-tint fill + steel check (legible in both themes). Active: steel ring that
@@ -12777,8 +13420,8 @@ button.small {
   color: var(--text);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 10px;
+  gap: calc(8px * var(--font-scale));
+  padding-bottom: calc(10px * var(--font-scale));
 }
 /* The fan is nested, not a loose sibling — the panel's flex gap owns its spacing. */
 .fb-shell .fb-drp-panel .fb-sa {
@@ -12792,7 +13435,7 @@ button.small {
 }
 .fb-shell .fb-drp-active {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-micro);
 }
 /* The live report streams here — capped + scrollable so a long draft doesn't become a
    wall (the final report card carries the whole thing). Now a boxed pane inside the stage
@@ -12800,7 +13443,7 @@ button.small {
 .fb-shell .fb-drp-report {
   max-height: 40vh;
   overflow-y: auto;
-  padding: 9px 11px;
+  padding: calc(9px * var(--font-scale)) calc(11px * var(--font-scale));
   border: 1px solid var(--border);
   background: var(--surface-2);
   border-radius: 12px;
@@ -12810,15 +13453,15 @@ button.small {
    (violet BrainGlyph + label, pill on hover/open) and the body reuses `fb-thinking-trace`
    verbatim, so an in-tool think is visually identical to one shown outside the tool. */
 .fb-shell .fb-drp-think {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
 }
 .fb-shell .fb-drp-think-sum {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 25px;
-  padding: 3px 9px;
-  margin-left: -9px; /* pull the pill's padding back to the panel's left edge */
+  gap: calc(7px * var(--font-scale));
+  min-height: calc(25px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
+  margin-left: calc(-9px * var(--font-scale)); /* pull the pill's padding back to the panel's left edge */
   border-radius: 999px;
   color: var(--text-2);
   font-weight: 500;
@@ -12831,8 +13474,8 @@ button.small {
   display: none; /* drop the native disclosure triangle — the BrainGlyph is the mark */
 }
 .fb-shell .fb-drp-think-sum .fb-act-ic {
-  width: 13px;
-  height: 13px;
+  width: calc(13px * var(--font-scale));
+  height: calc(13px * var(--font-scale));
   flex: none;
   color: var(--violet);
 }
@@ -12854,28 +13497,28 @@ button.small {
 .fb-shell .fb-deepest-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   flex-wrap: wrap;
 }
 .fb-shell .fb-deepest-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: calc(6px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
   font-weight: 600;
   color: var(--amber);
   background: var(--amber-tint);
   border: 1px solid rgba(201, 163, 106, 0.3);
-  padding: 3px 10px;
+  padding: calc(3px * var(--font-scale)) calc(10px * var(--font-scale));
   border-radius: var(--r-pill);
 }
 .fb-shell .fb-deepest-sub {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-2);
 }
 .fb-shell .fb-deepest-meta {
-  margin-top: 3px;
-  font-size: 11px;
+  margin-top: calc(3px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -12935,13 +13578,14 @@ button.small {
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px 9px;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale))
+    calc(9px * var(--font-scale));
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.7), transparent);
 }
 .fb-shell .fb-genprev-step,
 .fb-shell .fb-genprev-pct {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--font-scale));
   color: #fff;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
@@ -12955,7 +13599,7 @@ button.small {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 3px;
+  height: calc(3px * var(--font-scale));
   background: rgba(255, 255, 255, 0.14);
 }
 .fb-shell .fb-genprev-bar i {
@@ -12985,9 +13629,10 @@ button.small {
   right: 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 11px 4px 9px;
-  font-size: 11.5px;
+  gap: calc(6px * var(--font-scale));
+  padding: calc(4px * var(--font-scale)) calc(11px * var(--font-scale))
+    calc(4px * var(--font-scale)) calc(9px * var(--font-scale));
+  font-size: calc(11.5px * var(--font-scale));
   color: #fff;
   cursor: pointer;
   background: rgba(20, 21, 24, 0.78);
@@ -13000,8 +13645,8 @@ button.small {
   border-color: transparent;
 }
 .fb-shell .fb-genprev-sq {
-  width: 8px;
-  height: 8px;
+  width: calc(8px * var(--font-scale));
+  height: calc(8px * var(--font-scale));
   border-radius: 2px;
   background: currentColor;
 }
@@ -13076,10 +13721,10 @@ button.small {
 .fb-shell .tv-genimg-lbl {
   position: absolute;
   bottom: 8px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.04em;
-  padding: 2px 7px;
+  padding: calc(2px * var(--font-scale)) calc(7px * var(--font-scale));
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--bg) 62%, transparent);
   color: var(--text-2);
@@ -13096,7 +13741,7 @@ button.small {
   top: 0;
   bottom: 0;
   left: var(--pos, 50%);
-  width: 2px;
+  width: calc(2px * var(--font-scale));
   transform: translateX(-1px);
   background: var(--steel);
 }
@@ -13105,17 +13750,17 @@ button.small {
   top: 50%;
   left: var(--pos, 50%);
   transform: translate(-50%, -50%);
-  width: 32px;
-  height: 32px;
+  width: calc(32px * var(--font-scale));
+  height: calc(32px * var(--font-scale));
   border-radius: 50%;
   background: var(--steel);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .fb-shell .tv-genimg-acts {
   display: flex;
-  gap: 8px;
+  gap: calc(8px * var(--font-scale));
   align-items: center;
-  padding: 7px 2px 1px;
+  padding: calc(7px * var(--font-scale)) calc(2px * var(--font-scale)) calc(1px * var(--font-scale));
 }
 .fb-shell .tv-genimg-acts .tv-genimg-cap {
   margin-right: auto;
@@ -13137,16 +13782,16 @@ button.small {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 26px;
+  width: calc(32px * var(--font-scale));
+  height: calc(26px * var(--font-scale));
   border: 0;
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
 }
 .fb-shell .tv-genimg-seg button svg {
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -13171,7 +13816,7 @@ button.small {
   min-width: 0;
 }
 .fb-shell .node-row .node-status {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale));
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-3);
@@ -13190,17 +13835,17 @@ button.small {
 }
 .fb-shell .node-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
+  gap: calc(8px * var(--font-scale));
+  margin-top: calc(4px * var(--font-scale));
 }
 .fb-shell .node-actions button {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   border-radius: 9px;
-  padding: 6px 12px;
+  padding: calc(6px * var(--font-scale)) calc(12px * var(--font-scale));
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-head);
 }
 .fb-shell .node-actions button:disabled {
   opacity: 0.4;
@@ -13215,44 +13860,45 @@ button.small {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
   min-width: 0;
 }
 .fb-shell .merge-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: calc(5px * var(--font-scale));
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
-  padding: 2px 9px 2px 3px;
-  font-size: 13px;
+  padding: calc(2px * var(--font-scale)) calc(9px * var(--font-scale)) calc(2px * var(--font-scale))
+    calc(3px * var(--font-scale));
+  font-size: var(--fs-head);
 }
 .fb-shell .merge-arrow {
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-secondary);
 }
 
 /* ===== Inline approval card (agent/InlineProposal; docs/mocks/inline-approvals/
    d-one-tree.html) — one staged Proposal acted on IN the answer bubble: per-leaf
    approve/decline-with-reason/correct-in-place and one double-tap Enact. ===== */
 .fb-shell .fb-inline-prop {
-  margin-top: 10px;
+  margin-top: calc(10px * var(--font-scale));
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 13px;
   overflow: hidden;
 }
 .fb-shell .fb-inline-prop.loading {
-  padding: 12px 13px;
+  padding: calc(12px * var(--font-scale)) calc(13px * var(--font-scale));
   color: var(--text-3);
   font-size: var(--fs-secondary);
 }
 .fb-shell .fb-inline-prop.done {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
-  padding: 12px 13px;
+  gap: calc(9px * var(--font-scale));
+  padding: calc(12px * var(--font-scale)) calc(13px * var(--font-scale));
   color: var(--ok);
   font-size: var(--fs-secondary);
   line-height: 1.45;
@@ -13264,13 +13910,13 @@ button.small {
   display: block;
   color: var(--text-3);
   font-size: var(--fs-micro);
-  margin-top: 2px;
+  margin-top: calc(2px * var(--font-scale));
 }
 .fb-shell .ip-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 12px;
+  gap: calc(8px * var(--font-scale));
+  padding: calc(11px * var(--font-scale)) calc(12px * var(--font-scale));
   border-bottom: 1px solid var(--border);
 }
 .fb-shell .ip-title {
@@ -13283,25 +13929,25 @@ button.small {
   flex: none;
 }
 .fb-shell .ip-tree {
-  padding: 4px 8px;
+  padding: calc(4px * var(--font-scale)) calc(8px * var(--font-scale));
 }
 .fb-shell .ip-group-head {
-  padding: 8px 6px 4px;
+  padding: calc(8px * var(--font-scale)) calc(6px * var(--font-scale)) calc(4px * var(--font-scale));
   font-size: var(--fs-micro);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-3);
 }
 .fb-shell .ip-group-body {
-  margin-left: 3px;
-  padding-left: 9px;
+  margin-left: calc(3px * var(--font-scale));
+  padding-left: calc(9px * var(--font-scale));
   border-left: 1px solid var(--border);
 }
 .fb-shell .ip-leaf {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 6px 8px;
-  padding: 8px 6px;
+  gap: calc(6px * var(--font-scale)) calc(8px * var(--font-scale));
+  padding: calc(8px * var(--font-scale)) calc(6px * var(--font-scale));
   align-items: start;
 }
 .fb-shell .ip-leaf + .ip-leaf {
@@ -13326,17 +13972,17 @@ button.small {
   font-size: var(--fs-micro);
 }
 .fb-shell .ip-value {
-  margin-top: 5px;
+  margin-top: calc(5px * var(--font-scale));
 }
 .fb-shell .ip-value-text {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6px * var(--font-scale));
   max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 3px 8px;
+  padding: calc(3px * var(--font-scale)) calc(8px * var(--font-scale));
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text);
@@ -13355,32 +14001,32 @@ button.small {
 }
 .fb-shell .ip-edit-input {
   width: 100%;
-  max-width: 220px;
+  max-width: calc(220px * var(--font-scale));
   background: var(--surface);
   border: 1px solid var(--warn);
   border-radius: 8px;
-  padding: 3px 8px;
+  padding: calc(3px * var(--font-scale)) calc(8px * var(--font-scale));
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--text);
 }
 .fb-shell .ip-held-badge {
   display: inline-block;
-  margin-top: 6px;
+  margin-top: calc(6px * var(--font-scale));
   font-size: var(--fs-micro);
   color: var(--warn);
   background: var(--warn-tint, var(--amber-tint));
-  padding: 2px 8px;
+  padding: calc(2px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: var(--r-pill);
 }
 .fb-shell .ip-ctl {
   grid-column: 2;
   display: flex;
-  gap: 5px;
+  gap: calc(5px * var(--font-scale));
 }
 .fb-shell .ip-ctl button {
-  width: 30px;
-  height: 30px;
+  width: calc(30px * var(--font-scale));
+  height: calc(30px * var(--font-scale));
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -13408,8 +14054,8 @@ button.small {
   grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px 2px 2px;
+  gap: calc(6px * var(--font-scale));
+  padding: calc(6px * var(--font-scale)) calc(2px * var(--font-scale)) calc(2px * var(--font-scale));
 }
 .fb-shell .ip-reason-label {
   font-size: var(--fs-micro);
@@ -13420,15 +14066,15 @@ button.small {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 9px;
-  padding: 8px 10px;
+  padding: calc(8px * var(--font-scale)) calc(10px * var(--font-scale));
   font-size: var(--fs-micro);
   color: var(--text);
 }
 .fb-shell .ip-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
   border-top: 1px solid var(--border);
 }
 .fb-shell .ip-tally {
@@ -13448,7 +14094,7 @@ button.small {
 .fb-shell .ip-enact {
   flex: none;
   min-height: 44px;
-  padding: 10px 16px;
+  padding: calc(10px * var(--font-scale)) calc(16px * var(--font-scale));
   border: none;
   border-radius: 11px;
   background: var(--accent);
@@ -18000,6 +18646,11 @@ button.auto-sect[aria-expanded="true"] > svg {
   border-radius: 5px;
   /* No transition: the karaoke highlight snaps to the spoken word (owner choice). */
 }
+/* A transcript with no media under it (an SDR captions row) renders its words as spans:
+   nothing to seek, so nothing that looks tappable. */
+span.atx-w {
+  cursor: default;
+}
 /* box-shadow (not padding) makes the pill, so the highlight never reflows words. */
 .atx-w.now {
   background: var(--steel);
@@ -18272,12 +18923,13 @@ button.auto-sect[aria-expanded="true"] > svg {
    bubble is frameless); its `.fb-activity` border-top is the divider from the card body. */
 .fb-shell .fb-analysis-card .fb-act-foot {
   margin: 0;
-  padding: 8px 14px 10px;
+  padding: calc(8px * var(--font-scale)) calc(14px * var(--font-scale))
+    calc(10px * var(--font-scale));
 }
 .fb-shell .fb-analysis-card .fb-act-foot.bare .fb-activity {
   /* keep the divider even if the foot leads with no answer, so the footer stays attached */
   border-top: 1px solid var(--border);
-  padding-top: 6px;
+  padding-top: calc(6px * var(--font-scale));
 }
 .tv-task {
   display: flex;
@@ -18892,8 +19544,8 @@ button.auto-sect[aria-expanded="true"] > svg {
 /* The Chats-picker plan badge — the same plan_status on the session row, beside the
    staged badge (scoped like .stat.staged). */
 .fb-shell .stat.plan {
-  font-size: 11px;
-  padding: 3px 9px;
+  font-size: calc(11px * var(--font-scale));
+  padding: calc(3px * var(--font-scale)) calc(9px * var(--font-scale));
   border-radius: 999px;
   color: var(--text-3);
   background: var(--surface-2);
@@ -24673,6 +25325,21 @@ button.task-band:active {
   color: var(--steel);
 }
 
+/* The note button in the top bar's right cluster: the door from a note's conversation to
+   the note itself. Quiet (`--text-2`, the readout register beside it) — the conversation
+   is where the owner is, and this is the reference, not the destination. */
+.note-btn {
+  color: var(--text-2);
+  /* ⟲ Restated rather than removed: `.icon-btn` now carries the same floor itself, so
+     this is no longer the one control in the bar that clears it. It stays because this is
+     the ONLY door from an open conversation to the note's record — the analysis table and
+     both no-terminal re-run levers sit behind it — and a control that important should
+     not depend on a shared base rule staying right. `.icon-btn`'s -8px margin pulls the
+     visual box back, so the glyph sits where the cluster expects it. */
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .sdr-note {
   font-size: var(--fs-secondary);
   color: var(--text-2);
@@ -25120,9 +25787,18 @@ button.task-band:active {
   font-weight: 640;
   margin: 0;
 }
-/* The tab strip is the shared `.seg-tabs` control (see the session list); what is left
-   here is only the screen's own scroll body — `.subscreen` is a fixed flex column, so
-   the content pane is what scrolls, never the shell. */
+/* The tab strip is the shared `.seg-row`/`.seg` control — the one the job row inside a
+   radio (`.sdr-jobs`) uses, and this supplies only the accent its tint reads from, in the
+   same two lines that file does. Two tab-shaped rows a thumb apart on one screen were
+   drawn two different ways before this; nothing here restyles the control itself. */
+.radio-tabs {
+  --mode: var(--accent);
+  --mode-tint: var(--accent-tint);
+  margin-bottom: 11px;
+}
+
+/* what is left here is only the screen's own scroll body — `.subscreen` is a fixed flex
+   column, so the content pane is what scrolls, never the shell. */
 .radio-body {
   flex: 1;
   overflow-y: auto;
@@ -25608,43 +26284,78 @@ button.task-band:active {
    question"), and a near-identical clone under a different class name would have slipped
    past that test while being exactly what it was written against. Only the count pill and
    the tighter spacing are new. */
+/* THE COMPACT VARIANT (DESIGN.md: "compact-variant rows may reduce to 36px height but
+   never shrink tap areas below 44px including padding"). Measured on the owner's phone,
+   these two rows plus their labels ate roughly a third of the screen before the first
+   station appeared — on a screen whose whole job is the list underneath them.
+   36px painted, 44px live, and the 8px between rows is exactly what the pads claim, so
+   two neighbouring filters can never overlap into one another's target. */
 .aprs-ranges {
-  margin-bottom: 9px;
+  margin-bottom: 8px;
+  /* The hit pad below reaches past the pill, and `.seg-tabs` clips to its radius — which
+     clips hit-testing too, not only paint. So this row keeps the radius on its segments
+     (next rule) instead of on the container. */
+  overflow: visible;
 }
-/* The house control is ~31px tall repo-wide; on this screen it is the primary filter and
-   sits next to the chips, so it gets the phone tap target rather than matching a
-   deviation. */
 .aprs-ranges .seg-tab {
-  min-height: 44px;
+  position: relative;
+  min-height: 36px;
+  font-size: var(--fs-micro);
+}
+/* What `overflow: hidden` was doing for the container: without it the active segment's
+   tint squares off the pill's rounded ends. Inset by the container's 1px border. */
+.aprs-ranges .seg-tab:first-child {
+  border-radius: calc(var(--r-seg) - 1px) 0 0 calc(var(--r-seg) - 1px);
+}
+.aprs-ranges .seg-tab:last-child {
+  border-radius: 0 calc(var(--r-seg) - 1px) calc(var(--r-seg) - 1px) 0;
+}
+/* The 8px the row gave up, handed back as tap area it does not have to paint. Invisible,
+   out of flow, and part of its own button — so the target is 44px while the control reads
+   36px. The repo's other answer to this (`button.vitals`, `.note-menu-btn`) is transparent
+   padding plus a negative margin, which cannot work for either of these: the segment is
+   inside a clipping pill, and the chips WRAP, where negative margins would pull two rows
+   of targets through each other. */
+.aprs-ranges .seg-tab::before,
+.aprs-chip::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
 }
 .seg-count {
   font-size: 10.5px;
   color: var(--text-3);
 }
+/* The counts are the reason these chips are worth their space, so they come UP to the
+   type scale's floor as the rows come down — scoped, because `.seg-count` is shared. */
+.aprs-ranges .seg-count {
+  font-size: var(--fs-micro);
+}
 .seg-tab.on .seg-count {
   color: inherit;
 }
 
+/* Row-gap 8px is load-bearing: it is what the two chip rows' hit pads occupy when the row
+   wraps. Column-gap can be tighter — nothing extends sideways. */
 .aprs-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 11px;
+  gap: 8px 6px;
+  margin-bottom: 8px;
 }
 .aprs-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  /* 44px of tap target on a phone (DESIGN.md), even though the pill reads smaller. A
-     filter you have to aim at twice is a filter you stop using. */
-  min-height: 44px;
-  padding: 5px 12px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-micro);
   cursor: pointer;
 }
 .aprs-chip[aria-pressed="true"] {
@@ -25653,11 +26364,29 @@ button.task-band:active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .aprs-chip-n {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 .aprs-chip[aria-pressed="true"] .aprs-chip-n {
   color: inherit;
+}
+/* The provenance chips share the row with the kinds, so they carry the SAME tints the
+   packet rows' provenance badge does — the chip that filters "gated" looks like the
+   "gated" badge the reader is filtering on, which is what tells the two dimensions apart
+   in one row without a divider that would land mid-wrap. */
+.aprs-chip-arr.b-direct {
+  --chip: var(--ok, var(--accent));
+}
+.aprs-chip-arr.b-gated {
+  --chip: var(--text-2);
+}
+.aprs-chip-arr.b-rf {
+  --chip: var(--accent);
+}
+.aprs-chip-arr[aria-pressed="true"] {
+  border-color: var(--chip);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
 }
 
 .aprs-count {
@@ -26455,4 +27184,1008 @@ button.wf-sigpill {
 .tv-swap[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* The filter width, under the mode it belongs to (docs/mocks/bandwidth, shape D).
+   Inside the mode button rather than beside it: mode and bandwidth are one setting to
+   the owner — "AM, 6 kHz wide" — and two controls for one setting is what shape D was
+   chosen to avoid. */
+.sdr-modes .seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.15;
+}
+.sdr-bw {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.sdr-modes .seg-on .sdr-bw {
+  color: var(--accent);
+}
+
+/* The passband's draggable edges, over the tuning view's canvas. Handles rather than a
+   slider: the value being set is WHERE THE EDGE SITS on this picture, and a slider
+   somewhere else would make the owner map a number onto the interference by eye. */
+.sdr-tuneview {
+  position: relative;
+  touch-action: none;
+}
+.sdr-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The TOUCH target stays wide — a 12px one on a 32 kHz picture is a miss most tries.
+     What shrank is the grip drawn inside it, which at 12x28 covered a chunk of the trace
+     it is meant to sit beside and read as furniture rather than as an edge. */
+  width: 28px;
+  margin-left: -14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Comfortably past the 44px minimum in the tall direction, and 28px wide so two
+     handles on a narrow AM filter do not overlap into one unhittable target. */
+  min-height: 44px;
+}
+.sdr-edge::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  margin-top: -9px;
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.95;
+}
+.sdr-edge:disabled {
+  cursor: default;
+}
+.sdr-edge:disabled::after {
+  opacity: 0.35;
+}
+.sdr-edge-on::after,
+.sdr-edge:focus-visible::after {
+  opacity: 1;
+  /* Grows only while held, so the grip is findable under a fingertip without being
+     furniture the rest of the time. */
+  box-shadow: 0 0 0 5px var(--steel-tint);
+}
+.sdr-edge-live {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 6px;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--scrim);
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+/* The tuning view's width, which doubles as the zoom. Styled as text that can be
+   tapped rather than as a button: it sits inside a label, and a real button there
+   would read as chrome on a sheet that is already tall. The dotted underline is the
+   only affordance it needs — the row it labels is the thing that changes. */
+.tv-zoom {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--text-3);
+}
+.tv-zoom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- SDR recordings: the library and the trim sheet ------------------------------- */
+/* Binding specs: docs/mocks/recording/a-tape-deck.html (rows) and d-trim-sheet.html
+   (the header's disk line, the trailing scissors column, the whole trim sheet).
+   Sized against the neighbouring radio surfaces — .radio-body already gives a 14px
+   gutter, so nothing here carries a horizontal margin of its own. */
+.sdr-act-record {
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+/* Armed INVERTS rather than merely brightening: the button is about to do something,
+   and a tint that only deepens is the state people tap through without reading. */
+.sdr-act-record.armed {
+  color: var(--bg);
+  background: var(--rose);
+}
+.sdr-act-record .sdr-rec-el {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+/* What Record will keep, under the word rather than beside it — the same stacked
+   label/sub-label the mode segment uses for its bandwidth (`.sdr-modes .seg` + `.sdr-bw`),
+   because kind and Record are one setting to the owner and `.sdr-actions` has room for
+   exactly the two `flex: 1` buttons already in it. */
+.sdr-rec-what {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.15;
+}
+.sdr-rec-kind {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* Armed inverts the whole button, so the sub-label has to come with it: --text-3 on the
+   filled rose reads as a smudge rather than as a word. */
+.sdr-act-record.armed .sdr-rec-kind {
+  color: var(--bg);
+  opacity: 0.8;
+}
+.sdr-act-record small {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-disk {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.rec-freed {
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.rec-bar {
+  height: 5px;
+  margin: 6px 2px 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rec-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-day {
+  margin: 12px 2px 6px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+/* The row is the flex container, so the trailing action sits BESIDE the tappable body
+   rather than wrapping under it, and the progress bar spans the full width below both. */
+.rec-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.rec-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px 11px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* Its own control beside the row, not a glyph inside it: the circle plays and the row
+   expands, and one button that guessed from the tap's coordinates would have one
+   accessible name for two different actions. */
+.rec-play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: center;
+  width: 38px;
+  height: 38px;
+  margin-left: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.rec-row-on .rec-play {
+  border-color: var(--accent);
+  background: var(--steel-tint);
+  color: var(--accent);
+}
+.rec-who {
+  flex: 1;
+  min-width: 0;
+}
+.rec-who b {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.rec-unit {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* Scoped to a class, not `.rec-who span`: an element+class selector outranks `.rec-chip`,
+   which quietly turned the mode badge and the MHz unit into full-width blocks. */
+.rec-who .rec-prev {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.rec-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  color: var(--text-2);
+  vertical-align: 1px;
+}
+.rec-chip-cut {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  color: var(--green);
+}
+/* A captions row, marked on the row itself rather than left to be inferred from the
+   missing play control. Steel, the app's "this is text" accent, not an alarm colour. */
+.rec-chip-cc {
+  border-color: color-mix(in srgb, var(--steel) 45%, var(--border));
+  color: var(--steel);
+}
+/* The 12px gutter the play control's own margin supplies on a clip row has to come from
+   the body when there is no play control. */
+.rec-row-cc .rec-main {
+  padding-left: 12px;
+}
+/* The transcript viewer sits in the row's body, which already has the surface and the
+   hairline above it — so the legend's own top border would be a second rule 10px under
+   the first, and its padding is the card's, not this list's. */
+.rec-body .atx-body {
+  padding: 10px 0 2px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  /* The cap is re-stated because the component's own is computed from --fs-body: left
+     alone, the smaller type here would scroll at about nine lines instead of six. */
+  max-height: calc(var(--fs-micro) * 1.55 * 6 + 12px);
+}
+.rec-body .atx-legend {
+  padding: 6px 0 10px;
+  border-top: 0;
+}
+.rec-meta {
+  flex: none;
+  text-align: right;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 44px and divided by a hairline: the whole point of the column is that the one
+   irreversible action on this surface cannot be hit by a thumb aiming at the row. */
+.rec-trim {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  width: 44px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.rec-prog {
+  flex: 0 0 100%;
+  height: 3px;
+  background: var(--surface-2);
+}
+.rec-prog i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-body {
+  flex: 0 0 100%;
+  padding: 0 12px 6px;
+  border-top: 1px solid var(--border);
+}
+.rec-tx {
+  margin: 10px 0 2px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+/* The house action list (.rl-action), so Delete arms and confirms the same way it does
+   in the Research Library rather than inventing a second ceremony. An <a> is in the row
+   because a download is a URL the browser handles, never a request through the client. */
+.rec-body .rl-action {
+  text-decoration: none;
+  font-size: var(--fs-secondary);
+}
+.rec-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--accent);
+}
+
+.trim-sub {
+  margin: 0 0 14px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* The waveform is the argument: radio has real silence in it, so the part worth
+   keeping is VISIBLE. Its ground is dark in both themes — a level envelope on a white
+   card reads as a chart, not as tape. */
+.trim-wave {
+  position: relative;
+  height: 118px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a0c10;
+  overflow: hidden;
+  touch-action: none;
+}
+.trim-bar {
+  position: absolute;
+  bottom: 50%;
+  width: 2px;
+  background: var(--text-3);
+  opacity: 0.45;
+  transform: translateY(50%);
+}
+.trim-bar.in {
+  background: var(--green);
+  opacity: 1;
+}
+.trim-drop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(14, 15, 17, 0.55);
+}
+.trim-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  margin-left: -17px;
+  touch-action: none;
+}
+.trim-grip::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--green);
+}
+.trim-grip::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  margin-top: -16px;
+  width: 12px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--green);
+}
+.trim-grip:focus-visible {
+  outline: none;
+}
+.trim-grip:focus-visible::after {
+  box-shadow: 0 0 0 4px var(--green-tint);
+}
+.trim-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.trim-at {
+  position: absolute;
+  top: 6px;
+  font-size: 9px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-at-in {
+  left: 6px;
+}
+.trim-at-out {
+  right: 6px;
+}
+.trim-marks {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 2px 0;
+  font-size: 10px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.trim-nudge {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.trim-nudge button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.trim-sums {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.trim-sums div {
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.trim-sums span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.trim-sums b {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-note);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.trim-sums .trim-was {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.trim-gain {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--green-tint);
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.trim-gain b {
+  font-variant-numeric: tabular-nums;
+}
+.trim-error {
+  margin: 10px 2px 0;
+  font-size: var(--fs-micro);
+  color: var(--danger);
+}
+.trim-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.trim-acts button {
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  cursor: pointer;
+}
+/* Green because it is the SAVE, per the house green=save rule — and 1.5× wide because
+   it is the one button on this sheet that cannot be undone. */
+.trim-acts .trim-keep {
+  flex: 1.5;
+  border-color: var(--green);
+  background: var(--green-tint);
+  color: var(--text);
+  font-weight: 500;
+}
+.trim-acts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.trim-foot {
+  margin: 12px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.trim-foot b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+/* The waveform's ground stays dark in LIGHT theme too — a level envelope on a white
+   card reads as a chart rather than as tape, and the green selection needs the contrast.
+   Both values are the mock's, and both are picture content rather than chrome. */
+[data-theme="light"] .trim-wave {
+  background: #0e1218;
+}
+[data-theme="light"] .trim-drop {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+/* --- The note's own thread (AGENT_INGEST_REWRITE §3b, binding mock
+   docs/mocks/agent-ingest-thread/note-thread.html) ---------------------------------- */
+
+/* Turn 0: the note, frozen. Not a bubble — it is not something the owner just said, it
+   is the thing the conversation is about — so it is ruled rather than filled, in the
+   NOTE'S OWN domain colour (the mock fixes it rose, which in this palette is the medical
+   domain and would say something false on a financial note). Steel when the session
+   stored no scopes to read a domain off. */
+.fb-shell .fb-turn0 {
+  --note-rule: var(--steel);
+  align-self: stretch;
+  padding: calc(10px * var(--font-scale)) calc(13px * var(--font-scale));
+  border-left: 3px solid var(--note-rule);
+  border-radius: 0 var(--r-card) var(--r-card) 0;
+  background: var(--surface);
+}
+.fb-shell .fb-turn0-label {
+  margin: 0 0 calc(5px * var(--font-scale));
+  color: var(--note-rule);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-turn0-body {
+  /* The note reads at the SAME size as the answer about it — never smaller. */
+  font-size: var(--fs-chat);
+  /* The note's own line breaks are part of it; the frame's are gone with the frame. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The question block. AMBER, not the mock's rose, for the reason the stream chip is
+   amber: rose is the MEDICAL domain here, so a rose block says the same thing twice on a
+   medical note. Amber is the open-ask register, and the words carry it regardless. */
+.fb-shell .fb-qblock {
+  display: flex;
+  flex-direction: column;
+  /* Its own frame under the turn, like the sub-agent fan — stretched to the column
+     because it is a separate object, not because the bubble is narrow: `.bubble.ai` is
+     already `max-width: 100%` and only `.bubble.me` keeps the 80% cap. */
+  align-self: stretch;
+  margin-top: calc(-2px * var(--font-scale));
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--border));
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.fb-shell .fb-qblock-done {
+  /* Answered and spent: still legible on a reopened thread (§3b I9), no longer inviting.
+     DIMMED BY TOKEN, never by opacity, and that is R3f's fourth review, finding 4. An
+     `opacity: 0.72` here multiplied every colour under it, so computed over --bg it put
+     the "still open" line at 1.81:1 in light, the answer's own words at 3.41:1 (--text-2 —
+     DESIGN.md's CERTIFIED body text, failing for no reason but this) and a candidate's
+     detail at 1.81:1, against a binding 4.5:1 floor. A descendant cannot undo an
+     ancestor's opacity, so the last round could only buy back one line at a time by
+     re-colouring it; dropping the opacity buys all four at once.
+     What carries "spent" instead is the neutral border, the head going from amber to
+     --text, and the CANDIDATES giving up their raised fill below — dimming the things that
+     look like controls rather than the words the owner has to read. */
+  border-color: var(--border);
+}
+/* The chips stop reading as controls: no raised --surface-2 fill, the label at --text-2.
+   The one he PICKED keeps its amber tint and full-strength label, so a reopened thread
+   shows what he chose rather than a uniformly grey row. Every measured line comes out
+   ABOVE where the opacity left it — the candidate detail included (1.81 → 2.72 light,
+   1.90 → 2.78 dark; still the --text-3 token's own shortfall, which is filed as a
+   design-system call and is the same on a live block). */
+.fb-shell .fb-qblock-done .fb-q-opt:not(.fb-q-picked) {
+  background: transparent;
+  color: var(--text-2);
+}
+.fb-shell .fb-qblock-head {
+  margin: 0 0 calc(8px * var(--font-scale));
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+}
+.fb-shell .fb-qblock-done .fb-qblock-head {
+  /* --text, not the --text-3 this used to take, and not the live block's amber either.
+     This line is the count of what the send actually LANDED — the first thing the owner
+     reads on a frozen block (`QuestionBlock.tsx`), and the one place R3f's second review
+     found lying outright — so it is the last line here allowed to be hard to read, and
+     --text is what DESIGN.md certifies for text that must be read (14.4:1 dark, 17.2:1
+     light over the block's --surface). Amber stays on the LIVE head, where it is the
+     invitation rather than the report. (R3f's third review finding 4, kept after the
+     fourth review removed the opacity that first forced it.) */
+  color: var(--text);
+}
+.fb-shell .fb-q {
+  padding: calc(9px * var(--font-scale)) 0;
+  border-top: 1px solid var(--border);
+}
+.fb-shell .fb-q:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.fb-shell .fb-q-why {
+  margin: 0 0 calc(3px * var(--font-scale));
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-text {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.fb-shell .fb-q-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(5px * var(--font-scale));
+  margin-top: calc(7px * var(--font-scale));
+}
+/* 44×44 minimum (DESIGN.md), and here the BOX grows rather than a bleeding hit area —
+   which is the one place this departs from the vitals chart's precedent, on purpose. The
+   candidates WRAP: an out-of-flow hit area 44px tall centred on a 26px chip reaches ~9px
+   into the row above and below it, so on a two-row set the wrong candidate is what a tap
+   near the edge lands on. Offering a mistaken pick is exactly the mispairing this block
+   exists to refuse, and the block has the vertical room the top bar did not. */
+.fb-shell .fb-q-opt {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(1px * var(--font-scale));
+  min-width: 44px;
+  min-height: 44px;
+  padding: calc(6px * var(--font-scale)) calc(9px * var(--font-scale));
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+/* The typed escape (§3b I6, R3f's review finding 4) — the same chip, reading as the way
+   out of the list rather than as one more name in it. */
+.fb-shell .fb-q-else {
+  border-style: dashed;
+  color: var(--text-2);
+}
+.fb-shell .fb-q-opt:disabled {
+  cursor: default;
+}
+.fb-shell .fb-q-picked {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.fb-shell .fb-q-opt-detail {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-q-picked .fb-q-opt-detail {
+  color: var(--amber);
+}
+.fb-shell .fb-q-input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: calc(7px * var(--font-scale));
+  padding: calc(7px * var(--font-scale)) calc(9px * var(--font-scale));
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.fb-shell .fb-q-answered {
+  margin: calc(7px * var(--font-scale)) 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+/* A row the send did NOT answer, on a block that is otherwise spent — the one line on a
+   frozen block the owner has to notice: the agent may re-ask exactly these, and a row that
+   read as answered is what sent him round that loop (R3f's second review).
+   --text WITH AN AMBER RULE, not amber text (R3f's fourth review, finding 4). Amber body
+   text is 2.35:1 on the light theme's --surface whatever the block does — that is the
+   token, not this wave — and DESIGN.md is explicit that the muted accents are for chrome
+   and tints while body text is --text/--text-2. So the open-ask register is carried by the
+   rule, which is chrome, and the sentence itself is readable in both themes. The state is
+   in the words either way, which is the app's own rule about colour. */
+.fb-shell .fb-q-open {
+  margin: calc(7px * var(--font-scale)) 0 0;
+  padding-left: calc(7px * var(--font-scale));
+  border-left: 2px solid var(--amber);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+/* States what the block cannot do, where the owner would otherwise assume it does. */
+.fb-shell .fb-q-foot {
+  margin: calc(10px * var(--font-scale)) 0 0;
+  padding-top: calc(9px * var(--font-scale));
+  border-top: 1px dashed var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* The composer's carry strip — what rides the next send (§3b I7). Sits where the
+   appointment pill sits, and reads as a statement rather than a control, because it is
+   not one: the send below is the submit. */
+.omnibox .omni-carry {
+  display: flex;
+  align-items: center;
+  gap: calc(7px * var(--font-scale));
+  margin-bottom: calc(8px * var(--font-scale));
+  padding: calc(6px * var(--font-scale)) calc(9px * var(--font-scale));
+  border-radius: 9px;
+  background: var(--amber-tint);
+  color: var(--amber);
+  font-size: var(--fs-micro);
+}
+.omnibox .omni-carry-n {
+  font-weight: 650;
+}
+
+/* DESIGN.md Motion: "Honor `prefers-reduced-motion: reduce` by disabling all
+   non-essential animation." These eight were omissions rather than decisions — each has a
+   sibling state already covered in an existing reduce block (`.fb-status.live`'s mark is
+   guarded while `.fb-status.waiting`'s was not, and so on). Derived by parsing every
+   `animation:` declaration in this file against every reduce block, not by reading. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-drp-step.active .fb-drp-dot,
+  .fb-shell .fb-genprev-img.fb-genprev-fade,
+  .fb-shell .fb-genprev-bar i.fb-genprev-indet,
+  .jl-tab-live,
+  .loc-digest-recompute.spin span,
+  .presence-toast,
+  .task-dot.running,
+  .task-rd.running,
+  .task-bd.running,
+  .task-acts .task-runbtn.running svg {
+    animation: none;
+  }
+}
+
+/* A RE-READING of the note: an event in the thread, not something the owner said. The
+   pass used to persist the whole framed note again, so a corrected note appeared twice in
+   its own conversation. Ruled rather than bubbled — it is the thread's own voice. */
+.fb-shell .fb-reread {
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--font-scale));
+  margin: calc(2px * var(--font-scale)) 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+.fb-shell .fb-reread::before,
+.fb-shell .fb-reread::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* WHAT CHANGED, on the face of the turn — the ledger promoted out of the Worked
+   disclosure (DESIGN.md "the ledger is not a disclosure"). A card, not a rung: it sits
+   above the activity strip with its own ground, because it is the turn's receipt and
+   the strip below it is navigation. Quiet enough to read under the answer, never a
+   second heading competing with it. */
+.fb-shell .fb-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--font-scale));
+  margin: calc(8px * var(--font-scale)) 0 calc(2px * var(--font-scale));
+  padding: calc(7px * var(--font-scale)) calc(10px * var(--font-scale));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  list-style: none;
+}
+.fb-shell .fb-ledger-row {
+  display: flex;
+  align-items: baseline;
+  gap: calc(7px * var(--font-scale));
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  min-height: calc(22px * var(--font-scale));
+}
+.fb-shell .fb-ledger-row .ent-dot {
+  flex: none;
+  /* baseline-aligned row, so the dot needs nudging onto the text's optical centre */
+  transform: translateY(1px);
+}
+.fb-shell .fb-ledger-txt {
+  flex: 1;
+  color: var(--text);
+  /* his own sentence, wrapped rather than clipped: a statement cut at the card edge is
+     the one thing this card exists to show him whole */
+  overflow-wrap: anywhere;
+}
+/* what became of it — the same word the expanded rung uses, in the same tinted-pill
+   recipe, so one write never reads two ways on one screen */
+.fb-shell .fb-ledger-verb {
+  flex: none;
+  padding: calc(1px * var(--font-scale)) calc(7px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text);
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 500;
+  white-space: nowrap;
+}
+.fb-shell .fb-ledger-row.fbw-replaced .fb-ledger-verb {
+  background: var(--steel-tint);
+}
+.fb-shell .fb-ledger-row.fbw-held .fb-ledger-verb {
+  background: var(--amber-tint);
+}
+.fb-shell .fb-ledger-rest {
+  min-height: 0;
+}
+/* With a ledger above it the activity strip drops its own rule. That rule exists to
+   separate the ANSWER from the strip; the ledger card carries its own border and now
+   sits between the two, so drawing both stacked two separators a few pixels apart and
+   left the rule reading as an orphaned line under the card. The card IS the break. */
+.fb-shell .fb-act-foot.has-ledger .fb-activity {
+  border-top: 0;
+  padding-top: 0;
+}
+/* and the card takes over the breathing room the rule's padding used to give */
+.fb-shell .fb-act-foot.has-ledger .fb-ledger {
+  margin-bottom: calc(6px * var(--font-scale));
+}
+/* the overflow, which opens the steps view rather than growing this card — a quiet
+   control in the "+N more" register the entity chips already use. Its 44px target is its
+   own IN-FLOW box, not a bleed: the activity strip sits directly under this card and a
+   pseudo-element reaching down for the last 12px would win the hit test over the Worked
+   chip, which is the mistake `button.chip-ask` was already caught making on a wrapping
+   row. A ledger's last line is cheap to make tall; a Worked chip that opens the wrong
+   thing is not. */
+.fb-shell .fb-ledger-more {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-3);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  text-align: left;
+  cursor: pointer;
+}
+/* a resolve's own headline on the collapsed step row — how many records it made and
+   how many it matched. The step's count-chip slot, so it truncates with the row. */
+.fb-shell .fbw-cnt.fbw-ents {
+  color: var(--text-3);
+}
+/* a newly MINTED entity, marked on its chip: "did you make a new Boss, or match the one
+   I have?" is the whole of what a note introducing something asks. */
+.fb-shell .entity-chip .ent-new-tag {
+  margin-left: calc(5px * var(--font-scale));
+  padding: 0 calc(5px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--text-2);
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* why a write did not go live, or what the graph noticed going ahead — the sentence
+   that had only ever existed inside the result the model reads. */
+.fb-shell .fbw-why {
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.45;
+  color: var(--amber);
+}
+
+/* WHAT HE CAME BACK AND ADDED. A composed note carries dated block markers in its own
+   text (`backend/src/jbrain/notes/compose.py`) because that text is what the next
+   reading reads; rendering it verbatim showed him
+   `[addition 2026-09-15 01:24 UTC]` in his own note. These are the two surfaces that
+   render those blocks as what they are. */
+
+/* the stream row's quiet count — the preview now reads as one continuous note, so this
+   is the only thing saying he came back to it */
+.note-added {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* the note screen, where the stamp earns its space: this is where he reads a note
+   whole, and "when did I say that?" is a real question */
+.note-view-body .note-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.note-view-body .note-block-when {
+  margin: 0 0 6px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* the agent's question — the only text in a note's body he did not write, so it is set
+   apart rather than reading as his own sentence */
+.note-view-body .note-block-q {
+  margin: 0 0 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ONE ANSWER of his, in his own bubble. The turn text records an answered set as
+   `Q: …/A: …` pairs so the frozen block can read them back (`asked.answersFromReply`);
+   that is a storage shape, and rendering it verbatim re-printed the agent's question at
+   him inside his own bubble, under the card already showing it. */
+.fb-shell .fb-answer-line {
+  margin: 0;
+  line-height: 1.5;
+}
+.fb-shell .fb-answer-line + .fb-answer-line {
+  margin-top: calc(8px * var(--font-scale));
 }

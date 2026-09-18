@@ -30,6 +30,7 @@ import {
   loadBands,
   whyNotLive,
 } from "../sdrBands";
+import { MAX_MHZ, MIN_MHZ, whyNotSpannable, whyNotTunable } from "../sdrTunable";
 import { Sheet } from "./Sheet";
 
 export function SdrBandSheet({
@@ -148,8 +149,8 @@ export function SdrBandSheet({
               <span className="bband">
                 <span className="bt">Enter a frequency…</span>
                 <span className="bd">
-                  Anywhere from {edge(bands.tuner_min_hz)} to {edge(bands.tuner_max_hz)} MHz.
-                  Settings are inherited from whichever section it lands in.
+                  Anywhere from {MIN_MHZ} to {MAX_MHZ} MHz. Settings are inherited from whichever
+                  section it lands in.
                 </span>
               </span>
             </button>
@@ -252,9 +253,21 @@ function ManualEntry({
 }) {
   const [widthMhz, setWidthMhz] = useState(2);
   const at = Number.parseFloat(value);
-  const low = bands.tuner_min_hz / 1_000_000;
-  const high = bands.tuner_max_hz / 1_000_000;
-  const legal = Number.isFinite(at) && at >= low && at <= high;
+  // NOT `bands.tuner_min_hz`, which is the R820T2 TUNER's floor and refuses everything
+  // the box reaches with that tuner powered down. It refused a manual 4.625 MHz while
+  // the picture behind this sheet was drawing 4.393-5.417 MHz from the 60 m button —
+  // the band table could go somewhere the box's own entry field called unreachable.
+  const low = MIN_MHZ;
+  const high = MAX_MHZ;
+  // A picture is a RANGE, so both its edges are checked; a tuned frequency is a point.
+  // The aliasing hole is why that difference matters rather than being tidiness: a span
+  // centred at 20 MHz passes a centre-only test and is drawn half from a mirror of
+  // somewhere else.
+  const refusal =
+    purpose === "spectrum" && widthMhz > 0
+      ? whyNotSpannable(at - widthMhz / 2, at + widthMhz / 2)
+      : whyNotTunable(at);
+  const legal = refusal === null;
   // Which curated section it lands in, if any. Its settings are what a manual frequency
   // inherits — the alternative is asking the owner for a mode and a step they have no
   // way to know, on a band the table already describes.
@@ -290,8 +303,8 @@ function ManualEntry({
       <p className="sheet-hint">
         {!value
           ? "Anywhere the radio reaches."
-          : !legal
-            ? `Outside what this radio reaches (${low}–${high} MHz).`
+          : refusal !== null
+            ? refusal
             : landed
               ? `Lands in ${landed.band} · ${landed.name} — ${landed.mode.toUpperCase()}, steps of ${landed.step_hz / 1000} kHz.`
               : "No curated section covers this, so it keeps the mode you are already on."}

@@ -20,6 +20,7 @@ from sqlalchemy import CursorResult, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.models.note_conversation import NoteConversationRepo
 
 SYSTEM_CTX = SessionContext(principal_id="worker", principal_kind="owner")
 
@@ -169,21 +170,43 @@ async def enqueue(
     as before — the six shipped kinds are unchanged. The stamp is fail-closed at
     *use*: a partial stamp narrows to nothing and raises in the worker, never a
     silent widening (db.session.narrowed_context)."""
-    job_id = str(uuid.uuid4())
     async with scoped_session(maker, ctx) as session:
-        await session.execute(
-            text(
-                "INSERT INTO app.jobs (id, kind, payload, principal_id, domain_code)"
-                " VALUES (:id, :kind, cast(:payload AS jsonb), :principal_id, :domain_code)"
-            ),
-            {
-                "id": job_id,
-                "kind": kind,
-                "payload": json.dumps(payload),
-                "principal_id": principal_id,
-                "domain_code": domain_code,
-            },
+        return await enqueue_on(
+            session, kind, payload, principal_id=principal_id, domain_code=domain_code
         )
+
+
+async def enqueue_on(
+    session: AsyncSession,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    principal_id: str | None = None,
+    domain_code: str | None = None,
+) -> str:
+    """`enqueue` on a session the caller already owns, so the job lands in the SAME
+    transaction as the write that needs it.
+
+    That atomicity is the point: a write path whose re-ingest is enqueued afterwards
+    can crash in between and leave the row committed with nothing queued to act on it
+    (the standing FUTURE note on `SqlNotesRepo.create_note`). `analysis/rebuild.py`
+    already reaches for this shape with raw SQL — "enqueued directly, in the note's own
+    transaction"; this is the same thing with the queue's own column list.
+    """
+    job_id = str(uuid.uuid4())
+    await session.execute(
+        text(
+            "INSERT INTO app.jobs (id, kind, payload, principal_id, domain_code)"
+            " VALUES (:id, :kind, cast(:payload AS jsonb), :principal_id, :domain_code)"
+        ),
+        {
+            "id": job_id,
+            "kind": kind,
+            "payload": json.dumps(payload),
+            "principal_id": principal_id,
+            "domain_code": domain_code,
+        },
+    )
     return job_id
 
 
@@ -312,14 +335,19 @@ async def has_active_analysis(
     *,
     statuses: tuple[str, ...] = ACTIVE_STATUSES,
 ) -> bool:
-    """Whether an integrate_note job is active for this note — the guard that
+    """Whether a `note_converse` job is active for this note — the guard that
     keeps the trigger from enqueuing a second pass over a note already in
-    flight (both would write the same note)."""
+    flight (both would write the same note).
+
+    Its subject moved with the producer in R4: every caller asked about the
+    `integrate_note` twin it was about to enqueue, and that kind no longer exists.
+    The note conversation is what reads a note now, so that is what "analysis is
+    already in flight" means."""
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
-                    "SELECT 1 FROM app.jobs WHERE kind = 'integrate_note'"
+                    "SELECT 1 FROM app.jobs WHERE kind = 'note_converse'"
                     " AND status IN :statuses AND payload->>'note_id' = :nid LIMIT 1"
                 ).bindparams(bindparam("statuses", expanding=True)),
                 {"statuses": list(statuses), "nid": note_id},
@@ -586,23 +614,45 @@ async def backfill_pending_integration(
     *,
     limit: int = INTEGRATION_BACKFILL_LIMIT,
 ) -> int:
-    """Enqueue integrate_note for indexed notes not yet integrated — the v3
-    cutover backfill (W3.3). BOUNDED per call: migration 0029 defaulted EVERY
-    existing note to 'pending_integration', so an unbounded sweep would push the
-    whole corpus through the costlier Integrator at once. Oldest-first
-    (created_at); each integrated note drops out of `integration_state <>
-    'integrated'`, so repeated boots drain the backlog within budget. Skips a note
-    with an active integrate_note job or outstanding OCR. Ordered by
-    INTEGRATION_BACKFILL_ORDER_BY — the owner-ahead (N14) seam, inert today (see
-    that constant)."""
+    """Enqueue `note_converse` for indexed notes not yet integrated — the dropped-event
+    safety net for the note's graph producer. BOUNDED per call: migration 0029 defaulted
+    EVERY existing note to 'pending_integration', so an unbounded sweep would push the
+    whole corpus through at once. Oldest-first (created_at); each integrated note drops
+    out of `integration_state <> 'integrated'`, so repeated fires drain the backlog within
+    budget. Ordered by INTEGRATION_BACKFILL_ORDER_BY — the owner-ahead (N14) seam, inert
+    today (see that constant).
+
+    **It enqueues the CONVERSATION since R3**, because the conversation is what flips
+    `integration_state` now (`analysis/converse.NoteConverseRunner._mark_integrated`), on
+    every pass ending. Re-enqueuing `integrate_note` off a state that producer no longer
+    wrote would have re-run the analyzer every five minutes for the life of each note,
+    and would have left the conversation — the producer this state is now ABOUT — with no
+    safety net at all, which it had never had. R4 then deleted that producer outright.
+
+    Three skips:
+
+    - an active `note_converse` job for the note (the twin check);
+    - a LIVE conversation on it, which is the clause `dispatcher._already_active` already
+      applies: the handler would decline such an event anyway (`already_live`), so
+      enqueuing is a job that exists to do nothing — and on a thread parked
+      `waiting_on_owner` it would be one every five minutes until the owner answers;
+    - outstanding OCR, and the attachment-intent window below.
+
+    The stale-conversation RECLAIM leads, and it is load-bearing rather than tidy: a pass
+    killed mid-turn (an `Ops -> Update` quiesce is a `stop -t 30`) leaves a `running` row
+    that the live-conversation skip would honour forever. `reclaim_stale` is otherwise
+    reached only through `live_for_note`, i.e. only when something already asks about that
+    note — and after R3 this sweep is the only thing that would (CLAUDE.md #10: no
+    terminal, so a stranded note must un-strand itself)."""
     async with scoped_session(maker, ctx) as session:
+        await NoteConversationRepo().reclaim_stale(session)
         result = await session.execute(
             text(
                 # INTEGRATION_BACKFILL_ORDER_BY is a module constant, never
                 # caller input — interpolation is safe.
                 f"""
                 INSERT INTO app.jobs (id, kind, payload)
-                SELECT gen_random_uuid(), 'integrate_note',
+                SELECT gen_random_uuid(), 'note_converse',
                        jsonb_build_object('note_id', n.id)
                 FROM app.notes n
                 WHERE n.ingest_state = 'indexed'
@@ -610,9 +660,14 @@ async def backfill_pending_integration(
                   AND n.integration_state <> 'integrated'
                   AND NOT EXISTS (
                       SELECT 1 FROM app.jobs j
-                      WHERE j.kind = 'integrate_note'
+                      WHERE j.kind = 'note_converse'
                         AND j.status IN ('queued', 'running')
                         AND j.payload ->> 'note_id' = n.id::text
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM app.note_conversations c
+                      WHERE c.note_id = n.id
+                        AND c.state IN ('running', 'waiting_on_owner')
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM app.jobs j
@@ -628,11 +683,16 @@ async def backfill_pending_integration(
                   -- (that would defeat the gate). Eligible again once the promised
                   -- attachments land (present >= expected) OR the settle window lapses
                   -- (a promise that never arrived — integrate on what it has).
+                  -- Measured from `received_at`, the SERVER's receipt instant (0190),
+                  -- never `created_at`: that is the client's capture time, so an
+                  -- offline-flushed note with a promised attachment would arrive
+                  -- already past its own window and defeat this gate in exactly the
+                  -- case the gate exists for.
                   AND (
                       n.attachments_expected <= (
                           SELECT count(*) FROM app.attachments a WHERE a.note_id = n.id
                       )
-                      OR n.created_at < now() - (:settle * interval '1 second')
+                      OR n.received_at < now() - (:settle * interval '1 second')
                   )
                 ORDER BY {INTEGRATION_BACKFILL_ORDER_BY}
                 LIMIT :lim

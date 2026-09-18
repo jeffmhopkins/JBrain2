@@ -641,6 +641,14 @@ class FakeSettingsStore:
         # Default OFF; only an explicit true turns it on (mirrors the SQL store).
         return self.values.get("local_llm_patch_restore_checkpoint", False) is True
 
+    async def llm_kv_prefix_budget_gb(self, ctx: object) -> int:
+        stored = self.values.get("llm_kv_prefix_budget_gb", 25)
+        return stored if isinstance(stored, int) and 1 <= stored <= 500 else 25
+
+    async def set_llm_kv_prefix_budget_gb(self, ctx: object, gb: int) -> int:
+        self.values["llm_kv_prefix_budget_gb"] = gb
+        return gb
+
     async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
         raw = self.values.get("pronunciation_lexicon", {})
         if not isinstance(raw, dict):
@@ -873,6 +881,9 @@ class FakeLocalGateway:
         self.logs_text = logs_text
         self.fail_props = fail_props
         self.props_payload = props_payload or {}
+        self.fail_metrics = False
+        self.metrics_text = ""
+        self.metrics_readings: list[str] = []
         self.unloaded: list[str] = []
         self.loaded: list[str] = []
         # The prompt size the fake's warm "measured" — what after_warm receives.
@@ -943,6 +954,18 @@ class FakeLocalGateway:
         if self.fail_props:
             raise LocalGatewayError("simulated gateway failure")
         return dict(self.props_payload)
+
+    async def metrics(self, served_model: str) -> str:
+        """llama-server's Prometheus text. `metrics_readings` is a QUEUE: the prompt-cache
+        counters are cumulative, so anything measuring one request brackets it with two
+        reads, and a fake that answered identically both times would hide a broken delta."""
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_metrics:
+            raise LocalGatewayError("simulated gateway failure")
+        if self.metrics_readings:
+            return self.metrics_readings.pop(0)
+        return self.metrics_text
 
 
 class FakeComfyUiGateway:

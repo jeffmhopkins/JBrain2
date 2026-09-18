@@ -139,3 +139,39 @@ def test_render_snapshot_does_not_mutate_the_live_accumulator() -> None:
     acc.feed(ToolResultEvent(tool_call_id="c1", ok=True, summary="done"))
     assert acc.tool_steps()[0]["ok"] is True
     assert acc.tool_steps()[0]["summary"] == "done"
+
+
+def test_a_tools_recorded_args_replace_the_ones_the_model_sent() -> None:
+    # R3f's third review, finding 1. `ask_owner` mints its question ids server-side and
+    # keeps them on the ledger; the PERSISTED step is what the PWA's question block is
+    # built from, and it held only `call.arguments` — which carry no ids, because the tool
+    # declares no `id` property. The block then posted positional ids the open set had
+    # never held and `clarify._pair` dropped every tapped answer. The result event carries
+    # what the tool recorded, and the step takes it.
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="ask_owner", arguments={"questions": [{"question": "Q"}]}))
+    acc.feed(
+        ToolResultEvent(
+            tool_call_id="c1",
+            ok=True,
+            summary="Recorded, one question.",
+            args={
+                "questions": [{"id": "q8f21ab03", "question": "Q", "blocks": "", "candidates": ""}]
+            },
+        )
+    )
+    acc.feed(DoneEvent(stop_reason="awaiting_owner"))
+
+    (step,) = acc.tool_steps()
+    assert step["args"]["questions"][0]["id"] == "q8f21ab03"
+
+
+def test_a_step_keeps_the_models_args_when_the_tool_records_none_of_its_own() -> None:
+    # The narrowness of the seam above: every tool that mints nothing is untouched by it.
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="search", arguments={"q": "sarah"}))
+    acc.feed(ToolResultEvent(tool_call_id="c1", ok=True, summary="3 hits"))
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    (step,) = acc.tool_steps()
+    assert step["args"] == {"q": "sarah"}

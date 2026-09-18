@@ -75,7 +75,7 @@ from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.sdr.resolve import for_purpose, refusal
-from jbrain.sdr.roles import GENERAL
+from jbrain.sdr.roles import GENERAL, Radio
 from jbrain.sdr.sweep import channels, reduce_csv, steady_channels, waterfall_png
 from jbrain.sdr.tuner import MAX_MHZ, TUNABLE_MIN_MHZ, nodes_in, out_of_range
 from jbrain.settings_store import SqlSettingsStore
@@ -132,6 +132,20 @@ async def _radio(request: Request, settings: Any, want: str) -> str | None:
     if detail is not None:
         raise HTTPException(status_code=409, detail=detail)
     return choice.serial
+
+
+async def _rig(request: Request, serial: str | None) -> Radio:
+    """What the owner has said about that radio's signal path — its pinned gain and any
+    converter in front of it.
+
+    The debug console is a third door onto the same hardware, so it has to honour the
+    same settings: a sweep from here that forgot the converter would tune the raw
+    shortwave frequency, power the tuner down, and measure an antenna the converter's
+    output is not connected to — a picture of silence, confidently labelled."""
+    if not serial:
+        return Radio(serial="")
+    stored = await _store(request).sdr_radios(_OWNER_CTX)
+    return stored.get(serial) or Radio(serial=serial)
 
 
 def _gateway(request: Request) -> Any:
@@ -595,6 +609,11 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
 # counterfactual differs from it by exactly one edit. `matched_recorded` per step is the
 # measure: where the model stops following the night it actually had is the effect.
 #
+# It also takes inline `raw_tools`, which widens it past its origin: a tool surface still
+# being designed has no registry entry, and a persona that resolves before it writes never
+# reaches its write tool in one turn — so the call worth measuring is invisible until the
+# tool ships, which is backwards. Stubs feed the first move so the second can be observed.
+#
 # Reuses the llm.complete scope (it IS a converse). NO HANDLER EVER RUNS: the only tool
 # output that reaches the model is a string the caller supplied.
 
@@ -611,6 +630,12 @@ class ReplayRequest(BaseModel):
     task: str = "agent.turn"
     strength: str | None = None
     tools: list[str] = Field(default_factory=list)
+    # Inline tool schemas, appended after the registry ones — the same knob /tool-probe
+    # carries, and here for a reason that surface does not cover: a multi-turn loop is the
+    # only way to measure a tool a model reaches for on its SECOND move, and a tool being
+    # designed does not exist in the registry yet. Without this, a proposed tool surface
+    # can be measured for the shape of its first call and nothing else.
+    raw_tools: list[dict[str, Any]] = Field(default_factory=list)
     # The night's observed tool results, in the order the sitting produced them. Matched to
     # the model's calls by NAME (FIFO per name) so a replay that reorders its reads still
     # continues; `matched_recorded` records whether the order held.
@@ -649,12 +674,27 @@ class ReplayOut(BaseModel):
 @router.post("/replay")
 async def replay(body: ReplayRequest, request: Request, _p: DebugDep) -> ReplayOut:
     """Replay a sitting multi-turn against recorded tool results. See the module note."""
-    request.state.debug_detail = f"{len(body.tools)} tools, {body.max_steps} steps"
+    attached = len(body.tools) + len(body.raw_tools)
+    request.state.debug_detail = f"{attached} tools, {body.max_steps} steps"
     registry = cast(ToolRegistry, request.app.state.agent_registry)
     unknown = [t for t in body.tools if t not in registry.names()]
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown tools: {unknown}")
     llm_tools = [registry.get(name).as_llm_tool() for name in body.tools]
+    try:
+        llm_tools += [
+            LlmTool(
+                name=rt["name"],
+                description=rt.get("description", ""),
+                input_schema=rt.get("input_schema", {"type": "object", "properties": {}}),
+            )
+            for rt in body.raw_tools
+        ]
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"raw_tools need a 'name' (and optional description/input_schema): {exc}",
+        ) from exc
     router_ = _llm_router(request)
     provider, model = await router_.effective_spec(body.task, body.strength)
 
@@ -1022,6 +1062,20 @@ class SdrSweepOut(BaseModel):
     png_base64: str
     csv_chars: int
     csv: str | None = None
+    gain_db: float | None = None
+    """The tuner gain these rows were MEASURED at, or None when the tuner was on its own
+    loop. A survey's numbers are dBFS, and dBFS is comparable only against the same gain
+    and the same bin width — the width was reported and the gain was not, so two runs
+    taken at 10 and at 30 dB came back looking like the same instrument. The api cannot
+    derive it: absent in the request means the sidecar's per-purpose default, and since
+    the gain became a per-radio setting it can also mean whatever that radio stores."""
+    tuner_bypassed: bool = False
+    """True when the sweep ran below 24 MHz with no converter, where the tuner is
+    powered down and there is no gain stage at all. A third answer, not a missing one:
+    the levels are true dBFS with no gain to quote, rather than a moving reference."""
+    upconverter_hz: int = 0
+    """The converter offset the radio was tuned through, in Hz. Every frequency in this
+    response — `start_hz`, `stop_hz`, every bin — is the owner's, never the tune."""
     """The raw rtl_power CSV, when asked for. Off by default because it is megabytes and
     dwarfs everything else here — but a calibration instrument that will not hand back
     its measurements is not one, and inferring a floor from PNG pixel brightness (which
@@ -1785,7 +1839,14 @@ async def sdr_sweep(
     # `_span` checks BOTH EDGES, which the sidecar cannot: it validates the sweep's
     # centre, so a 10-70 MHz request centres on 40 and passes every check while its
     # bottom half cannot be measured at all and comes back reported as quiet.
-    start_hz, stop_hz, _picture_bin, capture = sdr_api._span(None, start_mhz, stop_mhz)  # noqa: SLF001
+    # WHICH RADIO FIRST, because the capture plan depends on what is in front of it: a
+    # converted shortwave span is the tuner doing ordinary work at VHF, not the ADC
+    # branch its own edges imply.
+    serial = await _radio(request, settings, GENERAL)
+    rig = await _rig(request, serial)
+    start_hz, stop_hz, _picture_bin, capture = sdr_api._span(  # noqa: SLF001
+        None, start_mhz, stop_mhz, rig.upconverter_hz
+    )
 
     body: dict[str, Any] = {
         "start_hz": start_hz,
@@ -1795,11 +1856,14 @@ async def sdr_sweep(
         # used; nothing here assumes they are equal.
         "bin_hz": int(round(bin_khz * 1_000)),
         "seconds": seconds,
-        "gain": gain,
+        # This call's gain if it named one — measuring the same band at two gains on
+        # purpose is what this route is for — and otherwise the radio's standing choice.
+        "gain": sdr_api._tuner_gain(gain, rig),  # noqa: SLF001
+        "upconverter_hz": rig.upconverter_hz,
         # A sweep is a general use of the radio, so it may not take one reserved for a
         # service. Resolved BEFORE the job is queued, so a refusal is this request's 409
         # rather than an error the caller has to poll for.
-        "serial": await _radio(request, settings, GENERAL),
+        "serial": serial,
     }
     if capture is not None:
         # The capture the plan named, as the spectrum routes send it: the band table
@@ -1878,6 +1942,13 @@ async def sdr_sweep(
                 # unparsed one without paying for the whole CSV.
                 csv_chars=len(csv_text),
                 csv=csv_text if include_csv else None,
+                gain_db=(
+                    float(payload["gain_db"])
+                    if isinstance(payload.get("gain_db"), (int, float))
+                    else None
+                ),
+                tuner_bypassed=payload.get("tuner_bypassed") is True,
+                upconverter_hz=body["upconverter_hz"],
             )
             jobs[job_id] = {"status": "done", "result": out, "error": None}
         except Exception as exc:  # noqa: BLE001 - a debug job must surface, not crash the loop
@@ -1889,15 +1960,18 @@ async def sdr_sweep(
     return JobSubmitOut(job_id=job_id)
 
 
-def _receivable(frequency_mhz: float) -> None:
+def _receivable(frequency_mhz: float, upconverter_hz: int = 0) -> None:
     """Refuse a frequency the radio would answer with a DIFFERENT one — the debug twin
     of `api/sdr.py`'s `_tunable`, and needed here for the same reason the owner routes
     need it: the `Query` bounds check the ENDS, and 14.4-24 MHz sits inside them and is
     reached by neither path. Below 24 MHz the sidecar tunes with `-E direct2`, and
     direct sampling folds the second Nyquist zone back onto the first, so 18.1 MHz is
     received as 10.7 (SDR_IQ_SPECTRUM_PLAN §8). A capture from there transcribes
-    cleanly and names the wrong band."""
-    refusal = out_of_range(frequency_mhz)
+    cleanly and names the wrong band.
+
+    A converter takes that hole away rather than narrowing it, so the question is asked
+    of the TUNE (`jbrain.sdr.tuner.out_of_range`)."""
+    refusal = out_of_range(frequency_mhz, upconverter_hz / 1_000_000)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal[0].upper() + refusal[1:])
 
@@ -1926,22 +2000,27 @@ async def sdr_capture(
     transcript of an empty band is whisper hallucinating on noise, so judge the audio by
     `peak` first and the words second."""
     request.state.debug_detail = f"sdr capture {frequency_mhz} MHz {mode}"
-    _receivable(frequency_mhz)
     if not settings.sdr_url:
         raise HTTPException(status_code=503, detail="No SDR on this box (sdr_url unset).")
 
+    serial = await _radio(request, settings, GENERAL)
+    rig = await _rig(request, serial)
+    _receivable(frequency_mhz, rig.upconverter_hz)
     freq_hz = int(round(frequency_mhz * 1_000_000))
     async with httpx.AsyncClient(base_url=settings.sdr_url, timeout=seconds + 60) as client:
         resp = await client.post(
             "/capture",
             json={
+                # The OWNER's frequency. The offset below is what shifts the tune, and
+                # the WAV that comes back is stamped with this one.
                 "frequency_hz": freq_hz,
                 "seconds": seconds,
                 "mode": mode,
-                "gain": gain,
+                "gain": sdr_api._tuner_gain(gain, rig),  # noqa: SLF001
+                "upconverter_hz": rig.upconverter_hz,
                 # A capture is a general use of the radio. The sidecar has accepted a
                 # serial here since before radio roles existed; nothing had ever sent one.
-                "serial": await _radio(request, settings, GENERAL),
+                "serial": serial,
             },
         )
     if resp.status_code == 409:
@@ -2320,7 +2399,10 @@ async def sdr_sessions_debug(
     something the sidecar reports. It calls the same `status_of`, so it cannot drift
     from the icon: a second derivation would be the very thing B7 deleted."""
     request.state.debug_detail = "sdr sessions"
-    return await sdr_api.status_of(settings)
+    # `recording_now` for the same reason: the tape deck is api state rather than
+    # something /healthz reports, and a console that omits it would say the box is idle
+    # while a recording is running.
+    return await sdr_api.status_of(settings, sdr_api.recording_now(request))
 
 
 def _sidecar_detail(resp: httpx.Response, fallback: str) -> str:
@@ -2417,6 +2499,62 @@ async def update_status(
     request.state.debug_detail = f"update (tail {tail})"
     resp = await _supervisor(request).get(
         "/update/status",
+        params={"tail": tail},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.post("/backup", status_code=202)
+async def start_backup_debug(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """**Take a full backup** — the Data screen's "Back up everything", reachable with a
+    token.
+
+    It exists because the console could already CAUSE the irreversible thing and not the
+    reversible one. `/update` deploys, and a deploy can carry a destructive migration; the
+    snapshot that makes such a deploy survivable was the single step only the owner could
+    perform, from a screen whose name had drifted out of the docs (it moved from Ops to
+    its own Data launcher). So the safe half of "back up, then update" depended on finding
+    a button, and the unsafe half did not. That asymmetry is the gap this closes.
+
+    **It starts a backup; it cannot read one.** The archive is written on the box and
+    stays there — this returns the one-shot's state, never its bytes, and there is
+    deliberately no download route beside it. A token that could pull the archive would be
+    a way to exfiltrate every note, fact and attachment in one request, which is a far
+    larger grant than anything else on this surface and is not worth the convenience.
+    Retrieving the file remains the owner's, from the Data screen, over his own session.
+
+    409 while another one-shot is running — the supervisor's own mutual exclusion, since
+    a backup racing an update would snapshot a half-migrated database. Poll
+    `/backup/status` for the log tail and the filename it wrote."""
+    request.state.debug_detail = "backup (full export)"
+    resp = await _supervisor(request).post(
+        "/export", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another one-shot is already running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/backup/status")
+async def backup_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The most recent backup one-shot's state + log tail, proxied from the supervisor.
+
+    `state: "done"` with `exit_code: 0` is the only thing that licenses a destructive
+    deploy. Read it before pressing `/update` on a release carrying a data migration —
+    "I started a backup" is not the same claim as "a backup finished"."""
+    request.state.debug_detail = f"backup status (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/export/status",
         params={"tail": tail},
         headers={"Authorization": f"Bearer {settings.supervisor_token}"},
     )
@@ -2734,6 +2872,94 @@ async def model_metrics(
     from wall-clock timings, which is how the MTP work here spent a long time guessing."""
     request.state.debug_detail = model_id
     return await llm_settings.gateway_metrics(model_id, settings, _gateway(request))
+
+
+@router.get("/llm/kv-prefix")
+async def kv_prefix_state(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """The jerv prompt cache's whole state — counters, per-model file/identity, disk usage,
+    recent outcomes, and llama-server's own prompt-reuse counters.
+
+    This is the route that answers "is the KV cache working?". Until it existed the box could
+    not say: only the two SUCCESS paths wrote a box event, so a store humming along and a
+    store that had not restored anything since boot both produced no rows at all, and the
+    feature shipped silently inert twice on exactly that blindness. `counters` is the whole
+    record (every outcome since process start); `models[].state` resolves the fingerprint a
+    turn would ask for against what is on disk, naming the drifted component when they
+    disagree; `reuse` is the server's cumulative cache-hit ratio, the one number that cannot
+    be argued with.
+
+    Read-only and load-free: it never admits, loads or evicts, so it is safe to poll."""
+    return await llm_settings.kv_prefix_state(
+        settings,
+        _gateway(request),
+        kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        registry=getattr(request.app.state, "agent_registry", None),
+        settings_store=_store(request),
+    )
+
+
+@router.delete("/llm/kv-prefix")
+async def kv_prefix_clear(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    model: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """Delete the prompt cache's slot files — all of them, or one catalog model's (`model`).
+
+    The no-terminal twin of `rm -rf .kvslots` (CLAUDE.md #10), for the same reason
+    `drop-page-cache` exists: reclaiming this space needed host shell, which the owner running
+    this box remotely does not have. Measured at 94% of the budget with nothing able to act.
+
+    Safe while models are resident: this removes files on disk, never a live slot, so a
+    conversation in flight keeps its KV. The cost of a wrong call is bounded at one re-prefill
+    per deleted identity — the behaviour without this store at all — and the next prime writes
+    the file back. Reach for `GET /llm/kv-prefix` first: `store.by_file` says what is there."""
+    request.state.debug_detail = f"clear kv prefix ({model or 'all'})"
+    return await llm_settings.kv_prefix_clear(
+        settings, kv_prefix=getattr(request.app.state, "kv_prefix", None), model_id=model
+    )
+
+
+@router.put("/llm/auto-restore")
+async def set_auto_restore(
+    request: Request,
+    _p: DebugDep,
+    enabled: Annotated[bool, Query()],
+) -> dict[str, object]:
+    """Turn the end-of-turn restore on or off — the WarmKeeper's whole reason to exist.
+
+    OFF, the keeper keeps nothing warm and the disk store carries the entire mechanism: a
+    lost prefix waits for the next turn to notice it, which is the turn that then pays for
+    the restore. ON, the box puts an evicted model back once a turn ends and the keeper
+    re-primes it off-turn, so the owner's next message meets a warm slot.
+
+    It already had an owner route (`PUT /api/settings/llm/auto-restore`), reachable only with
+    an owner cookie — so an assistant holding a debug token could READ the flag on
+    `GET /api/debug/llm`, measure exactly what it costs, and then not be able to act on the
+    measurement. This is that gap closed; the two share one implementation.
+
+    A SURPRISE control, not a safety one: every load, restore included, still goes through the
+    device-memory guard. Applies to the next turn, with no restart."""
+    request.state.debug_detail = f"auto restore {'on' if enabled else 'off'}"
+    return await llm_settings.set_auto_restore_value(_store(request), _OWNER_CTX, enabled=enabled)
+
+
+@router.put("/llm/kv-prefix/budget")
+async def kv_prefix_budget(
+    request: Request,
+    _p: DebugDep,
+    gb: Annotated[int, Query()],
+) -> dict[str, object]:
+    """Set the prompt cache's disk allowance in GiB (2..500, default 25).
+
+    It was a module constant whose own comment conceded the gap — "changing it is a release,
+    there is no knob" — which on a box with no terminal meant no path at all. Read once at
+    construction, so it applies on the next api start; Ops → Update performs one anyway."""
+    request.state.debug_detail = f"kv prefix budget {gb} GiB"
+    return await llm_settings.set_kv_prefix_budget(_store(request), _OWNER_CTX, gb=gb)
 
 
 @router.post("/llm/local-models/{model_id}/prime")

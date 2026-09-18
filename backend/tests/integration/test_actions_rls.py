@@ -42,8 +42,12 @@ async def _action_names(maker: async_sessionmaker, ctx: SessionContext) -> set[s
 
 
 async def test_seeded_actions_are_globally_readable(maker: async_sessionmaker) -> None:
-    """The migration seeds the six shipped actions; every scope reads them — no
-    domain firewall on global machinery (the app.canonical_predicates precedent)."""
+    """The migration seeds the shipped actions; every scope reads them — no domain
+    firewall on global machinery (the app.canonical_predicates precedent).
+
+    Exactly the in-code specs, which is why this is the test that catches an un-seeding
+    migration nobody mirrored in the registry: 0200 removed `integrate_note` from BOTH
+    when R4 deleted its producer."""
     expected = {spec.name for spec in ACTION_SPECS}
     assert await _action_names(maker, OWNER) == expected
     assert await _action_names(maker, GENERAL_ONLY) == expected
@@ -100,13 +104,13 @@ async def test_scoped_principal_cannot_edit_an_action(maker: async_sessionmaker)
     # and silently affects nothing rather than mutating the registry.
     async with scoped_session(maker, GENERAL_ONLY) as s:
         result = await s.execute(
-            text("UPDATE app.actions SET cost_class = 'cheap' WHERE name = 'integrate_note'")
+            text("UPDATE app.actions SET cost_class = 'cheap' WHERE name = 'ocr_attachment'")
         )
         assert cast(CursorResult[Any], result).rowcount == 0
     async with scoped_session(maker, OWNER) as s:
         cost = (
             await s.execute(
-                text("SELECT cost_class FROM app.actions WHERE name = 'integrate_note'")
+                text("SELECT cost_class FROM app.actions WHERE name = 'ocr_attachment'")
             )
         ).scalar_one()
     assert cost == "expensive"

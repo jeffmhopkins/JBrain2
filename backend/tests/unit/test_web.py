@@ -2711,8 +2711,18 @@ class _FakeBlobs:
     async def exists(self, sha256: str) -> bool:
         return sha256 in self.blobs
 
+    async def delete(self, sha256: str) -> bool:
+        # Part of the protocol since the SDR trim (storage.BlobStore.delete): idempotent,
+        # so a digest that is already gone is False rather than an error.
+        return self.blobs.pop(sha256, None) is not None
+
     def usage(self) -> tuple[int, int]:
         return (len(self.blobs), sum(len(b) for b in self.blobs.values()))
+
+    def free_bytes(self) -> int:
+        # Part of the protocol since the SDR recorder refuses to start on a nearly-full
+        # volume; memory is not a disk, so this one never runs out.
+        return 1 << 40
 
 
 class _FakeArtifacts:

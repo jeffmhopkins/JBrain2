@@ -2,7 +2,7 @@
 
 A user asks "my wife", "my boss", "my mom"; the graph stores those bonds under
 canonical predicates (`spouse`, `reportsTo`, `parent`) the extractor steers
-toward (see `note_extract.prompt` and the reciprocity registries in
+toward (see the reciprocity registries in
 `supersession.py`). The schema's `renamed_from` normalizes drift *spellings*
 (`legalName` → `name.full`) but never natural-language *relationship words* —
 "wife" is not a predicate, so a name search for it finds nothing. This module is

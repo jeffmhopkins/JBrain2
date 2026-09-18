@@ -22,7 +22,17 @@ from fastapi import HTTPException
 
 from jbrain.api import debug as debug_api
 from jbrain.api import sdr as sdr_api
+from jbrain.sdr.roles import Radio
 from jbrain.sdr.tuner import MIN_MHZ, NYQUIST_MHZ, aliased, out_of_range
+
+#: A dongle with nothing in front of it — the radio every door meets unless the owner
+#: has said otherwise, and the one the hole applies to.
+BARE = Radio(serial="77192819")
+
+#: The same dongle behind a Nooelec Ham It Up. The hole is GONE for it: 18.1 MHz tunes
+#: 143.1, the R820T2 is in circuit and mixes properly, and there is no second Nyquist
+#: zone to fold out of.
+CONVERTED = Radio(serial="77192819", upconverter_hz=125_000_000)
 
 #: The example the plan names, and the reason it is the example: 10.7 MHz is inside the
 #: 31 m broadcast band, so what comes back is a station rather than noise.
@@ -45,6 +55,38 @@ def _request() -> Any:
     return SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace()))
 
 
+def _stub_radios(monkeypatch: pytest.MonkeyPatch, stored: Radio) -> None:
+    """Make every door see one attached radio, described as `stored`.
+
+    **Which radio comes first now, and it has to**: what is tunable depends on what is
+    in front of the dongle, so a route cannot refuse 18.1 MHz until it knows whether a
+    converter would put it at 143.1. Choosing a radio is not TAKING one — `_post` below
+    is what takes it, and it stays the thing that must never be reached."""
+
+    async def chosen(*_a: Any, **_k: Any) -> Any:
+        return SimpleNamespace(serial=stored.serial, reason="general", detail="")
+
+    class _Store:
+        async def sdr_radios(self, _ctx: Any) -> dict[str, Radio]:
+            return {stored.serial: stored}
+
+    async def health(*_a: Any, **_k: Any) -> Any:
+        return {"sessions": [{"session_id": "s1", "serial": stored.serial}]}
+
+    async def named(*_a: Any, **_k: Any) -> str:
+        return stored.serial
+
+    monkeypatch.setattr(sdr_api, "_radio_for", chosen)
+    monkeypatch.setattr(sdr_api, "_refuse", lambda _c: None)
+    monkeypatch.setattr(sdr_api, "get_settings_store", lambda _r: _Store())
+    monkeypatch.setattr(sdr_api, "ctx_for", lambda _o: object())
+    monkeypatch.setattr(sdr_api, "_health", health)
+    # The debug console is the third door and asks the same two questions in the same
+    # order, so it needs the same two answers.
+    monkeypatch.setattr(debug_api, "_radio", named)
+    monkeypatch.setattr(debug_api, "_store", lambda _r: _Store())
+
+
 @pytest.fixture(autouse=True)
 def _no_radio_is_taken(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every path out of these routes fails loudly, so a refusal that arrives AFTER the
@@ -57,10 +99,8 @@ def _no_radio_is_taken(monkeypatch: pytest.MonkeyPatch) -> None:
     for module in (sdr_api, debug_api):
         monkeypatch.setattr(module, "httpx", _Exploding(), raising=False)
     monkeypatch.setattr(sdr_api, "_post", never)
-    monkeypatch.setattr(sdr_api, "_radio_for", never)
-    monkeypatch.setattr(sdr_api, "_health", never)
     monkeypatch.setattr(debug_api, "_sdr_post", never)
-    monkeypatch.setattr(debug_api, "_radio", never)
+    _stub_radios(monkeypatch, BARE)
 
 
 class _Exploding:
@@ -112,7 +152,7 @@ async def test_retuning_a_live_session_refuses_too() -> None:
     frequency the owner chose, so the picture and the audio keep working — they would
     simply be of somewhere else."""
     with pytest.raises(HTTPException) as raised:
-        await sdr_api.tune(_settings(), OWNER, ASKED_MHZ)
+        await sdr_api.tune(_request(), _settings(), OWNER, ASKED_MHZ)
 
     assert f"{RECEIVED_MHZ:g} MHz" in _said(raised)
 
@@ -166,14 +206,53 @@ async def test_an_ordinary_frequency_still_gets_through() -> None:
         posted.append(body)
         return {"session_id": "s1"}
 
-    async def radio(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(serial="77192819", conflict=None, refusal=None)
-
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(sdr_api, "_post", post)
-        patch.setattr(sdr_api, "_radio_for", radio)
-        patch.setattr(sdr_api, "_refuse", lambda _c: None)
 
         await sdr_api.listen(_request(), _settings(), OWNER, 7.2, "usb")
 
     assert posted[0]["frequency_hz"] == 7_200_000
+
+
+# --- the hole, and what a converter does to it --------------------------------------
+
+
+async def test_a_converter_admits_the_frequency_the_bare_radio_folds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hole is a property of DIRECT SAMPLING, not of 18.1 MHz.
+
+    With a Ham It Up in front the dongle is asked for 143.1 MHz, the R820T2 is in
+    circuit, and there is no second Nyquist zone to fold out of — so the same request
+    the bare radio must refuse is an ordinary tuning."""
+    posted: list[dict[str, Any]] = []
+
+    async def post(_settings_: Any, _path: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted.append(body)
+        return {"session_id": "s1"}
+
+    _stub_radios(monkeypatch, CONVERTED)
+    monkeypatch.setattr(sdr_api, "_post", post)
+
+    await sdr_api.listen(_request(), _settings(), OWNER, ASKED_MHZ)
+
+    # THE REGRESSION THIS FEATURE IS MOST LIKELY TO CAUSE: the frequency on the wire is
+    # the owner's, and the shift happens at the hardware. A `frequency_hz` of
+    # 143_100_000 here would be a session labelled 125 MHz wrong end to end.
+    assert posted[0]["frequency_hz"] == int(ASKED_MHZ * 1_000_000)
+    assert posted[0]["upconverter_hz"] == 125_000_000
+
+
+async def test_a_converter_does_not_excuse_a_frequency_it_cannot_reach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1700 MHz is tunable bare and is not through a converter: the tune would be
+    1825 MHz, past the top of the radio. The refusal names both numbers, because an
+    owner reading only the second could not connect it to what they asked for."""
+    _stub_radios(monkeypatch, CONVERTED)
+
+    with pytest.raises(HTTPException) as raised:
+        await sdr_api.listen(_request(), _settings(), OWNER, 1700.0)
+
+    said = _said(raised)
+    assert "1700 MHz" in said and "1825 MHz" in said

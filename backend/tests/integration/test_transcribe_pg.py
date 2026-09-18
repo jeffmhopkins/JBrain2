@@ -22,11 +22,11 @@ from sqlalchemy.pool import NullPool
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIPT_CONFIDENCE, TranscribePipeline
-from jbrain.llm import LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import Transcript, Word
-from tests.conftest import SchemaRoutedLlmClient, docker_available
+from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
 pytestmark = [
@@ -350,14 +350,14 @@ async def test_low_confidence_audio_reads_below_the_ceiling(
     assert conf == pytest.approx(0.4)  # mean(0.3, 0.5) < the 0.8 ceiling
 
 
-async def test_low_confidence_transcript_marker_reaches_extraction_prompt(
+async def test_low_confidence_transcript_marker_reaches_the_note_the_agent_reads(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
-    """The extraction call must SEE that a transcript was noisy: a low-confidence
-    transcript chunk reaches note.extract behind the "[low-confidence transcript …]"
-    marker so the model discounts facts built on it (the analysis half of the
-    per-word confidence)."""
-    from jbrain.analysis.pipeline import AnalysisPipeline
+    """The reader must SEE that a transcript was noisy: a low-confidence transcript
+    reaches the note conversation's turn 0 behind the "[low-confidence transcript …]"
+    marker so the agent discounts facts built on it (the analysis half of the per-word
+    confidence)."""
+    from jbrain.analysis.converse import note_text
 
     note_id, attachment_id = await make_note_with_audio(maker, blobs, body="left a voice memo")
     await ingest(maker, blobs).ingest_note({"note_id": note_id})
@@ -379,24 +379,10 @@ async def test_low_confidence_transcript_marker_reaches_extraction_prompt(
     )
     await ingest(maker, blobs).ingest_note({"note_id": note_id})
 
-    # The body and the audio transcript now extract in SEPARATE note.extract calls
-    # (per-source extraction), so the marker is asserted across every extract call. A
-    # schema-routed fake answers each note.extract with the extraction and the lone
-    # integrate.note with the empty intent, regardless of how many source groups run.
-    fake = SchemaRoutedLlmClient(
-        '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-        ' "temporal_tokens": []}',
-        '{"resolutions": [], "facts": []}',
-    )
-    analyzer = AnalysisPipeline(
-        maker,
-        LlmRouter(
-            {"xai": fake},
-            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
-        ),
-    )
-    await analyzer.integrate_note({"note_id": note_id})
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(SYSTEM_CTX, note_id)
+    assert note is not None
+    text_read = await note_text(repo, SYSTEM_CTX, note)
 
-    extract_text = "\n".join(c["user_text"] for c in fake.calls)
-    assert "[low-confidence transcript from memo.wav]\nship by August" in extract_text
-    assert "left a voice memo" in extract_text  # body chunk stays unmarked
+    assert "[low-confidence transcript from memo.wav]\nship by August" in text_read
+    assert text_read.startswith("left a voice memo")  # the body leads, unmarked

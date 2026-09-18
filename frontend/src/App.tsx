@@ -34,6 +34,7 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { PetFaceScreen } from "./screens/PetFaceScreen";
 import { RadioScreen } from "./screens/RadioScreen";
 import { ResearchDetailScreen } from "./screens/ResearchDetailScreen";
 import { type ResearchKind, ResearchScreen } from "./screens/ResearchScreen";
@@ -73,6 +74,7 @@ type Card =
   | "radio"
   | "intake"
   | "petcontrol"
+  | "petface"
   | "jcode"
   | "jlaunch"
   | "jmolt"
@@ -82,7 +84,10 @@ type Card =
 // back bar + slide-in), so they render outside the shared subscreen TopBar wrapper —
 // hence no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol">,
+  Exclude<
+    Card,
+    "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol" | "petface"
+  >,
   string
 > = {
   ops: "Ops",
@@ -131,6 +136,10 @@ export function App() {
   const [sessionBackTo, setSessionBackTo] = useState<Card | null>(null);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
+  // A note's CONVERSATION, handed to HomeScreen to load on the Entry surface — the review
+  // inbox's notes row, and a note screen's own door back into its thread.
+  const [noteThread, setNoteThread] = useState<string | null>(null);
+  const clearNoteThread = useCallback(() => setNoteThread(null), []);
   const [noteClosing, setNoteClosing] = useState(false);
   // The entity page stacks one layer above the note view (analysis chips).
   const [entityView, setEntityView] = useState<string | null>(null);
@@ -324,6 +333,21 @@ export function App() {
     if (item !== null) setNoteView(noteViewFromItem(item));
   }
 
+  /** Open a note's CONVERSATION: drop every reading layer and card covering home, then
+   * hand the note to HomeScreen, which loads its thread into the Entry surface (the
+   * owner's ruling of 2026-09-14 — a note conversation is loaded in the main view, not in
+   * a layer above it). */
+  function openNoteConversation(noteId: string) {
+    // Leave a return marker for the card this drops (the review inbox, Search), the same
+    // one a Tasks session handoff leaves: back then climbs conversation → notes list →
+    // that card, instead of ending on home with the list the owner came from gone.
+    if (card !== null) setSessionBackTo(card);
+    setNoteView(null);
+    setCard(null);
+    setLauncherOpen(false);
+    setNoteThread(noteId);
+  }
+
   // "Open in jerv conversation" from the Research Library: drop the detail + list card +
   // launcher to reveal home, then seed the owner's current Research (jerv) chat — the
   // agent that produced these artifacts — with a reference to the item.
@@ -475,6 +499,7 @@ export function App() {
     if (card === "jcode") return setCard(null);
     if (card === "jlaunch") return setCard(null);
     if (card === "petcontrol") return setCard(null);
+    if (card === "petface") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -521,6 +546,8 @@ export function App() {
           onComposeConsumed={clearCompose}
           openSession={openSession}
           onOpenSessionConsumed={clearOpenSession}
+          openNoteThread={noteThread}
+          onOpenNoteThreadConsumed={clearNoteThread}
         />
       </div>
 
@@ -539,6 +566,7 @@ export function App() {
         card !== "image" &&
         card !== "radio" &&
         card !== "petcontrol" &&
+        card !== "petface" &&
         card !== "jcode" &&
         card !== "jlaunch" && (
           <div
@@ -592,7 +620,22 @@ export function App() {
                 }}
               />
             )}
-            {card === "review" && <ReviewScreen />}
+            {/* A notes-tab row REDIRECTS into its conversation (D4). ⟲ A row about a NOTE
+              loads that note's conversation on the ENTRY surface (the owner's ruling of
+              2026-09-14), so the card and launcher drop to reveal it. A row about no note
+              (a staged `owner_prefs` approval) keeps the session handoff, leaving a return
+              marker for the back gesture. */}
+            {card === "review" && (
+              <ReviewScreen
+                onOpenNote={openNoteConversation}
+                onOpenConversation={(sessionId, agent) => {
+                  setCard(null);
+                  setLauncherOpen(false);
+                  setSessionBackTo("review");
+                  setOpenSession({ id: sessionId, agent });
+                }}
+              />
+            )}
             {card === "intake" && <IntakeLinksScreen />}
             {/* Rows open the same entity layer the analysis chips use. */}
             {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
@@ -642,6 +685,7 @@ export function App() {
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
       {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
+      {card === "petface" && <PetFaceScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the
@@ -709,6 +753,9 @@ export function App() {
             onAddAttachment={addAttachmentTo}
             onRemoveAttachment={removeAttachmentFrom}
             onOpenEntity={setEntityView}
+            // This layer holds the note's RECORD; its conversation loads on the Entry
+            // surface below, so opening it drops this layer rather than stacking.
+            onOpenConversation={openNoteConversation}
           />
         </div>
       )}

@@ -101,6 +101,15 @@ export interface SpectrumRow {
    *  nothing between rows at all. A reader holding rows across time needs both to tell a
    *  floor that MOVED from a floor measured differently. */
   gainDb: number | null;
+  /** True when the row was drawn with the TUNER POWERED DOWN — direct sampling, no
+   *  converter — so there was no gain stage for `gainDb` to describe.
+   *
+   *  Distinct from `gainDb === null`, which means the tuner's own loop was running and
+   *  MOVING. "The gain is wandering" and "there is no gain" read the same dB scale in
+   *  opposite ways, so a viewer that could not tell them apart would either hedge a
+   *  sound measurement or trust a moving one. False on a row from a box that predates
+   *  the field. */
+  tunerBypassed: boolean;
   /** Band or channel. Said by the box; inferred from `passbandHz` only for a row from
    *  an older sidecar, which is exactly how every reader used to guess. */
   view: SpectrumView;
@@ -295,6 +304,7 @@ export function parseRow(raw: string): SpectrumRow | { error: string } | null {
       typeof payload.gain_db === "number" && Number.isFinite(payload.gain_db)
         ? payload.gain_db
         : null,
+    tunerBypassed: payload.tuner_bypassed === true,
     view: parseView(payload.view, passband),
   };
 }
@@ -489,4 +499,26 @@ export function resetSdrSpectrum(): void {
   listeners.clear();
   holders.clear();
   state = IDLE;
+}
+
+/**
+ * What the picture's dB scale means, in the row's own terms. Never empty.
+ *
+ * **Said on every row, not only the bad ones.** A spectrum or survey session pins its
+ * gain by construction — a waterfall whose gain moves has a scale that means nothing
+ * from one row to the next — and the legend is how that pinning becomes visible instead
+ * of being a fact buried in the sidecar. A legend that appeared only when something was
+ * wrong would teach the reader to stop reading it, and then it would not work when it
+ * mattered (docs/mocks/radio-settings/README.md).
+ *
+ * Three states, because the radio really has three. `tunerBypassed` is HF with no
+ * converter: the tuner is powered down and nothing in the path has a gain control, so
+ * the levels are true dBFS with no gain to state. A null `gainDb` with the tuner in
+ * circuit is the radio's own loop moving under the measurement, which makes the numbers
+ * comparable within a row and meaningless between rows.
+ */
+export function scaleLegend(row: SpectrumRow): string {
+  if (row.tunerBypassed) return "dBFS (no gain stage)";
+  if (row.gainDb === null) return "relative — gain is moving";
+  return `dBFS @ ${row.gainDb} dB`;
 }

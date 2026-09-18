@@ -1,13 +1,26 @@
-// Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level over
-// home or search with Note / Attachments / Analysis tabs. Attachments is the
-// canonical manager (manifest rows + per-file sheet); pre-Phase-3 the header
-// is domain + date only (no title), and Analysis shows phased placeholders.
+// Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level with
+// **Note / Files** tabs — the note's own RECORD, reached from the conversation about it.
+//
+// ⟲ It is no longer the conversation's host. It was, for one release: the owner rejected
+// that on 2026-09-14 — *"I want you to keep the one omnibox just like jerv. The difference
+// is the default view of entry would be notes. And when you select a note, it basically
+// loads a conversation the same as if I had swiped left inside of jerv and picked a
+// different conversation."* So the thread and its bespoke composer are gone from here; the
+// conversation loads in the main view on Entry (`agent/NoteConversation.tsx`), and this
+// screen is one tap from it — the top bar's note button — carrying what a transcript
+// cannot: the body, the files, and what the graph currently holds from this note,
+// including the only no-terminal re-analysis controls the box has (CLAUDE.md #10).
+//
+// Note carries the body, the clarification eraser and everything the Analysis tab used to
+// show on its own; Files is the canonical attachment manager (manifest rows + per-file
+// sheet).
 
 import { type TouchEvent, useEffect, useRef, useState } from "react";
 import { Markdown } from "../agent/markdown";
 import type { SearchResult } from "../api/client";
 import { attachmentUrl } from "../api/client";
 import { AnalysisTab } from "../components/AnalysisTab";
+import { Clarifications } from "../components/Clarifications";
 import { fmtBytes } from "../components/ImageExtracts";
 import { Sheet } from "../components/Sheet";
 import { IngestChip } from "../components/Stream";
@@ -15,6 +28,7 @@ import { TopBar } from "../components/TopBar";
 import { FileIcon, ImageIcon, MoreIcon, PlusIcon } from "../components/icons";
 import { awaitingImageCount } from "../notes/lifecycle";
 import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
+import { parseNote } from "../notes/noteBlocks";
 import type { MoveTarget } from "../notes/useNoteActions";
 import type { StreamAttachment, StreamItem, SyncStatus } from "../notes/useNotes";
 
@@ -75,11 +89,37 @@ export function noteViewFromSearch(result: SearchResult): NoteViewSource {
 /** A note body rendered as rich text — headings, **bold**, and bulleted/numbered
  * lists read as formatting rather than raw `**`/`-`/`1.` markup. Reuses the safe
  * assistant Markdown renderer (React nodes, no innerHTML), so a captured recipe or a
- * structured note looks the way it was written. */
+ * structured note looks the way it was written.
+ *
+ * The dated blocks appended after the body (`notes/compose.py`) are rendered as what
+ * they ARE — what he came back and added, and when — rather than as the raw
+ * `[addition 2026-09-15 01:24 UTC]` line the composed text carries for the next
+ * reading. Here, unlike the stream row, the stamp is worth its space: this is where he
+ * reads the note whole and "when did I say that?" is a real question. */
 function BodyParagraphs({ body }: { body: string }) {
+  const { body: authored, blocks } = parseNote(body);
   return (
     <div className="note-view-body">
-      <Markdown text={body} />
+      <Markdown text={authored} />
+      {blocks.map((block, i) => (
+        <section
+          // The stamp is minute-resolution, so two additions in one minute would collide
+          // on it alone; the index disambiguates them and is stable because blocks are
+          // append-only and never reordered.
+          key={`${block.at}-${i}`}
+          className={`note-block note-block-${block.kind}`}
+        >
+          <h3 className="note-block-when">
+            {block.kind === "addition" ? "Added" : "Answered"} · {block.at}
+          </h3>
+          {block.question !== undefined && block.question !== "" && (
+            // The agent's question, quoted as the agent's — it is the only text in a
+            // note's body that he did not write, so it must not read as his.
+            <p className="note-block-q">{block.question}</p>
+          )}
+          <Markdown text={block.answer} />
+        </section>
+      ))}
     </div>
   );
 }
@@ -110,8 +150,8 @@ interface AttachmentsTabProps {
 }
 
 // The canonical attachment manager is a pure manifest (settled twice: the
-// manifest review, then the Sources-card review moved extract viewing to
-// the Analysis tab): inert rows with status chips + the per-file ⋯ sheet.
+// manifest review, then the Sources-card review moved extract viewing to the Sources
+// card): inert rows with status chips + the per-file ⋯ sheet.
 function AttachmentsTab({ view, onAdd, onRemove }: AttachmentsTabProps) {
   const [sheetFor, setSheetFor] = useState<StreamAttachment | null>(null);
   const [removeArmed, setRemoveArmed] = useState(false);
@@ -275,8 +315,11 @@ interface NoteScreenProps {
   onDelete: (id: string) => void;
   onAddAttachment: (noteId: string, file: File) => Promise<StreamAttachment>;
   onRemoveAttachment: (attachmentId: string) => Promise<void>;
-  /** Analysis-tab entity chips open the entity layer above this one. */
+  /** Fact-table and transcript entity chips open the entity layer above this one. */
   onOpenEntity: (entityId: string) => void;
+  /** Open this note's CONVERSATION — the Entry surface loads it in the main view. Absent
+   * where there is no home surface under this layer to hand it to. */
+  onOpenConversation?: ((noteId: string) => void) | undefined;
 }
 
 export function NoteScreen({
@@ -290,11 +333,12 @@ export function NoteScreen({
   onAddAttachment,
   onRemoveAttachment,
   onOpenEntity,
+  onOpenConversation,
 }: NoteScreenProps) {
   const [view, setView] = useState(source);
-  // Analysis is the most useful surface once a note exists, so it opens first;
-  // the Note body is one tap away.
-  const [tab, setTab] = useState<"note" | "attachments" | "analysis">("analysis");
+  // The note's own text first — this screen is the RECORD, and the conversation about it
+  // is the surface this was opened from.
+  const [tab, setTab] = useState<"note" | "attachments">("note");
 
   // Keep the local view in step when App refreshes the source (saved edits,
   // attachment changes from the editor layer).
@@ -344,7 +388,12 @@ export function NoteScreen({
   return (
     <div className="subscreen subscreen-note" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
       <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} />
-      <div className="screen-body note-view" ref={scrollerRef}>
+      {/* Head + tabs sit OUTSIDE the scroller: the Thread tab pins a composer to the
+          bottom edge and gives the transcript its own scroll box, so the screen's chrome
+          can no longer be part of a single scrolling column. The tab row staying put is
+          the point on a chat surface — the way back to the note's own text must not be
+          something you scroll a conversation to find. */}
+      <div className="note-view-chrome">
         <div className="note-view-head">
           <span
             className="domain-pill"
@@ -352,7 +401,9 @@ export function NoteScreen({
           >
             <span
               className="domain-dot"
-              style={{ background: DOMAIN_COLOR[view.domain] ?? "var(--steel)" }}
+              style={{
+                background: DOMAIN_COLOR[view.domain] ?? "var(--steel)",
+              }}
             />
             {DOMAIN_TITLE[view.domain] ?? view.domain}
             {view.destination ? ` → ${view.destination}` : ""}
@@ -364,7 +415,11 @@ export function NoteScreen({
               day: "numeric",
               year: "numeric",
             })}{" "}
-            · {view.createdAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+            ·{" "}
+            {view.createdAt.toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
           </span>
           <IngestChip item={{ ...view, attachments: view.attachments ?? [] }} />
           {view.provenance === "agent" && (
@@ -402,26 +457,42 @@ export function NoteScreen({
             className={`seg${tab === "attachments" ? " seg-on" : ""}`}
             onClick={() => setTab("attachments")}
           >
-            Attachments
+            Files
             {(view.attachments?.length ?? view.attachmentCount) > 0 && (
               <span className="tab-count">{view.attachments?.length ?? view.attachmentCount}</span>
             )}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "analysis"}
-            className={`seg${tab === "analysis" ? " seg-on" : ""}`}
-            onClick={() => setTab("analysis")}
-          >
-            Analysis
-          </button>
         </div>
+      </div>
 
+      <div className="screen-body note-view" ref={scrollerRef}>
         {tab === "note" && (
           <>
             <BodyParagraphs body={view.body} />
             {view.partial && <p className="note-view-loading">loading the full note…</p>}
+            {/* The D6 eraser. The body above already renders the blocks as prose —
+                D6 changes no screen — but the block IDS exist nowhere the owner can
+                reach, and an id you cannot name is a block you cannot redact. Renders
+                nothing at all for a note that was never asked about, which is most. */}
+            <Clarifications noteId={noteId} onErased={(body) => setView((v) => ({ ...v, body }))} />
+            {/* What the graph currently holds from this note — the former Analysis tab,
+                whole. The conversation records DECISIONS; this is a readout of the
+                CURRENT head: a value superseded a month later still reads "written" in
+                the turn that wrote it, and only this says what is true now. It also
+                carries the note's only no-terminal re-run controls (note-level and
+                per-image) and the OCR / transcript expansions, none of which a turn can
+                host. Folded under the note's own text rather than given a third tab,
+                because "the note, and what it says" is one reading. */}
+            <div className="note-record">
+              <h3 className="section-header">What this note says</h3>
+              <AnalysisTab
+                noteId={noteId}
+                attachments={view.attachments}
+                ingestState={view.ingestState}
+                bodyChars={view.body.length}
+                onOpenEntity={onOpenEntity}
+              />
+            </div>
           </>
         )}
         {tab === "attachments" && (
@@ -446,19 +517,26 @@ export function NoteScreen({
             }}
           />
         )}
-        {tab === "analysis" && (
-          <AnalysisTab
-            noteId={noteId}
-            attachments={view.attachments}
-            ingestState={view.ingestState}
-            bodyChars={view.body.length}
-            onOpenEntity={onOpenEntity}
-          />
-        )}
       </div>
 
       {menuOpen && noteId !== null && (
         <Sheet title="Note actions" onClose={() => setMenuOpen(false)}>
+          {onOpenConversation && (
+            // The way back into the note's conversation from a note reached anywhere but
+            // the notes list — a search hit, an entity mention, a cited source card. The
+            // thread is not on this screen any more, so without this door those routes
+            // would reach the record and stop there.
+            <button
+              type="button"
+              className="sheet-action"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenConversation(noteId);
+              }}
+            >
+              open the conversation
+            </button>
+          )}
           <button
             type="button"
             className="sheet-action sheet-action-edit"
@@ -474,7 +552,11 @@ export function NoteScreen({
             className="sheet-action"
             onClick={() => {
               setMenuOpen(false);
-              onMove({ id: noteId, domain: view.domain, destination: view.destination });
+              onMove({
+                id: noteId,
+                domain: view.domain,
+                destination: view.destination,
+              });
             }}
           >
             move domain

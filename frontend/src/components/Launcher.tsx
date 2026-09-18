@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
 import {
+  AnimalIcon,
   BookIcon,
   BotIcon,
   CalendarIcon,
@@ -50,6 +51,7 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "petcontrol"
+  | "petface"
   | "jcode"
   | "jlaunch"
   | "jmolt";
@@ -99,6 +101,11 @@ const SECTIONS: Section[] = [
     header: "System",
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
+      // The endpoint display preview. It sits in System rather than beside "Pet" because it
+      // is a validation surface for the room-endpoint hardware, not a second way to play with
+      // the pet — and it carries AnimalIcon rather than BotIcon so it cannot be mistaken for
+      // one (BotIcon is already doing duty for both "Pet" and "LLM").
+      { title: "Pet face", icon: <AnimalIcon size={24} />, target: "petface" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
@@ -248,10 +255,14 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
     if (!open || !active || !foreground) return;
     let stale = false;
     const refresh = () => {
-      api
-        .reviewQueue()
-        .then((queue) => {
-          if (!stale) setReviewCount(queue.items.length);
+      // The Review tile's badge is the whole signal for both tabs (D4/D5 — no push, no
+      // nagging count anywhere else), so it sums the wiki findings and the notes tab's
+      // waiting rows. A first pass still reading is not waiting on anyone and is
+      // excluded, the same rule the tab's own count pill uses.
+      Promise.all([api.reviewQueue(), api.notesInbox().catch(() => ({ items: [] }))])
+        .then(([queue, notes]) => {
+          if (stale) return;
+          setReviewCount(queue.items.length + notes.items.filter((r) => !r.live).length);
         })
         .catch(() => {});
       // Count tasks with an unviewed latest run — recomputed each poll against the

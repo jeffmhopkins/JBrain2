@@ -108,9 +108,10 @@ async def test_catalog_flags_seeded_vs_in_code(maker: async_sessionmaker) -> Non
     owner = await _owner(maker)
     view = await _reader(maker).load(owner)
     by_name = {a.name: a for a in view.actions}
-    # The shipped six are mirrored into app.actions (migration 0035).
+    # The shipped set is mirrored into app.actions (migration 0035; 0200 removed
+    # `integrate_note` from both when R4 deleted its producer).
     assert by_name["ingest_note"].seeded is True
-    assert by_name["integrate_note"].seeded is True
+    assert by_name["ocr_attachment"].seeded is True
     # The reconcilers and purge live in-code only.
     assert by_name["reconcile_pending_notes"].seeded is False
     assert by_name["purge_deleted_artifacts"].seeded is False

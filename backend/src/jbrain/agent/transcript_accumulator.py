@@ -87,10 +87,28 @@ class TranscriptAccumulator:
                     step["proposal"] = event.proposal.model_dump()
                 if event.entities:
                     step["entities"] = [e.model_dump() for e in event.entities]
+                # The rows a write tool wrote. Persisted like the chips above so the
+                # D3 chip replays on reopen — and read back by the note conversation's
+                # ledger, which is where constraint 6's `touched` set comes from.
+                if event.facts:
+                    step["facts"] = [f.model_dump() for f in event.facts]
+                # D3's `truncated`: the call took only a prefix of its batch. Persisted
+                # beside the writes because the rung's wording turns on it — a clamped
+                # batch shown as a whole one is the same false report on reopen as live.
+                if event.truncated:
+                    step["truncated"] = True
                 # Web citation sources (jerv) — persisted so the favicon chips and
                 # their [^n] targets replay on reopen.
                 if event.web_sources:
                     step["web_sources"] = [s.model_dump() for s in event.web_sources]
+                # The arguments the TOOL recorded, replacing the ones the model sent.
+                # `ask_owner` mints its question ids server-side and keeps them on the
+                # ledger; the step is what the PWA's question block is built from, so
+                # without this the block offers positional ids the ledger never held and
+                # `clarify._pair` drops every answer posted against them. Set only by a
+                # tool that mints something — every other step keeps the model's own args.
+                if event.args:
+                    step["args"] = event.args
         elif event.type == "tool_view":
             # The rich view (e.g. a list_card) rides its tool step so the bubble's
             # tool-result views replay on reopen.

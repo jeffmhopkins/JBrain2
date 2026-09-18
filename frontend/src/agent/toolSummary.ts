@@ -7,7 +7,7 @@
 // cannot ship as a raw snake_case row with no visible target.
 
 import type { SourceRef, ToolActivity } from "./transcript";
-import type { EntityRef, WebSource } from "./types";
+import type { EntityRef, FactWrite, WebSource } from "./types";
 
 export type { SourceRef };
 
@@ -26,6 +26,12 @@ export interface ToolStep {
   /** Entities the tool resolved — rendered as tappable links in the expanded
    * step, so a name reaches its page without exposing the raw id. */
   entities: EntityRef[];
+  /** Graph writes this call made — the D3 "entity modified" rung of the expanded
+   * step. Empty for every tool that writes nothing. */
+  facts: FactWrite[];
+  /** The call asserted only a prefix of what it was given, so its write list is
+   * partial and says so (D3's `truncated`). */
+  truncated: boolean;
   /** The call's arguments, for the expanded-step "arguments" list. */
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
@@ -44,6 +50,27 @@ const STEP_LABELS: Record<string, string> = {
   request_rebuild: "Requested an article rebuild",
   add_source_exclusion: "Excluded a source",
   file_correction: "Filed a correction note",
+  // The note conversation's write surface (AGENT_INGEST_CONVERSATION_PLAN D3/D16).
+  // Labelled in the owner's terms, never the verb's: the step says what the agent did
+  // to the owner's graph, and the expanded rung says what landed and in which domain.
+  resolve_entity: "Resolved who the note means",
+  assert_fact: "Recorded what the note says",
+  // `close_reading` is the whole-note reading (AGENT_INGEST_REWRITE R1), not one more
+  // fact — the reading is everything the note says, and that whole-note scope is what
+  // the settle acts on. The label has to carry BOTH halves: an earlier one said only
+  // "Read the whole note", and a read verb over the one call that writes the owner's
+  // graph is why he could not tell his entities had been recorded at all. `status.ts`
+  // has always said "Recording" for the live phase; these two must agree.
+  close_reading: "Read the note and recorded what it says",
+  ask_owner: "Asked you a question",
+  prefs_read: "Read your standing instructions",
+  prefs_write: "Staged a standing instruction",
+  // The on-reply half (D8). `correct_fact` WROTE — it replaced a value and pinned it —
+  // while `merge_entities` only staged, and the two labels have to say which, because
+  // "staged" is the whole difference between something you still have to approve and
+  // something already on file.
+  correct_fact: "Corrected a fact you disputed",
+  merge_entities: "Staged an entity fold",
   propose_correction: "Staged a proposal",
   propose_merge: "Staged an entity merge",
   // Memory + scratchpads
@@ -215,12 +242,31 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   lookup_condition: ["name"],
   add_source_exclusion: ["domain", "reason"],
   file_correction: ["body"],
+  // The W3 write tools batch (TOOL_SURFACE.md: ≤12 surfaces, ≤8 facts per call), so
+  // their one legible target is an ARRAY — `inlinePiece` renders those elementwise.
+  resolve_entity: ["entities"],
+  assert_fact: ["facts"],
+  // The reading's legible target is its TITLE — the one line the owner would recognise
+  // the note by. ⟲ `facts` used to follow it, elementwise, and what that actually put on
+  // the row was the batch's SUBJECT HANDLES: "e1, e1, e2 +3". A handle is the model's
+  // private name for an entity for the length of one pass; on screen it is noise sitting
+  // exactly where the owner looks to see what the call was about.
+  close_reading: ["title"],
+  // One ask carries the whole SET (R1c), so its legible target is an ARRAY too — each
+  // element renders as its own question text through BATCH_ELEMENT_KEYS below.
+  ask_owner: ["questions"],
+  // The on-reply writes are NOT batched — one disputed value, one pair of entities — so
+  // their inline piece is the thing the owner would recognise in the strip: what the
+  // fact was corrected TO, and which two records are being folded.
+  correct_fact: ["statement"],
+  merge_entities: ["entity_a", "entity_b"],
   propose_correction: ["correction"],
   propose_merge: ["reason"],
   remember: ["body_md"],
   memory_read: ["block_kind"],
   memory_edit: ["op"],
   archivist_memory_write: ["content"],
+  prefs_write: ["op", "text"],
   scratch_read: ["filename"],
   scratch_write: ["mode", "filename"],
   scratch_manage: ["op", "filename"],
@@ -284,6 +330,8 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   "run_python",
   "read_note",
   "read_entity",
+  // D15 injects the standing instructions into the prompt; the read takes no argument.
+  "prefs_read",
   "read_wiki",
   "request_rebuild",
   "archivist_memory_read",
@@ -337,12 +385,49 @@ const FALLBACK_KEYS: readonly string[] = [
 // swallow it (matches the backend child-trace clamp in agent/spawn.py).
 const INLINE_PIECES = 2;
 const INLINE_PIECE_LEN = 200;
+// How many elements of a batched argument name themselves on the row before the rest
+// become a "+N". The W3 note-ingest tools take ≤12 surfaces / ≤8 facts per call
+// (TOOL_SURFACE.md), so a batch that printed every element would swallow the row.
+const INLINE_BATCH = 3;
+// The keys a batch ELEMENT is named by, first hit wins — the same "first legible key"
+// rule FALLBACK_KEYS applies to a whole argument map, one level down.
+const BATCH_ELEMENT_KEYS: readonly string[] = [
+  "surface",
+  "name",
+  "subject",
+  "question",
+  "statement",
+  "text",
+  "value",
+];
 
-function inlinePiece(v: unknown): string | undefined {
+function scalarPiece(v: unknown): string | undefined {
   if (typeof v === "number") return String(v);
   if (typeof v !== "string" || !v.trim()) return undefined;
   const s = v.trim();
   return s.length > INLINE_PIECE_LEN ? `${s.slice(0, INLINE_PIECE_LEN)}…` : s;
+}
+
+// One element of a batched argument: a bare string, or the first legible field of an
+// object (the batch shapes W2 measured are arrays of small objects).
+function elementPiece(v: unknown): string | undefined {
+  const scalar = scalarPiece(v);
+  if (scalar) return scalar;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  for (const key of BATCH_ELEMENT_KEYS) {
+    const piece = scalarPiece(o[key]);
+    if (piece) return piece;
+  }
+  return undefined;
+}
+
+function inlinePiece(v: unknown): string | undefined {
+  if (!Array.isArray(v)) return scalarPiece(v);
+  const named = v.map(elementPiece).filter((p): p is string => p !== undefined);
+  if (named.length === 0) return undefined;
+  const shown = named.slice(0, INLINE_BATCH).join(", ");
+  return named.length > INLINE_BATCH ? `${shown} +${named.length - INLINE_BATCH}` : shown;
 }
 
 function inlineArg(name: string, args: Record<string, unknown> | undefined): string | undefined {
@@ -387,6 +472,38 @@ function noteSource(summary: string): SourceRef[] {
   return [{ noteId: m[1], domain: m[2], text: stripMarks(body) || "(empty note)" }];
 }
 
+/** The entities a step touched, each ONCE.
+ *
+ * The wire repeats them, by design on the backend's side: `close_reading` emits an
+ * `EntityRef` per touched handle PER FACT (`graphwritetools._assert_one` returns
+ * `[subject, object]` and the loop `refs.extend(touched)`), so eight facts about the
+ * owner and his dog ship sixteen refs naming two entities. The write path has no reason
+ * to care — `NoteConversationRepo.writes()` unions them into a set, which is why nothing
+ * noticed — but every UI consumer does: `EntityChips` keys on `entity_id`, so repeats are
+ * duplicate React keys and a chip wall that says "Boss" eight times, and the turn ledger
+ * counted each repeat as another record created.
+ *
+ * First occurrence wins, which is well-defined: `created` is a property of the HANDLE and
+ * a handle lives for the whole pass, so every ref for one entity within a step carries the
+ * same value.
+ *
+ * DO NOT MOVE THIS TO THE BACKEND. The repeats are not waste there: `graphwritetools._ground`
+ * hangs each committed statement on the refs of the fact it came from, and `loop._grounding_corpus`
+ * reads those refs server-side, before the wire. Deduping upstream would keep the first ref
+ * and drop the statements hanging on the rest — silently restoring the amber "unverified"
+ * badge on every write past the first, which is the defect `_ground` exists to fix. The
+ * duplication carries information right up to the point where it stops doing so, and that
+ * point is here.
+ */
+function uniqueEntities(refs: EntityRef[] | undefined): EntityRef[] {
+  if (refs === undefined || refs.length < 2) return refs ?? [];
+  const seen = new Map<string, EntityRef>();
+  for (const ref of refs) {
+    if (!seen.has(ref.entity_id)) seen.set(ref.entity_id, ref);
+  }
+  return [...seen.values()];
+}
+
 export function toolStep(t: ToolActivity): ToolStep {
   let sources: SourceRef[];
   if (t.sources && t.sources.length > 0) {
@@ -407,7 +524,9 @@ export function toolStep(t: ToolActivity): ToolStep {
     inline: inlineArg(t.name, t.args),
     sources,
     webSources: t.webSources ?? [],
-    entities: t.entities ?? [],
+    entities: uniqueEntities(t.entities),
+    facts: t.facts ?? [],
+    truncated: t.truncated === true,
     args: t.args,
     summary: t.summary,
   };

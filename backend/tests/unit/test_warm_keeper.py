@@ -69,6 +69,10 @@ class _FakeRouter:
         self.admit_without_loading = False
         # Shared so the prime can be ordered against the load/restore the gateway records.
         self._gateway = gateway
+        self.effort: str | None = "low"
+        # Every prime's max_tokens. The store's exact-integer save gate is sound ONLY because
+        # the prime generates exactly one token; nothing asserted it.
+        self.max_tokens: list[int] = []
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
@@ -76,8 +80,9 @@ class _FakeRouter:
     async def effective_reasoning_effort(self, task: str) -> str | None:
         # The live box carries a stored "low" on agent.turn — the value whose absence from
         # the gateway warm caused the 2026-08-23 mismatch. Distinctive, not None, so a
-        # keeper that drops it on the way to the store cannot pass.
-        return "low"
+        # keeper that drops it on the way to the store cannot pass. Settable, so a test can
+        # do what the owner does in Settings and change it under a running keeper.
+        return self.effort
 
     async def admit_local_load(self, served_model: str) -> None:
         # The REAL one loads. `ensure_room` takes the slow path for a non-resident target and
@@ -89,6 +94,7 @@ class _FakeRouter:
             await self._gateway.load(served_model)
 
     async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096):
+        self.max_tokens.append(max_tokens)
         if self._gateway is not None:
             self._gateway.events.append("prime")
         if self.fail:
@@ -461,3 +467,106 @@ async def test_a_broken_disk_layer_never_wedges_the_keeper() -> None:
     assert await keeper.reconcile_once() is True
     assert "prime" in gateway.events
     assert len(router.converses) == 1
+
+
+async def test_changing_the_reasoning_effort_makes_the_keeper_re_prime() -> None:
+    """The effort is in the RENDERED prompt — gpt-oss's harmony template writes a literal
+    "Reasoning: <level>" into the leading tokens — and therefore in the store's fingerprint.
+
+    Without it in the memo, the settled branch was unreachable-by-design: `want ==
+    self._primed` stayed true across a Settings change, so the keeper never re-primed, no
+    save ever ran, no file was ever written under the new identity, and every interactive
+    turn re-prefilled the whole ~30k prefix until a restart or an eviction. The store's own
+    fingerprint comment named that hazard and closed only its half."""
+    keeper, _gateway, router, store = _kept_with_store(running=("gpt-oss-120b",))
+    assert await keeper.reconcile_once() is True
+    primed_once = len(router.converses)
+    assert primed_once == 1
+
+    # Settled: the same identity does not re-prime, only re-checks the slot.
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == primed_once
+
+    # The owner changes agent.turn's effort in Settings. Nothing unloads the model.
+    router.effort = "high"
+
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == primed_once + 1, "a new effort is a new prefix to prime"
+    assert store.saves[-1][2] == "high", "and the save must be keyed by the effort it primed"
+
+
+# ---- P4: the loop's own failure modes -----------------------------------------------------
+
+
+async def test_a_loss_reported_during_a_prime_is_not_erased_by_that_prime() -> None:
+    """The lost update. A cold prime is 60-200 s, and residency reporting a drop inside that
+    window used to be overwritten by the prime's own completion re-asserting the memo — the
+    model then sits resident, COLD, and believed primed, which is precisely the state the
+    hook was added to prevent. The prime that no longer owns its generation says nothing."""
+    keeper, _gateway, router, store = _kept_with_store(running=("gpt-oss-120b",))
+
+    # Residency drops the model while the prime is in flight.
+    async def converse_then_lose(*a: object, **kw: object):
+        keeper.note_prefix_lost("gpt-oss-120b")
+        return await _FakeRouter.converse(router, *a, **kw)  # type: ignore[arg-type]
+
+    router.converse = converse_then_lose  # type: ignore[method-assign]
+
+    assert await keeper.reconcile_once() is False, "a superseded prime has not settled"
+    assert keeper._primed is None, "and it must not claim the slot it primed still holds it"
+    assert store.saves == [], "nor save a prefix keyed to a slot that is gone"
+
+
+async def test_a_reported_loss_cuts_the_sleep_short() -> None:
+    """The edge trigger was only half an edge: the hook fired immediately and the keeper then
+    slept out the rest of its interval. Its main production caller is the end-of-turn restore,
+    so it lands just after the owner sends a message — making their NEXT message, inside that
+    same minute, the one that pays the prefill the hook exists to prevent."""
+    keeper, _gateway, _router, _store = _kept_with_store(running=("gpt-oss-120b",))
+    keeper._interval_ready = 30.0  # a steady interval no test should ever wait out
+
+    task = asyncio.create_task(keeper.run())
+    await asyncio.sleep(0.05)  # let it settle and enter the sleep
+    ticks = len(_store.restores) if hasattr(_store, "restores") else 0
+
+    keeper.note_prefix_lost("gpt-oss-120b")
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert keeper._wake is not None
+    # It woke: a second reconcile ran well inside the 30 s interval.
+    assert len(getattr(_store, "restores", [])) > ticks or keeper._primed is not None
+
+
+async def test_a_failing_prime_backs_off_instead_of_hammering_the_box() -> None:
+    """A prime failing for a PERSISTENT reason retried at the eager cadence forever: ~17k log
+    lines a day, and each attempt runs an admission that can EVICT to fit — so the keeper and
+    the worker could trade the same 68 GB model back and forth every five seconds."""
+    keeper, _gateway, _router, _store = _kept_with_store()
+    keeper._interval_wait = 1.0
+    keeper._interval_ready = 60.0
+
+    assert keeper._retry_delay() == 1.0  # no failures yet
+    keeper._failures = 1
+    assert keeper._retry_delay() == 2.0
+    keeper._failures = 4
+    assert keeper._retry_delay() == 16.0
+    keeper._failures = 99
+    assert keeper._retry_delay() == 60.0, "and never slower than the steady poll"
+
+
+async def test_the_prime_generates_exactly_one_token() -> None:
+    """The load-bearing premise of the whole save path, and nothing asserted it.
+
+    `save_after_prime` identifies the primed slot by an EXACT integer match on the prime's own
+    `usage.input_tokens`. That works only because the server appends every sampled token to
+    the slot's cache except the final stop token — so a `max_tokens=1` prime leaves the cache
+    at precisely its prompt size. Raise it and no slot ever matches: the save is skipped and
+    logged, the disk layer goes silently inert, and every test stays green. The store's own
+    comment says "if slot_unidentified becomes chronic, look here first" — this is that look,
+    made automatic."""
+    keeper, _gateway, router, _store = _kept_with_store()
+    assert await keeper.reconcile_once() is True
+    assert router.max_tokens == [1], "a prime that generates more can never be identified"

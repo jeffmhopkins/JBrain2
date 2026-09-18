@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Stand up a throwaway Postgres for the LLM-in-the-middle harness and drive it
-# interactively (read the real note.extract prompt as the model; run a scenario
+# interactively (read the persona the harness plays as the model; run a scenario
 # file against the real pipeline). The committed golden scenarios run as part
 # of the normal suite via `pytest -m integration tests/integration/test_harness_scenarios.py`;
 # this script is for ad-hoc "be the model" exploration on a standing DB.
 #
 #   scripts/llm-harness.sh up          start DB + migrate
-#   scripts/llm-harness.sh prompt      print the assembled system+user prompt
+#   scripts/llm-harness.sh prompt      print the note-conversation persona prompt
 #   scripts/llm-harness.sh run FILE    run one scenario JSON, print + assert
 #   scripts/llm-harness.sh down        remove the DB
 set -euo pipefail

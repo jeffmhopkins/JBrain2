@@ -23,11 +23,63 @@ export interface EntityRef {
    * them to ground a fact-value answer; the UI doesn't render them (the same prose is
    * already in the Worked step). Empty for find_entity/relate and related-object chips. */
   facts?: string[];
+  /** Whether this ref MINTED the entity or matched one already on file. The write path
+   * has always known it and has always said so to the MODEL ("new entity" / "already
+   * known"); it reached the owner nowhere, so the screen could not distinguish "I made a
+   * new record for Boss" from "I matched Boss to the one you already have" — which on a
+   * note introducing something new is the whole of what he wants to know. */
+  created?: boolean;
+  /** The entity's own kind — person, thing, animal, place. NOT `kind` above, which is
+   * this ref's discriminator and is always the literal "entity". */
+  entity_kind?: string;
 }
 export interface NoteRef {
   kind: "note";
   note_id: string;
   label: string;
+}
+
+/** What became of one fact the agent wrote (D3 of AGENT_INGEST_CONVERSATION_PLAN).
+ * Reported by the WRITE PATH — `supersession.decide()` owns which of these a write
+ * became, never the model — so a step renders what landed, not what was asked for. */
+export type WriteStatus = "written" | "replaced" | "held";
+
+/** One graph write a tool made, carried on its result and persisted onto the turn so
+ * the step renders identically live and on reopen. `domain` is per fact, not per call:
+ * one note's writes can land in different domains and each must NAME its own (D3 —
+ * "never colour alone"). */
+export interface FactWrite {
+  fact_id: string;
+  /** The whole statement — the fallback when the edge parts below are absent. */
+  label: string;
+  domain: Domain;
+  /** D3's three states, reduced from the write path's seven-word outcome vocabulary
+   * SERVER-SIDE (`contracts.write_status`), so one table decides it rather than each
+   * renderer. Optional on the wire only because an older persisted turn predates it —
+   * `writeVerb`/`tallyWrites` fall back to `outcome`, never to "written". */
+  status?: WriteStatus;
+  /** The precise word the write path used — `already`, `closed`, `historical`,
+   * `promoted` and the three above. Carried because `status` is a lossy reduction and
+   * this is what the ledger and a debug read want. */
+  outcome?: string;
+  /** The graph edge, so a write renders in the shipped `predicate → value` form the
+   * entity page and the review inbox already use rather than a second one. */
+  predicate?: string;
+  qualifier?: string | null;
+  value?: string;
+  /** The statement this write superseded — the "current" half of the shipped
+   * before→after diff. Only ever set with `status: "replaced"`. */
+  replaced?: string;
+  /** D12: committed from an attachment (a photo, an OCR'd page) rather than the note's
+   * own prose. Marked by the write path, never inferred from the tool name. */
+  from_attachment?: boolean;
+  /** Why the write path held back, or what it noticed going ahead.
+   * `"attribute_collision"` is the one that matters on screen: the value on file
+   * DISAGREED, and this one is live because it is NEWER — not because anything decided
+   * between them. It has only ever existed inside the free-text result the MODEL reads,
+   * so a contradicted supersession has rendered identically to a clean one, and a
+   * conversation write files no review card to catch it either. */
+  hold_reason?: string;
 }
 export type CitationRef = FactRef | EntityRef | NoteRef;
 
@@ -101,6 +153,21 @@ export interface ToolResultEvent {
   web_sources?: WebSource[];
   proposal?: ProposalRef | null;
   entities?: EntityRef[];
+  /** Graph writes this call made (D3). Absent for every tool that writes nothing —
+   * an empty array from a write tool means "it wrote nothing", which is a different
+   * statement and renders differently. */
+  facts?: FactWrite[];
+  /** The call asserted only a PREFIX of what it was given — a batch cut short by the
+   * step/tool-error caps (`loop.py`), or arguments the ledger capped. Constraint 6
+   * turns on this distinction, so the step says it out loud rather than showing a
+   * short list as if it were the whole one. */
+  truncated?: boolean;
+  /** The arguments the TOOL recorded, where they differ from the ones the model sent —
+   * they REPLACE the step's `args`. Only `ask_owner` sends them, and only because it mints
+   * its question ids server-side: the step this client builds its question block from is
+   * otherwise the model's raw arguments, which carry no ids at all. Absent for every other
+   * tool, whose step keeps what the model sent. */
+  args?: Record<string, unknown> | null;
 }
 export interface ToolViewEvent {
   type: "tool_view";
@@ -292,6 +359,11 @@ export interface TranscriptTurn {
      * bubble's chips and inline links replay on reopen (not just note sources). */
     proposal?: ProposalRef | null;
     entities?: EntityRef[];
+    /** The graph writes the call made and whether it was cut short (D3), persisted so
+     * a conversation reopened days later renders the same writes it did live — the
+     * turn, not the tool-call ledger, is what survives the event stream. */
+    facts?: FactWrite[];
+    truncated?: boolean;
     /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
     view?: ViewPayload | null;
     /** The answer-text length when the tool was called — the split point an image
@@ -388,6 +460,15 @@ export interface AppointmentRef {
   title: string;
 }
 
+/** One answer to a note thread's open question, carried by the send that answers it.
+ * `question_id` is the id `ask_owner` recorded with the question — a joined prose string
+ * could not say which answer answers which, and a mispaired answer becomes a wrong
+ * sentence in the owner's own note. */
+export interface ChatAnswer {
+  question_id: string;
+  answer: string;
+}
+
 export interface ChatRequest {
   session_id: string;
   message: string;
@@ -413,6 +494,10 @@ export interface ChatRequest {
    * value and never sends it to a non-reasoning model. (Inline union rather than
    * client.ts's ReasoningEffort: client.ts imports this module.) */
   reasoning_effort?: "none" | "low" | "medium" | "high";
+  /** The owner's answers to a note thread's open question set, riding the same send as
+   * whatever free text is in the composer — one send is one turn (§3b I7). Turn-local
+   * like `appointment_id`; the transcript records `message` verbatim. */
+  answers?: ChatAnswer[];
   /** This turn carries a Proposal ENACT OUTCOME the owner just produced inline (not
    * owner prose): `message` is the server-authored summary, framed as a data report so
    * the assistant acknowledges and continues without re-staging declined items. */

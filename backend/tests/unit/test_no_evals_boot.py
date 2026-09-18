@@ -9,10 +9,10 @@ hides the package entirely (an import hook that raises for `evals` and `evals.*`
 proves that importing `jbrain.worker` and `jbrain.main` (building the app) succeed
 regardless.
 
-The eval RUNTIME (the scorer core + the case corpus) lives IN the package as
-`jbrain.evals.runner`, so the analysis eval scoring runs in production. The
-fail-closed path on an EMPTY corpus (a stripped/mis-packaged image) is asserted
-below: no cases means no fixture scores, so there is nothing to read as a pass."""
+The eval RUNTIME (the scorer cores + their case corpora) lives IN the package under
+`jbrain.evals`, so eval scoring can run in production. The fail-closed path on an EMPTY
+corpus (a stripped/mis-packaged image) is asserted below: no cases means no fixture
+scores, so there is nothing to read as a pass."""
 
 from __future__ import annotations
 
@@ -80,9 +80,20 @@ def evals_hidden() -> Iterator[None]:
 
 def test_evals_is_actually_hidden(evals_hidden: None) -> None:
     """Sanity: the fixture genuinely makes `evals` unimportable, so the assertions
-    below are meaningful (a no-op fixture would make this whole test vacuous)."""
+    below are meaningful (a no-op fixture would make this whole test vacuous).
+
+    Aimed at a module that EXISTS and imports cleanly on its own — R4 deleted
+    `evals/run.py`, and a deleted module raises ModuleNotFoundError with the fixture or
+    without it, which is precisely the vacuum this assertion is here to rule out. The
+    assertion below proves the aim: unhidden, the same import works."""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("evals.run")
+        importlib.import_module("evals.shape_probe")
+
+
+def test_the_sanity_target_imports_when_evals_is_not_hidden() -> None:
+    """The other half of the sanity check: without the fixture the module is importable,
+    so the failure above can only be the fixture's doing."""
+    assert importlib.import_module("evals.shape_probe") is not None
 
 
 def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:
@@ -96,14 +107,19 @@ def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:
 
 
 async def test_runner_fails_closed_on_empty_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty case corpus (a stripped/mis-packaged image) must NOT read as a pass: the
-    in-package analysis runner produces an EvalRun with NO fixture scores, so there is
-    nothing to count as success — a contentless run can never clear a bar."""
-    import jbrain.evals.runner as runner
+    """An empty case corpus (a stripped/mis-packaged image) must NOT read as a pass: an
+    in-package runner produces an EvalRun with NO fixture scores, so there is nothing to
+    count as success — a contentless run can never clear a bar.
 
-    monkeypatch.setattr(runner, "load_cases", lambda: [])
-    results, tokens = await runner.score_cases(object(), runner.load_cases())
+    Asserted on the disambiguate runner since R4, which deleted the note.extract corpus
+    with its prompt. The property is the runner family's, not that corpus's."""
+    import jbrain.evals.disambiguate_runner as runner
+
+    monkeypatch.setattr(runner, "load_disambiguate_cases", lambda: [])
+    results, tokens = await runner.score_disambiguate_cases(
+        object(), runner.load_disambiguate_cases()
+    )
     assert results == []
     assert tokens == 0
-    run = runner.eval_run_from_cases(results, "v-test")
+    run = runner.eval_run_from_disambiguate(results, "v-test")
     assert run.scores == ()

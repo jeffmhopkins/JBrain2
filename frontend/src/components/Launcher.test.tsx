@@ -33,6 +33,28 @@ describe("Launcher tile navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("ops");
   });
 
+  // The pet-face endpoint preview is its OWN button, distinct from "Pet" (which is the
+  // phone remote for the wall). They were briefly adjacent under Knowledge sharing one icon,
+  // which made them read as one feature with two names.
+  it("routes the Pet face card to the endpoint preview", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
+    expect(onNavigate).toHaveBeenCalledWith("petface");
+  });
+
+  it("keeps Pet and Pet face as two separate buttons", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pet" }));
+    expect(onNavigate).toHaveBeenCalledWith("petcontrol");
+    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
+    expect(onNavigate).toHaveBeenCalledWith("petface");
+    expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
   it("routes the Data card to its launcher screen", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
@@ -169,13 +191,16 @@ describe("Launcher review badge (live count)", () => {
   });
 
   const noop = () => {};
-  const queueOf = (n: number) =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () =>
-        Promise.resolve({ items: Array.from({ length: n }, (_, i) => ({ id: `r${i}` })) }),
-    } as Response);
+  const jsonOf = (items: unknown[]) =>
+    Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ items }) } as Response);
+  // The badge is the sum of BOTH tabs (D4): the wiki findings and the notes tab's
+  // waiting rows, so the mock has to answer the two endpoints separately.
+  const serve =
+    (wiki: number, notes: { live: boolean }[] = []) =>
+    (input: RequestInfo | URL) =>
+      String(input) === "/api/review/notes"
+        ? jsonOf(notes)
+        : jsonOf(Array.from({ length: wiki }, (_, i) => ({ id: `r${i}` })));
   // Flush the pending fetch microtasks (fake timers, so no findBy/waitFor).
   const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
   const tick = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
@@ -184,7 +209,7 @@ describe("Launcher review badge (live count)", () => {
     let count = 2;
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => queueOf(count)),
+      vi.fn((input: RequestInfo | URL) => serve(count)(input)),
     );
     render(<Launcher open onClose={noop} onNavigate={noop} />);
 
@@ -203,8 +228,33 @@ describe("Launcher review badge (live count)", () => {
     expect(screen.queryByText(/^\d+$/)).toBeNull();
   });
 
+  it("sums both tabs, and a thread still reading does not count", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(serve(5, [{ live: false }, { live: false }, { live: false }, { live: true }])),
+    );
+    render(<Launcher open onClose={noop} onNavigate={noop} />);
+    await flush();
+    // 5 wiki findings + 3 waiting; the first pass still reading is not waiting on you.
+    expect(screen.getByText("8")).toBeInTheDocument();
+  });
+
+  it("still badges the wiki findings when the notes endpoint fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input) === "/api/review/notes"
+          ? Promise.reject(new Error("no network"))
+          : serve(4)(input),
+      ),
+    );
+    render(<Launcher open onClose={noop} onNavigate={noop} />);
+    await flush();
+    expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
   it("does not poll while a card is stacked over it (active=false)", async () => {
-    const fetchMock = vi.fn(() => queueOf(1));
+    const fetchMock = vi.fn(serve(1));
     vi.stubGlobal("fetch", fetchMock);
     // Open but covered by a card: mounted for the reveal beneath, but off-screen.
     render(<Launcher open active={false} onClose={noop} onNavigate={noop} />);
@@ -214,7 +264,7 @@ describe("Launcher review badge (live count)", () => {
   });
 
   it("resumes polling when the card closes and it's back on screen", async () => {
-    const fetchMock = vi.fn(() => queueOf(1));
+    const fetchMock = vi.fn(serve(1));
     vi.stubGlobal("fetch", fetchMock);
     const { rerender } = render(<Launcher open active={false} onClose={noop} onNavigate={noop} />);
     await flush();
@@ -227,7 +277,7 @@ describe("Launcher review badge (live count)", () => {
   });
 
   it("stops polling once closed", async () => {
-    const fetchMock = vi.fn(() => queueOf(1));
+    const fetchMock = vi.fn(serve(1));
     vi.stubGlobal("fetch", fetchMock);
     const { rerender } = render(<Launcher open onClose={noop} onNavigate={noop} />);
     await flush();

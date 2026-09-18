@@ -1,6 +1,6 @@
 {
   "name": "homeLocation as a Place edge still supersedes across different place nodes",
-  "description": "Follow-up to the object-edge work (docs/reference/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
+  "description": "Follow-up to the object-edge work (docs/reference/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed. TOOL-PATH NOTE: this file asserted kind='state' before the W3 re-point and now asserts 'relationship'. Not a weakening -- _fact_kind returns 'relationship' for every object edge by design -- but it does mean the kind assertion is now a tautology; the supersession this file exists for is carried by status/chained.",
   "steps": [
     {
       "domain": "general",
@@ -104,7 +104,7 @@
       {
         "entity": "Sarah",
         "predicate": "homeLocation",
-        "kind": "state",
+        "kind": "relationship",
         "value_contains": "Denver",
         "status": "superseded",
         "chained": true
@@ -112,7 +112,7 @@
       {
         "entity": "Sarah",
         "predicate": "homeLocation",
-        "kind": "state",
+        "kind": "relationship",
         "value_contains": "Boulder",
         "status": "active",
         "chained": false

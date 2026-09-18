@@ -170,6 +170,15 @@ MAX_SWEEP_SPAN_HZ = 60_000_000
 #: overload the loud end: at 30 dB the strongest station on the FM dial reads -11.2
 #: dBFS with no clipping, which is 19 dB of headroom.
 MEASURING_GAIN_DB = 30.0
+
+#: The gain value that means "hand the tuner back to its own loop", for every purpose.
+#:
+#: It has to be a VALUE rather than an absent one, because absent already means
+#: something else and must keep meaning it: a session with no gain listens under AGC
+#: and MEASURES at `MEASURING_GAIN_DB`, which is what this box has always done. An owner
+#: who asks for automatic on a waterfall is asking for the second of those to stop, and
+#: `gain=None` cannot carry that request.
+GAIN_AUTO = "auto"
 # How long a non-session claim on a radio (a one-shot `capture`) stays good. Longer than
 # any capture the sidecar will run — server.py caps one at 120 s — plus room for device
 # open and tuner settle on a cold radio, so an expiry is always a LEAK rather than a slow
@@ -615,7 +624,7 @@ class SessionGone(RuntimeError):
     """This session was released, so it may not relaunch anything."""
 
 
-def aliased_refusal(frequency_hz: int) -> str | None:
+def aliased_refusal(frequency_hz: int, upconverter_hz: int = 0) -> str | None:
     """Why direct sampling cannot honestly tune here, or None.
 
     THE GAP BETWEEN THE TWO FLOORS. `demod_args` puts everything below `MIN_HZ` on
@@ -628,8 +637,11 @@ def aliased_refusal(frequency_hz: int) -> str | None:
     Only the sidecar can state the whole rule, because only the sidecar knows both that
     `direct2` was chosen and what clock it implies (docs/plans/SDR_IQ_SPECTRUM_PLAN.md
     §8, "a pre-existing bug this makes visible"). Above `MIN_HZ` the R820T2 is back in
-    circuit and mixes properly, so there is nothing here to refuse."""
-    if NYQUIST_HZ < frequency_hz < MIN_HZ:
+    circuit and mixes properly, so there is nothing here to refuse — and a converter
+    puts it back in circuit at any dial frequency, which is why this asks about the
+    TUNE."""
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if NYQUIST_HZ < tuned_hz < MIN_HZ:
         image = ADC_RATE_HZ - frequency_hz
         return (
             f"{frequency_hz / 1e6:.3f} MHz cannot be tuned: below "
@@ -640,23 +652,115 @@ def aliased_refusal(frequency_hz: int) -> str | None:
     return None
 
 
-def validate(frequency_hz: int, mode: str) -> str:
+def validate(frequency_hz: int, mode: str, upconverter_hz: int = 0) -> str:
     """Bound the tuning request and return rtl_fm's demodulator name.
 
     Validated here as well as in the api because this process is the one that
     actually opens the device: a bound that lives only in the caller is a bound that
-    a second caller does not have."""
-    if not DIRECT_MIN_HZ <= frequency_hz <= MAX_HZ:
+    a second caller does not have.
+
+    `upconverter_hz` moves the question onto the TUNE: with a converter inline the
+    dongle is asked for `frequency_hz + upconverter_hz`, and what has to be in range and
+    free of the direct-sampling fold is that. Zero — no converter — leaves every bound
+    exactly where it was."""
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if upconverter_hz > 0:
+        if not MIN_HZ <= tuned_hz <= MAX_HZ:
+            raise SdrError(
+                f"{frequency_hz} Hz tunes {tuned_hz} Hz through the converter, which is "
+                f"outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
+            )
+    elif not DIRECT_MIN_HZ <= frequency_hz <= MAX_HZ:
         raise SdrError(
             f"{frequency_hz} Hz is outside the tuner's range ({MIN_HZ}-{MAX_HZ} Hz)"
         )
-    aliased = aliased_refusal(frequency_hz)
+    aliased = aliased_refusal(frequency_hz, upconverter_hz)
     if aliased is not None:
         raise SdrError(aliased)
     key = mode.lower()
     if key not in MODES:
         raise SdrError(f"unknown mode {mode!r} (want one of {sorted(MODES)})")
     return key
+
+
+def bandwidths_for(mode: str) -> tuple[int, ...]:
+    """Every filter width a mode offers, widest first, from the demodulator itself.
+
+    One source of truth: `demod.BANDWIDTH_HZ`. A copy here would be a second place to
+    forget, and the failure would be a control offering a width the box then refuses."""
+    return tuple(demod.BANDWIDTH_HZ.get(mode.lower(), ()))
+
+
+def validate_bandwidth(mode: str, bandwidth_hz: object) -> int:
+    """The filter width, defaulted and bounded to what this mode actually offers.
+
+    `None` means "the mode's default", which is the widest rung — the same answer every
+    caller got before the width was a parameter at all, so an old client that never
+    sends one is unaffected.
+
+    Refused rather than clamped. Clamping a width the owner asked for would give them a
+    radio quietly listening at some other bandwidth than the one on screen, and the
+    whole reason this parameter exists is that a filter doing something other than what
+    the owner believes is very hard to hear and impossible to see."""
+    ladder = bandwidths_for(mode)
+    bounds = demod.BANDWIDTH_RANGE_HZ.get(mode.lower())
+    if not ladder or bounds is None:
+        raise SdrError(f"unknown mode {mode!r}")
+    if bandwidth_hz is None:
+        return ladder[0]
+    # The value arrives off a JSON body, so it is `object` until something narrows it —
+    # and `int()` of an arbitrary object is exactly what a type checker refuses. `bool`
+    # is excluded by hand because it IS an `int` to Python, and `True` would otherwise
+    # sail through as 1 Hz and be refused for the wrong reason.
+    if isinstance(bandwidth_hz, bool) or not isinstance(bandwidth_hz, int | float | str):
+        raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz")
+    try:
+        want = int(bandwidth_hz)
+    except ValueError:
+        raise SdrError(f"{bandwidth_hz!r} is not a filter width in Hz") from None
+    low, high = bounds
+    if not low <= want <= high:
+        raise SdrError(
+            f"{mode.lower()} filters run {low}-{high} Hz wide, not {want}"
+        )
+    if want % demod.BANDWIDTH_STEP_HZ:
+        raise SdrError(
+            f"a filter width must be a multiple of {demod.BANDWIDTH_STEP_HZ} Hz, "
+            f"and {want} is not"
+        )
+    return want
+
+
+def view_spans_for(mode: str) -> tuple[int, ...]:
+    """The picture widths a mode offers, from the demodulator. One source of truth, for
+    the same reason `bandwidths_for` is."""
+    return tuple(demod.VIEW_SPAN_HZ.get(mode.lower(), ()))
+
+
+def validate_view_span(mode: str, span_hz: object) -> int:
+    """The picture width, bounded to the rungs this mode offers.
+
+    A ladder rather than a range, unlike the bandwidth: a zoom has no equivalent of
+    "narrower than that station" to place by eye — it is a magnification, and three of
+    them cover what a phone screen can usefully show. Refused rather than clamped for
+    the same reason everything else here is."""
+    ladder = view_spans_for(mode)
+    if not ladder:
+        raise SdrError(f"unknown mode {mode!r}")
+    if span_hz is None:
+        return 0
+    if isinstance(span_hz, bool) or not isinstance(span_hz, int | float | str):
+        raise SdrError(f"{span_hz!r} is not a picture width in Hz")
+    try:
+        want = int(span_hz)
+    except ValueError:
+        raise SdrError(f"{span_hz!r} is not a picture width in Hz") from None
+    if want not in ladder:
+        raise SdrError(
+            f"{mode.lower()} draws {', '.join(str(w) for w in ladder)} Hz wide, "
+            f"not {want}"
+        )
+    return want
 
 
 # Narrowband FM is the only thing 1200-baud AFSK arrives on. Accepting `usb` or `wbfm`
@@ -709,7 +813,23 @@ ANY_DEVICE = radio.ANY_DEVICE
 blocking_key = radio.blocking_key
 
 
-def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
+def direct_for(frequency_hz: int, upconverter_hz: int = 0) -> bool:
+    """Whether this tuning is reached with the tuner powered down.
+
+    **A converter and direct sampling are alternatives, never companions.** With one
+    inline the dongle is asked for `frequency_hz + upconverter_hz`, which is above the
+    tuner's floor by construction, so the R820T2 is back in circuit — which is what
+    buys a gain control on HF at all. One function because four call sites were each
+    writing `frequency_hz < radio.DIRECT_MAX_HZ`, and a fifth that forgot the converter
+    would power the tuner down under a signal already mixed up to VHF: the
+    antenna feeds the ADC, the converter's output goes nowhere, and the radio is
+    silent with nothing to say about why."""
+    return frequency_hz + max(0, upconverter_hz) < radio.DIRECT_MAX_HZ
+
+
+def demod_args(
+    mode: str, gain: str | None, frequency_hz: int, upconverter_hz: int = 0
+) -> list[str]:
     """Everything after `-f` and `-d` that decides how a signal is DEMODULATED.
 
     One function because there are two callers — a live session and the one-shot
@@ -731,7 +851,8 @@ def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
     one — a discriminator's output is already centred — so this would only add a filter
     with nothing to remove."""
     args = ["-F", "9"]
-    if frequency_hz < MIN_HZ:
+    tuned_hz = frequency_hz + max(0, upconverter_hz)
+    if tuned_hz < MIN_HZ:
         # Below the tuner, the ADC is fed straight from the antenna. `direct2` selects
         # the Q branch, which is the one this board wires; `direct` would select I and
         # produce silence on hardware that looks otherwise healthy.
@@ -742,11 +863,16 @@ def demod_args(mode: str, gain: str | None, frequency_hz: int) -> list[str]:
         args += ["-s", str(AUDIO_RATE)]
     if MODES[mode] == "am":
         args += ["-E", "dc"]
-    if gain and frequency_hz >= MIN_HZ:
+    if gain and gain != GAIN_AUTO and tuned_hz >= MIN_HZ:
         # Deliberately dropped below the tuner's floor: `rtlsdr_set_direct_sampling`
         # calls the tuner's own `exit()`, so the R820T2 is powered down and out of the
         # signal path. `-g` there writes to a chip that is not listening, and the
-        # honest thing is to not claim a control that does nothing.
+        # honest thing is to not claim a control that does nothing. With a converter
+        # inline the tuner IS in the path at the same dial frequency, which is why the
+        # test is on the tune rather than on the request.
+        #
+        # `auto` sends nothing: rtl_fm's own default is `verbose_auto_gain`, so asking
+        # for automatic and saying nothing are the same instruction to this tool.
         args += ["-g", gain]
     return args
 
@@ -1122,6 +1248,15 @@ class Frame:
     #: matter is a wire big enough to overload it.
     headroom_db: float | None = None
     clipped_share: float = 0.0
+    #: True when this row was drawn with the TUNER POWERED DOWN — direct sampling, no
+    #: converter — and there was therefore no gain stage for `gain_db` to describe.
+    #:
+    #: It exists because `gain_db is None` already means something different and must
+    #: keep meaning it: the tuner's own loop, running and moving. "The gain is wandering"
+    #: and "there is no gain" produce opposite readings of the same dB scale — relative
+    #: in the first case, absolute in the second — so a viewer that could not tell them
+    #: apart would either hedge a sound measurement or trust a moving one.
+    tuner_bypassed: bool = False
     #: Which picture this row belongs to: the whole capture (`VIEW_BAND`) or the tuned
     #: channel (`VIEW_CHANNEL`). One session now publishes both off the same samples, so
     #: a reader holding rows across time needs the row itself to say which — the
@@ -1167,6 +1302,7 @@ class Frame:
                 "gain_db": self.gain_db,
                 "headroom_db": self.headroom_db,
                 "clipped_share": round(self.clipped_share, 6),
+                "tuner_bypassed": self.tuner_bypassed,
                 "view": self.view,
             }
             # `object.__setattr__` because the dataclass is frozen — which is also what
@@ -1196,6 +1332,13 @@ class SessionInfo:
     listeners: int
     purpose: str = PURPOSE_LISTEN
     serial: str | None = None
+    #: The converter offset this session is tuning through, in Hz. 0 is none.
+    #:
+    #: Reported for the reason `engine` is: it changes what the hardware is doing and
+    #: the owner has no terminal to look (CLAUDE.md #10). `frequency_hz` above is
+    #: unaffected by it and always will be — this is the difference between the two, not
+    #: a correction to apply to either.
+    upconverter_hz: int = 0
     #: The RANGE, for the two purposes that have one. A survey and a live spectrum are
     #: tuned to a span, and `frequency_hz` can only carry its midpoint — which reads as
     #: a tuner parked somewhere it is not, and gives a waterfall no way to label its own
@@ -1214,6 +1357,28 @@ class SessionInfo:
     engine: str = "rtl_fm"
     #: USB buffers dropped under this session. See `Session.overflows`.
     overflows: int = 0
+    #: How wide the demodulator's filter is, as a FULL channel width in Hz — the number
+    #: the bandwidth control shows. Zero on a session that has no channel (a spectrum
+    #: stare), which is how a client tells "no filter" from "the narrowest one".
+    bandwidth_hz: int = 0
+    #: Every width THIS mode offers, widest first. Sent with the session rather than
+    #: hardcoded in the client because the ladder is a property of the demodulator: a
+    #: PWA holding its own copy would offer widths a redeployed box had stopped
+    #: accepting, and the refusal would arrive as a 400 the owner cannot act on.
+    bandwidths_hz: tuple[int, ...] = ()
+    #: The narrowest and widest this mode will build, and the grid a width must land on.
+    #: The presets above are quick picks INSIDE this; the drag on the tuning view runs
+    #: anywhere in it, so the client needs the bounds rather than just the menu — and it
+    #: needs them from the box, for the same reason it does not hold its own ladder.
+    bandwidth_min_hz: int = 0
+    bandwidth_max_hz: int = 0
+    bandwidth_step_hz: int = 0
+    #: How wide the TUNING PICTURE is, and the widths this mode offers. A different thing
+    #: from the bandwidth above and deliberately so: the bandwidth is what the radio
+    #: HEARS, this is only how much spectrum is drawn around it. Zero on a session with
+    #: no channel to draw.
+    view_span_hz: int = 0
+    view_spans_hz: tuple[int, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1227,9 +1392,17 @@ class SessionInfo:
             "elapsed_s": round(time.time() - self.started_at, 1),
             "audio_peak": round(self.audio_peak, 4),
             "listeners": self.listeners,
+            "upconverter_hz": self.upconverter_hz,
             "sweep": self.sweep,
             "engine": self.engine,
             "overflows": self.overflows,
+            "bandwidth_hz": self.bandwidth_hz,
+            "bandwidths_hz": list(self.bandwidths_hz),
+            "bandwidth_min_hz": self.bandwidth_min_hz,
+            "bandwidth_max_hz": self.bandwidth_max_hz,
+            "bandwidth_step_hz": self.bandwidth_step_hz,
+            "view_span_hz": self.view_span_hz,
+            "view_spans_hz": list(self.view_spans_hz),
         }
 
 
@@ -1244,9 +1417,16 @@ class Session:
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
         serial: str | None = None,
+        bandwidth_hz: int | None = None,
+        upconverter_hz: int = 0,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.sweep = sweep
+        #: The converter in front of THIS radio, in Hz, as the api read it off the
+        #: owner's settings. It shifts the tune and nothing else: `self.frequency_hz`,
+        #: every frame, every peak, every recording and every log line stay on the
+        #: frequency the owner asked for (`radio.Radio.upconverter_hz`).
+        self.upconverter_hz = max(0, int(upconverter_hz or 0))
         # WHICH radio this session opened. None means "whichever librtlsdr enumerates
         # first", which is the historical behaviour and is fine with one dongle plugged
         # in; with two it is how APRS silently ends up on the wrong antenna, so the api
@@ -1277,7 +1457,15 @@ class Session:
             # waterfall started from the api reported the low edge as its tuning.
             frequency_hz = self.sweep.centre_hz
         self.frequency_hz = frequency_hz
-        self.mode = validate(frequency_hz, mode)
+        self.mode = validate(frequency_hz, mode, self.upconverter_hz)
+        #: The filter width in force, validated HERE rather than when the demodulator is
+        #: built, so a width this box cannot serve is refused before anything opens the
+        #: radio — the same order everything else in this constructor follows.
+        self.bandwidth_hz = validate_bandwidth(self.mode, bandwidth_hz)
+        #: How wide the tuning picture is drawn. Zero means "whatever the chain's own
+        #: default is", which is what every session starts at; a number is the owner's
+        #: pick. Set through `set_view_span`, which rebuilds NOTHING.
+        self.view_span_hz: float = 0.0
         self.audio_peak = 0.0
         self._subs: set[queue.Queue[bytes | None]] = set()
         # Captioning subscribers. Segmenting only runs while at least one is attached,
@@ -1375,9 +1563,19 @@ class Session:
     # ---- pipeline -------------------------------------------------------------
 
     def _rtl_cmd(self) -> list[str]:
-        cmd = ["rtl_fm", "-f", str(self.frequency_hz), "-M", MODES[self.mode]]
+        # `-f` is the ONE frequency in this process that carries the converter's offset,
+        # because it is the one that reaches the hardware (the I/Q engine's equivalent is
+        # `radio.Radio._apply_locked`). `self.frequency_hz` is untouched, so everything
+        # this session reports stays where the owner is listening.
+        cmd = [
+            "rtl_fm",
+            "-f",
+            str(self.frequency_hz + self.upconverter_hz),
+            "-M",
+            MODES[self.mode],
+        ]
         cmd += self._device_args()
-        cmd += demod_args(self.mode, self.gain, self.frequency_hz)
+        cmd += demod_args(self.mode, self.gain, self.frequency_hz, self.upconverter_hz)
         return [*cmd, "-"]
 
     def _enc_cmd(self) -> list[str]:
@@ -1504,14 +1702,17 @@ class Session:
         nothing running for `_start_pipeline`'s fallback to race."""
         if shutil.which("ffmpeg") is None:
             raise SdrError("ffmpeg is not installed in this image")
-        direct = self.frequency_hz < radio.DIRECT_MAX_HZ
+        direct = self.tuner_bypassed
         try:
             # No offset on the direct path: the tuner is powered down, so there is no
             # LO and no leakage spike to dodge, and the mixer would only cost work.
+            # (`offset_hz` here is the demodulator's LO dodge, in kHz — nothing to do
+            # with the upconverter, which never reaches this layer at all.)
             chain = demod.Demodulator(
                 self.mode,
                 LISTEN_CAPTURE_HZ,
                 offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+                bandwidth_hz=self.bandwidth_hz,
             )
         except demod.DemodError as bad:
             raise RadioUnavailable(f"this build cannot demodulate {self.mode}: {bad}") from bad
@@ -1534,6 +1735,7 @@ class Session:
                 center_hz=self.frequency_hz - int(chain.offset_hz),
                 serial=self.serial,
                 direct=direct,
+                upconverter_hz=self.upconverter_hz,
                 doing=PURPOSE_LABEL[PURPOSE_LISTEN],
                 # A DEEPER RING than the spectrum path's, which is where the default was
                 # measured: see `LISTEN_QUEUE_BUFFERS`. Audio is the one output on this
@@ -1651,9 +1853,13 @@ class Session:
             enc.stdin.flush()
 
     def _publish_channel(
-        self, spectrum: "iq.Spectrum", passband: tuple[float, float]
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float], reach_hz: float
     ) -> None:
-        self._publish_frame(self._tuning_frame(spectrum, passband))
+        # The chain's own default reach is ignored once the owner has picked a width: a
+        # zoom is a CROP, so it never rebuilt anything and `reach_hz` is still whatever
+        # the demodulator was built with.
+        span = self.view_span_hz or 4.0 * reach_hz
+        self._publish_frame(self._tuning_frame(spectrum, passband, span))
 
     def _publish_band(self, spectrum: "iq.Spectrum") -> None:
         self._publish_frame(self._band_frame(spectrum))
@@ -1691,8 +1897,10 @@ class Session:
             if not self._restarting:
                 self._end_frames()
 
-    def _tuning_frame(self, spectrum: "iq.Spectrum", passband: tuple[float, float]) -> Frame:
-        """The channel's own spectrum, cropped to twice what the demodulator hears.
+    def _tuning_frame(
+        self, spectrum: "iq.Spectrum", passband: tuple[float, float], span_hz: float
+    ) -> Frame:
+        """The channel's own spectrum, cropped to twice the mode's WIDEST passband.
 
         Twice the passband is the span the mock settled on
         (docs/mocks/sdr-tuning-view/), and cropping to it is what makes the shaded band
@@ -1703,13 +1911,21 @@ class Session:
 
         The crop stays CENTRED on the tuned frequency even where the passband is not
         (SSB), because "am I centred?" is a question about the dial: it reaches four
-        times the passband's furthest edge, which is the same span every symmetric mode
-        had before C14 and now also holds all of SSB's."""
+        the span it is given, which is what every symmetric mode had before C14 and
+        now also holds all of SSB's.
+
+        **`span_hz` is the owner's, and its default is the mode's WIDEST filter times
+        four rather than the filter in force.** Cropping to the
+        live passband would zoom the picture in every time the owner narrowed the filter
+        — hiding the interfering station at the moment they narrowed it to reject that
+        station, and keeping the shaded box the same fraction of the picture at every
+        setting, so the control would look like it had done nothing. Holding the picture
+        still and letting the box shrink inside it is the visual argument for the whole
+        feature (`demod.Demodulator.crop_reach_hz`)."""
         low, high = passband
-        reach = max(abs(low), abs(high))
         keep = min(
             spectrum.bins,
-            max(TUNING_BINS // 8, int(round(4.0 * reach / spectrum.bin_hz))),
+            max(TUNING_BINS // 8, int(round(span_hz / spectrum.bin_hz))),
         )
         first = (spectrum.bins - keep) // 2
         return Frame(
@@ -1757,7 +1973,8 @@ class Session:
                 rate_hz=rate_hz,
                 center_hz=centre,
                 serial=self.serial,
-                direct=centre < radio.DIRECT_MAX_HZ,
+                direct=direct_for(centre, self.upconverter_hz),
+                upconverter_hz=self.upconverter_hz,
                 doing=PURPOSE_LABEL[PURPOSE_SPECTRUM],
             )
         except radio.RadioBusy as busy:
@@ -1929,7 +2146,15 @@ class Session:
         # The gain the row was measured at, stamped at the same seam and for the same
         # reason (C22): dBFS is comparable only against the same gain, and a row that did
         # not carry it is a row a reader has to guess the reference for.
-        if frame.gain_db is None:
+        if self.tuner_bypassed:
+            # NOT the gain we asked for. Below 24 MHz with no converter the tuner is
+            # powered down, so `set_gain` returned early and `-g` wrote to a chip that
+            # is not listening — stamping `MEASURING_GAIN_DB` here put a number on every
+            # shortwave row that reads like a measurement and is fiction, which is the
+            # failure this subsystem keeps producing. The row says there was no gain
+            # stage instead, and the picture says so too.
+            frame = dataclasses.replace(frame, gain_db=None, tuner_bypassed=True)
+        elif frame.gain_db is None:
             frame = dataclasses.replace(frame, gain_db=self.tuner_gain_db)
         # Signals found HERE rather than at the three places a frame is built: both
         # engines and the stitcher pass through this one seam, so no path can publish a
@@ -2566,10 +2791,29 @@ KISSPORT {self.kiss_port}
         symmetric spur comb at +-55.5, 111, 166 and 222 kHz — seven phantom stations,
         none of them on NOAA's 25 kHz raster, all of them reported as signals. The same
         radio at a fixed 30 dB found ONE, 27.1 dB over the floor, agreeing with a
-        spectrum session over the same span to within 1.5 dB."""
+        spectrum session over the same span to within 1.5 dB.
+
+        `GAIN_AUTO` is the owner asking for that loop ON PURPOSE, including on a
+        measuring session — the one request `gain=None` cannot express, since absent
+        already means "whatever this purpose does by default". It is worse here and the
+        picture says so rather than refusing it: the dB scale goes relative and the
+        peaks stop being published, both below."""
+        if self.gain == GAIN_AUTO:
+            return None
         if self.gain:
             return float(self.gain)
         return None if self.purpose in (PURPOSE_LISTEN, PURPOSE_APRS) else MEASURING_GAIN_DB
+
+    @property
+    def tuner_bypassed(self) -> bool:
+        """Whether this session's samples never passed through the tuner at all.
+
+        Not the same question as `tuner_gain_db is None`, and the difference is the
+        whole reason both exist: under direct sampling `rtlsdr_set_direct_sampling`
+        calls the tuner's own `exit()`, so no gain — ours, or the radio's own loop —
+        is in the path. Reporting the number we asked for would be reporting a
+        measurement nothing was measured at (`radio.Radio.set_gain`)."""
+        return direct_for(self.frequency_hz, self.upconverter_hz)
 
     @property
     def default_view(self) -> str:
@@ -2593,7 +2837,12 @@ KISSPORT {self.kiss_port}
             return True
         return self.purpose == PURPOSE_LISTEN and self.engine == "iq"
 
-    def tune(self, frequency_hz: int, mode: str | None = None) -> None:
+    def tune(
+        self,
+        frequency_hz: int,
+        mode: str | None = None,
+        bandwidth_hz: int | None = None,
+    ) -> None:
         """Move this session to another station, keeping its id and its listeners.
 
         **IN PLACE on our own engine, which is the point (A2).** "`rtl_fm` cannot be
@@ -2611,13 +2860,24 @@ KISSPORT {self.kiss_port}
         Order matters and is the reverse of `_restart`'s: everything that can FAIL —
         validation, then building the new demodulator — happens before the radio moves,
         so a request that cannot be served leaves a working session exactly as it was."""
-        wanted = validate(frequency_hz, mode or self.mode)
+        wanted = validate(frequency_hz, mode or self.mode, self.upconverter_hz)
+        # **The width STICKS across a retune, and resets when the mode changes.** A
+        # narrow filter is a decision about a crowded band, not about one station, so
+        # re-picking it at every step of the dial would make it useless exactly where it
+        # is needed. But the ladders differ per mode, so a width carried into a mode that
+        # has no such rung would be refused — and that refusal would arrive on an
+        # ordinary mode button press, which is not where the owner asked for anything
+        # about bandwidth. Changing mode therefore falls back to that mode's default.
+        if bandwidth_hz is None:
+            bandwidth_hz = self.bandwidth_hz if wanted == self.mode else None
+        width = validate_bandwidth(wanted, bandwidth_hz)
         running, held, enc = self._capture, self._radio, self._enc
         if running is None or held is None or enc is None:
             # `rtl_fm`, which really cannot be retuned: tear it down and build it again.
             def apply() -> None:
                 self.frequency_hz = frequency_hz
                 self.mode = wanted
+                self.bandwidth_hz = width
                 self.audio_peak = 0.0
 
             self._restart(apply)
@@ -2625,7 +2885,7 @@ KISSPORT {self.kiss_port}
         with self._lock:
             if self._released:
                 raise SessionGone("that session has been released")
-        direct = frequency_hz < radio.DIRECT_MAX_HZ
+        direct = direct_for(frequency_hz, self.upconverter_hz)
         try:
             # No offset on the direct path: the tuner is powered down, so there is no LO
             # and no leakage spike to dodge (`_start_iq_listen`).
@@ -2633,6 +2893,7 @@ KISSPORT {self.kiss_port}
                 wanted,
                 LISTEN_CAPTURE_HZ,
                 offset_hz=0.0 if direct else float(LISTEN_OFFSET_HZ),
+                bandwidth_hz=width,
             )
         except demod.DemodError as bad:
             raise RadioUnavailable(f"this build cannot demodulate {wanted}: {bad}") from bad
@@ -2645,6 +2906,7 @@ KISSPORT {self.kiss_port}
             )
             self.frequency_hz = frequency_hz
             self.mode = wanted
+            self.bandwidth_hz = width
             self.audio_peak = 0.0
             self._demod = chain
 
@@ -2663,6 +2925,30 @@ KISSPORT {self.kiss_port}
         # before the retune is a picture of somewhere else.
         with self._lock:
             self._history = {}
+
+    def set_view_span(self, span_hz: int) -> None:
+        """Change how much spectrum the tuning picture draws. **Rebuilds nothing.**
+
+        That is the whole design of it, and the reason a zoom is not a second bandwidth.
+        A filter width changes what the radio HEARS, so it redesigns the channel filter
+        and replaces the chain — a click in the audio, which is a price worth paying once
+        for selectivity. A picture width changes only how much of a row `_tuning_frame`
+        keeps, so it costs one integer and the next frame is already drawn to it: no
+        filter is redesigned, no chain is replaced, the audio does not stop, and there is
+        no retune for the shading to lag behind.
+
+        Bounded by what the chain ALREADY supplies (`demod.max_span_hz`), which is why
+        the ladders in `demod.VIEW_SPAN_HZ` stop where they do. A wider picture than that
+        would have to change `view_rate_hz`, and that is a rebuild — so it is not
+        offered rather than being offered and made to click."""
+        wanted = validate_view_span(self.mode, span_hz)
+        chain = self._demod
+        if chain is not None and wanted > chain.max_span_hz:
+            raise SdrError(
+                f"this radio draws at most {int(chain.max_span_hz)} Hz "
+                f"of picture at once, not {wanted}"
+            )
+        self.view_span_hz = float(wanted)
 
     def resweep(self, sweep: Sweep) -> None:
         """Point a live spectrum at a different range, in place.
@@ -2856,6 +3142,7 @@ KISSPORT {self.kiss_port}
     def info(self) -> SessionInfo:
         with self._lock:
             listeners = len(self._subs)
+        bounds = demod.BANDWIDTH_RANGE_HZ.get(self.mode, (0, 0))
         return SessionInfo(
             session_id=self.id,
             frequency_hz=self.frequency_hz,
@@ -2866,9 +3153,20 @@ KISSPORT {self.kiss_port}
             listeners=listeners,
             purpose=self.purpose,
             serial=self.serial,
+            upconverter_hz=self.upconverter_hz,
             sweep=self.sweep.as_dict() if self.sweep is not None else None,
             engine=self.engine,
             overflows=self.overflows,
+            # Zero on a session with no channel to filter — a spectrum stare tunes to a
+            # SPAN, and reporting a width there would put a bandwidth control on a
+            # screen that has nothing to apply it to.
+            bandwidth_hz=0 if self.sweep is not None else self.bandwidth_hz,
+            bandwidths_hz=() if self.sweep is not None else bandwidths_for(self.mode),
+            bandwidth_min_hz=0 if self.sweep is not None else bounds[0],
+            bandwidth_max_hz=0 if self.sweep is not None else bounds[1],
+            bandwidth_step_hz=0 if self.sweep is not None else demod.BANDWIDTH_STEP_HZ,
+            view_span_hz=0 if self.sweep is not None else int(self.view_span_hz),
+            view_spans_hz=() if self.sweep is not None else view_spans_for(self.mode),
         )
 
 
@@ -2995,6 +3293,8 @@ class Tuner:
         purpose: str = PURPOSE_LISTEN,
         sweep: Sweep | None = None,
         serial: str | None = None,
+        bandwidth_hz: int | None = None,
+        upconverter_hz: int = 0,
     ) -> SessionInfo:
         validate_purpose(purpose)
         key = serial or self.ANY
@@ -3003,7 +3303,16 @@ class Tuner:
             busy = self._busy(key)
             if busy is not None:
                 raise busy
-            session = Session(frequency_hz, mode, gain, purpose, sweep, serial)
+            session = Session(
+                frequency_hz,
+                mode,
+                gain,
+                purpose,
+                sweep,
+                serial,
+                bandwidth_hz,
+                upconverter_hz,
+            )
             self._sessions[key] = session
             return session.info()
 

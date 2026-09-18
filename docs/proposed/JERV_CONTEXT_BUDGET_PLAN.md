@@ -137,8 +137,9 @@ anti-injection half does not, and the argument is not stronger for overstating i
 Rewrite to state both halves — what jerv owns, what remains out of reach — and to name the
 scratchpad from W2 as its third local store. Bump the prompt version.
 
-**Gate.** `scripts/prompt-eval.sh` is **not** a gate for this: it runs `evals/run.py`, which is
-`note.extract`-only, and `grep -rn jerv backend/evals/` returns nothing. Editing the paragraph
+**Gate.** `scripts/prompt-eval.sh` is **not** a gate for this — it was `note.extract`-only,
+`grep -rn jerv backend/evals/` returned nothing, and R4 of `../plans/AGENT_INGEST_REWRITE.md`
+has since deleted it outright with the prompt it scored. Editing the paragraph
 that carries the location firewall with zero behavioural coverage is not acceptable, so W1
 ships a new scenario in the `adv_prompt_injection_*` harness family asserting (a) the location
 firewall holds under a poisoned page and (b) an injected standing-order line is not obeyed.

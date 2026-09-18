@@ -56,7 +56,7 @@ import type {
 } from "../jlaunch/types";
 import type { SdrBands, SpectrumRange } from "../sdrBands";
 import type { SdrRadios } from "../sdrRadios";
-import type { SdrListening, SdrState } from "../sdrSession";
+import type { SdrListening, SdrRecordingState, SdrState } from "../sdrSession";
 
 export interface Principal {
   principal_id: string;
@@ -939,10 +939,17 @@ export interface LocalModelInfo {
   context_window_override: number | null;
   /** Estimated KV-cache GB at the effective window AND slot count — a second slot doubles it. */
   kv_gb: number;
-  /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a dedicated interactive
-   * keep-warm slot beside the background one, so a primed chat prefix isn't evicted by
-   * title/background traffic). Editable only while the model isn't resident. */
+  /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a second slot the primed
+   * chat prefix can survive in). NOT isolation: llama-server picks the slot with the longest
+   * matching prefix and otherwise the least-recently-used one — which is the idle prefix slot.
+   * So it buys one dissimilar request of headroom, not immunity. Editable only while the model
+   * isn't resident. */
   parallel_slots: number;
+  /** True when raising `parallel_slots` above 1 would COST this model its disk prompt cache:
+   * a recurrent MTP hybrid loses `--spec-type` above one slot, and `--slot-save-path` is
+   * withheld with it (a plain-recurrent restore can only restore garbage). Sound, but it used
+   * to be silent — protecting the prefix quietly deleted the durable copy of it. */
+  slots_drop_disk_cache: boolean;
   /** `--image-min-tokens`: the floor an image is encoded to, and the knob for whether small
    * text in a photo survives to the model. null on a text-only entry — no projector, so a
    * floor would do nothing and the control is not rendered. */
@@ -1137,6 +1144,38 @@ export interface NoteOut {
   latitude: number | null;
   longitude: number | null;
   accuracy_m: number | null;
+}
+
+/** One appended D6 clarification block. Two shapes, and `kind` says which: an `answer`
+ * pairs a question the agent asked with what Jeff typed back, an `addition` is something
+ * he said unprompted, with no question at all (backend migration 0203).
+ *
+ * Either way it IS the note's text once appended — chunked, embedded, searchable,
+ * citable — so a block that carried a password or a diagnosis has to be identifiable
+ * before it can be removed. The note screen renders blocks as prose (D6 changes no
+ * screen), which is why the ids only exist here. */
+export interface ClarificationOut {
+  id: string;
+  seq: number;
+  kind: "answer" | "addition";
+  /** null on an `addition` — nobody asked. Switch on `kind`, not on this. */
+  question: string | null;
+  answer: string;
+  created_at: string;
+}
+
+/** A note's conversation, so the note screen can open it (backend `GET
+ * /notes/{id}/thread`). null when the note has never been read — a note captured seconds
+ * ago, or one whose ingest is still pending. */
+export interface NoteThreadOut {
+  session_id: string;
+  /** The persona hosting it, so the handoff lands on the tab that shows it. */
+  agent: string;
+  state: string;
+  /** When the thread last MOVED — the signal that its transcript may have grown. Only a
+   * state change bumps it, which is exactly the set of moments a note conversation gains
+   * turns: the unattended pass, the re-reading a reply triggers, and the reply itself. */
+  updated_at: string;
 }
 
 export interface NotesPage {
@@ -1386,6 +1425,34 @@ export const FILTER_STATUS: Record<ReviewFilter, "open" | "resolved"> = {
   pending: "open",
   decided: "resolved",
 };
+
+/** One row of the review inbox's NOTES tab (D4 of AGENT_INGEST_CONVERSATION_PLAN) —
+ * an ingestion question or a staged approval waiting on the owner.
+ *
+ * There is deliberately no `id` and no action here. The row is a redirect: it carries
+ * the `session_id` to open and nothing a decision could be posted against, because the
+ * conversation is the only place ingestion is decided. The wire shape is what enforces
+ * that, not the screen. */
+export interface NotesInboxRow {
+  kind: "question" | "approval";
+  session_id: string;
+  /** The session's persona, so the redirect flips to the conversation tab that hosts
+   * it before opening the thread. */
+  agent: string;
+  note_id: string | null;
+  domain: string;
+  quote: string;
+  /** What is being asked — the whole open SET (R1c's batched ask), in the order the
+   * agent asked it. Empty on a first pass still reading; a staged approval carries its
+   * one server-written line. */
+  asks: string[];
+  captured_at: string | null;
+  waiting_since: string;
+  committed: number;
+  /** A first pass still reading: listed so the note is visibly in hand, uncounted
+   * because nothing is waiting on the owner yet. */
+  live: boolean;
+}
 
 export interface BatchDecision {
   id: string;
@@ -2132,6 +2199,15 @@ export interface PetState {
   lights_on: boolean;
   /** Room props the pet can target/carry: {kind: [x, z]} in normalized floor coords. */
   objects: Record<string, [number, number]>;
+  /** Ephemeral effects. Present on `GET /api/pet`, but **dropped from `/api/pet/stream`
+   *  frames** (`api/pet.py` builds SSE payloads with no effects argument) — which is why the
+   *  wall polls at 1 Hz instead of subscribing, and why any surface that needs the creature
+   *  form has to poll too. Optional so a stream frame type-checks. */
+  pet_form?: string;
+  pet_scale?: number;
+  pet_scene?: string;
+  object_colors?: Record<string, string>;
+  object_scales?: Record<string, number>;
 }
 
 /** A kid play-button (each expands to a canned script), `say` (freeform → talk brain),
@@ -2168,6 +2244,114 @@ export interface PetCommand {
   z?: number;
   /** What the child said (`say`), or the colour name (`color`). */
   text?: string;
+}
+
+/** What Record was asked to keep. `captions` is the transcript of the same reception
+ *  and **no audio at all** — instead of the clip, not alongside it, because there is one
+ *  radio and one capture at a time. */
+export type SdrRecordKind = "audio" | "captions";
+
+/** One stored recording (docs/plans/SDR_RECORDING_PLAN.md §3). A recording is a FILE:
+ *  a frequency, a mode, a bandwidth, a time, a length and a size. */
+export interface SdrRecording {
+  id: string;
+  started_at: string;
+  ended_at: string | null;
+  /** What the clip IS now. */
+  duration_s: number;
+  /** What was originally captured. `duration_s < captured_s` is what makes a row
+   *  "trimmed" — a derived fact rather than a flag that can drift out of step with the
+   *  audio it describes. */
+  captured_s: number;
+  /** The settings at the moment Record was pressed. A retune does not restart the
+   *  pipeline, so a clip may span a frequency change; the row states where it began. */
+  frequency_hz: number;
+  mode: string;
+  bandwidth_hz: number | null;
+  gain?: string | null;
+  serial?: string | null;
+  /** Which kind of recording this row is: a clip, or the closed captions of the same
+   *  reception and no audio at all. Absent from an api older than the long press. */
+  kind?: SdrRecordKind;
+  /** The api sends **null** on a captions row, along with `peaks` and the blob behind
+   *  them: there is no file, so there is nothing measured — never 0, which would read as
+   *  an empty clip rather than as a recording that is not a clip. Read it through
+   *  `isSdrClip`, which is the one place that decides whether a row has audio at all. */
+  bytes: number | null;
+  /** The level envelope the trim sheet draws, 0..1, computed on the box at stop and
+   *  again after a trim — so the waveform can never disagree with the clip.
+   *
+   *  Optional because the LIST route's projection omits it — 400 floats a row would
+   *  dwarf a hundred-row response — so a row that arrived from the library has none and
+   *  the trim sheet fetches the one clip it is open on (`getSdrRecording`, the by-id
+   *  route). A box older than that route, or a clip whose decode failed, answers without
+   *  an envelope even there; a sheet without one draws a flat picture and says so rather
+   *  than inventing one. See SdrTrimSheet. */
+  peaks?: number[];
+  /** What was said. On a captions row it is the whole artifact — there is no clip under
+   *  it — and it carries the per-word timings `AudioTranscript.tsx` tints. An audio row
+   *  has none until a clip can be transcribed after the fact, which is still unbuilt. */
+  transcript?: { text?: string | null; words?: unknown[]; duration_ms?: number | null } | null;
+  /** Whether the box HAS a transcript, which is all the LIST carries: the text itself
+   *  comes with the by-id row. The field is here so a reader of this type does not
+   *  conclude a list row with no `transcript` was never transcribed. */
+  has_transcript?: boolean;
+  transcribed_at?: string | null;
+}
+
+/** A recording that HAS a file behind it, with its size narrowed to a real number.
+ *
+ *  The player, the download link and the whole trim sheet are written for a clip and
+ *  cannot be given anything else. Saying so in the type is what makes that a compile
+ *  error rather than a `0 kB` printed under a recording nobody ever measured. */
+export type SdrClip = SdrRecording & { bytes: number };
+
+/** Whether a row is a clip — asked once, because the answer drives four affordances.
+ *
+ *  Play, download, trim and the size in the row's meta all hang on it, and four separate
+ *  `kind` checks is four chances for one of them to go on assuming an MP3. `bytes` is
+ *  checked as well as the kind so a row from an api that predates the swap — which has
+ *  no `kind` at all — is still refused if it somehow arrives with no size. */
+export function isSdrClip(row: SdrRecording): row is SdrClip {
+  return row.kind !== "captions" && row.bytes !== null;
+}
+
+/** What the library reads, in one document: the rows and what they cost.
+ *
+ *  `usage` rides with the list rather than living on its own route because the header's
+ *  meter and the rows under it are one reading — fetched apart, the total could disagree
+ *  with the sum of what is on screen. */
+export interface SdrRecordingsPage {
+  recordings: SdrRecording[];
+  usage: {
+    bytes: number;
+    count: number;
+    /** How much trimming has actually given back. **Nothing expires** — there is no
+     *  retention prune — so this is the only number that argues for the feature. */
+    reclaimed_bytes: number;
+  };
+}
+
+/** What a trim actually did. `cut` is the frame-boundary window the server landed on,
+ *  which is within 72 ms of what the handles asked for. */
+export interface SdrTrimResult {
+  recording: SdrRecording;
+  cut: { start_s: number; end_s: number };
+  usage: SdrRecordingsPage["usage"];
+}
+
+/** A delete's answer: the meter, so it moves with the list rather than a poll later. */
+export interface SdrUsageResult {
+  deleted: boolean;
+  usage: SdrRecordingsPage["usage"];
+}
+
+/** The answer to `POST /sdr/record`. Idempotent both ways, so `recording` is simply
+ *  what is running afterwards — null once a capture has stopped — and `saved` is the row
+ *  that just landed, when this call is what landed it. */
+export interface SdrRecordResult {
+  recording: SdrRecordingState | null;
+  saved?: SdrRecording | null;
 }
 
 export class ApiError extends Error {
@@ -2252,6 +2436,20 @@ export function chatAttachmentThumbUrl(id: string, thumbId: string): string {
 
 export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
+}
+
+/** Streamable/downloadable URL for one stored SDR recording.
+ *
+ *  A URL helper rather than an `api.*` method for the same reason `attachmentUrl` is: a
+ *  blob never goes through `request()`, which reads the body as JSON. The api serves this
+ *  with `FileResponse`, so Starlette answers HTTP Range on it — which is what makes the
+ *  trim sheet's Preview able to start mid-clip instead of downloading from zero.
+ *
+ *  NOT the live stream. `/api/sdr/audio` is the chunked broadcast that `sdrAudio.ts`
+ *  owns end to end, and its element is one-shot; a recording is a file, and every
+ *  surface that plays one uses its own element against this URL. */
+export function sdrRecordingUrl(id: string): string {
+  return `/api/sdr/recordings/${encodeURIComponent(id)}/audio`;
 }
 
 // Offline stand-ins for the generated-image bytes: an `<img src>` never flows
@@ -2447,6 +2645,35 @@ export const api = {
 
   async deleteNote(id: string): Promise<void> {
     await request(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // The D6 clarification blocks. Owner-only server-side, both verbs: the append
+  // enqueues a re-ingest on `is_owner()` RLS, so a token caller would get a driver
+  // error rather than a refusal.
+  async listClarifications(noteId: string): Promise<ClarificationOut[]> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/clarifications`);
+    return (await response.json()) as ClarificationOut[];
+  },
+
+  // The note's conversation, whatever state it is in — the note screen's door into it.
+  // Deliberately not the notes-inbox route beside it: that one lists LIVE threads, and
+  // the thread Jeff wants when he has something to add is the settled one nobody is
+  // asking him about (O16).
+  async noteThread(noteId: string): Promise<NoteThreadOut | null> {
+    const response = await request(`/api/notes/${encodeURIComponent(noteId)}/thread`);
+    return (await response.json()) as NoteThreadOut | null;
+  },
+
+  // Erasing one re-drives ingestion, so the returned note is the note as it now reads —
+  // no second fetch to see the redaction land.
+  async deleteClarification(noteId: string, clarificationId: string): Promise<NoteOut> {
+    const response = await request(
+      `/api/notes/${encodeURIComponent(noteId)}/clarifications/${encodeURIComponent(
+        clarificationId,
+      )}`,
+      { method: "DELETE" },
+    );
+    return (await response.json()) as NoteOut;
   },
 
   // Hide/unhide only flip stream visibility — no re-ingest, so the note keeps
@@ -2730,11 +2957,29 @@ export const api = {
     return (await response.json()) as SdrListening;
   },
 
-  async sdrTune(frequencyMhz: number, mode?: string, sessionId?: string): Promise<SdrListening> {
+  async sdrTune(
+    frequencyMhz: number,
+    mode?: string,
+    sessionId?: string,
+    bandwidthHz?: number,
+  ): Promise<SdrListening> {
     let query = `frequency_mhz=${encodeURIComponent(frequencyMhz)}`;
     if (mode) query += `&mode=${encodeURIComponent(mode)}`;
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    // Sending a width WITHOUT a mode is how the control changes only the filter: the
+    // session keeps its width across a retune, and naming a mode would reset it to that
+    // mode's default (deploy/sdr/listen.py `Session.tune`).
+    if (bandwidthHz) query += `&bandwidth_hz=${encodeURIComponent(bandwidthHz)}`;
     const response = await request(`/api/sdr/tune?${query}`, { method: "POST" });
+    return (await response.json()) as SdrListening;
+  },
+
+  /** How wide the tuning picture is drawn. NOT a retune: the sidecar crops the next
+   *  frame differently and rebuilds nothing, so the audio does not stop. */
+  async sdrViewSpan(spanHz: number, sessionId?: string): Promise<SdrListening> {
+    let query = `span_hz=${encodeURIComponent(spanHz)}`;
+    if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
+    const response = await request(`/api/sdr/view?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
   },
 
@@ -2758,9 +3003,13 @@ export const api = {
     window: string,
     kinds: readonly string[] = [],
     mine: string | null = null,
+    provenance: readonly string[] = [],
   ): Promise<AprsRoster> {
     let query = `window=${encodeURIComponent(window)}`;
     if (kinds.length > 0) query += `&kinds=${encodeURIComponent(kinds.join(","))}`;
+    // How the frames arrived — direct / gated / rf. Server-side like the kinds, for the
+    // same reason: a year of this channel is ~1.2M rows to render sixteen lines.
+    if (provenance.length > 0) query += `&provenance=${encodeURIComponent(provenance.join(","))}`;
     // The owner's callsign pins his own stations BEFORE the server caps the list — the
     // client cannot pin what it was never sent. It is a sort key on his own request, not
     // a permission, and the server already knows who is asking.
@@ -2802,7 +3051,17 @@ export const api = {
 
   async describeSdrRadio(
     serial: string,
-    body: { name: string; description: string; role: string },
+    body: {
+      name: string;
+      description: string;
+      role: string;
+      // The tuner gain pinned on this radio ("" unset, "auto", or a measured rung in
+      // dB) and any converter in front of it, in Hz. Sent on every save because the
+      // card saves a whole radio: omitting one would be indistinguishable from
+      // clearing it.
+      gain: string;
+      upconverter_hz: number;
+    },
   ): Promise<SdrRadios> {
     const response = await request(`/api/sdr/radios/${encodeURIComponent(serial)}`, {
       method: "PUT",
@@ -2852,6 +3111,61 @@ export const api = {
     if (sessionId) query += `&session_id=${encodeURIComponent(sessionId)}`;
     const response = await request(`/api/sdr/spectrum/tune?${query}`, { method: "POST" });
     return (await response.json()) as SdrListening;
+  },
+
+  // --- recordings (docs/plans/SDR_RECORDING_PLAN.md §4) ----------------------
+  // The api is the recorder, not the sidecar: it opens its own subscriber on the live
+  // stream and spools it into the blob store. So "record" is a switch on the box, which
+  // is why it is idempotent both ways and why starting with nothing listening is a
+  // refusal with a sentence rather than a silent no-op.
+  // No session id: the recorder subscribes to whichever session holds the tuner, and one
+  // capture runs at a time box-wide — so naming a session here would be a parameter the
+  // api has nothing to do with.
+  //
+  // `kind` is what the long press on Record swaps, and it is sent only when STARTING:
+  // a stop has nothing to choose, and naming a kind on the way out would suggest it
+  // could stop one kind and leave another running. One capture runs at a time box-wide.
+  async sdrRecord(on: boolean, kind: SdrRecordKind = "audio"): Promise<SdrRecordResult> {
+    const query = on ? `on=true&kind=${kind}` : "on=false";
+    const response = await request(`/api/sdr/record?${query}`, { method: "POST" });
+    return (await response.json()) as SdrRecordResult;
+  },
+
+  async getSdrRecordings(limit = 200): Promise<SdrRecordingsPage> {
+    const response = await request(`/api/sdr/recordings?limit=${encodeURIComponent(limit)}`);
+    return (await response.json()) as SdrRecordingsPage;
+  },
+
+  /** One recording, carrying the waveform the list leaves out.
+   *
+   *  The library omits `peaks` on purpose — 400 floats per row would dwarf a hundred-row
+   *  response — so the trim sheet asks for the one clip it is open on. Without it the
+   *  sheet is two handles over an empty picture, which is the shape's whole argument
+   *  missing: a cut is placeable because the dead air at each end is visible. */
+  async getSdrRecording(id: string): Promise<SdrRecording> {
+    const response = await request(`/api/sdr/recordings/${encodeURIComponent(id)}`);
+    return (await response.json()) as SdrRecording;
+  },
+
+  /** Cut to `[startS, endS]`, discard the original, and say what was really cut.
+   *
+   *  The client asks in SECONDS and the server answers with what it actually did: the
+   *  copy lands on an MP3 frame boundary, so the returned `recording.duration_s` is the
+   *  truth and the sheet's arithmetic was only ever an estimate of it. `usage` comes
+   *  back with it so the disk meter moves with the list rather than a poll later. */
+  async trimSdrRecording(id: string, startS: number, endS: number): Promise<SdrTrimResult> {
+    const response = await request(
+      `/api/sdr/recordings/${encodeURIComponent(id)}/trim`,
+      jsonInit("POST", { start_s: startS, end_s: endS }),
+    );
+    return (await response.json()) as SdrTrimResult;
+  },
+
+  async deleteSdrRecording(id: string): Promise<SdrUsageResult> {
+    const response = await request(`/api/sdr/recordings/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return (await response.json()) as SdrUsageResult;
   },
 
   async sdrStop(sessionId?: string): Promise<void> {
@@ -3331,6 +3645,13 @@ export const api = {
   async reviewQueue(status: "open" | "resolved" | "deferred" = "open"): Promise<ReviewQueue> {
     const response = await request(`/api/review?status=${status}`);
     return (await response.json()) as ReviewQueue;
+  },
+
+  // The notes tab: ingestion questions and staged approvals, oldest wait first. A
+  // READ ONLY — there is no sibling call that answers one, by design (D4).
+  async notesInbox(): Promise<{ items: NotesInboxRow[] }> {
+    const response = await request("/api/review/notes");
+    return (await response.json()) as { items: NotesInboxRow[] };
   },
 
   // Skip is client-side only (cycle to the back of the local queue) — there

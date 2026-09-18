@@ -346,3 +346,97 @@ async def test_distinction_pair_ordering_and_uniqueness_enforced(
                 ),
                 {"a": ids["entity"], "b": ids["entity_b"]},
             )
+
+
+@pytest.mark.parametrize(("table", "key"), [("facts", "fact"), ("entity_mentions", "mention")])
+async def test_settle_owner_is_inside_the_domain_firewall(
+    maker: async_sessionmaker,
+    table: str,
+    key: str,
+) -> None:
+    """Migration 0196's column (CLAUDE.md rule 3): `settle_owners` decides who may
+    RETRACT a row, so a narrowed session must not be able to read it off a health row
+    or flip it — re-stamping a health fact `conversation` from a general-scoped session
+    would hand its retraction to a producer the firewall never lets near the note.
+
+    It rides the existing row policies rather than one of its own, which is exactly what
+    this pins: the column is inside the row, and the row is what RLS isolates.
+
+    Also pins the default the seed relies on: these rows are inserted without the column
+    (as ~50 fixture inserts across the suite are), so `analyzer` is what they must get.
+    """
+    ids = await seed_health_graph(maker)
+    row_id = ids[key]
+    read = text(f"SELECT settle_owners FROM app.{table} WHERE id = :id")  # noqa: S608 — fixed set
+
+    async with scoped_session(maker, OWNER) as s:
+        assert (await s.execute(read, {"id": row_id})).scalar_one() == ["analyzer"]
+
+    async with scoped_session(maker, GENERAL_ONLY) as s:
+        assert (await s.execute(read, {"id": row_id})).first() is None
+        # RETURNING rather than rowcount: the row is invisible to this session, so a
+        # policy-refused UPDATE returns nothing at all.
+        refused = await s.execute(
+            text(
+                f"UPDATE app.{table} SET settle_owners = ARRAY['conversation']"  # noqa: S608
+                " WHERE id = :id RETURNING id"
+            ),
+            {"id": row_id},
+        )
+        assert refused.first() is None
+
+    async with scoped_session(maker, OWNER) as s:
+        assert (await s.execute(read, {"id": row_id})).scalar_one() == ["analyzer"]
+
+
+async def test_review_card_settle_owner_is_inside_the_domain_firewall(
+    maker: async_sessionmaker,
+) -> None:
+    """Migration 0197's column (CLAUDE.md rule 3): `settle_owner` decides who may RETIRE
+    a card, so a narrowed session must not read it off a health card or flip it —
+    re-stamping a health note's `extraction_truncated` card `emr` from a general-scoped
+    session would hand the analyzer's "your medical records were clipped" notice to a
+    producer that deletes it on its next settle.
+
+    It rides `review_items`' existing row policy rather than one of its own, which is
+    what this pins: the column is inside the row, and the row is what RLS isolates.
+
+    Also pins the shape 0197 chose over 0196's: NULLABLE with no default. The seeded
+    `merge_proposal` is not a kind any settle sweeps, and NULL is the true statement
+    about it — no settling producer claims that card, so no sweep may take it.
+    """
+    ids = await seed_health_graph(maker)
+    card = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        # An un-swept kind, written exactly as the ~50 fixture inserts across the suite
+        # write review cards: no stamp, and none invented for it.
+        assert (
+            await s.execute(
+                text("SELECT settle_owner FROM app.review_items WHERE id = :id"),
+                {"id": ids["review"]},
+            )
+        ).scalar_one() is None
+        await s.execute(
+            text(
+                "INSERT INTO app.review_items (id, kind, payload, domain_code, settle_owner)"
+                " VALUES (:id, 'extraction_truncated', :payload, 'health', 'analyzer')"
+            ),
+            {"id": card, "payload": '{"note_id": "' + ids["note"] + '"}'},
+        )
+
+    read = text("SELECT settle_owner FROM app.review_items WHERE id = :id")
+    async with scoped_session(maker, HEALTH_ONLY) as s:
+        assert (await s.execute(read, {"id": card})).scalar_one() == "analyzer"
+
+    async with scoped_session(maker, GENERAL_ONLY) as s:
+        assert (await s.execute(read, {"id": card})).first() is None
+        # RETURNING rather than rowcount: the row is invisible to this session, so a
+        # policy-refused UPDATE returns nothing at all.
+        refused = await s.execute(
+            text("UPDATE app.review_items SET settle_owner = 'emr' WHERE id = :id RETURNING id"),
+            {"id": card},
+        )
+        assert refused.first() is None
+
+    async with scoped_session(maker, OWNER) as s:
+        assert (await s.execute(read, {"id": card})).scalar_one() == "analyzer"

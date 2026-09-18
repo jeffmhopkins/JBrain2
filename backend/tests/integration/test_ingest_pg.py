@@ -150,6 +150,50 @@ async def test_chunks_domain_firewall(maker: async_sessionmaker[AsyncSession]) -
             )
 
 
+async def test_the_note_the_agent_reads_carries_a_text_layer_attachment(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """A lab report, a statement, a lease, a .txt list: a document with real text in it
+    is never OCR'd (a PDF with a text layer is skipped by design; `text/*` was never an
+    OCR candidate), so it has NO `attachment_extracts` row and its words exist only as
+    chunks. `converse.note_text` has to read that half too, or the whole document is
+    missing from the conversation the graph is written out of and the owner watches a
+    capture succeed that produces nothing (CLAUDE.md #10)."""
+    from jbrain.analysis.converse import note_text
+
+    note_id = await make_note(maker, domain="general", body="filed the lab results")
+    await add_attachment(
+        maker,
+        blobs,
+        note_id,
+        filename="list.txt",
+        media_type="text/plain",
+        data=b"oat milk and coffee beans",
+    )
+    await add_attachment(
+        maker,
+        blobs,
+        note_id,
+        filename="labs.pdf",
+        media_type="application/pdf",
+        data=pdf_bytes("Sodium 141 mmol/L", "Potassium 4.1 mmol/L"),
+    )
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+
+    repo = SqlNotesRepo(maker)
+    note = await repo.get_note(OWNER, note_id)
+    assert note is not None
+    text_read = await note_text(repo, OWNER, note)
+
+    assert text_read.startswith("filed the lab results")  # the body still leads
+    assert "oat milk and coffee beans" in text_read
+    # Every page of the PDF, in page order, not just the first.
+    assert text_read.index("Sodium 141 mmol/L") < text_read.index("Potassium 4.1 mmol/L")
+    # No OCR ran, so nothing is marked as machine-vision output — and nothing is doubled.
+    assert "[ocr from" not in text_read
+    assert text_read.count("Sodium 141 mmol/L") == 1
+
+
 async def test_pipeline_ingests_note_with_attachments(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
@@ -225,9 +269,17 @@ async def test_pipeline_ingests_note_with_attachments(
     assert hits and hits >= 2  # note body + pdf page 1
 
 
-async def test_reingestion_replaces_chunks(
+async def test_reingestion_keeps_the_unchanged_chunks_and_adds_the_new_one(
     maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
 ) -> None:
+    """A chunk that comes back byte-identical KEEPS ITS ROW (`ingest.carryover`).
+
+    Chunk ids used to churn on every re-ingest, and five tables point at them: two
+    cascade, so the note's `entity_mentions` and its published `wiki_citations` were
+    destroyed each time. Holding the row is what stops that, and the visible
+    consequence here is that the untouched body chunk survives a re-ingest triggered by
+    something else entirely — an attachment arriving.
+    """
     note_id = await make_note(maker, domain="health", body="morning BP reading 120 over 80")
     pipeline = IngestPipeline(maker, blobs)
     await pipeline.ingest_note({"note_id": note_id})
@@ -244,13 +296,35 @@ async def test_reingestion_replaces_chunks(
     await pipeline.ingest_note({"note_id": note_id})
     second = await chunk_rows(maker, OWNER, note_id)
 
-    # Old chunks are gone (ids not stable across re-ingestion, by design),
-    # the body chunk is rebuilt, and the new attachment is now indexed.
-    assert {c["id"] for c in first}.isdisjoint({c["id"] for c in second})
+    assert {c["id"] for c in first} <= {c["id"] for c in second}
     assert sum(1 for c in second if c["source_kind"] == "note") == len(first)
     assert any(c["text"] == "cholesterol within range" for c in second)
-    # Re-ingest re-enqueues embedding: rebuilt chunks all start unembedded.
+    # Re-ingest still re-enqueues embedding; the handler fills only NULL embeddings, so
+    # a carried-over chunk keeps the vector it already had.
     assert await embed_jobs_for(maker, note_id) == 2
+
+
+async def test_reingestion_replaces_a_chunk_whose_text_changed(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The other half: carry-over is identity-based, not blanket. A rewritten body has
+    no identical twin and no chunk covering the old span with the same characters, so it
+    gets a fresh row exactly as before."""
+    note_id = await make_note(maker, domain="health", body="morning BP reading 120 over 80")
+    pipeline = IngestPipeline(maker, blobs)
+    await pipeline.ingest_note({"note_id": note_id})
+    first = await chunk_rows(maker, OWNER, note_id)
+
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.notes SET body = :b WHERE id = :n"),
+            {"b": "evening pulse 58 resting", "n": note_id},
+        )
+    await pipeline.ingest_note({"note_id": note_id})
+    second = await chunk_rows(maker, OWNER, note_id)
+
+    assert {c["id"] for c in first}.isdisjoint({c["id"] for c in second})
+    assert any(c["text"] == "evening pulse 58 resting" for c in second)
 
 
 async def test_pipeline_failure_marks_note_failed(

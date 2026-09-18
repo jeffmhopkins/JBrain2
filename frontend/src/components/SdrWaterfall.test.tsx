@@ -314,7 +314,9 @@ describe("what the note claims", () => {
 
     send(stream, 1000);
 
-    expect(note()).toBe("4 bins of 25.0 kHz");
+    // The SCALE is always there — a legend that appeared only when the gain was
+    // suspect would train the reader to ignore it. The rate is the part that waits.
+    expect(note()).toBe("4 bins of 25.0 kHz · relative — gain is moving");
   });
 
   it("says one a second on the rtl_power tier", () => {

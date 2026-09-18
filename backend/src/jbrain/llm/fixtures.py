@@ -201,8 +201,9 @@ class FixtureLlmClient:
         images: Sequence[LlmImage] = (),
         with_schema: bool = False,
     ) -> str:
-        # with_schema must match the eventual call: note.extract is always called
-        # WITH a json_schema, so its fixtures are authored with_schema=True.
+        # with_schema must match the eventual call: a task that sends a json_schema
+        # (entity.disambiguate, the wiki lint pair) has its fixtures authored
+        # with_schema=True.
         prompt = _complete_prompt(
             model=model, system=system, user_text=user_text, images=images, with_schema=with_schema
         )

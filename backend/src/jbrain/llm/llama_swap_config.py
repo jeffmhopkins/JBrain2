@@ -316,12 +316,21 @@ def render(
             # never swapped out is a model whose slots are not being fought over in the first
             # place.
             #
+            # That last sentence was written for the single-slot world and does NOT hold for
+            # slot contention, which is a different fight: `-np 2` exists precisely because the
+            # slots ARE contended, and `--cache-ram` is what upstream uses to make an evicted
+            # slot cheap to recover (it copies the outgoing prompt to host RAM before
+            # overwriting). At 0 there is no copy, so a slot taken by a background prompt is a
+            # total loss, recoverable only from this repo's own disk store — ~100 ms warm, so
+            # the trade still comes out ahead, but the two decisions pull against each other
+            # and neither comment said so. See PROMPT_CACHE_HARDENING_PLAN.md P2.
+            #
             # `local_catalog.CACHE_RAM_GB` MOVES WITH THIS. Serving `-cram 0` while budgeting
             # 8 GiB over-reserves every model and evicts pairs that fit; the inverse
             # under-reserves on the box's freeze path.
             "-cram",
             "0",
-            # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of a
+            # Prompt-prefix KV reuse (docs/reference/PROMPT_CACHE.md): keep the KV of a
             # matching
             # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is
             # the min
@@ -400,11 +409,23 @@ def render(
         ]
         # ALWAYS explicit, even at 1. llama-server's `-np` default is `auto`, which current
         # builds resolve to a multi-slot value — so omitting the flag does NOT mean one slot,
-        # and a single-slot serving mode would be silently violated. Above 1 this is the
-        # dedicated interactive slot beside the background one: llama-server routes each
-        # request to the slot with the longest matching prefix, so jerv turns keep their primed
-        # KV in one slot while title/background traffic uses the other — neither can evict the
-        # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
+        # and a single-slot serving mode would be silently violated.
+        #
+        # Above 1 this is the second slot the interactive prefix is MEANT to survive in, and
+        # this comment used to claim it as isolation: "neither can evict the other's cache".
+        # It is not, and nothing here makes it so. There is no pinning anywhere — no
+        # `--slot-prompt-similarity`, no `id_slot` on any request the gateway sends, no
+        # reservation. llama-server picks the slot with the longest matching prefix and,
+        # for a prompt that matches none, falls back to the LEAST RECENTLY USED slot — which
+        # is precisely the idle slot holding the primed prefix whenever the owner is not
+        # mid-turn. A background prompt with a different system header matches nothing.
+        #
+        # So a second slot buys ONE dissimilar request of headroom, not immunity: it makes the
+        # prefix outlive a single interloper, and over a stream of heterogeneous background
+        # traffic it is still taken. The durable protection is the disk store, which puts the
+        # prefix back in ~100 ms (jbrain.llm.kv_prefix), and `-cram 0` below means there is no
+        # in-RAM prompt cache to fall back on when a slot IS taken. Sized and described in
+        # docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says the same.
         cmd += ["-np", str(n_slots)]
         # KV-slot save/restore target (jbrain.llm.kv_prefix). Attention models get the flag;
         # a plain recurrent model's slot cannot be restored (the path clears the context

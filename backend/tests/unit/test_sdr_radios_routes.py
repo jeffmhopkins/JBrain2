@@ -127,7 +127,20 @@ async def test_describing_a_radio_writes_it_and_returns_the_whole_list(
         WIRE,
     )
 
-    assert store.wrote == [(WIRE, {"name": "Long wire", "description": "9:1 unun", "role": "aprs"})]
+    assert store.wrote == [
+        (
+            WIRE,
+            {
+                "name": "Long wire",
+                "description": "9:1 unun",
+                "role": "aprs",
+                # Sent on every save, because the card saves a whole radio: a field left
+                # out would be indistinguishable from one the owner cleared.
+                "gain": "",
+                "upconverter_hz": 0,
+            },
+        )
+    ]
     assert [(r.serial, r.name, r.role) for r in out.radios] == [(WIRE, "Long wire", "aprs")]
 
 
@@ -171,10 +184,50 @@ class TestReadingWhatWasStored:
 
     async def test_it_reads_what_the_owner_wrote(self) -> None:
         radios = await self._store(
-            {WIRE: {"name": "Long wire", "description": "9:1 unun", "role": "aprs"}}
+            {
+                WIRE: {
+                    "name": "Long wire",
+                    "description": "9:1 unun",
+                    "role": "aprs",
+                    "gain": "20",
+                    "upconverter_hz": 125_000_000,
+                }
+            }
         ).sdr_radios(object())
 
-        assert radios[WIRE] == Radio(WIRE, "Long wire", "9:1 unun", "aprs")
+        assert radios[WIRE] == Radio(WIRE, "Long wire", "9:1 unun", "aprs", "20", 125_000_000)
+
+    async def test_a_gain_this_build_does_not_know_reads_as_UNSET(self) -> None:
+        """The opposite decision to an unknown ROLE above, and deliberately.
+
+        An unreadable role could be a reservation a newer build understands, so keeping
+        it costs a radio nobody needed. An unreadable gain is a claim about the SIGNAL
+        PATH: it would reach `rtl_fm -g` or `setGain` as a number nobody measured, and
+        every waterfall row would then be labelled with it. Unset is what a box that
+        never opened this screen does, which is the safe place to fail to."""
+        for junk in ("25", 30, "auto ", None, True, {}):
+            radios = await self._store({WIRE: {"gain": junk}}).sdr_radios(object())
+
+            assert radios[WIRE].gain == "", junk
+
+    async def test_a_junk_or_out_of_range_offset_reads_as_NO_converter(self) -> None:
+        """The one fallback that cannot mis-tune. A half-read offset would put the
+        hardware somewhere nobody asked for, and every frequency reported back would
+        still claim to be where the owner was listening."""
+        for junk in ("125000000", -1, 3_000_000_000, 12.5, True, None):
+            radios = await self._store({WIRE: {"upconverter_hz": junk}}).sdr_radios(object())
+
+            assert radios[WIRE].upconverter_hz == 0, junk
+
+    async def test_one_bad_tuning_field_does_not_cost_the_other(self) -> None:
+        """Individual bad FIELDS fall back one at a time — a radio with a readable gain
+        and a corrupt offset keeps its gain."""
+        radios = await self._store({WIRE: {"gain": "30", "upconverter_hz": "nope"}}).sdr_radios(
+            object()
+        )
+
+        assert radios[WIRE].gain == "30"
+        assert radios[WIRE].upconverter_hz == 0
 
     async def test_junk_degrades_to_no_radios_rather_than_raising(self) -> None:
         for junk in ("nope", 5, None, ["a"]):
@@ -190,7 +243,7 @@ class TestReadingWhatWasStored:
     async def test_bad_fields_fall_back_one_at_a_time(self) -> None:
         radios = await self._store({WIRE: {"name": 5, "description": None}}).sdr_radios(object())
 
-        assert radios[WIRE] == Radio(WIRE, "", "", GENERAL)
+        assert radios[WIRE] == Radio(WIRE, "", "", GENERAL, "", 0)
 
     async def test_an_unknown_role_stays_RESERVED_rather_than_becoming_general(self) -> None:
         """The decision, not defensive tidying.

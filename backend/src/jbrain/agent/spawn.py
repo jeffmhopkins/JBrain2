@@ -999,10 +999,24 @@ class SpawnService:
                     )
                     finished = True
 
+            # The same model-gated canvas trio /chat, the prime and the task runner hide. A
+            # spawned child runs under `agent.turn` with `agent_for(persona)`, so a jerv child
+            # sends jerv's tool array — and without this it would send three MORE entries than
+            # the primed prefix, diverging ~40 tokens into the tool block. For a persona whose
+            # allowlist holds none of the trio this resolves to no provider at all, so it is
+            # byte-identical there rather than merely harmless.
+            # Imported here, not at module scope: `readtools` reaches back into this module,
+            # and a top-level import closes the cycle at startup.
+            from jbrain.agent.readtools import canvas_hidden_tools, compose_hidden_tools
+
+            canvas_hidden = await canvas_hidden_tools(
+                self._router, None, profile.tools or frozenset()
+            )
             loop = AgentLoop(
                 self._router,
                 self._registry,
                 recorder=tally,  # type: ignore[arg-type]
+                hidden_tools_provider=compose_hidden_tools(canvas_hidden),
                 # The step cap scales with the child's effort (a high-effort research
                 # child gets a long chain to search/read/synthesize); the wall-clock and
                 # token caps are generous backstops above it.
@@ -1172,8 +1186,26 @@ class SpawnService:
             # [FAILED] so the parent doesn't synthesize over an empty block. (AgentResult
             # never carries stop_reason="error"; an exception-failed child returns above.)
             text = result.text.strip()
-            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted", "max_steps")
-            hit_cap = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
+            # `max_tokens` joins both lists as a CAP, not a fault. It is the provider's
+            # output ceiling doing what the step and cost caps do — cutting a child that
+            # was still producing — so a length-cut child that nonetheless synthesized a
+            # real answer is complete-but-deep like a budget-cut one, and only a
+            # length-cut child with NO text is truncated. `agent/loop._round_stop` started
+            # reporting it here rather than laundering it into `end_turn`; without this
+            # line that fix would have turned every usable length-cut child red.
+            _clean_stops = (
+                "end_turn",
+                "budget",
+                "tree_budget_exhausted",
+                "max_steps",
+                "max_tokens",
+            )
+            hit_cap = result.stop_reason in (
+                "budget",
+                "tree_budget_exhausted",
+                "max_steps",
+                "max_tokens",
+            )
             ok = bool(text) and result.stop_reason in _clean_stops
             # "Truncated" (the synthesis card's red ✕) is reserved for a child a cap cut
             # off WITHOUT a usable answer. A capped child that still synthesized a real

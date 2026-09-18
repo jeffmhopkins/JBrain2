@@ -63,7 +63,9 @@ from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
+from jbrain.analysis.converse import NOTE_CONVERSE_SPEC
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
+from jbrain.analysis.rebuild import GRAPH_REBUILD_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
@@ -188,7 +190,7 @@ from jbrain.sdr.resolve import for_purpose
 from jbrain.sdr.roles import Choice
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import LLM_KV_PREFIX_BUDGET_GB_DEFAULT, SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
@@ -239,6 +241,13 @@ structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
 )
 
+#: How long shutdown waits for an in-flight SDR recording to finalize. Bounded, because
+#: an Ops → Update must not hang on a wedged sidecar — but long enough for the blob
+#: rename and the row write, because a recording interrupted by a deploy is still a
+#: recording (docs/plans/SDR_RECORDING_PLAN.md §2). A module constant so the finalize is
+#: testable without a ten-second test.
+SDR_FINALIZE_TIMEOUT_S = 10.0
+
 # The action specs the API's registry carries: the shipped six plus every in-code
 # action the worker can dispatch that the Ops surface must resolve — the purge sweep,
 # the three reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, the wiki
@@ -260,18 +269,33 @@ API_ACTION_SPECS = (
     *WIKI_SPECS,
     WIKI_LINT_SPEC,
     TRIAGE_INBOX_SPEC,
+    GRAPH_REBUILD_SPEC,
+    # Event-bound, never Ops-fireable — but the Automations surface resolves every
+    # seeded pipeline's steps through THIS registry, and an action it does not carry
+    # renders as "not in the action registry" beside the integrate trigger it now
+    # runs next to.
+    NOTE_CONVERSE_SPEC,
 )
 
 
 def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:
-    """Bridge residency → WarmKeeper without an import cycle or a construction-order
-    constraint: residency reports a served name whose primed KV it just dropped, and the
-    keeper forgets its memo so the next tick re-primes on the eager cadence."""
+    """Bridge residency → WarmKeeper AND the KV prefix store without an import cycle or a
+    construction-order constraint: residency reports a served name whose primed KV it just
+    dropped, the keeper forgets its memo so the next tick re-primes on the eager cadence,
+    and the store forgets that it restored into a slot that no longer exists.
+
+    Both listeners are required. The keeper's memo governs whether a re-prime happens; the
+    store's `_restored_unused` governs whether the restore that would make that re-prime
+    cheap is even attempted. Telling only the keeper — which is what this did — left the
+    store refusing to restore a perfectly good file, so the re-prime paid the full prefill."""
 
     def notify(served_model: str) -> None:
         keeper = getattr(app.state, "warm_keeper", None)
         if keeper is not None:
             keeper.note_prefix_lost(served_model)
+        store = getattr(app.state, "kv_prefix", None)
+        if store is not None:
+            store.note_prefix_lost(served_model)
 
     return notify
 
@@ -522,8 +546,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kv_patch_active = False
         with suppress(Exception):
             kv_patch_active = await settings_store.local_llm_patch_restore_checkpoint(SYSTEM_CTX)
+        # The disk allowance, read the same way and for the same reason: it was a module
+        # constant the owner could not reach, on a box whose store runs near it.
+        kv_budget_gb = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+        with suppress(Exception):
+            kv_budget_gb = await settings_store.llm_kv_prefix_budget_gb(SYSTEM_CTX)
         app.state.kv_prefix = KvPrefixStore(
-            app.state.local_gateway, settings.local_models_dir, patch_active=kv_patch_active
+            app.state.local_gateway,
+            settings.local_models_dir,
+            patch_active=kv_patch_active,
+            max_store_bytes=kv_budget_gb * 1024**3,
         )
         app.state.llm_router = build_router(
             settings,
@@ -1153,8 +1185,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if boot_reaped:
                 structlog.get_logger().info("agent.runlog.boot_reaped", reaped=boot_reaped)
         # Bound accumulation while the process stays up (a child stranded by a rare
-        # double-cancel): an age-based sweep above the hard turn wall-clock, so it never
-        # races a genuinely-live detached turn.
+        # double-cancel): an age-based sweep on `runlog.STRANDED_AFTER_SECONDS`, which was
+        # sized above the hard turn wall-clock and no longer is — that constant says what
+        # a sweep under the cap costs.
         stranded_reaper_task = asyncio.create_task(
             reap_stranded_loop(app.state.agent_runlog, SYSTEM_CTX)
         )
@@ -1408,7 +1441,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_url=settings.supervisor_url, timeout=30.0
         )
         yield
+        # Finalize a recording that is still running, before anything else is torn down.
+        # An Ops → Update while the tape deck is going would otherwise take the clip's
+        # spool file with the container — and an interrupted recording is still a
+        # recording (docs/plans/SDR_RECORDING_PLAN.md §2). Bounded, and here rather than
+        # further down because writing its row needs the pool still alive.
+        sdr_recorder = getattr(app.state, "sdr_recorder", None)
+        if sdr_recorder is not None:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(sdr_recorder.stop(), timeout=SDR_FINALIZE_TIMEOUT_S)
+        # Cancel AND drain, like every sibling below. The keeper can be inside a
+        # `save_slot` POST — a multi-GB write with a ≥180 s client timeout — and llama-server
+        # writes that file at its final, trusted name with no tmp+rename. A cancel landing
+        # there leaves a truncated file the store will later trust into a failed restore, and
+        # only a bounded wait gives the save a chance to finish or fail cleanly. It also keeps
+        # a late `box_events.record` from opening a session on an engine already disposed.
         warm_keeper_task.cancel()
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(warm_keeper_task, return_exceptions=True), timeout=10.0
+            )
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()

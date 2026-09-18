@@ -8,6 +8,7 @@ describe how JBrain2 *is* built. These are `Living` docs (per
 
 | Doc | What it covers |
 |---|---|
+| `PROMPT_CACHE.md` | How the interactive agent's ~30k-token prefix is kept ready across restarts and evictions — the three layers (slot, WarmKeeper, disk store), the fingerprint that decides when a saved file is reusable, which models are eligible and why, the numbers measured on the box (a cold load processes **11** prompt tokens of 30,546; restore 94 ms warm against a 118 s prefill), and the no-terminal routes for reading and operating it. Written because the design lived only in a module docstring, and the feature had already shipped inert twice behind a store that looked identical whether it was working or dead. |
 | `ARCHITECTURE.md` | System shape: containers, the one-database design, the knowledge pipeline, security model, operations. |
 | `SERVICES.md` | Concrete inventory of everything the box runs: every Docker container (core + opt-in), the on-box GPU model services, the PWA + JBrain360 Android app, and the functions baked in (agent, pipeline, workflow engine, wiki). |
 | `DEVELOPMENT.md` | Binding standards: the architectural constitution, comments, testing, git, releases, `dev-setup.sh`. |

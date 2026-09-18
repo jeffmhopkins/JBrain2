@@ -101,6 +101,11 @@ class _FakeSupervisor:
                 return _FakeResp(409, "")
             self.update_running = True
             return _FakeResp(202, "", json_body={"state": "running"})
+        if url == "/export":
+            if self.oneshot_running:
+                return _FakeResp(409, "")
+            self.oneshot_running = True
+            return _FakeResp(202, "", json_body={"oneshot": "jbrain-export-1"})
         if url == "/refresh":
             service = (json or {}).get("service")
             if service not in self.services:
@@ -125,6 +130,16 @@ class _FakeSupervisor:
                     "state": "running",
                     "exit_code": None,
                     "log_tail": "[update] syncing local models",
+                },
+            )
+        if url == "/export/status":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "state": "done",
+                    "exit_code": 0,
+                    "log_tail": "[export] wrote jbrain-backup.tar.zst",
                 },
             )
         if url == "/refresh/status":
@@ -1159,12 +1174,14 @@ class _ScriptedRouter:
     def __init__(self, names: list[str]) -> None:
         self.names = names
         self.seen_messages: list[Any] = []
+        self.seen_tools: list[Any] = []
 
     async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         return ("local", "gpt-oss-120b")
 
     async def converse(self, task: str, *, messages: Any, tools: Any = (), **kw: Any) -> LlmTurn:
         self.seen_messages.append(list(messages))
+        self.seen_tools.append(list(tools))
         step = sum(1 for m in messages if isinstance(m, ToolResultMessage))
         if step >= len(self.names):
             return LlmTurn(
@@ -1284,6 +1301,61 @@ def test_replay_honours_the_step_cap(debug_client: tuple[TestClient, str]) -> No
     )
 
     assert resp.json()["steps_taken"] == 3
+
+
+def test_replay_can_attach_a_tool_the_registry_does_not_have_yet(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """A tool surface being DESIGNED cannot be measured past its first move otherwise.
+
+    `tool-probe` takes inline schemas but returns one call, and a model that resolves
+    before it writes never reaches the write tool in a single turn — so the shape of the
+    call that matters is unobservable until the tool ships, which is the wrong order.
+    Registry names stay supported; raw schemas are appended after them."""
+    client, key = debug_client
+    router = _ScriptedRouter(["resolve_entity", "assert_fact"])
+    _state(client).llm_router = router
+
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={
+            "user_text": "Dana moved to the Mission and started at Everlane in March.",
+            "raw_tools": [
+                {"name": "resolve_entity", "description": "Resolve named things."},
+                {
+                    "name": "assert_fact",
+                    "description": "Record facts.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"facts": {"type": "array", "items": {"type": "object"}}},
+                    },
+                },
+            ],
+            "stubs": [{"name": "resolve_entity", "result": "Dana Whitfield -> ent_1"}],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["call_sequence"] == ["resolve_entity", "assert_fact"]
+    assert body["tool_count"] == 2
+    # The write tool reached the model on the second turn, carrying its own schema — the
+    # whole point, since that is the call a single-turn probe can never see.
+    assert [t.name for t in router.seen_tools[1]] == ["resolve_entity", "assert_fact"]
+    assert router.seen_tools[1][1].input_schema["properties"]["facts"]["type"] == "array"
+    assert body["steps"][0]["result_used"] == "Dana Whitfield -> ent_1"
+
+
+def test_replay_rejects_a_malformed_raw_tool(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/replay",
+        headers=_auth(key),
+        json={"user_text": "hi", "raw_tools": [{"description": "no name"}]},
+    )
+    assert resp.status_code == 400
+    assert "raw_tools" in resp.json()["detail"]
 
 
 def test_replay_rejects_an_unknown_tool(debug_client: tuple[TestClient, str]) -> None:
@@ -1439,3 +1511,198 @@ def test_the_refresh_routes_require_the_debug_token(
 
     assert client.post("/api/debug/refresh", params={"service": "sdr"}).status_code == 401
     assert client.get("/api/debug/refresh/status").status_code == 401
+
+
+def test_the_console_can_take_a_backup_not_only_cause_an_update(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The asymmetry this closes: `/update` could already cause the IRREVERSIBLE thing —
+    a deploy, which can carry a destructive migration — while the snapshot that makes
+    such a deploy survivable was the one step only the owner could perform, from a screen
+    whose name had drifted out of the docs. The safe half depended on finding a button
+    and the unsafe half did not."""
+    client, key = debug_client
+
+    resp = client.post("/api/debug/backup", headers=_auth(key))
+
+    assert resp.status_code == 202
+    assert ("/export", {}) in _state(client).supervisor_client.posts
+
+
+def test_the_backup_route_starts_one_and_cannot_read_one(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The security property, asserted rather than left to the docstring. The archive is
+    every note, fact and attachment on the box in one file. Starting a backup is a safe
+    grant; DOWNLOADING one would be single-request exfiltration of the whole corpus, so
+    no route beside this may serve its bytes."""
+    client, key = debug_client
+    client.post("/api/debug/backup", headers=_auth(key))
+
+    # Scan the WHOLE debug surface, not just paths under /backup. A prefix guard would
+    # miss the regression it exists to prevent — a later `/api/debug/archive` or
+    # `/api/debug/export/file/…` is a different prefix and would sail past it.
+    from fastapi.responses import FileResponse, StreamingResponse
+
+    servers = [
+        r
+        for r in cast(Any, client.app).routes
+        if str(getattr(r, "path", "")).startswith("/api/debug/")
+        and isinstance(getattr(r, "response_class", None), type)
+        and issubclass(r.response_class, FileResponse | StreamingResponse)
+    ]
+    assert not servers, f"a debug route serves a file body: {[r.path for r in servers]}"
+    readers = {
+        p
+        for p in {str(getattr(r, "path", "")) for r in cast(Any, client.app).routes}
+        if p.startswith("/api/debug/backup") and p != "/api/debug/backup"
+    }
+    assert readers == {"/api/debug/backup/status"}, f"a backup reader appeared: {readers}"
+
+    status = client.get("/api/debug/backup/status", headers=_auth(key), params={"tail": 120})
+    assert status.status_code == 200
+    body = status.json()
+    assert body["state"] == "done" and body["exit_code"] == 0
+    assert "archive" not in body and "bytes" not in body
+    assert ("/export/status", {"tail": 120}) in _state(client).supervisor_client.calls
+
+
+def test_a_backup_while_another_oneshot_runs_is_refused(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The supervisor's own mutual exclusion, surfaced as a sentence. A backup racing an
+    update would snapshot a half-migrated database — the one artefact that must be
+    trustworthy is the one taken before a destructive deploy."""
+    client, key = debug_client
+    assert client.post("/api/debug/backup", headers=_auth(key)).status_code == 202
+
+    again = client.post("/api/debug/backup", headers=_auth(key))
+
+    assert again.status_code == 409
+    assert "already running" in again.json()["detail"]
+
+
+def test_the_backup_routes_need_a_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.post("/api/debug/backup").status_code == 401
+    assert client.get("/api/debug/backup/status").status_code == 401
+
+
+# --- prompt cache (KV prefix) ------------------------------------------------
+#
+# The store was correct and unobservable: only its two SUCCESS paths wrote a box event, so a
+# healthy store and a store that had not restored since boot both produced no rows anywhere.
+# This route is the answer to "is the KV cache working?", and the owner has no terminal to ask
+# any other way (CLAUDE.md #10).
+
+
+def test_kv_prefix_state_reports_counters_store_and_reuse(
+    debug_client: tuple[TestClient, str], tmp_path: Any
+) -> None:
+    """The three things no other surface carries: what the store has been DOING (counters),
+    what is on DISK, and llama-server's own prompt-REUSE ratio."""
+    from jbrain.llm.kv_prefix import KvPrefixStore
+
+    client, key = debug_client
+    gw = _state(client).local_gateway
+    gw.metrics_text = (
+        "llamacpp:prompt_tokens_cached_total 27000\nllamacpp:prompt_tokens_total 3000\n"
+    )
+    store = KvPrefixStore(gw, str(tmp_path))
+    asyncio.run(store._note("restore_rejected", "gpt-oss-120b", n_restored=11))
+    _state(client).kv_prefix = store
+
+    resp = client.get("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["counters"]["restore_rejected"] == 1
+    assert body["recent"][0]["outcome"] == "restore_rejected"
+    assert body["store"]["budget_bytes"] > 0
+    assert body["store"]["files"] == 0
+
+
+def test_kv_prefix_state_409s_when_the_store_is_not_wired(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """A cloud-only box has no store. Say so, rather than reporting an empty one as healthy
+    — 'no rows' reading as 'fine' is the exact failure this whole route exists to end."""
+    client, key = debug_client
+    _state(client).kv_prefix = None
+
+    resp = client.get("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 409
+    assert "not wired" in resp.json()["detail"]
+
+
+def test_kv_prefix_state_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+
+    assert client.get("/api/debug/llm/kv-prefix").status_code == 401
+
+
+def test_kv_prefix_clear_removes_files_and_is_scopeable(
+    debug_client: tuple[TestClient, str], tmp_path: Any
+) -> None:
+    """The route that replaces `rm -rf .kvslots`, which the owner has no shell to run."""
+    from jbrain.llm.kv_prefix import KvPrefixStore
+
+    client, key = debug_client
+    store = KvPrefixStore(_state(client).local_gateway, str(tmp_path))
+    _state(client).kv_prefix = store
+
+    resp = client.delete("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 200
+    assert resp.json() == {"files": 0, "bytes": 0, "model": "*"}
+
+
+def test_kv_prefix_budget_is_bounded_and_says_when_it_applies(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The floor is one file's worth: below it the store would evict everything it just
+    saved, which is a delete loop rather than a budget."""
+    client, key = debug_client
+
+    ok = client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}, headers=_auth(key))
+    assert ok.status_code == 200
+    assert ok.json()["budget_gb"] == 40
+    assert "restart" in ok.json()["applies"]
+
+    assert (
+        client.put(
+            "/api/debug/llm/kv-prefix/budget", params={"gb": 1}, headers=_auth(key)
+        ).status_code
+        == 422
+    )
+
+
+def test_the_kv_prefix_write_routes_need_the_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.delete("/api/debug/llm/kv-prefix").status_code == 401
+    assert client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}).status_code == 401
+
+
+def test_auto_restore_is_settable_from_the_debug_surface(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The flag decides whether the WarmKeeper keeps anything warm at all. It had an owner
+    route only, so an assistant holding a debug token could READ it on `GET /api/debug/llm`,
+    measure exactly what it costs, and then not be able to act on the measurement."""
+    client, key = debug_client
+
+    off = client.put("/api/debug/llm/auto-restore", params={"enabled": False}, headers=_auth(key))
+    assert off.status_code == 200
+    assert off.json()["auto_restore"] is False
+    assert _state(client).settings_store.values["llm_local_auto_restore"] is False
+
+    on = client.put("/api/debug/llm/auto-restore", params={"enabled": True}, headers=_auth(key))
+    assert on.json()["auto_restore"] is True
+    assert "next turn" in on.json()["applies"]
+    assert _state(client).settings_store.values["llm_local_auto_restore"] is True
+
+
+def test_the_auto_restore_route_needs_the_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.put("/api/debug/llm/auto-restore", params={"enabled": True}).status_code == 401

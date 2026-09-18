@@ -54,6 +54,7 @@ from jbrain.llm.router import (
     TASK_REASONING_BUCKET,
     _split_spec,
 )
+from jbrain.llm.types import LlmTool
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
     LLM_TASK_OVERRIDES_KEY,
@@ -68,10 +69,8 @@ router = APIRouter()
 TASK_LABELS: dict[str, str] = {
     "agent.turn": "Agent turn",
     "agent.vision": "Agent image analysis",
-    "integrate.note": "Integrate note",
     "intake.materialize": "Intake materialize",
     "fact.adjudicate": "Fact adjudicate",
-    "note.extract": "Note extract",
     "entity.disambiguate": "Entity disambiguate",
     "correction_note.extract": "Correction extract",
     "vision.ocr": "Vision OCR",
@@ -241,6 +240,14 @@ class LocalModelInfo(BaseModel):
     # by title/background traffic — docs/runbooks/STRIX_HALO_SETUP.md). Editable only while
     # the model isn't resident; a change doubles the model's KV footprint.
     parallel_slots: int
+    # True when raising `parallel_slots` above 1 would COST this model its disk prompt cache.
+    # A recurrent MTP-hybrid serves with `--spec-type draft-mtp`, and the generator strips
+    # speculation above one slot; `--slot-save-path` is then withheld, because a
+    # plain-recurrent restore has no context checkpoints and can only restore garbage. That
+    # reasoning is right — the bug was that it was SILENT, so protecting the prefix quietly
+    # deleted the durable copy of it (and the box grew an empty `.kvslots` folder that read as
+    # "configured"). Surfaced so the screen can say so before the owner spends the trade.
+    slots_drop_disk_cache: bool
     # `--image-min-tokens`: the FLOOR an image is encoded to, and the knob for whether small
     # text in a photo survives to the model. None on a text-only entry (no projector, so a
     # floor would do nothing) and on a vision entry left at the catalog value.
@@ -627,6 +634,7 @@ def _local_model_info(
         context_window_override=override,
         kv_gb=kv_gb,
         parallel_slots=n_slots,
+        slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
         # The override wins; otherwise the catalog's own field. Both None on a text-only entry,
@@ -1251,7 +1259,7 @@ async def set_auto_restore(
     nothing on its own while the owner is diagnosing it. Read live by the evictor in the api
     process, so it applies to the next turn with no restart."""
     ctx = ctx_for(principal)
-    await store.set_llm_local_auto_restore(ctx, body.enabled)
+    await set_auto_restore_value(store, ctx, enabled=body.enabled)
     return await _snapshot(settings, store, ctx, gateway)
 
 
@@ -1606,7 +1614,7 @@ async def gateway_load(
     tool schemas — into the gateway KV cache so the operator's first conversation turn
     reuses that prefix instead of paying the cold persona+tools prefill (the 60-90s
     first-response latency owners hit right after Load,
-    docs/archive/LLM_PROMPT_CACHE_PLAN.md). The tools MUST be primed too: under the
+    docs/reference/PROMPT_CACHE.md). The tools MUST be primed too: under the
     gateway's `--jinja` the template renders them into the prompt's leading tokens, so a
     persona-only warm diverges from a real (tool-carrying) turn before the reusable prefix
     ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);
@@ -1993,6 +2001,126 @@ async def gateway_metrics(
     return {"spec": parse_spec_counters(text), "raw": text}
 
 
+async def set_auto_restore_value(
+    store: SqlSettingsStore, ctx: SessionContext, *, enabled: bool
+) -> dict[str, object]:
+    """Set the end-of-turn restore toggle. The owner route's body, callable from the debug
+    surface too — one implementation, so the two cannot drift.
+
+    Read live by the evictor in the api process, so it applies to the next turn with no
+    restart."""
+    await store.set_llm_local_auto_restore(ctx, enabled)
+    return {"auto_restore": enabled, "applies": "on the next turn"}
+
+
+async def kv_prefix_state(
+    settings: Settings,
+    gateway: LocalGatewayClient,
+    *,
+    kv_prefix: "KvPrefixStore | None",
+    registry: ToolRegistry | None = None,
+    settings_store: SqlSettingsStore | None = None,
+) -> dict[str, object]:
+    """The whole prompt-cache state, for the owner debug console — the answer to "is the KV
+    cache actually working?", which no surface on this box could previously give.
+
+    Three things it reports that nothing else does. The COUNTERS separate a healthy quiet
+    store from one that has not worked since boot: both emit no rows anywhere else, because
+    only the two success paths ever wrote a box event. The per-model STATE resolves the
+    fingerprint a turn would look for against the file actually on disk, so an identity drift
+    (a tool-set flap, an effort change, a reinstalled model renumbering `--port`) reads as
+    `cold_no_file` with the drifted component named rather than as an unexplained slow turn.
+    And `reuse` carries llama-server's own cumulative prompt-cache counters, which are the
+    authoritative signal — the per-slot `n_prompt_tokens_cache` in `/slots` is zeroed on
+    release and reads 0 whether reuse was total or nonexistent.
+
+    Every probe is best-effort: a model that will not answer reports its error and the rest of
+    the read still lands. Nothing here loads, evicts or mutates anything."""
+    if kv_prefix is None:
+        raise HTTPException(status_code=409, detail="the prompt-cache store is not wired")
+    probes: list[tuple[str, str, Sequence[LlmTool], str | None]] = []
+    efforts: dict[str, str | None] = {}
+    if registry is not None:
+        for model_id in sorted(settings.local_models):
+            model = local_catalog.get(model_id)
+            if model is None:
+                continue
+            served = model.served_model
+            # The identity is resolved through the SAME helper the keeper's and the load's
+            # saves use, so this read cannot disagree with them about which file a turn
+            # would want — two implementations of one identity is the bug class this
+            # instrument exists to catch, and it must not introduce a third.
+            effort, _before, _after = await _warm_identity(
+                served,
+                settings_store=settings_store,
+                kv_prefix=kv_prefix,
+                registry=registry,
+            )
+            efforts[served] = effort
+            with contextlib.suppress(Exception):
+                p_system, p_tools, _hidden = await jerv_prime_inputs(registry, served)
+                probes.append((served, p_system, p_tools, effort))
+    state = await kv_prefix.snapshot(probes)
+    # llama-server's own reuse counters, per resident model. Cumulative since the server
+    # started: a rate near 0 on a box that has been answering turns means the prefix is not
+    # being reused at all, whatever this store reports about its files.
+    reuse: dict[str, object] = {}
+    for served in sorted({p[0] for p in probes}):
+        try:
+            text = await gateway.metrics(served)
+        except Exception as exc:  # noqa: BLE001 — one unreadable model must not fail the read
+            reuse[served] = {"error": str(exc)}
+            continue
+        counters = parse_spec_counters(text)
+        reuse[served] = {
+            k: counters[k]
+            for k in ("prompt_tokens_cached_total", "prompt_tokens_total", "cache_hit_rate")
+            if k in counters
+        }
+    state["reuse"] = reuse
+    state["resolved_effort"] = efforts
+    return state
+
+
+async def kv_prefix_clear(
+    settings: Settings,
+    *,
+    kv_prefix: "KvPrefixStore | None",
+    model_id: str | None = None,
+) -> dict[str, object]:
+    """Delete the prompt cache's files — all of them, or one model's.
+
+    The no-terminal twin of `rm -rf .kvslots` (CLAUDE.md #10), and it exists for exactly the
+    reason `drop-page-cache` does: reclaiming this space was host shell, which the owner
+    running this box remotely does not have. Measured on the box at 94% of the budget with no
+    way to act on it.
+
+    Safe at any time. A deleted file costs at most one re-prefill — the behaviour without this
+    store at all — and the next prime writes it back. It never touches a resident slot, so a
+    conversation in flight keeps its KV."""
+    if kv_prefix is None:
+        raise HTTPException(status_code=409, detail="the prompt-cache store is not wired")
+    served: str | None = None
+    if model_id is not None:
+        served = _require_provisioned(settings, model_id).served_model
+    return await kv_prefix.clear(served)
+
+
+async def set_kv_prefix_budget(
+    store: SqlSettingsStore, ctx: SessionContext, *, gb: int
+) -> dict[str, object]:
+    """Set the prompt cache's disk allowance, in GiB.
+
+    Takes effect on the next api start — the store reads it once at construction, like the
+    patch toggle — and Ops → Update restarts it anyway. Bounded here rather than in the store
+    because this number bounds a delete loop: the floor is one file's worth (a ~1.1 GB slot
+    file plus its sidecar), below which the store would evict everything it just saved."""
+    if not 2 <= gb <= 500:
+        raise HTTPException(status_code=422, detail="budget must be 2..500 GiB")
+    await store.set_llm_kv_prefix_budget_gb(ctx, gb)
+    return {"budget_gb": gb, "applies": "on the next api restart"}
+
+
 async def gateway_prime(
     model_id: str,
     settings: Settings,
@@ -2022,6 +2150,13 @@ async def gateway_prime(
         kv_prefix=kv_prefix,
         registry=registry,
     )
+    # Whether the model is ALREADY resident decides what the baseline means, and it has to be
+    # asked before the load, which is the thing that changes it.
+    try:
+        resident = model.served_model in await gateway.running()
+    except Exception:  # noqa: BLE001 — an unknown residency just costs the reuse line
+        resident = True
+    before = await _reuse_counters(gateway, model.served_model, resident=resident)
     started = time.monotonic()
     try:
         await gateway.load(
@@ -2036,12 +2171,56 @@ async def gateway_prime(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway prime failed: {exc}") from exc
-    return {
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    out: dict[str, object] = {
         "model": model.served_model,
-        "elapsed_ms": round((time.monotonic() - started) * 1000),
+        "elapsed_ms": elapsed_ms,
         "tool_count": len(warm_tools or []),
         "system_chars": len(warm_system or ""),
     }
+    # The reuse DELTA across this one prime. `elapsed_ms` alone only implies a cache hit (a
+    # restore returns 200 either way, and a fast prime could just be a short prefix); these
+    # two counters say it outright — `cached` is prompt tokens llama-server did not have to
+    # process. A prime whose `reuse_rate` is ~1.0 proves the restore took effect end to end,
+    # which is the one claim this whole mechanism rests on and could not previously make.
+    after = await _reuse_counters(gateway, model.served_model)
+    if before is not None and after is not None:
+        cached = round(after[0] - before[0])
+        processed = round(after[1] - before[1])
+        out["reuse"] = {
+            "cached_tokens": cached,
+            "processed_tokens": processed,
+            "reuse_rate": (
+                round(cached / (cached + processed), 4) if (cached + processed) > 0 else None
+            ),
+        }
+    return out
+
+
+async def _reuse_counters(
+    gateway: LocalGatewayClient, served_model: str, *, resident: bool = True
+) -> tuple[float, float] | None:
+    """(prompt tokens served from cache, prompt tokens processed) since the server started,
+    or None when they cannot be read. Cumulative by nature — only a delta across a known
+    request means anything, which is why both callers bracket one.
+
+    `resident=False` returns a ZERO baseline rather than None. llama-swap starts a fresh
+    llama-server per load, so a model that is not resident has no counters to read AND no
+    history to subtract — its next reading IS the delta. Without this the cold-load prime
+    could never report reuse, which is the one case the measurement exists for: whether the
+    DISK restore spared the prefill. (Reading `/metrics` on a non-resident model is refused
+    outright, by design — reaching it would load the model outside the residency budget.)"""
+    if not resident:
+        return (0.0, 0.0)
+    try:
+        counters = parse_spec_counters(await gateway.metrics(served_model))
+    except Exception:  # noqa: BLE001 — a measurement must never fail the thing it measures
+        return None
+    cached = counters.get("prompt_tokens_cached_total")
+    processed = counters.get("prompt_tokens_total")
+    if cached is None or processed is None:
+        return None
+    return (cached, processed)
 
 
 @router.put("/settings/llm")

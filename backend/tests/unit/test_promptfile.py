@@ -1,15 +1,15 @@
-"""The .prompt loader: frontmatter parsing, strict rendering, and fail-fast
-validation. The real note_extract.prompt round-trips to the constants the
-pipeline imports, and a content/version guard makes prose drift deliberate."""
+"""The .prompt loader: frontmatter parsing, strict rendering, and fail-fast validation.
+The real shipped files round-trip to the constants their modules import.
 
-import hashlib
-import json
-import re
+The note.extract round trip and its content/version digest went with the prompt in R4.
+The equivalent guard for the producer that reads notes now is `test_agents.py`'s pinned
+(version, prose digest) per persona — `note_ingest` among them — which is what keeps
+`facts.prompt_version` honest."""
+
 from pathlib import Path
 
 import pytest
 
-from jbrain.analysis.prompt import EXTRACTION_SCHEMA, PROMPT_VERSION, SYSTEM_PROMPT
 from jbrain.llm.promptfile import PromptError, load_prompt
 
 _MINIMAL = """\
@@ -100,13 +100,6 @@ def test_trailing_eof_newline_is_not_part_of_the_body(tmp_path: Path) -> None:
     assert not pf.render(who="w").endswith("\n")  # the conventional EOF newline is hygiene
 
 
-def test_note_extract_file_round_trips_to_the_imported_constants() -> None:
-    pf = load_prompt(Path(__file__).parents[2] / "src/jbrain/analysis/prompts/note_extract.prompt")
-    assert pf.render(max_facts=pf.config["max_facts"]) == SYSTEM_PROMPT
-    assert pf.output_schema == EXTRACTION_SCHEMA
-    assert pf.version == PROMPT_VERSION and pf.strength == "high"
-
-
 def test_entity_disambiguate_file_round_trips_to_the_imported_constants() -> None:
     from jbrain.analysis.entities import (
         DISAMBIGUATE_MAX_TOKENS,
@@ -144,48 +137,3 @@ def test_vision_files_round_trip_and_run_on_the_vision_tier() -> None:
     # Both image tasks declare the vision tier (adapter picks an image model).
     assert ocr.strength == "vision" and OCR_STRENGTH == "vision"
     assert caption.strength == "vision" and DESCRIPTION_STRENGTH == "vision"
-
-
-def test_prompt_content_is_pinned_to_its_version() -> None:
-    """A content/version guard: the rendered prompt + schema hash to a pinned
-    value. Editing the prompt prose or schema fails this test until you BOTH bump
-    `version` in note_extract.prompt AND update the hash here — which keeps
-    PROMPT_VERSION (stamped on every fact) honest, so a re-run is a deliberate
-    migration, never silent drift."""
-    blob = SYSTEM_PROMPT + "\x00" + json.dumps(EXTRACTION_SCHEMA, sort_keys=True)
-    digest = hashlib.sha256(blob.encode()).hexdigest()
-    assert (PROMPT_VERSION, digest) == (
-        "note-extract-v31",
-        "be803b17d0ede66c257b9325c4aabdb5e2a87f536060ba3f3bf09116495c006c",
-    )
-
-
-def test_tier1_vocabulary_digest_matches_the_registry() -> None:
-    """The prompt's tier-1 vocabulary digest is HAND-AUTHORED prose (dynamic
-    rendering is rejected: it would let a YAML edit silently change what
-    PROMPT_VERSION identifies), so this drift check — every spelling the digest
-    lists is a registry-declared predicate — is what keeps the trimmed registry
-    the source of truth. A registry demotion without a prompt edit is red here."""
-    from jbrain.schema.loader import get_registry
-
-    block = re.search(
-        r"^BEGIN-TIER1-VOCABULARY\n(.*?)\nEND-TIER1-VOCABULARY$",
-        SYSTEM_PROMPT,
-        re.MULTILINE | re.DOTALL,
-    )
-    assert block is not None, "tier-1 vocabulary digest block missing from the rendered prompt"
-    listed: list[str] = []
-    for line in block.group(1).splitlines():
-        _, colon, tail = line.partition(":")
-        assert colon, f"digest line without a 'type: predicates' shape: {line!r}"
-        listed += [p.strip() for p in tail.split(",") if p.strip()]
-    # A real vocabulary, not a stub — and every spelling is tier-1 (declared).
-    assert len(listed) >= 40
-    registry = get_registry()
-    undeclared = sorted({p for p in listed if not registry.declares_predicate(p)})
-    assert not undeclared, f"digest lists predicates the registry does not declare: {undeclared}"
-    # And CANONICAL: declares_predicate normalizes renamed_from attractors first,
-    # so a drift spelling (treated_by, seenBy) would pass it while defeating the
-    # digest's purpose — the exact spelling is what keeps one history per edge.
-    drifted = sorted({p for p in listed if registry.normalize_predicate(p) != p})
-    assert not drifted, f"digest lists non-canonical drift spellings: {drifted}"
