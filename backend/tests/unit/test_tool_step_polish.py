@@ -118,6 +118,193 @@ def test_inline_arg_keys_exist_in_each_tool_schema() -> None:
     assert not bad, f"INLINE_ARGS names keys the tool schema doesn't have: {bad}"
 
 
+# --- the result-brief policy (SHOW_THE_WORKING_PLAN.md W1) -------------------
+#
+# A Worked row carries what was ASKED; this is the gate for the other half — what CAME
+# BACK. Every tool is in exactly one of the two sets below, so a NEW tool cannot ship
+# without deciding which, and the second set is the remaining work written down rather
+# than assumed away.
+
+# Tools whose handler authors the row's answer itself — `ToolOutput(result_brief=...)`.
+# Prefer this: only the handler knows which part of its own result was the answer.
+_AUTHORS_BRIEF = {"calculate", "run_python"}
+
+# Tools that do not author one (yet). Not a licence: a row here says what came back only if
+# `stepLedger.ts` can phrase it from the step's STRUCTURED fields — `sources` ("3 notes"),
+# `facts` (the D3 write phrase), `entities` (the resolve's cast), `web_sources`. A tool with
+# none of those still renders a blank right-hand side, which is a row the owner cannot check.
+#
+# This set is the backlog, and it is meant to SHRINK. Moving a name out of it is one
+# `result_brief=` argument in its handler.
+_NO_AUTHORED_BRIEF = {
+    "add_list_item",
+    "add_source_exclusion",
+    "analyze_image",
+    "analyze_stream",
+    "analyze_video",
+    "aprs_recent",
+    "archivist_memory_read",
+    "archivist_memory_write",
+    "ask_owner",
+    "assert_fact",
+    "canvas",
+    "chart_measurements",
+    "check_channel",
+    "check_list_item",
+    "close_reading",
+    "compare_images",
+    "correct_fact",
+    "create_list",
+    "crop_regions",
+    "current_location",
+    "current_time",
+    "decompose_research",
+    "deep_produce",
+    "deep_research",
+    "deepest_research",
+    "device_status",
+    "external_video",
+    "fetch_image",
+    "file_correction",
+    "find_entity",
+    "find_when_at",
+    "geocode_reverse",
+    "gmail_archive",
+    "gmail_bulk_label",
+    "gmail_count",
+    "gmail_create_label",
+    "gmail_label",
+    "gmail_list_labels",
+    "gmail_read",
+    "gmail_search",
+    "gmail_sender_breakdown",
+    "grab_frame",
+    "grokipedia",
+    "home_status",
+    "hurricane",
+    "jmolt_observe",
+    "journal",
+    "location_history",
+    "location_query",
+    "lookup_condition",
+    "lookup_medication",
+    "make_intake_link",
+    "manage_appointment",
+    "memory_edit",
+    "memory_read",
+    "merge_entities",
+    "moltbook",
+    "moltbook_comment",
+    "moltbook_post",
+    "moltbook_profile_update",
+    "moltbook_social",
+    "moltbook_vote",
+    "name_session",
+    "nearby_now",
+    "neighborhood",
+    "news_feed",
+    "news_search",
+    "ocr",
+    "portal_search",
+    "prefs_read",
+    "prefs_write",
+    "propose_correction",
+    "propose_merge",
+    "public_records",
+    "query_server_metrics",
+    "read_appointment",
+    "read_appointments",
+    "read_artifact",
+    "read_encounters",
+    "read_entity",
+    "read_labs",
+    "read_list",
+    "read_lists",
+    "read_note",
+    "read_plan",
+    "read_wiki",
+    "recall",
+    "relate",
+    "remember",
+    "remove_external_video",
+    "remove_list_item",
+    "remove_research_report",
+    "render_bars",
+    "render_chart",
+    "render_html",
+    "request_rebuild",
+    "research_report",
+    "resolve_entity",
+    "save_place",
+    "science_search",
+    "scratch_list",
+    "scratch_manage",
+    "scratch_read",
+    "scratch_write",
+    "sdr_aprs_logging",
+    "sdr_listen",
+    "sdr_read",
+    "sdr_signal",
+    "sdr_stop",
+    "search",
+    "show_canvas",
+    "show_external_video",
+    "show_research_report",
+    "spawn_subagent",
+    "time_at_place",
+    "time_left",
+    "transcribe",
+    "weather",
+    "weather_history",
+    "web_fetch",
+    "web_search",
+    "where_is",
+    "where_was_i",
+    "write_plan",
+    "write_plan_result",
+}
+
+
+def test_every_tool_declares_a_result_brief_policy() -> None:
+    roster = set(_roster())
+    declared = _AUTHORS_BRIEF | _NO_AUTHORED_BRIEF
+    missing = sorted(roster - declared)
+    assert not missing, (
+        "these tools declare no result-brief policy — make the handler pass "
+        "`result_brief=` and add the name to _AUTHORS_BRIEF, or add it to "
+        f"_NO_AUTHORED_BRIEF to record that its row has no authored answer yet: {missing}"
+    )
+    stale = sorted(declared - roster)
+    assert not stale, f"these names are no longer tools — drop them from the sets: {stale}"
+    both = sorted(_AUTHORS_BRIEF & _NO_AUTHORED_BRIEF)
+    assert not both, f"a tool is in both result-brief sets — pick one: {both}"
+
+
+def test_the_tools_that_author_their_answer_still_do() -> None:
+    """The set is a claim about the handlers, so it is checked against them.
+
+    Without this the set rots in the safe direction-looking way: a refactor drops the
+    `result_brief=` argument, every test still passes, and the row the plan exists to fill
+    goes quietly blank."""
+    modules = [
+        path.read_text(encoding="utf-8")
+        for path in sorted((_REPO / "backend" / "src" / "jbrain").rglob("*.py"))
+    ]
+    # Per tool, not repo-wide: one remaining `result_brief=` anywhere in the backend would
+    # otherwise vouch for every name in the set. A handler's module registers the tool by
+    # name, so the two appearing together is the check available without importing the
+    # whole registry (which needs a database).
+    silent = sorted(
+        name
+        for name in _AUTHORS_BRIEF
+        if not any(f'"{name}"' in src and "result_brief=" in src for src in modules)
+    )
+    assert not silent, (
+        "_AUTHORS_BRIEF claims these tools fill the Worked row's answer, but no handler "
+        f"passes `result_brief=` any more: {silent}"
+    )
+
+
 def test_frontend_maps_carry_no_stale_tools() -> None:
     src = _summary_src()
     known = set(_roster()) | _SYNTHETIC | _FORWARD

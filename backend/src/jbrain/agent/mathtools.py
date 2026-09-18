@@ -341,7 +341,7 @@ def _decimal(value: sympy.Expr, digits: int) -> str | None:
         return f"{Decimal(str(approx)).normalize():f}"
 
 
-def evaluate(expression: str, *, digits: int = DEFAULT_DIGITS) -> str:
+def evaluate(expression: str, *, digits: int = DEFAULT_DIGITS) -> Rendered:
     """Evaluate `expression` exactly and render it for the model. Raises MathError with a
     single readable line for anything it will not or cannot do."""
     expression = expression.strip()
@@ -370,7 +370,36 @@ def evaluate(expression: str, *, digits: int = DEFAULT_DIGITS) -> str:
     return _render(expression, value, digits)
 
 
-def _render(expression: str, value: sympy.Expr, digits: int) -> str:
+class Rendered(str):
+    """`evaluate`'s model-facing text, carrying the ANSWER alongside it.
+
+    A str subclass for the same reason `ToolOutput` is one: every caller keeps its `-> str`
+    contract and nothing downstream has to change. The point is that the handler gets the
+    answer as a value rather than re-deriving it by parsing the text it just built — which
+    would be exactly the mistake `ToolResultEvent.result_brief` exists to avoid, one layer
+    further down."""
+
+    brief: str
+
+    def __new__(cls, content: str, brief: str) -> Rendered:
+        out = super().__new__(cls, content)
+        out.brief = brief
+        return out
+
+
+# The Worked row is one line on a phone. An exact result may legitimately run to
+# MAX_RESULT_DIGITS, so the row's copy is capped — the full value is in the step's result
+# text, which is the thing the cap exists to send the reader to.
+MAX_BRIEF_CHARS = 32
+
+
+def _brief_answer(exact: str) -> str:
+    if len(exact) <= MAX_BRIEF_CHARS:
+        return exact
+    return exact[: MAX_BRIEF_CHARS - 1] + "…"
+
+
+def _render(expression: str, value: sympy.Expr, digits: int) -> Rendered:
     if value.has(sympy.zoo) or value.has(sympy.oo) or value.has(sympy.nan):
         raise MathError("ValueError: that has no finite value")
     # Checked before printing, not after: see MAX_RESULT_DIGITS on why this refuses instead
@@ -386,7 +415,10 @@ def _render(expression: str, value: sympy.Expr, digits: int) -> str:
     approx = _decimal(value, digits)
     if approx is not None and approx != exact:
         lines.append(f"decimal: {approx}")
-    return "\n".join(lines)
+    # The EXACT form is the answer, because being exact is what this tool is for: a row
+    # reading `3/10` is the whole argument for having it, where `0.3` is what any calculator
+    # would have said.
+    return Rendered("\n".join(lines), _brief_answer(exact))
 
 
 def build_math_handlers() -> dict[str, ToolHandler]:
@@ -409,7 +441,7 @@ def build_math_handlers() -> dict[str, ToolHandler]:
             return ToolOutput(
                 "TimeoutError: that expression took too long to evaluate — try breaking it up"
             )
-        return ToolOutput(rendered)
+        return ToolOutput(rendered, result_brief=rendered.brief)
 
     return {"calculate": calculate_tool}
 

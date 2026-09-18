@@ -41,17 +41,16 @@ import {
 import { attachmentKind } from "./attachmentKind";
 import {
   type LedgerRow,
-  entityPhrase,
   ledgerRows,
   ledgerWord,
   stepWriteState,
   turnWriteSummary,
-  writePhrase,
 } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
+import { stepLedger } from "./stepLedger";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
@@ -2093,8 +2092,7 @@ function StepRow({
   // phrase already say "writing…" / "failed", and a rung reading "nothing was written"
   // over a call still running would be a lie the owner cannot tell from the truth.
   const hasWrites = writes !== "none" && writes !== "writing" && writes !== "failed";
-  const writeNote = writePhrase(step);
-  const entityNote = entityPhrase(step);
+  const ledger = stepLedger(step);
   const stepArgs =
     step.args != null && Object.keys(step.args).length > 0
       ? (step.args as Record<string, unknown>)
@@ -2128,25 +2126,12 @@ function StepRow({
           </span>
         )}
         <span className={`fb-step-mark ${mark}`} aria-hidden="true" />
-        {step.name === "search" && (
-          <span className="fb-step-cnt">
-            {step.sources.length} result{step.sources.length === 1 ? "" : "s"}
-          </span>
-        )}
-        {step.name === "web_search" && hasWebSources && (
-          <span className="fb-step-cnt">
-            {step.webSources.length} result{step.webSources.length === 1 ? "" : "s"}
-          </span>
-        )}
-        {writeNote !== undefined && (
-          <span className={`fb-step-cnt fbw-cnt fbw-${writes}`}>{writeNote}</span>
-        )}
-        {/* A resolve writes no FACT, so it has no write phrase — and carried no mark at
-            all, which left the one call that creates the owner's records reading as a
-            call that did nothing. What it did is the cast: how many records it made and
-            how many it matched. */}
-        {writeNote === undefined && entityNote !== undefined && (
-          <span className="fb-step-cnt fbw-cnt fbw-ents">{entityNote}</span>
+        {/* What came back, in one phrase — for EVERY tool, not the four that used to be
+            named here (`stepLedger` decides; a write keeps its own D3 wording, a resolve
+            its cast, and a tool that authored an answer wins over any count). A row with
+            nothing on its right is a row the owner cannot check. */}
+        {ledger !== undefined && (
+          <span className={`fb-step-cnt ${ledger.cls}`.trimEnd()}>{ledger.text}</span>
         )}
         <ChevronGlyph className="fb-step-caret" />
       </button>

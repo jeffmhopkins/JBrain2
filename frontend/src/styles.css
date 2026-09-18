@@ -10582,9 +10582,29 @@ button.small {
   background: var(--steel);
   animation: fb-breathe 1.5s ease-in-out infinite;
 }
+/* the Worked row's RESULT column — what came back (stepLedger.ts). It does not shrink:
+   on a narrow row the label and the argument give way first, because the argument is what
+   you asked and the result is what you came for. The max-width is a backstop, not the
+   mechanism — the phrase itself is capped where it is authored. */
 .fb-shell .fb-step-cnt {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
+}
+/* a COMPUTED answer, the one result the row exists to make checkable. Green because it is
+   a value the box worked out rather than a count of what it found. */
+.fb-shell .fb-step-cnt.fbl-res {
+  font-family: var(--font-mono);
+  color: var(--ok);
+}
+/* a call that failed, for every tool — the dot says it too, but only this says it in the
+   column the eye scans down. */
+.fb-shell .fb-step-cnt.fbl-bad {
+  color: var(--rose);
 }
 .fb-shell .fb-step-caret {
   width: calc(14px * var(--font-scale));

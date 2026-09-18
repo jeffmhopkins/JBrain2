@@ -1669,6 +1669,16 @@ the step that made it. Not a surface of its own and not a note-screen change: th
     true, no review card is filed for a conversation write, and nothing else will raise
     it. A reason with no owner-facing meaning renders nothing — a code he cannot act on is
     a code he has to ask about.
+- **Every step row says what came back**, not only what was asked (`stepLedger.ts`, build
+  plan `docs/plans/SHOW_THE_WORKING_PLAN.md` W1 — binding mock
+  `docs/mocks/code-run/h-worked-ledger.html`). The right-hand column is one slot with one
+  rule: the tool's own authored answer wins (`ToolResultEvent.result_brief` — only the
+  handler knows which part of its result was the answer), else a phrase read off the step's
+  STRUCTURED fields (`3 notes`, the D3 write phrase, a resolve's cast, `2 results`), and a
+  failed call reads `failed` whatever the tool. Never parsed out of the result text, which
+  is model-facing prose. A row with nothing on its right is a row the owner cannot check —
+  and the column does not shrink: on a narrow row the label and the argument give way
+  first, because the argument is what you asked and the result is what you came for.
 - **A step's arguments are not its result.** The request and the verbatim payload share
   ONE disclosure, *below* what the call did — "what the agent sent". Arguments that render
   unconditionally put a JSON dump of the request above the answer to "what did this do?",

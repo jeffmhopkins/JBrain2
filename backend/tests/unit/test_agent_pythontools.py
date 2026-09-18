@@ -14,7 +14,13 @@ import httpx
 import pytest
 
 from jbrain.agent.loop import ToolContext, ToolOutput
-from jbrain.agent.pythontools import MAX_OBSERVATION_CHARS, build_python_handlers, format_run
+from jbrain.agent.pythontools import (
+    MAX_BRIEF_CHARS,
+    MAX_OBSERVATION_CHARS,
+    build_python_handlers,
+    format_run,
+    run_brief,
+)
 from jbrain.db.session import SessionContext
 from jbrain.pysandbox import (
     MAX_CODE_BYTES,
@@ -203,3 +209,31 @@ async def test_the_handler_returns_a_tool_output() -> None:
     """ToolOutput is what the loop pulls surfaced data off; every handler returns one."""
     handler = build_python_handlers(_responding({"ok": True, "result": "1"}))["run_python"]
     assert isinstance(await handler({"code": "1"}, _ctx()), ToolOutput)
+
+
+# --- the Worked row's answer (SHOW_THE_WORKING_PLAN.md W1) -------------------
+
+
+def test_the_answer_is_the_trailing_expression_when_there_is_one() -> None:
+    """The notebook convention the sandbox already honours: a bare final expression IS the
+    result, whatever the snippet printed on the way there."""
+    assert run_brief(Ran(ok=True, stdout="working\n", result="Decimal('2917.80')")) == (
+        "Decimal('2917.80')"
+    )
+
+
+def test_otherwise_the_answer_is_the_last_line_printed() -> None:
+    """A snippet that computes and prints ends on its conclusion; the lines above it are
+    working, and showing the first would put the working in the answer's column."""
+    assert run_brief(Ran(ok=True, stdout="q1 640\nq2 702\ntotal 2917.80\n")) == "total 2917.80"
+
+
+def test_the_row_says_so_when_a_run_printed_nothing() -> None:
+    """A blank right-hand side is a row you cannot check, and "it printed nothing" is itself
+    the thing worth seeing — it is the commonest beginner shape."""
+    assert run_brief(Ran(ok=True)) == "no output"
+
+
+def test_the_answer_is_capped_and_flattened_to_one_row() -> None:
+    assert run_brief(Ran(ok=True, result="x" * 200)) == "x" * (MAX_BRIEF_CHARS - 1) + "\u2026"
+    assert run_brief(Ran(ok=True, result="a\n  b")) == "a b"

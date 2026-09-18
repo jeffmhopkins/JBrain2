@@ -5,6 +5,7 @@ import pytest
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.mathtools import (
     KNOWN_NAMES,
+    MAX_BRIEF_CHARS,
     MAX_EXPRESSION_CHARS,
     MAX_FACTORIAL_ARG,
     MAX_RESULT_DIGITS,
@@ -251,3 +252,28 @@ async def test_a_bad_digits_argument_is_clamped_not_refused(digits: object) -> N
     """Never fail a correct expression over a malformed optional argument."""
     out = await _call(expression="sqrt(2)", digits=digits)
     assert "exact:   sqrt(2)" in out
+
+
+# --- the Worked row's answer (SHOW_THE_WORKING_PLAN.md W1) -------------------
+
+
+def test_the_render_carries_the_exact_answer_as_a_value() -> None:
+    """The handler must not have to parse the text it just built — that would be the very
+    mistake `result_brief` exists to stop, one layer further down."""
+    rendered = evaluate("(2847 - 2633) * 12")
+    assert rendered.brief == "2568"
+    assert rendered.splitlines()[0] == "(2847 - 2633) * 12"
+
+
+def test_the_answer_is_the_exact_form_not_the_decimal() -> None:
+    """Being exact is what this tool is for. A row reading `3/10` is the whole argument for
+    having it; `0.3` is what any calculator would have said."""
+    assert evaluate("0.1 + 0.2").brief == "3/10"
+
+
+def test_a_huge_result_is_capped_to_a_row() -> None:
+    """The row is one line on a phone. The full value stays in the step's result text, which
+    is where the cap is meant to send the reader."""
+    brief = evaluate("factorial(200)").brief
+    assert len(brief) == MAX_BRIEF_CHARS
+    assert brief.endswith("…")

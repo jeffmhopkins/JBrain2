@@ -85,6 +85,33 @@ def format_run(ran: Ran) -> str:
     return rendered
 
 
+# One line on a phone; the full value is in the step's result text.
+MAX_BRIEF_CHARS = 32
+
+
+def run_brief(ran: Ran) -> str:
+    """The run's ANSWER for the Worked row, read off `Ran`'s fields rather than off the text
+    `format_run` built from them.
+
+    A trailing bare expression is the answer when there is one — the notebook convention the
+    sandbox already honours. Otherwise the LAST line printed is: a snippet that computes and
+    prints ends on its conclusion, and the lines above it are working. A run that said
+    nothing says so, because a row with a blank right-hand side is a row you cannot check,
+    and "it printed nothing" is itself the thing worth seeing."""
+    answer = ran.result if ran.result is not None else _last_line(ran.stdout)
+    if not answer:
+        return "no output"
+    answer = " ".join(answer.split())
+    if len(answer) > MAX_BRIEF_CHARS:
+        answer = answer[: MAX_BRIEF_CHARS - 1] + "\u2026"
+    return answer
+
+
+def _last_line(stdout: str) -> str:
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
 def build_python_handlers(sandbox: PySandboxClient) -> dict[str, ToolHandler]:
     """The `run_python` tool. Built only when a sandbox URL is configured; otherwise the
     sidecar is dropped from the registry and the tool simply does not exist on that box
@@ -110,6 +137,6 @@ def build_python_handlers(sandbox: PySandboxClient) -> dict[str, ToolHandler]:
             # arguments under the owner's own RLS scope. A second, unscoped copy in the
             # container logs is a domain-firewall hole for no debugging gain.
         )
-        return ToolOutput(format_run(ran))
+        return ToolOutput(format_run(ran), result_brief=run_brief(ran))
 
     return {"run_python": run_python_tool}

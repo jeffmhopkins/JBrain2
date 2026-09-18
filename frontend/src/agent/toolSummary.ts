@@ -36,6 +36,11 @@ export interface ToolStep {
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
   summary: string | undefined;
+  /** The handler's one-line ANSWER for the collapsed row's right-hand side —
+   * `ToolResultEvent.result_brief`. Empty for a tool whose result is already carried
+   * structurally (sources, facts, entities, web sources), which `stepLedger` phrases from
+   * those instead. Never derived from `summary`: that is model-facing text. */
+  result: string | undefined;
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -529,5 +534,6 @@ export function toolStep(t: ToolActivity): ToolStep {
     truncated: t.truncated === true,
     args: t.args,
     summary: t.summary,
+    result: t.result,
   };
 }

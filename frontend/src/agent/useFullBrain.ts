@@ -259,6 +259,7 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
       ...(tool.facts?.length ? { facts: tool.facts } : {}),
       ...(tool.truncated ? { truncated: true } : {}),
+      ...(tool.result_brief ? { result: tool.result_brief } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
       ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),

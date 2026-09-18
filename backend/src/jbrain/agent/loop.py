@@ -383,6 +383,7 @@ class ToolOutput(str):
     halt: str | None
     truncated: bool
     recorded_args: dict[str, Any] | None
+    result_brief: str
 
     def __new__(
         cls,
@@ -398,6 +399,7 @@ class ToolOutput(str):
         halt: str | None = None,
         truncated: bool = False,
         recorded_args: dict[str, Any] | None = None,
+        result_brief: str = "",
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -421,6 +423,10 @@ class ToolOutput(str):
         # the model's arguments and is untouched by any of this. See `ToolResultEvent.args`
         # for the seam it closes.
         out.recorded_args = recorded_args
+        # The row's right-hand side: what CAME BACK, in one short phrase. Set it where the
+        # answer is not already one of the structured fields above — a tool whose result is
+        # `sources`/`facts`/`entities` is phrased from those and leaves this empty.
+        out.result_brief = result_brief
         return out
 
 
@@ -505,6 +511,8 @@ def _persisted_step(
         step["facts"] = [f.model_dump() for f in dispatched.facts]
     if dispatched.truncated:
         step["truncated"] = True
+    if dispatched.result_brief:
+        step["result_brief"] = dispatched.result_brief
     if dispatched.view is not None:
         step["view"] = dispatched.view.model_dump()
     return step
@@ -539,6 +547,8 @@ class _Dispatched:
     halt: str | None = None
     # Wall-clock time in the handler, for the step log and the persisted transcript.
     duration_ms: int = 0
+    # The handler's one-line answer for the Worked row (`ToolResultEvent.result_brief`).
+    result_brief: str = ""
 
 
 @dataclass(frozen=True)
@@ -1386,6 +1396,7 @@ class AgentLoop:
                     facts=list(dispatched.facts),
                     truncated=dispatched.truncated,
                     args=dispatched.recorded_args,
+                    result_brief=dispatched.result_brief,
                 )
                 if dispatched.view is not None:
                     yield ToolViewEvent(tool_call_id=call.id, view=dispatched.view)
@@ -1715,6 +1726,7 @@ class AgentLoop:
                         facts=list(dispatched.facts),
                         truncated=dispatched.truncated,
                         args=dispatched.recorded_args,
+                        result_brief=dispatched.result_brief,
                     )
                 )
                 if dispatched.view is not None:
@@ -1897,6 +1909,7 @@ class AgentLoop:
             truncated=out.truncated if out else False,
             halt=out.halt if out else None,
             recorded_args=out.recorded_args if out else None,
+            result_brief=out.result_brief if out else "",
             duration_ms=elapsed,
         )
 

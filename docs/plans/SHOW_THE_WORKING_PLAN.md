@@ -1,6 +1,6 @@
 # Show the working — the code-run surfaces, and the question that reaches the chat
 
-> **Status:** Scheduled · **Last verified:** 2026-09-18 · **Waves:** W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-09-18 · **Waves:** W1✅ W1b◻️ W2◻️ W3◻️ W4◻️
 
 ## Thesis
 
@@ -217,23 +217,55 @@ sent.
 
 ## Waves
 
-### W1 — the ledger
+### W1 ✅ — the ledger
 
-Every tool fills the slot that already exists.
+Every row gets a right-hand side.
 
-- `result_brief` on `ToolResultEvent`; persisted in `transcript_accumulator.py`; carried into
-  `ToolStep` in `toolSummary.ts`.
-- Every handler in the roster fills it, or lands in the exemption list with a reason.
-- `.fb-step-cnt` rendered from it for every tool, replacing the four hardcoded per-tool branches
-  in `StepRow` — the two `search` / `web_search` counts and the two `fbw-cnt` write phrases — with
-  one field. The write phrases keep their modifier classes; what changes is where the string comes
-  from.
-- One new CSS rule: `.fb-step-cnt.res` — a computed answer reads green, not grey like a count.
-  Same shape as main's `fbw-*` modifiers, so the row keeps one vocabulary.
-- `test_tool_step_polish.py` gains the result-brief policy assertion.
+- **`result_brief`** on `ToolOutput` and `ToolResultEvent`, through `_Dispatched`, both event
+  seams, the live stream (`transcript.ts`), the persisted step (`transcript_accumulator.py`,
+  `loop._step`) and its replay (`useFullBrain.ts`), into `ToolStep.result`.
+- **`stepLedger.ts`** decides the phrase, and `StepRow`'s four hardcoded per-tool branches —
+  the `search` / `web_search` counts and the two `fbw-cnt` write phrases — become one call.
+  The order is the design: an authored answer beats a count, because a count is what the
+  client could have worked out and the answer is what only the tool knew.
+- **A failed call now says `failed` for every tool**, not just the writes. The status dot
+  already said it; nothing said it in the column the eye scans down, which is what makes a
+  failed call findable in a strip of twelve. That one rule covers all 127 tools.
+- **`calculate` and `run_python` author their answers** — the reason this plan exists. Both
+  read the answer off a VALUE rather than off the text they just built: `evaluate` returns a
+  `Rendered` str subclass carrying `.brief` (the same idiom `ToolOutput` itself uses, so all
+  47 existing tests keep treating it as a str), and `run_brief` reads `Ran`'s fields. Parsing
+  one's own rendered prose would be the exact mistake `result_brief` exists to stop, one layer
+  further down.
+- **Two CSS rules**: `.fb-step-cnt.fbl-res` (a computed answer, `--ok` and monospace) and
+  `.fb-step-cnt.fbl-bad`. Plus `flex: none` on the column, so on a narrow row the label and
+  the argument give way first — the argument is what you asked, the result is what you came
+  for.
+- **The gate**: `test_tool_step_polish.py` requires every tool to be in exactly one of
+  `_AUTHORS_BRIEF` or `_NO_AUTHORED_BRIEF`, so a new tool cannot ship without deciding, and
+  a second test checks that the tools claiming to author an answer still pass `result_brief=`
+  (verified by removing the argument and watching it go red).
 
-Independently valuable and independently shippable: after W1 every Worked row says what came
-back, with no new component anywhere.
+**What W1 did NOT do, stated plainly.** The plan said *"every handler in the roster fills it."*
+Two of 127 do. The other 125 are named in `_NO_AUTHORED_BRIEF`, which is the backlog written
+down rather than assumed away — a set that is meant to shrink, one `result_brief=` argument at
+a time. Those rows are not blank: `stepLedger` phrases a result from the step's structured
+fields wherever there is one (`3 notes`, the D3 write phrase, a resolve's cast, `2 results`),
+and a failed call always says so. A tool with none of those still shows nothing on its right,
+and that is the honest remaining gap.
+
+Sizing it that way was deliberate: 114 handlers are declared `-> str`, so filling the long tail
+means changing 114 return types — mechanical, reviewable on its own, and worth nothing until
+the mechanism it feeds exists. **W1b** is that sweep.
+
+### W1b — the long tail authors its answers
+
+Mechanical follow-on: move names out of `_NO_AUTHORED_BRIEF` by having their handlers pass
+`result_brief=`. Worth doing in tranches by module rather than as one 125-file diff, and worth
+doing at all only where the answer is not already carried structurally — a tool whose row
+already reads `3 notes` gains nothing from a second phrasing of the same fact.
+
+The gate makes the progress legible: the set's size is the remaining work.
 
 ### W2 — the `code_run` view, rendered in the panel
 

@@ -101,6 +101,8 @@ export interface ToolActivity {
   facts?: FactWrite[];
   /** The call asserted only a prefix of what it was given (D3's `truncated`). */
   truncated?: boolean;
+  /** The handler's one-line answer for the Worked row (`ToolResultEvent.result_brief`). */
+  result?: string;
   /** Live progress for an in-flight tool — image gen's sampler step/total + sharpening
    * preview, or a multi-phase tool's text `label` ("Analyzing frame 12/30"). Set by
    * `tool_progress`, cleared when the result lands (the final view then renders). */
@@ -320,6 +322,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         ...(event.web_sources?.length ? { webSources: event.web_sources } : {}),
         ...(event.facts?.length ? { facts: event.facts } : {}),
         ...(event.truncated ? { truncated: true } : {}),
+        ...(event.result_brief ? { result: event.result_brief } : {}),
         // The arguments as the TOOL recorded them, replacing what the model sent. It is
         // how `ask_owner`'s server-minted question ids reach this step at all, and the
         // live thread has to take them the same way a reopened one does — the backend

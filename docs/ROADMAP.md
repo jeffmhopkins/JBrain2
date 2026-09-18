@@ -481,7 +481,7 @@ fabricated an image comparison it had no way to perform; reconciled with a four-
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
 
-**Scheduled:** Show the working (build plan: `docs/plans/SHOW_THE_WORKING_PLAN.md`, waves W1–W4) —
+**In progress:** Show the working (build plan: `docs/plans/SHOW_THE_WORKING_PLAN.md`, W1✅, W1b/W2/W3/W4 open) —
 the surfaces that make the exact-math tools checkable, plus `ask_user`. `calculate` / `run_python`
 shipped with **no view of their own**: the code that produced a number is persisted on the turn and
 shown nowhere, so the one tool whose entire value is that its answer can be checked produced answers
@@ -505,7 +505,7 @@ question's open set lives on the asking turn rather than on a conversation row (
 question dies with the conversation and can never reach the notes-tab queue — a chat question has no
 note to correct and no ladder to climb), and a conversational answer mints no note, which narrows
 ratified D7 to the note-thread context it was written for. Nothing in W4 is left for a wave to
-decide; W1–W3 depend on none of it.
+decide; W1–W3 depend on none of it. **W1 shipped:** a `result_brief` the handler authors, carried from `ToolOutput` to the persisted step and back; `stepLedger.ts` in place of StepRow's four hardcoded per-tool branches; a `failed` phrase for all 127 tools rather than the four writes; and `calculate` / `run_python` reading their own answers off a value rather than off the prose they just rendered. The honest gap is the long tail — 2 of 127 handlers author a brief, the rest sit in a gate-enforced `_NO_AUTHORED_BRIEF` backlog (W1b) and are phrased from structured fields where they have any.
 
 **In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
 give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its

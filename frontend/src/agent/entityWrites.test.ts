@@ -45,6 +45,7 @@ function step(over: Partial<ToolStep> & { name: string }): ToolStep {
     truncated: false,
     args: undefined,
     summary: undefined,
+    result: undefined,
     ...over,
   };
 }
