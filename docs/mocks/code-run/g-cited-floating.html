@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · G · cited computations, floating</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;}
+  button:focus-visible,.fx:focus-visible{outline:2px solid var(--violet);outline-offset:2px;border-radius:4px;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--violet-tint);color:var(--violet);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.52;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the marker — the entire surface at rest (D) ===== */
+  .fx{
+    display:inline-flex;align-items:center;gap:1px;vertical-align:baseline;
+    font-family:var(--font-mono);font-size:10.5px;line-height:1;font-weight:500;
+    padding:2px 5px 2px 4px;border-radius:5px;margin-left:2px;
+    background:var(--violet-tint);color:var(--violet);
+    position:relative;top:-1px;border:1px solid transparent;
+  }
+  .fx:active{background:rgba(164,147,201,.32);}
+  .fx.on{border-color:var(--violet);background:rgba(164,147,201,.3);}
+  .fx i{font-style:italic;opacity:.75;}
+
+  /* ===== the popover — floats, so nothing reflows (F) ===== */
+  .pop{
+    position:absolute;z-index:30;width:280px;max-width:calc(100% - 26px);
+    background:var(--surface-2);border:1px solid var(--violet);border-radius:13px;
+    box-shadow:0 14px 38px rgba(0,0,0,.66);display:flex;flex-direction:column;
+    opacity:0;transform:translateY(-5px) scale(.985);
+    transition:opacity .14s ease,transform .14s ease;pointer-events:none;
+  }
+  .pop.on{opacity:1;transform:none;pointer-events:auto;}
+  .tail{
+    position:absolute;width:9px;height:9px;background:var(--surface-2);
+    border-left:1px solid var(--violet);border-top:1px solid var(--violet);
+    transform:rotate(45deg);
+  }
+  .pop-h{display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:1px solid var(--border);flex:none;}
+  .pop-h .n{font-family:var(--font-mono);font-size:10px;color:var(--violet);background:var(--violet-tint);padding:2px 6px;border-radius:5px;}
+  .pop-h .tool{font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);}
+  .pop-h .sp{flex:1;}
+  .pop-h .ms{font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .pop-h .ic{width:15px;height:15px;color:var(--text-3);flex:none;}
+  .pop-h .ic:hover{color:var(--text);}
+  .pop-b{padding:10px;overflow-y:auto;overscroll-behavior:contain;}
+
+  .expr{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);line-height:1.55;word-break:break-word;}
+  .eq{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:baseline;}
+  .eq .l{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .eq .v{font-family:var(--font-mono);font-size:12.5px;color:var(--text);word-break:break-all;}
+  .eq .v.hero{color:var(--green);}
+
+  .more{
+    margin-top:10px;width:100%;padding:8px;border-radius:9px;
+    background:var(--bg);border:1px solid var(--border);color:var(--text-2);
+    font-size:11.5px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .more:active{color:var(--text);}
+  .more svg{width:11px;height:11px;}
+  .code{display:none;margin-top:10px;}
+  .pop.expanded .code,.sheet .code{display:block;}
+  .pop.expanded .more{display:none;}
+
+  .lab{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;display:flex;align-items:center;gap:7px;}
+  .lab .cp{margin-left:auto;text-transform:none;letter-spacing:0;font-size:10.5px;color:var(--steel);}
+  .lab .cp.done{color:var(--green);}
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-family:var(--font-mono);font-size:10.5px;line-height:1.62;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  pre+.lab{margin-top:10px;}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+  .seal{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--text-3);}
+  .chip.ok{background:var(--green-tint);border-color:transparent;color:var(--green);}
+
+  /* ===== promote to a sheet — the escape hatch for long output ===== */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:35;}
+  .scrim.on{opacity:1;pointer-events:auto;}
+  .sheet{
+    position:absolute;left:0;right:0;bottom:0;max-height:86%;z-index:36;
+    background:var(--bg);border:1px solid var(--border);border-bottom:none;
+    border-radius:20px 20px 0 0;transform:translateY(100%);
+    transition:transform .26s cubic-bezier(.22,.9,.3,1);display:flex;flex-direction:column;
+  }
+  .sheet.on{transform:none;}
+  .grab{height:19px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .grab i{width:36px;height:4px;border-radius:999px;background:var(--border);display:block;}
+  .sheet .pop-h{padding:2px 14px 11px;}
+  .sheet .pop-b{padding:12px 14px 24px;}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant G — D's marker, F's popover</span><br />
+  <b>Cited computations, floating.</b> The marker from <b>D</b> so the working is
+  <i>findable</i>; the floating popover from <b>F</b> so opening it <i>moves nothing</i>.
+  Tap any <span class="fx"><i>ƒ</i>1</span>. The <code>run_python</code> one
+  (<span class="fx"><i>ƒ</i>4</span>) carries real code — it opens compact, expands in
+  place, and promotes to a sheet when that isn't room enough.
+</div>
+
+<div class="phone" id="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15 — percentage increase, annual at the new rate, and one third of that.</div>
+
+    <div class="bubble ai">
+      Your bill went up <b>29.7492%</b><button class="fx" data-fx="1"><i>ƒ</i>1</button> —
+      call it 29.7%. Twelve months at the new rate is
+      <b>$2,917.80</b><button class="fx" data-fx="2"><i>ƒ</i>2</button>, and split three ways
+      that's exactly <b>$972.60</b><button class="fx" data-fx="3"><i>ƒ</i>3</button> each —
+      it divides evenly, no rounding needed.
+    </div>
+
+    <div class="bubble me">Show me the months so I can check it.</div>
+
+    <div class="bubble ai">
+      Quarterly marks are $729.45, $1,458.90, $2,188.35 and $2,917.80 at
+      twelve<button class="fx" data-fx="4"><i>ƒ</i>4</button>.
+    </div>
+
+    <div class="bubble me">And if I switch to the fixed tariff at 21.8¢?</div>
+
+    <div class="bubble ai">
+      On the fixed tariff you'd pay <b>$2,616.00</b><button class="fx" data-fx="5"><i>ƒ</i>5</button>
+      a year — <b>$301.80</b><button class="fx" data-fx="6"><i>ƒ</i>6</button> less than
+      staying put.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+
+  <div class="scrim" id="scrim"></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What the hybrid fixes.</b> D's marker was <i>findable but pushed the page around</i>;
+  F's popover <i>moved nothing but was invisible until guessed at</i>. Together: six computed
+  figures across three turns cost the transcript <b>nothing</b>, every one is visibly
+  citable, and checking one never moves the sentence you were reading.
+  <b>What's left to decide:</b> whether `ƒ1 ƒ2 ƒ3` in a single sentence reads as rigour or
+  as clutter — that is a live-use question a mock can't settle.
+</div>
+
+<script>
+  const DATA = {
+    1:{tool:"calculate",ms:"1ms",expr:"(243.15 - 187.40) / 187.40 * 100",
+       rows:[["exact","27875/937",1],["decimal","29.7492",0]],
+       seal:['<span class="chip ok">exact</span>']},
+    2:{tool:"calculate",ms:"0ms",expr:"243.15 * 12",
+       rows:[["exact","14589/5",1],["decimal","2917.8",0]],
+       seal:['<span class="chip ok">exact</span>']},
+    3:{tool:"calculate",ms:"0ms",expr:"243.15 * 12 / 3",
+       rows:[["exact","4863/5",1],["decimal","972.6",0]],
+       seal:['<span class="chip ok">divides evenly</span>']},
+    4:{tool:"run_python",ms:"44ms",expr:"A running Decimal total over twelve months, printing each quarter.",
+       rows:[["result","Decimal('2917.80')",1]],
+       seal:['<span class="chip ok">ran clean</span>','<span class="chip">no network · scratch only</span>'],
+       code:true},
+    5:{tool:"calculate",ms:"0ms",expr:"0.218 * 1000 * 12",
+       rows:[["exact","2616",1]],
+       seal:['<span class="chip ok">exact</span>']},
+    6:{tool:"calculate",ms:"0ms",expr:"243.15 * 12 - 0.218 * 1000 * 12",
+       rows:[["exact","1509/5",1],["decimal","301.8",0]],
+       seal:['<span class="chip ok">exact</span>']},
+  };
+
+  const CODE =
+    '<div class="lab">Code <button class="cp" data-cp>copy</button></div>' +
+    '<pre><span class="gut">1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal\n' +
+    '<span class="gut">2 </span>rate = <span class="f">Decimal</span>(<span class="s">\'243.15\'</span>)\n' +
+    '<span class="gut">3 </span>running = <span class="f">Decimal</span>(<span class="s">\'0\'</span>)\n' +
+    '<span class="gut">4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):\n' +
+    '<span class="gut">5 </span>    running += rate\n' +
+    '<span class="gut">6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:\n' +
+    '<span class="gut">7 </span>        <span class="f">print</span>(<span class="s">f\'after month {month:2}: {running}\'</span>)\n' +
+    '<span class="gut">8 </span>running</pre>' +
+    '<div class="lab">stdout</div>' +
+    '<pre class="out">after month  3: 729.45\nafter month  6: 1458.90\nafter month  9: 2188.35\nafter month 12: 2917.80</pre>';
+
+  const X = '<svg viewBox="0 0 24 24"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
+  const GROW = '<svg viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>';
+
+  const phone = document.getElementById("phone");
+  const chat = document.getElementById("chat");
+  const scrim = document.getElementById("scrim");
+  let pop = null, sheet = null, openOn = null;
+
+  function body(id) {
+    const d = DATA[id];
+    return '<div class="expr">' + d.expr + "</div>" +
+      '<div class="eq">' + d.rows.map(([l, v, hero]) =>
+        '<div class="l">' + l + '</div><div class="v' + (hero ? " hero" : "") + '">' + v + "</div>"
+      ).join("") + "</div>" +
+      (d.code
+        ? '<button class="more">' + GROW + " Show the code</button>" +
+          '<div class="code">' + CODE + "</div>"
+        : "") +
+      '<div class="seal">' + d.seal.join("") +
+        '<span class="chip">' + d.tool + " · " + d.ms + "</span></div>";
+  }
+
+  function wireCopy(root) {
+    for (const cp of root.querySelectorAll("[data-cp]")) {
+      cp.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const code = cp.closest(".code").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+        navigator.clipboard?.writeText(code);
+        cp.classList.add("done"); cp.textContent = "copied";
+        setTimeout(() => { cp.classList.remove("done"); cp.textContent = "copy"; }, 1400);
+      });
+    }
+  }
+
+  function closeAll() {
+    pop?.remove(); pop = null;
+    if (sheet) { sheet.classList.remove("on"); const s = sheet; setTimeout(() => s.remove(), 260); sheet = null; }
+    scrim.classList.remove("on");
+    document.querySelector(".fx.on")?.classList.remove("on");
+    openOn = null;
+  }
+
+  // Anchored under its marker and clamped inside the frame, so it never runs off an edge.
+  function place(el, anchor) {
+    const pr = phone.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let left = ar.left - pr.left + ar.width / 2 - w / 2;
+    left = Math.max(9, Math.min(left, pr.width - w - 9));
+    const below = ar.bottom - pr.top + 9;
+    const flip = below + h > pr.height - 74;
+    const top = flip ? Math.max(58, ar.top - pr.top - h - 9) : below;
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    const tail = el.querySelector(".tail");
+    const tx = Math.max(12, Math.min(ar.left - pr.left + ar.width / 2 - left - 4.5, w - 21));
+    tail.style.left = tx + "px";
+    tail.style.top = flip ? "auto" : "-5px";
+    tail.style.bottom = flip ? "-5px" : "auto";
+    tail.style.transform = flip ? "rotate(225deg)" : "rotate(45deg)";
+  }
+
+  function promote(id) {
+    pop?.remove(); pop = null;
+    sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.innerHTML =
+      '<div class="grab"><i></i></div>' +
+      '<div class="pop-h"><span class="n">ƒ' + id + '</span>' +
+      '<span class="tool">' + DATA[id].tool + '</span><span class="sp"></span>' +
+      '<span class="ms">' + DATA[id].ms + '</span>' +
+      '<button class="ic" data-close>' + X + "</button></div>" +
+      '<div class="pop-b">' + body(id) + "</div>";
+    sheet.querySelector("[data-close]").addEventListener("click", closeAll);
+    sheet.addEventListener("click", (e) => e.stopPropagation());
+    wireCopy(sheet);
+    phone.append(sheet);
+    scrim.classList.add("on");
+    requestAnimationFrame(() => sheet.classList.add("on"));
+  }
+
+  function open(id, marker) {
+    pop = document.createElement("div");
+    pop.className = "pop";
+    pop.innerHTML =
+      '<div class="tail"></div>' +
+      '<div class="pop-h"><span class="n">ƒ' + id + '</span>' +
+      '<span class="tool">' + DATA[id].tool + '</span><span class="sp"></span>' +
+      '<span class="ms">' + DATA[id].ms + '</span>' +
+      (DATA[id].code ? '<button class="ic" data-grow>' + GROW + "</button>" : "") +
+      '<button class="ic" data-close>' + X + "</button></div>" +
+      '<div class="pop-b">' + body(id) + "</div>";
+
+    pop.addEventListener("click", (e) => e.stopPropagation());
+    pop.querySelector("[data-close]").addEventListener("click", closeAll);
+    pop.querySelector("[data-grow]")?.addEventListener("click", () => promote(id));
+    pop.querySelector(".more")?.addEventListener("click", () => {
+      pop.classList.add("expanded");
+      // The body just grew — cap it to the frame and let it scroll rather than
+      // spilling off the bottom. This is the answer to F's real flaw: a popover is a
+      // poor place for eight lines of code, so past a point it stops being one.
+      pop.querySelector(".pop-b").style.maxHeight = Math.round(phone.clientHeight * 0.46) + "px";
+      place(pop, marker);
+    });
+    wireCopy(pop);
+
+    phone.append(pop);
+    marker.classList.add("on");
+    openOn = id;
+    place(pop, marker);
+    requestAnimationFrame(() => pop.classList.add("on"));
+  }
+
+  for (const fx of document.querySelectorAll("[data-fx]")) {
+    fx.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = fx.dataset.fx, was = openOn === id;
+      closeAll();
+      if (!was) open(id, fx);
+    });
+  }
+
+  document.addEventListener("click", closeAll);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
+  chat.addEventListener("scroll", () => { if (pop) closeAll(); }, {passive: true});
+</script>
+</body>
+</html>

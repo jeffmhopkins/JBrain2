@@ -1,9 +1,10 @@
 # Code run — seeing what `run_python` and `calculate` actually did
 
-> **Status:** GUI gate **open** — **six** variants across two rounds, awaiting the owner's
-> choice. Nothing built. The tools themselves shipped in
-> `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that makes their working
-> legible.
+> **Status:** GUI gate **settled** — the owner chose **D's marker with F's popover**, built
+> as **variant G** (`g-cited-floating.html`), which is the binding spec. A–F are retained as
+> the record. Nothing is built yet; the build plan is the next artifact. The tools
+> themselves shipped in `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that
+> makes their working legible.
 
 ## The problem
 
@@ -61,7 +62,49 @@ the repo already renders sources as tappable `[^n]` markers, so this reuses a pa
 rather than adding one. **F** is the most elegant and photographs best. **E** is the
 dullest and is probably right.
 
-### The judgement, revised
+## The decision — G, the hybrid
+
+The owner's call: *"I like D, but I want it to have the pop-up of F."*
+
+That resolves the gate, and it resolves it better than any of the six on their own, because
+it takes the two variants whose weaknesses were **exactly complementary**:
+
+| | Findable? | Moves the page? |
+|---|---|---|
+| D — cited computations | **yes** (a visible `ƒ1`) | yes, the card pushes content down |
+| F — tap the number | no, invisible until guessed at | **no**, the popover floats |
+| **G — both** | **yes** | **no** |
+
+Neither half was compromised to get there — the marker is D's unchanged, the floating,
+clamped, tail-anchored popover is F's unchanged. `g-cited-floating.html` is the binding
+mock.
+
+**It also fixes the one flaw I recorded against F.** *"A popover is a poor place for eight
+lines of code"* was true and was not hand-waved: in G the `run_python` popover opens
+compact (expression → result), expands in place with its body capped to 46% of the frame
+and scrolling, and carries a **promote-to-sheet** control for when that still isn't room.
+Small content stays a popover; large content stops being one.
+
+**What G does not settle,** and what live use will have to: whether `ƒ1 ƒ2 ƒ3` inside one
+sentence reads as rigour or as clutter. Three markers in a single clause is the densest
+case the tool will routinely produce, and no mock can answer it — if it reads as clutter,
+the fallback is to mark only the *first* computed figure in a clause and let its popover
+list the rest.
+
+### Why not E, which I had recommended
+
+E is still the best *forensic* view — the ledger's expression-beside-answer list, with the
+failed call visible among them, is the fastest way to audit a whole turn. G trades that for
+per-number attribution: it answers "where did **this** number come from" immediately, and
+"what ran in this turn" not at all.
+
+That trade is defensible and probably right — the question people actually ask is about a
+specific number, not a turn. But it leaves a real gap: **a failed call that was retried has
+no marker of its own**, because it produced no number, so nothing in G surfaces it. If that
+matters, E's ledger is the natural second surface, reachable from a turn-level affordance —
+and this is the one place the build plan should revisit.
+
+### The round-two judgement (kept for the record)
 
 **E.**
 
