@@ -1436,7 +1436,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if sdr_recorder is not None:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(sdr_recorder.stop(), timeout=SDR_FINALIZE_TIMEOUT_S)
+        # Cancel AND drain, like every sibling below. The keeper can be inside a
+        # `save_slot` POST — a multi-GB write with a ≥180 s client timeout — and llama-server
+        # writes that file at its final, trusted name with no tmp+rename. A cancel landing
+        # there leaves a truncated file the store will later trust into a failed restore, and
+        # only a bounded wait gives the save a chance to finish or fail cleanly. It also keeps
+        # a late `box_events.record` from opening a session on an engine already disposed.
         warm_keeper_task.cancel()
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(warm_keeper_task, return_exceptions=True), timeout=10.0
+            )
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()

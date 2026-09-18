@@ -32,6 +32,7 @@ logged and retried on the next tick, never raised into boot or a turn.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable, Collection
 
 import structlog
@@ -102,6 +103,23 @@ class WarmKeeper:
         # catch a later gateway-only restart or a hidden-set flip.
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
+        # Set by `note_prefix_lost` to cut the sleep short. Without it the edge trigger was
+        # only half an edge: residency reported the loss immediately and the keeper then slept
+        # out the rest of its interval before acting. Its main production caller is the
+        # end-of-turn restore, so it fires just after the owner finished a message — which
+        # makes the next message, inside that same minute, the one that pays the prefill the
+        # hook exists to prevent.
+        self._wake = asyncio.Event()
+        # Consecutive failed ticks, for the backoff below. A prime that fails for a persistent
+        # reason used to retry at the eager 5 s cadence forever — three settings reads, a
+        # /running GET, an admission that can EVICT to fit, and a log line every five seconds,
+        # on a box whose owner reads those logs through a debug console.
+        self._failures = 0
+        # Bumped on every prime attempt. `_primed` is only written by the attempt that still
+        # owns the current generation, so a `note_prefix_lost` arriving DURING a prime is no
+        # longer overwritten by that prime's completion — a 60-200 s window in which the model
+        # could be evicted and bare-reloaded, leaving it resident, cold, and marked primed.
+        self._generation = 0
 
     async def _auto_restore_allowed(self) -> bool:
         """Default OPEN when unwired (no loader) or on a settings read failure: this gate only
@@ -124,6 +142,10 @@ class WarmKeeper:
         edge-triggered half of that invalidation."""
         if self._primed is not None and self._primed[0] == served_model:
             self._primed = None
+        # Invalidate any prime currently in flight: it was priming a slot that no longer
+        # exists, and letting it record success would re-assert the memo this just cleared.
+        self._generation += 1
+        self._wake.set()
 
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when
@@ -231,6 +253,12 @@ class WarmKeeper:
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a
         # real turn reuses. max_tokens=1 — we want the prefill in cache, not the output.
+        #
+        # The generation is read BEFORE the await and compared after. A cold prime takes
+        # 60-200 s, and `note_prefix_lost` firing inside that window used to be erased by this
+        # prime's own completion re-asserting `_primed` — leaving the model resident, cold, and
+        # believed primed, which is the exact state that hook exists to prevent.
+        generation = self._generation
         try:
             prime_turn = await self._router.converse(
                 AGENT_TURN_TASK,
@@ -241,6 +269,12 @@ class WarmKeeper:
             )
         except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))
+            return False
+        if generation != self._generation:
+            # The slot we primed was dropped while we were priming. Say nothing about being
+            # primed, and let the next tick start over — the save below is skipped too,
+            # because the token count it would key on describes a slot that is gone.
+            log.info("warm_keeper.prime_superseded", model=served)
             return False
         self._primed = want
         # Persist what was just primed, in the same breath — the only moment the slot
@@ -260,9 +294,21 @@ class WarmKeeper:
         )
         return True
 
+    def _retry_delay(self) -> float:
+        """The eager interval, doubled per consecutive failure, capped at the steady one.
+
+        A prime that fails for a PERSISTENT reason — a gateway that will not come up, a model
+        that cannot fit — used to retry at the eager cadence forever: ~17k log lines a day, and
+        each attempt runs an admission that can EVICT to fit, so the keeper and the worker
+        could trade the same 68 GB model back and forth every five seconds. Backoff makes a
+        transient failure cost nothing extra and a permanent one cost almost nothing at all."""
+        delay = self._interval_wait * (2 ** min(self._failures, 8))
+        return min(delay, self._interval_ready)
+
     async def run(self) -> None:
         """The reconcile loop: settle, then sleep — short while still trying to reach a wanted
-        model (boot / gateway restart / hidden-set flip), long once primed. Runs until cancelled."""
+        model (boot / gateway restart / hidden-set flip), long once primed, and backing off
+        while it keeps failing. A dropped prefix cuts the sleep short. Runs until cancelled."""
         while True:
             settled = True
             try:
@@ -270,4 +316,12 @@ class WarmKeeper:
             except Exception:  # noqa: BLE001 — one bad tick must never kill the keeper
                 log.warning("warm_keeper.tick_failed", exc_info=True)
                 settled = False
-            await asyncio.sleep(self._interval_ready if settled else self._interval_wait)
+            self._failures = 0 if settled else self._failures + 1
+            delay = self._interval_ready if settled else self._retry_delay()
+            # Wait for the delay OR for a reported loss, whichever comes first. The hook's
+            # main caller is the end-of-turn restore, so it fires just after the owner sends a
+            # message — and sleeping out the rest of the interval is what made their NEXT
+            # message pay the prefill the hook was added to prevent.
+            self._wake.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
