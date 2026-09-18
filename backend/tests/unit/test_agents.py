@@ -13,6 +13,7 @@ from jbrain.agent.agents import (
     GMAIL_TOOLS,
     INTAKE_TOOLS,
     JERV_TOOLS,
+    MATH_TOOLS,
     MEMORY_TOOLS,
     NON_OWNER_PERSONAS,
     OWNER_AGENTS,
@@ -64,15 +65,19 @@ def test_curator_is_the_full_brain_default() -> None:
     curator = AGENTS["curator"]
     assert curator.tools is None
     assert curator.reads_knowledge_base is True
-    assert curator.version == "agent-system-v8"
+    assert curator.version == "agent-system-v9"
 
 
-def test_teacher_is_a_tool_less_socratic_tutor() -> None:
-    """teacher has no tools (an empty allowlist) and no knowledge-base access — it
-    teaches only from the conversation."""
+def test_teacher_is_a_socratic_tutor_that_holds_only_the_math_tools() -> None:
+    """teacher's allowlist is the arithmetic pair and nothing else, and it still reads no
+    knowledge base — it teaches from the conversation. The pair is the owner-decided
+    reversal of the original empty allowlist: a tutor that cannot check a student's
+    arithmetic has to either trust it or assert its own."""
     teacher = AGENTS["teacher"]
-    assert teacher.tools == frozenset()
+    assert teacher.tools == MATH_TOOLS == frozenset({"calculate", "run_python"})
     assert teacher.reads_knowledge_base is False
+    # Nothing ELSE leaked in with them: no web, no knowledge base, no spawn.
+    assert not ((teacher.tools or frozenset()) & (WEB_TOOLS | {SPAWN_TOOL}))
 
 
 def test_jerv_is_a_sandboxed_web_chatbot() -> None:
@@ -84,6 +89,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
         jerv.tools
         == JERV_TOOLS
         == WEB_TOOLS
+        | MATH_TOOLS
         | {
             "news_search",
             "science_search",
@@ -187,7 +193,11 @@ def test_curator_holds_deep_produce_via_extra_tools_only() -> None:
 
     curator = agent_for("curator")
     assert curator.tools is None  # the wildcard is intact (not converted to an allowlist)
-    assert curator.extra_tools == frozenset({"deep_produce"})
+    # `run_python` rides the same mechanism, and for the same reason: it is `web`-class, so
+    # curator holding it has to be a deliberate line rather than something a wildcard
+    # absorbed. `calculate` is deliberately NOT here — it is `read`-class and needs no grant.
+    assert curator.extra_tools == frozenset({"deep_produce", "run_python"})
+    assert "calculate" not in curator.extra_tools
     # No other persona carries an extra_tools grant — the grant does not leak.
     for name, profile in AGENTS.items():
         if name != "curator":
@@ -201,7 +211,9 @@ def test_image_tools_are_jerv_only() -> None:
     assert "analyze_image" in JERV_TOOLS
     assert {"generate_image", "edit_image"} & JERV_TOOLS == set()
     assert AGENTS["curator"].tools is None
-    assert AGENTS["teacher"].tools == frozenset()
+    # teacher now holds the arithmetic pair, and nothing else — no vision tool reached it.
+    assert AGENTS["teacher"].tools == MATH_TOOLS
+    assert "analyze_image" not in MATH_TOOLS
 
 
 def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
@@ -209,7 +221,11 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
     shared current_time read (to ground date queries), and reads no knowledge base, so
     no owner note/entity data is in context while it triages mail."""
     archivist = AGENTS["archivist"]
-    assert archivist.tools == ARCHIVIST_TOOLS == GMAIL_TOOLS | MEMORY_TOOLS | {"current_time"}
+    assert (
+        archivist.tools
+        == ARCHIVIST_TOOLS
+        == GMAIL_TOOLS | MEMORY_TOOLS | MATH_TOOLS | {"current_time"}
+    )
     assert "current_time" in ARCHIVIST_TOOLS  # date awareness for older_than:/before: queries
     assert {
         "gmail_search",
@@ -248,8 +264,12 @@ def test_archivist_tools_are_archivist_only() -> None:
     assert AGENTS["curator"].tools is None
     assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & JERV_TOOLS)
     shared_with_jerv = ARCHIVIST_TOOLS & JERV_TOOLS
-    assert shared_with_jerv == {"current_time"}  # the one deliberate shared tool
-    assert AGENTS["teacher"].tools == frozenset()
+    # The deliberate shared tools: the clock, and the arithmetic pair every persona holds.
+    assert shared_with_jerv == MATH_TOOLS | {"current_time"}
+    # The exclusivity that actually matters is unchanged — the mailbox surface is still
+    # the archivist's alone; what it now shares reads nothing and reaches nothing.
+    assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & (MATH_TOOLS | {"current_time"}))
+    assert AGENTS["teacher"].tools == MATH_TOOLS
 
 
 def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
@@ -262,6 +282,7 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
         research.tools
         == RESEARCH_TOOLS
         == WEB_TOOLS
+        | MATH_TOOLS
         | {
             "news_search",
             "science_search",
@@ -274,7 +295,11 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
     # The categorized search tools + the curated feed source ride the gather personas, so a
     # deep-research fan can use them regardless of the preset path (research_scout held them too).
     assert {"news_search", "science_search", "news_feed"} <= RESEARCH_TOOLS
-    assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
+    # summarize is no longer tool-LESS: it holds the arithmetic pair, because rolling a set
+    # of findings into a summary is exactly where a total or a percentage gets invented.
+    # Neither tool reads or egresses anything, so the sandbox is unchanged.
+    assert summarize.tools == SUMMARIZE_TOOLS == MATH_TOOLS
+    assert not (SUMMARIZE_TOOLS & WEB_TOOLS)
     for p in (research, review, summarize):
         assert p.reads_knowledge_base is False
         assert "current_location" not in (p.tools or frozenset())
@@ -293,7 +318,8 @@ def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
     assert (
         scout.tools
         == SCOUT_TOOLS
-        == frozenset(
+        == MATH_TOOLS
+        | frozenset(
             {
                 "web_search",
                 "news_search",
@@ -304,7 +330,7 @@ def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
             }
         )
     )
-    assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
+    assert fetch.tools == FETCH_TOOLS == MATH_TOOLS | frozenset({"web_fetch", "current_time"})
     # The scout can follow leads (fetch), search news, and pull curated feeds (news_feed); the
     # reader is fetch-only — it never searches (no web_search AND no news_search) and holds no
     # discovery tool (no news_feed), so it can't wander off from its handed URL list.
@@ -330,7 +356,7 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
     assert (
         research_lib.tools
         == RESEARCH_LIBRARY_TOOLS
-        == frozenset({"external_video", "current_time"})
+        == MATH_TOOLS | frozenset({"external_video", "current_time"})
     )
     assert review_lib.tools == REVIEW_LIBRARY_TOOLS == RESEARCH_LIBRARY_TOOLS
     for p in (research_lib, review_lib):
@@ -422,32 +448,32 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
     version bump, like every .prompt file (DEVELOPMENT.md)."""
     pins = {
         "curator": (
-            "agent-system-v8",
-            "be091947e2325b07751dd6d0a4aa6f04596ab12bf0719461481d667e4d5a73ed",
+            "agent-system-v9",
+            "544ad9ffdef3b960761ba76c560519967806a1b3a722c9030c472218e6bf5dec",
         ),
         "teacher": (
-            "agent-teacher-v1",
-            "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
+            "agent-teacher-v2",
+            "ef0c06932958572fe992bc896c0cfff7a963dc27bfd46f1b273df968b07e7bbc",
         ),
         "jerv": (
-            "agent-jerv-v48",
-            "47efedc798419f86b1d91e3cf30b8e8e5b8f5b13a2b89adcef48b5812d2164b9",
+            "agent-jerv-v49",
+            "8aae605db61338f59fa80e8b9fbb70826695f1e9f4a9fa933563269d5e72909e",
         ),
         "archivist": (
-            "agent-archivist-v6",
-            "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
+            "agent-archivist-v7",
+            "b2cde2ecf5d34a74f5712e83e49d0df2a572372e0d95489d95b19c8b4b8851c2",
         ),
         "research": (
-            "agent-research-v17",
-            "fe7214009384173ccfe5d0fbedfe2ea21613feb651ded4bc792c20a140680795",
+            "agent-research-v18",
+            "744fbb8168726ffe4bd5a46d3b3358c7a63797d9319d33a79920495a42fd78fd",
         ),
         "review": (
-            "agent-review-v8",
-            "af54a4fdee68266e8ba6b5494bed81f6a9ebd67bb5f024f51eca9632a5133e17",
+            "agent-review-v9",
+            "3f613ba4c7ef9dce422be2e4a33e0678e589614a077b7254548df863f697426f",
         ),
         "summarize": (
-            "agent-summarize-v2",
-            "eff59feeb739f1bd48546f06e2e8768cdf6158703d69ae4140c096e04e49672e",
+            "agent-summarize-v3",
+            "1ebcaef6ac0005b87ddefca694c5c8e0f8b9bcdc279b3456c41917dadb3059e9",
         ),
         "intake": (
             "agent-intake-v1",

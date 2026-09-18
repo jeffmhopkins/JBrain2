@@ -42,6 +42,22 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              # The pysandbox sidecar lives under deploy/ but is TESTED by the BACKEND
+              # suite, which loads deploy/pysandbox/*.py by path and runs the real runner
+              # in real subprocesses — exactly the arrangement the sdr note below records
+              # for the supervisor. Without these, a PR touching only the sandbox ran no
+              # test that covers it, and the sandbox is the one component where an
+              # uncovered change is a containment change.
+              - 'deploy/pysandbox/**'
+              # Its image and its compose service. test_pysandbox_server.py asserts on the
+              # compose topology (the `sandbox` network is `internal: true` and holds
+              # exactly api + pysandbox — the egress-free claim IS that membership), and
+              # this job is the only place `docker build -f deploy/Dockerfile.pysandbox`
+              # runs on a PR. The image is built ON THE BOX, so without this gate the first
+              # check of a broken Dockerfile is the owner's Ops -> Update, on a box with
+              # no terminal.
+              - 'deploy/Dockerfile.pysandbox'
+              - 'deploy/docker-compose.yml'
               - '.github/workflows/ci.yml'
             supervisor:
               - 'supervisor/**'
@@ -112,6 +128,17 @@ jobs:
         run: uv run ruff format --check .
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         run: uv run pyright
+      # The pysandbox sidecar's image, built (not pushed) as a PR gate — the same reasoning
+      # the supervisor job records for Dockerfile.sdr. It belongs here rather than in
+      # `images`, which is push-only and so post-merge, and post-merge is too late for an
+      # image the box builds itself. The build is also the only check of the Dockerfile's
+      # own smoke test, which runs a real snippet through runner.py and asserts its stdout
+      # and result — so a sidecar that would crash-loop on the box fails here instead.
+      # `working-directory: .` because the job defaults to `backend/` and the image's
+      # context is the repo root.
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.pysandbox .
 
   backend-unit:
     needs: changes

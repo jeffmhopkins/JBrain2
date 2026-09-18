@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-18
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -123,6 +123,21 @@ owner-approved, shipped via PR); **no unbounded autonomous loop** (episodic,
 human-anchored, step-capped); **no agent framework runtime** (LangChain/LangGraph/
 AutoGPT — their abstractions break one-person operability); and **no code
 execution in the agent**.
+
+> **On that last refusal, now that `run_python` exists.** It is unamended, and the
+> tool does not breach it: the agent executes nothing. The handler POSTs the
+> model's snippet to the `pysandbox` sidecar — a separate container, egress-free by
+> compose topology, read-only, holding no owner data and no credentials — exactly as
+> the api posts a render to `htmlrender` and proxies a session to `jcode`.
+> `docs/archive/JCODE_PLAN.md` settled this reconciliation in its own words: *"jcode
+> does not violate that, because it is not the agent."* JBrain **fronts** a sandbox;
+> it does not **embody** one. The line the refusal is really drawing — arbitrary code
+> must never run where the knowledge base, the RLS session and the storage
+> abstraction are — is unmoved. `calculate` does not engage the refusal at all: it
+> evaluates a closed expression grammar with no names, attributes, assignment or
+> calls outside a fixed table, and is not code execution by any reading. The decision
+> record, including the two costs `JERV_CONTEXT_BUDGET_PLAN.md` §5 priced and how
+> each is paid, is `docs/archive/EXACT_MATH_TOOLS_PLAN.md`.
 
 **Lean litmus test for any agent feature:** does it reuse the LLM adapter, the
 storage abstraction, RLS-scoped Postgres, and the existing job queue / review

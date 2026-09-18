@@ -47,6 +47,7 @@ from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.publicrecordstools import build_public_records_handlers
+from jbrain.agent.pythontools import build_python_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
@@ -179,6 +180,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notify import NotifyBus
 from jbrain.push import SqlFcmTokenRepo
+from jbrain.pysandbox import PySandboxClient
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.sdr.aprslog import AprsLog, run_aprs_backfill_loop, run_aprs_log_loop
 from jbrain.sdr.gate import CommandGate, heard_from_row
@@ -658,6 +660,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # than shipping model-authored markup to the PWA. Empty url ⇒ the html lane
         # reports unavailable and the shape ops keep working.
         app.state.htmlrender = HtmlRenderClient(settings.htmlrender_url)
+        # The Python sandbox (docs/archive/EXACT_MATH_TOOLS_PLAN.md): the `run_python` tool's
+        # executor, in its own egress-free, read-only container. On app.state like every
+        # other sidecar client; an empty url ⇒ the tool is absent from the registry entirely
+        # rather than offered and failing.
+        app.state.pysandbox = PySandboxClient(settings.pysandbox_url)
         # A YouTube URL through web_fetch reads as a lightweight title+channel+description+
         # captions view (jbrain.web.youtube) — no media download or GPU, unlike analyze_video.
         # Bound to the tested yt-dlp resolver + caption fetcher; the blocking resolve runs off
@@ -1023,6 +1030,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if app.state.htmlrender.configured
             else None
         )
+        # The `run_python` sandbox tool. Wired only when the sidecar is configured, so a box
+        # without one drops the sidecar from the registry and no persona is offered a tool
+        # that would only ever report itself unavailable.
+        python_handlers = (
+            build_python_handlers(app.state.pysandbox) if app.state.pysandbox.configured else None
+        )
         # jerv's canvas (docs/plans/AGENT_CANVAS_PLAN.md): mark up the owner's photo,
         # or sketch on a blank sheet, through a retained scene the model edits by id.
         # The `html` op renders through the egress-free htmlrender sidecar; with no
@@ -1092,6 +1105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             compare_handlers=compare_handlers,
             ocr_handlers=ocr_handlers,
             html_handlers=html_handlers,
+            python_handlers=python_handlers,
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,

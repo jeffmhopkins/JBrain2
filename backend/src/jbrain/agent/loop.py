@@ -327,6 +327,12 @@ class ToolContext:
     html_render_budget: "ToolCallBudget | None" = None
 
 
+def _ms_since(started: float) -> int:
+    """Monotonic, not wall-clock: a duration measured against the system clock goes negative
+    when NTP steps it, and a negative tool duration in the log is worse than none."""
+    return int((time.monotonic() - started) * 1000)
+
+
 @dataclass(frozen=True)
 class JobRef:
     """A job a long/deferred tool enqueued instead of blocking the turn — the id to
@@ -449,6 +455,7 @@ def _persisted_step(
         "id": call.id,
         "name": call.name,
         "ok": not dispatched.result.is_error,
+        "duration_ms": dispatched.duration_ms,
         "sources": [s.model_dump() for s in dispatched.sources],
         "text_offset": text_offset,
         "reasoning_offset": reasoning_offset,
@@ -481,6 +488,8 @@ class _Dispatched:
     job: JobRef | None
     web_sources: tuple[WebSource, ...] = ()
     deferred: DeferredRef | None = None
+    # Wall-clock time in the handler, for the step log and the persisted transcript.
+    duration_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -1253,6 +1262,7 @@ class AgentLoop:
                     tool_call_id=call.id,
                     ok=not dispatched.result.is_error,
                     summary=dispatched.result.content,
+                    duration_ms=dispatched.duration_ms,
                     sources=list(dispatched.sources),
                     web_sources=list(dispatched.web_sources),
                     proposal=dispatched.proposal,
@@ -1553,6 +1563,7 @@ class AgentLoop:
                         tool_call_id=call.id,
                         ok=not dispatched.result.is_error,
                         summary=dispatched.result.content,
+                        duration_ms=dispatched.duration_ms,
                         sources=list(dispatched.sources),
                         web_sources=list(dispatched.web_sources),
                         proposal=dispatched.proposal,
@@ -1670,8 +1681,14 @@ class AgentLoop:
             err = ToolResult(
                 tool_call_id=call.id, content=f"tool not available: {call.name}", is_error=True
             )
+            # Logged like any other call, and arguably the most worth having: a model naming
+            # a tool it was never offered is either a slip worth noticing or an injection
+            # worth investigating, and neither is visible if a refusal leaves no line.
+            log.warning("agent.tool_refused", tool=call.name)
+            self._log_call(call, ok=False, duration_ms=0, result_chars=0)
             return _Dispatched(err, (), None, (), None, None)
         tool = self._registry.get(call.name)
+        started = time.monotonic()
         try:
             observation = await tool.handler(call.arguments, tool_ctx)
         except Exception as exc:  # noqa: BLE001 — a tool error is an observation, not a crash
@@ -1679,7 +1696,9 @@ class AgentLoop:
             # BaseException, so a Stop still propagates). The model gets a generic, ACTIONABLE
             # message — not the raw exception string (a dead-end that can leak internals); the
             # detail stays in the log.
-            log.warning("agent.tool_error", tool=call.name, error=repr(exc))
+            elapsed = _ms_since(started)
+            log.warning("agent.tool_error", tool=call.name, error=repr(exc), duration_ms=elapsed)
+            self._log_call(call, ok=False, duration_ms=elapsed, result_chars=0)
             # If the tool authored call examples, echo the first one — a raised exception is
             # often a malformed-args call, so showing the exact shape is self-teaching.
             hint = ""
@@ -1690,9 +1709,11 @@ class AgentLoop:
                 " another tool; if it keeps failing, tell the owner what you attempted."
             )
             err = ToolResult(tool_call_id=call.id, content=base + hint, is_error=True)
-            return _Dispatched(err, (), None, (), None, None)
+            return _Dispatched(err, (), None, (), None, None, duration_ms=elapsed)
+        elapsed = _ms_since(started)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
+        self._log_call(call, ok=True, duration_ms=elapsed, result_chars=len(result.content))
         return _Dispatched(
             result,
             out.sources if out else (),
@@ -1702,6 +1723,29 @@ class AgentLoop:
             out.job if out else None,
             out.web_sources if out else (),
             out.deferred if out else None,
+            duration_ms=elapsed,
+        )
+
+    def _log_call(self, call: ToolCall, *, ok: bool, duration_ms: int, result_chars: int) -> None:
+        """One structured line per tool call — the surface that answers "did the model use the
+        tool, and what did it cost?" without opening the database.
+
+        The ARGUMENTS are summarized, not logged verbatim: a tool call's arguments routinely
+        quote what the owner just said (a note title, an address, a search term), and the
+        container log is not RLS-scoped — a domain firewall enforced in Postgres is worth
+        nothing if the same text lands in a log line anyone reading the box can see. The
+        verbatim arguments ARE persisted, on the turn's `agent_turns` row, under the owner's
+        own scope, where the Runs surface reads them. So this line carries the shape (which
+        tool, which argument names, how big, how long, did it work) and the scoped store
+        carries the content."""
+        log.info(
+            "agent.tool_call",
+            tool=call.name,
+            ok=ok,
+            duration_ms=duration_ms,
+            args=sorted(call.arguments) if call.arguments else [],
+            args_chars=len(json.dumps(call.arguments, default=str)) if call.arguments else 0,
+            result_chars=result_chars,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

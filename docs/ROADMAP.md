@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-18
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -205,6 +205,18 @@ deferred.)*
   `archive/SUBAGENT_FEEDING_WAVES_PLAN.md`) — `jerv` fans out web-sandboxed
   research/review/summarize sub-agents (`agent/spawn.py`, migration 0105).
   *Deferred:* feeding-wave run-log persistence + live SSE.
+- **Exact-math tools** ✅ (`archive/EXACT_MATH_TOOLS_PLAN.md`) — `calculate` (exact
+  in-process arithmetic over a restricted AST + sympy; `agent/mathtools.py`) and
+  `run_python` (the egress-free, read-only `pysandbox` compose sidecar;
+  `agent/pythontools.py`, `deploy/pysandbox/`). A mechanical backstop for the
+  number-invention failure class prompt discipline never closed. Held by every persona
+  but the non-owner `intake`; no migration. Records why ASSISTANT.md's "no code
+  execution in the agent" survives the second tool (the api fronts a sandbox, it does
+  not embody one) and reverses the `proposed/JERV_CONTEXT_BUDGET_PLAN.md` §5 rejection
+  on the trigger that document itself named. Also adds per-tool-call duration + an
+  `agent.tool_call` log line, which nothing recorded before.
+  *Residual:* `teacher` and `summarize` now enforce restraint by prompt where an empty
+  allowlist used to enforce it structurally — worth watching in live use.
 
 ## Phase 7 — Outer ring — Mostly shipped
 

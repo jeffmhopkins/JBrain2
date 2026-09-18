@@ -1,0 +1,115 @@
+"""The `run_python` tool: a snippet in, what it printed and what it evaluated to out.
+
+The multi-step half of the arithmetic backstop. `calculate` answers one expression exactly;
+this answers the questions that are not one expression — a loop, a median over twenty
+numbers, a date difference, a running total, a unit conversion chain, checking a figure
+against a table the model is holding.
+
+**It runs nowhere near here.** The handler does one thing: POST the snippet to the
+`pysandbox` sidecar (`jbrain.pysandbox`) and shape the reply. That indirection is the
+feature, not plumbing — see that module and `deploy/pysandbox/server.py` for why
+`docs/reference/ASSISTANT.md`'s "no code execution in the agent" is intact with this tool
+shipped, and `docs/archive/EXACT_MATH_TOOLS_PLAN.md` for the decision record.
+
+**It is sent the model's snippet and nothing else.** No note body, no lab value, no location
+fix, no session context — the sandbox has no way to fetch anything, so the only owner data
+that could ever reach it is data a handler put there, and this one puts none. That is why
+the tool is `web`-classed: not because it egresses (it cannot), but because `web` is the
+opt-in, never-in-the-wildcard gate, and a tool that executes model-authored code must be
+granted per persona rather than absorbed by a wildcard.
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.pysandbox import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MAX_TIMEOUT_SECONDS,
+    PySandboxClient,
+    PySandboxError,
+    Ran,
+)
+
+log = structlog.get_logger()
+
+# What a tool result may occupy in the model's context. The sidecar already truncates each
+# stream; this is the envelope around all of them, because three capped fields still add up.
+MAX_OBSERVATION_CHARS = 12_000
+
+
+def _requested_timeout(raw: object) -> float:
+    """Clamp rather than refuse. A malformed optional argument is never worth failing a
+    correct snippet over, and the sidecar clamps again on its own side regardless."""
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_SECONDS
+    return max(0.1, min(value, MAX_TIMEOUT_SECONDS))
+
+
+def format_run(ran: Ran) -> str:
+    """Render one execution for the model.
+
+    Labelled sections rather than JSON: the model reads this as prose and copies numbers out
+    of it, and an empty section is omitted so a successful one-line computation comes back as
+    one line. A failure leads with the error, because that is the only part the model needs
+    in order to write the next version."""
+    blocks: list[str] = []
+    if ran.error:
+        blocks.append(f"error:  {ran.error}")
+    if ran.stdout.strip():
+        blocks.append(f"stdout:\n{ran.stdout.rstrip()}")
+    # Reported separately from stdout: a warning printed alongside a correct answer should
+    # not read as part of the answer.
+    if ran.stderr.strip():
+        blocks.append(f"stderr:\n{ran.stderr.rstrip()}")
+    if ran.result is not None:
+        blocks.append(f"result: {ran.result}")
+    if not blocks:
+        # Ran fine, said nothing — the commonest beginner shape, and worth naming so the
+        # model adds a `print` instead of concluding the sandbox is broken.
+        return "The code ran with no errors, but printed nothing and produced no final value."
+    rendered = "\n".join(blocks)
+    if len(rendered) > MAX_OBSERVATION_CHARS:
+        rendered = (
+            rendered[:MAX_OBSERVATION_CHARS]
+            + f"\n… [truncated: the output was {len(rendered):,} characters, showing the first"
+            f" {MAX_OBSERVATION_CHARS:,}]"
+        )
+    elif ran.truncated:
+        # The sidecar cut a stream. Said plainly, because a model that believes it has seen
+        # the whole of a long output will draw a conclusion from a fragment.
+        rendered += "\n[the output was long and was cut short]"
+    return rendered
+
+
+def build_python_handlers(sandbox: PySandboxClient) -> dict[str, ToolHandler]:
+    """The `run_python` tool. Built only when a sandbox URL is configured; otherwise the
+    sidecar is dropped from the registry and the tool simply does not exist on that box
+    (the same graceful degrade as the image/transcribe tools)."""
+
+    async def run_python_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        code = str(arguments.get("code", ""))
+        timeout = _requested_timeout(arguments.get("timeout_seconds"))
+        try:
+            ran = await sandbox.run(code, timeout_seconds=timeout)
+        except PySandboxError as exc:
+            # The sandbox being unreachable is not the model's mistake, so the message says
+            # what to do about it rather than inviting a retry of the same call.
+            return ToolOutput(f"run_python is unavailable: {exc}. Answer another way.")
+        log.info(
+            "agent.run_python",
+            ok=ran.ok,
+            duration_ms=ran.duration_ms,
+            code_chars=len(code),
+            truncated=ran.truncated,
+            # The snippet itself is NOT logged: it is model-authored text that may quote
+            # whatever the owner just said, and the run log already records the call's
+            # arguments under the owner's own RLS scope. A second, unscoped copy in the
+            # container logs is a domain-firewall hole for no debugging gain.
+        )
+        return ToolOutput(format_run(ran))
+
+    return {"run_python": run_python_tool}

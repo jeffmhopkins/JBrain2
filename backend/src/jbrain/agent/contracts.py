@@ -244,6 +244,11 @@ class ToolResultEvent(BaseModel):
     tool_call_id: str
     ok: bool
     summary: str
+    # How long the handler took. Carried to the client and into the persisted step so a
+    # turn's cost is legible after the fact — "which call was the slow one" was previously
+    # answerable only from the run's total, which is the sum of everything that happened.
+    # Defaulted, so every existing construction and every stored turn without it still load.
+    duration_ms: int = 0
     # Structured notes the tool surfaced (search hits, the note read), for the
     # response's source cards; empty for tools that cite nothing.
     sources: list[NoteSource] = Field(default_factory=list)

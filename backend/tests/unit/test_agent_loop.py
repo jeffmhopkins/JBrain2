@@ -5,9 +5,12 @@ tools — no real model, no database."""
 import asyncio
 import contextlib
 import hashlib
+import json
 from typing import Any
 
 import pytest
+import structlog
+import structlog.testing
 
 from jbrain.agent.contracts import (
     ChatEvent,
@@ -139,8 +142,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v8",
-        "be091947e2325b07751dd6d0a4aa6f04596ab12bf0719461481d667e4d5a73ed",
+        "agent-system-v9",
+        "544ad9ffdef3b960761ba76c560519967806a1b3a722c9030c472218e6bf5dec",
     )
 
 
@@ -1903,3 +1906,103 @@ async def test_batch_run_has_no_event_sink() -> None:
     loop = AgentLoop(router, registry_with(make_tool("probe", _capture)))
     await loop.run(session=OWNER, scopes=(), conversation=[UserMessage(text="go")])
     assert captured and captured[0].emit_event is None
+
+
+# --- The tool-call log ------------------------------------------------------
+
+
+def _tool_call_lines(entries: list) -> list[dict]:
+    return [e for e in entries if e.get("event") == "agent.tool_call"]
+
+
+async def test_every_tool_call_is_logged_with_its_duration() -> None:
+    """One structured line per call — the surface that answers "did the model use the tool,
+    and what did it cost?" without opening the database."""
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(10, 5)),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = router_with(turns)
+    with structlog.testing.capture_logs() as entries:
+        await run(AgentLoop(router, registry_with(make_tool("search", search))))
+    (line,) = _tool_call_lines(entries)
+    assert line["tool"] == "search"
+    assert line["ok"] is True
+    assert line["duration_ms"] >= 0
+    assert line["result_chars"] == len("found: x")
+
+
+async def test_the_log_line_names_the_arguments_without_quoting_them() -> None:
+    """The domain firewall is enforced in Postgres and would be worth nothing if the same
+    owner text landed in an unscoped container log. The line carries the SHAPE — which
+    argument names, how big — and the verbatim values go to the scoped store instead."""
+    secret = "my cardiologist's address"
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": secret}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    with structlog.testing.capture_logs() as entries:
+        await run(AgentLoop(router, registry_with(make_tool("search", search))))
+    (line,) = _tool_call_lines(entries)
+    assert line["args"] == ["q"]
+    assert line["args_chars"] > 0
+    assert secret not in json.dumps(line)
+
+
+async def test_a_failing_tool_is_logged_as_a_call_too() -> None:
+    """Otherwise the log answers "which tools worked" rather than "which were tried", and
+    the interesting case — the model reaching for something that broke — is the one missing."""
+    turns = [
+        LlmTurn("", (ToolCall("c1", "boom", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("recovered", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    with structlog.testing.capture_logs() as entries:
+        await run(AgentLoop(router, registry_with(make_tool("boom", boom))))
+    (line,) = _tool_call_lines(entries)
+    assert line["tool"] == "boom" and line["ok"] is False
+
+
+async def test_a_turn_with_no_tool_call_logs_none() -> None:
+    """The other half of "did the model use the tool": an absent line is the signal."""
+    router, _ = router_with([LlmTurn("straight answer", (), "end_turn", LlmUsage(1, 1))])
+    with structlog.testing.capture_logs() as entries:
+        await run(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert _tool_call_lines(entries) == []
+
+
+async def test_the_duration_reaches_the_stream_and_the_persisted_step() -> None:
+    """A duration in a log line alone is gone by the time anyone asks. It also rides the
+    tool_result event, so the PWA's Worked block and the stored turn both carry it."""
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    events = [
+        event
+        async for event in loop.run_stream(
+            session=OWNER, scopes=("general",), conversation=[UserMessage(text="hi")]
+        )
+    ]
+    results = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(results) == 1
+    assert results[0].duration_ms >= 0
+
+
+async def test_a_refused_tool_is_logged_too() -> None:
+    """A model naming a tool it was never offered is either a slip worth noticing or an
+    injection worth investigating. A refusal that leaves no line makes both invisible."""
+    turns = [
+        LlmTurn("", (ToolCall("c1", "web_fetch", {"url": "x"}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("sorry", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    # A registry holding only `search`, so `web_fetch` is refused at dispatch.
+    with structlog.testing.capture_logs() as entries:
+        await run(AgentLoop(router, registry_with(make_tool("search", search))))
+    (line,) = _tool_call_lines(entries)
+    assert line["tool"] == "web_fetch" and line["ok"] is False
+    assert any(e.get("event") == "agent.tool_refused" for e in entries)

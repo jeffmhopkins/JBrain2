@@ -73,6 +73,10 @@ class TranscriptAccumulator:
             step = self._steps.get(event.tool_call_id)
             if step is not None:
                 step["ok"] = event.ok
+                # How long the handler took. Persisted alongside the result so "which call
+                # was the slow one" is answerable from a stored turn, not only from the run
+                # total — which is the sum of everything, tools and model time together.
+                step["duration_ms"] = event.duration_ms
                 # The verbatim result text, so a step's result rung replays on reopen —
                 # for a sourceless tool (the web tools) it is the only content shown.
                 step["summary"] = event.summary
