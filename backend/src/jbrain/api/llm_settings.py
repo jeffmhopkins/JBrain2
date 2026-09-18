@@ -2090,7 +2090,13 @@ async def gateway_prime(
         kv_prefix=kv_prefix,
         registry=registry,
     )
-    before = await _reuse_counters(gateway, model.served_model)
+    # Whether the model is ALREADY resident decides what the baseline means, and it has to be
+    # asked before the load, which is the thing that changes it.
+    try:
+        resident = model.served_model in await gateway.running()
+    except Exception:  # noqa: BLE001 — an unknown residency just costs the reuse line
+        resident = True
+    before = await _reuse_counters(gateway, model.served_model, resident=resident)
     started = time.monotonic()
     try:
         await gateway.load(
@@ -2132,11 +2138,20 @@ async def gateway_prime(
 
 
 async def _reuse_counters(
-    gateway: LocalGatewayClient, served_model: str
+    gateway: LocalGatewayClient, served_model: str, *, resident: bool = True
 ) -> tuple[float, float] | None:
     """(prompt tokens served from cache, prompt tokens processed) since the server started,
     or None when they cannot be read. Cumulative by nature — only a delta across a known
-    request means anything, which is why both callers bracket one."""
+    request means anything, which is why both callers bracket one.
+
+    `resident=False` returns a ZERO baseline rather than None. llama-swap starts a fresh
+    llama-server per load, so a model that is not resident has no counters to read AND no
+    history to subtract — its next reading IS the delta. Without this the cold-load prime
+    could never report reuse, which is the one case the measurement exists for: whether the
+    DISK restore spared the prefill. (Reading `/metrics` on a non-resident model is refused
+    outright, by design — reaching it would load the model outside the residency budget.)"""
+    if not resident:
+        return (0.0, 0.0)
     try:
         counters = parse_spec_counters(await gateway.metrics(served_model))
     except Exception:  # noqa: BLE001 — a measurement must never fail the thing it measures

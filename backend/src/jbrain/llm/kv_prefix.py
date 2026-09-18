@@ -481,6 +481,18 @@ class KvPrefixStore:
             _identity_components(line, system, tools, reasoning_effort),
         )
 
+    def note_prefix_lost(self, served_model: str) -> None:
+        """The slot this store restored into is gone — an eviction, an operator unload, or a
+        bare restore-load. Registered with the residency coordinator beside the keeper's hook.
+
+        Without it `_restored_unused` is a belief nothing can correct: it is set by a restore
+        and cleared only by a turn that USES that restore or by a fresh prime, so a model
+        evicted in between leaves the memo set forever. `restore_if_lost` then returns False
+        at its first line — before it reads `/slots` at all — and the next jerv turn pays the
+        full ~125 s prefill this store exists to prevent, with a valid file sitting on disk
+        unread. Residency already reported this; only the keeper was listening."""
+        self._restored_unused.discard(served_model)
+
     def note_agent_turn(self, served_model: str, input_tokens: int) -> None:
         """A real jerv turn completed — whatever was restored has now been used, and the
         slot it grew reports a prefix-sized cache on its own from here on."""
@@ -773,7 +785,14 @@ class KvPrefixStore:
                     served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
                 )
             except LocalGatewayError as exc:
+                # Same reasoning as the rejected-restore branch below, which this used to
+                # lack: a failed or timed-out restore can leave a PARTIAL file at the trusted
+                # name, and an existing file short-circuits every future save
+                # (`save_after_prime` treats existence as proof and returns True) while every
+                # future restore repeats this error. Nothing else ever repairs it, so the
+                # fingerprint stays poisoned until a config change happens to move it.
                 await self._note("restore_failed", served_model, error=str(exc))
+                await asyncio.to_thread(self._remove_quietly, path)
                 return False
             elapsed_ms = round((time.perf_counter() - started) * 1000)
             n_restored = resp.get("n_restored")

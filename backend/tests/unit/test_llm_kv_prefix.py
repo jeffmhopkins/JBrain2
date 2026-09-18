@@ -885,3 +885,50 @@ async def test_the_outcome_ring_is_bounded(root: Path, monkeypatch: pytest.Monke
     snap = await store.snapshot()
     assert len(_d(snap)["recent"]) == kv_prefix.OUTCOME_HISTORY
     assert _d(snap["counters"])["restore_skipped_busy"] == kv_prefix.OUTCOME_HISTORY + 5
+
+
+# ---- eviction invalidates the restored-unused memo ---------------------------------------
+
+
+async def test_an_eviction_clears_the_restored_but_unused_memo(root: Path) -> None:
+    """The memo is a belief about a slot, and an eviction makes it false. It is set by a
+    restore and cleared only by a turn that USES that restore or by a fresh prime, so a model
+    evicted in between kept it set forever — and `restore_if_lost` returns False at its FIRST
+    line, before reading `/slots` at all. The next jerv turn then paid the full prefill with a
+    valid file sitting on disk unread. Residency already reported the eviction; only the
+    WarmKeeper was listening."""
+    store, gw = _store(root)
+    store._prime_tokens[SERVED] = PRIME
+    _plant_file(root, store, "persona")
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert len(gw.restored) == 1
+    # Restored but not yet used: the slot reports no size, so the memo stands in for it and a
+    # second call correctly declines.
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert len(gw.restored) == 1
+
+    # The slot is now gone. Residency says so.
+    store.note_prefix_lost(SERVED)
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert len(gw.restored) == 2, "the file must be restored again, not assumed still resident"
+
+
+async def test_a_restore_that_fails_at_the_transport_removes_the_file(root: Path) -> None:
+    """The asymmetry this closes. A restore REJECTED on its token count already deleted the
+    file, with the reason written out: leaving it means every future save is short-circuited
+    by its existence and every future restore repeats the failure. A restore that failed at
+    the transport — a timeout mid-2 GiB read, a 500 — left exactly the same poisoned file and
+    did not delete it, so nothing ever repaired that fingerprint."""
+    store, gw = _store(root)
+    store._prime_tokens[SERVED] = PRIME
+    _plant_file(root, store, "persona")
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
+    gw.restore_response = LocalGatewayError("upstream 500")
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    # The slot file AND its checkpoint sidecar: a sidecar for state that no longer exists is
+    # unusable, and `_slot_files` lists the whole directory, so an orphan would show here.
+    assert _slot_files(root) == [], "a file that cannot be restored must not block saves"

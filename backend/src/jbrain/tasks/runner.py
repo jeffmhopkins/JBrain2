@@ -21,6 +21,7 @@ from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.contracts import ChatEvent, UsageEvent
 from jbrain.agent.loop import AgentLoop, AgentResult, guardrails_for_effort
+from jbrain.agent.readtools import canvas_hidden_tools, compose_hidden_tools
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
@@ -135,11 +136,23 @@ class LoopTurnExecutor:
         guardrails = guardrails_for_effort(
             effort, scale=profile.budget_multiplier, supervised=supervised
         )
+        # The model-gated canvas trio, hidden exactly as /chat and the WarmKeeper's prime hide
+        # it. Without this provider the loop hides NOTHING, so a scheduled task or a plan
+        # continuation sends a tool array three entries longer than the primed prefix — and
+        # because the array is alphabetical, `canvas` sorts fourth, so the divergence lands
+        # ~40 tokens into a ~21k-token tool block and re-prefills essentially all of it.
+        # Worse than the one turn's cost: the diverged ~30k prompt then satisfies
+        # `KvPrefixStore`'s prefix-sized guard, so the store declines to restore the real
+        # prefix, while the keeper's memo still reads primed and declines to re-prime it. The
+        # correct prefix is then absent from RAM and unrestorable from disk until an eviction
+        # or a restart, and the owner's next chat turn pays the full prefill.
+        canvas_hidden = await canvas_hidden_tools(self.router, None, profile.tools or frozenset())
         loop = AgentLoop(
             self.router,
             self.registry,
             recorder=tally,  # type: ignore[arg-type]
             guardrails=guardrails,
+            hidden_tools_provider=compose_hidden_tools(canvas_hidden),
         )
         # `root_tree` seeds this turn as the ROOT of a sub-agent fan (depth 0), exactly as /chat
         # does — the budget sized off the turn's own per-turn cap. Without it `ctx.tree` is None,

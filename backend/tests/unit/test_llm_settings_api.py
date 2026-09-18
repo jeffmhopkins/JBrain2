@@ -1659,35 +1659,6 @@ async def test_warm_identity_builds_matching_restore_and_save_hooks(
     assert s[4] == 37142
 
 
-async def test_prime_reports_the_reuse_delta_not_just_the_clock() -> None:
-    """`elapsed_ms` only IMPLIES a cache hit — a restore returns 200 whether or not it
-    landed, and a fast prime could just be a short prefix. The delta across the prime says
-    it outright: cached prompt tokens are tokens llama-server did not have to process.
-
-    The two readings differ on purpose. These counters are CUMULATIVE, so a fake that
-    answered identically twice would hide a delta computed against the wrong baseline —
-    the one bug this measurement could plausibly have."""
-    gw = FakeLocalGateway()
-    gw.metrics_readings = [
-        "llamacpp:prompt_tokens_cached_total 1000\nllamacpp:prompt_tokens_total 500\n",
-        "llamacpp:prompt_tokens_cached_total 28757\nllamacpp:prompt_tokens_total 500\n",
-    ]
-    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
-
-    out = await llm_settings.gateway_prime(
-        "qwen3-vl-30b",
-        settings,
-        cast(Any, gw),
-        residency=None,
-    )
-
-    assert out["reuse"] == {
-        "cached_tokens": 27757,
-        "processed_tokens": 0,
-        "reuse_rate": 1.0,
-    }
-
-
 async def test_prime_still_reports_when_the_counters_cannot_be_read() -> None:
     """A measurement must never fail the thing it measures: an old llama.cpp build with no
     prompt-cache counters still gets a timed prime, just without the reuse line."""
@@ -1699,3 +1670,49 @@ async def test_prime_still_reports_when_the_counters_cannot_be_read() -> None:
 
     assert "reuse" not in out
     assert isinstance(out["elapsed_ms"], int)
+
+
+async def test_a_cold_prime_still_reports_reuse_from_a_zero_baseline() -> None:
+    """The case the measurement exists for, and the one it could not report.
+
+    Reading `/metrics` on a NON-resident model is refused by design (reaching it would load
+    the model outside the residency budget), so bracketing a cold prime meant the `before`
+    read always failed and the reuse line was dropped — from exactly the prime that answers
+    'did the DISK restore spare the prefill?'. llama-swap starts a fresh llama-server per
+    load, so a non-resident model has no history to subtract: its after-reading IS the delta.
+
+    Caught on the live box, not here: the first fake had no notion of residency, so the
+    original test passed against a gateway that would answer `/metrics` for a cold model."""
+    gw = FakeLocalGateway()  # nothing resident
+    gw.metrics_readings = [
+        "llamacpp:prompt_tokens_cached_total 30545\nllamacpp:prompt_tokens_total 1\n",
+    ]
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+
+    out = await llm_settings.gateway_prime("qwen3-vl-30b", settings, cast(Any, gw), residency=None)
+
+    assert out["reuse"] == {
+        "cached_tokens": 30545,
+        "processed_tokens": 1,
+        "reuse_rate": 1.0,
+    }, "a cold prime must report the restore it just made, not drop the line"
+
+
+async def test_a_warm_prime_subtracts_the_history_it_already_had() -> None:
+    """The other half: an ALREADY-resident model carries counters from every earlier request,
+    so its baseline must be read and subtracted. Zeroing it here would credit this prime with
+    the whole server's lifetime reuse."""
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
+    gw.metrics_readings = [
+        "llamacpp:prompt_tokens_cached_total 61080\nllamacpp:prompt_tokens_total 11\n",
+        "llamacpp:prompt_tokens_cached_total 91625\nllamacpp:prompt_tokens_total 12\n",
+    ]
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+
+    out = await llm_settings.gateway_prime("qwen3-vl-30b", settings, cast(Any, gw), residency=None)
+
+    assert out["reuse"] == {
+        "cached_tokens": 30545,
+        "processed_tokens": 1,
+        "reuse_rate": 1.0,
+    }
