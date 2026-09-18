@@ -54,6 +54,7 @@ from jbrain.llm.router import (
     TASK_REASONING_BUCKET,
     _split_spec,
 )
+from jbrain.llm.types import LlmTool
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
     LLM_TASK_OVERRIDES_KEY,
@@ -1993,6 +1994,75 @@ async def gateway_metrics(
     return {"spec": parse_spec_counters(text), "raw": text}
 
 
+async def kv_prefix_state(
+    settings: Settings,
+    gateway: LocalGatewayClient,
+    *,
+    kv_prefix: "KvPrefixStore | None",
+    registry: ToolRegistry | None = None,
+    settings_store: SqlSettingsStore | None = None,
+) -> dict[str, object]:
+    """The whole prompt-cache state, for the owner debug console — the answer to "is the KV
+    cache actually working?", which no surface on this box could previously give.
+
+    Three things it reports that nothing else does. The COUNTERS separate a healthy quiet
+    store from one that has not worked since boot: both emit no rows anywhere else, because
+    only the two success paths ever wrote a box event. The per-model STATE resolves the
+    fingerprint a turn would look for against the file actually on disk, so an identity drift
+    (a tool-set flap, an effort change, a reinstalled model renumbering `--port`) reads as
+    `cold_no_file` with the drifted component named rather than as an unexplained slow turn.
+    And `reuse` carries llama-server's own cumulative prompt-cache counters, which are the
+    authoritative signal — the per-slot `n_prompt_tokens_cache` in `/slots` is zeroed on
+    release and reads 0 whether reuse was total or nonexistent.
+
+    Every probe is best-effort: a model that will not answer reports its error and the rest of
+    the read still lands. Nothing here loads, evicts or mutates anything."""
+    if kv_prefix is None:
+        raise HTTPException(status_code=409, detail="the prompt-cache store is not wired")
+    probes: list[tuple[str, str, Sequence[LlmTool], str | None]] = []
+    efforts: dict[str, str | None] = {}
+    if registry is not None:
+        for model_id in sorted(settings.local_models):
+            model = local_catalog.get(model_id)
+            if model is None:
+                continue
+            served = model.served_model
+            # The identity is resolved through the SAME helper the keeper's and the load's
+            # saves use, so this read cannot disagree with them about which file a turn
+            # would want — two implementations of one identity is the bug class this
+            # instrument exists to catch, and it must not introduce a third.
+            effort, _before, _after = await _warm_identity(
+                served,
+                settings_store=settings_store,
+                kv_prefix=kv_prefix,
+                registry=registry,
+            )
+            efforts[served] = effort
+            with contextlib.suppress(Exception):
+                p_system, p_tools, _hidden = await jerv_prime_inputs(registry, served)
+                probes.append((served, p_system, p_tools, effort))
+    state = await kv_prefix.snapshot(probes)
+    # llama-server's own reuse counters, per resident model. Cumulative since the server
+    # started: a rate near 0 on a box that has been answering turns means the prefix is not
+    # being reused at all, whatever this store reports about its files.
+    reuse: dict[str, object] = {}
+    for served in sorted({p[0] for p in probes}):
+        try:
+            text = await gateway.metrics(served)
+        except Exception as exc:  # noqa: BLE001 — one unreadable model must not fail the read
+            reuse[served] = {"error": str(exc)}
+            continue
+        counters = parse_spec_counters(text)
+        reuse[served] = {
+            k: counters[k]
+            for k in ("prompt_tokens_cached_total", "prompt_tokens_total", "cache_hit_rate")
+            if k in counters
+        }
+    state["reuse"] = reuse
+    state["resolved_effort"] = efforts
+    return state
+
+
 async def gateway_prime(
     model_id: str,
     settings: Settings,
@@ -2022,6 +2092,7 @@ async def gateway_prime(
         kv_prefix=kv_prefix,
         registry=registry,
     )
+    before = await _reuse_counters(gateway, model.served_model)
     started = time.monotonic()
     try:
         await gateway.load(
@@ -2036,12 +2107,47 @@ async def gateway_prime(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway prime failed: {exc}") from exc
-    return {
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    out: dict[str, object] = {
         "model": model.served_model,
-        "elapsed_ms": round((time.monotonic() - started) * 1000),
+        "elapsed_ms": elapsed_ms,
         "tool_count": len(warm_tools or []),
         "system_chars": len(warm_system or ""),
     }
+    # The reuse DELTA across this one prime. `elapsed_ms` alone only implies a cache hit (a
+    # restore returns 200 either way, and a fast prime could just be a short prefix); these
+    # two counters say it outright — `cached` is prompt tokens llama-server did not have to
+    # process. A prime whose `reuse_rate` is ~1.0 proves the restore took effect end to end,
+    # which is the one claim this whole mechanism rests on and could not previously make.
+    after = await _reuse_counters(gateway, model.served_model)
+    if before is not None and after is not None:
+        cached = round(after[0] - before[0])
+        processed = round(after[1] - before[1])
+        out["reuse"] = {
+            "cached_tokens": cached,
+            "processed_tokens": processed,
+            "reuse_rate": (
+                round(cached / (cached + processed), 4) if (cached + processed) > 0 else None
+            ),
+        }
+    return out
+
+
+async def _reuse_counters(
+    gateway: LocalGatewayClient, served_model: str
+) -> tuple[float, float] | None:
+    """(prompt tokens served from cache, prompt tokens processed) since the server started,
+    or None when they cannot be read. Cumulative by nature — only a delta across a known
+    request means anything, which is why both callers bracket one."""
+    try:
+        counters = parse_spec_counters(await gateway.metrics(served_model))
+    except Exception:  # noqa: BLE001 — a measurement must never fail the thing it measures
+        return None
+    cached = counters.get("prompt_tokens_cached_total")
+    processed = counters.get("prompt_tokens_total")
+    if cached is None or processed is None:
+        return None
+    return (cached, processed)
 
 
 @router.put("/settings/llm")

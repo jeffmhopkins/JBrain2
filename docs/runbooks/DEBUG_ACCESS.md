@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-09-07
+> **Status:** Living · **Last verified:** 2026-09-18
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -178,8 +178,43 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   window pays for it exactly.
 - `GET /api/debug/llm/local-models/{id}/props` — `build_info` (the only build identity available
   over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
+- `GET /api/debug/llm/kv-prefix` — **the prompt cache's whole state**, and the route to reach
+  for first when a turn is unexpectedly slow. Read-only and load-free (it never admits, loads
+  or evicts), so it is safe to poll. Four parts:
+
+  - `counters` — every outcome since the api started (`saved`, `restored`, `identity_drift`,
+    `restore_rejected`, `restore_skipped_busy`, `slot_unidentified`, `save_mismatch`, …). This
+    is the part that did not exist before: the store's failures were `info` log lines, so a
+    store humming along and a store that had not restored anything since boot both produced
+    **no rows on any owner surface**. A `restored` count that is not moving across a day of
+    use is the signal; a large `identity_drift` says turns are asking for a prefix nothing
+    ever saved.
+  - `models[]` — per served model: `eligible` (+ `reason` when not — "recurrent", or the
+    Fast-Qwen-loads patch setting being off, which look identical from outside and have
+    opposite remedies), and `state`, which resolves the fingerprint a turn *would* ask for
+    against what is actually on disk: `file_present`, `restored_unused`, `cold_no_file`,
+    `no_disk_layer` (served without `--slot-save-path`), `ineligible`. A `cold_no_file` beside
+    a store full of files **is** an identity drift — compare `identity` with
+    `last_known_identity` and the differing key names the input that moved (`launch` covers
+    the window, slot count and every server flag; `tools`, `system`, `effort` are their own).
+  - `store` — `bytes`, `files`, `budget_bytes`, `over_budget`, and `by_file` newest-first.
+    Priced exactly as the LRU prune prices it (a `.ckpt` sidecar is billed to its slot file,
+    never counted alone), so a prune that fires can be explained against this total.
+  - `reuse` — llama-server's cumulative `prompt_tokens_cached_total` / `prompt_tokens_total`
+    / `cache_hit_rate` per model, carried here so one read answers the question end to end.
+
+  A miss now also writes a `kv_prefix_missed` box event, so it reaches the PWA's vitals as
+  well — rate-limited to one row per (model, reason) per 5 min, because a poisoned file
+  re-rejected on every keeper tick would otherwise bury the narration. **The counters, not
+  that surface, are the complete record.**
+
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
-  `elapsed_ms`, the measurement instrument for any prefill experiment.
+  `elapsed_ms`, the measurement instrument for any prefill experiment, plus **`reuse`**
+  (`cached_tokens`, `processed_tokens`, `reuse_rate`) — the `/metrics` prompt-cache delta
+  across that one prime. `elapsed_ms` only *implies* a hit (a restore returns 200 either way,
+  and a fast prime could just be a short prefix); the delta says it outright. A `reuse_rate`
+  near 1.0 proves the restore took effect end to end. Absent when the build reports no
+  prompt-cache counters — a measurement never fails the thing it measures.
 
   ⚠️ **A prime EVICTS to fit, exactly like a load, and nothing on this path schedules a
   restore.** One exception, and it cuts the other way: if the victim is the **primary local

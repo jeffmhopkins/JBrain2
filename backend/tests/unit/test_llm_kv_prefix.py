@@ -12,6 +12,7 @@ failure, and the save directory read off the launch line the server actually run
 import os
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -87,6 +88,13 @@ def _id_dir(root: Path) -> Path:
 def _store(root: Path, *, writing: bool = False) -> tuple[KvPrefixStore, FakeGateway]:
     gw = FakeGateway(writes_to=_id_dir(root) if writing else None)
     return KvPrefixStore(gw, str(root)), gw  # type: ignore[arg-type]
+
+
+def _d(value: object) -> Any:
+    """Narrow one level of `snapshot()`'s JSON. It is typed `dict[str, object]` because it
+    is a wire payload, not a model — the tests do the narrowing rather than the route."""
+    assert isinstance(value, dict | list)
+    return value
 
 
 def _slot_files(root: Path) -> list[str]:
@@ -546,8 +554,12 @@ async def test_a_boot_restore_adopts_the_restored_count_as_the_prime_size(root: 
 
 
 async def test_restore_waits_for_an_idle_slot_rather_than_fighting_a_live_request(
-    root: Path,
+    root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Zero the poll interval as both sibling busy-wait tests do: the behaviour under test is
+    # "eight polls, still busy, give up", not the wall clock. Without it this one test slept
+    # for a real 2 s — 87% of the module's runtime, on every CI run.
+    monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     _plant_file(root, store, "persona")
     store._prime_tokens[SERVED] = PRIME
@@ -722,3 +734,154 @@ async def test_a_missing_file_names_the_identity_component_that_drifted(
     drift = [ln for ln in out.splitlines() if "identity_drift" in ln]
     assert drift and '"tools"' in drift[0].replace("'", '"')
     assert '"changed": ["tools"]' in drift[0].replace("'", '"') or "['tools']" in drift[0]
+
+
+# ---- instrumentation --------------------------------------------------------------------
+#
+# The store was correct and unobservable: only its two SUCCESS paths wrote a box event, so a
+# store humming along and a store that had not restored anything since boot produced the same
+# output on every owner surface — no row at all. That silence is how the feature shipped inert
+# twice (the read-only mount; the 2026-08-24 flag/eligibility split). These pin the parts that
+# make a miss visible, and the counters that stay exact when the visible surface is throttled.
+
+
+async def test_every_outcome_is_counted_including_the_ones_that_never_get_a_row(
+    root: Path, events: list
+) -> None:
+    """A counter per outcome, moved on every occurrence. This is the difference between
+    'quiet because healthy' and 'quiet because dead', which no other surface can tell
+    apart — both produce no rows."""
+    store, gw = _store(root, writing=True)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+    # A miss: nothing prime-sized is cached and no file exists for THIS identity.
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
+    other = [LlmTool(name="extra", description="flapped in", input_schema={})]
+    assert await store.restore_if_lost(SERVED, "persona", [*TOOLS, *other]) is False
+
+    snap = await store.snapshot()
+    assert snap["counters"] == {"identity_drift": 1, "saved": 1}
+
+
+async def test_a_repeated_miss_reports_once_but_counts_every_time(
+    root: Path, events: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure loop this throttle exists for: a poisoned file rejected on every keeper
+    tick would otherwise bury the box's narration in one recurring fault. The owner gets one
+    row; the counter keeps the true rate, so the debug read still says 'this happened 47
+    times' rather than 'this happened'."""
+    monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
+    store, gw = _store(root)
+    gw.slot_state = []  # no slots at all -> nothing to identify the prime in
+    gw.save_response = LocalGatewayError("upstream 500")
+    _plant_file(root, store, "persona")
+
+    for _ in range(3):
+        assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+
+    misses = [e for e in events if e[0] == box_events.KV_PREFIX_MISSED]
+    assert len(misses) == 1, "a repeating fault must not flood the owner's surface"
+    assert misses[0][1] == SERVED
+    snap = await store.snapshot()
+    assert _d(snap["counters"])["restore_skipped_busy"] == 3, "the counter is the complete record"
+
+    # Past the throttle window the owner hears about it again — a fault that is still
+    # happening an hour later must not have gone permanently silent.
+    monkeypatch.setattr(kv_prefix, "BOX_EVENT_MIN_INTERVAL_S", 0.0)
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert len([e for e in events if e[0] == box_events.KV_PREFIX_MISSED]) == 2
+
+
+async def test_a_miss_names_itself_on_the_owner_surface(root: Path, events: list) -> None:
+    """The row has to say WHICH miss: `restore_rejected` (the file was bad and is gone) and
+    `identity_drift` (the file is fine, the turn wants a different one) have completely
+    different remedies and previously looked identical — both being nothing at all."""
+    store, gw = _store(root)
+    store._prime_tokens[SERVED] = PRIME
+    path = _plant_file(root, store, "persona")
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
+    gw.restore_response = {"n_restored": 11}  # a stub: below the floor
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert not path.exists(), "a proven-bad file is still deleted"
+    kinds = [(e[0], e[2]) for e in events if e[0] == box_events.KV_PREFIX_MISSED]
+    assert len(kinds) == 1
+    assert kinds[0][1] is not None and kinds[0][1].startswith("restore_rejected")
+    assert "n_restored=11" in kinds[0][1]
+
+
+async def test_the_snapshot_says_whether_the_file_a_turn_wants_is_on_disk(root: Path) -> None:
+    """The question the debug read exists to answer. Resolving the identity here is the
+    point: a `cold_no_file` beside a store full of files is an identity drift, and the
+    per-component digests say which input moved — the 2026-08-24 mystery, answerable."""
+    store, gw = _store(root, writing=True)
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME, "is_processing": False}]
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+
+    hit = await store.snapshot([(SERVED, "persona", TOOLS, None)])
+    row = _d(_d(hit["models"])[0])
+    assert row["state"] == "file_present"
+    assert row["eligible"] is True
+    assert row["prime_tokens"] == PRIME
+    assert row["file_bytes"] == 64
+
+    # The same store, asked about the identity a DIFFERENT tool set would send.
+    other = [LlmTool(name="extra", description="flapped in", input_schema={})]
+    miss = await store.snapshot([(SERVED, "persona", [*TOOLS, *other], None)])
+    row = _d(_d(miss["models"])[0])
+    assert row["state"] == "cold_no_file"
+    assert _d(row["identity"])["tools"] != _d(row["last_known_identity"])["tools"]
+    assert _d(row["identity"])["system"] == _d(row["last_known_identity"])["system"]
+
+
+async def test_the_snapshot_prices_the_store_the_way_the_prune_does(root: Path) -> None:
+    """One number for the budget and the owner. A sidecar is billed to its slot file and
+    never counted alone — exactly `_prune_to_budget`'s rule — or a prune that fires would
+    read as unexplained against a total that disagrees with it."""
+    store, _gw = _store(root)
+    path = _plant_file(root, store, "persona")
+    os.write(os.open(str(path) + ".ckpt", os.O_CREAT | os.O_WRONLY), b"\0" * 8)
+
+    snap = await store.snapshot()
+    usage = _d(snap["store"])
+    assert usage["files"] == 1, "the sidecar is not a file of its own"
+    assert usage["bytes"] == 64 + 8, "it is billed to the slot file it rides with"
+    assert usage["over_budget"] is False
+    assert _d(_d(usage["by_file"])[0])["sidecar"] is True
+
+
+async def test_an_ineligible_model_says_why_it_will_never_use_the_disk_layer(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """'This model can never restore' and 'the owner's patch setting is off' are the same
+    silence from outside and have opposite remedies — one is a fact, the other is a toggle."""
+    import jbrain.llm.kv_prefix as mod
+
+    base = local_catalog.get_by_served(SERVED)
+    assert base is not None
+    mtp_hybrid = replace(
+        base,
+        recurrent=True,
+        kv_slot_restorable=False,
+        extra_server_args=(*base.extra_server_args, "--spec-type", "draft-mtp"),
+    )
+    monkeypatch.setattr(mod.local_catalog, "get_by_served", lambda m: mtp_hybrid)
+    store, _gw = _store(root)  # patch_active defaults off
+    snap = await store.snapshot([(SERVED, "persona", TOOLS, None)])
+    row = _d(_d(snap["models"])[0])
+    assert row["eligible"] is False
+    assert "patch setting is off" in row["reason"]
+
+
+async def test_the_outcome_ring_is_bounded(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A store that has been up for weeks must not accumulate its own history in RAM."""
+    monkeypatch.setattr(kv_prefix, "BOX_EVENT_MIN_INTERVAL_S", 0.0)
+    monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
+    store, gw = _store(root)
+    gw.slot_state = []
+    _plant_file(root, store, "persona")
+    for _ in range(kv_prefix.OUTCOME_HISTORY + 5):
+        await store.restore_if_lost(SERVED, "persona", TOOLS)
+    snap = await store.snapshot()
+    assert len(_d(snap)["recent"]) == kv_prefix.OUTCOME_HISTORY
+    assert _d(snap["counters"])["restore_skipped_busy"] == kv_prefix.OUTCOME_HISTORY + 5
