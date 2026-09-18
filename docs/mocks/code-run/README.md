@@ -1,10 +1,11 @@
 # Code run — seeing what `run_python` and `calculate` actually did
 
-> **Status:** GUI gate **settled** — the owner chose **D's marker with F's popover**, built
-> as **variant G** (`g-cited-floating.html`), which is the binding spec. A–F are retained as
-> the record. Nothing is built yet; the build plan is the next artifact. The tools
-> themselves shipped in `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that
-> makes their working legible.
+> **Status:** GUI gate **settled** — **two** binding mocks, because the surface turned out
+> to be two: **G** (`g-cited-floating.html`) for the in-prose path, and **H**
+> (`h-worked-ledger.html`) for the Worked panel. A–F are retained as the record. Nothing is
+> built yet; the build plan is the next artifact. The tools themselves shipped in
+> `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that makes their working
+> legible.
 
 ## The problem
 
@@ -90,6 +91,49 @@ sentence reads as rigour or as clutter. Three markers in a single clause is the 
 case the tool will routinely produce, and no mock can answer it — if it reads as clutter,
 the fallback is to mark only the *first* computed figure in a clause and let its popover
 list the rest.
+
+## H — the Worked panel, which is the other half
+
+The owner, on seeing G: *"We also had the little sub panel that pops up for tool usage and
+in there it should also have kind of the same ledger idea, and then also for code execution
+still needs the same kind of treatment."*
+
+That is not a second gate — it is the recognition that **G alone was half an answer**, and
+it resolves the gap recorded against G above.
+
+**The panel already exists.** `StepRow` / the `fb-step` rows (`FullBrainSurface.tsx`), from
+the settled `../assistant-tooluse-1-inline-accordion.html`. What H changes is not the
+panel's shape but **what a row says**. Today a row carries what was *asked* —
+`Searched your notes · "refinance closing"` — and never what came *back*. Every row now
+carries **argument → result**:
+
+```
+Searched your notes      "refinance closing"  →  3 notes
+Read a note              Refinance — closing…  →  5.15% · 30yr
+Worked out a number      (2847 - 2633) * 12   →  2568
+Ran a computation        8 lines · decimal    →  Decimal('2917.80')
+```
+
+**One rule does the work:** the argument truncates and **the result never does**. The answer
+is what you came for, so it is the half that survives a narrow screen.
+
+**Code execution gets the same treatment inside the panel** — a `run_python` row expands to
+the code, stdout, result and containment chips: the same content G floats in a popover,
+rendered inline because the panel is already a deliberate "show me the working" surface.
+One content shape, two entry points.
+
+### How G and H divide, and why both are needed
+
+| | Answers | Entry |
+|---|---|---|
+| **G** | *"Where did **this number** come from?"* | a `ƒ` marker on the number, in the prose |
+| **H** | *"What ran, in what order, and what failed?"* | the Worked panel, collapsed to one button |
+
+**H is what closes G's hole.** A call that failed produced no number, so it earns no marker
+and is invisible in G — the panel is the only place it ever appears, and it opens itself
+there, the way a failed step already does. The gap recorded above as *"the one thing the
+build plan should revisit"* is revisited and closed: not by adding a turn-level affordance
+to G, but by giving the panel that already existed the job it was always better suited to.
 
 ### Why not E, which I had recommended
 

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Worked panel · H · the ledger treatment</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;text-align:left;width:100%;}
+  button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--green-tint);color:var(--green);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the Worked panel — collapsed to one button by default ===== */
+  .worked{margin-top:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;}
+  .w-head{display:flex;align-items:center;gap:9px;padding:10px 11px;}
+  .w-head:active{background:var(--surface);}
+  .w-head .ic{width:15px;height:15px;color:var(--text-3);flex:none;}
+  .w-head .t{flex:1;min-width:0;font-size:12.5px;color:var(--text-2);}
+  .w-head .n{font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums;flex:none;}
+  .w-head .bad{color:var(--rose);}
+  .w-head .caret{width:13px;height:13px;color:var(--text-3);flex:none;transition:transform .16s ease;}
+  .worked.open .w-head .caret{transform:rotate(90deg);}
+  .w-body{display:none;border-top:1px solid var(--border);}
+  .worked.open .w-body{display:block;}
+
+  /* ===== a ledger row: what it did, then what came back ===== */
+  .step{border-bottom:1px solid var(--border);}
+  .step:last-child{border-bottom:0;}
+  .s-row{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:start;padding:8px 11px;}
+  .s-row:active{background:var(--bg);}
+  .glyph{width:21px;height:21px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px;background:var(--steel-tint);color:var(--steel);}
+  .glyph svg{width:12px;height:12px;}
+  .glyph.fx{background:var(--violet-tint);color:var(--violet);}
+  .glyph.py{background:var(--violet-tint);color:var(--violet);}
+  .glyph.bad{background:var(--rose-tint);color:var(--rose);}
+  .s-main{min-width:0;}
+  .s-lab{font-size:12.5px;color:var(--text);line-height:1.35;}
+  /* THE LEDGER LINE. The argument shrinks and truncates; the result never does —
+     the answer is what you came for, so it is the half that always survives. */
+  .s-led{margin-top:3px;display:flex;align-items:baseline;gap:5px;font-family:var(--font-mono);font-size:11px;line-height:1.45;}
+  .s-led .arg{color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto;}
+  .s-led .to{color:var(--text-3);flex:none;opacity:.7;}
+  .s-led .res{color:var(--green);flex:none;white-space:nowrap;max-width:52%;overflow:hidden;text-overflow:ellipsis;}
+  .step.bad .s-led .res{color:var(--rose);}
+  .s-end{display:flex;align-items:center;gap:7px;margin-top:2px;}
+  .s-end .ms{font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .s-end .caret{width:12px;height:12px;color:var(--text-3);transition:transform .16s ease;}
+  .step.open .s-end .caret{transform:rotate(90deg);}
+
+  /* ===== the expanded detail — the same content G's popover shows ===== */
+  .s-det{display:none;padding:2px 11px 11px 41px;background:var(--bg);}
+  .step.open .s-det{display:block;}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:baseline;}
+  .kv .l{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .kv .v{font-family:var(--font-mono);font-size:12px;color:var(--text);word-break:break-word;}
+  .kv .v.hero{color:var(--green);}
+  .lab{margin-top:9px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;display:flex;align-items:center;gap:7px;}
+  .lab .cp{margin-left:auto;width:auto;text-transform:none;letter-spacing:0;font-size:10.5px;color:var(--steel);}
+  .lab .cp.done{color:var(--green);}
+  pre{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-family:var(--font-mono);font-size:10.5px;line-height:1.62;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  pre.err{color:var(--rose);}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+  .seal{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{font-size:10px;padding:2px 7px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);}
+  .chip.ok{background:var(--green-tint);border-color:transparent;color:var(--green);}
+  .chip.seal{background:var(--violet-tint);border-color:transparent;color:var(--violet);}
+  .src{margin-top:8px;display:flex;flex-direction:column;gap:5px;}
+  .src a{display:block;padding:7px 9px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);font-size:11.5px;color:var(--text-2);text-decoration:none;}
+  .src a .d{display:inline-block;width:6px;height:6px;border-radius:999px;background:var(--steel);margin-right:6px;}
+  .note{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--text-3);}
+  .note b{color:var(--text-2);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Worked panel · H — the ledger treatment</span><br />
+  <b>The panel already shipped; this changes what a row says.</b> Today a row shows what was
+  <i>asked</i> — <code>Searched your notes · "birth certificate"</code> — and never what came
+  <i>back</i>. Every row now carries <b>argument → result</b>, and a
+  <code>run_python</code> row expands to the same code view <b>G</b> floats in prose.
+  Tap the header, then any row.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat">
+    <div class="bubble me">What did the refinance actually save me, and what's the annual on the new electric rate?</div>
+
+    <div class="bubble ai">
+      The refinance dropped you from 6.4% to <b>5.15%</b> — about <b>$214/month</b>, which is
+      <b>$2,568</b> a year. Separately, twelve months at the new electric rate is
+      <b>$2,917.80</b>.
+
+      <div class="worked open" data-worked>
+        <button class="w-head">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+          <span class="t">Worked</span>
+          <span class="n">6 steps · <span class="bad">1 failed</span> · 1.4s</span>
+          <svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+
+        <div class="w-body">
+
+          <div class="step" data-step>
+            <button class="s-row">
+              <span class="glyph"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Searched your notes</span>
+                <span class="s-led">
+                  <span class="arg">"refinance closing"</span>
+                  <span class="to">→</span>
+                  <span class="res">3 notes</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">340ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+              <div class="src">
+                <a href="#"><span class="d"></span>Refinance — closing disclosure, 12 Mar</a>
+                <a href="#"><span class="d"></span>Mortgage rate quotes, 28 Feb</a>
+                <a href="#"><span class="d"></span>Call with broker — notes</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="step" data-step>
+            <button class="s-row">
+              <span class="glyph"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v6h6"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Read a note</span>
+                <span class="s-led">
+                  <span class="arg">Refinance — closing disclosure</span>
+                  <span class="to">→</span>
+                  <span class="res">5.15% · 30yr</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">40ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+              <div class="kv">
+                <div class="l">rate</div><div class="v hero">5.15%</div>
+                <div class="l">term</div><div class="v">30 years, fixed</div>
+                <div class="l">previous</div><div class="v">6.40%</div>
+              </div>
+              <div class="note">The row's result is the <b>part of the note the turn actually
+                used</b>, not the note's title — which is what makes the ledger line worth the
+                pixels.</div>
+            </div>
+          </div>
+
+          <div class="step bad open" data-step>
+            <button class="s-row">
+              <span class="glyph bad"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Worked out a number</span>
+                <span class="s-led">
+                  <span class="arg">(2847 - 2633) * 12mo</span>
+                  <span class="to">→</span>
+                  <span class="res">failed</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">0ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+<pre class="err">SyntaxError: unexpected 'm' at position 16</pre>
+              <div class="note"><b>This is the row that closes G's gap.</b> A failed call
+                produced no number, so it earns no <code>ƒ</code> marker in the prose — the
+                panel is the only place it is ever visible. It opens itself, the way a failed
+                step already does.</div>
+            </div>
+          </div>
+
+          <div class="step" data-step>
+            <button class="s-row">
+              <span class="glyph fx"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Worked out a number</span>
+                <span class="s-led">
+                  <span class="arg">(2847 - 2633) * 12</span>
+                  <span class="to">→</span>
+                  <span class="res">2568</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">1ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+              <div class="kv">
+                <div class="l">exact</div><div class="v hero">2568</div>
+              </div>
+              <div class="seal"><span class="chip ok">exact</span><span class="chip">calculate</span></div>
+            </div>
+          </div>
+
+          <div class="step" data-step>
+            <button class="s-row">
+              <span class="glyph fx"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Worked out a number</span>
+                <span class="s-led">
+                  <span class="arg">243.15 * 12</span>
+                  <span class="to">→</span>
+                  <span class="res">2917.8</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">0ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+              <div class="kv">
+                <div class="l">exact</div><div class="v hero">14589/5</div>
+                <div class="l">decimal</div><div class="v">2917.8</div>
+              </div>
+              <div class="seal"><span class="chip ok">exact</span><span class="chip">calculate</span></div>
+            </div>
+          </div>
+
+          <!-- the code-execution row: the same treatment, inside the panel -->
+          <div class="step open" data-step>
+            <button class="s-row">
+              <span class="glyph py"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M13 6l-2 12"/></svg></span>
+              <span class="s-main">
+                <span class="s-lab">Ran a computation</span>
+                <span class="s-led">
+                  <span class="arg">8 lines · decimal</span>
+                  <span class="to">→</span>
+                  <span class="res">Decimal('2917.80')</span>
+                </span>
+              </span>
+              <span class="s-end"><span class="ms">44ms</span><svg class="caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+            </button>
+            <div class="s-det">
+              <div class="lab">Code <button class="cp" data-cp>copy</button></div>
+<pre><span class="gut">1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut">2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut">3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut">4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut">5 </span>    running += rate
+<span class="gut">6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut">7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut">8 </span>running</pre>
+              <div class="lab">stdout</div>
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+              <div class="kv" style="margin-top:9px">
+                <div class="l">result</div><div class="v hero">Decimal('2917.80')</div>
+              </div>
+              <div class="seal">
+                <span class="chip ok">ran clean</span>
+                <span class="chip seal">no network · scratch only</span>
+                <span class="chip">stdlib only</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>One rule does the work.</b> On the ledger line the <b>argument truncates and the result
+  never does</b> — the answer is what you came for, so it is the half that always survives a
+  narrow screen. <b>And the two surfaces divide cleanly:</b> G's <code>ƒ</code> marker answers
+  <i>"where did this number come from"</i> from inside the prose; this panel answers
+  <i>"what ran, in what order, and what failed"</i> — including the calls that produced no
+  number and therefore appear nowhere else.
+</div>
+
+<script>
+  for (const w of document.querySelectorAll("[data-worked]")) {
+    w.querySelector(".w-head").addEventListener("click", () => w.classList.toggle("open"));
+  }
+  for (const st of document.querySelectorAll("[data-step]")) {
+    st.querySelector(".s-row").addEventListener("click", () => st.classList.toggle("open"));
+  }
+  for (const cp of document.querySelectorAll("[data-cp]")) {
+    cp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const code = cp.closest(".s-det").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+      navigator.clipboard?.writeText(code);
+      cp.classList.add("done"); cp.textContent = "copied";
+      setTimeout(() => { cp.classList.remove("done"); cp.textContent = "copy"; }, 1400);
+    });
+  }
+</script>
+</body>
+</html>
