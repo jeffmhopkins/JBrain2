@@ -9857,13 +9857,23 @@ button.small {
   margin-left: 0;
   padding: calc(3px * var(--font-scale));
   gap: 0;
+  /* Pull the glyph to the end of its 44px target so the row actually ends where the row
+     ends. Left-aligned, the copy glyph sat 33px in from the right edge at 65% — invisible
+     while the foot was 48.9px tall, but once the strip dropped to 22.1px that inset was
+     the only thing left to look at, and the pair read as mis-spaced rather than aligned.
+     The 44px box is the TAP TARGET and stays: two adjacent 44px targets cannot also sit
+     glyph-to-glyph, so the space between the two icons is that target's footprint, not
+     slack to be closed. `.fb-act-play` takes the same end alignment below. */
+  justify-content: flex-end;
 }
 .fb-shell .fb-act-play {
   flex: none;
   margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* End-aligned to match compact copy beside it, so the two glyphs share one rhythm
+     rather than one sitting centred in its target and the other pinned to the edge. */
+  justify-content: flex-end;
   /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box. */
   min-width: 44px;
   min-height: 0;
