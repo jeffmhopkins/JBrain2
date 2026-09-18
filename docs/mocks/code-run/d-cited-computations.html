@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · D · cited computations</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--violet-tint);color:var(--violet);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the marker — the whole surface, at rest ===== */
+  .fx{
+    display:inline-flex;align-items:center;gap:2px;vertical-align:baseline;
+    font-family:var(--font-mono);font-size:10.5px;line-height:1;
+    padding:2px 5px 2px 4px;border-radius:5px;margin-left:2px;
+    background:var(--violet-tint);color:var(--violet);cursor:pointer;
+    position:relative;top:-1px;border:1px solid transparent;
+  }
+  .fx:active{background:rgba(164,147,201,.3);}
+  .fx.on{border-color:var(--violet);background:rgba(164,147,201,.28);}
+  .fx i{font-style:italic;font-weight:600;opacity:.8;}
+
+  /* ===== the card that opens below the bubble ===== */
+  .card{
+    align-self:flex-start;width:100%;border:1px solid var(--violet);border-radius:13px;
+    background:var(--surface-2);overflow:hidden;
+  }
+  .card-h{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border);}
+  .card-h .n{font-family:var(--font-mono);font-size:10.5px;color:var(--violet);background:var(--violet-tint);padding:2px 6px;border-radius:5px;}
+  .card-h .t{flex:1;min-width:0;font-size:12.5px;color:var(--text-2);}
+  .card-h .x{width:15px;height:15px;color:var(--text-3);cursor:pointer;flex:none;}
+  .card-b{padding:11px 12px;}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 11px;align-items:baseline;}
+  .kv .l{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .kv .v{font-family:var(--font-mono);font-size:12.5px;color:var(--text);word-break:break-word;}
+  .kv .v.hero{color:var(--green);}
+
+  pre{margin-top:9px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.6;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+  .lab{margin-top:10px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+
+  .seal{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--text-3);}
+  .chip.ok{background:var(--green-tint);border-color:transparent;color:var(--green);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant D</span><br />
+  <b>Cited computations.</b> At rest there is <b>no strip, no card, no row</b> — the turn is
+  pure prose, and a computed number carries a tiny marker the way a retrieved fact carries
+  <code>[^1]</code>. A computation <i>is</i> a source for a number, so it cites like one.
+  Tap any <span class="fx"><i>ƒ</i>1</span> to open it; tap again to close.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15 — percentage increase, annual at the new rate, and one third of that.</div>
+
+    <div class="bubble ai">
+      Your bill went up <b>29.7492%</b><span class="fx" data-fx="1"><i>ƒ</i>1</span> — call it
+      29.7%. Twelve months at the new rate is <b>$2,917.80</b><span class="fx" data-fx="2"><i>ƒ</i>2</span>,
+      and split three ways that's exactly <b>$972.60</b><span class="fx" data-fx="3"><i>ƒ</i>3</span>
+      each — it divides evenly, no rounding needed.
+    </div>
+
+    <div class="bubble me">Show me the months so I can check it.</div>
+
+    <div class="bubble ai">
+      Quarterly marks are $729.45, $1,458.90, $2,188.35 and $2,917.80 at
+      twelve<span class="fx" data-fx="4"><i>ƒ</i>4</span>.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> A marker is easy to miss, so the working is discoverable only if you
+  already suspect a number — and four markers in one sentence get noisy.
+  <b>What it buys:</b> the only variant with <b>zero vertical cost at rest</b>. Three turns
+  of computation take exactly as much room as three turns of prose, and the working attaches
+  to the <i>specific number</i> it produced rather than to the turn as a whole.
+</div>
+
+<!-- card templates -->
+<template id="t1">
+  <div class="kv">
+    <div class="l">ran</div><div class="v">(243.15 - 187.40) / 187.40 * 100</div>
+    <div class="l">exact</div><div class="v hero">27875/937</div>
+    <div class="l">decimal</div><div class="v">29.7492</div>
+  </div>
+  <div class="seal"><span class="chip ok">exact</span><span class="chip">calculate · 1ms</span></div>
+</template>
+<template id="t2">
+  <div class="kv">
+    <div class="l">ran</div><div class="v">243.15 * 12</div>
+    <div class="l">exact</div><div class="v hero">14589/5</div>
+    <div class="l">decimal</div><div class="v">2917.8</div>
+  </div>
+  <div class="seal"><span class="chip ok">exact</span><span class="chip">calculate · 0ms</span></div>
+</template>
+<template id="t3">
+  <div class="kv">
+    <div class="l">ran</div><div class="v">243.15 * 12 / 3</div>
+    <div class="l">exact</div><div class="v hero">4863/5</div>
+    <div class="l">decimal</div><div class="v">972.6</div>
+  </div>
+  <div class="seal"><span class="chip ok">divides evenly</span><span class="chip">calculate · 0ms</span></div>
+</template>
+<template id="t4">
+  <div class="lab">Code</div>
+<pre><span class="gut">1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut">2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut">3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut">4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut">5 </span>    running += rate
+<span class="gut">6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut">7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut">8 </span>running</pre>
+  <div class="lab">stdout</div>
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+  <div class="kv" style="margin-top:10px">
+    <div class="l">result</div><div class="v hero">Decimal('2917.80')</div>
+  </div>
+  <div class="seal"><span class="chip ok">ran clean</span><span class="chip">run_python · 44ms</span><span class="chip">no network · scratch only</span></div>
+</template>
+
+<script>
+  const TITLES = {
+    1: "calculate — percentage increase",
+    2: "calculate — annual total",
+    3: "calculate — one third",
+    4: "run_python — the twelve months",
+  };
+  let open = null;
+
+  function close() {
+    document.querySelector(".card")?.remove();
+    document.querySelector(".fx.on")?.classList.remove("on");
+    open = null;
+  }
+
+  for (const fx of document.querySelectorAll("[data-fx]")) {
+    fx.addEventListener("click", () => {
+      const id = fx.dataset.fx;
+      const wasOpen = open === id;
+      close();
+      if (wasOpen) return;
+
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML =
+        '<div class="card-h"><span class="n">ƒ' + id + '</span>' +
+        '<span class="t">' + TITLES[id] + '</span>' +
+        '<svg class="x" viewBox="0 0 24 24"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg></div>' +
+        '<div class="card-b"></div>';
+      card.querySelector(".card-b").append(
+        document.getElementById("t" + id).content.cloneNode(true)
+      );
+      card.querySelector(".x").addEventListener("click", close);
+
+      // The card lands directly under the bubble the marker sits in — so the working
+      // appears beside the sentence it produced, without living there permanently.
+      fx.closest(".bubble").after(card);
+      fx.classList.add("on");
+      open = id;
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+</script>
+</body>
+</html>

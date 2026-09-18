@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · F · tap the number</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.52;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the whole affordance: the number itself ===== */
+  .num{
+    font-weight:600;cursor:pointer;
+    border-bottom:1px dotted rgba(164,147,201,.6);
+    padding-bottom:1px;
+  }
+  .num:active,.num.on{background:var(--violet-tint);border-radius:4px;border-bottom-color:transparent;}
+
+  /* ===== the popover — floats, so the transcript never reflows ===== */
+  .pop{
+    position:absolute;z-index:30;width:270px;max-width:calc(100% - 28px);
+    background:var(--surface-2);border:1px solid var(--violet);border-radius:12px;
+    box-shadow:0 12px 34px rgba(0,0,0,.6);overflow:hidden;
+    opacity:0;transform:translateY(-4px);transition:opacity .13s ease,transform .13s ease;
+    pointer-events:none;
+  }
+  .pop.on{opacity:1;transform:translateY(0);pointer-events:auto;}
+  .pop-h{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);}
+  .pop-h .tool{font-family:var(--font-mono);font-size:10px;color:var(--violet);background:var(--violet-tint);padding:2px 6px;border-radius:5px;}
+  .pop-h .ms{margin-left:auto;font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .pop-b{padding:9px 10px;}
+  .expr{font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);word-break:break-word;line-height:1.5;}
+  .eq{margin-top:7px;padding-top:7px;border-top:1px solid var(--border);display:grid;grid-template-columns:auto 1fr;gap:3px 9px;align-items:baseline;}
+  .eq .l{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .eq .v{font-family:var(--font-mono);font-size:12px;color:var(--text);}
+  .eq .v.hero{color:var(--green);}
+
+  .more{
+    margin-top:9px;width:100%;padding:7px;border-radius:8px;cursor:pointer;
+    background:var(--bg);border:1px solid var(--border);color:var(--text-2);
+    font:500 11.5px system-ui,-apple-system,sans-serif;
+  }
+  .more:active{color:var(--text);}
+  .code{display:none;margin-top:9px;}
+  .pop.expanded .code{display:block;}
+  .pop.expanded .more{display:none;}
+  .lab{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px;}
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 9px;font-family:var(--font-mono);font-size:10.5px;line-height:1.6;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);margin-top:7px;}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);} .f{color:var(--steel);}
+  .seal{margin-top:8px;font-size:10px;color:var(--text-3);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant F</span><br />
+  <b>Tap the number.</b> There is no component at rest at all — <b>the number <i>is</i> the
+  affordance</b>, marked only by a faint dotted underline. Tapping it floats a popover over
+  the transcript, so nothing below ever moves. Tap any underlined figure; tap it again, or
+  anywhere else, to dismiss.
+</div>
+
+<div class="phone" id="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15 — percentage increase, annual at the new rate, and one third of that.</div>
+
+    <div class="bubble ai">
+      Your bill went up <span class="num" data-n="1">29.7492%</span> — call it 29.7%. Twelve
+      months at the new rate is <span class="num" data-n="2">$2,917.80</span>, and split three
+      ways that's exactly <span class="num" data-n="3">$972.60</span> each — it divides
+      evenly, no rounding needed.
+    </div>
+
+    <div class="bubble me">Show me the months so I can check it.</div>
+
+    <div class="bubble ai">
+      Quarterly marks are $729.45, $1,458.90, $2,188.35 and
+      <span class="num" data-n="4">$2,917.80</span> at twelve.
+    </div>
+
+    <div class="bubble me">And if I switch to the fixed tariff at 21.8¢?</div>
+
+    <div class="bubble ai">
+      On the fixed tariff you'd pay <span class="num" data-n="5">$2,616.00</span> a year —
+      <span class="num" data-n="6">$301.80</span> less than staying put.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> No visible marker means the working is <i>invisible until guessed
+  at</i> — a reader who doesn't know numbers are tappable never finds it — and a popover is
+  a poor place for eight lines of code.
+  <b>What it buys:</b> zero vertical cost <i>and</i> zero layout shift. Six computed figures
+  across three turns add nothing to the transcript, and checking one never moves the
+  sentence you were reading.
+</div>
+
+<script>
+  const DATA = {
+    1: {tool:"calculate", ms:"1ms", expr:"(243.15 - 187.40) / 187.40 * 100",
+        rows:[["exact","27875/937",1],["decimal","29.7492",0]]},
+    2: {tool:"calculate", ms:"0ms", expr:"243.15 * 12",
+        rows:[["exact","14589/5",1],["decimal","2917.8",0]]},
+    3: {tool:"calculate", ms:"0ms", expr:"243.15 * 12 / 3",
+        rows:[["exact","4863/5",1],["decimal","972.6",0]]},
+    4: {tool:"run_python", ms:"44ms", expr:"8 lines — a running Decimal total over twelve months",
+        rows:[["result","Decimal('2917.80')",1]], code:true},
+    5: {tool:"calculate", ms:"0ms", expr:"0.218 * 1000 * 12",
+        rows:[["exact","2616",1],["decimal","2616",0]]},
+    6: {tool:"calculate", ms:"0ms", expr:"243.15 * 12 - 0.218 * 1000 * 12",
+        rows:[["exact","1509/5",1],["decimal","301.8",0]]},
+  };
+
+  const CODE =
+    '<div class="lab">Code</div>' +
+    '<pre><span class="k">from</span> decimal <span class="k">import</span> Decimal\n' +
+    'rate = <span class="f">Decimal</span>(<span class="s">\'243.15\'</span>)\n' +
+    'running = <span class="f">Decimal</span>(<span class="s">\'0\'</span>)\n' +
+    '<span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):\n' +
+    '    running += rate\n' +
+    '    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:\n' +
+    '        <span class="f">print</span>(<span class="s">f\'after month {month:2}: {running}\'</span>)\n' +
+    'running</pre>' +
+    '<pre class="out">after month  3: 729.45\nafter month  6: 1458.90\nafter month  9: 2188.35\nafter month 12: 2917.80</pre>' +
+    '<div class="seal">no network · scratch only · stdlib</div>';
+
+  const phone = document.getElementById("phone");
+  let pop = null, openOn = null;
+
+  function close() {
+    pop?.remove(); pop = null;
+    document.querySelector(".num.on")?.classList.remove("on");
+    openOn = null;
+  }
+
+  function build(id) {
+    const d = DATA[id];
+    const el = document.createElement("div");
+    el.className = "pop";
+    el.innerHTML =
+      '<div class="pop-h"><span class="tool">' + d.tool + '</span>' +
+      '<span class="ms">' + d.ms + '</span></div>' +
+      '<div class="pop-b"><div class="expr">' + d.expr + '</div>' +
+      '<div class="eq">' + d.rows.map(([l, v, hero]) =>
+        '<div class="l">' + l + '</div><div class="v' + (hero ? " hero" : "") + '">' + v + '</div>'
+      ).join("") + '</div>' +
+      (d.code ? '<button class="more">Show the code</button><div class="code">' + CODE + '</div>' : "") +
+      '</div>';
+    if (d.code) {
+      el.querySelector(".more").addEventListener("click", (e) => {
+        e.stopPropagation();
+        el.classList.add("expanded");
+        // Re-clamp: the popover just got taller and may now run off the bottom.
+        place(el, document.querySelector(".num.on"));
+      });
+    }
+    return el;
+  }
+
+  // Anchored under the tapped number, clamped inside the phone so it never runs off an edge.
+  function place(el, anchor) {
+    const pr = phone.getBoundingClientRect();
+    const ar = anchor.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let left = ar.left - pr.left + ar.width / 2 - w / 2;
+    left = Math.max(10, Math.min(left, pr.width - w - 10));
+    let top = ar.bottom - pr.top + 7;
+    if (top + h > pr.height - 76) top = Math.max(60, ar.top - pr.top - h - 7);
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+  }
+
+  for (const num of document.querySelectorAll("[data-n]")) {
+    num.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = num.dataset.n;
+      const was = openOn === id;
+      close();
+      if (was) return;
+      pop = build(id);
+      phone.append(pop);
+      num.classList.add("on");
+      openOn = id;
+      place(pop, num);
+      requestAnimationFrame(() => pop.classList.add("on"));
+    });
+  }
+
+  document.addEventListener("click", close);
+  document.getElementById("chat").addEventListener("scroll", close, {passive: true});
+</script>
+</body>
+</html>
