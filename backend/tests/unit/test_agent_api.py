@@ -332,7 +332,7 @@ def test_chat_streams_text_then_done(
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
-    assert runlog.started == [("sess-1", "agent-system-v8")]
+    assert runlog.started == [("sess-1", "agent-system-v9")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
         {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
@@ -645,6 +645,10 @@ def test_chat_persists_tool_steps_with_sources(
             "id": "c1",
             "name": "search",
             "ok": True,
+            # How long the handler took, persisted alongside the result so a stored turn
+            # answers "which call was the slow one" (EXACT_MATH_TOOLS_PLAN.md W4). The fake
+            # tool returns instantly, so this is 0 rather than an arbitrary number.
+            "duration_ms": 0,
             "summary": "found 1",
             "sources": [{"note_id": "n1", "domain": "general", "snippet": "born"}],
             # No prose streamed before the call (stream_chunks[0] == ""), so the split
@@ -2293,7 +2297,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v48") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v49") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(

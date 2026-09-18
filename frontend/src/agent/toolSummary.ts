@@ -111,6 +111,11 @@ const STEP_LABELS: Record<string, string> = {
   // Location + time + home
   current_location: "Checked your location",
   current_time: "Checked the clock",
+  // The arithmetic backstop (docs/archive/EXACT_MATH_TOOLS_PLAN.md). "Worked out" rather
+  // than "Calculated" so the row reads as the model showing its working, which is the
+  // behaviour the tool exists to encourage.
+  calculate: "Worked out a number",
+  run_python: "Ran a computation",
   location_history: "Read location history",
   location_query: "Checked a place",
   find_when_at: "Checked when you were somewhere",
@@ -231,6 +236,11 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   write_plan_result: ["heading", "note"],
   current_location: ["detail"],
   current_time: ["timezone"],
+  // The expression itself is the "what" — a row reading `Worked out a number ·
+  // (243.15 - 187.40) / 187.40 * 100` says exactly what was computed, which is the whole
+  // point of routing arithmetic through a tool. `run_python`'s code is multi-line and
+  // belongs in the expanded view, not on a collapsed row, so it opts out via NO_INLINE.
+  calculate: ["expression"],
   location_history: ["subject"],
   location_query: ["place"],
   find_when_at: ["place"],
@@ -269,6 +279,9 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 const NO_INLINE: ReadonlySet<string> = new Set([
   // takes no arguments — there is only one radio to release
   "sdr_stop",
+  // the snippet is multi-line source; a collapsed row is the wrong place for it, and the
+  // expanded view is where the code belongs
+  "run_python",
   "read_note",
   "read_entity",
   "read_wiki",
