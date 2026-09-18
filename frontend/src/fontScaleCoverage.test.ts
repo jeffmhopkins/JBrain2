@@ -157,18 +157,59 @@ describe("tap targets", () => {
     expect(scaledTapTargets()).toEqual([]);
   });
 
-  // The foot's play/copy buttons give up `min-height` so the strip can follow its type
-  // — the 44px has to survive somewhere, or the control silently shrinks to its glyph.
-  it("keeps the foot buttons' 44px reachable after they stop painting it", () => {
+  // The foot's play/copy buttons paint neither dimension of their target any more: the
+  // height floor went so the strip could follow its type, the width floor went so the two
+  // glyphs could pair at the row's end. Both live on the overlay now, so if the overlay
+  // loses its height or stops reaching outward the controls silently shrink to their
+  // glyphs (~13px) with nothing else failing. Measured through elementFromPoint when this
+  // landed: play 38x38 and copy 28x38 at 65%, 59x44 and 41x44 at 100%.
+  it("carries the foot buttons' tap area on the overlay, since the box no longer does", () => {
     const rules = topLevelRules(CSS);
-    const overlay = rules.find(
-      (r) => /fb-act-(play|copy)::after/.test(r.selector) && /height:\s*44px/.test(r.body),
+    const base = rules.find(
+      (r) => /fb-act-play::after/.test(r.selector) && /fb-act-copy::after/.test(r.selector),
     );
-    expect(overlay, "foot buttons lost their 44px hit-area overlay").toBeDefined();
-    for (const sel of [".fb-shell .fb-act-play", ".fb-shell .fb-act-copy"]) {
-      const rule = rules.find((r) => r.selector === sel && r.body.includes("min-width"));
-      expect(rule?.body, `${sel} must keep an absolute 44px width`).toMatch(/min-width:\s*44px/);
+    expect(base?.body, "foot buttons lost their 44px-tall hit-area overlay").toMatch(
+      /height:\s*44px/,
+    );
+    for (const sel of [".fb-shell .fb-act-play::after", ".fb-shell .fb-act-copy::after"]) {
+      const rule = rules.find((r) => r.selector === sel);
+      expect(rule, `${sel} must widen the target outward`).toBeDefined();
+      // A negative left/right is the target reaching into the empty space beside the pair.
+      expect(rule?.body, `${sel} must reach outward, not just wrap the glyph`).toMatch(
+        /(left|right):\s*calc\(-\d/,
+      );
     }
+  });
+});
+
+/** The design px inside `calc(<n>px * var(--font-scale))`, in source order. */
+function scaledPx(body: string, prop: string): number[] {
+  const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:([^;]*)`).exec(body);
+  if (!m?.[1]) return [];
+  return [...m[1].matchAll(/calc\((-?\d*\.?\d+)px \* var\(--font-scale\)\)/g)].map((x) =>
+    Number(x[1]),
+  );
+}
+
+describe("status line", () => {
+  // The live status line sits BETWEEN the last turn and the omnibox, and nothing centres
+  // it — its own padding has to make up the difference between the chat's floor above and
+  // the dock's gutter below. Those three rules are in three different parts of the sheet,
+  // so a change to any one silently tips it (the dock's gutter not scaling once left it
+  // 6.5px above against 13.2px below at 65%). The arithmetic is the invariant.
+  it("sits equally between the last turn and the omnibox, at every text size", () => {
+    const rules = topLevelRules(CSS);
+    const body = (sel: string) => rules.find((r) => r.selector === sel)?.body ?? "";
+    const chat = scaledPx(body(".fb-shell .fb-chat"), "padding");
+    const status = scaledPx(body(".fb-shell .fb-status"), "padding");
+    const dock = scaledPx(body(".dock"), "padding");
+    // padding shorthands: [top, sides, bottom]
+    expect(chat, ".fb-chat padding must be three scaled values").toHaveLength(3);
+    expect(status, ".fb-status padding must be three scaled values").toHaveLength(3);
+    expect(dock.length, ".dock padding must scale").toBeGreaterThanOrEqual(2);
+    const above = (chat[2] ?? 0) + (status[0] ?? 0);
+    const below = (status[2] ?? 0) + (dock[0] ?? 0);
+    expect(below, `above=${above} below=${below} — status line is off-centre`).toBe(above);
   });
 });
 
