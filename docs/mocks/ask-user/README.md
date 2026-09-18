@@ -34,6 +34,26 @@ that invents its own lifecycle, its own expiry and its own store would collide w
 plan the moment it is built. Every variant below is drawn so the two are the *same*
 question with two urgencies.
 
+## Built on the shipped stylesheet
+
+All three inline the `:root` tokens and every `.bubble` / `.fb-inline-prop` / `.ip-*` /
+`.fb-composer` rule verbatim from `frontend/src/styles.css`, with only the `.fb-shell`
+scope prefix dropped. Each mock's stylesheet is split into three labelled blocks — shipped
+CSS, phone-frame scaffolding, and that variant's proposed additions — so a reviewer can see
+exactly what is being asked for.
+
+That is not decoration: it is what makes the "no new plumbing" claim checkable. **A and C
+are `InlineProposal`'s own frame**, down to `.ip-head`, `.ip-tree`, `.ip-leaf`, `.ip-foot`,
+the `.ip-enact.armed` double-tap state and the `.fb-inline-prop.done` settled state. The
+additions are a question line, a `why`, and an option row's selected state — the shipped
+leaf carries approve/decline controls where a question carries a choice.
+
+**C's park state needed no new colour either.** `.ip-held` / `.ip-held-badge` already exist,
+already amber, for a leaf whose prerequisite is declined and which therefore reads *held*
+(DESIGN.md). A parked question is that state exactly, so the assumption block borrows the
+vocabulary rather than inventing an amber of its own — which is a small sign that the
+park-don't-block idea fits the system rather than being bolted to it.
+
 ## The three
 
 | | Shape | Best at | Worst at |

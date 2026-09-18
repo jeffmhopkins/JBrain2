@@ -5,207 +5,1235 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Ask the user · A · inline question card</title>
 <style>
-  :root{
-    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
-    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
-    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
-    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
-    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
-    --violet-tint:rgba(164,147,201,.16);
-    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 1 — THE REAL STYLESHEET, PASTED UNCHANGED.
+   :root from frontend/src/styles/tokens.css; every .bubble / .fb-act-* /
+   .fb-step-* / .fb-inline-prop / .ip-* / .fb-composer rule from
+   frontend/src/styles.css. Only the `.fb-shell ` scope prefix is dropped.
+   `ask_user` is architecturally the shipped InlineProposal with a question in
+   place of a diff, so these mocks are built on ITS css, not a lookalike.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root{
+
+  color-scheme: dark;
+
+  /* Neutrals */
+  --bg: #0e0f11;
+  --surface: #17181b;
+  --surface-2: #1e2024;
+  --border: #26282c;
+  --text: #e6e7e9;
+  --text-2: #9a9da3;
+  --text-3: #5c5f66;
+  /* The composer sits slightly below --surface so it reads as the floor. */
+  --surface-composer: #141518;
+  /* Sheet/dialog scrim: --bg at 60% alpha (docs/reference/DESIGN.md "Modal system"). */
+  --scrim: rgba(14, 15, 17, 0.6);
+
+  /* Accents — identical across themes. Tints are 13% alpha of the accent. */
+  --steel: #7fa7c9;
+  --steel-tint: rgba(127, 167, 201, 0.13);
+  --green: #8fbc9a;
+  --green-tint: rgba(143, 188, 154, 0.13);
+  --amber: #c9a36a;
+  --amber-tint: rgba(201, 163, 106, 0.13);
+  --rose: #cf8a8f;
+  --rose-tint: rgba(207, 138, 143, 0.13);
+  --violet: #a493c9;
+  --violet-tint: rgba(164, 147, 201, 0.13);
+
+  /* Entity-type accents — extend the five above to cover the entity-type icon
+     discs, same muted register. Tinted at 16% via color-mix on the disc, so no
+     separate -tint tokens. See docs/reference/DESIGN.md "Entity-type accents". */
+  --periwinkle: #8f9fd0; /* Product */
+  --sage: #a8bd7e; /* Animal */
+  --terracotta: #d0917f; /* MedicalCondition */
+  --teal: #6fb6b1; /* MedicalProcedure */
+  --orchid: #c98ab4; /* Drug */
+  --slate: #9aa0a8; /* Thing — neutral fallback */
+
+  /* Semantic aliases */
+  --accent: var(--steel);
+  --accent-tint: var(--steel-tint);
+  --ok: var(--green);
+  --warn: var(--amber);
+  --danger: var(--rose);
+  --danger-tint: var(--rose-tint);
+  --info: var(--steel);
+  /* The location domain's accent (the Phase-7 teal candidate, made binding by the
+     L3 GUI gate — Option B's inline trail/fence/start/gap markers ride this).
+     Shares the teal hue with the MedicalProcedure entity disc; this is the
+     domain-color name surfaces reference. See docs/reference/DESIGN.md. */
+  --location: #6fb6b1;
+  --location-tint: rgba(111, 182, 177, 0.13);
+
+  /* Type scale */
+  /* Type scale = DESIGN.md px values × the user's font-scale setting
+     (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
+  --font-scale: 0.75;
+  --fs-micro: calc(12px * var(--font-scale));
+  /* Graph node labels float free on a busy canvas, so they keep a 12px floor
+     regardless of the text-size setting (the 0.75 default would shrink micro
+     to 9px); 100% nudges them up to 15px. */
+  --fs-graph-label: clamp(12px, calc(13px * var(--font-scale)), 15px);
+  --fs-head: calc(13px * var(--font-scale)); /* note-row metadata */
+  --fs-secondary: calc(14px * var(--font-scale));
+  --fs-note: calc(15px * var(--font-scale)); /* stream body, segments */
+  --fs-body: calc(16px * var(--font-scale));
+  --fs-composer: calc(17px * var(--font-scale)); /* Phase 1 omnibox review */
+  --fs-title: calc(18px * var(--font-scale));
+  --fs-screen: calc(22px * var(--font-scale));
+  --fs-hero: calc(28px * var(--font-scale));
+  --fs-editor: calc(20px * var(--font-scale)); /* focused-writer edit page */
+
+  /* Shape */
+  --r-input: 12px;
+  --r-seg: 14px;
+  --r-card: 16px;
+  --r-box: 16px;
+  --r-pill: 999px;
+
+  --shadow-card: none;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Predicate paths in the analysis surfaces render monospace. */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
+   attributes of their own (unlike components/icons.tsx). Without this they fall
+   back to the SVG default — a solid black fill — so the per-element `color`
+   rules below (steel, text-2, …) never took, which is why the Worked icons read
+   as black on every prior CSS-color pass. Drawing them as outlines that follow
+   `currentColor` is what makes those colors land. */
+.tw-ic,
+.tw-chev,
+.fb-step-caret {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
+   A labelled 44px button expands the tool steps in place — no flip, no 3D, no
+   swipe. The body animates open with a grid-rows ease so content stays in flow. */
+/* the disclosure at the foot of an assistant bubble: "Thinking" (violet, the model's
+   reasoning) and "Worked" (steel, its tool steps) as two tinted chips that act as a
+   segmented control over ONE shared panel — selecting a chip swaps the panel's content
+   (reasoning ⇄ steps), selecting the open chip closes it. With a single body the open
+   height and bottom spacing match for either view. The whole strip is one flex child of
+   the bubble, so a closed panel adds no column gap and the line stays tight to the card
+   foot; negative margins snug it to the answer above and the card's padding below. */
+.fb-act-foot {
+  margin-top: -6px;
+  margin-bottom: -6px;
+}
+.fb-act-foot.bare {
+  /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
+  margin-top: 0;
+}
+.fb-activity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: nowrap;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.fb-act-foot.bare .fb-activity {
+  border-top: none;
+  padding-top: 2px;
+}
+/* a chip — thinking and worked share this shape; selected chips tint to their register */
+.fb-act-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 25px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: none;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.fb-act-think {
+  flex: none;
+}
+/* worked carries the longest text (steps · sources · failed); only its count shrinks
+   and ellipsizes, so the chips stay on one line and never collide into "ThougWorked" */
+.fb-act-work {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fb-act-chip:hover {
+  color: var(--text);
+}
+.fb-act-ic,
+.fb-act-chip .tw-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.fb-act-think .fb-act-ic {
+  color: var(--violet);
+}
+.fb-act-work .tw-ic {
+  color: var(--steel);
+}
+.fb-act-think.on {
+  background: var(--violet-tint);
+  border-color: rgba(164, 147, 201, 0.3);
+  color: var(--violet);
+}
+.fb-act-work.on {
+  background: var(--steel-tint);
+  border-color: rgba(127, 167, 201, 0.3);
+  color: var(--steel);
+}
+.fb-act-lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+.fb-act-count {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 400;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-act-work.on .fb-act-count {
+  color: var(--steel);
+  opacity: 0.75;
+}
+.fb-worked-fail {
+  color: var(--rose);
+}
+/* the copy action: pinned to the far right; a glyph + "Copy" label, a brief green
+   confirm that swaps to a check + "Copied". */
+.fb-act-copy {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-act-copy:hover {
+  color: var(--steel);
+}
+.fb-act-copy .fb-act-ic {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: currentColor;
+}
+.fb-act-copy.done {
+  color: var(--green);
+}
+/* read-aloud on: the copy button drops its label to just the icon (square) so the
+   play control fits beside it. The play control owns the far-right auto margin, so
+   copy clears its own (the row gap alone spaces the pair) and squares up its padding. */
+.fb-act-copy.compact {
+  margin-left: 0;
+  padding: 3px;
+  gap: 0;
+}
+.fb-act-play {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 25px;
+  padding: 3px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.fb-act-play:hover {
+  color: var(--steel);
+}
+.fb-act-play.on {
+  color: var(--steel);
+}
+/* auto-play armed: the violet register (distinct from the steel playing/hover state),
+   so the loop-marked triangle reads as "on" even when this turn isn't speaking. */
+.fb-act-play.auto {
+  color: var(--violet);
+}
+/* the long-press target shouldn't trigger the OS text-selection / callout while held. */
+.fb-act-play {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+.fb-act-play .fb-act-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: currentColor;
+}
+.fb-act-pulse {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: fb-think-pulse 1.1s ease-out infinite;
+}
+.fb-act-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.18s ease-out;
+}
+.fb-act-body.open {
+  grid-template-rows: 1fr;
+}
+.fb-act-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+/* the single shared panel shows exactly one view (reasoning or steps) at a time */
+.fb-act-view {
+  display: none;
+}
+.fb-act-view.show {
+  display: block;
+}
+.fb-thinking-trace {
+  margin: 2px 0 6px;
+  padding: 9px 11px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--violet-tint);
+  border-radius: 10px;
+  font: 12.5px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+/* A tool call interleaved into the thinking trace where it happened (mirrors a
+   sub-agent's ChildTrace): a ✓/✕/· mark, the step label, and the web tool's
+   url/query, on its own flowing line within the reasoning. */
+.fb-think-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.fb-think-mark {
+  flex: none;
+  color: var(--green);
+  font-size: 11px;
+}
+.fb-think-tool.bad .fb-think-mark {
+  color: var(--rose);
+}
+.fb-think-tool.live .fb-think-mark {
+  color: var(--violet);
+}
+.fb-think-name {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fb-think-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.fb-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+/* a single tool step — itself a pulldown (arguments in · result out · raw) */
+.fb-step {
+  border-radius: 10px;
+}
+.fb-step.err {
+  background: var(--rose-tint);
+}
+.fb-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+/* the fallback dot for a tool with no dedicated glyph — a small centered mark,
+   not the full 15px icon box (which would render as a big muted disc) */
+.fb-step-row .tw-bullet {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  background: var(--steel);
+}
+.fb-step-lab {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* a web tool shows its target inline after the label — the label yields its
+   stretch so the url/query takes the row and truncates rather than overflowing */
+.fb-step-row.has-arg .fb-step-lab {
+  flex: 0 0 auto;
+}
+.fb-step-arg {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-step-mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--green);
+}
+.fb-step-mark.bad {
+  background: var(--rose);
+}
+.fb-step-mark.live {
+  background: var(--steel);
+  animation: fb-breathe 1.5s ease-in-out infinite;
+}
+.fb-step-cnt {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.fb-step-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-2);
+  transition: transform 0.16s ease-out;
+}
+.fb-step.open .fb-step-caret {
+  transform: rotate(90deg);
+}
+.fb-step-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.16s ease-out;
+}
+.fb-step.open .fb-step-detail {
+  grid-template-rows: 1fr;
+}
+.fb-step-di {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-step.open .fb-step-di {
+  padding-bottom: 6px;
+}
+/* arguments — a flat one-level key/value list, monospace values */
+.fb-args {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 2px 0 8px;
+  padding-left: 23px;
+}
+.fb-args-row {
+  display: contents;
+}
+.fb-args dt {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.fb-args dd {
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.fb-res-lab {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-left: 23px;
+  margin-bottom: 4px;
+}
+.fb-res-txt {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+  padding-left: 23px;
+  /* a long result scrolls within its own pane rather than running the step
+     on forever — the expansion stays a glanceable height (the screenshot's
+     web_fetch summary was the offender). */
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fb-res-txt.err {
+  color: var(--rose);
+}
+/* the raw result rung — clamped monospace inset with copy + show-all */
+.fb-raw-wrap {
+  padding-left: 23px;
+  margin-top: 7px;
+}
+.fb-raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.fb-raw-toggle:hover {
+  color: var(--text-2);
+  border-color: var(--text-3);
+}
+.fb-raw {
+  position: relative;
+  margin-top: 8px;
+}
+.fb-raw-pre {
+  margin: 0;
+  padding: 8px 40px 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow: hidden;
+}
+.fb-raw-pre.full {
+  /* "show all lines" lifts the 150px clamp but still scrolls within a bounded
+     pane rather than expanding without limit. */
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fb-raw-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-raw-copy:hover {
+  color: var(--steel);
+  border-color: var(--steel);
+}
+.fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.fb-raw-more {
+  display: block;
+  margin-top: 6px;
+  padding: 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--steel);
+  cursor: pointer;
+}
+.fb-act-body,
+  .fb-act-chip,
+  .fb-step-detail,
+  .fb-step-caret {
+    transition: none;
   }
-  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
-  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.fb-step-mark.live,
+  .fb-act-pulse {
+    animation: none;
+  }
+.toolwork-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 23px;
+}
+.fb-drp-think-sum .fb-act-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--violet);
+}
+/* The foot sits flush at the bottom (no negative margins, its own padding since the media
+   bubble is frameless); its `.fb-activity` border-top is the divider from the card body. */
+.fb-analysis-card .fb-act-foot {
+  margin: 0;
+  padding: 8px 14px 10px;
+}
+.fb-analysis-card .fb-act-foot.bare .fb-activity {
+  /* keep the divider even if the foot leads with no answer, so the footer stays attached */
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.bubble {
+  max-width: 80%;
+  padding: 11px 14px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  /* A long unbreakable token — a bare URL, an id — wraps inside the bubble
+     instead of spilling past its right edge. Inherited, so it reaches the
+     markdown prose too; code blocks and tables keep their own scroll-x. */
+  overflow-wrap: anywhere;
+}
+.bubble.me {
+  align-self: flex-end;
+  background: var(--steel-tint);
+  border: 1px solid var(--steel-tint);
+  border-bottom-right-radius: 0;
+}
+.bubble.ai {
+  align-self: flex-start;
+  /* The assistant answer (prose, code, tool views) may use the full column width;
+     only the owner's own bubble stays inset at the base 80%. */
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* rich text in an assistant answer (agent/markdown.tsx) — and the research-library
+   report reader (.rl-md), which renders the same <Markdown> and so shares its block flow. */
+.bubble.ai .md,
+.rl-md .md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* A bubble whose body is just a width:100% image/preview would shrink-wrap to the
+   image's natural size; give it the full column so the live preview and the final
+   image are always the large variant, with or without answer text beside them. */
+.bubble.ai:has(.fb-genprev, .tv-genimg) {
+  width: 100%;
+}
+/* An image turn splits into preamble / image / reply bubbles; the image one carries no
+   bubble chrome — the picture's own rounded frame + its caption stand alone, so there's
+   no border-inside-a-border. */
+.bubble.ai.bubble-media {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+/* The analysis cards bring their own frame (border/radius/surface); drop the generic
+   tool-view wrapper's frame (like .tv-task / .atx) so the card's own rounded frame stands
+   alone instead of nested inside a second one. The card itself rides a frameless
+   `.bubble.ai.bubble-media` bubble (FullBrainSurface splits it out, the same as an image),
+   so the answer bubble's chrome is gone too — while the turn's "Thinking / Worked" foot
+   keeps its own normal bubble, where its disclosure renders correctly. */
+.tool-view:has(.tv-vid) {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+@keyframes fb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+@keyframes fb-think-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(164, 147, 201, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0);
+  }
+}
 
-  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
-  .caption b{color:var(--text);font-weight:600;}
-  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--amber-tint);color:var(--amber);}
+/* icon bases */
+/* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
+   attributes of their own (unlike components/icons.tsx). Without this they fall
+   back to the SVG default — a solid black fill — so the per-element `color`
+   rules below (steel, text-2, …) never took, which is why the Worked icons read
+   as black on every prior CSS-color pass. Drawing them as outlines that follow
+   `currentColor` is what makes those colors land. */
+.tw-ic,
+.tw-chev,
+.fb-step-caret {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+/* the fallback dot for a tool with no dedicated glyph — a small centered mark,
+   not the full 15px icon box (which would render as a big muted disc) */
+.fb-step-row .tw-bullet {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  background: var(--steel);
+}
+.fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.tw-bullet {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+  margin: 0 4px;
+}
 
-  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
-  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
-  .bar .ttl{font-size:16px;font-weight:600;}
-  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
-  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--amber);}
-  .bar .dot.done{background:var(--green);}
+/* ── InlineProposal + composer, verbatim ── */
+/* composer */
+.fb-composer {
+  margin: 0 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 10px;
+  flex: none;
+}
+.fb-composer textarea {
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+  min-height: 44px;
+  outline: none;
+}
+/* ===== Inline approval card (agent/InlineProposal; docs/mocks/inline-approvals/
+   d-one-tree.html) — one staged Proposal acted on IN the answer bubble: per-leaf
+   approve/decline-with-reason/correct-in-place and one double-tap Enact. ===== */
+.fb-inline-prop {
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.fb-inline-prop.loading {
+  padding: 12px 13px;
+  color: var(--text-3);
+  font-size: var(--fs-secondary);
+}
+.fb-inline-prop.done {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 13px;
+  color: var(--ok);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.fb-inline-prop.done .ip-check {
+  flex: none;
+}
+.fb-inline-prop .ip-sub {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  margin-top: 2px;
+}
+.ip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ip-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.ip-domain {
+  flex: none;
+}
+.ip-tree {
+  padding: 4px 8px;
+}
+.ip-group-head {
+  padding: 8px 6px 4px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ip-group-body {
+  margin-left: 3px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+.ip-leaf {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 8px;
+  padding: 8px 6px;
+  align-items: start;
+}
+.ip-leaf + .ip-leaf {
+  border-top: 1px solid var(--border);
+}
+.ip-leaf-main {
+  grid-column: 1;
+  min-width: 0;
+}
+.ip-leaf-label {
+  font-size: var(--fs-head);
+  color: var(--text);
+}
+.ip-leaf.out .ip-leaf-main {
+  opacity: 0.5;
+}
+.ip-leaf.out .ip-leaf-label {
+  text-decoration: line-through;
+}
+.ip-edited {
+  color: var(--warn);
+  font-size: var(--fs-micro);
+}
+.ip-value {
+  margin-top: 5px;
+}
+.ip-value-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text);
+  text-align: left;
+  cursor: text;
+}
+.ip-value-text:disabled {
+  cursor: default;
+}
+.ip-leaf.corrected .ip-value-text {
+  border-color: var(--warn);
+}
+.ip-pen {
+  color: var(--text-3);
+  flex: none;
+}
+.ip-edit-input {
+  width: 100%;
+  max-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.ip-held-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  color: var(--warn);
+  background: var(--warn-tint, var(--amber-tint));
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.ip-ctl {
+  grid-column: 2;
+  display: flex;
+  gap: 5px;
+}
+.ip-ctl button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: var(--fs-secondary);
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s, border-color 0.13s;
+}
+.ip-ok.on {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--bg);
+}
+.ip-ok.on.corrected {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.ip-no.on {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--bg);
+}
+.ip-reason {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 2px 2px;
+}
+.ip-reason-label {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.ip-reason-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.ip-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.ip-tally {
+  flex: 1;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.ip-tally b {
+  color: var(--text);
+}
+.ip-no {
+  color: var(--danger);
+}
+.ip-held {
+  color: var(--warn);
+}
+.ip-enact {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.ip-enact.armed {
+  background: var(--ok);
+}
+.ip-enact:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ip-ctl button,
+  .ip-enact {
+    transition: none;
+  }
+.fb-inline-prop.done .ip-check {
+  flex: none;
+}
+.ip-pen {
+  color: var(--text-3);
+  flex: none;
+}
+.ip-held-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  color: var(--warn);
+  background: var(--warn-tint, var(--amber-tint));
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.ip-tally {
+  flex: 1;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.ip-tally b {
+  color: var(--text);
+}
+.ip-held {
+  color: var(--warn);
+}
+.ip-enact {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.ip-enact.armed {
+  background: var(--ok);
+}
+.ip-enact:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ip-ctl button,
+  .ip-enact {
+    transition: none;
+  }
 
-  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
-  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
-  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
-  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
-  .ai b{font-weight:600;}
-  .sysline{align-self:flex-end;max-width:94%;display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:8px 12px;line-height:1.45;}
-  .sysline svg{width:13px;height:13px;flex:none;margin-top:1px;}
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 2 — MOCK SCAFFOLDING ONLY: the phone frame and its fake chrome.
+   ══════════════════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+[hidden]{display:none!important;}  /* a class `display` otherwise beats the UA rule */
+body{background:#000;color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+     display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;font-size:15px;}
+button{font-family:inherit;}
+button:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+svg:not(.tw-ic):not(.fb-step-caret){fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+.caption b{color:var(--text);font-weight:600;}
+.caption code{font-family:var(--font-mono);font-size:.9em;color:var(--violet);}
+.caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--amber-tint);color:var(--amber);}
+.phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+.topbar{flex:none;display:flex;align-items:baseline;gap:10px;padding:16px 16px 10px;}
+.topbar .ttl{font-size:21px;font-weight:700;letter-spacing:-.02em;}
+.topbar .st{margin-left:auto;font-size:12px;color:var(--amber);display:flex;align-items:center;gap:6px;}
+.topbar .st.done{color:var(--green);}
+.topbar .st i{width:7px;height:7px;border-radius:999px;background:currentColor;display:block;font-style:normal;}
+.chat{flex:1;overflow-y:auto;padding:4px 14px 14px;display:flex;flex-direction:column;gap:11px;}
+.bubble p{margin:0;}
+.turncard{border:1px solid var(--border);border-radius:16px;padding:12px 13px;}
+.turncard .bubble.ai{border:none;background:none;padding:0;max-width:100%;}
+.sysline{align-self:flex-end;max-width:94%;display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--ok);
+         background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:8px 12px;line-height:1.45;}
+.sysline.warm{color:var(--warn);}
+.sysline svg{width:13px;height:13px;flex:none;margin-top:1px;}
+.tabs{display:flex;border-top:1px solid var(--border);border-bottom:1px solid var(--border);flex:none;}
+.tabs span{flex:1;text-align:center;padding:12px 0;font-size:13.5px;color:var(--text-2);border-right:1px solid var(--border);}
+.tabs span:last-child{border-right:none;}
+.tabs .on{background:rgba(201,163,106,.09);color:var(--amber);}
+.foot-note{width:392px;max-width:94vw;padding:0 6px;color:var(--text-3);font-size:12.5px;line-height:1.55;}
+.foot-note b{color:var(--text-2);}
 
-  /* ===== the question card ===== */
-  .q{margin-top:9px;border:1px solid rgba(201,163,106,.3);border-radius:13px;background:var(--surface-2);overflow:hidden;}
-  .q.answered{border-color:var(--border);opacity:.72;}
-  .qhead{display:flex;align-items:flex-start;gap:10px;padding:11px 12px 9px;}
-  .qico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--amber-tint);color:var(--amber);}
-  .qico svg{width:15px;height:15px;}
-  .q.answered .qico{background:var(--green-tint);color:var(--green);}
-  .qmain{flex:1;min-width:0;}
-  .qkick{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);}
-  .q.answered .qkick{color:var(--green);}
-  .qtext{margin-top:5px;font-size:14.5px;line-height:1.45;color:var(--text);}
-  .qwhy{margin-top:7px;font-size:12px;line-height:1.5;color:var(--text-3);padding-left:10px;border-left:2px solid var(--border);}
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 3 — THE PROPOSED ADDITIONS for this variant.
+   ══════════════════════════════════════════════════════════════════════════ */
 
-  .opts{padding:2px 10px 10px;display:flex;flex-direction:column;gap:6px;}
-  .opt{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:10px;background:var(--bg);border:1px solid var(--border);font-size:13.5px;cursor:pointer;}
-  .opt:active{background:var(--surface);}
-  .opt .rad{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;}
-  .opt.sel{border-color:rgba(201,163,106,.45);background:var(--amber-tint);}
-  .opt.sel .rad{border-color:var(--amber);background:var(--amber);box-shadow:inset 0 0 0 3px var(--surface-2);}
-  .opt .sub{display:block;margin-top:2px;font-size:11.5px;color:var(--text-3);}
+/* The question card IS InlineProposal — .fb-inline-prop, .ip-head, .ip-tree, .ip-leaf,
+   .ip-foot, .ip-enact and its .armed double-tap state are all shipped, unchanged. These
+   are the only additions: the question line, the "why", and an option row's selected
+   state (the shipped leaf has approve/decline controls; a question has a choice). */
+.ip-q{padding:9px 12px 4px;font-size:var(--fs-body);line-height:1.4;color:var(--text);}
+.ip-why{padding:0 12px 4px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;}
+.ip-leaf.opt{cursor:pointer;border-radius:9px;}
+.ip-leaf.opt.sel{background:var(--accent-tint);}
+.ip-radio{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;margin-top:1px;display:block;}
+.ip-leaf.opt.sel .ip-radio{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3px var(--surface-2);}
+.ip-own{display:flex;align-items:center;gap:8px;margin:2px 6px 6px;padding:9px 10px;border-radius:9px;
+        border:1px dashed var(--border);color:var(--text-3);font-size:var(--fs-head);cursor:pointer;
+        background:none;width:calc(100% - 12px);text-align:left;}
+.ip-own svg{width:14px;height:14px;flex:none;}
+.ip-skip{flex:none;min-height:44px;padding:10px 14px;border:1px solid var(--border);border-radius:11px;
+         background:var(--surface);color:var(--text-2);font-size:var(--fs-secondary);cursor:pointer;}
 
-  .own{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:10px;background:var(--bg);border:1px dashed var(--border);font-size:13px;color:var(--text-3);cursor:pointer;}
-  .own svg{width:14px;height:14px;flex:none;}
-
-  .qfoot{display:flex;gap:8px;padding:0 10px 11px;}
-  .qbtn{flex:1;text-align:center;padding:10px;border-radius:10px;font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2);}
-  .qbtn.primary{background:var(--amber-tint);border-color:rgba(201,163,106,.4);color:var(--amber);font-weight:600;}
-  .qbtn.primary.armed{background:var(--amber);color:#17181b;border-color:var(--amber);}
-  .qbtn.dim{flex:0 0 auto;padding:10px 13px;color:var(--text-3);}
-
-  .answer{display:none;padding:0 12px 12px;}
-  .q.answered .answer{display:block;}
-  .q.answered .opts,.q.answered .qfoot{display:none;}
-  .answer .val{padding:10px 11px;border-radius:10px;background:var(--green-tint);border:1px solid rgba(143,188,154,.25);font-size:13.5px;color:var(--text);}
-  .answer .meta{margin-top:6px;font-size:11.5px;color:var(--text-3);}
-
-  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
-  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
-  .composer .input.hot{color:var(--text);border-color:rgba(201,163,106,.4);}
 </style>
 </head>
 <body>
 
 <div class="caption">
-  <span class="tag">Ask the user · variant A</span><br />
-  <b>Inline question card.</b> The same shape as the shipped <b>InlineProposal</b>: an
-  interactive card in the transcript that takes an answer and sends it back so the turn
-  resumes. Suggested answers are tappable; "in my own words" hands you the composer.
-  Double-tap to send — first tap arms, second enacts, the repo's settled doctrine.
+  <span class="tag">Ask the user · A — inline card</span><br />
+  <b>The shipped InlineProposal, with a question in place of a diff.</b> Same frame, same
+  <code>.ip-foot</code>, same <b>double-tap</b> Enact — first tap arms, second sends — which
+  is the repo's settled doctrine. Answering sends a message back and the turn resumes.
+  Pick an option, then tap <b>Send answer</b> twice.
 </div>
 
 <div class="phone">
-  <div class="bar">
-    <div class="ttl">Full Brain</div>
-    <div class="right"><span class="dot" id="dot"></span> <span id="state">waiting on you</span></div>
-  </div>
-
+  <div class="topbar"><div class="ttl">Full Brain</div><div class="st" id="st"><i></i> waiting on you</div></div>
   <div class="chat" id="chat">
     <div class="bubble me">Book the follow-up with Dr. Reyes for next Tuesday.</div>
 
-    <div class="bubble ai">
-      Before I stage that — one thing I shouldn't guess at.
-
-      <div class="q" id="q">
-        <div class="qhead">
-          <div class="qico">
-            <svg viewBox="0 0 24 24" id="qsvg"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
-          </div>
-          <div class="qmain">
-            <div class="qkick" id="kick">A question</div>
-            <div class="qtext">Your notes have two Dr. Reyes — which one?</div>
-            <div class="qwhy">Picking wrong would stage an appointment against the wrong
-              person, and I'd rather ask than guess.</div>
-          </div>
+    <div class="turncard">
+      <div class="bubble ai"><p>Before I stage that — one thing I shouldn't guess at.</p></div>
+      <div class="fb-inline-prop" id="card">
+        <div class="ip-head">
+          <svg class="ip-pen" width="15" height="15" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+          <span class="ip-title">A question</span>
         </div>
-
-        <div class="opts" id="opts">
-          <div class="opt" data-opt="Elena Reyes — cardiology">
-            <div class="rad"></div>
-            <div>Elena Reyes <span class="sub">Cardiology · last seen March</span></div>
+        <div class="ip-q">Your notes have two Dr. Reyes — which one?</div>
+        <div class="ip-why">Picking wrong stages an appointment against the wrong person.</div>
+        <div class="ip-tree">
+          <div class="ip-leaf opt" data-opt="Elena Reyes — cardiology">
+            <div class="ip-leaf-main">
+              <div class="ip-leaf-label">Elena Reyes</div>
+              <div class="ip-value"><span class="ip-value-text">cardiology · last seen March</span></div>
+            </div>
+            <div class="ip-ctl"><span class="ip-radio"></span></div>
           </div>
-          <div class="opt" data-opt="Marcus Reyes — dentistry">
-            <div class="rad"></div>
-            <div>Marcus Reyes <span class="sub">Dentistry · last seen November</span></div>
+          <div class="ip-leaf opt" data-opt="Marcus Reyes — dentistry">
+            <div class="ip-leaf-main">
+              <div class="ip-leaf-label">Marcus Reyes</div>
+              <div class="ip-value"><span class="ip-value-text">dentistry · last seen November</span></div>
+            </div>
+            <div class="ip-ctl"><span class="ip-radio"></span></div>
           </div>
-          <div class="own" id="own">
+          <button type="button" class="ip-own" id="own">
             <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
             Answer in my own words
-          </div>
+          </button>
         </div>
-
-        <div class="qfoot">
-          <div class="qbtn primary" id="send">Send answer</div>
-          <div class="qbtn dim" id="skip">You decide</div>
-        </div>
-
-        <div class="answer">
-          <div class="val" id="chosen">Elena Reyes — cardiology</div>
-          <div class="meta" id="ameta">Answered · the turn picked up from here</div>
+        <div class="ip-foot">
+          <span class="ip-tally" id="tally">Nothing picked yet</span>
+          <button type="button" class="ip-skip" id="skip">You decide</button>
+          <button type="button" class="ip-enact" id="send">Send answer</button>
         </div>
       </div>
     </div>
 
-    <!-- what appears after answering -->
-    <div class="sysline" id="sent" style="display:none">
-      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
-      <span id="sentTxt">Answered — Elena Reyes</span>
-    </div>
-
-    <div class="bubble ai" id="resumed" style="display:none">
-      Elena Reyes it is. Staged a follow-up for <b>Tuesday 23 September, 2:40pm</b> —
-      cardiology, same clinic as March. It's waiting for your approval.
-    </div>
+    <div class="sysline" id="sent" hidden><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span id="sentTxt"></span></div>
+    <div class="turncard" id="resumed" hidden><div class="bubble ai"><p>Elena Reyes it is. Staged a follow-up for <b>Tuesday 23 September, 2:40pm</b> — cardiology, same clinic as March. It's waiting for your approval.</p></div></div>
   </div>
-
-  <div class="composer"><div class="input" id="inp">Message…</div></div>
+  <div class="tabs"><span>+ Entry</span><span class="on">Research</span><span>Brain</span></div>
+  <div class="fb-composer"><textarea id="ta" rows="1" placeholder="Message…"></textarea></div>
 </div>
 
-<div class="caption" style="margin-top:2px">
-  <b>What it costs.</b> A card mid-bubble makes the turn visibly stop, and a model that
-  asks too often turns the transcript into a form. <b>What it buys:</b> the question sits
-  with the reasoning that raised it, the suggested answers make the common case one tap,
-  and <b>"You decide"</b> is always present — so a question you don't want is never a
-  dead end.
+<div class="foot-note">
+  <b>What it costs.</b> The turn visibly stops, and a model that asks too often turns the
+  transcript into a form. <b>What it buys:</b> the question sits with the reasoning that
+  raised it, the common case is one tap, and it reuses a component that already ships —
+  including its settled <b>done</b> state, which is what you see after sending.
 </div>
 
 <script>
-  const q = document.getElementById("q"), send = document.getElementById("send");
-  let chosen = null, armed = false;
 
-  for (const opt of document.querySelectorAll("[data-opt]")) {
-    opt.addEventListener("click", () => {
-      for (const o of document.querySelectorAll("[data-opt]")) o.classList.toggle("sel", o === opt);
-      chosen = opt.dataset.opt;
-      armed = false; send.classList.remove("armed"); send.textContent = "Send answer";
-    });
-  }
-  document.getElementById("own").addEventListener("click", () => {
-    const inp = document.getElementById("inp");
-    inp.classList.add("hot"); inp.textContent = "The cardiologist — Elena…";
-    for (const o of document.querySelectorAll("[data-opt]")) o.classList.remove("sel");
-    chosen = null;
+let chosen=null, armed=false;
+const send=document.getElementById("send"), tally=document.getElementById("tally"), card=document.getElementById("card");
+for(const o of document.querySelectorAll("[data-opt]")){
+  o.addEventListener("click",()=>{
+    for(const x of document.querySelectorAll("[data-opt]")) x.classList.toggle("sel", x===o);
+    chosen=o.dataset.opt; tally.textContent=chosen;
+    armed=false; send.classList.remove("armed"); send.textContent="Send answer";
   });
+}
+document.getElementById("own").addEventListener("click",()=>{
+  const ta=document.getElementById("ta"); ta.value="The cardiologist — Elena"; ta.focus();
+  for(const x of document.querySelectorAll("[data-opt]")) x.classList.remove("sel");
+  chosen="The cardiologist — Elena"; tally.textContent="typing your own answer…";
+  armed=false; send.classList.remove("armed"); send.textContent="Send answer";
+});
+function settle(text){
+  card.className="fb-inline-prop done";
+  card.innerHTML='<svg class="ip-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>'+
+    '<span>Answered — '+text+'<span class="ip-sub">the turn picked up from here</span></span>';
+  document.getElementById("sentTxt").textContent=text;
+  document.getElementById("sent").hidden=false;
+  const st=document.getElementById("st"); st.className="st done"; st.innerHTML='<i></i> curator';
+  setTimeout(()=>{ document.getElementById("resumed").hidden=false;
+    document.getElementById("chat").scrollTop=9999; },400);
+}
+send.addEventListener("click",()=>{
+  if(!chosen){ send.textContent="Pick one first"; setTimeout(()=>send.textContent="Send answer",1100); return; }
+  if(!armed){ armed=true; send.classList.add("armed"); send.textContent="Tap to send"; return; }
+  settle(chosen);
+});
+document.getElementById("skip").addEventListener("click",()=>settle("You decide — it chose Elena (cardiology)"));
 
-  function settle(text, kick) {
-    document.getElementById("chosen").textContent = text;
-    document.getElementById("kick").textContent = kick;
-    q.classList.add("answered");
-    document.getElementById("qsvg").innerHTML = '<path d="M20 6L9 17l-5-5"/>';
-    document.getElementById("sentTxt").textContent = "Answered — " + text;
-    document.getElementById("sent").style.display = "flex";
-    document.getElementById("dot").classList.add("done");
-    document.getElementById("state").textContent = "curator";
-    setTimeout(() => {
-      document.getElementById("resumed").style.display = "block";
-      document.getElementById("chat").scrollTop = 9999;
-    }, 420);
-  }
-
-  send.addEventListener("click", () => {
-    if (!chosen) { send.textContent = "Pick one first"; setTimeout(() => (send.textContent = "Send answer"), 1100); return; }
-    if (!armed) { armed = true; send.classList.add("armed"); send.textContent = "Tap to send"; return; }
-    settle(chosen, "Answered");
-  });
-  document.getElementById("skip").addEventListener("click", () => {
-    document.getElementById("ameta").textContent = "You let it decide · it picked the cardiologist and said so";
-    settle("You decide — it chose Elena Reyes (cardiology)", "You decided not to answer");
-  });
 </script>
 </body>
 </html>
