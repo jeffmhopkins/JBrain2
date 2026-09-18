@@ -1614,7 +1614,7 @@ async def gateway_load(
     tool schemas — into the gateway KV cache so the operator's first conversation turn
     reuses that prefix instead of paying the cold persona+tools prefill (the 60-90s
     first-response latency owners hit right after Load,
-    docs/archive/LLM_PROMPT_CACHE_PLAN.md). The tools MUST be primed too: under the
+    docs/reference/PROMPT_CACHE.md). The tools MUST be primed too: under the
     gateway's `--jinja` the template renders them into the prompt's leading tokens, so a
     persona-only warm diverges from a real (tool-carrying) turn before the reusable prefix
     ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);

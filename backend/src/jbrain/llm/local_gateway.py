@@ -868,7 +868,7 @@ class LocalGatewayClient:
         the first real turn carrying the same leading system prompt then reuses that prefix
         instead of prefilling the large static persona prompt cold (the tens-of-seconds
         first-token cost on a big model), moving that cost into the load the operator is
-        already waiting on (docs/archive/LLM_PROMPT_CACHE_PLAN.md).
+        already waiting on (docs/reference/PROMPT_CACHE.md).
 
         `warm_tools` MUST carry the same tool schemas the real turn sends. Under the
         gateway's `--jinja`, the model's chat template renders the tool definitions into

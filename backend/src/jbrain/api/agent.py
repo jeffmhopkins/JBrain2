@@ -1251,7 +1251,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     conversation = _conversation(
         body, images, attach_text, anchored=anchored, live_anchor=live_anchor
     )
-    # Cache-stable prompt layout (docs/archive/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
+    # Cache-stable prompt layout (docs/reference/PROMPT_CACHE.md): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local
     # gateway's KV cache can reuse turn-over-turn; put the VOLATILE blocks (presence, "now")
     # right before the newest user message instead of at the head, so a per-turn change no

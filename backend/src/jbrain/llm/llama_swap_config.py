@@ -330,7 +330,7 @@ def render(
             # under-reserves on the box's freeze path.
             "-cram",
             "0",
-            # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of a
+            # Prompt-prefix KV reuse (docs/reference/PROMPT_CACHE.md): keep the KV of a
             # matching
             # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is
             # the min

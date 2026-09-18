@@ -70,6 +70,9 @@ class _FakeRouter:
         # Shared so the prime can be ordered against the load/restore the gateway records.
         self._gateway = gateway
         self.effort: str | None = "low"
+        # Every prime's max_tokens. The store's exact-integer save gate is sound ONLY because
+        # the prime generates exactly one token; nothing asserted it.
+        self.max_tokens: list[int] = []
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
@@ -91,6 +94,7 @@ class _FakeRouter:
             await self._gateway.load(served_model)
 
     async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096):
+        self.max_tokens.append(max_tokens)
         if self._gateway is not None:
             self._gateway.events.append("prime")
         if self.fail:
@@ -551,3 +555,18 @@ async def test_a_failing_prime_backs_off_instead_of_hammering_the_box() -> None:
     assert keeper._retry_delay() == 16.0
     keeper._failures = 99
     assert keeper._retry_delay() == 60.0, "and never slower than the steady poll"
+
+
+async def test_the_prime_generates_exactly_one_token() -> None:
+    """The load-bearing premise of the whole save path, and nothing asserted it.
+
+    `save_after_prime` identifies the primed slot by an EXACT integer match on the prime's own
+    `usage.input_tokens`. That works only because the server appends every sampled token to
+    the slot's cache except the final stop token — so a `max_tokens=1` prime leaves the cache
+    at precisely its prompt size. Raise it and no slot ever matches: the save is skipped and
+    logged, the disk layer goes silently inert, and every test stays green. The store's own
+    comment says "if slot_unidentified becomes chronic, look here first" — this is that look,
+    made automatic."""
+    keeper, _gateway, router, _store = _kept_with_store()
+    assert await keeper.reconcile_once() is True
+    assert router.max_tokens == [1], "a prime that generates more can never be identified"
