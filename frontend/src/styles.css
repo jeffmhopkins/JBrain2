@@ -961,8 +961,15 @@ button.chip-ask {
   display: flex;
   /* `.icon-btn` bleeds 8px past its layout box on each side, so a 14px gap left the two
      44px hit areas overlapping by 2px — and a near-miss on the paperclip SENDS the note.
-     24px puts 8px of dead space between them. */
-  gap: calc(24px * var(--font-scale));
+     24px puts 8px of dead space between them.
+
+     This gap does NOT scale, and that is the point. #1420's scaling sweep took it to
+     `calc(24px * var(--font-scale))`, but the thing it spaces — the 44px hit area and the
+     8px bleed `.icon-btn` pulls back with — is absolute, so scaling only this side ate the
+     dead space: 2px at the shipped 75% default, and at 65% the paperclip's and send's hit
+     areas OVERLAPPED again by 0.4px, which is the exact failure the 24px was chosen to
+     end. A tap floor is absolute (DESIGN.md), so the spacing that clears it is too. */
+  gap: 24px;
   align-items: center;
 }
 
