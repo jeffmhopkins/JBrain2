@@ -3,7 +3,7 @@
 > **Status:** GUI gate **settled** — **two** binding mocks, because the surface turned out
 > to be two: **G** (`g-cited-floating.html`) for the in-prose path, and **H**
 > (`h-worked-ledger.html`) for the Worked panel. A–F are retained as the record. Nothing is
-> built yet; the build plan is the next artifact. The tools themselves shipped in
+> built yet; the build plan is `../../plans/SHOW_THE_WORKING_PLAN.md`. The tools themselves shipped in
 > `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that makes their working
 > legible.
 
@@ -121,10 +121,15 @@ proposed additions — so a reviewer can see exactly what is being asked for.
 
 **And what is being asked for is two CSS rules.** Reading the real code changed the size of
 this: **`.fb-step-cnt` already exists**, is already styled, and already sits exactly where a
-result belongs — between the status dot and the caret. It is populated by **two tools**,
-`search` and `web_search` (`FullBrainSurface.tsx:1803,1808`), which is why a live screenshot
-shows *"5 results"* on one row and nothing on the next. **Every tool filling it is the whole
-ledger.** The additions are `.fb-step-cnt.res` (a computed answer reads green, not grey like
+result belongs — between the status dot and the caret. When this gate ran it was populated by
+**two tools**, `search` and `web_search`, which is why a live screenshot shows *"5 results"* on
+one row and nothing on the next. **Every tool filling it is the whole ledger.**
+
+*Since confirmed from the other side:* main has since added the entity-write and resolve
+phrases to the same slot (`fbw-cnt fbw-*`), for this README's own reason — the call that
+creates the owner's records was reading as a call that did nothing. So the ledger is an
+established direction to finish rather than a new one to argue for, and main has set the
+modifier-class convention the build plan follows. The additions are `.fb-step-cnt.res` (a computed answer reads green, not grey like
 a count) and `.fb-code` (the one step that needs more than a line of text).
 
 **What a row says.** Today a row carries what was *asked* —
@@ -163,9 +168,9 @@ needs no new mechanism — it is `fb-step-cnt`, populated from a per-tool result
 first is smaller; the second is what would let the step and G's popover share one component.
 
 *Also noted from the owner's screenshots:* the live box renders the raw-payload toggle as
-**"what the agent sent"** where this checkout still says `"raw result"`
-(`FullBrainSurface.tsx:1898`). The box is ahead of this branch; the mock uses the live
-wording.
+**"what the agent sent"** where this checkout said `"raw result"`. The mock used the live
+wording, and merging main confirmed it — the shipped string is
+`"what the agent sent"` (`FullBrainSurface.tsx:2255`). No discrepancy remains.
 
 ### How G and H divide, and why both are needed
 

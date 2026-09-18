@@ -1,10 +1,35 @@
 # Ask the user — a tool that stops and asks instead of guessing
 
-> **Status:** GUI gate **settled on A** (2026-09-18), with one amendment the owner made at
-> the gate: **a multiple-choice question always carries a written-answer row.** Nothing built
-> yet — no `ask_user` tool exists; the build plan is the next step.
+> **Status:** GUI gate **settled on A** (2026-09-18) and then **overtaken by shipped code**
+> — kept as the record, not as the spec. While this gate ran, main landed `ask_owner`
+> (`backend/src/jbrain/agent/asktools.py`) and **`QuestionBlock`**
+> (`frontend/src/agent/QuestionBlock.tsx`), which answer the same question for a note thread.
+> **`QuestionBlock` is the binding surface.** What survives from this gate is the owner's
+> amendment — a multiple-choice question always carries a written answer — which the shipped
+> component already satisfies. What does not survive is A's posting model. See
+> `../../plans/SHOW_THE_WORKING_PLAN.md` W4, which widens the shipped surface rather than
+> building a second one.
 
-## The problem
+## What the shipped component decided differently, and better
+
+**A question block cannot start a turn.** `QuestionBlock` keeps every selection as local
+state and borrows the composer's send; **A posts its own turn**, `InlineProposal`-style.
+The shipped decision is right for an arithmetic reason A did not account for: `ask_owner`
+asks a **set**, and three answers that each posted would be three turns, three clarification
+blocks and three re-reads of the note — the exact cost batching exists to remove. A stray tap
+on the shipped block also costs nothing, where a stray Enact burns a turn.
+
+**The written escape is already a component rule.** `QuestionRow` appends **"Something
+else"** to any row with candidates, revealing the same text field. The component appends it;
+the model does not supply it and cannot suppress it — which is exactly the invariant argued
+for below, enforced where the argument said it belonged. The one thing it lacks is a test
+*saying* so, which `SHOW_THE_WORKING_PLAN.md` D6 adds.
+
+## The problem, as it stood when this gate opened
+
+*Since overtaken — `ask_owner` now does exactly this inside a note thread. The statement
+below held when the gate ran, and still holds for a plain conversation, which is what
+`SHOW_THE_WORKING_PLAN.md` W4 addresses.*
 
 The agent has no way to ask a question and *wait*. It can stage a Proposal and it can end
 a turn, but there is no path for "I need one fact from you before the rest of this is

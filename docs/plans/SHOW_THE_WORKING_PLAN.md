@@ -1,4 +1,4 @@
-# Show the working — the code-run surfaces and `ask_user`
+# Show the working — the code-run surfaces, and the question that reaches the chat
 
 > **Status:** Scheduled · **Last verified:** 2026-09-18 · **Waves:** W1◻️ W2◻️ W3◻️ W4◻️
 
@@ -10,15 +10,54 @@ cannot be fluent and wrong. But they shipped **with no view of their own**: the 
 produced a number is persisted on the turn and shown nowhere, so the one tool whose entire
 value is that its answer can be **checked** produced answers you still had to take on trust.
 
-This plan builds the surfaces that finish that job, plus the tool that prevents the same
+This plan builds the surfaces that finish that job, plus the one that prevents the same
 failure one level up:
 
 - **You can see where a number came from** — G, the cited computation.
 - **You can see what ran, in what order, and what failed** — H, the Worked-panel ledger.
-- **It asks instead of guessing** — `ask_user`, variant A.
+- **It asks instead of guessing** — the question surface, reaching the conversation.
 
 The three are one idea: *the model's confidence is not evidence.* Two of them make its work
 inspectable after the fact; the third stops it manufacturing work from a premise it invented.
+
+## What main landed while this branch was in the GUI gate
+
+Merging main before writing the first line of code changed one of the three waves
+substantially, and the honest thing is to say so rather than build a second version of
+something that ships:
+
+**`ask_owner` exists** (`agent/asktools.py`, `agent/tools/ask_owner.tool` v4). A note
+conversation's agent asks a batched **set** of questions, each with the question, what it
+blocks in the owner's words, and candidates; the questions become durable **inside the ask
+transaction** (not at the turn seam, because the reply path reads them back); the
+conversation goes to `waiting_on_owner`; and the turn ends — via `ToolOutput(halt=...)`
+and the loop, deliberately *not* by asking the model in prose to stop. One open set at a
+time; a second ask is refused and reports the set that is open.
+
+**`QuestionBlock` exists** (`agent/QuestionBlock.tsx`, `.fb-q-*`), and it already renders
+the thing the ask-user gate was called to settle — one row per question, *blocks · why*,
+tappable candidates, and a text field.
+
+**Two of that component's decisions are better than the ones the gate reached,** and this
+plan adopts them rather than arguing:
+
+- **It cannot start a turn.** Selecting a candidate is local state; nothing posts. The
+  submit is the composer's, because three answers that each posted their own turn would be
+  three turns, three clarification blocks and three re-reads — the exact cost a *batched*
+  ask exists to remove. Mock A posts its own turn, `InlineProposal`-style. **A is wrong on
+  this point and the shipped component is right.**
+- **A question set, not a question.** Everything the pass is stuck on goes in one call.
+
+**What the gate got right is already in the shipped code too.** The owner's condition on
+variant A — *a multiple-choice question must always let me write a custom answer* — is
+satisfied by `QuestionRow`: whenever a row has candidates and is not frozen, the component
+appends **"Something else"**, which reveals the same text field. The component appends it;
+the model does not supply it and cannot suppress it. That is the invariant, already
+enforced where it belongs.
+
+**So `ask_user` is not a tool to build.** It is `ask_owner` + `QuestionBlock` reaching a
+*conversation* instead of only a note thread — see W4, which is now much smaller and much
+better founded than the one the gate implied.
 
 ## What is already true, and therefore not in scope
 
@@ -30,16 +69,21 @@ Reading the live code shrank this plan considerably. Recorded here so no wave re
   already reports, from the settled `../mocks/assistant-tooluse-1-inline-accordion.html`. H is
   **not a new panel and not a new disclosure** — it is what each tool renders into the one that
   is already there.
-- **The ledger's slot exists.** `.fb-step-cnt` is styled and sits exactly where a result belongs,
-  between the status dot and the caret. It is populated by **two tools**, `search` and
-  `web_search` (`FullBrainSurface.tsx:1803,1808`) — which is why a live screenshot shows
-  *"5 results"* on one row and nothing on the next. **Every tool filling it is the whole ledger.**
+- **The ledger's slot exists, and main has started filling it.** `.fb-step-cnt` is styled and
+  sits exactly where a result belongs, between the status dot and the caret. When this gate
+  opened it was populated by **two** tools, `search` and `web_search`; main has since added the
+  entity-write and resolve phrases (`fbw-cnt fbw-*`), for the reason this plan gives — *"the one
+  call that creates the owner's records read as a call that did nothing."* So the ledger is not
+  a new idea to sell; it is an established one to **finish**, and main has already set the
+  convention (a modifier class per result kind) that D1's `.fb-step-cnt.res` follows. The
+  remaining work is that the slot is filled by four hardcoded per-tool branches rather than by
+  every tool.
 - **The view registry exists.** `views/registry.tsx` maps a `view` name to a first-party
   component and renders **nothing** for an unknown name (DESIGN.md invariant #1/#9). A new
   tool-view is a deliberate edit to that map, like adding a tool.
-- **The synchronous ask-and-resume path exists.** `InlineProposal` takes an owner action in the
-  transcript and sends a server-authored outcome back as a follow-up turn. `ask_user` is that
-  mechanism with a question in place of a diff.
+- **The whole ask-and-answer path exists** — `ask_owner`, the loop's `halt`, `QuestionBlock`,
+  and the reply that consumes an open set. It is bound to a note thread, and only to a note
+  thread. W4 is that binding, not a rebuild.
 - **Per-call duration is already carried and persisted.** `ToolResultEvent.duration_ms`.
 
 ## The settled surfaces
@@ -52,7 +96,7 @@ mock looks wrong in the app.
 |---|---|---|---|
 | **G** | `../mocks/code-run/g-cited-floating.html` | *"Where did **this number** come from?"* | an `ƒn` marker on the number, in the prose |
 | **H** | `../mocks/code-run/h-worked-ledger.html` | *"What ran, in what order, and what failed?"* | the Worked panel, collapsed to one button |
-| **A** | `../mocks/ask-user/a-inline-card.html` | *"Which one did you mean?"* | a question card in the transcript |
+| **A** | `../mocks/ask-user/a-inline-card.html` — **partly superseded**, see above | *"Which one did you mean?"* | a question card in the transcript |
 
 H is what closes G's hole: **a call that failed produced no number, so it earns no marker and
 is invisible in G.** The panel is the only place it ever appears, and it opens itself there the
@@ -125,48 +169,51 @@ anything the model wrote at render time. A marker that resolves to no call **ren
 the same rule `ToolView` applies to an unknown view name. This is what keeps G from becoming a
 way for model output to assert a computation happened that did not.
 
-### D4 — `ask_user` renders A's card but stores C's record
+### D4 — the question surface is widened, not duplicated
 
-The gate chose A. The ingest plan's binding constraint #8 is unconditional: **no question may be
-filed without a declared `default_action` and `default_at`**
-(`AGENT_INGEST_CONVERSATION_PLAN.md`).
+`ask_owner` is bound to `note_ingest` by allowlist, and `FullBrainSurface` feeds
+`QuestionBlock` only inside a note thread (*"Absent on every turn that asked nothing, which
+is every turn outside a note thread"*). Everything else it needs already works.
 
-These are not in conflict, and the resolution is worth stating plainly because it is the thing
-that stops two incompatible question systems existing:
+**So W4 widens the binding and builds no second question system.** The tool, its halt, its
+durability-at-ask-time, its one-open-set rule, the block, the candidates and the written
+escape are all reused as they stand.
 
-> **The tool schema requires `default_action` and `default_at`. The card does not render them.**
+**The one thing that does not carry over is the store.** `ask_owner`'s questions hang off a
+**note conversation** — `waiting_on_owner` is a note-conversation state, and the reply path
+consumes an open set against that row. A `/chat` conversation has no such row. W4's real
+work is that binding, and it is the wave's one genuine design question rather than a
+formality (see the open decisions below).
 
-A synchronous question that gets answered never needs its default — but a turn the owner walks
-away from is exactly the case the default exists for, and that case does not announce itself in
-advance. Requiring the field costs the model one sentence of thought it should be having anyway
-("what will I do if nobody answers?"), and it means variant C is later a **render change with no
-migration**: C is A plus two rows, and the rows' data is already in the record.
+### D5 — a conversational answer mints no note
 
-### D5 — a synchronous answer mints no note; a parked one does
+The ingest plan's D7 makes an owner's answer mint an owner-authored note so the graph stays
+re-derivable, and in a note thread the answer is appended to the note as source text and
+re-ingested. That is right *there*: the question was about a note, and the answer is a
+correction to it.
 
-The ingest plan's D7 makes an owner's answer mint an owner-authored note, so the graph stays
-re-derivable. Applied literally to every clarifying question, that floods the note store with
-*"the cardiology one"*.
+Applied to a conversation it is wrong. *"The cardiology one"* is not a fact about the world;
+it is a disambiguation scoped to the turn that asked, and minting it would fill the corpus
+with answers that mean nothing away from their question. So: **a conversational answer
+returns to the model as a tool result and mints nothing.** An answer that asserts a fact
+goes through the agent's normal commit path, where it mints a note like any other fact —
+because that is a claim the graph should carry, not because it arrived as an answer.
 
-The boundary: an answer that resolves a **reference** ("which Dr. Reyes") returns to the model
-as a tool result and mints nothing — it is scoped to the turn and re-derivable from the turn.
-An answer that asserts a **fact about the world** ("the new clinic is on Harrow St") goes through
-the agent's normal commit path, where it mints a note like any other fact, because that is a
-claim the graph should carry.
+This is a boundary, not an exception to D7: D7 governs a note conversation's answers, which
+keep behaving exactly as they do today.
 
-**This is flagged for the owner below** — it is the one decision here that trades against a
-ratified one.
+### D6 — the written escape gets a test that names it, because it is load-bearing
 
-### D6 — the written-answer row is a component invariant with a test
+`QuestionRow` already appends **"Something else"** to any row with candidates. What it does
+not have is a test that says *this is a rule*, so the next refactor that makes the escape
+conditional — on candidate count, on a model flag, on "the model said these are exhaustive"
+— would pass CI.
 
-From the gate: the card appends *"Something else — I'll write it"* itself, whatever options the
-model supplied. A prompt-level rule would be followed until the one time it wasn't, and that one
-time is the question where a closed set of choices pushes the owner into an answer that is wrong
-— a new way to produce the failure this tool exists to prevent.
-
-So: a unit test renders the card with a model payload containing only closed options and asserts
-the written row is present and sends. No new CSS — `.ip-reason-input` already ships on this card
-for decline-with-reason, the same shape of a structured choice with a written escape.
+A closed set of choices is a new way to get a wrong answer: if none of the options is right,
+the owner picks one anyway, and a confident wrong answer is worse than the guess the tool
+exists to prevent. That is worth one test asserting that a row built from candidates alone
+still offers the written escape, and that the escape is not derived from anything the model
+sent.
 
 ## Waves
 
@@ -177,9 +224,12 @@ Every tool fills the slot that already exists.
 - `result_brief` on `ToolResultEvent`; persisted in `transcript_accumulator.py`; carried into
   `ToolStep` in `toolSummary.ts`.
 - Every handler in the roster fills it, or lands in the exemption list with a reason.
-- `.fb-step-cnt` rendered from it for every tool, not just `search` / `web_search` (removing the
-  two hardcoded blocks at `FullBrainSurface.tsx:1803,1808`).
+- `.fb-step-cnt` rendered from it for every tool, replacing the four hardcoded per-tool branches
+  in `StepRow` — the two `search` / `web_search` counts and the two `fbw-cnt` write phrases — with
+  one field. The write phrases keep their modifier classes; what changes is where the string comes
+  from.
 - One new CSS rule: `.fb-step-cnt.res` — a computed answer reads green, not grey like a count.
+  Same shape as main's `fbw-*` modifiers, so the row keeps one vocabulary.
 - `test_tool_step_polish.py` gains the result-brief policy assertion.
 
 Independently valuable and independently shippable: after W1 every Worked row says what came
@@ -214,30 +264,43 @@ sentence reads as rigour or as clutter. If it reads as clutter, the fallback is 
 **first** computed figure in a clause and let its popover list the rest — a prompt change, not a
 rebuild, which is why this wave is cheap to get wrong.
 
-### W4 — `ask_user`
+### W4 — the question reaches the conversation
 
-- The `.tool` sidecar: question, options (0..n), `why`, `default_action`, `default_at` (D4).
-- The handler stages the question and the turn ends — the existing end-and-resume path, not a
-  blocking call inside the loop. **Nothing in the agent loop waits on a human.**
-- The card (A), the written-answer row and its test (D6), the resume as a data-framed follow-up
-  turn.
-- Persona grants: **never `intake`.** A non-owner stranger's session must not be able to put a
-  question in front of the owner — the first thing an injected instruction would reach for.
-- The question record carries C's fields whether or not C's rows render.
+Not a new tool and not a new card. `ask_owner` and `QuestionBlock` already do the asking;
+this wave is the binding that lets them happen outside a note thread.
 
-**W4's store is blocked** on `AGENT_INGEST_CONVERSATION_PLAN.md` — see below.
+- **Bind `ask_owner` past `note_ingest`** — the allowlist, and the personas that hold it.
+- **A conversation-scoped open set.** `waiting_on_owner` is a note-conversation state; a
+  `/chat` conversation needs the equivalent, and it is the wave's real work (see the open
+  decision below for the two shapes).
+- **Feed `ask` outside a note thread.** `FullBrainSurface` already routes `ask` into
+  `QuestionBlock`; today nothing populates it for a plain conversation. The component and
+  its CSS are reused unchanged.
+- **The written-escape test** (D6).
+- **Personas: never `intake`.** Already argued in `agents.py` and stronger than the version
+  this plan first wrote: an intake question is *model-authored from stranger-controlled
+  text*, reaches the owner in his own agent's voice after the review step that is the whole
+  trust boundary, and his typed answer is appended as source and re-ingested — an unreviewed
+  inbound message channel with a stranger at its source. That reasoning is binding here too,
+  and it extends to any future non-owner principal.
+
+**Mock A survives only in part.** Its layout question is answered by a shipped component;
+its posting model is wrong (D4); its free-text rule is right and already enforced. The mock
+is kept as the record of the gate, marked accordingly.
 
 ## Binding constraints
 
 1. **Model output never authors markup, URL or colour.** DESIGN.md invariant #1/#9. Applies to
-   `code_run`'s slots, to G's popover, and to the question card's option labels.
+   `code_run`'s slots, to G's popover, and to a question's candidate labels.
 2. **An unresolvable reference renders as nothing** — an unknown view name, a marker with no
    call. Never a placeholder, never an error the owner has to interpret.
-3. **`ask_user` never blocks the agent loop.** A turn that ends is a turn that ended; the answer
-   arrives as a new turn. Anything else puts a human in a timeout path.
-4. **One question model.** `ask_user`'s record is the ingest plan's question row — one store, one
-   expiry ladder, one queue. A second question system is the failure this design is shaped to
-   avoid.
+3. **Asking never blocks the agent loop.** `ask_owner` already does this correctly — the handler
+   returns `ToolOutput(halt=...)` and the loop finishes the turn, rather than the prompt asking
+   the model to stop. The answer arrives as a new turn. Anything else puts a human in a timeout
+   path, and a prose obligation is not a mechanism.
+4. **One question model.** One tool, one block, one open-set rule, whether the question came
+   from a note or a conversation. A second question system is the failure W4 is shaped to
+   avoid, and it is now an easy failure to have: the tool it would duplicate already ships.
 5. **New fields are defaulted.** Stored turns predate them and must still load.
 6. **No new runtime dependency.** Syntax highlighting is component-owned token classes, not a
    highlighting library.
@@ -248,44 +311,49 @@ rebuild, which is why this wave is cheap to get wrong.
 surfaces are read-only views over calls that already happened. Two things are genuinely new and
 worth naming:
 
-**A question card is a first-party surface rendering model-authored text,** and the model's text
-can be induced by a note body or a fetched web page ("confirm your account to continue"). That is
-the same exposure tool results already carry, but a card that *asks for input* is a better target
-than a card that displays output. The card must never render a link, a field that looks like a
-credential prompt, or anything outside the closed set of affordances the mock shows. **A red-team
-pass on the card is part of W4's gate**, not a follow-up.
+**A question block is a first-party surface rendering model-authored text,** and that text can
+be induced by a note body or a fetched web page ("confirm your account to continue"). A surface
+that *asks for input* is a better target than one that displays output. `QuestionBlock` is
+already built to the right shape — it renders no link and no model-authored markup — and W4
+must not widen it. The exposure W4 genuinely adds is **reach**: a conversation can hold web
+content a note thread cannot, so the tool that was previously asked only about the owner's own
+note can now be asked from a turn that just read the internet. `agents.py`'s existing argument
+for dropping `ask_owner` from the third-party set is the precedent, and **a red-team pass on the
+widened binding is part of W4's gate**, not a follow-up.
 
 **G's marker is an assertion that a computation happened.** Resolving it against the persisted
 call rather than against anything written at render time (D3) is what keeps a model unable to
 claim arithmetic it never did. Worth a test that says so directly.
 
-Neither wave touches RLS, the domain firewall, or principal scope. W4 adds a table (the question
-record) if the ingest plan has not already added it — which needs an RLS isolation test per
-CLAUDE.md #3, and the health/finance/location `never` from D2 is a firewall concern, not a
-preference.
+W1–W3 touch neither RLS, the domain firewall, nor principal scope. W4 touches principal scope
+by definition — it decides who may put a question in front of the owner — and if its open set
+needs a new table, that table needs an RLS isolation test per CLAUDE.md #3.
 
 ## Open decisions for the owner
 
-1. **D5 — does a clarifying answer mint a note?** The proposal above says a reference-resolving
-   answer does not and a fact-asserting one does. This trades against ratified D7 ("owner answers
-   mint owner-authored notes"), so it is the owner's to confirm rather than mine to assume.
-2. **W4's sequencing.** `ask_user` shares the ingest plan's question store, and that plan is
-   *awaiting owner sign-off, no code written*. Three options: build W4's store first and have the
-   ingest plan adopt it; wait for the ingest plan's Wave 0; or build W4 synchronous-only, with no
-   store at all, where an unanswered question simply dies with the turn. **The third is the
-   honest MVP** — it ships the whole of variant A, which never renders a parked state anyway, and
-   defers the store to the plan that actually owns it. The `default_action` / `default_at` fields
-   are still required from day one (D4) so the record is forward-compatible when the store lands.
+1. **Where a conversational question's open set lives.** `ask_owner`'s durability hangs off a
+   note-conversation row, and a `/chat` conversation has none. Two shapes:
+   **(a)** give the conversation the same open-set column and reuse the reply path whole, or
+   **(b)** keep the set in the turn's own record and let it die with the conversation, which is
+   simpler and means an unanswered conversational question is simply forgotten. **(b) is the
+   honest MVP** — a question asked in chat that nobody answered has no queue to belong to and
+   no note to correct — but it is the owner's call, because it decides whether a chat question
+   can ever reach the notes-tab queue.
+2. **D5 — does a conversational answer mint a note?** The plan says no, and that a fact worth
+   keeping should land through the normal commit path rather than because it arrived as an
+   answer. This narrows ratified D7 to the context D7 was written for, so it is worth an
+   explicit yes rather than an assumption.
 
-W1–W3 depend on none of this and can start immediately.
+W1–W3 depend on neither and can start immediately.
 
 ## Docs to reconcile at merge
 
 - `../reference/DESIGN.md` — `code_run` added to the tool-view registry; the question card's
   closed affordance set; `.fb-step-cnt` as a universal slot rather than a two-tool one.
-- `../reference/ASSISTANT.md` — `ask_user` in the tool roster and its persona grants.
+- `../reference/ASSISTANT.md` — `ask_owner`'s widened persona grants and the conversational
+  question surface.
 - `../mocks/code-run/README.md`, `../mocks/ask-user/README.md` — gate status → built.
 - `../ROADMAP.md` — this plan's status.
-- `AGENT_INGEST_CONVERSATION_PLAN.md` — whichever sequencing option the owner picks, and D5's
-  outcome against its D7.
+- `AGENT_INGEST_CONVERSATION_PLAN.md` / `AGENT_INGEST_REWRITE.md` — the open-set shape the
+  owner picks, and D5's narrowing of D7 to the note-thread context.
 - This plan archives to `../archive/` in the PR that lands its last wave.

@@ -490,13 +490,19 @@ a computed number carries an `ƒn` marker and cites its working in a floating po
 (`mocks/code-run/h-worked-ledger.html`) — every Worked row carries **argument → result**, the failed
 call included, which is the half G structurally cannot show; **A** (`mocks/ask-user/a-inline-card.html`)
 — a question card in the transcript, whose written-answer row the *component* appends whatever options
-the model supplied, so a closed set of choices can never push the owner into a wrong one. Reading the
+the model supplied, so a closed set of choices can never push the owner into a wrong one. **A is kept
+as the record, not the spec:** main landed `ask_owner` + `QuestionBlock` while this gate ran, which
+answer the same question for a note thread and answer one part of it better (the block cannot start a
+turn — three answers that each posted would be three turns, which is the cost a batched ask exists to
+remove), and which already enforce the owner's written-escape amendment. So W4 is not a new tool or a
+new card: it is the binding that lets the shipped surface reach a plain conversation. Reading the
 live code shrank the work: `.fb-step-cnt` already exists and is filled by only `search` / `web_search`,
 so the ledger is one backend field (`result_brief`) plus one CSS rule, enforced by extending
 `test_tool_step_polish.py`. Decides H's open question — a step renders its tool's registered view, so G
 and H are one component — and reconciles A with the ingest plan's constraint #8 by **storing C's record
-while rendering A's card**, which leaves variant C a later render change with no migration. W4's
-question store is blocked on `plans/AGENT_INGEST_CONVERSATION_PLAN.md`; W1–W3 are not.
+while rendering A's card**, and W4's one real design question is where a conversational question's
+open set lives, since `waiting_on_owner` is a note-conversation state and a `/chat` conversation has
+no such row. W1–W3 depend on none of that.
 
 **In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
 give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its
