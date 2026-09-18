@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Ask the user · C · answer or park</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--green-tint);color:var(--green);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:9px;color:var(--text-3);font-size:12px;}
+  .bar .q{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:var(--amber-tint);color:var(--amber);font-size:11.5px;}
+  .bar .q svg{width:11px;height:11px;}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+  .sysline{align-self:flex-end;max-width:94%;display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:8px 12px;line-height:1.45;}
+  .sysline.warm{color:var(--amber);}
+  .sysline svg{width:13px;height:13px;flex:none;margin-top:1px;}
+
+  /* ===== the card ===== */
+  .q{margin-top:9px;border:1px solid rgba(201,163,106,.3);border-radius:13px;background:var(--surface-2);overflow:hidden;}
+  .q.settled{border-color:var(--border);}
+  .qhead{display:flex;align-items:flex-start;gap:10px;padding:11px 12px 4px;}
+  .qico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--amber-tint);color:var(--amber);}
+  .qico svg{width:15px;height:15px;}
+  .q.settled .qico{background:var(--green-tint);color:var(--green);}
+  .qmain{flex:1;min-width:0;}
+  .qkick{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:7px;}
+  .q.settled .qkick{color:var(--green);}
+  .qkick .dl{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--text-3);font-size:11px;}
+  .qtext{margin-top:5px;font-size:14.5px;line-height:1.45;}
+
+  /* what it will do if you say nothing — the load-bearing line */
+  .assume{margin:9px 12px 0;padding:9px 11px;border-radius:10px;background:var(--bg);border:1px solid var(--border);font-size:12.5px;line-height:1.5;color:var(--text-2);}
+  .assume b{color:var(--text);font-weight:600;}
+  .assume .h{display:block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px;}
+  .assume.locked{background:var(--rose-tint);border-color:rgba(207,138,143,.28);}
+  .assume.locked .h{color:var(--rose);}
+
+  .opts{padding:9px 10px 4px;display:flex;flex-wrap:wrap;gap:6px;}
+  .opt{padding:8px 13px;border-radius:999px;background:var(--bg);border:1px solid var(--border);font-size:13px;cursor:pointer;}
+  .opt:active{background:var(--surface);}
+  .opt.sel{background:var(--amber-tint);border-color:rgba(201,163,106,.45);color:var(--amber);}
+  .opt.own{border-style:dashed;color:var(--text-3);}
+
+  .qfoot{display:flex;gap:8px;padding:8px 10px 11px;}
+  .qbtn{flex:1;text-align:center;padding:10px;border-radius:10px;font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2);}
+  .qbtn.primary{background:var(--amber-tint);border-color:rgba(201,163,106,.4);color:var(--amber);font-weight:600;}
+  .qbtn.primary.armed{background:var(--amber);color:#17181b;border-color:var(--amber);}
+
+  .settledbox{display:none;padding:2px 12px 12px;}
+  .q.settled .settledbox{display:block;}
+  .q.settled .opts,.q.settled .qfoot,.q.settled .assume{display:none;}
+  .settledbox .val{padding:10px 11px;border-radius:10px;background:var(--green-tint);border:1px solid rgba(143,188,154,.25);font-size:13.5px;}
+  .settledbox .val.parked{background:var(--amber-tint);border-color:rgba(201,163,106,.25);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Ask the user · variant C</span><br />
+  <b>Answer or park.</b> Variant A plus the thing A leaves implicit: the card <b>always
+  states what it will assume if you say nothing</b>, and offers <b>Park it</b> — the
+  question goes to the silent queue, the turn continues on the stated assumption, and the
+  answer corrects it later. Health, finance and location questions <b>cannot</b> be
+  parked. Try <b>Park it</b>, then reload and try the health question's greyed-out park.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right">
+      <span class="q" id="qbadge"><svg viewBox="0 0 24 24"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg> 1</span>
+      curator
+    </div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">Book the follow-up with Dr. Reyes for next Tuesday.</div>
+
+    <div class="bubble ai">
+      Before I stage that — one thing I shouldn't guess at.
+
+      <div class="q" id="q">
+        <div class="qhead">
+          <div class="qico"><svg id="qsvg" viewBox="0 0 24 24"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="qmain">
+            <div class="qkick"><span id="kick">A question</span><span class="dl" id="dl">expires in 7 days</span></div>
+            <div class="qtext">Your notes have two Dr. Reyes — which one?</div>
+          </div>
+        </div>
+
+        <div class="assume" id="assume">
+          <span class="h">If you don't answer</span>
+          I'll go with <b>Elena (cardiology)</b> — she's the one you saw in March — and
+          mark the appointment as resting on an assumption until you say otherwise.
+        </div>
+
+        <div class="opts">
+          <div class="opt" data-opt="Elena — cardiology">Elena · cardiology</div>
+          <div class="opt" data-opt="Marcus — dentistry">Marcus · dentistry</div>
+          <div class="opt own" data-opt="own">My own words…</div>
+        </div>
+
+        <div class="qfoot">
+          <div class="qbtn primary" id="send">Answer</div>
+          <div class="qbtn" id="park">Park it</div>
+        </div>
+
+        <div class="settledbox">
+          <div class="val" id="chosen">Elena — cardiology</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sysline" id="sent" style="display:none">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span id="sentTxt"></span>
+    </div>
+
+    <div class="bubble ai" id="resumed" style="display:none"></div>
+
+    <!-- the second question shows the domain rule -->
+    <div class="bubble ai" id="second" style="display:none">
+      One more, and this one I can't park.
+
+      <div class="q">
+        <div class="qhead">
+          <div class="qico" style="background:var(--rose-tint);color:var(--rose)">
+            <svg viewBox="0 0 24 24"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+          </div>
+          <div class="qmain">
+            <div class="qkick" style="color:var(--rose)">A health question<span class="dl">never expires</span></div>
+            <div class="qtext">Is the 10mg the current dose, or did March's note supersede it?</div>
+          </div>
+        </div>
+        <div class="assume locked">
+          <span class="h">This one can't be parked</span>
+          Health, finance and location questions never decay into an assumption — a
+          guessed dose is not a small error. It waits until you answer it.
+        </div>
+        <div class="opts">
+          <div class="opt">10mg is current</div>
+          <div class="opt">March superseded it</div>
+        </div>
+        <div class="qfoot">
+          <div class="qbtn primary">Answer</div>
+          <div class="qbtn" style="opacity:.4;cursor:not-allowed">Park it</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> The tallest card of the three, and the assumption line is extra
+  prose to read on every question. <b>What it buys:</b> the question is never a
+  <i>block</i> — the turn can always continue — and it is the only variant that connects
+  to the ratified ingest design: <b>D2</b>'s expiry ladder, its decay to a marked
+  assumption, and its <b>never</b> for health, finance and location, rather than inventing
+  a second, incompatible question system.
+</div>
+
+<script>
+  const q = document.getElementById("q"), send = document.getElementById("send");
+  let chosen = null, armed = false;
+  for (const opt of document.querySelectorAll("#q [data-opt]")) {
+    opt.addEventListener("click", () => {
+      for (const o of document.querySelectorAll("#q [data-opt]")) o.classList.toggle("sel", o === opt);
+      chosen = opt.dataset.opt === "own" ? "The cardiologist" : opt.dataset.opt;
+      armed = false; send.classList.remove("armed"); send.textContent = "Answer";
+    });
+  }
+  function settle(text, kick, parked, reply) {
+    document.getElementById("chosen").textContent = text;
+    document.getElementById("chosen").classList.toggle("parked", parked);
+    document.getElementById("kick").textContent = kick;
+    document.getElementById("dl").textContent = parked ? "parked · 7 days" : "";
+    q.classList.add("settled");
+    if (!parked) document.getElementById("qsvg").innerHTML = '<path d="M20 6L9 17l-5-5"/>';
+    document.getElementById("sentTxt").textContent = text;
+    const sent = document.getElementById("sent");
+    sent.style.display = "flex"; sent.classList.toggle("warm", parked);
+    document.getElementById("qbadge").textContent = parked ? " 1 parked" : "";
+    if (!parked) document.getElementById("qbadge").style.display = "none";
+    setTimeout(() => {
+      const r = document.getElementById("resumed");
+      r.innerHTML = reply; r.style.display = "block";
+      document.getElementById("second").style.display = "block";
+      document.getElementById("chat").scrollTop = 9999;
+    }, 420);
+  }
+  send.addEventListener("click", () => {
+    if (!chosen) { send.textContent = "Pick one first"; setTimeout(() => (send.textContent = "Answer"), 1100); return; }
+    if (!armed) { armed = true; send.classList.add("armed"); send.textContent = "Tap to send"; return; }
+    settle(chosen, "Answered", false,
+      "Elena Reyes it is. Staged a follow-up for <b>Tuesday 23 September, 2:40pm</b> — cardiology, same clinic as March.");
+  });
+  document.getElementById("park").addEventListener("click", () =>
+    settle("Parked — carrying on with Elena (cardiology) as an assumption", "Parked", true,
+      "Staged it for <b>Tuesday 23 September, 2:40pm</b> with Elena, <b>marked as an assumption</b>. The question is in your queue; answering it later corrects the appointment."));
+</script>
+</body>
+</html>

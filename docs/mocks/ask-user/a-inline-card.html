@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Ask the user · A · inline question card</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--amber-tint);color:var(--amber);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--amber);}
+  .bar .dot.done{background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+  .sysline{align-self:flex-end;max-width:94%;display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:8px 12px;line-height:1.45;}
+  .sysline svg{width:13px;height:13px;flex:none;margin-top:1px;}
+
+  /* ===== the question card ===== */
+  .q{margin-top:9px;border:1px solid rgba(201,163,106,.3);border-radius:13px;background:var(--surface-2);overflow:hidden;}
+  .q.answered{border-color:var(--border);opacity:.72;}
+  .qhead{display:flex;align-items:flex-start;gap:10px;padding:11px 12px 9px;}
+  .qico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--amber-tint);color:var(--amber);}
+  .qico svg{width:15px;height:15px;}
+  .q.answered .qico{background:var(--green-tint);color:var(--green);}
+  .qmain{flex:1;min-width:0;}
+  .qkick{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);}
+  .q.answered .qkick{color:var(--green);}
+  .qtext{margin-top:5px;font-size:14.5px;line-height:1.45;color:var(--text);}
+  .qwhy{margin-top:7px;font-size:12px;line-height:1.5;color:var(--text-3);padding-left:10px;border-left:2px solid var(--border);}
+
+  .opts{padding:2px 10px 10px;display:flex;flex-direction:column;gap:6px;}
+  .opt{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:10px;background:var(--bg);border:1px solid var(--border);font-size:13.5px;cursor:pointer;}
+  .opt:active{background:var(--surface);}
+  .opt .rad{width:16px;height:16px;border-radius:999px;border:1.5px solid var(--text-3);flex:none;}
+  .opt.sel{border-color:rgba(201,163,106,.45);background:var(--amber-tint);}
+  .opt.sel .rad{border-color:var(--amber);background:var(--amber);box-shadow:inset 0 0 0 3px var(--surface-2);}
+  .opt .sub{display:block;margin-top:2px;font-size:11.5px;color:var(--text-3);}
+
+  .own{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:10px;background:var(--bg);border:1px dashed var(--border);font-size:13px;color:var(--text-3);cursor:pointer;}
+  .own svg{width:14px;height:14px;flex:none;}
+
+  .qfoot{display:flex;gap:8px;padding:0 10px 11px;}
+  .qbtn{flex:1;text-align:center;padding:10px;border-radius:10px;font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-2);}
+  .qbtn.primary{background:var(--amber-tint);border-color:rgba(201,163,106,.4);color:var(--amber);font-weight:600;}
+  .qbtn.primary.armed{background:var(--amber);color:#17181b;border-color:var(--amber);}
+  .qbtn.dim{flex:0 0 auto;padding:10px 13px;color:var(--text-3);}
+
+  .answer{display:none;padding:0 12px 12px;}
+  .q.answered .answer{display:block;}
+  .q.answered .opts,.q.answered .qfoot{display:none;}
+  .answer .val{padding:10px 11px;border-radius:10px;background:var(--green-tint);border:1px solid rgba(143,188,154,.25);font-size:13.5px;color:var(--text);}
+  .answer .meta{margin-top:6px;font-size:11.5px;color:var(--text-3);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+  .composer .input.hot{color:var(--text);border-color:rgba(201,163,106,.4);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Ask the user · variant A</span><br />
+  <b>Inline question card.</b> The same shape as the shipped <b>InlineProposal</b>: an
+  interactive card in the transcript that takes an answer and sends it back so the turn
+  resumes. Suggested answers are tappable; "in my own words" hands you the composer.
+  Double-tap to send — first tap arms, second enacts, the repo's settled doctrine.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot" id="dot"></span> <span id="state">waiting on you</span></div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">Book the follow-up with Dr. Reyes for next Tuesday.</div>
+
+    <div class="bubble ai">
+      Before I stage that — one thing I shouldn't guess at.
+
+      <div class="q" id="q">
+        <div class="qhead">
+          <div class="qico">
+            <svg viewBox="0 0 24 24" id="qsvg"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+          </div>
+          <div class="qmain">
+            <div class="qkick" id="kick">A question</div>
+            <div class="qtext">Your notes have two Dr. Reyes — which one?</div>
+            <div class="qwhy">Picking wrong would stage an appointment against the wrong
+              person, and I'd rather ask than guess.</div>
+          </div>
+        </div>
+
+        <div class="opts" id="opts">
+          <div class="opt" data-opt="Elena Reyes — cardiology">
+            <div class="rad"></div>
+            <div>Elena Reyes <span class="sub">Cardiology · last seen March</span></div>
+          </div>
+          <div class="opt" data-opt="Marcus Reyes — dentistry">
+            <div class="rad"></div>
+            <div>Marcus Reyes <span class="sub">Dentistry · last seen November</span></div>
+          </div>
+          <div class="own" id="own">
+            <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+            Answer in my own words
+          </div>
+        </div>
+
+        <div class="qfoot">
+          <div class="qbtn primary" id="send">Send answer</div>
+          <div class="qbtn dim" id="skip">You decide</div>
+        </div>
+
+        <div class="answer">
+          <div class="val" id="chosen">Elena Reyes — cardiology</div>
+          <div class="meta" id="ameta">Answered · the turn picked up from here</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- what appears after answering -->
+    <div class="sysline" id="sent" style="display:none">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <span id="sentTxt">Answered — Elena Reyes</span>
+    </div>
+
+    <div class="bubble ai" id="resumed" style="display:none">
+      Elena Reyes it is. Staged a follow-up for <b>Tuesday 23 September, 2:40pm</b> —
+      cardiology, same clinic as March. It's waiting for your approval.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input" id="inp">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> A card mid-bubble makes the turn visibly stop, and a model that
+  asks too often turns the transcript into a form. <b>What it buys:</b> the question sits
+  with the reasoning that raised it, the suggested answers make the common case one tap,
+  and <b>"You decide"</b> is always present — so a question you don't want is never a
+  dead end.
+</div>
+
+<script>
+  const q = document.getElementById("q"), send = document.getElementById("send");
+  let chosen = null, armed = false;
+
+  for (const opt of document.querySelectorAll("[data-opt]")) {
+    opt.addEventListener("click", () => {
+      for (const o of document.querySelectorAll("[data-opt]")) o.classList.toggle("sel", o === opt);
+      chosen = opt.dataset.opt;
+      armed = false; send.classList.remove("armed"); send.textContent = "Send answer";
+    });
+  }
+  document.getElementById("own").addEventListener("click", () => {
+    const inp = document.getElementById("inp");
+    inp.classList.add("hot"); inp.textContent = "The cardiologist — Elena…";
+    for (const o of document.querySelectorAll("[data-opt]")) o.classList.remove("sel");
+    chosen = null;
+  });
+
+  function settle(text, kick) {
+    document.getElementById("chosen").textContent = text;
+    document.getElementById("kick").textContent = kick;
+    q.classList.add("answered");
+    document.getElementById("qsvg").innerHTML = '<path d="M20 6L9 17l-5-5"/>';
+    document.getElementById("sentTxt").textContent = "Answered — " + text;
+    document.getElementById("sent").style.display = "flex";
+    document.getElementById("dot").classList.add("done");
+    document.getElementById("state").textContent = "curator";
+    setTimeout(() => {
+      document.getElementById("resumed").style.display = "block";
+      document.getElementById("chat").scrollTop = 9999;
+    }, 420);
+  }
+
+  send.addEventListener("click", () => {
+    if (!chosen) { send.textContent = "Pick one first"; setTimeout(() => (send.textContent = "Send answer"), 1100); return; }
+    if (!armed) { armed = true; send.classList.add("armed"); send.textContent = "Tap to send"; return; }
+    settle(chosen, "Answered");
+  });
+  document.getElementById("skip").addEventListener("click", () => {
+    document.getElementById("ameta").textContent = "You let it decide · it picked the cardiologist and said so";
+    settle("You decide — it chose Elena Reyes (cardiology)", "You decided not to answer");
+  });
+</script>
+</body>
+</html>
