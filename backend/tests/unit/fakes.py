@@ -873,6 +873,9 @@ class FakeLocalGateway:
         self.logs_text = logs_text
         self.fail_props = fail_props
         self.props_payload = props_payload or {}
+        self.fail_metrics = False
+        self.metrics_text = ""
+        self.metrics_readings: list[str] = []
         self.unloaded: list[str] = []
         self.loaded: list[str] = []
         # The prompt size the fake's warm "measured" — what after_warm receives.
@@ -943,6 +946,18 @@ class FakeLocalGateway:
         if self.fail_props:
             raise LocalGatewayError("simulated gateway failure")
         return dict(self.props_payload)
+
+    async def metrics(self, served_model: str) -> str:
+        """llama-server's Prometheus text. `metrics_readings` is a QUEUE: the prompt-cache
+        counters are cumulative, so anything measuring one request brackets it with two
+        reads, and a fake that answered identically both times would hide a broken delta."""
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_metrics:
+            raise LocalGatewayError("simulated gateway failure")
+        if self.metrics_readings:
+            return self.metrics_readings.pop(0)
+        return self.metrics_text
 
 
 class FakeComfyUiGateway:

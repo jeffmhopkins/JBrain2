@@ -1586,3 +1586,57 @@ def test_the_backup_routes_need_a_token(debug_client: tuple[TestClient, str]) ->
     client, _ = debug_client
     assert client.post("/api/debug/backup").status_code == 401
     assert client.get("/api/debug/backup/status").status_code == 401
+
+
+# --- prompt cache (KV prefix) ------------------------------------------------
+#
+# The store was correct and unobservable: only its two SUCCESS paths wrote a box event, so a
+# healthy store and a store that had not restored since boot both produced no rows anywhere.
+# This route is the answer to "is the KV cache working?", and the owner has no terminal to ask
+# any other way (CLAUDE.md #10).
+
+
+def test_kv_prefix_state_reports_counters_store_and_reuse(
+    debug_client: tuple[TestClient, str], tmp_path: Any
+) -> None:
+    """The three things no other surface carries: what the store has been DOING (counters),
+    what is on DISK, and llama-server's own prompt-REUSE ratio."""
+    from jbrain.llm.kv_prefix import KvPrefixStore
+
+    client, key = debug_client
+    gw = _state(client).local_gateway
+    gw.metrics_text = (
+        "llamacpp:prompt_tokens_cached_total 27000\nllamacpp:prompt_tokens_total 3000\n"
+    )
+    store = KvPrefixStore(gw, str(tmp_path))
+    asyncio.run(store._note("restore_rejected", "gpt-oss-120b", n_restored=11))
+    _state(client).kv_prefix = store
+
+    resp = client.get("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["counters"]["restore_rejected"] == 1
+    assert body["recent"][0]["outcome"] == "restore_rejected"
+    assert body["store"]["budget_bytes"] > 0
+    assert body["store"]["files"] == 0
+
+
+def test_kv_prefix_state_409s_when_the_store_is_not_wired(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """A cloud-only box has no store. Say so, rather than reporting an empty one as healthy
+    — 'no rows' reading as 'fine' is the exact failure this whole route exists to end."""
+    client, key = debug_client
+    _state(client).kv_prefix = None
+
+    resp = client.get("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 409
+    assert "not wired" in resp.json()["detail"]
+
+
+def test_kv_prefix_state_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+
+    assert client.get("/api/debug/llm/kv-prefix").status_code == 401

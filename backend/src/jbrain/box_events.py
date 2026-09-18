@@ -93,6 +93,15 @@ JOB_REFUSED_NO_ROOM = "job_refused_no_room"
 KV_PREFIX_SAVED = "kv_prefix_saved"
 KV_PREFIX_RESTORED = "kv_prefix_restored"
 
+# The prompt cache did NOT help, and the turn (or the next one) pays a full prefill for it.
+# Its two success twins above were the only KV rows the box emitted, which made a healthy
+# quiet store and a store that has not worked since boot produce IDENTICAL output: no row at
+# all. That silence is how this feature shipped inert twice — the read-only mount, and the
+# 2026-08-24 flag/eligibility split — so the miss is the row that actually needed to exist.
+# Rate-limited per (model, reason) in KvPrefixStore._note; the store's counters, not this
+# surface, are the complete record.
+KV_PREFIX_MISSED = "kv_prefix_missed"
+
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.
 RETENTION = timedelta(days=1)

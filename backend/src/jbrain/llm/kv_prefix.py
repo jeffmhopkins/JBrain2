@@ -80,6 +80,7 @@ import hashlib
 import json
 import os
 import time
+from collections import deque
 from collections.abc import Sequence
 
 import structlog
@@ -189,6 +190,35 @@ def _identity_components(
 RESTORE_BUSY_POLLS = 8
 RESTORE_BUSY_INTERVAL_S = 0.25
 
+# How many recent outcomes the store keeps for the debug read. The owner has no terminal
+# (CLAUDE.md #10) and box_events' widest owner surface is fifteen minutes, so a miss that
+# happened an hour ago is otherwise unreachable; this ring is what makes "what has this
+# store actually been doing?" answerable at all.
+OUTCOME_HISTORY = 40
+
+# Minimum gap between box_events rows for the SAME (model, outcome). Counters below record
+# every occurrence — they are the truth. This only rate-limits the owner-facing surface, so
+# a pathological loop (a poisoned file re-rejected on every tick) reports once rather than
+# flooding the box's narration with a fault the counters already state precisely.
+BOX_EVENT_MIN_INTERVAL_S = 300.0
+
+# The outcomes that mean THE CACHE DID NOT HELP — each one costs a full prefill somewhere.
+# They are the reason this instrumentation exists: every one of them was previously an
+# `info` log line on a box whose owner cannot read logs, which is how this feature shipped
+# silently inert twice (the read-only mount, and the 2026-08-24 flag/eligibility split).
+MISS_OUTCOMES = frozenset(
+    {
+        "slots_unreadable",
+        "slot_unidentified",
+        "save_failed",
+        "save_mismatch",
+        "identity_drift",
+        "restore_skipped_busy",
+        "restore_failed",
+        "restore_rejected",
+    }
+)
+
 
 class KvPrefixStore:
     """One per process, wired beside the gateway. `models_root` is THIS process's view of
@@ -223,6 +253,185 @@ class KvPrefixStore:
         # The identity components of the last fingerprint OBSERVED to have a file (a save,
         # or a restore/resolve that found one) — what identity_drift diffs against.
         self._last_identity: dict[str, dict[str, str]] = {}
+        # ---- instrumentation (see `snapshot`) ----
+        # Every outcome this store reaches, counted since process start. Cheap, unbounded in
+        # value but not in keys (one per outcome name), and the only way to tell "the cache
+        # is healthy and quiet" from "the cache has not worked since boot" — which read
+        # IDENTICALLY on every other surface, because both produce no rows at all.
+        self._counters: dict[str, int] = {}
+        # The last few outcomes with timestamps, for the debug read. Bounded ring.
+        self._events: deque[dict[str, object]] = deque(maxlen=OUTCOME_HISTORY)
+        # Per served model, the most recent outcome — what a state read leads with.
+        self._last_outcome: dict[str, dict[str, object]] = {}
+        # (model, outcome) -> monotonic time of the last box_events row, for the rate limit.
+        self._box_event_at: dict[tuple[str, str], float] = {}
+
+    # ---- instrumentation ------------------------------------------------------------
+
+    async def _note(
+        self,
+        outcome: str,
+        served_model: str,
+        *,
+        warn: bool = False,
+        **fields: object,
+    ) -> None:
+        """Record one outcome: count it, ring it, log it, and — for a miss — put it on the
+        owner's own surface.
+
+        Everything this store does is best-effort, and that used to mean every failure was an
+        `info` line on a box whose owner cannot read logs. The counter is the truth (it moves
+        on every occurrence); the box_events row is the attention, rate-limited so a repeating
+        fault reports once rather than burying the narration it belongs in."""
+        self._counters[outcome] = self._counters.get(outcome, 0) + 1
+        record = {
+            "at": time.time(),
+            "model": served_model,
+            "outcome": outcome,
+            **fields,
+        }
+        self._events.append(record)
+        self._last_outcome[served_model] = record
+        if warn:
+            log.warning(f"kv_prefix.{outcome}", model=served_model, **fields)
+        else:
+            log.info(f"kv_prefix.{outcome}", model=served_model, **fields)
+        if outcome not in MISS_OUTCOMES:
+            return
+        key = (served_model, outcome)
+        now = time.monotonic()
+        last = self._box_event_at.get(key)
+        if last is not None and (now - last) < BOX_EVENT_MIN_INTERVAL_S:
+            return
+        self._box_event_at[key] = now
+        # Only short scalar fields reach the owner's row: `identity_drift` carries two whole
+        # component maps, which would fill the 200-char detail with digests and push out the
+        # one thing that matters (WHICH component moved). The log line keeps them all.
+        detail = ", ".join(
+            f"{k}={v}" for k, v in fields.items() if v is not None and len(str(v)) <= 60
+        )
+        await box_events.record(
+            box_events.KV_PREFIX_MISSED,
+            served_model,
+            detail=f"{outcome}{': ' + detail if detail else ''}",
+            status="failed",
+        )
+
+    async def snapshot(
+        self,
+        probes: Sequence[tuple[str, str, Sequence[LlmTool], str | None]] = (),
+    ) -> dict[str, object]:
+        """Everything this store knows, for the owner debug read.
+
+        `probes` are (served_model, system, tools, reasoning_effort) tuples — the identity a
+        caller believes a turn would send. Resolving them here is the point: it answers the
+        question no other surface can, which is whether the file this store would look for is
+        the file that is actually on disk. A state of `cold_no_file` beside a healthy-looking
+        box is the signature of an identity drift, and the `identity` digests say which
+        component moved."""
+        usage = await asyncio.to_thread(self._walk_store)
+        models: list[dict[str, object]] = []
+        for served_model, system, tools, effort in probes:
+            entry: dict[str, object] = {"model": served_model}
+            eligible = self._eligible(served_model)
+            entry["eligible"] = eligible is not None
+            if eligible is None:
+                entry["reason"] = self._ineligible_reason(served_model)
+            entry["prime_tokens"] = self._prime_tokens.get(served_model)
+            entry["restored_unused"] = served_model in self._restored_unused
+            entry["last_outcome"] = self._last_outcome.get(served_model)
+            resolved = await asyncio.to_thread(self._resolve, served_model, system, tools, effort)
+            if resolved is None:
+                entry["state"] = "no_disk_layer" if eligible is not None else "ineligible"
+                models.append(entry)
+                continue
+            fingerprint, _save_dir, identity = resolved
+            entry["fingerprint"] = fingerprint
+            entry["identity"] = identity
+            entry["last_known_identity"] = self._last_identity.get(served_model)
+            path = os.path.join(_save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
+            stat = await asyncio.to_thread(self._stat_quietly, path)
+            if stat is None:
+                entry["state"] = "cold_no_file"
+            else:
+                entry["file_bytes"] = stat[0]
+                entry["file_mtime"] = stat[1]
+                entry["sidecar"] = (
+                    await asyncio.to_thread(self._stat_quietly, path + _SIDECAR_EXT)
+                ) is not None
+                entry["state"] = (
+                    "restored_unused" if served_model in self._restored_unused else "file_present"
+                )
+            models.append(entry)
+        return {
+            "counters": dict(sorted(self._counters.items())),
+            "recent": list(self._events),
+            "store": {
+                "bytes": usage[0],
+                "files": usage[1],
+                "budget_bytes": MAX_STORE_BYTES,
+                "over_budget": usage[0] > MAX_STORE_BYTES,
+                "by_file": usage[2],
+            },
+            "models": models,
+        }
+
+    def _ineligible_reason(self, served_model: str) -> str:
+        """Why `_eligible` said no — the difference between "this model will never use the
+        disk layer" and "the owner's patch setting is off", which look the same from outside
+        and have completely different remedies."""
+        model = local_catalog.get_by_served(served_model)
+        if model is None:
+            return "not a catalog model"
+        if model.recurrent and model.is_mtp_speculative and not self._patch_active:
+            return "recurrent MTP hybrid, and the Fast-Qwen-loads patch setting is off"
+        if model.recurrent:
+            return "recurrent: a restored slot has no context checkpoints"
+        if model.is_speculative:
+            return "external-draft speculative: no slot file captures the draft state"
+        return "ineligible"
+
+    def _stat_quietly(self, path: str) -> tuple[int, float] | None:
+        """Runs in a thread — (size, mtime) or None when the file is not there."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime)
+
+    def _walk_store(self) -> tuple[int, int, list[dict[str, object]]]:
+        """Runs in a thread — (total bytes, file count, per-file rows) for the whole tree.
+
+        Shares its accounting rules with `_prune_to_budget`: a sidecar is billed to its slot
+        file, never counted on its own. The size the budget acts on and the size the owner
+        reads must be the same number, or a prune that fires looks unexplained."""
+        root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
+        rows: list[dict[str, object]] = []
+        total = 0
+        for folder, _dirs, names in os.walk(root):
+            for name in names:
+                if not name.endswith(_SLOT_FILE_SUFFIX):
+                    continue
+                path = os.path.join(folder, name)
+                with contextlib.suppress(OSError):
+                    stat = os.stat(path)
+                    size = stat.st_size
+                    sidecar = False
+                    with contextlib.suppress(OSError):
+                        size += os.stat(path + _SIDECAR_EXT).st_size
+                        sidecar = True
+                    total += size
+                    rows.append(
+                        {
+                            "model": os.path.basename(folder),
+                            "fingerprint": name[: -len(_SLOT_FILE_SUFFIX)],
+                            "bytes": size,
+                            "mtime": stat.st_mtime,
+                            "sidecar": sidecar,
+                        }
+                    )
+        rows.sort(key=lambda r: r["mtime"], reverse=True)  # type: ignore[arg-type,return-value]
+        return (total, len(rows), rows)
 
     # ---- identity -------------------------------------------------------------------
 
@@ -319,11 +528,11 @@ class KvPrefixStore:
             if not model.recurrent or await asyncio.to_thread(os.path.exists, path + _SIDECAR_EXT):
                 await asyncio.to_thread(self._touch, path)
                 return True
-            log.info("kv_prefix.resaving_for_sidecar", model=served_model)
+            await self._note("resaving_for_sidecar", served_model)
         try:
             slots = await self._gateway.slots(served_model)
         except LocalGatewayError as exc:
-            log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
+            await self._note("slots_unreadable", served_model, phase="save", error=str(exc))
             return False
         # EXACT match works here only because the prime generates exactly ONE token: the
         # server appends every sampled token to the slot's cache EXCEPT the final stop
@@ -340,9 +549,9 @@ class KvPrefixStore:
         if len(matches) != 1:
             # Zero: something replaced the prime between the converse returning and this
             # read — the exact race v1 lost by saving anyway. More than one: ambiguous.
-            log.info(
-                "kv_prefix.slot_unidentified",
-                model=served_model,
+            await self._note(
+                "slot_unidentified",
+                served_model,
                 expected_tokens=prime_tokens,
                 candidates=len(matches),
             )
@@ -357,7 +566,7 @@ class KvPrefixStore:
             # and an existing file short-circuits every future save while restores keep
             # reading junk. Remove whatever landed, or this fingerprint is poisoned until
             # a config change happens to move it.
-            log.info("kv_prefix.save_failed", model=served_model, error=str(exc))
+            await self._note("save_failed", served_model, error=str(exc))
             await asyncio.to_thread(self._remove_quietly, path)
             return False
         n_saved = resp.get("n_saved")
@@ -366,9 +575,10 @@ class KvPrefixStore:
             # on disk is NOT the prime — remove it, or a later restore trusts it. Only THIS
             # file: other configs' files were saved under their own verified counts and a
             # bad write here says nothing about them.
-            log.warning(
-                "kv_prefix.save_mismatch",
-                model=served_model,
+            await self._note(
+                "save_mismatch",
+                served_model,
+                warn=True,
                 expected=prime_tokens,
                 n_saved=n_saved,
             )
@@ -380,7 +590,7 @@ class KvPrefixStore:
             served_model,
             detail=f"{prime_tokens}-token jerv prefix saved to disk",
         )
-        log.info("kv_prefix.saved", model=served_model, tokens=prime_tokens, slot=slot_id)
+        await self._note("saved", served_model, tokens=prime_tokens, slot=slot_id)
         return True
 
     def _remove_quietly(self, path: str) -> None:
@@ -491,9 +701,9 @@ class KvPrefixStore:
             # a race. `effort` prints its value; the rest print short digests.
             last = self._last_identity.get(served_model)
             if last is not None and last != identity:
-                log.info(
-                    "kv_prefix.identity_drift",
-                    model=served_model,
+                await self._note(
+                    "identity_drift",
+                    served_model,
                     changed=sorted(k for k in identity if identity[k] != last.get(k)),
                     now=identity,
                     was=last,
@@ -504,7 +714,7 @@ class KvPrefixStore:
             try:
                 slots = await self._gateway.slots(served_model)
             except LocalGatewayError as exc:
-                log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
+                await self._note("slots_unreadable", served_model, phase="restore", error=str(exc))
                 return False
             # The smallest cache that could BE the prefix: the prime's own size. A slot
             # below it (a small task's residue) cannot contain the prefix and is fair to
@@ -535,7 +745,9 @@ class KvPrefixStore:
                     try:
                         slots = await self._gateway.slots(served_model)
                     except LocalGatewayError as exc:
-                        log.info("kv_prefix.slots_unreadable", model=served_model, error=str(exc))
+                        await self._note(
+                            "slots_unreadable", served_model, phase="busy_wait", error=str(exc)
+                        )
                         return False
                     occupied = [s for s in slots if isinstance(s, dict)]
                     if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
@@ -543,12 +755,12 @@ class KvPrefixStore:
                         return False  # freed into something prefix-sized — leave it alone
                     idle = [s for s in occupied if not s.get("is_processing")]
                     if idle:
-                        log.info("kv_prefix.restore_waited_for_slot", model=served_model)
+                        await self._note("restore_waited_for_slot", served_model)
                         break
                 else:
-                    log.info(
-                        "kv_prefix.restore_skipped_busy",
-                        model=served_model,
+                    await self._note(
+                        "restore_skipped_busy",
+                        served_model,
                         slots=[_slot_int(s, "n_prompt_tokens") for s in occupied],
                     )
                     return False
@@ -561,7 +773,7 @@ class KvPrefixStore:
                     served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
                 )
             except LocalGatewayError as exc:
-                log.info("kv_prefix.restore_failed", model=served_model, error=str(exc))
+                await self._note("restore_failed", served_model, error=str(exc))
                 return False
             elapsed_ms = round((time.perf_counter() - started) * 1000)
             n_restored = resp.get("n_restored")
@@ -575,9 +787,10 @@ class KvPrefixStore:
                 # simply misses the cache and prefills — the exact behaviour without this
                 # store. Log it loudly; a repeat means the file is bad, and the next
                 # successful save replaces it.
-                log.warning(
-                    "kv_prefix.restore_rejected",
-                    model=served_model,
+                await self._note(
+                    "restore_rejected",
+                    served_model,
+                    warn=True,
                     n_restored=n_restored,
                     expected=expected,
                 )
@@ -601,9 +814,9 @@ class KvPrefixStore:
                 served_model,
                 detail=f"{n_restored}-token jerv prefix restored from disk in {elapsed_ms} ms",
             )
-            log.info(
-                "kv_prefix.restored",
-                model=served_model,
+            await self._note(
+                "restored",
+                served_model,
                 tokens=n_restored,
                 slot=slot_id,
                 elapsed_ms=elapsed_ms,
