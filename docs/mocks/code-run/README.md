@@ -101,18 +101,34 @@ still needs the same kind of treatment."*
 That is not a second gate — it is the recognition that **G alone was half an answer**, and
 it resolves the gap recorded against G above.
 
-**The panel already exists.** `StepRow` / the `fb-step` rows (`FullBrainSurface.tsx`), from
-the settled `../assistant-tooluse-1-inline-accordion.html`. What H changes is not the
-panel's shape but **what a row says**. Today a row carries what was *asked* —
+**The panel already exists and is already the place every tool reports.** `StepRow` / the
+`fb-step` rows (`FullBrainSurface.tsx`), from the settled
+`../assistant-tooluse-1-inline-accordion.html`. H is not a new panel and not a new
+disclosure — it is **what every tool puts in the one that is already there**.
+
+*A correction worth recording, because the first draft of H got it wrong:* that draft
+framed this as a change to the Worked strip, as though the ledger were a property of the
+panel. It is not. The panel is the container; **the ledger is what each tool renders into
+it**, and `run_python` is simply the tool with the most to render. Framing it the other way
+produced a mock that showed six rows of mostly-maths and called it done.
+
+**What a row says.** Today a row carries what was *asked* —
 `Searched your notes · "refinance closing"` — and never what came *back*. Every row now
-carries **argument → result**:
+carries **argument → result**, across every tool kind:
 
 ```
-Searched your notes      "refinance closing"  →  3 notes
-Read a note              Refinance — closing…  →  5.15% · 30yr
-Worked out a number      (2847 - 2633) * 12   →  2568
-Ran a computation        8 lines · decimal    →  Decimal('2917.80')
+Searched your notes      "refinance closing"        →  3 notes
+Read a note              Refinance — closing…       →  5.15% · 30yr
+Searched Gmail           from:lender after:2026/01  →  12 messages
+Checked the clock        owner's zone               →  Thu 18 Sep, 20:54
+Worked out a number      (2847 - 2633) * 12mo       →  failed
+Worked out a number      (2847 - 2633) * 12   ƒ1    →  2568
+Ran a computation        8 lines · decimal          →  Decimal('2917.80')
 ```
+
+**Even a dataless tool gets a right-hand side.** The clock's row is the test case: a row
+with nothing on its right is a row you cannot check, and every tool has something to put
+there. A row that cannot fill it is a tool whose result was never worth surfacing.
 
 **One rule does the work:** the argument truncates and **the result never does**. The answer
 is what you came for, so it is the half that survives a narrow screen.
@@ -120,7 +136,16 @@ is what you came for, so it is the half that survives a narrow screen.
 **Code execution gets the same treatment inside the panel** — a `run_python` row expands to
 the code, stdout, result and containment chips: the same content G floats in a popover,
 rendered inline because the panel is already a deliberate "show me the working" surface.
-One content shape, two entry points.
+One content shape, two entry points. A maths row that also carries a prose marker shows its
+`ƒn` in the panel too, so the same call is identifiable from either end.
+
+**The one real build question this raises.** The registered per-tool component (`ToolView`)
+renders in the **bubble**; the Worked step detail is a *fixed cascade* in `StepRow`
+(args → error / sources / entities / web sources / summary → raw). So "every tool renders
+its own ledger in the panel" is an extension, not styling, and the build plan has to pick
+one: widen the cascade with a ledger line every tool populates, or let a step render its
+tool's registered view inline. The first is smaller and probably right; the second is what
+would let `run_python` reuse the code view verbatim.
 
 ### How G and H divide, and why both are needed
 
