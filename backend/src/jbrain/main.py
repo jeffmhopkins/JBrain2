@@ -188,7 +188,7 @@ from jbrain.sdr.resolve import for_purpose
 from jbrain.sdr.roles import Choice
 from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import LLM_KV_PREFIX_BUDGET_GB_DEFAULT, SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
@@ -544,8 +544,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kv_patch_active = False
         with suppress(Exception):
             kv_patch_active = await settings_store.local_llm_patch_restore_checkpoint(SYSTEM_CTX)
+        # The disk allowance, read the same way and for the same reason: it was a module
+        # constant the owner could not reach, on a box whose store runs near it.
+        kv_budget_gb = LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+        with suppress(Exception):
+            kv_budget_gb = await settings_store.llm_kv_prefix_budget_gb(SYSTEM_CTX)
         app.state.kv_prefix = KvPrefixStore(
-            app.state.local_gateway, settings.local_models_dir, patch_active=kv_patch_active
+            app.state.local_gateway,
+            settings.local_models_dir,
+            patch_active=kv_patch_active,
+            max_store_bytes=kv_budget_gb * 1024**3,
         )
         app.state.llm_router = build_router(
             settings,

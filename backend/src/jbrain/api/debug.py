@@ -2900,6 +2900,44 @@ async def kv_prefix_state(
     )
 
 
+@router.delete("/llm/kv-prefix")
+async def kv_prefix_clear(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    model: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """Delete the prompt cache's slot files — all of them, or one catalog model's (`model`).
+
+    The no-terminal twin of `rm -rf .kvslots` (CLAUDE.md #10), for the same reason
+    `drop-page-cache` exists: reclaiming this space needed host shell, which the owner running
+    this box remotely does not have. Measured at 94% of the budget with nothing able to act.
+
+    Safe while models are resident: this removes files on disk, never a live slot, so a
+    conversation in flight keeps its KV. The cost of a wrong call is bounded at one re-prefill
+    per deleted identity — the behaviour without this store at all — and the next prime writes
+    the file back. Reach for `GET /llm/kv-prefix` first: `store.by_file` says what is there."""
+    request.state.debug_detail = f"clear kv prefix ({model or 'all'})"
+    return await llm_settings.kv_prefix_clear(
+        settings, kv_prefix=getattr(request.app.state, "kv_prefix", None), model_id=model
+    )
+
+
+@router.put("/llm/kv-prefix/budget")
+async def kv_prefix_budget(
+    request: Request,
+    _p: DebugDep,
+    gb: Annotated[int, Query()],
+) -> dict[str, object]:
+    """Set the prompt cache's disk allowance in GiB (2..500, default 25).
+
+    It was a module constant whose own comment conceded the gap — "changing it is a release,
+    there is no knob" — which on a box with no terminal meant no path at all. Read once at
+    construction, so it applies on the next api start; Ops → Update performs one anyway."""
+    request.state.debug_detail = f"kv prefix budget {gb} GiB"
+    return await llm_settings.set_kv_prefix_budget(_store(request), _OWNER_CTX, gb=gb)
+
+
 @router.post("/llm/local-models/{model_id}/prime")
 async def prime_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep

@@ -2061,6 +2061,45 @@ async def kv_prefix_state(
     return state
 
 
+async def kv_prefix_clear(
+    settings: Settings,
+    *,
+    kv_prefix: "KvPrefixStore | None",
+    model_id: str | None = None,
+) -> dict[str, object]:
+    """Delete the prompt cache's files — all of them, or one model's.
+
+    The no-terminal twin of `rm -rf .kvslots` (CLAUDE.md #10), and it exists for exactly the
+    reason `drop-page-cache` does: reclaiming this space was host shell, which the owner
+    running this box remotely does not have. Measured on the box at 94% of the budget with no
+    way to act on it.
+
+    Safe at any time. A deleted file costs at most one re-prefill — the behaviour without this
+    store at all — and the next prime writes it back. It never touches a resident slot, so a
+    conversation in flight keeps its KV."""
+    if kv_prefix is None:
+        raise HTTPException(status_code=409, detail="the prompt-cache store is not wired")
+    served: str | None = None
+    if model_id is not None:
+        served = _require_provisioned(settings, model_id).served_model
+    return await kv_prefix.clear(served)
+
+
+async def set_kv_prefix_budget(
+    store: SqlSettingsStore, ctx: SessionContext, *, gb: int
+) -> dict[str, object]:
+    """Set the prompt cache's disk allowance, in GiB.
+
+    Takes effect on the next api start — the store reads it once at construction, like the
+    patch toggle — and Ops → Update restarts it anyway. Bounded here rather than in the store
+    because this number bounds a delete loop: the floor is one file's worth (a ~1.1 GB slot
+    file plus its sidecar), below which the store would evict everything it just saved."""
+    if not 2 <= gb <= 500:
+        raise HTTPException(status_code=422, detail="budget must be 2..500 GiB")
+    await store.set_llm_kv_prefix_budget_gb(ctx, gb)
+    return {"budget_gb": gb, "applies": "on the next api restart"}
+
+
 async def gateway_prime(
     model_id: str,
     settings: Settings,
