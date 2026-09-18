@@ -455,6 +455,23 @@ fabricated an image comparison it had no way to perform; reconciled with a four-
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
 
+**Scheduled:** Show the working (build plan: `docs/plans/SHOW_THE_WORKING_PLAN.md`, waves W1–W4) —
+the surfaces that make the exact-math tools checkable, plus `ask_user`. `calculate` / `run_python`
+shipped with **no view of their own**: the code that produced a number is persisted on the turn and
+shown nowhere, so the one tool whose entire value is that its answer can be checked produced answers
+you still had to trust. Three settled GUI-gate mocks: **G** (`mocks/code-run/g-cited-floating.html`) —
+a computed number carries an `ƒn` marker and cites its working in a floating popover; **H**
+(`mocks/code-run/h-worked-ledger.html`) — every Worked row carries **argument → result**, the failed
+call included, which is the half G structurally cannot show; **A** (`mocks/ask-user/a-inline-card.html`)
+— a question card in the transcript, whose written-answer row the *component* appends whatever options
+the model supplied, so a closed set of choices can never push the owner into a wrong one. Reading the
+live code shrank the work: `.fb-step-cnt` already exists and is filled by only `search` / `web_search`,
+so the ledger is one backend field (`result_brief`) plus one CSS rule, enforced by extending
+`test_tool_step_polish.py`. Decides H's open question — a step renders its tool's registered view, so G
+and H are one component — and reconciles A with the ingest plan's constraint #8 by **storing C's record
+while rendering A's card**, which leaves variant C a later render change with no migration. W4's
+question store is blocked on `plans/AGENT_INGEST_CONVERSATION_PLAN.md`; W1–W3 are not.
+
 **In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
 give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its
 paging position) survives across conversation turns instead of evaporating at turn's end. Motivated by
