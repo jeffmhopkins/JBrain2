@@ -35,6 +35,35 @@ def _rule(selector: str) -> str:
     return src[at : src.index("}", at)]
 
 
+def _rules_for(selector: str) -> str:
+    """Every declaration block that applies to `selector`, concatenated — including the
+    ones it reaches through a comma-separated selector LIST. `_rule` finds a block by its
+    exact selector text, which silently reads the wrong rule when a property is set on a
+    group (`.a::after, .b::after { height: 44px }`) and refined per-selector below it: the
+    grouped block is invisible to the first member and the second member's own block wins
+    for the first. A floor set on a group is still a floor, so it has to be read as one."""
+    src = _STYLES.read_text(encoding="utf-8")
+    blocks = []
+    for m in re.finditer(r"(?m)^((?:[^{}\n]+,\s*\n)*[^{}\n]+)\{([^}]*)\}", src):
+        names = [part.strip() for part in m.group(1).split(",")]
+        if selector in names:
+            blocks.append(m.group(2))
+    assert blocks, f"no rule declares {selector}"
+    return "\n".join(blocks)
+
+
+def _min_font_scale() -> float:
+    """The smallest text size the app ships (`frontend/src/fontScale.ts`), read rather than
+    hardcoded — add a smaller one and the tap-target arithmetic below is re-judged at it."""
+    src = (_REPO / "frontend" / "src" / "fontScale.ts").read_text(encoding="utf-8")
+    m = re.search(r"FONT_SCALES:\s*FontScale\[\]\s*=\s*\[([^\]]+)\]", src)
+    assert m is not None, "fontScale.ts no longer declares FONT_SCALES"
+    return min(int(v) for v in re.findall(r"\d+", m.group(1))) / 100
+
+
+MIN_FONT_SCALE = _min_font_scale()
+
+
 def test_the_streams_ask_chip_is_a_44px_box_that_cannot_overlap_its_neighbours() -> None:
     """The 44px minimum, and — the half the first version of this gate did not reach —
     that reaching it costs no OTHER tappable on the row its own hit area.
@@ -120,9 +149,19 @@ def test_the_answers_action_row_clears_the_floor() -> None:
     there would have drawn a 44px capsule around 12px of text on every answer in the app.
     A gate that only asserted `min-height` on all three would have passed over exactly
     that — the failure this file's own docstring names, "a gate that asserts a
-    declaration is not a gate that establishes the property named in its own comment"."""
+    declaration is not a gate that establishes the property named in its own comment".
+
+    ⟲ **All three reach the floor through an overlay now.** #1423 paired the glyphs at the
+    row's end, which meant dropping the 44px WIDTH box off copy and play — two adjacent
+    44px targets cannot also sit glyph-to-glyph — and taking the height back on an
+    `::after` that extends OUTWARD into the empty half of the row. So the assertion moved
+    with it: the floor lives on the overlay, not the button, and asserting `min-height` on
+    the button here would now fail against a control that does clear the floor."""
     for selector in (".fb-shell .fb-act-copy", ".fb-shell .fb-act-play"):
-        assert re.search(r"min-height:\s*44px", _rule(selector)), selector
+        # The box stopped painting the target, so the overlay has to carry it.
+        overlay = _rules_for(f"{selector}::after")
+        assert re.search(r"height:\s*44px", overlay), selector
+        assert re.search(r"transform:\s*translateY\(-50%\)", overlay), selector
     # The painted one: small chrome, 44px of reachable box centred on it.
     chip = _rule(".fb-shell .fb-act-chip")
     assert re.search(r"position:\s*relative", chip)
@@ -150,7 +189,15 @@ def test_the_icon_button_is_a_44px_box_that_does_not_crowd_its_neighbour() -> No
     pulls its layout box back with `margin: -8px`, so the hit area bleeds 8px past what
     the flex `gap` spaces. At `gap: 14px` the paperclip's and send's 44px boxes
     OVERLAPPED by 2px, and a near-miss on attach does not no-op — it sends the note. The
-    gap has to clear twice the bleed with room to spare."""
+    gap has to clear twice the bleed with room to spare.
+
+    ⟲ **And it has to clear it at every text size.** #1420's scaling sweep took
+    `.foot-icons` to `gap: calc(24px * var(--font-scale))` while the bleed it spaces stayed
+    absolute, so the dead space thinned with the text: 2px at the shipped 75% default, and
+    at 65% the two hit areas overlapped again by 0.4px — the exact failure the 24px was
+    chosen to end, re-introduced by a rule that was only trying to make text smaller. A gap
+    that scales is therefore read at the SMALLEST shipped scale, not at 100%, and that is
+    what makes this gate catch the sweep rather than be silently un-matched by it."""
     btn = _rule(".icon-btn")
     assert re.search(r"min-width:\s*44px", btn)
     assert re.search(r"min-height:\s*44px", btn)
@@ -158,10 +205,22 @@ def test_the_icon_button_is_a_44px_box_that_does_not_crowd_its_neighbour() -> No
     assert bleed_m is not None, ".icon-btn no longer pulls its layout box back"
     bleed = int(bleed_m.group(1))
     for row in (".foot-icons", ".top-bar-right"):
-        gap_m = re.search(r"gap:\s*(\d+)px", _rule(row))
-        assert gap_m is not None, f"{row} declares no gap"
-        gap = int(gap_m.group(1))
-        assert gap - 2 * bleed >= 8, f"{row}: {gap - 2 * bleed}px between hit areas"
+        rule = _rule(row)
+        # An absolute gap holds at every size; a scaled one is only as wide as the smallest
+        # scale makes it, so that is the width this floor has to be judged against.
+        gap_m = re.search(r"gap:\s*(\d+(?:\.\d+)?)px", rule)
+        scaled_m = re.search(
+            r"gap:\s*calc\(\s*(\d+(?:\.\d+)?)px\s*\*\s*var\(--font-scale\)\s*\)", rule
+        )
+        if scaled_m is not None:
+            gap = float(scaled_m.group(1)) * MIN_FONT_SCALE
+        else:
+            assert gap_m is not None, f"{row} declares no gap"
+            gap = float(gap_m.group(1))
+        clear = gap - 2 * bleed
+        assert clear >= 8, f"{row}: {clear:.1f}px between hit areas" + (
+            f" at the {MIN_FONT_SCALE:.0%} text size" if scaled_m else ""
+        )
 
 
 def test_the_older_notes_pill_is_a_button_with_a_buttons_floor() -> None:

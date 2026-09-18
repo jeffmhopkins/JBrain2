@@ -61,6 +61,16 @@ const EXEMPT =
 /** A hairline and the 44px tap-target floor stay put at every scale. */
 const ABSOLUTE = new Set(["1px", "44px"]);
 
+/** Spacing whose job is to CLEAR an absolute tap target, keyed `selector|property`.
+ *  It is tap-target geometry wearing a spacing property, so it is absolute for the same
+ *  reason the 44px is: `.foot-icons`'s 24px is twice `.icon-btn`'s 8px bleed plus 8px of
+ *  dead space between two 44px hit areas, and when this guard pushed it through the scale
+ *  sweep the dead space is what paid — 2px at the shipped 75% default, and at 65% the
+ *  paperclip's and send's hit areas OVERLAPPED by 0.4px, which is a near-miss on attach
+ *  sending the note. Scaling one side of an arithmetic whose other side is absolute is
+ *  not coverage; it is a regression this guard asked for. */
+const TAP_SPACING = new Set([".foot-icons|gap"]);
+
 const PX = /(?<![\w-])\d*\.?\d+px/g;
 
 /** Drop `calc(…)` groups that carry the scale factor — the px inside them is the
@@ -125,6 +135,7 @@ function unscaledDeclarations(): string[] {
       const prop = decl.slice(0, at).trim();
       const value = decl.slice(at + 1).trim();
       if (!SIZE_PROPS.has(prop)) continue;
+      if (TAP_SPACING.has(`${selector}|${prop}`)) continue;
       const bare = stripScaled(value).match(PX) ?? [];
       if (bare.some((px) => !ABSOLUTE.has(px))) found.push(`${selector} { ${prop}: ${value} }`);
     }
