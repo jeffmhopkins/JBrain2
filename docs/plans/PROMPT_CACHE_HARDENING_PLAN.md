@@ -1,7 +1,7 @@
 # Prompt cache hardening — what the instrumentation found
 
 > **Status:** In progress · **Last verified:** 2026-09-18 ·
-> **Waves:** P0✅ P1✅ P2✅ P3◻️ P4◻️ P5◻️
+> **Waves:** P0✅ P1✅ P2✅ P3✅ P4◻️ P5◻️
 
 The jerv prompt cache (`llm/kv_prefix.py` + `llm/warm_keeper.py` + the `--slot-save-path`
 half of `llm/llama_swap_config.py`) works, and now says so. This plan carries what an
@@ -96,7 +96,46 @@ every prefix loss waits for the next turn to notice. Measurable now that the cou
 - Decide alongside: whether `auto_restore` should default on. Measured OFF on the box today,
   so the RAM tier is doing nothing and the disk layer carries everything.
 
-## P3 ◻️ — identity and lane
+## P3 ✅ — identity and lane
+
+Four landed. The framing that made them one wave: every item here is the store believing
+something about a slot that the thing it describes no longer justifies.
+
+- **A background turn could retire a restore it never used.** `agent.turn` is not an
+  interactive lane — the briefing, deep research and every sub-agent run under it — and the
+  post-turn hook fired for all of them. `note_agent_turn` now takes the turn's own
+  fingerprint and clears only its own. Deliberately NOT done: re-routing those callers to
+  their own task name. It would not stop them taking the slot (they follow the same model),
+  and it moves Settings rows, effort resolution and usage labels for a bookkeeping bug that
+  the identity check fixes precisely.
+- **An abandoned stream never retired the restore it consumed.** A Stop throws GeneratorExit
+  at a `yield`, so every post-turn statement is skipped while the prompt was still sent and
+  the slot still grown. Now cleared in a `finally`.
+- **The slots gate refused to fill an EMPTY slot** because a different slot was busy — a
+  single-slot argument applied to a multi-slot server, which on `-np 2` blocked every restore
+  for as long as a foreign conversation lived, while touching the file so the box read
+  healthy. An empty idle slot destroys nothing, so it is always fair game; a full box still
+  refuses, which is the half that must never regress.
+- **`--port` left the fingerprint.** It is the model's INDEX in the installed set, so a
+  routine PWA install renumbered every later entry and orphaned its ~1.1 GB file to rebuild a
+  byte-identical cache.
+
+### Carried forward, with reasons
+
+- **The chat template's CONTENT is still unhashed** (only its path) and the llama-server build
+  is not in the fingerprint at all. Both need something the fingerprint cannot reach today:
+  the template lives on the gateway container's filesystem, and the build is only readable
+  over HTTP via `/props`, which a synchronous fingerprint cannot await. Fail-soft in practice
+  — a wrong restore trips `n_restored` and deletes the file — but the first restore after a
+  boot adopts whatever count comes back with no comparison, which is exactly when a stale
+  file is most likely. Needs a design, not a patch.
+- **A per-conversation effort or model pick still has no save path.** Fixing it means saving
+  from the turn path, which is the one place a save has never been allowed to happen.
+- **Residency still evicts biggest-first**, so the interactive model is the first victim
+  because it is the largest. Protecting it means refusing loads that fit today; that is a
+  budget policy decision, not a cache fix.
+
+## P3 notes — what the review found
 
 - **`agent.turn` is worn by background traffic** — `daily_briefing.py:47`,
   `deep_research.py:115`, `spawn.py:81`. The label the KV machinery keys on.

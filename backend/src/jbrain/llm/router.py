@@ -12,6 +12,7 @@ The "local" provider must exist now so going all-local is config, not
 refactor — docs/reference/ANALYSIS.md "Privacy routing".
 """
 
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
@@ -449,16 +450,56 @@ class LlmRouter:
         except Exception:  # noqa: BLE001 — the disk layer must never fail a turn
             log.warning("llm.kv_restore_failed", model=model, exc_info=True)
 
-    def _note_agent_turn(self, task: str, provider: str, model: str, input_tokens: int) -> None:
-        """Tell the store a real jerv turn's prompt size, so the slot that conversation
-        grew keeps reading as 'prefix present' (restoring over it would wipe cached
-        history to re-plant a prefix the conversation already extends)."""
+    def _note_agent_turn(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        *,
+        system: str = "",
+        tools: Sequence[LlmTool] = (),
+        reasoning_effort: str | None = None,
+    ) -> None:
+        """Tell the store a real turn's prompt size, so the slot that conversation grew keeps
+        reading as 'prefix present' (restoring over it would wipe cached history to re-plant a
+        prefix the conversation already extends).
+
+        Named by IDENTITY, not just by task. `agent.turn` is not an interactive lane — the
+        daily briefing, deep research and every spawned sub-agent run under it with a
+        different system prompt and tool set — so passing the turn's own identity is what
+        stops a background completion retiring a restore the owner's turn has not used."""
         if (
-            self._kv_prefix is not None
-            and task == kv_prefix_mod.AGENT_TURN_TASK
-            and provider == local_catalog.LOCAL_PROVIDER
+            self._kv_prefix is None
+            or task != kv_prefix_mod.AGENT_TURN_TASK
+            or provider != local_catalog.LOCAL_PROVIDER
         ):
-            self._kv_prefix.note_agent_turn(model, input_tokens)
+            return
+        fingerprint: str | None = None
+        with contextlib.suppress(Exception):  # identity is best-effort; never fail a turn
+            fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
+        self._kv_prefix.note_agent_turn(model, input_tokens, fingerprint=fingerprint)
+
+    def _note_prefix_used(
+        self,
+        task: str,
+        provider: str,
+        model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
+    ) -> None:
+        """Retire the store's restored-but-unused memo for a request that reached the model
+        without completing — an abandoned stream. Best-effort in every direction."""
+        if (
+            self._kv_prefix is None
+            or task != kv_prefix_mod.AGENT_TURN_TASK
+            or provider != local_catalog.LOCAL_PROVIDER
+        ):
+            return
+        with contextlib.suppress(Exception):
+            fingerprint = self._kv_prefix.identity_of(model, system, tools, reasoning_effort)
+            self._kv_prefix.note_prefix_used(model, fingerprint)
 
     async def _admit_local(self, provider: str, model: str) -> None:
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
@@ -819,7 +860,15 @@ class LlmRouter:
             sampling=resolved_sampling,
         )
         elapsed = time.perf_counter() - start
-        self._note_agent_turn(task, provider, model, turn.usage.input_tokens)
+        self._note_agent_turn(
+            task,
+            provider,
+            model,
+            turn.usage.input_tokens,
+            system=system,
+            tools=tools,
+            reasoning_effort=reasoning_effort,
+        )
         await self._record(task, provider, model, turn.usage)
         log.info(
             "llm.converse",
@@ -951,13 +1000,32 @@ class LlmRouter:
                     yield TextChunk(text=turn.text)
                 final = turn
                 yield turn
+            finally:
+                # A stream the owner STOPS never reaches the tail below: GeneratorExit is
+                # thrown at a `yield`, so `_note_agent_turn` and everything after it is
+                # skipped. The prompt was still sent and the slot still grown, so the store's
+                # restored-but-unused memo would stay set for the rest of this process — and
+                # `restore_if_lost` returns False on it before it reads /slots at all, making
+                # the owner's NEXT turn pay the prefill this store exists to prevent.
+                # `first_part` is still True only if nothing ever arrived, in which case no
+                # slot was touched and there is nothing to retire.
+                if final is None and not first_part:
+                    self._note_prefix_used(task, provider, model, system, tools, reasoning_effort)
         if final is not None:
             elapsed = time.perf_counter() - start
             # The exact token count for the characters we just sent — the only free, exact
             # calibration this box offers, and it arrives on every turn.
             if probe is not None:
                 prefill.calibrate(model, prompt_chars, final.usage.input_tokens)
-            self._note_agent_turn(task, provider, model, final.usage.input_tokens)
+            self._note_agent_turn(
+                task,
+                provider,
+                model,
+                final.usage.input_tokens,
+                system=system,
+                tools=tools,
+                reasoning_effort=reasoning_effort,
+            )
             await self._record(task, provider, model, final.usage)
             log.info(
                 "llm.converse_stream",

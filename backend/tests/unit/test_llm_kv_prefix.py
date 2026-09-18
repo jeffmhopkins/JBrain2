@@ -99,6 +99,13 @@ def _d(value: object) -> Any:
     return value
 
 
+def _fingerprint_of(store: KvPrefixStore, system: str) -> str:
+    """The identity a turn with this system prompt would look for."""
+    fp = store.identity_of(SERVED, system, TOOLS, None)
+    assert fp is not None
+    return fp
+
+
 def _seed_prime(store: KvPrefixStore, system: str, tokens: int = PRIME) -> None:
     """Record a prime's token count the way a real save does: under the IDENTITY's
     fingerprint, not the served model. The count belongs to the identity — a model whose tool
@@ -517,8 +524,11 @@ async def test_a_restored_slot_reports_nothing_so_the_memo_stops_the_loop(root: 
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, "memo must hold"
     assert len(gw.restored) == 1
-    # a real turn uses the restored slot; from here the slot reports its own size
-    store.note_agent_turn(SERVED, PRIME + 300)
+    # a real turn uses the restored slot; from here the slot reports its own size. The turn
+    # must NAME the identity it ran: `agent.turn` is shared with the daily briefing, deep
+    # research and every sub-agent, and an unnamed clear let one of those retire a restore the
+    # owner's turn had not consumed.
+    store.note_agent_turn(SERVED, PRIME + 300, fingerprint=_fingerprint_of(store, "persona"))
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True, (
         "after use, a genuine later loss must be restorable again"
@@ -955,7 +965,7 @@ async def test_clear_takes_the_files_and_the_state_that_described_them(root: Pat
     path = _plant_file(root, store, "persona")
     os.write(os.open(str(path) + ".ckpt", os.O_CREAT | os.O_WRONLY), b"\0" * 8)
     _seed_prime(store, "persona")
-    store._restored_unused.add(SERVED)
+    store._restored_unused[SERVED] = _fingerprint_of(store, "persona")
 
     out = await store.clear()
 
@@ -963,7 +973,7 @@ async def test_clear_takes_the_files_and_the_state_that_described_them(root: Pat
     assert out["bytes"] == 64 + 8, "the sidecar's bytes are freed and counted"
     assert _slot_files(root) == [], "the pair goes together"
     assert store._prime_tokens == {}
-    assert store._restored_unused == set()
+    assert store._restored_unused == {}
 
 
 async def test_clear_can_take_one_model_and_leave_the_others(root: Path) -> None:
@@ -1002,3 +1012,109 @@ async def test_an_eviction_says_so(root: Path) -> None:
     assert _d(snap["counters"])["evicted"] == 1
     evicted = [e for e in _d(snap["recent"]) if e["outcome"] == "evicted"]
     assert evicted and evicted[0]["bytes"] == 64
+
+
+# ---- P3: identity, lanes and the slots gate ----------------------------------------------
+
+
+async def test_a_background_turn_cannot_retire_a_restore_it_never_used(root: Path) -> None:
+    """`agent.turn` is not an interactive lane. The daily briefing, deep research and every
+    spawned sub-agent run under that same task name with their own system prompt and tools,
+    and the router's post-turn hook fires for all of them. Clearing the memo on one retired a
+    restore the OWNER's turn had not consumed — and `restore_if_lost` returns False on that
+    belief before it reads /slots at all, so the next real turn paid a full prefill."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    _seed_prime(store, "persona")
+    gw.slot_state = [{"id": 0, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+
+    # The 06:00 briefing completes on the same model under the same task name.
+    store.note_agent_turn(SERVED, 9_000, fingerprint=_fingerprint_of(store, "a briefing"))
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, (
+        "jerv's restore is still unused — a stranger's turn must not retire it"
+    )
+    assert len(gw.restored) == 1, "and nothing should have been re-streamed"
+
+    # The owner's own turn does retire it.
+    store.note_agent_turn(SERVED, 31_000, fingerprint=_fingerprint_of(store, "persona"))
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+
+
+async def test_an_abandoned_stream_still_retires_the_restore_it_consumed(root: Path) -> None:
+    """A stream the owner STOPS never produces a final turn, so every post-turn statement in
+    the router is skipped — but the prompt was sent and the slot was grown. Left set, the memo
+    makes every later restore decline for the life of the process."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    _seed_prime(store, "persona")
+    gw.slot_state = [{"id": 0, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+
+    store.note_prefix_used(SERVED, _fingerprint_of(store, "persona"))
+
+    gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": False}]
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+
+
+async def test_an_empty_idle_slot_is_restorable_whatever_another_slot_holds(root: Path) -> None:
+    """The gate is about never overwriting cached history — so it has nothing to say about an
+    EMPTY slot. As `any()` across ALL slots it was a single-slot argument applied to a
+    multi-slot server: on `-np 2` a long background conversation in the other slot blocked
+    every restore for as long as that cache lived, while the store touched the file so the box
+    read as healthy."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    _seed_prime(store, "persona")
+    gw.slot_state = [
+        {"id": 0, "n_prompt_tokens": 0, "is_processing": False},  # free, and safe to fill
+        {"id": 1, "n_prompt_tokens": 33_000, "is_processing": False},  # a foreign conversation
+    ]
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
+    assert [r[1] for r in gw.restored] == [0], "into the empty slot, never over the other one"
+
+
+async def test_a_full_box_still_refuses_to_overwrite_a_conversation(root: Path) -> None:
+    """The half that must not regress: with nothing free, a prefix-sized cache is still
+    untouchable, whatever it holds. Restoring over a conversation to re-plant a prefix that
+    conversation already extends is the one harm this store must never cause."""
+    store, gw = _store(root)
+    _plant_file(root, store, "persona")
+    _seed_prime(store, "persona")
+    gw.slot_state = [
+        {"id": 0, "n_prompt_tokens": 33_000, "is_processing": False},
+        {"id": 1, "n_prompt_tokens": 29_000, "is_processing": False},
+    ]
+
+    assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
+    assert gw.restored == []
+
+
+async def test_reinstalling_a_model_does_not_orphan_every_later_models_cache(root: Path) -> None:
+    """`--port` is the model's INDEX in the installed set, so installing or removing ANY model
+    renumbers every entry after it. Hashed into the fingerprint, a routine PWA install
+    orphaned every later model's ~1.1 GB file and charged a full prefill to rebuild a
+    byte-identical cache. The port changes nothing about what the server computes."""
+    store, _gw = _store(root)
+    (root / "llama-swap.yaml").write_text(
+        f"models:\n  {SERVED}:\n    cmd: llama-server --port 9100 -c 131072"
+        f" --slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/{MODEL_ID}\n"
+    )
+    before = store.identity_of(SERVED, "persona", TOOLS, None)
+
+    # The owner installs a model ahead of this one; every later port shifts by one.
+    (root / "llama-swap.yaml").write_text(
+        f"models:\n  {SERVED}:\n    cmd: llama-server --port 9101 -c 131072"
+        f" --slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/{MODEL_ID}\n"
+    )
+    assert store.identity_of(SERVED, "persona", TOOLS, None) == before
+
+    # A real serving change still moves it.
+    (root / "llama-swap.yaml").write_text(
+        f"models:\n  {SERVED}:\n    cmd: llama-server --port 9101 -c 65536"
+        f" --slot-save-path /models/{llama_swap_config.KVSLOT_DIR}/{MODEL_ID}\n"
+    )
+    assert store.identity_of(SERVED, "persona", TOOLS, None) != before
