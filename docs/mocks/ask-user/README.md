@@ -1,7 +1,8 @@
 # Ask the user — a tool that stops and asks instead of guessing
 
-> **Status:** GUI gate **open** — three variants, awaiting the owner's choice. Nothing
-> built, no `ask_user` tool exists yet.
+> **Status:** GUI gate **settled on A** (2026-09-18), with one amendment the owner made at
+> the gate: **a multiple-choice question always carries a written-answer row.** Nothing built
+> yet — no `ask_user` tool exists; the build plan is the next step.
 
 ## The problem
 
@@ -58,11 +59,36 @@ park-don't-block idea fits the system rather than being bolted to it.
 
 | | Shape | Best at | Worst at |
 |---|---|---|---|
-| **A** `a-inline-card.html` | Question card in the transcript; tappable suggested answers; double-tap to send | Question sits with the reasoning that raised it; common case is one tap; matches the shipped `InlineProposal` doctrine exactly | The turn visibly stops; a chatty model turns the transcript into a form |
+| **A** `a-inline-card.html` **— chosen** | Question card in the transcript; tappable suggested answers **plus an always-present written row**; double-tap to send | Question sits with the reasoning that raised it; common case is one tap, and no case is a forced choice; matches the shipped `InlineProposal` doctrine exactly | The turn visibly stops; a chatty model turns the transcript into a form |
 | **B** `b-composer-pill.html` | No card at all — question is prose, the **composer** changes (pill + answer chips) | Lightest possible surface: no new registered view, answer where your thumb already is | The question scrolls away; nothing anchors *what* is waited on in a long chat; no record once answered; a second question has nowhere to go |
 | **C** `c-answer-or-park.html` | A, plus **what it will assume if you say nothing**, plus **Park it** | The question is never a *block*; the only variant wired to D2's ladder, its decay-to-assumption, and its `never` for health/finance/location | Tallest card; an assumption line to read on every question |
 
-## The judgement
+## The amendment the gate made: the written row is a component rule
+
+The owner's condition on choosing A: *"if it's multiple choice it really needs always to have
+an option to completely fill in a custom answer."*
+
+**That is a rule for the component, not for the prompt.** A closed set of choices is a new way
+to get a wrong answer: if none of the options is right, the owner is pushed into picking one
+anyway, and a wrong answer given confidently is worse than the guess this tool exists to
+prevent. A prompt-level *"always include an other option"* would be followed until the one
+time it wasn't — and that one time is exactly the question where it matters.
+
+So the invariant is:
+
+> **The component appends the written row itself, whatever options the model supplied. The
+> model cannot offer a closed question, because it is not the thing that renders the list.**
+
+It costs no new CSS. `.ip-reason-input` already ships on this card for decline-with-reason —
+the same shape, a structured choice with a written escape — so the written row is the shipped
+input in a leaf of its own. `a-inline-card.html` mocks all three states: the row selected and
+open, the send blocked while it is empty (*"Write it first"*), and the resumed reply branching
+on the written answer rather than an option id.
+
+## The judgement at the time of the gate
+
+*Kept for the record. The owner chose **A**; the reasoning below argued for C, and what it
+was protecting is carried into the build plan as an open item (see below).*
 
 **C, and not narrowly.**
 
@@ -100,3 +126,9 @@ read with them in view:
   never be able to put a question in front of the owner.
 - **Whether a parked question is the same row as an ingest question.** It should be. One
   store, one expiry ladder, one queue.
+- **What A does about a question the owner does not want to answer now.** This is C's whole
+  argument, and choosing A does not dispose of it: a blocking question is an improvement only
+  while you are willing to answer it, and the moment you are not, the work stops entirely.
+  C is A plus two rows, so the build plan should keep the door open — an assumption line and a
+  **Park it** control can be added to the settled card without rework if the block turns out
+  to bite. Until then, ending the turn is the escape hatch, which is worse but not fatal.
