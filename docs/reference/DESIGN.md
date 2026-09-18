@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-09-15
+> **Status:** Living · **Last verified:** 2026-09-18
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -40,6 +40,25 @@ Dual theme, dark-first. Implementation:
   Settings "Text size" control (65 / 75 / 90 / 100%) sets the scale,
   persisted locally. **Default is 75%** of the drawn px values (settled in
   Phase 1 polish — the doc's sizes read large on real devices).
+- **The setting scales the interface, not only its type.** A size token gets
+  the words right and still leaves the surface around them wrong: with the
+  chat's prose on `--fs-chat` but its box in flat px, the agent turn rendered
+  **byte-identical at 65 / 75 / 90 / 100%** — an 11.5px Thinking/Worked chip on
+  a 25px floor with ±6px margins — and a fixed 18px glyph held the omnibox tab
+  row open, so at 75% both read as chrome wrapped around small text. So in the
+  **agent turn** (`.fb-shell`, `.bubble`) and the **omnibox**, the
+  size-defining properties — `font-size`, padding, margin, gap, the min/max and
+  explicit box dimensions, and glyph `width`/`height` — are written
+  `calc(px × var(--font-scale))`, or in `em` for a glyph that should track its
+  own label. `frontend/src/fontScaleCoverage.test.ts` fails the build if one
+  goes back to a bare px. Four things stay absolute, by design:
+  - **44px tap targets** and **1px hairlines** — floors, not type-relative;
+  - **map, weather, hurricane and chart tool views** (`.loc-map*`, `.tv-wx*`,
+    `.tv-hu*`, `.tv-cc*`, `.tv-bar*`, `.tv-plot*`) — they draw into canvases
+    and SVG viewBoxes and lay out on hand-tuned pixel grids, so their cells
+    cannot scale while their tracks do not;
+  - **`border-radius`, shadows and absolute offsets** — shape, not size;
+  - **`@media` and `@keyframes` bodies** — breakpoints and animation geometry.
 
 ## Color tokens
 
