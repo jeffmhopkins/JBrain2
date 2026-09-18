@@ -701,7 +701,12 @@ button.chip-ask {
 
 .dock {
   flex: none;
-  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  /* Scaled like the rest of the omnibox. #1420 skipped this declaration whole because of
+     the env() in the shorthand, which left an 8px gutter above the box while everything
+     around it thinned — and that gutter is half of what sits under the status line.
+     The safe-area inset is a physical device measurement and stays absolute. */
+  padding: calc(8px * var(--font-scale)) calc(12px * var(--font-scale))
+    calc(10px * var(--font-scale) + env(safe-area-inset-bottom));
   background: var(--bg);
 }
 
@@ -9857,7 +9862,8 @@ button.small {
   margin-left: 0;
   padding: calc(3px * var(--font-scale));
   gap: 0;
-  /* Pull the glyph to the end of its 44px target so the row actually ends where the row
+  min-width: 0;
+  /* Pull the glyph to the end of its target so the row actually ends where the row
      ends. Left-aligned, the copy glyph sat 33px in from the right edge at 65% — invisible
      while the foot was 48.9px tall, but once the strip dropped to 22.1px that inset was
      the only thing left to look at, and the pair read as mis-spaced rather than aligned.
@@ -9874,8 +9880,12 @@ button.small {
   /* End-aligned to match compact copy beside it, so the two glyphs share one rhythm
      rather than one sitting centred in its target and the other pinned to the edge. */
   justify-content: flex-end;
-  /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box. */
-  min-width: 44px;
+  /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box.
+     The 44px WIDTH box is gone: it was the only thing holding the two glyphs 39px
+     apart, and the pair is meant to read as one cluster at the row's end. The width
+     comes back on the overlay below, taken OUTWARD into the empty half of the row
+     rather than from between the icons. */
+  min-width: 0;
   min-height: 0;
   padding: calc(3px * var(--font-scale));
   border-radius: 8px;
@@ -9906,7 +9916,7 @@ button.small {
    overhang and the dock paints over the last few px under the final turn. That is the
    honest cost, and still well above the 25px this control carried before the floor
    existed. The overhang above reaches the answer's last line, which carries no tap of
-   its own; the two buttons sit ~44px apart, so neither overlay reaches the other. */
+   its own. */
 .fb-shell .fb-act-play,
 .fb-shell .fb-act-copy {
   position: relative;
@@ -9915,11 +9925,21 @@ button.small {
 .fb-shell .fb-act-copy::after {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
   top: 50%;
   height: 44px;
   transform: translateY(-50%);
+}
+/* With the glyphs paired, each painted box is only ~13px wide, so the overlay takes its
+   width from the side that is empty: play reaches left into the row's blank middle, copy
+   right into the bubble's own padding. Inward each stops short of the 8.5px between them,
+   so the two never overlap and a tap is never ambiguous. */
+.fb-shell .fb-act-play::after {
+  left: calc(-34px * var(--font-scale));
+  right: calc(-3px * var(--font-scale));
+}
+.fb-shell .fb-act-copy::after {
+  left: calc(-3px * var(--font-scale));
+  right: calc(-18px * var(--font-scale));
 }
 
 /* the long-press target shouldn't trigger the OS text-selection / callout while held. */
@@ -10829,8 +10849,14 @@ button.small {
   display: inline-flex;
   align-items: center;
   gap: calc(8px * var(--font-scale));
+  /* Sits between the last turn and the omnibox, so its padding is what centres it there.
+     Above it sits the chat's own 4px floor, below it the dock's 8px gutter, so the two
+     sides only match when this padding makes up the 4px difference: 6 over 2 puts 10px
+     on each side at every text size. Measured 6.5 above against 13.2 below at 65% before
+     (the dock's gutter was unscaled then), which read as belonging to the turn rather
+     than sitting between it and the box. */
   padding: calc(6px * var(--font-scale)) calc(16px * var(--font-scale))
-    calc(8px * var(--font-scale));
+    calc(2px * var(--font-scale));
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
   color: var(--text-2);
