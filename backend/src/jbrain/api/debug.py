@@ -2874,6 +2874,32 @@ async def model_metrics(
     return await llm_settings.gateway_metrics(model_id, settings, _gateway(request))
 
 
+@router.get("/llm/kv-prefix")
+async def kv_prefix_state(
+    request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """The jerv prompt cache's whole state — counters, per-model file/identity, disk usage,
+    recent outcomes, and llama-server's own prompt-reuse counters.
+
+    This is the route that answers "is the KV cache working?". Until it existed the box could
+    not say: only the two SUCCESS paths wrote a box event, so a store humming along and a
+    store that had not restored anything since boot both produced no rows at all, and the
+    feature shipped silently inert twice on exactly that blindness. `counters` is the whole
+    record (every outcome since process start); `models[].state` resolves the fingerprint a
+    turn would ask for against what is on disk, naming the drifted component when they
+    disagree; `reuse` is the server's cumulative cache-hit ratio, the one number that cannot
+    be argued with.
+
+    Read-only and load-free: it never admits, loads or evicts, so it is safe to poll."""
+    return await llm_settings.kv_prefix_state(
+        settings,
+        _gateway(request),
+        kv_prefix=getattr(request.app.state, "kv_prefix", None),
+        registry=getattr(request.app.state, "agent_registry", None),
+        settings_store=_store(request),
+    )
+
+
 @router.post("/llm/local-models/{model_id}/prime")
 async def prime_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
