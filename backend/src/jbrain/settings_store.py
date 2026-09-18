@@ -309,6 +309,15 @@ LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY = "local_llm_patch_restore_checkpoint"
 LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT = False
 
 
+# The jerv prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix). It was a module
+# constant whose own comment conceded the gap — "changing it is a release, there is no knob"
+# — on a box whose owner has no terminal (CLAUDE.md #10) and whose store was measured at 94%
+# of it. Read once at startup, like the patch toggle: raising it takes effect on the next api
+# restart, which the PWA's Ops → Update performs anyway.
+LLM_KV_PREFIX_BUDGET_GB_KEY = "llm_kv_prefix_budget_gb"
+LLM_KV_PREFIX_BUDGET_GB_DEFAULT = 25
+
+
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
 # (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
 # substitution before forwarding a clip to the box (jbrain.api.brain) — engine-agnostic (it helps
@@ -1017,6 +1026,19 @@ class SqlSettingsStore:
             LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT,
         )
         return stored is True
+
+    async def llm_kv_prefix_budget_gb(self, ctx: SessionContext) -> int:
+        """The prompt cache's disk allowance in GiB. Defaults to 25; a stored value outside
+        1..500 is ignored rather than trusted, because this number bounds a delete loop."""
+        stored = await self.get(ctx, LLM_KV_PREFIX_BUDGET_GB_KEY, LLM_KV_PREFIX_BUDGET_GB_DEFAULT)
+        if isinstance(stored, int) and not isinstance(stored, bool) and 1 <= stored <= 500:
+            return stored
+        return LLM_KV_PREFIX_BUDGET_GB_DEFAULT
+
+    async def set_llm_kv_prefix_budget_gb(self, ctx: SessionContext, gb: int) -> int:
+        """Store the allowance. Bounds are the API's job, as everywhere else here."""
+        await self.upsert(ctx, LLM_KV_PREFIX_BUDGET_GB_KEY, gb)
+        return gb
 
     async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
         """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see

@@ -69,6 +69,7 @@ class _FakeRouter:
         self.admit_without_loading = False
         # Shared so the prime can be ordered against the load/restore the gateway records.
         self._gateway = gateway
+        self.effort: str | None = "low"
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
@@ -76,8 +77,9 @@ class _FakeRouter:
     async def effective_reasoning_effort(self, task: str) -> str | None:
         # The live box carries a stored "low" on agent.turn — the value whose absence from
         # the gateway warm caused the 2026-08-23 mismatch. Distinctive, not None, so a
-        # keeper that drops it on the way to the store cannot pass.
-        return "low"
+        # keeper that drops it on the way to the store cannot pass. Settable, so a test can
+        # do what the owner does in Settings and change it under a running keeper.
+        return self.effort
 
     async def admit_local_load(self, served_model: str) -> None:
         # The REAL one loads. `ensure_room` takes the slow path for a non-resident target and
@@ -461,3 +463,29 @@ async def test_a_broken_disk_layer_never_wedges_the_keeper() -> None:
     assert await keeper.reconcile_once() is True
     assert "prime" in gateway.events
     assert len(router.converses) == 1
+
+
+async def test_changing_the_reasoning_effort_makes_the_keeper_re_prime() -> None:
+    """The effort is in the RENDERED prompt — gpt-oss's harmony template writes a literal
+    "Reasoning: <level>" into the leading tokens — and therefore in the store's fingerprint.
+
+    Without it in the memo, the settled branch was unreachable-by-design: `want ==
+    self._primed` stayed true across a Settings change, so the keeper never re-primed, no
+    save ever ran, no file was ever written under the new identity, and every interactive
+    turn re-prefilled the whole ~30k prefix until a restart or an eviction. The store's own
+    fingerprint comment named that hazard and closed only its half."""
+    keeper, _gateway, router, store = _kept_with_store(running=("gpt-oss-120b",))
+    assert await keeper.reconcile_once() is True
+    primed_once = len(router.converses)
+    assert primed_once == 1
+
+    # Settled: the same identity does not re-prime, only re-checks the slot.
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == primed_once
+
+    # The owner changes agent.turn's effort in Settings. Nothing unloads the model.
+    router.effort = "high"
+
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == primed_once + 1, "a new effort is a new prefix to prime"
+    assert store.saves[-1][2] == "high", "and the save must be keyed by the effort it primed"

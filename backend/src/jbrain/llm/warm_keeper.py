@@ -83,9 +83,18 @@ class WarmKeeper:
         # the prime is a ~1 s cache hit instead of a ~60 s prefill, save after priming so
         # the next boot can do the same. Optional — unwired keeps the prior behaviour.
         self._kv_prefix = kv_prefix
-        # What we last successfully primed: (served_model, hidden-tool-set). None until primed
-        # (or after the model is found evicted). Re-prime when this no longer matches the desired.
-        self._primed: tuple[str, frozenset[str]] | None = None
+        # What we last successfully primed: (served_model, hidden-tool-set, reasoning effort).
+        # None until primed (or after the model is found evicted). Re-prime when this no longer
+        # matches the desired.
+        #
+        # The EFFORT is in here because it is in the rendered prompt — gpt-oss's harmony
+        # template writes a literal "Reasoning: <level>" into the leading tokens — and so in
+        # the store's fingerprint. Without it, changing the agent task's effort in Settings
+        # left `want == self._primed`, the keeper took its settled branch forever, no prime
+        # ran, no file was ever saved under the new identity, and every interactive turn
+        # re-prefilled the whole prefix until a restart. The store's own comment named that
+        # hazard and fixed only the fingerprint half of it.
+        self._primed: tuple[str, frozenset[str], str | None] | None = None
         # Two cadences: retry EAGERLY (interval_wait) while a target is wanted but not yet primed
         # — the boot window where the gateway is still coming up, so the prime lands
         # seconds after it's reachable, not a full steady-interval later. Once primed (or
@@ -158,7 +167,7 @@ class WarmKeeper:
                 effort = await self._router.effective_reasoning_effort(AGENT_TURN_TASK)
             except Exception:  # noqa: BLE001 — identity input only, never wedge the keeper
                 log.warning("warm_keeper.effort_resolve_failed", model=served, exc_info=True)
-        want = (served, hidden)
+        want = (served, hidden, effort)
         if served in running and self._primed == want:
             # Primed as far as the memo knows — but the memo cannot see a slot being
             # overwritten by traffic (a single-slot configuration loses the prefix to any

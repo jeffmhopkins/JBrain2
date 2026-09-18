@@ -1640,3 +1640,45 @@ def test_kv_prefix_state_requires_the_debug_token(debug_client: tuple[TestClient
     client, _ = debug_client
 
     assert client.get("/api/debug/llm/kv-prefix").status_code == 401
+
+
+def test_kv_prefix_clear_removes_files_and_is_scopeable(
+    debug_client: tuple[TestClient, str], tmp_path: Any
+) -> None:
+    """The route that replaces `rm -rf .kvslots`, which the owner has no shell to run."""
+    from jbrain.llm.kv_prefix import KvPrefixStore
+
+    client, key = debug_client
+    store = KvPrefixStore(_state(client).local_gateway, str(tmp_path))
+    _state(client).kv_prefix = store
+
+    resp = client.delete("/api/debug/llm/kv-prefix", headers=_auth(key))
+
+    assert resp.status_code == 200
+    assert resp.json() == {"files": 0, "bytes": 0, "model": "*"}
+
+
+def test_kv_prefix_budget_is_bounded_and_says_when_it_applies(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The floor is one file's worth: below it the store would evict everything it just
+    saved, which is a delete loop rather than a budget."""
+    client, key = debug_client
+
+    ok = client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}, headers=_auth(key))
+    assert ok.status_code == 200
+    assert ok.json()["budget_gb"] == 40
+    assert "restart" in ok.json()["applies"]
+
+    assert (
+        client.put(
+            "/api/debug/llm/kv-prefix/budget", params={"gb": 1}, headers=_auth(key)
+        ).status_code
+        == 422
+    )
+
+
+def test_the_kv_prefix_write_routes_need_the_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.delete("/api/debug/llm/kv-prefix").status_code == 401
+    assert client.put("/api/debug/llm/kv-prefix/budget", params={"gb": 40}).status_code == 401

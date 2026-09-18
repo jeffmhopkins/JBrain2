@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-09-18 — `GET /llm/kv-prefix` reports the prompt cache's own state (counters, per-model file/identity, disk usage, reuse), and `POST …/prime` now returns the prompt-cache delta across the prime. Prior: a dial outside the converter's own input passband (300 Hz - 65 MHz on this Ham It Up, owner-supplied) is now a 400 on every tune and sweep route, naming the converter and the tune it would have produced; a span it blocks part of is refused whole rather than trimmed. `POST /sdr/sweep` and `POST /sdr/capture` honour the chosen radio's stored gain and upconverter offset, and a sweep reports the gain its rows were MEASURED at.
+> **Status:** Living · **Last verified:** 2026-09-18 — the prompt cache is readable and operable: `GET /llm/kv-prefix` reports its state (counters, per-model file/identity, disk usage, reuse), `DELETE /llm/kv-prefix` clears it and `PUT /llm/kv-prefix/budget` sets its allowance, and `POST …/prime` returns the prompt-cache delta across the prime. Measured on the box: a cold load processes 11 prompt tokens of 30,546. Prior: a dial outside the converter's own input passband (300 Hz - 65 MHz on this Ham It Up, owner-supplied) is now a 400 on every tune and sweep route, naming the converter and the tune it would have produced; a span it blocks part of is refused whole rather than trimmed. `POST /sdr/sweep` and `POST /sdr/capture` honour the chosen radio's stored gain and upconverter offset, and a sweep reports the gain its rows were MEASURED at.
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -208,6 +208,16 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   re-rejected on every keeper tick would otherwise bury the narration. **The counters, not
   that surface, are the complete record.**
 
+- `DELETE /api/debug/llm/kv-prefix` — delete the prompt cache's slot files, all of them or
+  one catalog model's (`?model=<id>`). The no-terminal twin of `rm -rf .kvslots`, for the same
+  reason `drop-page-cache` exists. Safe while models are resident: it removes files, never a
+  live slot, so a conversation in flight keeps its KV. Cost of a wrong call is bounded at one
+  re-prefill per deleted identity, and the next prime writes the file back. Read
+  `GET …/kv-prefix` first — `store.by_file` says what is there.
+- `PUT /api/debug/llm/kv-prefix/budget?gb=N` — the store's disk allowance, 2..500 GiB
+  (default 25). It was a module constant whose own comment conceded the gap ("changing it is
+  a release, there is no knob"), which on a box with no terminal meant no path at all. Read
+  once at construction, so it applies on the next api start; Ops → Update performs one anyway.
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment, plus **`reuse`**
   (`cached_tokens`, `processed_tokens`, `reuse_rate`) — the `/metrics` prompt-cache delta

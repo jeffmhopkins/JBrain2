@@ -641,6 +641,14 @@ class FakeSettingsStore:
         # Default OFF; only an explicit true turns it on (mirrors the SQL store).
         return self.values.get("local_llm_patch_restore_checkpoint", False) is True
 
+    async def llm_kv_prefix_budget_gb(self, ctx: object) -> int:
+        stored = self.values.get("llm_kv_prefix_budget_gb", 25)
+        return stored if isinstance(stored, int) and 1 <= stored <= 500 else 25
+
+    async def set_llm_kv_prefix_budget_gb(self, ctx: object, gb: int) -> int:
+        self.values["llm_kv_prefix_budget_gb"] = gb
+        return gb
+
     async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
         raw = self.values.get("pronunciation_lexicon", {})
         if not isinstance(raw, dict):

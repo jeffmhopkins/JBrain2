@@ -85,9 +85,11 @@ def _id_dir(root: Path) -> Path:
     return root / llama_swap_config.KVSLOT_DIR / MODEL_ID
 
 
-def _store(root: Path, *, writing: bool = False) -> tuple[KvPrefixStore, FakeGateway]:
+def _store(
+    root: Path, *, writing: bool = False, budget: int = kv_prefix.MAX_STORE_BYTES
+) -> tuple[KvPrefixStore, FakeGateway]:
     gw = FakeGateway(writes_to=_id_dir(root) if writing else None)
-    return KvPrefixStore(gw, str(root)), gw  # type: ignore[arg-type]
+    return KvPrefixStore(gw, str(root), max_store_bytes=budget), gw  # type: ignore[arg-type]
 
 
 def _d(value: object) -> Any:
@@ -95,6 +97,16 @@ def _d(value: object) -> Any:
     is a wire payload, not a model — the tests do the narrowing rather than the route."""
     assert isinstance(value, dict | list)
     return value
+
+
+def _seed_prime(store: KvPrefixStore, system: str, tokens: int = PRIME) -> None:
+    """Record a prime's token count the way a real save does: under the IDENTITY's
+    fingerprint, not the served model. The count belongs to the identity — a model whose tool
+    set or effort flaps has two identities and two counts, and keying it by model is what made
+    one identity's restore delete the other's good file."""
+    resolved = store._resolve(SERVED, system, TOOLS, None)
+    assert resolved is not None
+    store._prime_tokens[resolved[0]] = tokens
 
 
 def _slot_files(root: Path) -> list[str]:
@@ -230,15 +242,14 @@ async def test_the_budget_evicts_least_recently_used_across_all_models(
     newest = _id_dir(root) / ("cc" * 16 + ".kvslot")
     newest.write_bytes(b"\0" * 64)
     os.utime(newest, (3_000, 3_000))
-    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 192)  # 4 × 64-byte files > this
-    store, gw = _store(root, writing=True)
+    store, gw = _store(root, writing=True, budget=192)  # 4 × 64-byte files > this
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
     assert not oldest.exists(), "least-recently-used goes first"
     assert middle.exists() and newest.exists()
     assert len(_slot_files(root)) == 3  # middle + newest + the fresh save
     # Even a budget smaller than one file never eats the file just verified.
-    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 1)
+    store._max_store_bytes = 1
     saved_name = gw.saved[0][2]
     (_id_dir(root) / saved_name).unlink()
     gw.saved.clear()
@@ -268,8 +279,7 @@ async def test_the_checkpoint_sidecar_lives_and_dies_with_its_slot_file(
     os.utime(newest, (3_000, 3_000))
     # oldest(64) + its sidecar(64) + newest(64) + the fresh save(>0) > 200: the budget
     # must see the sidecar's bytes, or oldest+sidecar reads as under-budget and stays.
-    monkeypatch.setattr(kv_prefix, "MAX_STORE_BYTES", 200)
-    store, gw = _store(root, writing=True)
+    store, gw = _store(root, writing=True, budget=200)
     gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
     assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
     assert not oldest.exists() and not oldest_ck.exists(), "eviction removes the pair"
@@ -447,7 +457,7 @@ async def test_restore_puts_the_prefix_back_when_nothing_prefix_sized_is_cached(
 ) -> None:
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [
         {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
         {"id": 1, "n_prompt_tokens": 9000, "is_processing": False},  # bigger foreign residue
@@ -470,7 +480,7 @@ async def test_anything_prefix_sized_blocks_the_restore_whatever_it_is(root: Pat
     store, gw = _store(root)
     path = _plant_file(root, store, "persona")
     os.utime(path, (1_000, 1_000))
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     for cached in (PRIME, PRIME + 240, 33000):  # prime, conversation, big foreign prompt
         gw.slot_state = [
             {"id": 0, "n_prompt_tokens": 512, "is_processing": False},
@@ -502,7 +512,7 @@ async def test_a_restored_slot_reports_nothing_so_the_memo_stops_the_loop(root: 
     owner's first message; with it, one restore stands until a turn uses it."""
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [{"id": 0, "is_processing": False}]  # fresh slot: no size at all
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False, "memo must hold"
@@ -533,7 +543,7 @@ async def test_restore_rejects_a_stub_deletes_the_file_and_falls_back(root: Path
     short-circuited by the junk's existence."""
     store, gw = _store(root)
     path = _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     gw.restore_response = {"n_restored": 312}
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
@@ -550,7 +560,7 @@ async def test_a_boot_restore_adopts_the_restored_count_as_the_prime_size(root: 
     gw.slot_state = [{"id": 0, "is_processing": False}]
     gw.restore_response = {"n_restored": PRIME}
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is True
-    assert store._prime_tokens[SERVED] == PRIME
+    assert store._prime_tokens[store._resolve(SERVED, "persona", TOOLS, None)[0]] == PRIME  # type: ignore[index]
 
 
 async def test_restore_waits_for_an_idle_slot_rather_than_fighting_a_live_request(
@@ -562,7 +572,7 @@ async def test_restore_waits_for_an_idle_slot_rather_than_fighting_a_live_reques
     monkeypatch.setattr(kv_prefix, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 512, "is_processing": True}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
@@ -579,7 +589,7 @@ async def test_no_file_for_the_current_fingerprint_means_no_restore(root: Path) 
 async def test_a_gateway_error_is_contained_not_raised(root: Path) -> None:
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 0, "is_processing": False}]
     gw.restore_response = LocalGatewayError("gateway went away")
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
@@ -663,7 +673,7 @@ async def test_a_mid_conversation_loss_restores_the_prefix_not_the_conversation(
     stack the turns on top" safe."""
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     # The conversation's slot survived (cache = prefix + turns, bigger than the prime):
     # nothing to do, and restoring would wipe the turns.
     gw.slot_state = [{"id": 0, "n_prompt_tokens": PRIME + 900, "is_processing": False}]
@@ -687,7 +697,7 @@ async def test_a_busy_slot_is_waited_out_then_restored(
     monkeypatch.setattr(mod, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.restore_response = {"n_restored": PRIME}
     busy = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
     freed = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": False}]
@@ -712,7 +722,7 @@ async def test_a_slot_still_busy_after_the_wait_is_left_alone(
     monkeypatch.setattr(mod, "RESTORE_BUSY_INTERVAL_S", 0.0)
     store, gw = _store(root)
     _plant_file(root, store, "persona")
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 5200, "is_processing": True}]
     assert await store.restore_if_lost(SERVED, "persona", TOOLS) is False
     assert gw.restored == []
@@ -797,7 +807,7 @@ async def test_a_miss_names_itself_on_the_owner_surface(root: Path, events: list
     `identity_drift` (the file is fine, the turn wants a different one) have completely
     different remedies and previously looked identical — both being nothing at all."""
     store, gw = _store(root)
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     path = _plant_file(root, store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
     gw.restore_response = {"n_restored": 11}  # a stub: below the floor
@@ -898,7 +908,7 @@ async def test_an_eviction_clears_the_restored_but_unused_memo(root: Path) -> No
     valid file sitting on disk unread. Residency already reported the eviction; only the
     WarmKeeper was listening."""
     store, gw = _store(root)
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     _plant_file(root, store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
 
@@ -923,7 +933,7 @@ async def test_a_restore_that_fails_at_the_transport_removes_the_file(root: Path
     the transport — a timeout mid-2 GiB read, a 500 — left exactly the same poisoned file and
     did not delete it, so nothing ever repaired that fingerprint."""
     store, gw = _store(root)
-    store._prime_tokens[SERVED] = PRIME
+    _seed_prime(store, "persona")
     _plant_file(root, store, "persona")
     gw.slot_state = [{"id": 0, "n_prompt_tokens": 12, "is_processing": False}]
     gw.restore_response = LocalGatewayError("upstream 500")
@@ -932,3 +942,63 @@ async def test_a_restore_that_fails_at_the_transport_removes_the_file(root: Path
     # The slot file AND its checkpoint sidecar: a sidecar for state that no longer exists is
     # unusable, and `_slot_files` lists the whole directory, so an orphan would show here.
     assert _slot_files(root) == [], "a file that cannot be restored must not block saves"
+
+
+# ---- the owner can act on the store without a terminal -----------------------------------
+
+
+async def test_clear_takes_the_files_and_the_state_that_described_them(root: Path) -> None:
+    """`rm -rf .kvslots` with no shell (CLAUDE.md #10). The in-memory half matters as much as
+    the files: a `_prime_tokens` entry for a file that no longer exists would have the next
+    restore verify against a count nothing can match, deleting a good file it then wrote."""
+    store, _gw = _store(root)
+    path = _plant_file(root, store, "persona")
+    os.write(os.open(str(path) + ".ckpt", os.O_CREAT | os.O_WRONLY), b"\0" * 8)
+    _seed_prime(store, "persona")
+    store._restored_unused.add(SERVED)
+
+    out = await store.clear()
+
+    assert out["files"] == 1
+    assert out["bytes"] == 64 + 8, "the sidecar's bytes are freed and counted"
+    assert _slot_files(root) == [], "the pair goes together"
+    assert store._prime_tokens == {}
+    assert store._restored_unused == set()
+
+
+async def test_clear_can_take_one_model_and_leave_the_others(root: Path) -> None:
+    """A full wipe costs a re-prefill on every identity. Scoping to one model is what makes
+    this usable on a box where only one entry has gone bad."""
+    other = root / llama_swap_config.KVSLOT_DIR / "other-model"
+    other.mkdir(parents=True)
+    keep = other / ("aa" * 16 + ".kvslot")
+    keep.write_bytes(b"\0" * 64)
+    store, _gw = _store(root)
+    _plant_file(root, store, "persona")
+
+    out = await store.clear(SERVED)
+
+    assert out["files"] == 1
+    assert _slot_files(root) == [], "the named model's files go"
+    assert keep.exists(), "another model's do not"
+
+
+async def test_an_eviction_says_so(root: Path) -> None:
+    """Evictions were the one thing this store did that left NO trace — not even an info
+    line. A config the operator flips back to next month will have been pruned silently, and
+    its re-prefill then reads as a new fault rather than as the budget doing its job."""
+    other = root / llama_swap_config.KVSLOT_DIR / "other-model"
+    other.mkdir(parents=True)
+    doomed = other / ("aa" * 16 + ".kvslot")
+    doomed.write_bytes(b"\0" * 64)
+    os.utime(doomed, (1_000, 1_000))
+    store, gw = _store(root, writing=True, budget=100)  # 64 + the fresh save > this
+    gw.slot_state = [{"id": 1, "n_prompt_tokens": PRIME, "is_processing": False}]
+
+    assert await store.save_after_prime(SERVED, "persona", TOOLS, PRIME) is True
+
+    assert not doomed.exists()
+    snap = await store.snapshot()
+    assert _d(snap["counters"])["evicted"] == 1
+    evicted = [e for e in _d(snap["recent"]) if e["outcome"] == "evicted"]
+    assert evicted and evicted[0]["bytes"] == 64

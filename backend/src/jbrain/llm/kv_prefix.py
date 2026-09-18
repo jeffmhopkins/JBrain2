@@ -227,10 +227,20 @@ class KvPrefixStore:
     per-model directory."""
 
     def __init__(
-        self, gateway: LocalGatewayClient, models_root: str, *, patch_active: bool = False
+        self,
+        gateway: LocalGatewayClient,
+        models_root: str,
+        *,
+        patch_active: bool = False,
+        max_store_bytes: int = MAX_STORE_BYTES,
     ) -> None:
         self._gateway = gateway
         self._models_root = models_root
+        # The disk allowance. A parameter rather than the module constant it defaults to,
+        # because the constant's own comment conceded the gap: "changing it is a release,
+        # there is no knob" — on a box whose owner has no terminal, and whose store runs at
+        # 94% of this budget. Read once at startup from the owner's setting, like patch_active.
+        self._max_store_bytes = max_store_bytes
         # Whether the Fast-Qwen-loads patched llama-server is the running build (the owner's
         # `local_llm_patch_restore_checkpoint` setting, read once at startup — see main.py).
         # It is the RUNTIME gate that admits the qwen3.8 MTP-hybrid entries to the disk layer:
@@ -239,8 +249,17 @@ class KvPrefixStore:
         # sound. Reading it once is enough because turning the setting on triggers the gateway
         # rebuild, which recreates this api container — the setting is re-read on that restart.
         self._patch_active = patch_active
-        # The prime's exact token count per served model — the integer that identifies
-        # the primed slot among /slots entries, and the expected restore size.
+        # The prime's exact token count per FINGERPRINT — the integer that identifies the
+        # primed slot among /slots entries, and the expected restore size.
+        #
+        # Keyed by fingerprint rather than by served model because the count belongs to an
+        # IDENTITY, not to a model: a file's count is frozen at its first save (an existing
+        # file short-circuits the rewrite), while a per-model key tracks whatever primed most
+        # recently. When the identity flapped — a hidden-set change, an effort change — the
+        # restore of a perfectly good file was rejected against the OTHER identity's count and
+        # the file was DELETED, with no re-save path while the keeper's memo held. That
+        # directly defeated the LRU design's stated goal of keeping every config the operator
+        # flips between warm.
         self._prime_tokens: dict[str, int] = {}
         # Served models restored-but-not-yet-used: such a slot reports NO n_prompt_tokens
         # (see module docstring), so without this memo every keeper tick would re-restore
@@ -337,7 +356,6 @@ class KvPrefixStore:
             entry["eligible"] = eligible is not None
             if eligible is None:
                 entry["reason"] = self._ineligible_reason(served_model)
-            entry["prime_tokens"] = self._prime_tokens.get(served_model)
             entry["restored_unused"] = served_model in self._restored_unused
             entry["last_outcome"] = self._last_outcome.get(served_model)
             resolved = await asyncio.to_thread(self._resolve, served_model, system, tools, effort)
@@ -347,6 +365,7 @@ class KvPrefixStore:
                 continue
             fingerprint, _save_dir, identity = resolved
             entry["fingerprint"] = fingerprint
+            entry["prime_tokens"] = self._prime_tokens.get(fingerprint)
             entry["identity"] = identity
             entry["last_known_identity"] = self._last_identity.get(served_model)
             path = os.path.join(_save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
@@ -369,8 +388,8 @@ class KvPrefixStore:
             "store": {
                 "bytes": usage[0],
                 "files": usage[1],
-                "budget_bytes": MAX_STORE_BYTES,
-                "over_budget": usage[0] > MAX_STORE_BYTES,
+                "budget_bytes": self._max_store_bytes,
+                "over_budget": usage[0] > self._max_store_bytes,
                 "by_file": usage[2],
             },
             "models": models,
@@ -516,7 +535,6 @@ class KvPrefixStore:
         model = self._eligible(served_model)
         if model is None or prime_tokens < MIN_PREFIX_TOKENS:
             return False
-        self._prime_tokens[served_model] = prime_tokens
         # A fresh prime supersedes any restored-but-unused state.
         self._restored_unused.discard(served_model)
         resolved = await asyncio.to_thread(
@@ -525,6 +543,7 @@ class KvPrefixStore:
         if resolved is None:
             return False
         fingerprint, save_dir, identity = resolved
+        self._prime_tokens[fingerprint] = prime_tokens
         self._last_identity[served_model] = identity
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         if await asyncio.to_thread(os.path.exists, path):
@@ -596,7 +615,11 @@ class KvPrefixStore:
             )
             await asyncio.to_thread(self._remove_quietly, path)
             return False
-        await asyncio.to_thread(self._prune_to_budget, path)
+        # An eviction used to be the one thing this store did that left NO trace at all —
+        # not even an info line. A config the operator flips back to next month will have
+        # been pruned silently, and its re-prefill then reads as a new fault.
+        for gone, size in await asyncio.to_thread(self._prune_to_budget, path):
+            await self._note("evicted", served_model, file=os.path.basename(gone), bytes=size)
         await box_events.record(
             box_events.KV_PREFIX_SAVED,
             served_model,
@@ -604,6 +627,54 @@ class KvPrefixStore:
         )
         await self._note("saved", served_model, tokens=prime_tokens, slot=slot_id)
         return True
+
+    async def clear(self, served_model: str | None = None) -> dict[str, object]:
+        """Delete this store's files — all of them, or one model's. Returns what went.
+
+        The no-terminal twin of `rm -rf .kvslots` (CLAUDE.md #10). It exists for the same
+        reason `drop-page-cache` does: the only way to reclaim this space was host shell,
+        which the owner running this box remotely does not have — and the budget's own
+        comment conceded it ("changing it is a release, there is no knob") while the store
+        sat at 94% of it. Safe at any time: a deleted file costs at most one re-prefill,
+        which is the behaviour without this store at all, and the next prime writes it back.
+
+        In-memory state goes with the files: a `_prime_tokens` entry for a file that no
+        longer exists would have the next restore verify against a count nothing can match."""
+        model = local_catalog.get_by_served(served_model) if served_model else None
+        only = model.id if model is not None else served_model
+        removed = await asyncio.to_thread(self._clear_files, only)
+        if served_model is None:
+            self._prime_tokens.clear()
+            self._restored_unused.clear()
+            self._last_identity.clear()
+        else:
+            self._restored_unused.discard(served_model)
+            self._last_identity.pop(served_model, None)
+        for fingerprint in removed[1]:
+            self._prime_tokens.pop(fingerprint, None)
+        await self._note("cleared", served_model or "*", files=len(removed[1]), bytes=removed[0])
+        return {"files": len(removed[1]), "bytes": removed[0], "model": served_model or "*"}
+
+    def _clear_files(self, only_dir: str | None) -> tuple[int, list[str]]:
+        """Runs in a thread — remove slot files (and their sidecars) under the tree, or under
+        one model's folder. Returns (bytes freed, the fingerprints removed)."""
+        root = os.path.join(self._models_root, llama_swap_config.KVSLOT_DIR)
+        if only_dir is not None:
+            root = os.path.join(root, only_dir)
+        freed = 0
+        fingerprints: list[str] = []
+        for folder, _dirs, names in os.walk(root):
+            for name in names:
+                if not name.endswith(_SLOT_FILE_SUFFIX):
+                    continue
+                path = os.path.join(folder, name)
+                with contextlib.suppress(OSError):
+                    freed += os.stat(path).st_size
+                with contextlib.suppress(OSError):
+                    freed += os.stat(path + _SIDECAR_EXT).st_size
+                self._remove_quietly(path)
+                fingerprints.append(name[: -len(_SLOT_FILE_SUFFIX)])
+        return (freed, fingerprints)
 
     def _remove_quietly(self, path: str) -> None:
         """Runs in a thread — delete a file that is now known-bad, tolerating absence.
@@ -621,10 +692,10 @@ class KvPrefixStore:
         with contextlib.suppress(OSError):
             os.utime(path, None)
 
-    def _prune_to_budget(self, keep_path: str) -> None:
+    def _prune_to_budget(self, keep_path: str) -> list[tuple[str, int]]:
         """Runs in a thread (asyncio.to_thread) — plain blocking fs on purpose.
 
-        Hold the whole `.kvslots` tree at or under MAX_STORE_BYTES by deleting
+        Hold the whole `.kvslots` tree at or under the store's byte budget by deleting
         least-recently-used files (oldest mtime first), across every model's folder. The
         just-saved file is never a candidate, whatever its mtime — deleting the thing the
         save just verified would turn a full store into a store that forgets its newest
@@ -664,14 +735,17 @@ class KvPrefixStore:
                     if os.path.abspath(path) != os.path.abspath(keep_path):
                         entries.append((stat.st_mtime, size, path))
         entries.sort()
+        evicted: list[tuple[str, int]] = []
         for _mtime, size, path in entries:
-            if total <= MAX_STORE_BYTES:
+            if total <= self._max_store_bytes:
                 break
             with contextlib.suppress(OSError):
                 os.remove(path)
                 with contextlib.suppress(OSError):
                     os.remove(path + _SIDECAR_EXT)
                 total -= size
+                evicted.append((path, size))
+        return evicted
 
     # ---- restore --------------------------------------------------------------------
 
@@ -697,6 +771,23 @@ class KvPrefixStore:
         turn or a fresh prime supersedes it."""
         if self._eligible(served_model) is None:
             return False
+        # The lock opens HERE, not at the slots read. It used to sit below the memo check and
+        # the file check, so two callers discovering the same loss both passed those, then
+        # serialized and both restored — two multi-GB streams, and the prefix planted in BOTH
+        # slots, including the one whose separation from the interactive slot is the entire
+        # point of a second slot. Reproduced; the comment on `self._lock` always claimed this.
+        async with self._lock:
+            return await self._restore_locked(served_model, system, tools, reasoning_effort)
+
+    async def _restore_locked(
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
+    ) -> bool:
+        """`restore_if_lost`'s body, with `self._lock` held. Split out only so the lock has
+        one acquisition point and cannot be taken twice on one path."""
         if served_model in self._restored_unused:
             return False  # already restored; the slot reports nothing until a turn uses it
         resolved = await asyncio.to_thread(
@@ -722,122 +813,121 @@ class KvPrefixStore:
                 )
             return False
         self._last_identity[served_model] = identity
-        async with self._lock:
-            try:
-                slots = await self._gateway.slots(served_model)
-            except LocalGatewayError as exc:
-                await self._note("slots_unreadable", served_model, phase="restore", error=str(exc))
-                return False
-            # The smallest cache that could BE the prefix: the prime's own size. A slot
-            # below it (a small task's residue) cannot contain the prefix and is fair to
-            # restore over; one at or above it might, and is not. Before any prime has run
-            # (a fresh process beside a long-running server) the floor stands in, so
-            # anything substantial — a conversation the server faithfully kept — stays
-            # untouchable until the keeper's first prime establishes the real number.
-            prime = self._prime_tokens.get(served_model)
-            threshold = prime if prime is not None else MIN_PREFIX_TOKENS
-            occupied = [s for s in slots if isinstance(s, dict)]
-            if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
-                # Something prefix-sized is cached — never restore over it. This branch is
-                # ALSO the only one a healthy hot config ever reaches (the keeper's settled
-                # tick lands here every minute), so it must refresh the LRU clock: without
-                # this touch the hottest config's file keeps its boot-time mtime and is the
-                # FIRST out of the budget (adversarial review, 2026-08-23).
-                await asyncio.to_thread(self._touch, path)
-                return False
-            idle = [s for s in occupied if not s.get("is_processing")]
-            if not idle:
-                # Every slot busy. Don't give up silently — the observed miss (2026-08-24)
-                # was a side-call 0.5 s from releasing the only slot, and the turn that
-                # followed paid a 204 s full re-prefill. Wait briefly for a slot to free,
-                # re-checking the prefix-sized guard each poll (the request that frees the
-                # slot may leave a conversation there that must not be restored over).
-                for _ in range(RESTORE_BUSY_POLLS):
-                    await asyncio.sleep(RESTORE_BUSY_INTERVAL_S)
-                    try:
-                        slots = await self._gateway.slots(served_model)
-                    except LocalGatewayError as exc:
-                        await self._note(
-                            "slots_unreadable", served_model, phase="busy_wait", error=str(exc)
-                        )
-                        return False
-                    occupied = [s for s in slots if isinstance(s, dict)]
-                    if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
-                        await asyncio.to_thread(self._touch, path)
-                        return False  # freed into something prefix-sized — leave it alone
-                    idle = [s for s in occupied if not s.get("is_processing")]
-                    if idle:
-                        await self._note("restore_waited_for_slot", served_model)
-                        break
-                else:
+        try:
+            slots = await self._gateway.slots(served_model)
+        except LocalGatewayError as exc:
+            await self._note("slots_unreadable", served_model, phase="restore", error=str(exc))
+            return False
+        # The smallest cache that could BE the prefix: the prime's own size. A slot
+        # below it (a small task's residue) cannot contain the prefix and is fair to
+        # restore over; one at or above it might, and is not. Before any prime has run
+        # (a fresh process beside a long-running server) the floor stands in, so
+        # anything substantial — a conversation the server faithfully kept — stays
+        # untouchable until the keeper's first prime establishes the real number.
+        prime = self._prime_tokens.get(fingerprint)
+        threshold = prime if prime is not None else MIN_PREFIX_TOKENS
+        occupied = [s for s in slots if isinstance(s, dict)]
+        if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
+            # Something prefix-sized is cached — never restore over it. This branch is
+            # ALSO the only one a healthy hot config ever reaches (the keeper's settled
+            # tick lands here every minute), so it must refresh the LRU clock: without
+            # this touch the hottest config's file keeps its boot-time mtime and is the
+            # FIRST out of the budget (adversarial review, 2026-08-23).
+            await asyncio.to_thread(self._touch, path)
+            return False
+        idle = [s for s in occupied if not s.get("is_processing")]
+        if not idle:
+            # Every slot busy. Don't give up silently — the observed miss (2026-08-24)
+            # was a side-call 0.5 s from releasing the only slot, and the turn that
+            # followed paid a 204 s full re-prefill. Wait briefly for a slot to free,
+            # re-checking the prefix-sized guard each poll (the request that frees the
+            # slot may leave a conversation there that must not be restored over).
+            for _ in range(RESTORE_BUSY_POLLS):
+                await asyncio.sleep(RESTORE_BUSY_INTERVAL_S)
+                try:
+                    slots = await self._gateway.slots(served_model)
+                except LocalGatewayError as exc:
                     await self._note(
-                        "restore_skipped_busy",
-                        served_model,
-                        slots=[_slot_int(s, "n_prompt_tokens") for s in occupied],
+                        "slots_unreadable", served_model, phase="busy_wait", error=str(exc)
                     )
                     return False
-            # Prefer an empty slot; else the one holding the smallest foreign prompt.
-            target = min(idle, key=lambda s: _slot_int(s, "n_prompt_tokens"))
-            slot_id = _slot_int(target, "id")
-            started = time.perf_counter()
-            try:
-                resp = await self._gateway.restore_slot(
-                    served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
-                )
-            except LocalGatewayError as exc:
-                # Same reasoning as the rejected-restore branch below, which this used to
-                # lack: a failed or timed-out restore can leave a PARTIAL file at the trusted
-                # name, and an existing file short-circuits every future save
-                # (`save_after_prime` treats existence as proof and returns True) while every
-                # future restore repeats this error. Nothing else ever repairs it, so the
-                # fingerprint stays poisoned until a config change happens to move it.
-                await self._note("restore_failed", served_model, error=str(exc))
-                await asyncio.to_thread(self._remove_quietly, path)
-                return False
-            elapsed_ms = round((time.perf_counter() - started) * 1000)
-            n_restored = resp.get("n_restored")
-            expected = self._prime_tokens.get(served_model)
-            if (
-                not isinstance(n_restored, int)
-                or n_restored < MIN_PREFIX_TOKENS
-                or (expected is not None and n_restored != expected)
-            ):
-                # A stub or a partial read: the slot now holds junk, but the next request
-                # simply misses the cache and prefills — the exact behaviour without this
-                # store. Log it loudly; a repeat means the file is bad, and the next
-                # successful save replaces it.
+                occupied = [s for s in slots if isinstance(s, dict)]
+                if any(_slot_int(s, "n_prompt_tokens") >= threshold for s in occupied):
+                    await asyncio.to_thread(self._touch, path)
+                    return False  # freed into something prefix-sized — leave it alone
+                idle = [s for s in occupied if not s.get("is_processing")]
+                if idle:
+                    await self._note("restore_waited_for_slot", served_model)
+                    break
+            else:
                 await self._note(
-                    "restore_rejected",
+                    "restore_skipped_busy",
                     served_model,
-                    warn=True,
-                    n_restored=n_restored,
-                    expected=expected,
+                    slots=[_slot_int(s, "n_prompt_tokens") for s in occupied],
                 )
-                # The file is proven bad; leaving it means every future save is
-                # short-circuited by its existence and every restore repeats this. Remove
-                # it so the next prime's save can lay down a good one.
-                await asyncio.to_thread(self._remove_quietly, path)
                 return False
-            if expected is None:
-                # First restore of this process life (a boot): adopt the restored count as
-                # the prime size so slot identification works before any prime has run.
-                self._prime_tokens[served_model] = n_restored
-            # A restore IS a use: refresh the file's mtime so the budget prune keeps the
-            # caches that earn their disk and ages out the ones nothing restores.
-            await asyncio.to_thread(self._touch, path)
-            # The slot will report NO size until a request uses it — remember the restore,
-            # or every keeper tick re-streams the same 2 GiB until the first message.
-            self._restored_unused.add(served_model)
-            await box_events.record(
-                box_events.KV_PREFIX_RESTORED,
-                served_model,
-                detail=f"{n_restored}-token jerv prefix restored from disk in {elapsed_ms} ms",
+        # Prefer an empty slot; else the one holding the smallest foreign prompt.
+        target = min(idle, key=lambda s: _slot_int(s, "n_prompt_tokens"))
+        slot_id = _slot_int(target, "id")
+        started = time.perf_counter()
+        try:
+            resp = await self._gateway.restore_slot(
+                served_model, slot_id, f"{fingerprint}{_SLOT_FILE_SUFFIX}"
             )
+        except LocalGatewayError as exc:
+            # Same reasoning as the rejected-restore branch below, which this used to
+            # lack: a failed or timed-out restore can leave a PARTIAL file at the trusted
+            # name, and an existing file short-circuits every future save
+            # (`save_after_prime` treats existence as proof and returns True) while every
+            # future restore repeats this error. Nothing else ever repairs it, so the
+            # fingerprint stays poisoned until a config change happens to move it.
+            await self._note("restore_failed", served_model, error=str(exc))
+            await asyncio.to_thread(self._remove_quietly, path)
+            return False
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        n_restored = resp.get("n_restored")
+        expected = self._prime_tokens.get(fingerprint)
+        if (
+            not isinstance(n_restored, int)
+            or n_restored < MIN_PREFIX_TOKENS
+            or (expected is not None and n_restored != expected)
+        ):
+            # A stub or a partial read: the slot now holds junk, but the next request
+            # simply misses the cache and prefills — the exact behaviour without this
+            # store. Log it loudly; a repeat means the file is bad, and the next
+            # successful save replaces it.
             await self._note(
-                "restored",
+                "restore_rejected",
                 served_model,
-                tokens=n_restored,
-                slot=slot_id,
-                elapsed_ms=elapsed_ms,
+                warn=True,
+                n_restored=n_restored,
+                expected=expected,
             )
-            return True
+            # The file is proven bad; leaving it means every future save is
+            # short-circuited by its existence and every restore repeats this. Remove
+            # it so the next prime's save can lay down a good one.
+            await asyncio.to_thread(self._remove_quietly, path)
+            return False
+        if expected is None:
+            # First restore of this process life (a boot): adopt the restored count as
+            # the prime size so slot identification works before any prime has run.
+            self._prime_tokens[fingerprint] = n_restored
+        # A restore IS a use: refresh the file's mtime so the budget prune keeps the
+        # caches that earn their disk and ages out the ones nothing restores.
+        await asyncio.to_thread(self._touch, path)
+        # The slot will report NO size until a request uses it — remember the restore,
+        # or every keeper tick re-streams the same 2 GiB until the first message.
+        self._restored_unused.add(served_model)
+        await box_events.record(
+            box_events.KV_PREFIX_RESTORED,
+            served_model,
+            detail=f"{n_restored}-token jerv prefix restored from disk in {elapsed_ms} ms",
+        )
+        await self._note(
+            "restored",
+            served_model,
+            tokens=n_restored,
+            slot=slot_id,
+            elapsed_ms=elapsed_ms,
+        )
+        return True
