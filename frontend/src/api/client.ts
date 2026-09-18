@@ -939,10 +939,17 @@ export interface LocalModelInfo {
   context_window_override: number | null;
   /** Estimated KV-cache GB at the effective window AND slot count — a second slot doubles it. */
   kv_gb: number;
-  /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a dedicated interactive
-   * keep-warm slot beside the background one, so a primed chat prefix isn't evicted by
-   * title/background traffic). Editable only while the model isn't resident. */
+  /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a second slot the primed
+   * chat prefix can survive in). NOT isolation: llama-server picks the slot with the longest
+   * matching prefix and otherwise the least-recently-used one — which is the idle prefix slot.
+   * So it buys one dissimilar request of headroom, not immunity. Editable only while the model
+   * isn't resident. */
   parallel_slots: number;
+  /** True when raising `parallel_slots` above 1 would COST this model its disk prompt cache:
+   * a recurrent MTP hybrid loses `--spec-type` above one slot, and `--slot-save-path` is
+   * withheld with it (a plain-recurrent restore can only restore garbage). Sound, but it used
+   * to be silent — protecting the prefix quietly deleted the durable copy of it. */
+  slots_drop_disk_cache: boolean;
   /** `--image-min-tokens`: the floor an image is encoded to, and the knob for whether small
    * text in a photo survives to the model. null on a text-only entry — no projector, so a
    * floor would do nothing and the control is not rendered. */

@@ -240,6 +240,14 @@ class LocalModelInfo(BaseModel):
     # by title/background traffic — docs/runbooks/STRIX_HALO_SETUP.md). Editable only while
     # the model isn't resident; a change doubles the model's KV footprint.
     parallel_slots: int
+    # True when raising `parallel_slots` above 1 would COST this model its disk prompt cache.
+    # A recurrent MTP-hybrid serves with `--spec-type draft-mtp`, and the generator strips
+    # speculation above one slot; `--slot-save-path` is then withheld, because a
+    # plain-recurrent restore has no context checkpoints and can only restore garbage. That
+    # reasoning is right — the bug was that it was SILENT, so protecting the prefix quietly
+    # deleted the durable copy of it (and the box grew an empty `.kvslots` folder that read as
+    # "configured"). Surfaced so the screen can say so before the owner spends the trade.
+    slots_drop_disk_cache: bool
     # `--image-min-tokens`: the FLOOR an image is encoded to, and the knob for whether small
     # text in a photo survives to the model. None on a text-only entry (no projector, so a
     # floor would do nothing) and on a vision entry left at the catalog value.
@@ -626,6 +634,7 @@ def _local_model_info(
         context_window_override=override,
         kv_gb=kv_gb,
         parallel_slots=n_slots,
+        slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
         # The override wins; otherwise the catalog's own field. Both None on a text-only entry,
