@@ -112,6 +112,21 @@ panel. It is not. The panel is the container; **the ledger is what each tool ren
 it**, and `run_python` is simply the tool with the most to render. Framing it the other way
 produced a mock that showed six rows of mostly-maths and called it done.
 
+**The mock is built on the shipped stylesheet, not a lookalike.** `h-worked-ledger.html`
+inlines the `:root` tokens and every `.fb-act-*` / `.fb-step-*` / `.fb-res-*` / `.fb-raw-*`
+rule verbatim from `frontend/src/styles.css`, with only the `.fb-shell` scope prefix
+dropped. If a row looks wrong in the mock it looks wrong in the app. The stylesheet is
+split into three labelled blocks — shipped CSS, mock scaffolding (the phone frame), and the
+proposed additions — so a reviewer can see exactly what is being asked for.
+
+**And what is being asked for is two CSS rules.** Reading the real code changed the size of
+this: **`.fb-step-cnt` already exists**, is already styled, and already sits exactly where a
+result belongs — between the status dot and the caret. It is populated by **two tools**,
+`search` and `web_search` (`FullBrainSurface.tsx:1803,1808`), which is why a live screenshot
+shows *"5 results"* on one row and nothing on the next. **Every tool filling it is the whole
+ledger.** The additions are `.fb-step-cnt.res` (a computed answer reads green, not grey like
+a count) and `.fb-code` (the one step that needs more than a line of text).
+
 **What a row says.** Today a row carries what was *asked* —
 `Searched your notes · "refinance closing"` — and never what came *back*. Every row now
 carries **argument → result**, across every tool kind:
@@ -141,11 +156,16 @@ One content shape, two entry points. A maths row that also carries a prose marke
 
 **The one real build question this raises.** The registered per-tool component (`ToolView`)
 renders in the **bubble**; the Worked step detail is a *fixed cascade* in `StepRow`
-(args → error / sources / entities / web sources / summary → raw). So "every tool renders
-its own ledger in the panel" is an extension, not styling, and the build plan has to pick
-one: widen the cascade with a ledger line every tool populates, or let a step render its
-tool's registered view inline. The first is smaller and probably right; the second is what
-would let `run_python` reuse the code view verbatim.
+(args → error / sources / entities / web sources / summary → raw). The ledger line itself
+needs no new mechanism — it is `fb-step-cnt`, populated from a per-tool result summary. But
+`run_python`'s code listing does not fit the cascade, so the build plan picks one: add a
+`code` rung to the cascade, or let a step render its tool's registered view inline. The
+first is smaller; the second is what would let the step and G's popover share one component.
+
+*Also noted from the owner's screenshots:* the live box renders the raw-payload toggle as
+**"what the agent sent"** where this checkout still says `"raw result"`
+(`FullBrainSurface.tsx:1898`). The box is ahead of this branch; the mock uses the live
+wording.
 
 ### How G and H divide, and why both are needed
 
