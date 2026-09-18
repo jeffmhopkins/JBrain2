@@ -1,7 +1,7 @@
 # Prompt cache hardening — what the instrumentation found
 
 > **Status:** In progress · **Last verified:** 2026-09-18 ·
-> **Waves:** P0✅ P1✅ P2✅ P3✅ P4◻️ P5◻️
+> **Waves:** P0✅ P1✅ P2✅ P3✅ P4✅ P5◻️
 
 The jerv prompt cache (`llm/kv_prefix.py` + `llm/warm_keeper.py` + the `--slot-save-path`
 half of `llm/llama_swap_config.py`) works, and now says so. This plan carries what an
@@ -151,7 +151,29 @@ something about a slot that the thing it describes no longer justifies.
 - **Stop mid-stream skips all post-turn bookkeeping** (`router.py:942-961` sits after the
   yield loop), stranding `_restored_unused`.
 
-## P4 ◻️ — the keeper
+## P4 ✅ — the keeper
+
+- **The lost update.** A cold prime is 60-200 s, and a `note_prefix_lost` arriving inside
+  that window was erased by the prime's own completion re-asserting `_primed` — leaving the
+  model resident, COLD and believed primed, the exact state the hook exists to prevent. A
+  generation counter, read before the await and compared after, means a superseded prime
+  claims nothing and saves nothing.
+- **The edge trigger was only half an edge.** The hook fired immediately and the keeper then
+  slept out the rest of its interval. Its main production caller is the end-of-turn restore,
+  so it lands just after the owner sends a message — making their next message, inside that
+  same minute, the one that pays the prefill. The sleep is now a wait on an event the hook
+  sets.
+- **No backoff, no ceiling.** A prime failing for a persistent reason retried at the eager
+  5 s cadence forever: ~17k log lines a day into the log a no-terminal owner reads through a
+  debug console, and each attempt runs an admission that can EVICT to fit, so the keeper and
+  the worker could trade the same 68 GB model back and forth. Now doubling per consecutive
+  failure, capped at the steady poll.
+- **Shutdown cancelled without draining**, alone among its siblings. The keeper can be inside
+  a `save_slot` POST — a multi-GB write with a ≥180 s timeout, written at its final trusted
+  name with no tmp+rename — so a cancel there left a truncated file the store would later
+  trust into a failed restore. Now cancelled and gathered with a bound, like every sibling.
+
+## P4 notes — what the review found
 
 No backoff or ceiling on prime failure (~17k log lines/day, and a 5 s evict/reload fight with
 the worker); `note_prefix_lost` cannot wake the 60 s sleep and is lost if a prime is in

@@ -489,3 +489,65 @@ async def test_changing_the_reasoning_effort_makes_the_keeper_re_prime() -> None
     assert await keeper.reconcile_once() is True
     assert len(router.converses) == primed_once + 1, "a new effort is a new prefix to prime"
     assert store.saves[-1][2] == "high", "and the save must be keyed by the effort it primed"
+
+
+# ---- P4: the loop's own failure modes -----------------------------------------------------
+
+
+async def test_a_loss_reported_during_a_prime_is_not_erased_by_that_prime() -> None:
+    """The lost update. A cold prime is 60-200 s, and residency reporting a drop inside that
+    window used to be overwritten by the prime's own completion re-asserting the memo — the
+    model then sits resident, COLD, and believed primed, which is precisely the state the
+    hook was added to prevent. The prime that no longer owns its generation says nothing."""
+    keeper, _gateway, router, store = _kept_with_store(running=("gpt-oss-120b",))
+
+    # Residency drops the model while the prime is in flight.
+    async def converse_then_lose(*a: object, **kw: object):
+        keeper.note_prefix_lost("gpt-oss-120b")
+        return await _FakeRouter.converse(router, *a, **kw)  # type: ignore[arg-type]
+
+    router.converse = converse_then_lose  # type: ignore[method-assign]
+
+    assert await keeper.reconcile_once() is False, "a superseded prime has not settled"
+    assert keeper._primed is None, "and it must not claim the slot it primed still holds it"
+    assert store.saves == [], "nor save a prefix keyed to a slot that is gone"
+
+
+async def test_a_reported_loss_cuts_the_sleep_short() -> None:
+    """The edge trigger was only half an edge: the hook fired immediately and the keeper then
+    slept out the rest of its interval. Its main production caller is the end-of-turn restore,
+    so it lands just after the owner sends a message — making their NEXT message, inside that
+    same minute, the one that pays the prefill the hook exists to prevent."""
+    keeper, _gateway, _router, _store = _kept_with_store(running=("gpt-oss-120b",))
+    keeper._interval_ready = 30.0  # a steady interval no test should ever wait out
+
+    task = asyncio.create_task(keeper.run())
+    await asyncio.sleep(0.05)  # let it settle and enter the sleep
+    ticks = len(_store.restores) if hasattr(_store, "restores") else 0
+
+    keeper.note_prefix_lost("gpt-oss-120b")
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert keeper._wake is not None
+    # It woke: a second reconcile ran well inside the 30 s interval.
+    assert len(getattr(_store, "restores", [])) > ticks or keeper._primed is not None
+
+
+async def test_a_failing_prime_backs_off_instead_of_hammering_the_box() -> None:
+    """A prime failing for a PERSISTENT reason retried at the eager cadence forever: ~17k log
+    lines a day, and each attempt runs an admission that can EVICT to fit — so the keeper and
+    the worker could trade the same 68 GB model back and forth every five seconds."""
+    keeper, _gateway, _router, _store = _kept_with_store()
+    keeper._interval_wait = 1.0
+    keeper._interval_ready = 60.0
+
+    assert keeper._retry_delay() == 1.0  # no failures yet
+    keeper._failures = 1
+    assert keeper._retry_delay() == 2.0
+    keeper._failures = 4
+    assert keeper._retry_delay() == 16.0
+    keeper._failures = 99
+    assert keeper._retry_delay() == 60.0, "and never slower than the steady poll"
