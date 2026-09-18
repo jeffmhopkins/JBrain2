@@ -277,14 +277,23 @@ API_ACTION_SPECS = (
 
 
 def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:
-    """Bridge residency → WarmKeeper without an import cycle or a construction-order
-    constraint: residency reports a served name whose primed KV it just dropped, and the
-    keeper forgets its memo so the next tick re-primes on the eager cadence."""
+    """Bridge residency → WarmKeeper AND the KV prefix store without an import cycle or a
+    construction-order constraint: residency reports a served name whose primed KV it just
+    dropped, the keeper forgets its memo so the next tick re-primes on the eager cadence,
+    and the store forgets that it restored into a slot that no longer exists.
+
+    Both listeners are required. The keeper's memo governs whether a re-prime happens; the
+    store's `_restored_unused` governs whether the restore that would make that re-prime
+    cheap is even attempted. Telling only the keeper — which is what this did — left the
+    store refusing to restore a perfectly good file, so the re-prime paid the full prefill."""
 
     def notify(served_model: str) -> None:
         keeper = getattr(app.state, "warm_keeper", None)
         if keeper is not None:
             keeper.note_prefix_lost(served_model)
+        store = getattr(app.state, "kv_prefix", None)
+        if store is not None:
+            store.note_prefix_lost(served_model)
 
     return notify
 

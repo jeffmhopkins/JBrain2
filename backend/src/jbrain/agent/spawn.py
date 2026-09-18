@@ -999,10 +999,24 @@ class SpawnService:
                     )
                     finished = True
 
+            # The same model-gated canvas trio /chat, the prime and the task runner hide. A
+            # spawned child runs under `agent.turn` with `agent_for(persona)`, so a jerv child
+            # sends jerv's tool array — and without this it would send three MORE entries than
+            # the primed prefix, diverging ~40 tokens into the tool block. For a persona whose
+            # allowlist holds none of the trio this resolves to no provider at all, so it is
+            # byte-identical there rather than merely harmless.
+            # Imported here, not at module scope: `readtools` reaches back into this module,
+            # and a top-level import closes the cycle at startup.
+            from jbrain.agent.readtools import canvas_hidden_tools, compose_hidden_tools
+
+            canvas_hidden = await canvas_hidden_tools(
+                self._router, None, profile.tools or frozenset()
+            )
             loop = AgentLoop(
                 self._router,
                 self._registry,
                 recorder=tally,  # type: ignore[arg-type]
+                hidden_tools_provider=compose_hidden_tools(canvas_hidden),
                 # The step cap scales with the child's effort (a high-effort research
                 # child gets a long chain to search/read/synthesize); the wall-clock and
                 # token caps are generous backstops above it.
