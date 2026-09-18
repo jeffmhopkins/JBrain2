@@ -2923,6 +2923,30 @@ async def kv_prefix_clear(
     )
 
 
+@router.put("/llm/auto-restore")
+async def set_auto_restore(
+    request: Request,
+    _p: DebugDep,
+    enabled: Annotated[bool, Query()],
+) -> dict[str, object]:
+    """Turn the end-of-turn restore on or off — the WarmKeeper's whole reason to exist.
+
+    OFF, the keeper keeps nothing warm and the disk store carries the entire mechanism: a
+    lost prefix waits for the next turn to notice it, which is the turn that then pays for
+    the restore. ON, the box puts an evicted model back once a turn ends and the keeper
+    re-primes it off-turn, so the owner's next message meets a warm slot.
+
+    It already had an owner route (`PUT /api/settings/llm/auto-restore`), reachable only with
+    an owner cookie — so an assistant holding a debug token could READ the flag on
+    `GET /api/debug/llm`, measure exactly what it costs, and then not be able to act on the
+    measurement. This is that gap closed; the two share one implementation.
+
+    A SURPRISE control, not a safety one: every load, restore included, still goes through the
+    device-memory guard. Applies to the next turn, with no restart."""
+    request.state.debug_detail = f"auto restore {'on' if enabled else 'off'}"
+    return await llm_settings.set_auto_restore_value(_store(request), _OWNER_CTX, enabled=enabled)
+
+
 @router.put("/llm/kv-prefix/budget")
 async def kv_prefix_budget(
     request: Request,
