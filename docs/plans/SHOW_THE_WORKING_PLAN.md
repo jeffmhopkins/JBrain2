@@ -183,7 +183,7 @@ escape are all reused as they stand.
 **note conversation** — `waiting_on_owner` is a note-conversation state, and the reply path
 consumes an open set against that row. A `/chat` conversation has no such row. W4's real
 work is that binding, and it is the wave's one genuine design question rather than a
-formality (see the open decisions below).
+formality (see O1 below).
 
 ### D5 — a conversational answer mints no note
 
@@ -200,7 +200,7 @@ goes through the agent's normal commit path, where it mints a note like any othe
 because that is a claim the graph should carry, not because it arrived as an answer.
 
 This is a boundary, not an exception to D7: D7 governs a note conversation's answers, which
-keep behaving exactly as they do today.
+keep behaving exactly as they do today. **Ratified by the owner** (O2).
 
 ### D6 — the written escape gets a test that names it, because it is load-bearing
 
@@ -270,9 +270,10 @@ Not a new tool and not a new card. `ask_owner` and `QuestionBlock` already do th
 this wave is the binding that lets them happen outside a note thread.
 
 - **Bind `ask_owner` past `note_ingest`** — the allowlist, and the personas that hold it.
-- **A conversation-scoped open set.** `waiting_on_owner` is a note-conversation state; a
-  `/chat` conversation needs the equivalent, and it is the wave's real work (see the open
-  decision below for the two shapes).
+- **A turn-scoped open set** (O1). `waiting_on_owner` is a note-conversation state; a `/chat`
+  conversation records the set on the asking turn instead, and an unanswered question dies
+  with the conversation. No new column, no note-reply path, and — by construction — no route
+  from a chat question into the notes-tab queue.
 - **Feed `ask` outside a note thread.** `FullBrainSurface` already routes `ask` into
   `QuestionBlock`; today nothing populates it for a plain conversation. The component and
   its CSS are reused unchanged.
@@ -329,22 +330,31 @@ W1–W3 touch neither RLS, the domain firewall, nor principal scope. W4 touches 
 by definition — it decides who may put a question in front of the owner — and if its open set
 needs a new table, that table needs an RLS isolation test per CLAUDE.md #3.
 
-## Open decisions for the owner
+## Decisions ratified by the owner (2026-09-18)
 
-1. **Where a conversational question's open set lives.** `ask_owner`'s durability hangs off a
-   note-conversation row, and a `/chat` conversation has none. Two shapes:
-   **(a)** give the conversation the same open-set column and reuse the reply path whole, or
-   **(b)** keep the set in the turn's own record and let it die with the conversation, which is
-   simpler and means an unanswered conversational question is simply forgotten. **(b) is the
-   honest MVP** — a question asked in chat that nobody answered has no queue to belong to and
-   no note to correct — but it is the owner's call, because it decides whether a chat question
-   can ever reach the notes-tab queue.
-2. **D5 — does a conversational answer mint a note?** The plan says no, and that a fact worth
-   keeping should land through the normal commit path rather than because it arrived as an
-   answer. This narrows ratified D7 to the context D7 was written for, so it is worth an
-   explicit yes rather than an assumption.
+Both of the plan's open questions are settled. Nothing here is left for a wave to decide.
 
-W1–W3 depend on neither and can start immediately.
+**O1 — the conversational open set lives in the turn, shape (b).** No new column on the
+conversation and no reuse of the note reply path: the set is recorded on the turn that asked,
+and an unanswered question dies with the conversation.
+
+The consequence, stated so a wave does not discover it as a surprise: **a question asked in
+chat can never reach the notes-tab queue.** That is the point rather than a cost — a chat
+question has no note to correct and no expiry ladder to climb, so a queue entry for it would
+be a row nothing can ever resolve. The ingest plan's ladder (D2) and its decay-to-assumption
+keep governing note-thread questions, which are unchanged.
+
+It also keeps `ask_owner`'s one-open-set rule honest for free: one conversation, one turn
+holding the set, and the reply that resumes the turn consumes it.
+
+**O2 — a conversational answer mints no note.** D5 as written is ratified. An answer that
+resolves a reference is scoped to the turn that asked and is re-derivable from it; a fact
+worth keeping lands through the agent's normal commit path, because it is a claim about the
+world and not because of how it arrived. D7 is unchanged for note conversations, where the
+answer still appends to the note as source text and is re-ingested.
+
+The practical rule for W4: **the handler that resumes on an answer has no note-writing path at
+all.** Not a policy the model is asked to observe — there is nothing there to call.
 
 ## Docs to reconcile at merge
 

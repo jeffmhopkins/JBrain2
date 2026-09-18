@@ -500,9 +500,12 @@ live code shrank the work: `.fb-step-cnt` already exists and is filled by only `
 so the ledger is one backend field (`result_brief`) plus one CSS rule, enforced by extending
 `test_tool_step_polish.py`. Decides H's open question — a step renders its tool's registered view, so G
 and H are one component — and reconciles A with the ingest plan's constraint #8 by **storing C's record
-while rendering A's card**, and W4's one real design question is where a conversational question's
-open set lives, since `waiting_on_owner` is a note-conversation state and a `/chat` conversation has
-no such row. W1–W3 depend on none of that.
+while rendering A's card**. W4's two open questions are **settled by the owner**: a conversational
+question's open set lives on the asking turn rather than on a conversation row (so an unanswered chat
+question dies with the conversation and can never reach the notes-tab queue — a chat question has no
+note to correct and no ladder to climb), and a conversational answer mints no note, which narrows
+ratified D7 to the note-thread context it was written for. Nothing in W4 is left for a wave to
+decide; W1–W3 depend on none of it.
 
 **In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
 give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its
