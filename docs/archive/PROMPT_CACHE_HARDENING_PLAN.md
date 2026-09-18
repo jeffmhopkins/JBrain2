@@ -1,7 +1,9 @@
 # Prompt cache hardening — what the instrumentation found
 
-> **Status:** In progress · **Last verified:** 2026-09-18 ·
-> **Waves:** P0✅ P1✅ P2✅ P3✅ P4✅ P5◻️
+> **Status:** Shipped 2026-09-18 · all six waves merged (#1412, #1413, #1414, #1415, #1416,
+> #1417 and this PR) · no migration · **Living successor:** `../reference/PROMPT_CACHE.md`,
+> which carries the known gaps this plan deliberately left open ·
+> **Waves:** P0✅ P1✅ P2✅ P3✅ P4✅ P5✅
 
 The jerv prompt cache (`llm/kv_prefix.py` + `llm/warm_keeper.py` + the `--slot-save-path`
 half of `llm/llama_swap_config.py`) works, and now says so. This plan carries what an
@@ -181,7 +183,53 @@ flight; shutdown cancels without draining, so a cancel mid-save can leave a part
 `--keep` / context-shift are unset, inheriting an upstream default that could silently drop
 the prefix head.
 
-## P5 ◻️ — tests and docs
+## P5 ✅ — tests and docs
+
+**The fakes now test against llama.cpp instead of agreeing with the docstring.** Every KV
+test built its slot dicts by hand with the three keys the code reads; a real body has ten,
+plus three nested objects. `tests/unit/fixtures/llama_slots_idle.json` is a verbatim capture
+off the box (build `b10629-eab8ee41f`, checked for prompt text before capture — there is
+none), and all 55 slot literals now derive from it. The suite passed unchanged against the
+real shape, which is the result worth recording: the store's reading of `/slots` holds.
+
+Two things the real body settles that the code only reasoned about:
+
+- `n_prompt_tokens_cache` reads **0** on an idle slot that has served a request — which is
+  why the store must never use it, exactly as `parse_spec_counters` warns.
+- `params.n_keep` is **0**. The review flagged this as SUSPECTED; it is now measured.
+  Nothing pins the prefix head if context shift ever engages.
+
+`fresh_slot()` keeps the distinction a plain default would have erased: a slot that has NEVER
+served reports no `n_prompt_tokens` key at all, which is the whole reason `_restored_unused`
+has to exist.
+
+**`max_tokens=1` is pinned.** The exact-integer save gate — the answer to v1's "it saved
+garbage" — works only because the prime generates exactly one token. Raise it and no slot
+ever matches: the save skips, the disk layer goes silently inert, and every test stays green.
+The store's comment said "if `slot_unidentified` becomes chronic, look here first"; that look
+is now automatic.
+
+**The busy-slot-freed-into-a-conversation branch is covered** — the raciest form of the rule
+this store must never break, and the last uncovered one.
+
+**Docs.** `docs/reference/PROMPT_CACHE.md` is new: the three layers, the fingerprint, the
+eligibility rules, the measured numbers and the no-terminal routes. All nine rotted `file:line`
+citations in `MODEL_ACCESS_INVENTORY.md` are now SYMBOL citations, with the reason written at
+the top — a line number is a volatile counter, which CLAUDE.md #9 already forbids in prose.
+The four code sites that pointed readers at the archived v1 plan now point at the reference
+doc, and that plan carries a superseded banner.
+
+### Carried, and why
+
+- **A recorded body for a BUSY slot.** The capture is of an idle one. `prefill.py` documents
+  that a busy slot's `n_prompt_tokens` is a moving window that UNDERSTATES the true total,
+  and the restore gate reads it — so the threshold can be compared against a number still
+  climbing. Capturing that needs a request in flight on the box at the moment of the read.
+- **The unpinned invariants the review listed that are genuinely untestable here** — an
+  external-draft speculative refusal (no catalog entry has that shape), and `--slot-save-path`
+  pointing outside `/models/`.
+
+## P5 notes — what the review found
 
 - **No KV test uses a recorded `/slots` body.** Every slot dict is hand-written with the three
   keys the code reads; a real body has ~20. The docstring's claims about llama.cpp semantics

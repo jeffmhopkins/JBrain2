@@ -1,6 +1,6 @@
 # Local LLM prompt cache — cache-stable prompt layout + gateway KV reuse
 
-> **Status:** Shipped 2026-08 · on-box perf (cache-stable prompt layout + gateway `--cache-reuse`), no migration · **Superseded-by:** —
+> **Status:** Shipped 2026-08 · on-box perf (cache-stable prompt layout + gateway `--cache-reuse`), no migration · **Superseded-by:** `docs/reference/PROMPT_CACHE.md` (its claims about the served command line — no `--slot-save-path`, no `-np`, no `--cache-reuse` — are all false today)
 
 Cut the first-token latency of on-box turns by making the large, static jerv /
 curator system prompts **reusable** across turns instead of re-prefilled every
