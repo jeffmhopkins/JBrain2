@@ -9826,8 +9826,8 @@ button.small {
   display: flex;
   align-items: center;
   gap: calc(5px * var(--font-scale));
-  min-width: calc(44px * var(--font-scale));
-  min-height: 44px;
+  min-width: 44px;
+  min-height: 0;
   padding: calc(3px * var(--font-scale)) calc(8px * var(--font-scale));
   border-radius: 8px;
   background: none;
@@ -9865,8 +9865,8 @@ button.small {
   align-items: center;
   justify-content: center;
   /* Also the LONG-PRESS target that arms auto-play — a gesture on a 25px box. */
-  min-width: calc(44px * var(--font-scale));
-  min-height: 44px;
+  min-width: 44px;
+  min-height: 0;
   padding: calc(3px * var(--font-scale));
   border-radius: 8px;
   background: none;
@@ -9886,6 +9886,32 @@ button.small {
 .fb-shell .fb-act-play.auto {
   color: var(--violet);
 }
+/* 44px is a HIT-AREA rule (DESIGN.md principle 1), not a painting one — and these two
+   buttons paint nothing but a glyph. Carried on `min-height` it was also the tallest
+   thing in the foot row, so the row took the floor's height rather than its own type's:
+   at 65% a 7.8px "Thought" label sat in a 48.9px strip, on every turn. The floor moves
+   to a centred overlay instead, so the strip follows the type — 48.9 -> 22.1px at 65%.
+   `min-width` still holds the width, so the target stays 44px wide; its HEIGHT measures
+   44px at 100%, 40 at 75% and 38 at 65%, because an overlay on a 22px row has to
+   overhang and the dock paints over the last few px under the final turn. That is the
+   honest cost, and still well above the 25px this control carried before the floor
+   existed. The overhang above reaches the answer's last line, which carries no tap of
+   its own; the two buttons sit ~44px apart, so neither overlay reaches the other. */
+.fb-shell .fb-act-play,
+.fb-shell .fb-act-copy {
+  position: relative;
+}
+.fb-shell .fb-act-play::after,
+.fb-shell .fb-act-copy::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
+}
+
 /* the long-press target shouldn't trigger the OS text-selection / callout while held. */
 .fb-shell .fb-act-play {
   -webkit-user-select: none;
