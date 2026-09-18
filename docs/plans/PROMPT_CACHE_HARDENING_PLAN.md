@@ -1,7 +1,7 @@
 # Prompt cache hardening — what the instrumentation found
 
 > **Status:** In progress · **Last verified:** 2026-09-18 ·
-> **Waves:** P0✅ P1✅ P2◻️ P3◻️ P4◻️ P5◻️
+> **Waves:** P0✅ P1✅ P2✅ P3◻️ P4◻️ P5◻️
 
 The jerv prompt cache (`llm/kv_prefix.py` + `llm/warm_keeper.py` + the `--slot-save-path`
 half of `llm/llama_swap_config.py`) works, and now says so. This plan carries what an
@@ -53,7 +53,36 @@ output everywhere, which is how this feature shipped inert twice.
 - **Evictions left no trace at all**, and the 25 GiB budget had "no knob" on a box with no
   terminal. Now `DELETE /llm/kv-prefix` and `PUT /llm/kv-prefix/budget`.
 
-## P2 ◻️ — the slot story is not what the UI says
+## P2 ✅ — the slot story is not what the UI says
+
+Measured while landing this: the box serves gpt-oss-120b at **one slot** (`total_slots: 1`,
+build `b10629-eab8ee41f`), and the slot was found holding **1,146 tokens** — the 30,546-token
+prefix already taken by background traffic, exactly the case the second slot is sold against.
+
+What shipped is the correction, not a mechanism: the config generator's comment and the PWA
+tooltip both claimed *"neither can evict the other's cache"*, which nothing in the emitted
+command line implements. A second slot buys **one dissimilar request of headroom, not
+immunity** — llama-server routes by longest matching prefix and otherwise to the
+least-recently-used slot, which is the idle prefix slot. The durable protection is the disk
+store (~100 ms warm), and `-cram 0` means there is no in-RAM fallback when a slot IS taken;
+the two decisions pull against each other and neither comment said so. Both now do.
+
+`slots_drop_disk_cache` is new on the model row, so the screen warns **before** the owner
+spends the trade on a qwen3.8 hybrid, where enabling the second slot withholds
+`--slot-save-path` and turns the disk layer off entirely. The strip is correct; it was silent.
+
+Left open deliberately: **no pinning was added.** `--slot-prompt-similarity` or an `id_slot`
+on the request would change the launch line, moving every fingerprint and orphaning all 18
+files for a full re-prefill each — worth doing only as a measured experiment, and only after
+the `auto_restore` decision below, since the two interact.
+
+### Still to decide
+
+`auto_restore` is OFF on the box, so the WarmKeeper is not keeping anything warm and the disk
+layer carries the whole mechanism. Turning it on costs a keep-warm load; leaving it off means
+every prefix loss waits for the next turn to notice. Measurable now that the counters exist.
+
+### What the review found (all now described or fixed)
 
 - **There is no slot pinning.** No `--slot-prompt-similarity`, no slot-id routing, no
   reservation. llama.cpp picks the longest-prefix slot, else the **LRU** slot — and the idle
