@@ -19,6 +19,25 @@
 export const PANEL_MM_W = 29.02;
 export const PANEL_MM_H = 35.33;
 
+/** The case's corner radius as a FRACTION of panel width.
+ *
+ * From a photograph of the assembled unit (2026-09-19): the enclosure rounds the display
+ * into a squircle like a watch, so the AMOLED is a 368x448 rectangle whose corners are not
+ * visible to anyone holding it. A preview that draws the full rectangle is therefore
+ * wrong in the same family as the CSS-mm size bug — it shows pixels that cannot be seen,
+ * and a face or caption placed there would look fine here and be clipped on the desk.
+ *
+ * Measured off the photo rather than a datasheet, so it is approximate and deliberately
+ * slightly generous: over-masking hides a corner that might exist, under-masking invites
+ * a design that loses content.
+ */
+export const CASE_CORNER_FRACTION = 0.13;
+
+/** The case's corner radius in panel pixels. */
+export function cornerRadius(panelW: number): number {
+  return Math.round(panelW * CASE_CORNER_FRACTION);
+}
+
 /** ISO/IEC 7810 ID-1 width: every credit, debit, and driving-licence card on earth, to 0.1 mm. */
 export const CARD_MM_W = 85.6;
 

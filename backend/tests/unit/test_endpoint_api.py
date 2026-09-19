@@ -8,8 +8,6 @@ cannot authenticate against, is recovered by walking to it with a screwdriver.
 
 import asyncio
 import hashlib
-import io
-import zipfile
 from collections.abc import Iterator
 from typing import Any
 
@@ -46,14 +44,6 @@ def _asset_stub(sums: str, blob: bytes):
         return httpx.Response(200, content=blob, request=request)
 
     return _get
-
-
-def _artifact(names: list[str]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name in names:
-            zf.writestr(name, b"\x00" * 64)
-    return buf.getvalue()
 
 
 class FakeStore:
@@ -155,57 +145,6 @@ class TestPorts:
         assert resp.json()["ports"] == []
 
 
-class TestFirmwareUpload:
-    def test_an_artifact_missing_an_image_is_refused_by_name(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
-    ) -> None:
-        """Half a firmware set writes half a board. The error names both what is missing
-        and what the zip did contain, because the owner is holding a file they downloaded
-        from somewhere and needs to know whether they picked the wrong one."""
-        c, _store, _blobs, _sent = client
-        zip_bytes = _artifact(["jbrain-endpoint.bin"])
-        resp = c.post(
-            "/api/endpoint/firmware",
-            params={"version": "0.1.0"},
-            files={"artifact": ("a.zip", zip_bytes, "application/zip")},
-        )
-        assert resp.status_code == 400
-        detail = resp.json()["detail"]
-        assert "bootloader.bin" in detail and "partition-table.bin" in detail
-
-    def test_a_directory_prefix_in_the_zip_still_matches(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
-    ) -> None:
-        """A zip downloaded from the Actions UI can carry a folder; the workflow publishes
-        the files flat. Matching on the base name means both work."""
-        c, store, _blobs, _sent = client
-        zip_bytes = _artifact(
-            [
-                "out/bootloader.bin",
-                "out/partition-table.bin",
-                "out/jbrain-endpoint.bin",
-            ]
-        )
-        resp = c.post(
-            "/api/endpoint/firmware",
-            params={"version": "0.2.0"},
-            files={"artifact": ("a.zip", zip_bytes, "application/zip")},
-        )
-        assert resp.status_code == 200, resp.text
-        assert store.rows["endpoint_firmware"]["version"] == "0.2.0"
-
-    def test_something_that_is_not_a_zip_is_rejected(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
-    ) -> None:
-        c, _store, _blobs, _sent = client
-        resp = c.post(
-            "/api/endpoint/firmware",
-            params={"version": "0.1.0"},
-            files={"artifact": ("a.zip", b"not a zip at all", "application/zip")},
-        )
-        assert resp.status_code == 400
-
-
 class TestManifest:
     def test_absent_firmware_is_a_404_rather_than_an_empty_version(
         self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
@@ -280,31 +219,38 @@ class TestSync:
         assert resp.status_code == 200, resp.text
         assert store.rows["endpoint_firmware"]["version"] == "1.2.3"
 
-    def test_an_unreachable_source_points_at_the_upload_fallback(
+    def test_an_unreachable_source_names_both_things_it_could_be(
         self,
         client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A box that cannot reach GitHub is a normal state for a LAN device, and it must
-        be told the way out rather than just that something failed."""
+        """ "Nothing to fetch" has two causes with different fixes — no network, or no
+        release cut yet — and the owner is holding a board, so the message names both."""
         c, _store, _blobs, _sent = client
         monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(None))
 
         resp = c.post("/api/endpoint/firmware/sync")
         assert resp.status_code == 503
-        assert "upload" in resp.json()["detail"].lower()
+        detail = resp.json()["detail"]
+        assert "github.com" in detail and "version.txt" in detail
 
 
 class TestFlash:
-    def test_flashing_before_any_firmware_is_uploaded_is_refused(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
+    def test_flashing_with_no_firmware_and_no_release_is_refused(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         c, _store, _blobs, _sent = client
+        # With no stored firmware AND no release reachable, the flash refuses rather than
+        # writing a partial board — and says both halves of why.
+        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(None))
         resp = c.post(
             "/api/endpoint/flash",
             json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
         )
         assert resp.status_code == 409
+        assert "none could be fetched" in resp.json()["detail"]
 
     def test_the_panel_is_given_a_fresh_device_key_and_the_api_url(
         self,

@@ -166,7 +166,7 @@ some of its content must not leak sideways. Non-negotiables:
 | Wave | What | Notes |
 |---|---|---|
 | **W1** | **Bench bring-up + decisions.** Flash Waveshare's sample, confirm display/mic/speaker, settle §4.1 transport, §4.3 toolchain, and get **OTA** working. | **Designed in §10** — the hardware arrived and the owner set the constraints. |
-| **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, `endpoint_url`/broker config defaulting to empty so the feature is simply absent when unset (the `sdr_url` pattern), Settings → Endpoints. | No new auth model. |
+| **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, broker config defaulting to empty so that half of the feature is absent when unset (the `sdr_url` pattern). **Note `endpoint_url` went the other way** — it defaults to the running service (`pysandbox`'s pattern), because gating the flasher behind a profile meant an `.env` edit on the host to enable a PWA-only feature; see §10.4b. | No new auth model. |
 | **W3** | **Display path.** Frame/scene protocol, renderers, notification cards. **GUI round 1 is drawn**: `../mocks/room-endpoint/device.html` — four shapes on one state model, awaiting the owner's pick. | See §8: the mock measured the panel and moved the goalposts. |
 | **W4** | **JPet on the endpoint.** One more `PetBroadcaster` subscriber + a sprite renderer. | The payoff. |
 | **W5** | **Voice out.** Kokoro → endpoint over the audio channel, with a `speak` action. | |
@@ -410,7 +410,7 @@ what makes a unit update.**
 ### 10.4b The box side, built (2026-09-19)
 
 The flash path exists, so a panel plugged into the box's USB port is now reachable from
-**Ops → Room endpoints** and from nowhere else — which is the point, since the owner has no
+**Endpoints** (its own launcher tile) and from nowhere else — which is the point, since the owner has no
 terminal and the debug console's `host.read` scope reports memory and processes, never
 device nodes.
 
@@ -469,8 +469,35 @@ them** — one bad image refuses the whole set, because a half-stored set is wor
 on a device with no cable attached to it. A flash with nothing stored syncs first, so the
 very first flash needs no separate action either.
 
-The manual upload survives as a fallback for a box that cannot reach GitHub, which is a
-real state for a LAN device and not worth leaving without an answer.
+**The manual upload was removed** (2026-09-19). It was kept as a fallback for a box that
+cannot reach GitHub — but a box in that state cannot update itself either, since
+`update-inner.sh` fetches this repo from the same place, so the fallback answered a
+situation in which nothing else works. A control nobody can reach is not a fallback; it is
+an invitation to a wrong turn on a screen where the wrong turn writes a bootloader.
+
+### 10.4c What the assembled unit showed (2026-09-19)
+
+A photograph of a panel in the hand, plugged into the box, settled three things no
+datasheet had:
+
+1. **It works out of the box.** The factory demo runs — Wi-Fi glyph, battery, clock, four
+   app icons, page dots — so the step-0 smoke test is passed on at least one unit, and a
+   dead screen after flashing is now unambiguous rather than a question.
+2. **The case rounds the display into a squircle.** The AMOLED is a 368×448 rectangle, but
+   the enclosure hides its corners: anything drawn there is invisible to whoever is holding
+   it. The PWA preview drew the full rectangle, which is wrong in the same family as the
+   CSS-`mm` size bug — it shows pixels that cannot be seen, and invites a design that loses
+   content on the desk. `pet/draw.ts` now clips to the case shape and leaves the corners
+   **transparent** rather than black: on an AMOLED black and off are identical, so a black
+   corner would say "this part of the display is dark" when the truth is "there is no
+   display here". Verified in a real browser by sampling the rendered canvas — all four
+   corners `alpha 0`, edges and centre opaque.
+3. **Portrait, with USB-C on the right.** Which the enclosure work will care about, and
+   which decides how a unit sits on a shelf.
+
+The corner radius is measured off the photograph rather than a datasheet, so
+`CASE_CORNER_FRACTION` is approximate and deliberately slightly generous: over-masking
+hides a corner that might exist, under-masking invites a design that loses content.
 
 ### 10.5 Three findings from the board in hand
 
@@ -501,7 +528,7 @@ the flasher.
 - **Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged `/dev/ttyACM*`?**
   Built that way (§10.4b) and asserted in `supervisor/tests/test_deploy_scripts.py`, but the
   assertion is about the compose file, not about the kernel. Still proven on the box at
-  step 5 — and **Ops → Room endpoints → Rescan USB is the proof**: a panel that is plugged
+  step 5 — and **Endpoints → Rescan USB is the proof**: a panel that is plugged
   in and does not appear there is this question failing.
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision

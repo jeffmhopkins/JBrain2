@@ -1,0 +1,214 @@
+/* The room-endpoint flasher. A worked sequence rather than a dashboard, so it is a column
+   of numbered steps with one action each, and it is laid out phone-first: the Ops card
+   this replaced put its status text behind its buttons at 400px because a flex row with
+   no wrap is fine on a desktop and not on a phone. */
+.ep-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.ep-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.ep-bar h1 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0;
+}
+.ep-bar button {
+  min-height: 44px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 14px;
+  font: 400 14px system-ui;
+}
+.ep-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ep-step {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface);
+}
+.ep-step h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.ep-step-n {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+.ep-hint,
+.ep-warn,
+.ep-ok {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+.ep-hint {
+  color: var(--text-3);
+}
+.ep-warn {
+  color: var(--danger, #e06c75);
+}
+.ep-ok {
+  color: var(--ok, #98c379);
+}
+.ep-empty {
+  padding: 24px 16px;
+  color: var(--text-3);
+}
+
+/* One action per step, full width on a phone so it cannot collide with anything. */
+.ep-primary {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  background: var(--accent-tint);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  font: 500 15px system-ui;
+}
+.ep-primary:disabled {
+  opacity: 0.45;
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+/* Ports: the whole row is the target, and the radio sits WITH its label rather than
+   floating — the first version inherited a list bullet and centred the input. */
+.ep-ports {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ep-ports label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.ep-ports label.sel {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.ep-ports input {
+  flex: none;
+  margin: 0;
+  width: 20px;
+  height: 20px;
+}
+.ep-port-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ep-port-text code {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.ep-port-text em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.ep-badge {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+}
+
+.ep-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+.ep-field input {
+  min-height: 44px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: 400 15px system-ui; /* 15px+ so iOS does not zoom the viewport on focus */
+}
+.ep-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 14px;
+  font-size: 14px;
+}
+.ep-check input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+.ep-check em {
+  display: block;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 3px;
+}
+.ep-log {
+  margin: 12px 0 0;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: 400 12px / 1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}

@@ -13,6 +13,7 @@ import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
 import { ControlScreen } from "./screens/ControlScreen";
 import { DataScreen } from "./screens/DataScreen";
+import { EndpointsScreen } from "./screens/EndpointsScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
@@ -75,6 +76,7 @@ type Card =
   | "intake"
   | "petcontrol"
   | "petface"
+  | "endpoints"
   | "jcode"
   | "jlaunch"
   | "jmolt"
@@ -86,7 +88,15 @@ type Card =
 const SCREEN_TITLES: Record<
   Exclude<
     Card,
-    "automations" | "tasks" | "image" | "radio" | "jcode" | "jlaunch" | "petcontrol" | "petface"
+    | "automations"
+    | "tasks"
+    | "image"
+    | "radio"
+    | "jcode"
+    | "jlaunch"
+    | "petcontrol"
+    | "petface"
+    | "endpoints"
   >,
   string
 > = {
@@ -500,6 +510,7 @@ export function App() {
     if (card === "jlaunch") return setCard(null);
     if (card === "petcontrol") return setCard(null);
     if (card === "petface") return setCard(null);
+    if (card === "endpoints") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -567,6 +578,7 @@ export function App() {
         card !== "radio" &&
         card !== "petcontrol" &&
         card !== "petface" &&
+        card !== "endpoints" &&
         card !== "jcode" &&
         card !== "jlaunch" && (
           <div
@@ -686,6 +698,7 @@ export function App() {
       {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
       {card === "petface" && <PetFaceScreen onClose={() => setCard(null)} />}
+      {card === "endpoints" && <EndpointsScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the
