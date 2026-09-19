@@ -9,10 +9,11 @@ cannot authenticate against, is recovered by walking to it with a screwdriver.
 import asyncio
 import hashlib
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.api import endpoint as endpoint_api
@@ -105,6 +106,46 @@ def client(
         yield c, store, blobs, sent
 
 
+def _stub_flash(
+    c: TestClient,
+    store: "FakeStore",
+    blobs: "FakeBlobs",
+    monkeypatch: pytest.MonkeyPatch,
+    sent: list[Any],
+    *,
+    lan_addr: str,
+) -> None:
+    """Run one flash against a faked sidecar, capturing the NVS payload it would write."""
+    # TestClient.app is typed as a bare ASGI callable, which has no `.state`.
+    cast(FastAPI, c.app).state.settings.lan_addr = lan_addr
+    sha = asyncio.run(blobs.put(b"\x00" * 32))
+    store.rows["endpoint_firmware"] = {"version": "9.9.9", "images": {"0x0": sha}}
+
+    class FakeStream:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            sent.append(payload)
+
+        async def __aenter__(self) -> "FakeStream":
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def aiter_bytes(self) -> Any:
+            yield b"OK\n"
+
+    monkeypatch.setattr(
+        httpx.AsyncClient,
+        "stream",
+        lambda _self, _m, _u, json: FakeStream(json),
+    )
+    resp = c.post(
+        "/api/endpoint/flash",
+        json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
 class TestPorts:
     def test_a_blanked_url_says_which_setting_rather_than_failing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -163,6 +204,60 @@ class TestManifest:
         body = c.get("/api/endpoint/firmware").json()
         assert set(body) == {"version", "url"}
         assert body["version"] == "0.3.0"
+
+
+class TestPanelAddress:
+    """Where a panel is told to find the box, and which certificate it is given.
+
+    These two must travel together. Handing a panel a PUBLIC hostname alongside the box's
+    INTERNAL root fails TLS on every request forever — with no symptom at all, because the
+    panel joins Wi-Fi perfectly and simply never gets an answer. That combination shipped
+    once and these tests exist so it cannot ship twice.
+    """
+
+    def test_a_lan_box_sends_its_own_address_and_its_own_root(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A panel is on the same LAN as the box, so that — not the owner's browser
+        address — is where it should look. Pinning one root also beats trusting ~150."""
+        c, store, blobs, sent = client
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
+        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="https://jbrain.local")
+
+        nvs = sent[-1]["nvs"]
+        assert nvs["api"] == "https://jbrain.local/api"
+        assert nvs["ca"].startswith("-----BEGIN CERTIFICATE-----")
+
+    def test_a_box_with_no_lan_site_sends_no_root_at_all(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The failure this pins: a public URL plus an internal root. The firmware then
+        trusts ONLY that root, so every handshake against a publicly-signed certificate
+        fails and the panel is mute. No root means it falls back to the public bundle."""
+        c, store, blobs, sent = client
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
+        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="https://jbrain.local")
+
+        nvs = sent[-1]["nvs"]
+        assert "ca" not in nvs, "an internal root beside a public URL is worse than none"
+        assert nvs["api"].endswith("/api")
+
+    def test_a_readable_root_without_a_lan_address_is_not_used(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The same pairing from the other side: a root is only right for the address it
+        was minted for, so an unconfigured LAN name means the root goes unused."""
+        c, store, blobs, sent = client
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
+        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="")
+
+        assert "ca" not in sent[-1]["nvs"]
 
 
 class TestSync:

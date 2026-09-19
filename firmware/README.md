@@ -50,7 +50,7 @@ Per-unit configuration is an NVS blob the box writes at flash time, in the `jbra
 | `ssid` / `pass` | the house network. **2.4 GHz only** — this radio has no 5 GHz. |
 | `api` | base URL, e.g. `https://jbrain.local/api`, no trailing slash |
 | `token` | the device credential, sent as `Authorization: Bearer …` |
-| `ca` | PEM of the box's Caddy internal-CA root |
+| `ca` | PEM of the box's Caddy internal-CA root. **Optional** — present only when the panel is pointed at the box's LAN name, whose certificate that root signs. Absent means the box was reached at a public hostname, and the firmware validates against the compiled-in public-CA bundle instead. Never both. |
 | `name` | which twin's endpoint this is (optional) |
 
 An OTA rewrites only the app slot, so all of it survives every update. The one path that

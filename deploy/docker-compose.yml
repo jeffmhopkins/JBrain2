@@ -173,6 +173,10 @@ services:
       # DNS failure on first capture. `update-inner.sh` writes SDR_URL into .env when it
       # finds a dongle, which is what fills this in — and until then the capture route
       # answers a clean 503 that says exactly that.
+      # The api needs its own LAN address to tell a panel where to find the box. It is the
+      # same value the proxy uses for Caddy's local HTTPS site; a panel is on this LAN, so
+      # this rather than the owner's browser address is what it should be given.
+      JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR-https://jbrain.local}
       JBRAIN_SDR_URL: ${SDR_URL:-}
       # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
       # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>

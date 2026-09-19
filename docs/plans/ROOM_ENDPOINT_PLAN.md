@@ -519,6 +519,43 @@ port and already streams a log to the PWA; reading the panel's own boot output o
 USB connection would turn a blind bring-up into a legible one, and it is the cheapest
 feature left in this wave. Until it exists, the manifest request is the only signal.
 
+### 10.4e Two bugs found before the first flash (2026-09-19)
+
+Both surfaced from the owner asking a plain question — *does this firmware connect to
+Wi-Fi, and can we test it?* — which is worth recording, because neither had a symptom that
+would have been diagnosable after the fact. Each produces a panel that joins Wi-Fi
+perfectly and is then silent forever.
+
+**1. `ca` was required by the firmware and conditional in the flasher.** `cfg.c` listed it
+as a mandatory NVS key; the api wrote it only when a Caddy root was readable. A box without
+a LAN site would therefore flash a panel that fails `cfg_load` on boot, logs *"no
+provisioning"* and stops — before touching the radio. `ca` is now optional.
+
+**2. The panel was told whatever address the owner's browser was on.** `_public_base()`
+returns `request.base_url`, so flashing from the PWA at a public hostname handed the panel
+that URL — **while also handing it the box's internal CA root**, which is the only thing
+the firmware trusted (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n`). Every handshake against a
+publicly-signed certificate would fail, forever, with no symptom: the panel joins Wi-Fi,
+fetches nothing, marks itself unhealthy and rolls back. On this box, reached at its public
+hostname, that was the likely outcome of the very first flash.
+
+The address and the certificate now travel together or not at all (`_panel_base`):
+
+- LAN address configured **and** its root readable → `https://jbrain.local/api` + that root
+  pinned. This is the intended path: a panel is on the same LAN, pinning one certificate
+  beats trusting ~150 public CAs, and it keeps the pet off the internet round trip.
+- otherwise → the owner's address + **no** root, validated against the public bundle the
+  firmware now carries.
+
+`JBRAIN_LAN_ADDR` already existed on the host for Caddy's local site but was only passed to
+the `proxy` service; the api now receives it too, which is what lets it answer "where should
+a panel look for me" with something better than "wherever you happened to be".
+
+Cost: the CA bundle grows the image from 894 K to 985 K, still 37% free in the factory slot.
+Firmware is **0.2.0**; three backend tests pin the pairing and were confirmed to fail
+against the shipped behaviour. Adding the bundle also needed `mbedtls` in the component's
+`REQUIRES` — the third defect in this wave that only compiling would find.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

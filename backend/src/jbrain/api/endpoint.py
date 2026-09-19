@@ -237,7 +237,32 @@ async def firmware_manifest(principal: PrincipalDep, request: Request) -> Firmwa
 
 
 def _public_base(request: Request) -> str:
+    """The address the OWNER reached this box at — used for the manifest's own `url`."""
     return str(request.base_url).rstrip("/") + "/api"
+
+
+def _panel_base(request: Request, settings: Settings) -> tuple[str, str]:
+    """Where a panel should look for the box, and which certificate to trust there.
+
+    NOT simply the owner's own address, which is what this used to be and was wrong in a
+    way that had no symptom but silence. A panel sits on the same LAN as the box; handing
+    it whatever host the owner's browser happened to be on sends every frame out through
+    the tunnel and back — and worse, a panel told a PUBLIC hostname while being handed the
+    box's INTERNAL root fails TLS on every request forever, having joined Wi-Fi perfectly.
+
+    So the two travel together or not at all:
+
+    - LAN address configured AND its root readable -> `https://jbrain.local/api` + that
+      root. Pinning one certificate beats trusting ~150 public CAs, and it costs nothing
+      here.
+    - otherwise -> the owner's address + no root, and the firmware validates against the
+      public bundle it now carries.
+    """
+    lan = settings.lan_addr.strip().rstrip("/")
+    ca = _lan_ca()
+    if lan and ca:
+        return f"{lan}/api", ca
+    return _public_base(request), ""
 
 
 @router.get("/firmware/available")
@@ -376,14 +401,16 @@ async def flash_panel(
     label = f"panel {body.name}".strip() if body.name else "room endpoint panel"
     provisioned = await devices.provision_device(device_repo, ctx_for(owner), label)
 
+    api_base, ca = _panel_base(request, settings)
     nvs = {
         "ssid": body.ssid,
         "pass": body.password,
-        "api": _public_base(request),
+        "api": api_base,
         "token": provisioned.key,
         "name": body.name,
     }
-    ca = _lan_ca()
+    # Only when it is the right root for that address. An internal root beside a public
+    # URL is worse than no root: it fails every handshake and looks like a network fault.
     if ca:
         nvs["ca"] = ca
 
