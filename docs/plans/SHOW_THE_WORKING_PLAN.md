@@ -1,6 +1,6 @@
 # Show the working — the code-run surfaces, and the question that reaches the chat
 
-> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2✅ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2✅ W3✅ W4◻️
 
 ## Thesis
 
@@ -324,20 +324,30 @@ could think what its answer was.
   nowhere. The view rides its `tool_call_id` onto its step on the live path and replays off
   the persisted step, which already carried it.
 
-### W3 — G, the cited computation
+### W3 ✅ — G, the cited computation
 
-- The `ƒn` marker in `markdown.tsx`, its target type, and the surface-side resolution from the
-  turn's calls (D3).
-- The floating, clamped, tail-anchored popover: opens compact (expression → result), expands in
-  place with its body capped to 46% of the frame and scrolling, and carries **promote-to-sheet**
-  for when that still isn't room. Small content stays a popover; large content stops being one.
-- Prompt guidance for emitting the marker, version-bumped.
-
-**Deliberately last of the three.** G is the only one that asks the model to change what it
-writes, and it is the one with a live-use risk no mock can settle: whether `ƒ1 ƒ2 ƒ3` inside one
-sentence reads as rigour or as clutter. If it reads as clutter, the fallback is to mark only the
-**first** computed figure in a clause and let its popover list the rest — a prompt change, not a
-rebuild, which is why this wave is cheap to get wrong.
+- **The marker is `[=n]`**, an ASCII sibling of `[^n]` in its own namespace, rendered as a
+  small `ƒn` chip. Separate numbering on purpose (D3): `[^1]` means *this came from your
+  note* and `[=1]` means *this came from arithmetic I did* — different claims with different
+  failure modes, so one numbering would hide which was which.
+- **The model authors the marker and nothing else.** `[=n]` names a POSITION; the popover's
+  contents are read from the persisted call, built by the surface from the turn's own steps.
+  **A marker that resolves to no call renders as plain text** — the same rule `ToolView`
+  applies to an unknown view name, and what stops a marker asserting a computation that never
+  happened. Tested directly.
+- **The popover is F's, unchanged**: fixed-position, clamped to the viewport on both axes,
+  flipping above the marker when there is no room below, and closing on Escape, on an outside
+  tap, or on any scroll — a panel pointing at a number that has moved is worse than no panel.
+- **It opens compact and expands in place**, the expansion capped at 46vh and scrolling. That
+  is the answer to the one flaw recorded against F (*"a popover is a poor place for eight
+  lines of code"*): small content stays a popover, large content stops being one. The expanded
+  body renders **the same `code_run` component the Worked step does**, which is what D2 bought
+  — one component, two entry points, no second place for them to disagree.
+- **Prompt guidance** in the three prompts that carry the arithmetic block (`system` v10,
+  `jerv` v50, `archivist` v9), including the clutter rule the gate flagged: mark the FIRST
+  computed figure in a sentence and leave the rest, because three markers in one clause reads
+  as clutter rather than rigour. That was the live-use risk G could not settle on a mock, and
+  it is cheap to reverse — a prompt change, not a rebuild.
 
 ### W4 — the question reaches the conversation
 

@@ -666,4 +666,47 @@ describe("Markdown", () => {
     expect(onEntity).toHaveBeenCalledWith("long");
     expect(screen.getAllByRole("button")).toHaveLength(1);
   });
+
+  // --- G: the computation marker (SHOW_THE_WORKING_PLAN.md W3) --------------
+
+  const calc = (result: string) => ({
+    payload: {
+      view: "code_run",
+      surface: "inline" as const,
+      data: { code: "(2847 - 2633) * 12", result },
+      refs: [],
+    },
+    brief: result,
+  });
+
+  it("renders [=n] as a tappable computation marker", () => {
+    const onCalc = vi.fn();
+    render(<Markdown text="That is $2,568[=1] a year." calcs={[calc("2568")]} onCalc={onCalc} />);
+    const marker = screen.getByRole("button", { name: /working/ });
+    expect(marker.textContent).toBe("\u01921");
+    fireEvent.click(marker);
+    expect(onCalc).toHaveBeenCalledWith(1, marker);
+  });
+
+  it("a marker that resolves to no call renders as plain text, never as a claim", () => {
+    // The rule that keeps a marker from asserting a computation that did not happen: the
+    // model authors the marker, and everything shown comes from the persisted call.
+    const { container } = render(<Markdown text="I worked it out[=3]." calcs={[calc("2568")]} />);
+    expect(container.querySelector(".md-calc")).toBeNull();
+    expect(container.textContent).toContain("[=3]");
+  });
+
+  it("keeps computations in their own namespace, separate from source citations", () => {
+    // `[^1]` means "this came from your note"; `[=1]` means "this came from arithmetic I
+    // did". Different claims, so one numbering would hide which was which.
+    const { container } = render(
+      <Markdown
+        text="The note says 5.15%[^1], so that is $2,568[=1]."
+        cites={[{ kind: "note", noteId: "n1" }]}
+        calcs={[calc("2568")]}
+      />,
+    );
+    expect(container.querySelector(".md-cite")).not.toBeNull();
+    expect(container.querySelector(".md-calc")).not.toBeNull();
+  });
 });

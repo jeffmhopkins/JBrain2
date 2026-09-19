@@ -21,6 +21,7 @@ import {
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { ComputationPopover } from "./ComputationPopover";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
 import { EntityWrites } from "./EntityWrites";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
@@ -47,7 +48,13 @@ import {
   turnWriteSummary,
 } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
-import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import {
+  type CalcTarget,
+  type CiteTarget,
+  Markdown,
+  type MdFlag,
+  stripModelCitations,
+} from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { stepLedger } from "./stepLedger";
@@ -873,6 +880,9 @@ function Bubble({
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
   const [openFlag, setOpenFlag] = useState<string | null>(null);
+  // The open computation popover, if any — one at a time per turn, because it is a glance
+  // at one number rather than a panel you leave up.
+  const [calc, setCalc] = useState<{ target: CalcTarget; anchor: DOMRect } | null>(null);
   // Pace the *displayed* prose: a steady typewriter reveal while the turn streams,
   // snapping to the full text once it settles. Only the Markdown text is paced —
   // sources, entities, and flags below still read the full `message.text`, so they
@@ -1008,6 +1018,15 @@ function Bubble({
     ...(t.webSources ?? []).map((w): CiteTarget => ({ kind: "web", url: w.url, title: w.title })),
     ...(t.entities ?? []).map((e): CiteTarget => ({ kind: "entity", entityId: e.entity_id })),
   ]);
+  // The turn's computations, positional with `[=n]` — one per call that produced a number,
+  // in call order. Built from the STEPS, not from anything the model wrote: a marker names a
+  // position and the popover's contents come from the persisted call, so a marker can never
+  // assert a computation that did not happen (SHOW_THE_WORKING_PLAN.md D3).
+  const calcTargets: CalcTarget[] = message.tools.flatMap((t) =>
+    t.view && t.view.view === "code_run"
+      ? [{ payload: t.view, brief: t.result ?? String(t.view.data.result ?? "") }]
+      : [],
+  );
   const onCite =
     onOpenNote || onOpenEntity
       ? (n: number) => {
@@ -1110,6 +1129,13 @@ function Bubble({
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
     <>
+      {calc && (
+        <ComputationPopover
+          target={calc.target}
+          anchor={calc.anchor}
+          onClose={() => setCalc(null)}
+        />
+      )}
       {message.text && (
         <Markdown
           text={shownText}
@@ -1120,6 +1146,11 @@ function Bubble({
           flags={flags}
           onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
           openFlag={openFlag}
+          calcs={calcTargets}
+          onCalc={(n, el) => {
+            const target = calcTargets[n - 1];
+            if (target) setCalc({ target, anchor: el.getBoundingClientRect() });
+          }}
           streaming={message.streaming}
         />
       )}

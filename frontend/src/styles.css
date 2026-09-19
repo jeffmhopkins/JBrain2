@@ -10595,6 +10595,98 @@ button.small {
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
 }
+/* G: the computation marker and its floating popover
+   (docs/mocks/code-run/g-cited-floating.html). The marker is D's — visible, so the working
+   is findable rather than guessed at; the panel is F's — floating, so opening it does not
+   push the conversation down. */
+.fb-shell .md-calc {
+  font: inherit;
+  font-size: calc(9.5px * var(--font-scale));
+  vertical-align: super;
+  line-height: 1;
+  margin-left: 1px;
+  padding: 0 calc(3px * var(--font-scale));
+  background: var(--green-tint);
+  border: none;
+  border-radius: calc(4px * var(--font-scale));
+  color: var(--ok);
+  cursor: pointer;
+}
+.fb-shell .md-calc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* transparent, and only there to catch the tap that closes: the popover is a glance, not a
+   mode, so it must not dim the conversation behind it. */
+.fb-shell .fb-calc-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+.fb-shell .fb-calc-pop {
+  position: fixed;
+  z-index: 61;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: calc(10px * var(--font-scale));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: calc(8px * var(--font-scale));
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--font-scale));
+}
+.fb-shell .fb-calc-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8px * var(--font-scale));
+}
+.fb-shell .fb-calc-expr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the answer never truncates — it is what the marker was tapped for. */
+.fb-shell .fb-calc-ans {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  color: var(--ok);
+}
+.fb-shell .fb-calc-more {
+  align-self: flex-start;
+  font: inherit;
+  font-size: calc(10.5px * var(--font-scale));
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  text-decoration: underline;
+}
+/* capped and scrolling, which is the answer to "a popover is a poor place for eight lines of
+   code": small content stays a popover, large content stops being one. */
+.fb-shell .fb-calc-body {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin: 0 calc(-8px * var(--font-scale)) calc(-8px * var(--font-scale));
+  padding: 0 calc(8px * var(--font-scale)) calc(4px * var(--font-scale));
+}
+/* inside the popover the code block has no step rail to line up with. */
+.fb-shell .fb-calc-body .fb-code,
+.fb-shell .fb-calc-body .fb-sealrow {
+  margin-left: 0;
+  padding-left: 0;
+}
+
 /* the `code_run` view, rendered INSIDE its step (docs/mocks/code-run/h-worked-ledger.html).
    Same inset and rail as the raw-payload block beside it, so a code listing sits where a
    payload already does rather than introducing a second shape. */

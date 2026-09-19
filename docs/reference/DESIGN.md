@@ -1669,6 +1669,15 @@ the step that made it. Not a surface of its own and not a note-screen change: th
     true, no review card is filed for a conversation write, and nothing else will raise
     it. A reason with no owner-facing meaning renders nothing — a code he cannot act on is
     a code he has to ask about.
+- **A computed number cites its working** (`[=n]` → `ƒn`, `ComputationPopover.tsx`, build
+  plan `docs/plans/SHOW_THE_WORKING_PLAN.md` W3 — binding mock
+  `docs/mocks/code-run/g-cited-floating.html`). Its own marker namespace, separate from the
+  `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
+  The model authors the MARKER only — the panel is filled from the persisted call, and a
+  marker that resolves to nothing renders as plain text rather than as an unbacked claim. The
+  panel floats and is clamped rather than reflowing the transcript, opens compact, and expands
+  in place capped at 46vh; the expansion is the same `code_run` component the Worked step
+  renders, so the two entry points cannot drift.
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
   `docs/plans/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some
