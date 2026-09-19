@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jbrain.agent.jmolt_owner import jmolt_settings_ctx
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.settings_store import SqlSettingsStore
 
 if TYPE_CHECKING:
@@ -52,6 +52,22 @@ def time_left_message(deadline_iso: str, tz: str, now: datetime) -> str:
     return f"{stamp} About {remaining_min} minute(s) remain in your hour tonight."
 
 
+def _remaining_brief(deadline_iso: str, now: datetime) -> str:
+    """Minutes left, for the row. The hour is the whole constraint jmolt works under, so a
+    row that only says "Checked the time" hides the one number the check was for.
+
+    Takes the raw setting and parses it the same way `time_left_message` does — a second
+    parser here would be free to disagree with the sentence beside it."""
+    try:
+        deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
+    except ValueError:
+        deadline = None
+    if deadline is None:
+        return "not running"
+    remaining = max(0, int((deadline - now).total_seconds() // 60))
+    return f"{remaining} min left" if remaining > 0 else "over"
+
+
 def build_jmolt_time_handlers(
     maker: async_sessionmaker[AsyncSession],
     settings_store: SqlSettingsStore | None = None,
@@ -64,6 +80,9 @@ def build_jmolt_time_handlers(
         sctx = jmolt_settings_ctx(ctx.session)
         tz = await settings.owner_timezone(sctx) or "UTC"
         deadline = await settings.moltbook_night_deadline(sctx)
-        return time_left_message(deadline, tz, datetime.now(UTC))
+        now = datetime.now(UTC)
+        return ToolOutput(
+            time_left_message(deadline, tz, now), result_brief=_remaining_brief(deadline, now)
+        )
 
     return {"time_left": time_left}

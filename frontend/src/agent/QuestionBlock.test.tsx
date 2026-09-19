@@ -120,6 +120,55 @@ describe("the question block", () => {
   // unanswerable. The escape is the robust fix; hardening the parser is not, because
   // every repair invents candidates the model never wrote.
   describe("the typed escape", () => {
+    // SHOW_THE_WORKING_PLAN.md D6. The two tests below pin the escape as a RULE rather
+    // than as behaviour that happens to be there. The owner's condition at the ask_user
+    // gate was that a multiple-choice question must always allow a written answer, and the
+    // argument for it is not aesthetic: a closed set of choices is a new way to get a wrong
+    // answer, because if none of the options is right the owner picks one anyway, and a
+    // confident wrong answer is worse than the guess this tool exists to prevent. Without
+    // these, a refactor that makes the escape conditional — on candidate count, on a model
+    // flag, on "the model said these are exhaustive" — passes CI.
+    it("is offered on EVERY candidate row, whatever the model supplied", () => {
+      block({
+        questions: [
+          {
+            id: "q1",
+            question: "One?",
+            blocks: "",
+            candidates: [{ label: "A", value: "A", detail: "" }],
+          },
+          {
+            id: "q2",
+            question: "Two?",
+            blocks: "",
+            candidates: [
+              { label: "X", value: "X", detail: "" },
+              { label: "Y", value: "Y", detail: "" },
+            ],
+          },
+        ],
+      });
+      // One candidate or five, the written row is there: the component appends it.
+      expect(screen.getAllByRole("button", { name: "Something else" })).toHaveLength(2);
+    });
+
+    it("is the component's, not the model's — no supplied option can be it", () => {
+      // The model cannot suppress the escape, and it cannot impersonate it either: the row
+      // is appended after the candidates it sent, so a candidate LABELLED "Something else"
+      // does not stand in for the real one.
+      block({
+        questions: [
+          {
+            id: "q1",
+            question: "One?",
+            blocks: "",
+            candidates: [{ label: "Something else", value: "Something else", detail: "" }],
+          },
+        ],
+      });
+      expect(screen.getAllByRole("button", { name: "Something else" })).toHaveLength(2);
+    });
+
     it("reveals the same field a candidate row otherwise never gets", () => {
       const onAnswer = block();
       expect(screen.queryByLabelText("Which Dr. Chen?")).not.toBeInTheDocument();

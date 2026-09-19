@@ -91,6 +91,7 @@ def build_video_handlers(
             return ToolOutput(
                 _summary_line(info.filename, cached),
                 view=_video_view(attachment_id, info, cached) if show else None,
+                result_brief="already analyzed",
             )
 
         if info.size_bytes > max_bytes:
@@ -129,9 +130,11 @@ def build_video_handlers(
         # The model reads the summary; the owner sees the rich scrubbing card. The view
         # carries the attachment id + structured analysis, never a URL — the component
         # builds the media/thumbnail srcs (invariant #9).
+        frames = stored.get("frames") or []
         return ToolOutput(
             _summary_line(info.filename, stored),
             view=_video_view(attachment_id, info, stored) if show else None,
+            result_brief=f"{len(frames)} frames" if frames else "analyzed",
         )
 
     return {"analyze_video": analyze_video_tool}

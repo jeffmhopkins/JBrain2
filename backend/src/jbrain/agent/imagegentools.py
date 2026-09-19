@@ -21,7 +21,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.chat_images import resolve_source, vision_read_spec
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.ingest.ocr import OCR_MAX_TOKENS, OCR_STRENGTH
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.errors import LlmError
@@ -233,8 +233,17 @@ def build_image_handlers(
         if transcription:
             head = description or ""
             joiner = "\n\n" if head else ""
-            return f"{head}{joiner}--- Full text (verbatim) ---\n{transcription}"
-        return description or "The vision model returned no description."
+            return ToolOutput(
+                f"{head}{joiner}--- Full text (verbatim) ---\n{transcription}",
+                # That text was FOUND is the answer; the text itself is model-read content
+                # from an image and belongs behind the disclosure, not on the row.
+                result_brief=f"described + {len(transcription.split()):,} words of text",
+            )
+        if not description:
+            return ToolOutput(
+                "The vision model returned no description.", result_brief="no description"
+            )
+        return ToolOutput(description, result_brief=f"{len(description.split()):,} words")
 
     return {
         "analyze_image": analyze_image_tool,

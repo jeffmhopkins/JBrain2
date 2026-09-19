@@ -64,7 +64,8 @@ def build_wiki_write_handlers(
             await jobs.enqueue(ctx.session, "ingest_note", {"note_id": note.id})
         return ToolOutput(
             "Filed your correction as a note. It will out-argue the conflicting fact and the "
-            "article will be rebuilt from the corrected graph — the wiki stays machine-written."
+            "article will be rebuilt from the corrected graph — the wiki stays machine-written.",
+            result_brief="filed" if created else "already filed",
         )
 
     async def request_rebuild_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
@@ -72,7 +73,7 @@ def build_wiki_write_handlers(
         if not article_id:
             return ToolOutput("request_rebuild needs an article_id.")
         await jobs.enqueue(ctx.session, "wiki_rebuild", {"target": article_id})
-        return ToolOutput("Queued a full rebuild of that article.")
+        return ToolOutput("Queued a full rebuild of that article.", result_brief="rebuild queued")
 
     async def add_source_exclusion_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         note_id = str(arguments.get("note_id", "")).strip()
@@ -99,7 +100,10 @@ def build_wiki_write_handlers(
         # Re-derive the affected article (or every article if the exclusion is global).
         await jobs.enqueue(ctx.session, "wiki_rebuild", {"target": article_id or "all"})
         scope = "this article" if article_id else "every article"
-        return ToolOutput(f"Excluded that note as a source for {scope}; queued a rebuild.")
+        return ToolOutput(
+            f"Excluded that note as a source for {scope}; queued a rebuild.",
+            result_brief=f"excluded from {scope}",
+        )
 
     return {
         "file_correction": file_correction_tool,

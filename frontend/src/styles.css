@@ -10582,9 +10582,193 @@ button.small {
   background: var(--steel);
   animation: fb-breathe 1.5s ease-in-out infinite;
 }
+/* the Worked row's RESULT column — what came back (stepLedger.ts). It does not shrink:
+   on a narrow row the label and the argument give way first, because the argument is what
+   you asked and the result is what you came for. The max-width is a backstop, not the
+   mechanism — the phrase itself is capped where it is authored. */
 .fb-shell .fb-step-cnt {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
+}
+/* G: the computation marker and its floating popover
+   (docs/mocks/code-run/g-cited-floating.html). The marker is D's — visible, so the working
+   is findable rather than guessed at; the panel is F's — floating, so opening it does not
+   push the conversation down. */
+.fb-shell .md-calc {
+  font: inherit;
+  font-size: calc(9.5px * var(--font-scale));
+  vertical-align: super;
+  line-height: 1;
+  margin-left: 1px;
+  padding: 0 calc(3px * var(--font-scale));
+  background: var(--green-tint);
+  border: none;
+  border-radius: calc(4px * var(--font-scale));
+  color: var(--ok);
+  cursor: pointer;
+}
+.fb-shell .md-calc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* transparent, and only there to catch the tap that closes: the popover is a glance, not a
+   mode, so it must not dim the conversation behind it. */
+.fb-shell .fb-calc-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+/* A real <dialog>, so its UA defaults have to go: a non-modal open dialog is
+   `position: absolute` with its own margin, padding and border. */
+.fb-shell .fb-calc-pop {
+  margin: 0;
+  max-width: none;
+  max-height: none;
+  color: var(--text);
+  position: fixed;
+  z-index: 61;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: calc(10px * var(--font-scale));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: calc(8px * var(--font-scale));
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--font-scale));
+}
+.fb-shell .fb-calc-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8px * var(--font-scale));
+}
+.fb-shell .fb-calc-expr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the answer never truncates — it is what the marker was tapped for. */
+.fb-shell .fb-calc-ans {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  color: var(--ok);
+}
+.fb-shell .fb-calc-more {
+  align-self: flex-start;
+  font: inherit;
+  font-size: calc(10.5px * var(--font-scale));
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  text-decoration: underline;
+}
+/* capped and scrolling, which is the answer to "a popover is a poor place for eight lines of
+   code": small content stays a popover, large content stops being one. */
+.fb-shell .fb-calc-body {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin: 0 calc(-8px * var(--font-scale)) calc(-8px * var(--font-scale));
+  padding: 0 calc(8px * var(--font-scale)) calc(4px * var(--font-scale));
+}
+/* inside the popover the code block has no step rail to line up with. */
+.fb-shell .fb-calc-body .fb-code,
+.fb-shell .fb-calc-body .fb-sealrow {
+  margin-left: 0;
+  padding-left: 0;
+}
+
+/* the `code_run` view, rendered INSIDE its step (docs/mocks/code-run/h-worked-ledger.html).
+   Same inset and rail as the raw-payload block beside it, so a code listing sits where a
+   payload already does rather than introducing a second shape. */
+.fb-shell .fb-code {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.62;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(8px * var(--font-scale));
+  padding: calc(9px * var(--font-scale)) calc(10px * var(--font-scale));
+  margin: 0 0 calc(8px * var(--font-scale)) calc(23px * var(--font-scale));
+  overflow-x: auto;
+  white-space: pre;
+}
+/* a program's OUTPUT reads at full strength and is never highlighted — colouring stdout
+   would let a snippet print something that looks like syntax. */
+.fb-shell .fb-code.out {
+  color: var(--text);
+}
+/* the closed token set the component applies from `language`. Model output selects a class
+   here; it never authors one (DESIGN.md #1/#9). */
+.fb-shell .fb-code .k {
+  color: var(--violet);
+}
+.fb-shell .fb-code .s {
+  color: var(--green);
+}
+.fb-shell .fb-code .n {
+  color: var(--amber);
+}
+.fb-shell .fb-code .f {
+  color: var(--accent);
+}
+.fb-shell .fb-code .c {
+  color: var(--text-3);
+}
+.fb-shell .fb-sealrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(5px * var(--font-scale));
+  padding-left: calc(23px * var(--font-scale));
+  margin-top: calc(2px * var(--font-scale));
+}
+/* where it ran, stated rather than assumed. Each chip names a control checked against the
+   compose file by test_pysandbox_server.py. */
+.fb-shell .sealchip {
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(2px * var(--font-scale)) calc(7px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+.fb-shell .sealchip.ok {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--green);
+}
+.fb-shell .sealchip.bad {
+  background: var(--rose-tint);
+  border-color: transparent;
+  color: var(--rose);
+}
+
+/* a COMPUTED answer, the one result the row exists to make checkable. Green because it is
+   a value the box worked out rather than a count of what it found. */
+.fb-shell .fb-step-cnt.fbl-res {
+  font-family: var(--font-mono);
+  color: var(--ok);
+}
+/* a call that failed, for every tool — the dot says it too, but only this says it in the
+   column the eye scans down. */
+.fb-shell .fb-step-cnt.fbl-bad {
+  color: var(--rose);
 }
 .fb-shell .fb-step-caret {
   width: calc(14px * var(--font-scale));

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.models.archivist import ArchivistMemoryRepo
 
@@ -53,7 +53,10 @@ def build_archivist_memory_handlers(
             return "Can't read memory — this session has no owner principal."
         async with scoped_session(maker, ctx.session) as session:
             content = await repo.read(session, ctx.session.principal_id)
-        return content or "(your memory is empty — nothing saved yet)"
+        return ToolOutput(
+            content or "(your memory is empty — nothing saved yet)",
+            result_brief=f"{len(content)} chars" if content else "empty",
+        )
 
     async def archivist_memory_write(arguments: dict, ctx: ToolContext) -> str:
         content = str(arguments.get("content", ""))
@@ -67,7 +70,11 @@ def build_archivist_memory_handlers(
         async with scoped_session(maker, ctx.session) as session:
             previous = await repo.read(session, ctx.session.principal_id)
             await repo.write(session, ctx.session.principal_id, content)
-        return _receipt(previous, content)
+        # The size CHANGE, not the new size: a write here is a full replace, and a shrink
+        # is the shape of the clobber this receipt exists to put in front of the model.
+        return ToolOutput(
+            _receipt(previous, content), result_brief=f"{len(previous)} → {len(content)} chars"
+        )
 
     return {
         "archivist_memory_read": archivist_memory_read,

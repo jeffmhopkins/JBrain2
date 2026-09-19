@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Worked panel · H · built on the real stylesheet</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 1 — THE REAL STYLESHEET, PASTED UNCHANGED.
+   Extracted verbatim from frontend/src/styles/tokens.css (:root) and
+   frontend/src/styles.css (every rule touching .fb-act-*, .fb-step-*, .fb-res-*,
+   .fb-raw-*, .fb-think-*, .toolwork-srcs, .tw-ic/.tw-bullet and the bubbles).
+   The only edit is dropping the `.fb-shell ` scope prefix, since this mock has no
+   app shell to sit inside. Nothing here is invented — if a row looks wrong in this
+   mock, it looks wrong in the app.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root{
+
+  color-scheme: dark;
+
+  /* Neutrals */
+  --bg: #0e0f11;
+  --surface: #17181b;
+  --surface-2: #1e2024;
+  --border: #26282c;
+  --text: #e6e7e9;
+  --text-2: #9a9da3;
+  --text-3: #5c5f66;
+  /* The composer sits slightly below --surface so it reads as the floor. */
+  --surface-composer: #141518;
+  /* Sheet/dialog scrim: --bg at 60% alpha (docs/reference/DESIGN.md "Modal system"). */
+  --scrim: rgba(14, 15, 17, 0.6);
+
+  /* Accents — identical across themes. Tints are 13% alpha of the accent. */
+  --steel: #7fa7c9;
+  --steel-tint: rgba(127, 167, 201, 0.13);
+  --green: #8fbc9a;
+  --green-tint: rgba(143, 188, 154, 0.13);
+  --amber: #c9a36a;
+  --amber-tint: rgba(201, 163, 106, 0.13);
+  --rose: #cf8a8f;
+  --rose-tint: rgba(207, 138, 143, 0.13);
+  --violet: #a493c9;
+  --violet-tint: rgba(164, 147, 201, 0.13);
+
+  /* Entity-type accents — extend the five above to cover the entity-type icon
+     discs, same muted register. Tinted at 16% via color-mix on the disc, so no
+     separate -tint tokens. See docs/reference/DESIGN.md "Entity-type accents". */
+  --periwinkle: #8f9fd0; /* Product */
+  --sage: #a8bd7e; /* Animal */
+  --terracotta: #d0917f; /* MedicalCondition */
+  --teal: #6fb6b1; /* MedicalProcedure */
+  --orchid: #c98ab4; /* Drug */
+  --slate: #9aa0a8; /* Thing — neutral fallback */
+
+  /* Semantic aliases */
+  --accent: var(--steel);
+  --accent-tint: var(--steel-tint);
+  --ok: var(--green);
+  --warn: var(--amber);
+  --danger: var(--rose);
+  --danger-tint: var(--rose-tint);
+  --info: var(--steel);
+  /* The location domain's accent (the Phase-7 teal candidate, made binding by the
+     L3 GUI gate — Option B's inline trail/fence/start/gap markers ride this).
+     Shares the teal hue with the MedicalProcedure entity disc; this is the
+     domain-color name surfaces reference. See docs/reference/DESIGN.md. */
+  --location: #6fb6b1;
+  --location-tint: rgba(111, 182, 177, 0.13);
+
+  /* Type scale */
+  /* Type scale = DESIGN.md px values × the user's font-scale setting
+     (Settings → Text size, default 0.75). fontScale.ts sets --font-scale. */
+  --font-scale: 0.75;
+  --fs-micro: calc(12px * var(--font-scale));
+  /* Graph node labels float free on a busy canvas, so they keep a 12px floor
+     regardless of the text-size setting (the 0.75 default would shrink micro
+     to 9px); 100% nudges them up to 15px. */
+  --fs-graph-label: clamp(12px, calc(13px * var(--font-scale)), 15px);
+  --fs-head: calc(13px * var(--font-scale)); /* note-row metadata */
+  --fs-secondary: calc(14px * var(--font-scale));
+  --fs-note: calc(15px * var(--font-scale)); /* stream body, segments */
+  --fs-body: calc(16px * var(--font-scale));
+  --fs-composer: calc(17px * var(--font-scale)); /* Phase 1 omnibox review */
+  --fs-title: calc(18px * var(--font-scale));
+  --fs-screen: calc(22px * var(--font-scale));
+  --fs-hero: calc(28px * var(--font-scale));
+  --fs-editor: calc(20px * var(--font-scale)); /* focused-writer edit page */
+
+  /* Shape */
+  --r-input: 12px;
+  --r-seg: 14px;
+  --r-card: 16px;
+  --r-box: 16px;
+  --r-pill: 999px;
+
+  --shadow-card: none;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Predicate paths in the analysis surfaces render monospace. */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
+   attributes of their own (unlike components/icons.tsx). Without this they fall
+   back to the SVG default — a solid black fill — so the per-element `color`
+   rules below (steel, text-2, …) never took, which is why the Worked icons read
+   as black on every prior CSS-color pass. Drawing them as outlines that follow
+   `currentColor` is what makes those colors land. */
+.tw-ic,
+.tw-chev,
+.fb-step-caret {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
+   A labelled 44px button expands the tool steps in place — no flip, no 3D, no
+   swipe. The body animates open with a grid-rows ease so content stays in flow. */
+/* the disclosure at the foot of an assistant bubble: "Thinking" (violet, the model's
+   reasoning) and "Worked" (steel, its tool steps) as two tinted chips that act as a
+   segmented control over ONE shared panel — selecting a chip swaps the panel's content
+   (reasoning ⇄ steps), selecting the open chip closes it. With a single body the open
+   height and bottom spacing match for either view. The whole strip is one flex child of
+   the bubble, so a closed panel adds no column gap and the line stays tight to the card
+   foot; negative margins snug it to the answer above and the card's padding below. */
+.fb-act-foot {
+  margin-top: -6px;
+  margin-bottom: -6px;
+}
+.fb-act-foot.bare {
+  /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
+  margin-top: 0;
+}
+.fb-activity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: nowrap;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.fb-act-foot.bare .fb-activity {
+  border-top: none;
+  padding-top: 2px;
+}
+/* a chip — thinking and worked share this shape; selected chips tint to their register */
+.fb-act-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 25px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: none;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.fb-act-think {
+  flex: none;
+}
+/* worked carries the longest text (steps · sources · failed); only its count shrinks
+   and ellipsizes, so the chips stay on one line and never collide into "ThougWorked" */
+.fb-act-work {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fb-act-chip:hover {
+  color: var(--text);
+}
+.fb-act-ic,
+.fb-act-chip .tw-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.fb-act-think .fb-act-ic {
+  color: var(--violet);
+}
+.fb-act-work .tw-ic {
+  color: var(--steel);
+}
+.fb-act-think.on {
+  background: var(--violet-tint);
+  border-color: rgba(164, 147, 201, 0.3);
+  color: var(--violet);
+}
+.fb-act-work.on {
+  background: var(--steel-tint);
+  border-color: rgba(127, 167, 201, 0.3);
+  color: var(--steel);
+}
+.fb-act-lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+.fb-act-count {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 400;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-act-work.on .fb-act-count {
+  color: var(--steel);
+  opacity: 0.75;
+}
+.fb-worked-fail {
+  color: var(--rose);
+}
+/* the copy action: pinned to the far right; a glyph + "Copy" label, a brief green
+   confirm that swaps to a check + "Copied". */
+.fb-act-copy {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-act-copy:hover {
+  color: var(--steel);
+}
+.fb-act-copy .fb-act-ic {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: currentColor;
+}
+.fb-act-copy.done {
+  color: var(--green);
+}
+/* read-aloud on: the copy button drops its label to just the icon (square) so the
+   play control fits beside it. The play control owns the far-right auto margin, so
+   copy clears its own (the row gap alone spaces the pair) and squares up its padding. */
+.fb-act-copy.compact {
+  margin-left: 0;
+  padding: 3px;
+  gap: 0;
+}
+.fb-act-play {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 25px;
+  padding: 3px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.fb-act-play:hover {
+  color: var(--steel);
+}
+.fb-act-play.on {
+  color: var(--steel);
+}
+/* auto-play armed: the violet register (distinct from the steel playing/hover state),
+   so the loop-marked triangle reads as "on" even when this turn isn't speaking. */
+.fb-act-play.auto {
+  color: var(--violet);
+}
+/* the long-press target shouldn't trigger the OS text-selection / callout while held. */
+.fb-act-play {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+.fb-act-play .fb-act-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: currentColor;
+}
+.fb-act-pulse {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: fb-think-pulse 1.1s ease-out infinite;
+}
+.fb-act-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.18s ease-out;
+}
+.fb-act-body.open {
+  grid-template-rows: 1fr;
+}
+.fb-act-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+/* the single shared panel shows exactly one view (reasoning or steps) at a time */
+.fb-act-view {
+  display: none;
+}
+.fb-act-view.show {
+  display: block;
+}
+.fb-thinking-trace {
+  margin: 2px 0 6px;
+  padding: 9px 11px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--violet-tint);
+  border-radius: 10px;
+  font: 12.5px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+/* A tool call interleaved into the thinking trace where it happened (mirrors a
+   sub-agent's ChildTrace): a ✓/✕/· mark, the step label, and the web tool's
+   url/query, on its own flowing line within the reasoning. */
+.fb-think-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.fb-think-mark {
+  flex: none;
+  color: var(--green);
+  font-size: 11px;
+}
+.fb-think-tool.bad .fb-think-mark {
+  color: var(--rose);
+}
+.fb-think-tool.live .fb-think-mark {
+  color: var(--violet);
+}
+.fb-think-name {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fb-think-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.fb-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+/* a single tool step — itself a pulldown (arguments in · result out · raw) */
+.fb-step {
+  border-radius: 10px;
+}
+.fb-step.err {
+  background: var(--rose-tint);
+}
+.fb-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+/* the fallback dot for a tool with no dedicated glyph — a small centered mark,
+   not the full 15px icon box (which would render as a big muted disc) */
+.fb-step-row .tw-bullet {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  background: var(--steel);
+}
+.fb-step-lab {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* a web tool shows its target inline after the label — the label yields its
+   stretch so the url/query takes the row and truncates rather than overflowing */
+.fb-step-row.has-arg .fb-step-lab {
+  flex: 0 0 auto;
+}
+.fb-step-arg {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fb-step-mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--green);
+}
+.fb-step-mark.bad {
+  background: var(--rose);
+}
+.fb-step-mark.live {
+  background: var(--steel);
+  animation: fb-breathe 1.5s ease-in-out infinite;
+}
+.fb-step-cnt {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.fb-step-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-2);
+  transition: transform 0.16s ease-out;
+}
+.fb-step.open .fb-step-caret {
+  transform: rotate(90deg);
+}
+.fb-step-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.16s ease-out;
+}
+.fb-step.open .fb-step-detail {
+  grid-template-rows: 1fr;
+}
+.fb-step-di {
+  min-height: 0;
+  overflow: hidden;
+}
+.fb-step.open .fb-step-di {
+  padding-bottom: 6px;
+}
+/* arguments — a flat one-level key/value list, monospace values */
+.fb-args {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 2px 0 8px;
+  padding-left: 23px;
+}
+.fb-args-row {
+  display: contents;
+}
+.fb-args dt {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.fb-args dd {
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.fb-res-lab {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-left: 23px;
+  margin-bottom: 4px;
+}
+.fb-res-txt {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+  padding-left: 23px;
+  /* a long result scrolls within its own pane rather than running the step
+     on forever — the expansion stays a glanceable height (the screenshot's
+     web_fetch summary was the offender). */
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fb-res-txt.err {
+  color: var(--rose);
+}
+/* the raw result rung — clamped monospace inset with copy + show-all */
+.fb-raw-wrap {
+  padding-left: 23px;
+  margin-top: 7px;
+}
+.fb-raw-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.fb-raw-toggle:hover {
+  color: var(--text-2);
+  border-color: var(--text-3);
+}
+.fb-raw {
+  position: relative;
+  margin-top: 8px;
+}
+.fb-raw-pre {
+  margin: 0;
+  padding: 8px 40px 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow: hidden;
+}
+.fb-raw-pre.full {
+  /* "show all lines" lifts the 150px clamp but still scrolls within a bounded
+     pane rather than expanding without limit. */
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fb-raw-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-raw-copy:hover {
+  color: var(--steel);
+  border-color: var(--steel);
+}
+.fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.fb-raw-more {
+  display: block;
+  margin-top: 6px;
+  padding: 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--steel);
+  cursor: pointer;
+}
+.fb-act-body,
+  .fb-act-chip,
+  .fb-step-detail,
+  .fb-step-caret {
+    transition: none;
+  }
+.fb-step-mark.live,
+  .fb-act-pulse {
+    animation: none;
+  }
+.toolwork-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 23px;
+}
+.fb-drp-think-sum .fb-act-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--violet);
+}
+/* The foot sits flush at the bottom (no negative margins, its own padding since the media
+   bubble is frameless); its `.fb-activity` border-top is the divider from the card body. */
+.fb-analysis-card .fb-act-foot {
+  margin: 0;
+  padding: 8px 14px 10px;
+}
+.fb-analysis-card .fb-act-foot.bare .fb-activity {
+  /* keep the divider even if the foot leads with no answer, so the footer stays attached */
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.bubble {
+  max-width: 80%;
+  padding: 11px 14px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  /* A long unbreakable token — a bare URL, an id — wraps inside the bubble
+     instead of spilling past its right edge. Inherited, so it reaches the
+     markdown prose too; code blocks and tables keep their own scroll-x. */
+  overflow-wrap: anywhere;
+}
+.bubble.me {
+  align-self: flex-end;
+  background: var(--steel-tint);
+  border: 1px solid var(--steel-tint);
+  border-bottom-right-radius: 0;
+}
+.bubble.ai {
+  align-self: flex-start;
+  /* The assistant answer (prose, code, tool views) may use the full column width;
+     only the owner's own bubble stays inset at the base 80%. */
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* rich text in an assistant answer (agent/markdown.tsx) — and the research-library
+   report reader (.rl-md), which renders the same <Markdown> and so shares its block flow. */
+.bubble.ai .md,
+.rl-md .md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* A bubble whose body is just a width:100% image/preview would shrink-wrap to the
+   image's natural size; give it the full column so the live preview and the final
+   image are always the large variant, with or without answer text beside them. */
+.bubble.ai:has(.fb-genprev, .tv-genimg) {
+  width: 100%;
+}
+/* An image turn splits into preamble / image / reply bubbles; the image one carries no
+   bubble chrome — the picture's own rounded frame + its caption stand alone, so there's
+   no border-inside-a-border. */
+.bubble.ai.bubble-media {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+/* The analysis cards bring their own frame (border/radius/surface); drop the generic
+   tool-view wrapper's frame (like .tv-task / .atx) so the card's own rounded frame stands
+   alone instead of nested inside a second one. The card itself rides a frameless
+   `.bubble.ai.bubble-media` bubble (FullBrainSurface splits it out, the same as an image),
+   so the answer bubble's chrome is gone too — while the turn's "Thinking / Worked" foot
+   keeps its own normal bubble, where its disclosure renders correctly. */
+.tool-view:has(.tv-vid) {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+@keyframes fb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+@keyframes fb-think-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(164, 147, 201, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(164, 147, 201, 0);
+  }
+}
+
+/* icon bases */
+/* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
+   attributes of their own (unlike components/icons.tsx). Without this they fall
+   back to the SVG default — a solid black fill — so the per-element `color`
+   rules below (steel, text-2, …) never took, which is why the Worked icons read
+   as black on every prior CSS-color pass. Drawing them as outlines that follow
+   `currentColor` is what makes those colors land. */
+.tw-ic,
+.tw-chev,
+.fb-step-caret {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-step-row .tw-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--steel);
+}
+.fb-step.err .fb-step-row .tw-ic {
+  color: var(--rose);
+}
+/* the fallback dot for a tool with no dedicated glyph — a small centered mark,
+   not the full 15px icon box (which would render as a big muted disc) */
+.fb-step-row .tw-bullet {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  background: var(--steel);
+}
+.fb-raw-copy .tw-ic {
+  width: 14px;
+  height: 14px;
+}
+.tw-bullet {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+  margin: 0 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 2 — MOCK SCAFFOLDING ONLY. The phone frame, the fake top bar and
+   composer, the ƒ marker and its popover (variant G). None of this is proposed
+   for the Worked panel; it exists so the panel has somewhere to live.
+   ══════════════════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:#000;color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+     display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;font-size:15px;}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;text-align:left;}
+button:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+svg:not(.tw-ic):not(.tw-chev):not(.fb-step-caret){fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+.caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+.caption b{color:var(--text);font-weight:600;}
+.caption code{font-family:var(--font-mono,ui-monospace,Menlo,monospace);font-size:.9em;color:var(--violet);}
+.caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+.phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+.topbar{flex:none;display:flex;align-items:baseline;gap:10px;padding:16px 16px 10px;}
+.topbar .ttl{font-size:21px;font-weight:700;letter-spacing:-.02em;}
+.topbar .pct{margin-left:auto;font-size:13px;font-weight:600;color:var(--text-2);}
+.topbar .pct small{color:var(--text-3);font-weight:400;}
+.chat{flex:1;overflow-y:auto;padding:4px 14px 14px;display:flex;flex-direction:column;gap:11px;}
+.turncard{border:1px solid var(--border);border-radius:16px;padding:12px 13px;background:transparent;}
+.turncard .bubble.ai{border:none;background:none;padding:0;}
+.bubble p{margin:0;}
+.spacer{flex:1;}
+.iconbtn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:var(--text-3);flex:none;}
+.iconbtn svg{width:15px;height:15px;}
+
+.composer{flex:none;border-top:1px solid var(--border);background:var(--surface-composer);}
+.composer .tabs{display:flex;border-bottom:1px solid var(--border);}
+.composer .tabs span{flex:1;text-align:center;padding:12px 0;font-size:13.5px;color:var(--text-2);border-right:1px solid var(--border);}
+.composer .tabs span:last-child{border-right:none;}
+.composer .tabs .on{background:rgba(201,163,106,.09);color:var(--amber);}
+.composer .ask{padding:14px 16px 22px;font-size:14.5px;color:var(--text-3);}
+
+/* variant G's marker + popover — the settled in-prose path, shown here only so the
+   two surfaces can be seen side by side */
+.fx{display:inline-flex;align-items:center;gap:1px;vertical-align:baseline;font-family:var(--font-mono,ui-monospace,Menlo,monospace);
+    font-size:10.5px;line-height:1;font-weight:500;padding:2px 5px 2px 4px;border-radius:5px;margin-left:2px;
+    background:var(--violet-tint);color:var(--violet);position:relative;top:-1px;border:1px solid transparent;}
+.fx.on{border-color:var(--violet);background:rgba(164,147,201,.3);}
+.fx i{font-style:italic;opacity:.75;}
+.pop{position:absolute;z-index:30;width:266px;max-width:calc(100% - 26px);background:var(--surface-2);
+     border:1px solid var(--violet);border-radius:13px;box-shadow:0 14px 38px rgba(0,0,0,.66);
+     opacity:0;transform:translateY(-5px);transition:opacity .13s,transform .13s;pointer-events:none;}
+.pop.on{opacity:1;transform:none;pointer-events:auto;}
+.tail{position:absolute;width:9px;height:9px;background:var(--surface-2);border-left:1px solid var(--violet);border-top:1px solid var(--violet);transform:rotate(45deg);}
+.pop-h{display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:1px solid var(--border);}
+.pop-h .n{font-family:var(--font-mono,monospace);font-size:10px;color:var(--violet);background:var(--violet-tint);padding:2px 6px;border-radius:5px;}
+.pop-h .tool{font-family:var(--font-mono,monospace);font-size:10.5px;color:var(--text-3);flex:1;}
+.pop-b{padding:10px;}
+.pop .expr{font-family:var(--font-mono,monospace);font-size:11.5px;color:var(--text-2);line-height:1.5;}
+.pop .eq{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:baseline;}
+.pop .eq .l{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+.pop .eq .v{font-family:var(--font-mono,monospace);font-size:12.5px;color:var(--text);}
+.pop .eq .v.hero{color:var(--green);}
+
+/* source cards — the shipped shape, redrawn here because the app builds them from
+   a React component rather than a single CSS class */
+.toolwork-srcs{display:flex;flex-direction:column;gap:6px;padding-left:23px;}
+.srccard{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+.srccard .fav{width:22px;height:22px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;
+              background:var(--steel-tint);color:var(--steel);font-size:11px;font-weight:600;}
+.srccard .st{flex:1;min-width:0;}
+.srccard .st b{display:block;font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.srccard .st small{display:block;font-size:10.5px;color:var(--text-3);margin-top:1px;}
+.srccard .go{width:13px;height:13px;color:var(--text-3);flex:none;}
+.fb-thinking-trace{font-family:var(--font-mono,monospace);font-size:11.5px;line-height:1.6;color:var(--text-2);
+                   background:var(--surface-2);border-radius:8px;padding:9px 10px;margin-top:4px;}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOCK 3 — THE ONLY TWO PROPOSED ADDITIONS.
+   Everything above is either shipped CSS or mock scaffolding. These two rules
+   are what this gate is actually asking for.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) A computed result reads as an ANSWER, not a count. `.fb-step-cnt` already
+   exists and already sits between the status dot and the caret — it is simply
+   only populated by `search` and `web_search` today. Every tool filling it is the
+   ledger; this modifier is the one visual change, so "2568" does not read with
+   the same weight as "3 notes". */
+.fb-step-cnt.res{color:var(--green);font-family:var(--font-mono,ui-monospace,Menlo,monospace);}
+.fb-step-cnt.bad{color:var(--rose);}
+
+/* (2) The one step that needs more than a line of text. Sized off `.fb-raw-pre`
+   (same inset, same 23px rail) so a code listing sits in the step exactly where a
+   raw payload already does. */
+.fb-code{font-family:var(--font-mono,ui-monospace,Menlo,monospace);font-size:10.5px;line-height:1.62;
+         color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+         padding:9px 10px;margin:0 0 8px 23px;overflow-x:auto;white-space:pre;}
+.fb-code.out{color:var(--text);}
+.fb-code .k{color:var(--violet);} .fb-code .s{color:var(--green);}
+.fb-code .n{color:var(--amber);} .fb-code .f{color:var(--steel);}
+.fb-sealrow{display:flex;flex-wrap:wrap;gap:5px;padding-left:23px;margin-top:2px;}
+.sealchip{font-size:10px;padding:2px 7px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);}
+.sealchip.ok{background:var(--green-tint);border-color:transparent;color:var(--green);}
+</style>
+</head>
+<body>
+<div class="caption">
+  <span class="tag">Worked panel · H — on the real stylesheet</span><br />
+  <b>This mock is built from <code>frontend/src/styles.css</code>, not a lookalike.</b> The
+  tokens, <code>.fb-act-*</code> chips, <code>.fb-step-*</code> rows, <code>.fb-res-lab</code>
+  and the source cards are the shipped rules, pasted in unchanged. Only the two
+  <i>proposed</i> additions are new, and they are marked as such in the stylesheet.
+  <br /><br />
+  Tap <b>Thought</b> / <b>Worked</b> to swap the panel, then any step row.
+</div>
+
+<div class="phone" id="phone">
+  <div class="topbar"><div class="ttl">Research</div><div class="pct">0 <small>%</small></div></div>
+
+  <div class="chat" id="chat">
+    <div class="bubble me">What did the refinance save me, and what's the annual on the new electric rate?</div>
+
+    <div class="turncard">
+      <div class="bubble ai"><p>The refinance took you from 6.4&nbsp;% to <b>5.15&nbsp;%</b> — about <b>$214</b> a month, so <b>$2,568</b><button class="fx" data-fx="1"><i>ƒ</i>1</button> a year. Twelve months at the new electric rate is <b>$2,917.80</b><button class="fx" data-fx="2"><i>ƒ</i>2</button>, which the month-by-month run confirms.</p></div>
+
+      <!-- ===== the real foot strip ===== -->
+      <div class="fb-act-foot">
+        <div class="fb-activity">
+          <button type="button" class="fb-act-chip fb-act-think" data-chip="think">
+            <svg class="fb-act-ic tw-ic" viewBox="0 0 24 24"><path d="M9 4H7a3 3 0 0 0-3 3v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a3 3 0 0 0 3 3h2"/><path d="M15 4h2a3 3 0 0 1 3 3v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a3 3 0 0 1-3 3h-2"/></svg>
+            <span class="fb-act-lab">Thought</span>
+          </button>
+          <button type="button" class="fb-act-chip fb-act-work on" data-chip="work">
+            <svg class="tw-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.4"/><path d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6M18.4 18.4l-1.6-1.6M7.2 7.2L5.6 5.6"/></svg>
+            <span class="fb-act-lab">Worked</span>
+            <span class="fb-act-count"> · 8 steps · 3 sources<span class="fb-worked-fail"> · 1 failed</span></span>
+          </button>
+          <span class="spacer"></span>
+          <button type="button" class="iconbtn" aria-label="read aloud"><svg viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></svg></button>
+          <button type="button" class="iconbtn" aria-label="copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+        </div>
+
+        <div class="fb-act-body open" id="actbody">
+          <div class="fb-act-inner">
+
+            <!-- Thought view -->
+            <div class="fb-act-view" data-view="think">
+              <div class="fb-thinking-trace">We need the refinance terms and the new electric rate. Find the closing note first, then read the rate off it — I should not do the twelve-month arithmetic in my head.</div>
+            </div>
+
+            <!-- Worked view -->
+            <div class="fb-act-view show" data-view="work">
+              <div class="fb-steps">
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Searched your notes</span>
+                    <span class="fb-step-arg">"refinance closing"</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt">3 notes</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">sources</div>
+                    <div class="toolwork-srcs">
+                      <span class="srccard"><span class="fav">R</span><span class="st"><b>Refinance — closing disclosure</b><small>12 Mar · finance</small></span><svg class="go" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+                      <span class="srccard"><span class="fav">M</span><span class="st"><b>Mortgage rate quotes</b><small>28 Feb · finance</small></span><svg class="go" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+                      <span class="srccard"><span class="fav">C</span><span class="st"><b>Call with broker — notes</b><small>26 Feb · general</small></span><svg class="go" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span>
+                    </div>
+                    <div class="fb-raw-wrap"><button type="button" class="fb-raw-toggle">what the agent sent</button></div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Read a note</span>
+                    <span class="fb-step-arg">Refinance — closing disclosure</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt">5.15% · 30yr</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">Rate 5.15% fixed, 30-year term, closing 12 Mar. Previous note records 6.40%.</div>
+                    <div class="fb-raw-wrap"><button type="button" class="fb-raw-toggle">what the agent sent</button></div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Searched Gmail</span>
+                    <span class="fb-step-arg">from:lender after:2026/01</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt">12 messages</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">12 message(s) match 'from:lender after:2026/01'.</div>
+                    <div class="fb-raw-wrap"><button type="button" class="fb-raw-toggle">what the agent sent</button></div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Checked the clock</span>
+                    <span class="fb-step-arg">owner's zone</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt">Thu 18 Sep, 20:54</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">It is currently Thursday, September 18, 2026, 20:54 (America/New_York).</div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step err open" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Worked out a number</span>
+                    <span class="fb-step-arg">(2847 - 2633) * 12mo</span>
+                    <span class="fb-step-mark bad"></span>
+                    <span class="fb-step-cnt bad">failed</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">error</div>
+                    <div class="fb-res-txt err">SyntaxError: unexpected 'm' at position 16</div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Worked out a number</span>
+                    <span class="fb-step-arg">(2847 - 2633) * 12</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt res">2568</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">exact: 2568 — cited as <b>ƒ1</b> in the answer above.</div>
+                  </div></div>
+                </div>
+
+                <div class="fb-step" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Worked out a number</span>
+                    <span class="fb-step-arg">243.15 * 12</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt res">2917.8</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">exact: 14589/5 · decimal: 2917.8 — cited as <b>ƒ2</b>.</div>
+                  </div></div>
+                </div>
+
+                <!-- code execution: the only step that needs more than fb-res-txt -->
+                <div class="fb-step open" data-step>
+                  <button type="button" class="fb-step-row has-arg">
+                    <span class="tw-bullet"></span>
+                    <span class="fb-step-lab">Ran a computation</span>
+                    <span class="fb-step-arg">8 lines · decimal</span>
+                    <span class="fb-step-mark"></span>
+                    <span class="fb-step-cnt res">2917.80</span>
+                    <svg class="fb-step-caret" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                  <div class="fb-step-detail"><div class="fb-step-di">
+                    <div class="fb-res-lab">code</div>
+                    <pre class="fb-code"><span class="k">from</span> decimal <span class="k">import</span> Decimal
+rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+    running += rate
+    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+running</pre>
+                    <div class="fb-res-lab">stdout</div>
+                    <pre class="fb-code out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+                    <div class="fb-res-lab">result</div>
+                    <div class="fb-res-txt">Decimal('2917.80')</div>
+                    <div class="fb-sealrow">
+                      <span class="sealchip ok">ran clean · 44ms</span>
+                      <span class="sealchip">no network · scratch only</span>
+                    </div>
+                    <div class="fb-raw-wrap"><button type="button" class="fb-raw-toggle">what the agent sent</button></div>
+                  </div></div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="tabs"><span>+ Entry</span><span class="on">Research</span><span>Brain</span></div>
+    <div class="ask">Ask the web, or work a problem…</div>
+  </div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>The ledger is not a new component — it is an existing one, used.</b>
+  <code>.fb-step-cnt</code> already exists, is already styled, and already sits exactly where
+  a result belongs (between the status dot and the caret). It is populated by
+  <b>two tools</b>: <code>search</code> and <code>web_search</code>, which is why your
+  screenshot shows <i>"5 results"</i> on one row and nothing on the other.
+  <b>Every tool filling it is the whole change.</b>
+  <br /><br />
+  <b>Two proposed additions, marked in the stylesheet:</b> <code>.fb-step-cnt.res</code>
+  (a computed result reads green rather than grey — it is an answer, not a count) and
+  <code>.fb-code</code> for the one step that needs more than a line of text.
+</div>
+
+<script>
+  // the two chips are a segmented control over ONE panel — the shipped behaviour
+  const body = document.getElementById("actbody");
+  let open = "work";
+  for (const chip of document.querySelectorAll("[data-chip]")) {
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation(); closePop();
+      const want = chip.dataset.chip;
+      open = open === want ? null : want;
+      for (const c of document.querySelectorAll("[data-chip]")) c.classList.toggle("on", c.dataset.chip === open);
+      for (const v of document.querySelectorAll("[data-view]")) v.classList.toggle("show", v.dataset.view === open);
+      body.classList.toggle("open", open !== null);
+    });
+  }
+  for (const st of document.querySelectorAll("[data-step]")) {
+    st.querySelector(".fb-step-row").addEventListener("click", (e) => {
+      e.stopPropagation(); st.classList.toggle("open");
+    });
+  }
+
+  // variant G's popover
+  const FX = {
+    1:{tool:"calculate",expr:"(2847 - 2633) * 12",rows:[["exact","2568",1]]},
+    2:{tool:"calculate",expr:"243.15 * 12",rows:[["exact","14589/5",1],["decimal","2917.8",0]]},
+  };
+  const phone = document.getElementById("phone"), chat = document.getElementById("chat");
+  let pop = null, openOn = null;
+  function closePop(){ pop?.remove(); pop=null; document.querySelector(".fx.on")?.classList.remove("on"); openOn=null; }
+  function place(el, a){
+    const pr=phone.getBoundingClientRect(), ar=a.getBoundingClientRect(), w=el.offsetWidth, h=el.offsetHeight;
+    const left=Math.max(9,Math.min(ar.left-pr.left+ar.width/2-w/2, pr.width-w-9));
+    const below=ar.bottom-pr.top+9, flip=below+h>pr.height-90;
+    el.style.left=left+"px"; el.style.top=(flip?Math.max(20,ar.top-pr.top-h-9):below)+"px";
+    const t=el.querySelector(".tail");
+    t.style.left=Math.max(12,Math.min(ar.left-pr.left+ar.width/2-left-4.5,w-21))+"px";
+    t.style.top=flip?"auto":"-5px"; t.style.bottom=flip?"-5px":"auto";
+    t.style.transform=flip?"rotate(225deg)":"rotate(45deg)";
+  }
+  for (const fx of document.querySelectorAll("[data-fx]")) {
+    fx.addEventListener("click",(e)=>{
+      e.stopPropagation();
+      const id=fx.dataset.fx, was=openOn===id; closePop(); if(was) return;
+      const d=FX[id];
+      pop=document.createElement("div"); pop.className="pop";
+      pop.innerHTML='<div class="tail"></div><div class="pop-h"><span class="n">\u0192'+id+
+        '</span><span class="tool">'+d.tool+'</span></div><div class="pop-b"><div class="expr">'+d.expr+
+        '</div><div class="eq">'+d.rows.map(([l,v,h])=>'<div class="l">'+l+'</div><div class="v'+(h?" hero":"")+'">'+v+'</div>').join("")+'</div></div>';
+      pop.addEventListener("click",(ev)=>ev.stopPropagation());
+      phone.append(pop); fx.classList.add("on"); openOn=id; place(pop,fx);
+      requestAnimationFrame(()=>pop.classList.add("on"));
+    });
+  }
+  document.addEventListener("click", closePop);
+  document.addEventListener("keydown",(e)=>{ if(e.key==="Escape") closePop(); });
+  chat.addEventListener("scroll",()=>{ if(pop) closePop(); },{passive:true});
+</script>
+</body>
+</html>

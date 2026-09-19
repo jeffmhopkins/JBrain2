@@ -19,15 +19,25 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import type { ViewPayload } from "./types";
 
 /** What a `[^n]` citation marker resolves to: an owner note (tap opens it, via
  * `onCite`), a graph entity (tap opens the entity, via `onCite`), or a web page (a
  * tappable favicon that opens the URL). Built by the surface from the turn's tool
  * sources, positional with the `[^n]` numbering. */
+/** What a `[=n]` computation marker resolves to: the `code_run` view of the call that
+ * produced the number, built by the surface from the turn's own steps. The marker names a
+ * POSITION; everything shown comes from the persisted call. */
+export interface CalcTarget {
+  payload: ViewPayload;
+  /** The one-line answer, for the popover's collapsed head. */
+  brief: string;
+}
+
 export type CiteTarget =
   | { kind: "note"; noteId: string }
   | { kind: "entity"; entityId: string }
@@ -57,7 +67,7 @@ const DATE = new RegExp(
 // inside a cell — without this it leaks as the literal text "<br>". It renders to a
 // real `<br>` node in every inline context (cells, list items, headings, prose).
 const INLINE =
-  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)|(<[bB][rR]\s*\/?>)/;
+  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(\[=\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)|(<[bB][rR]\s*\/?>)/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -330,6 +340,10 @@ interface Ctx {
   /** The turn's citation targets, positional with the `[^n]` numbering — a web
    * target renders as a favicon link, a note (or absent) as the numbered chip. */
   cites?: CiteTarget[] | undefined;
+  /** The turn's computations, positional with the `[=n]` numbering — one per `calculate`
+   * or `run_python` call that produced a number. */
+  calcs?: CalcTarget[] | undefined;
+  onCalc?: ((n: number, anchor: HTMLElement) => void) | undefined;
   onEntity?: ((entityId: string) => void) | undefined;
   onFlag?: ((flagId: string) => void) | undefined;
   openFlag?: string | null | undefined;
@@ -588,6 +602,32 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       out.push(<strong key={k}>{inline(tok.slice(2, -2), k, ctx)}</strong>);
     } else if (tok.startsWith("*")) {
       out.push(<em key={k}>{inline(tok.slice(1, -1), k, ctx)}</em>);
+    } else if (/^\[=\d+\]$/.test(tok)) {
+      // A COMPUTATION citation. Its own namespace, deliberately: `[^n]` means "this came
+      // from your note" and this means "this came from arithmetic I did" — different claims
+      // with different failure modes, so sharing one numbering would hide which was which.
+      //
+      // The model authors the MARKER and nothing else. What the popover shows is read from
+      // the persisted call, so a marker cannot assert a computation that did not happen; one
+      // that resolves to no call renders as plain text, the same rule `ToolView` applies to
+      // an unknown view name.
+      const num = Number(tok.slice(2, -1));
+      const target = ctx.calcs?.[num - 1];
+      if (!target) {
+        out.push(<Fragment key={k}>{tok}</Fragment>);
+      } else {
+        out.push(
+          <button
+            key={k}
+            type="button"
+            className="md-calc"
+            aria-label={`show the working for this number (${num})`}
+            onClick={(e) => ctx.onCalc?.(num, e.currentTarget)}
+          >
+            {`\u0192${num}`}
+          </button>,
+        );
+      }
     } else if (tok.startsWith("[^") || /^【\^?\d+】$/.test(tok)) {
       // A source citation, ASCII [^n] or the fullwidth 【^n】/【n】 a browsing model
       // emits. A web source renders as a tappable favicon that opens the page; a note
@@ -967,6 +1007,8 @@ export function Markdown({
   text,
   onCite,
   cites,
+  calcs,
+  onCalc,
   entities = [],
   onEntity,
   flags = [],
@@ -981,6 +1023,11 @@ export function Markdown({
   /** The turn's citation targets, positional with `[^n]` — a web target renders as
    * a favicon link; a note (or absent) renders as the numbered chip. */
   cites?: CiteTarget[] | undefined;
+  /** The turn's computations, positional with `[=n]`: the `code_run` view of each call that
+   * produced a number, in call order. A marker past the end renders as plain text. */
+  calcs?: CalcTarget[] | undefined;
+  /** Tap handler for a `[=n]` computation marker — opens its working. */
+  onCalc?: ((n: number, anchor: HTMLElement) => void) | undefined;
   /** Entities the turn surfaced — linkified where their label appears in text. */
   entities?: MdEntity[];
   /** Tap handler for an inline entity link. */
@@ -1011,6 +1058,8 @@ export function Markdown({
   const ctx: Ctx = {
     onCite,
     cites,
+    calcs,
+    onCalc,
     onEntity,
     onFlag,
     openFlag,

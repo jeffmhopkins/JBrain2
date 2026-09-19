@@ -33,6 +33,7 @@ import { reportToSpeech } from "../speakable.js";
 import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
+import { CodeRun } from "./codeRun";
 import {
   type HuGeoPoint,
   type HuMapData,
@@ -3969,7 +3970,17 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   bar_chart: BarChartCard,
   plan_card: PlanCard,
   image_set: ImageSet,
+  code_run: CodeRun,
 };
+
+/** Views that render inside their tool's STEP rather than in the bubble.
+ *
+ * `code_run` is the working, not the answer: it belongs where the owner goes to check a
+ * number (the Worked panel, and G's popover), not stacked under every reply that did some
+ * arithmetic. Keeping the membership HERE rather than in the surface means the step and the
+ * bubble read the same list, so a view can never render in both or in neither
+ * (docs/archive/SHOW_THE_WORKING_PLAN.md D2). */
+export const STEP_VIEWS: ReadonlySet<string> = new Set(["code_run"]);
 
 export function isKnownView(name: string): boolean {
   return name in REGISTRY;

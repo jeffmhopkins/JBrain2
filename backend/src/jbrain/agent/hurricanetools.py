@@ -126,6 +126,7 @@ def build_hurricane_handlers(
         return ToolOutput(
             _summarize(hit, nearest, distance, bearing, len(storms), detail),
             view=hurricane_view(hit, nearest, distance, bearing, len(storms), detail),
+            result_brief=f"{nearest.name} {round(distance)} mi",
         )
 
     return {"hurricane": hurricane_tool}

@@ -179,15 +179,17 @@ def build_lab_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, Too
         # A single-analyte trend also renders an interactive lab_chart view; a bare list
         # or a lone reading stays text-only.
         view = lab_chart_view(rows) if ascending else None
+        n = len(rows)
+        brief = f"{n} reading{'' if n == 1 else 's'}" if n else "none on record"
         if view is not None:
-            return ToolOutput(format_labs(rows), view=view)
-        return ToolOutput(format_labs(rows))
+            return ToolOutput(format_labs(rows), view=view, result_brief=brief)
+        return ToolOutput(format_labs(rows), result_brief=brief)
 
     async def read_encounters_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         enc_id = str(arguments.get("encounter_id", "") or "").strip()
         async with scoped_session(maker, ctx.session) as s:
             if enc_id:
-                return ToolOutput(await _expand_encounter(s, enc_id))
+                return ToolOutput(await _expand_encounter(s, enc_id), result_brief="1 encounter")
             conds: list[str] = []
             params: dict[str, Any] = {"limit": int(arguments.get("limit", 20) or 20)}
             if arguments.get("since"):
@@ -212,8 +214,14 @@ def build_lab_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, Too
                 .all()
             )
         if not rows:
-            return ToolOutput("No encounters are on record (or none are in the current scope).")
-        return ToolOutput("\n".join(_encounter_line(r) for r in rows))
+            return ToolOutput(
+                "No encounters are on record (or none are in the current scope).",
+                result_brief="none on record",
+            )
+        return ToolOutput(
+            "\n".join(_encounter_line(r) for r in rows),
+            result_brief=f"{len(rows)} encounter{'' if len(rows) == 1 else 's'}",
+        )
 
     return {"read_labs": read_labs_tool, "read_encounters": read_encounters_tool}
 

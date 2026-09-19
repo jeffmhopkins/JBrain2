@@ -66,7 +66,14 @@ def build_weather_handlers(
         if isinstance(forecast_r, BaseException):
             raise forecast_r
         alert = _alert_slot(alerts if isinstance(alerts, tuple) else ())
-        return ToolOutput(_summarize(forecast_r, alert), view=weather_view(forecast_r, alert))
+        return ToolOutput(
+            _summarize(forecast_r, alert),
+            view=weather_view(forecast_r, alert),
+            # An ACTIVE ALERT is the one weather answer that must not need a tap to find.
+            result_brief=(
+                str(alert["event"]) if alert else f"{forecast_r.temp_f}° {forecast_r.label}"
+            ),
+        )
 
     return {"weather": weather_tool}
 

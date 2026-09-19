@@ -45,6 +45,13 @@ def _sentence(local: datetime, label: str) -> str:
     return f"It is currently {local:%A, %B %d, %Y, %H:%M} ({label})."
 
 
+def _brief(local: datetime) -> str:
+    """The reading, for the Worked row. The clock is the case that proves the rule: a tool
+    with no sources, no facts and no entities still has an answer, and a row that shows only
+    "Checked the clock" is a row you cannot check."""
+    return f"{local:%a %-d %b, %H:%M}"
+
+
 def now_block(tz: str | None, *, now: datetime | None = None) -> str:
     """The data-framed current-date/time line prepended to the agent conversation:
     the `_CLOCK_FRAME` banner leads, demoting the sentence after it to DATA. Always
@@ -71,12 +78,13 @@ def build_clock_handlers() -> dict[str, ToolHandler]:
                 now_utc = datetime.now(UTC)
                 return ToolOutput(
                     f"'{requested}' isn't a known IANA timezone name. Right now it is"
-                    f" {now_utc:%A, %B %d, %Y, %H:%M} (UTC)."
+                    f" {now_utc:%A, %B %d, %Y, %H:%M} (UTC).",
+                    result_brief=f"{_brief(now_utc)} UTC",
                 )
             label = requested
         else:
             zone, label = _resolve(ctx.timezone)
         local = datetime.now(UTC).astimezone(zone)
-        return ToolOutput(_sentence(local, label))
+        return ToolOutput(_sentence(local, label), result_brief=_brief(local))
 
     return {"current_time": current_time_tool}

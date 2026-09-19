@@ -114,6 +114,17 @@ def _signal_bin_hz(start_hz: int, stop_hz: int) -> int | float:
     return bands.bin_width_hz(*capture) if capture is not None else SIGNAL_BIN_HZ
 
 
+def _signal_brief(body: dict[str, Any]) -> str:
+    """The margin, for the Worked row — the number the measurement IS. `sdr_signal` exists
+    to produce a figure this system could not produce before, so a row that does not show
+    it shows nothing at all."""
+    frame = body.get("frame") or {}
+    floor, peak = frame.get("floor_db"), frame.get("peak_db")
+    if not body.get("frames") or floor is None or peak is None:
+        return "no measurement"
+    return f"+{round(float(peak) - float(floor), 1)} dB over floor"
+
+
 def _signal_reading(body: dict[str, Any], start_hz: int, stop_hz: int) -> str:
     """The measurement as a sentence about the MARGIN, not the raw level.
 
@@ -309,9 +320,10 @@ def build_sdr_handlers(
 
         # The owner now has the tuner in their composer; say where it is rather than
         # narrating settings they can see on it.
-        return (
+        return ToolOutput(
             f"Listening on {mhz:g} MHz ({mode.upper()}). The radio icon is in the "
-            "composer — tap it to tune, hear it, or release the radio."
+            "composer — tap it to tune, hear it, or release the radio.",
+            result_brief=f"listening {mhz:g} MHz {mode.upper()}",
         )
 
     async def sdr_aprs_logging(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
@@ -397,10 +409,12 @@ def build_sdr_handlers(
             return f"APRS logging didn't start: {body.get('detail', 'unknown error')}"
         # The RESULTING state, never "ok": a caller must not be able to report a
         # success it did not achieve.
-        return (
+        return ToolOutput(
             f"APRS logging is on, on {mhz:g} MHz. That radio is held for packets, so it "
             "can't be listened to until logging is turned off — but another dongle, if "
-            "this box has one, is still free."
+            "this box has one, is still free.",
+            # The RESULTING state, as the sentence beside it insists: never "ok".
+            result_brief=f"logging on, {mhz:g} MHz",
         )
 
     async def sdr_stop(_arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
@@ -408,17 +422,20 @@ def build_sdr_handlers(
         if status != 200:
             return f"Couldn't release the radio: {body.get('detail', 'unknown error')}"
         if body.get("stopped"):
-            return "Radio released."
+            return ToolOutput("Radio released.", result_brief="released")
         # Naming no session means the LISTENING one, and a service is never released
         # this way: "release the radio" must not stop a log the owner armed on a
         # schedule. So say what IS holding one, or the answer is a dead end.
         holding = body.get("holding") or []
         jobs = sorted({str(h.get("purpose")) for h in holding if isinstance(h, dict)})
         if not jobs:
-            return "Nothing was listening — the radio is already free."
-        return (
+            return ToolOutput(
+                "Nothing was listening — the radio is already free.", result_brief="already free"
+            )
+        return ToolOutput(
             f"Nothing was listening. {' and '.join(jobs)} is holding a radio; that has "
-            "its own switch, so tell me which you want turned off."
+            "its own switch, so tell me which you want turned off.",
+            result_brief=f"held by {' and '.join(jobs)}",
         )
 
     async def sdr_read(arguments: dict, _ctx: ToolContext) -> str | ToolOutput:
@@ -437,8 +454,8 @@ def build_sdr_handlers(
             found = bands.by_id(str(wanted))
             if found is None:
                 return f"No section called {wanted!r}. Ask with no section to see the whole table."
-            return _section_detail(found)
-        return _band_table()
+            return ToolOutput(_section_detail(found), result_brief=found.name)
+        return ToolOutput(_band_table(), result_brief=f"{len(bands.SECTIONS)} sections")
 
     async def sdr_signal(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         """Power in dBFS, which is a number this system could not produce until F6.
@@ -470,7 +487,9 @@ def build_sdr_handlers(
             return f"{held[:1].upper()}{held[1:]}. Another radio may be free."
         if status != 200:
             return f"Couldn't measure it: {body.get('detail', 'unknown error')}"
-        return _signal_reading(body, start_hz, stop_hz)
+        return ToolOutput(
+            _signal_reading(body, start_hz, stop_hz), result_brief=_signal_brief(body)
+        )
 
     return {
         "sdr_listen": sdr_listen,

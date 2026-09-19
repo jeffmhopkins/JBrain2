@@ -251,6 +251,15 @@ class Settings(BaseSettings):
     # empty disables the HTML lane (the canvas `html` op reports unavailable and the
     # shape-op lane keeps working). The base URL is pinned here, never model-supplied.
     htmlrender_url: str = "http://htmlrender:8000"
+    # The `pysandbox` sidecar (deploy/pysandbox): Python code in, stdout + final value +
+    # error out — the `run_python` tool's executor (docs/archive/EXACT_MATH_TOOLS_PLAN.md).
+    # The api never executes the code; it POSTs here, which is what keeps ASSISTANT.md's
+    # "no code execution in the agent" true with the tool shipped. The container is
+    # egress-free by compose topology, read-only, holds no owner data and no credentials.
+    # Part of the stock stack, so this default points at the running service; empty disables
+    # the tool entirely — its sidecar is dropped from the registry and no persona is offered
+    # it. The base URL is pinned here, never model-supplied.
+    pysandbox_url: str = "http://pysandbox:8000"
     # The `sdr` radio sidecar (deploy/sdr), OPT-IN behind the `sdr` compose profile and
     # egress-free by topology. Pinned here and never model-supplied: the SDR tools take a
     # frequency and a mode, never a URL, so the `stream.py` SSRF guard stays untouched

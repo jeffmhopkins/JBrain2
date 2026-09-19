@@ -142,6 +142,56 @@ describe("FullBrainSurface", () => {
     expect(getTranscript).toHaveBeenCalledWith("s1");
   });
 
+  it("shows a code_run step's view INSTEAD of repeating it as prose", async () => {
+    // Found by rendering the real app, not by a test: the step drew its `code_run` view and
+    // then the fixed cascade printed the model-facing summary underneath it — the same
+    // stdout and the same result a second time, in prose, directly under the view that had
+    // just shown them structurally. The raw payload stays behind "what the agent sent",
+    // which is where DESIGN.md puts it ("a step's arguments are not its result").
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "what does it total?", tools: [] },
+        {
+          role: "assistant",
+          content: "It totals $2,917.80.",
+          tools: [
+            {
+              id: "c1",
+              name: "run_python",
+              ok: true,
+              sources: [],
+              args: { code: "running" },
+              result_brief: "Decimal('2917.80')",
+              summary: "stdout:\n729.45\nresult: Decimal('2917.80')",
+              view: {
+                view: "code_run",
+                surface: "inline",
+                data: {
+                  language: "python",
+                  code: "running",
+                  stdout: "729.45\n",
+                  result: "Decimal('2917.80')",
+                  ok: true,
+                },
+                refs: [],
+              },
+            },
+          ],
+        },
+      ],
+    );
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    await waitFor(() => expect(screen.getByText("It totals $2,917.80.")).toBeInTheDocument());
+    fireEvent.click(document.querySelector(".fb-act-work") as Element);
+    fireEvent.click(await screen.findByText("Ran a computation"));
+    // Scoped to the step's DETAIL: the answer also appears on the collapsed row's ledger
+    // cell, which is the point of W1 and not a duplicate of anything.
+    const detail = document.querySelector(".fb-step-detail") as HTMLElement;
+    await waitFor(() => expect(within(detail).getAllByText("Decimal('2917.80')")).toHaveLength(1));
+    expect(within(detail).queryByText(/^stdout:/)).not.toBeInTheDocument();
+  });
+
   it("replays a turn's proposal and entity chips, not just its note sources", async () => {
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> => [

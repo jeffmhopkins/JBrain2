@@ -315,20 +315,47 @@ async def test_a_blank_question_records_nothing_and_does_not_stop_the_turn(
     assert state == "running"
 
 
-async def test_outside_a_note_conversation_it_refuses_in_words(
+async def test_with_no_session_at_all_it_refuses_in_words(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext
 ) -> None:
-    """The `note_ingest` allowlist is the boundary, but the handler is reachable from the
-    /chat registry (the owner's REPLY is an ordinary chat turn), so a session with no
-    conversation behind it has to refuse rather than raise — loop.py turns a raised
-    exception into a generic error the model learns nothing from."""
+    """A turn with no session id is a worker pass, not a conversation: there is nowhere to
+    put the question and nobody watching for it. It refuses rather than raising — loop.py
+    turns a raised exception into a generic error the model learns nothing from."""
+    handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
+
+    assert "only inside a note's conversation" in await handler(_ask(QUESTION), _ctx(owner, None))
+
+
+async def test_in_a_plain_chat_the_set_lives_on_the_turn_and_ends_it(
+    maker: async_sessionmaker[AsyncSession], owner: SessionContext
+) -> None:
+    """SHOW_THE_WORKING_PLAN.md W4, O1. The handler is reachable from the /chat registry
+    (the owner's REPLY is an ordinary chat turn), and a plain chat has no note to correct
+    and no conversation row to record against. So the set lives on the TURN: `recorded_args`
+    carries the questions and their ids, which is the ONLY thing the PWA's question block is
+    built from, and the halt ends the turn exactly as it does in a note thread.
+
+    Against real Postgres this says the thing the unit test cannot: the session row really
+    exists, and the conversation tables really are left untouched — no ledger row and no
+    state for a thread that has neither."""
     handler = build_ask_owner_handlers(maker)[ASK_OWNER_TOOL]
     orphan = await AgentSessionRepo(maker).create(owner, domain_scopes=[], title="chat")
 
-    assert "only inside a note's conversation" in await handler(_ask(QUESTION), _ctx(owner, None))
-    assert "only inside a note's conversation" in await handler(
-        _ask(QUESTION), _ctx(owner, orphan.id)
-    )
+    out = await handler(_ask(QUESTION, COACH), _ctx(owner, orphan.id))
+
+    assert isinstance(out, ToolOutput)
+    assert out.halt == AWAITING_OWNER
+    assert out.result_brief == "2 questions"
+    recorded = out.recorded_args
+    assert recorded is not None
+    assert [q["question"] for q in recorded["questions"]] == [QUESTION, COACH]
+    # Minted server-side: the id is what an answer is paired against.
+    assert all(q["id"] for q in recorded["questions"])
+
+    # Nothing was written. `_state` would assert a row exists, so ask the repo directly.
+    async with scoped_session(maker, owner) as s:
+        assert await NoteConversationRepo().get(s, orphan.id) is None
+    assert await _ledger(maker, owner, orphan.id) == []
 
 
 async def test_an_ask_on_a_closed_thread_records_nothing_and_says_so(

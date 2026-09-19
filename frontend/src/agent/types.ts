@@ -162,6 +162,9 @@ export interface ToolResultEvent {
    * turns on this distinction, so the step says it out loud rather than showing a
    * short list as if it were the whole one. */
   truncated?: boolean;
+  /** The handler's one-line ANSWER for the Worked row's right-hand side. Absent for a tool
+   * whose result is already carried structurally; never a restatement of `summary`. */
+  result_brief?: string;
   /** The arguments the TOOL recorded, where they differ from the ones the model sent —
    * they REPLACE the step's `args`. Only `ask_owner` sends them, and only because it mints
    * its question ids server-side: the step this client builds its question block from is
@@ -364,6 +367,10 @@ export interface TranscriptTurn {
      * turn, not the tool-call ledger, is what survives the event stream. */
     facts?: FactWrite[];
     truncated?: boolean;
+    /** The handler's one-line answer for the Worked row, persisted so a reopened turn's
+     * strip still says what came back. A ledger that exists only live is a ledger you
+     * cannot go back and check. */
+    result_brief?: string;
     /** A rich tool-result view (e.g. a list_card), persisted so it replays too. */
     view?: ViewPayload | null;
     /** The answer-text length when the tool was called — the split point an image

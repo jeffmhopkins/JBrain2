@@ -96,9 +96,11 @@ def build_transcribe_handlers(
         # The model reads the transcript text; the owner sees the rich card (audio or
         # video player + per-word confidence + sync). The view carries the attachment
         # id, not a URL — the component builds the media src (invariant #9).
+        words = len(text.split())
         return ToolOutput(
             f'Transcript of "{info.filename}":\n{text}',
             view=_transcript_view(attachment_id, info.filename, model, transcript, info.media_type),
+            result_brief=f"{words:,} words",
         )
 
     return {"transcribe": transcribe_tool}

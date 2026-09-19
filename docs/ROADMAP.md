@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-09-08
+> **Status:** Living · **Last verified:** 2026-09-18
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -222,6 +222,18 @@ deferred.)*
   `archive/SUBAGENT_FEEDING_WAVES_PLAN.md`) — `jerv` fans out web-sandboxed
   research/review/summarize sub-agents (`agent/spawn.py`, migration 0105).
   *Deferred:* feeding-wave run-log persistence + live SSE.
+- **Exact-math tools** ✅ (`archive/EXACT_MATH_TOOLS_PLAN.md`) — `calculate` (exact
+  in-process arithmetic over a restricted AST + sympy; `agent/mathtools.py`) and
+  `run_python` (the egress-free, read-only `pysandbox` compose sidecar;
+  `agent/pythontools.py`, `deploy/pysandbox/`). A mechanical backstop for the
+  number-invention failure class prompt discipline never closed. Held by every persona
+  but the non-owner `intake`; no migration. Records why ASSISTANT.md's "no code
+  execution in the agent" survives the second tool (the api fronts a sandbox, it does
+  not embody one) and reverses the `proposed/JERV_CONTEXT_BUDGET_PLAN.md` §5 rejection
+  on the trigger that document itself named. Also adds per-tool-call duration + an
+  `agent.tool_call` log line, which nothing recorded before.
+  *Residual:* `teacher` and `summarize` now enforce restraint by prompt where an empty
+  allowlist used to enforce it structurally — worth watching in live use.
 
 ## Phase 7 — Outer ring — Mostly shipped
 
@@ -468,6 +480,32 @@ analyze-video/stream card on intermediate steps. Grabbed/fetched stills are firs
 fabricated an image comparison it had no way to perform; reconciled with a four-lens review. V0 (the
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
+
+**Shipped:** Show the working (build record: `docs/archive/SHOW_THE_WORKING_PLAN.md`, W1–W4 all landed) —
+the surfaces that make the exact-math tools checkable, plus `ask_user`. `calculate` / `run_python`
+shipped with **no view of their own**: the code that produced a number is persisted on the turn and
+shown nowhere, so the one tool whose entire value is that its answer can be checked produced answers
+you still had to trust. Three settled GUI-gate mocks: **G** (`mocks/code-run/g-cited-floating.html`) —
+a computed number carries an `ƒn` marker and cites its working in a floating popover; **H**
+(`mocks/code-run/h-worked-ledger.html`) — every Worked row carries **argument → result**, the failed
+call included, which is the half G structurally cannot show; **A** (`mocks/ask-user/a-inline-card.html`)
+— a question card in the transcript, whose written-answer row the *component* appends whatever options
+the model supplied, so a closed set of choices can never push the owner into a wrong one. **A is kept
+as the record, not the spec:** main landed `ask_owner` + `QuestionBlock` while this gate ran, which
+answer the same question for a note thread and answer one part of it better (the block cannot start a
+turn — three answers that each posted would be three turns, which is the cost a batched ask exists to
+remove), and which already enforce the owner's written-escape amendment. So W4 is not a new tool or a
+new card: it is the binding that lets the shipped surface reach a plain conversation. Reading the
+live code shrank the work: `.fb-step-cnt` already exists and is filled by only `search` / `web_search`,
+so the ledger is one backend field (`result_brief`) plus one CSS rule, enforced by extending
+`test_tool_step_polish.py`. Decides H's open question — a step renders its tool's registered view, so G
+and H are one component — and reconciles A with the ingest plan's constraint #8 by **storing C's record
+while rendering A's card**. W4's two open questions are **settled by the owner**: a conversational
+question's open set lives on the asking turn rather than on a conversation row (so an unanswered chat
+question dies with the conversation and can never reach the notes-tab queue — a chat question has no
+note to correct and no ladder to climb), and a conversational answer mints no note, which narrows
+ratified D7 to the note-thread context it was written for. Nothing in W4 is left for a wave to
+decide; W1–W3 depend on none of it. **W1 shipped:** a `result_brief` the handler authors, carried from `ToolOutput` to the persisted step and back; `stepLedger.ts` in place of StepRow's four hardcoded per-tool branches; a `failed` phrase for all 127 tools rather than the four writes; and `calculate` / `run_python` reading their own answers off a value rather than off the prose they just rendered. **W1b closed the long tail:** 108 of 127 tools author a brief, 19 render from structured fields, none render blank. The sweep was chosen by what would otherwise be EMPTY, which surfaced that a `view` does not fill the ledger — every view-only tool had a rich card in the bubble and an empty column beside it. Staged writes say they are staged (`merge_entities`' own text ends "do not say they are merged"; the row obeys the same rule), capped counts keep their `+`, full-replace writes report the size change, and attacker-controlled sources get a count rather than a line. The "already filled" claim is checked rather than trusted, and caught three tools that would have rendered blank behind a label saying they were fine. **W2 shipped** the `code_run` view — one component for `run_python` and `calculate`, with syntax highlighting owned by the component (the code is tokenized into nodes, never rendered as markup) and the containment chips tied to the compose declarations that make them true. `STEP_VIEWS` decides in one place which views render in a step rather than the bubble, read by both sides, which is what will let G's popover and H's step share one component. **W3 shipped** G: the `[=n]` marker in its own namespace, and the floating clamped popover that opens compact and expands to that same component. The model authors the marker and nothing else — the panel is filled from the persisted call, and a marker resolving to no call renders as plain text rather than as a computation that never happened. Prompt guidance carries the gate's clutter rule: mark the first computed figure in a sentence, not all three. **W4 shipped** the last of it, and smaller than the plan expected: the PWA's question block already read off the turn's own steps, so no frontend change was needed to render a question in a plain chat. `ask_owner` stops refusing a conversation and records its set on the TURN — no ledger row, no state flip, asserted by exploding if it reaches for either — with the same halt. Granted to curator and teacher (a tutor that guesses which reading a student meant teaches the guess) and **never** to a non-owner persona, which three independent assertions now enforce over `NON_OWNER_PERSONAS` rather than over the one persona that exists today. The owner's written-answer amendment became a rule: two tests fail if the escape is ever made conditional, verified by making it so.
 
 **In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
 give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its

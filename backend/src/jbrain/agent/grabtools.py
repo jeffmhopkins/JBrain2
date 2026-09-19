@@ -210,6 +210,10 @@ def build_grab_frame_handlers(
         )
         if caption:
             summary += f"\n\nWhat it shows: {caption}"
-        return ToolOutput(summary, view=chat_image_view(row) if show else None)
+        return ToolOutput(
+            summary,
+            view=chat_image_view(row) if show else None,
+            result_brief=f"image_id {image_id}",
+        )
 
     return {"grab_frame": grab_frame_tool}

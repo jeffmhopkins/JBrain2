@@ -73,6 +73,10 @@ class TranscriptAccumulator:
             step = self._steps.get(event.tool_call_id)
             if step is not None:
                 step["ok"] = event.ok
+                # How long the handler took. Persisted alongside the result so "which call
+                # was the slow one" is answerable from a stored turn, not only from the run
+                # total — which is the sum of everything, tools and model time together.
+                step["duration_ms"] = event.duration_ms
                 # The verbatim result text, so a step's result rung replays on reopen —
                 # for a sourceless tool (the web tools) it is the only content shown.
                 step["summary"] = event.summary
@@ -93,6 +97,11 @@ class TranscriptAccumulator:
                 # batch shown as a whole one is the same false report on reopen as live.
                 if event.truncated:
                     step["truncated"] = True
+                # The row's one-line answer. Persisted so a reopened turn's Worked strip
+                # still says what came back — a ledger that only exists live is a ledger
+                # you cannot go back and check, which is the whole point of having one.
+                if event.result_brief:
+                    step["result_brief"] = event.result_brief
                 # Web citation sources (jerv) — persisted so the favicon chips and
                 # their [^n] targets replay on reopen.
                 if event.web_sources:

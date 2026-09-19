@@ -64,6 +64,7 @@ from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.locationtools import build_location_handlers
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.agent.mathtools import build_math_handlers
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
@@ -153,6 +154,11 @@ OPTIONAL_COMPARE_TOOL = frozenset({"compare_images"})
 # render with no photograph under it has no coordinates to place wrong, so any model that
 # can write HTML may call this one.
 OPTIONAL_HTML_TOOL = frozenset({"render_html"})
+# The Python sandbox tool (docs/archive/EXACT_MATH_TOOLS_PLAN.md): dropped when no pysandbox
+# sidecar is configured. The degrade matters more here than elsewhere — the tool's whole
+# value is that the model can TRUST the number it returns, so a box without a sandbox should
+# not offer it at all rather than offer one that reports itself unavailable every call.
+OPTIONAL_PYTHON_TOOL = frozenset({"run_python"})
 # The canvas pair (AGENT_CANVAS_PLAN.md): optional because the handlers are only wired
 # when the image/attachment stores exist, and because a box with no htmlrender sidecar
 # still gets the shape ops — the `html` op degrades with a note rather than vanishing.
@@ -846,7 +852,7 @@ def build_read_handlers(
                 matches=matches,
             )
             if not rows:
-                return ToolOutput(_APRS_EMPTY)
+                return ToolOutput(_APRS_EMPTY, result_brief="nothing heard")
             lines = [_aprs_packet_line(row) for row in rows]
             head = (
                 "Transmissions the radio decoded. Anyone in range can send these and a "
@@ -861,7 +867,11 @@ def build_read_handlers(
         # tag inert; the boundary is only real because of that pairing.
         body = "\n".join(neutralize_boundary(line) for line in lines)
         return ToolOutput(
-            f'<{FEED_TAG} source="heard-over-the-air">\n{head}\n{body}\n</{FEED_TAG}>'
+            f'<{FEED_TAG} source="heard-over-the-air">\n{head}\n{body}\n</{FEED_TAG}>',
+            # A COUNT, never a line of the log: this is the most attacker-controlled text
+            # on the box, and the collapsed row is the one place it would appear without
+            # the data/instruction envelope around it.
+            result_brief=f"{len(lines)} line{'' if len(lines) == 1 else 's'}",
         )
 
     async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
@@ -1149,6 +1159,7 @@ def build_registry(
     compare_handlers: dict[str, ToolHandler] | None = None,
     ocr_handlers: dict[str, ToolHandler] | None = None,
     html_handlers: dict[str, ToolHandler] | None = None,
+    python_handlers: dict[str, ToolHandler] | None = None,
     canvas_handlers: dict[str, ToolHandler] | None = None,
     crop_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
@@ -1197,6 +1208,11 @@ def build_registry(
             # A clock read — no owner data, no domain — so every agent that holds it
             # (the curator by default; jerv by allowlist) can ground time-relative talk.
             **build_clock_handlers(),
+            # `calculate`: exact arithmetic, no owner data, no domain — the mechanical
+            # backstop for number-invention (JERV_CONTEXT_BUDGET_PLAN.md §5's named
+            # exception to the no-code-execution refusal; it evaluates a closed expression
+            # grammar, never code). `read`-class, so curator's wildcard holds it too.
+            **build_math_handlers(),
             # `name_session`: the chat names itself from inside its own turn, replacing the
             # separate `session.title` completion that evicted the primed prefix to do it.
             **build_session_handlers(AgentSessionRepo(maker)),
@@ -1265,6 +1281,10 @@ def build_registry(
             # rasterized to an image card. Present only when the htmlrender sidecar is
             # configured; otherwise its sidecar is dropped below.
             **(html_handlers or {}),
+            # The `run_python` sandbox tool (`web`-gated): the snippet is POSTed to the
+            # egress-free `pysandbox` container, never executed here. Present only when
+            # that sidecar is configured; otherwise its sidecar is dropped below.
+            **(python_handlers or {}),
             **(canvas_handlers or {}),
             **(crop_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
@@ -1360,6 +1380,7 @@ def build_registry(
             | OPTIONAL_COMPARE_TOOL
             | OPTIONAL_OCR_TOOL
             | OPTIONAL_HTML_TOOL
+            | OPTIONAL_PYTHON_TOOL
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL

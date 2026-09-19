@@ -223,8 +223,11 @@ services:
     # the network is empty (no jcode profile); the api's jcode client stays fail-closed.
     # `render`: the egress-free network the htmlrender sidecar sits on. The api is its
     # only caller, and joining an `internal: true` network costs the api nothing — it
-    # keeps its own egress through `edge`/`internal`.
-    networks: [edge, internal, jcode, jlaunch, render, radio]
+    # keeps its own egress through `edge`/`internal`. `sandbox` is the same shape for
+    # the pysandbox sidecar (EXACT_MATH_TOOLS_PLAN.md): the api is its only caller, and
+    # keeping the membership to exactly those two is what makes the sandbox's
+    # egress-free claim true — `test_pysandbox_server.py` asserts it.
+    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox]
     depends_on:
       db:
         condition: service_healthy
@@ -807,6 +810,48 @@ services:
       HTMLRENDER_IDLE_TTL_SECONDS: ${HTMLRENDER_IDLE_TTL_SECONDS:-300}
     networks: [render]
 
+  # Python code in, stdout + final value + error out (docs/archive/EXACT_MATH_TOOLS_PLAN.md).
+  # The `run_python` tool's executor, and the reason ASSISTANT.md's "no code execution in the
+  # agent" survives the tool existing: the api PROXIES a snippet here, exactly as it proxies a
+  # render to htmlrender or a session to jcode. The agent loop never executes anything.
+  #
+  # Every line below is a containment control, so none of them is optional:
+  # - `sandbox` is declared `internal: true`, so there is no route off the box; only
+  #   `pysandbox` + `api` join it, so there is nothing on it to reach either.
+  # - `read_only` root filesystem + a tmpfs `/tmp`: the snippet's scratch directory is the
+  #   ONLY writable path, it is RAM (so `size` is a real bound, not a disk quota), and it
+  #   does not survive the container.
+  # - `cap_drop: ALL` + `no-new-privileges` + a non-root user: nothing to escalate to.
+  # - `pids_limit` + `mem_limit`: the container-level backstop under the per-child rlimits
+  #   server.py sets, so a runaway hits a MemoryError it can report before it hits an OOM
+  #   kill it cannot.
+  # And it holds NOTHING: no database URL, no owner data, no blob volume, no Docker socket.
+  # The api never sends it note bodies or any other owner content — only the model's snippet.
+  #
+  # Stock stack (no profile), like htmlrender/rapidocr: a plain `up -d` — which is what a PWA
+  # update runs — brings it up with no CLI step, because the owner has no terminal (CLAUDE.md
+  # #10) and a tool that needs one to exist is a tool that does not exist.
+  pysandbox:
+    logging: *logbound
+    image: jbrain2-pysandbox:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.pysandbox
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=${PYSANDBOX_SCRATCH_SIZE:-256m},mode=1777
+    mem_limit: ${PYSANDBOX_MEM_LIMIT:-1g}
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      PYSANDBOX_TIMEOUT_SECONDS: ${PYSANDBOX_TIMEOUT_SECONDS:-10}
+      PYSANDBOX_MAX_TIMEOUT_SECONDS: ${PYSANDBOX_MAX_TIMEOUT_SECONDS:-60}
+      PYSANDBOX_MEMORY_LIMIT_MB: ${PYSANDBOX_MEMORY_LIMIT_MB:-512}
+      PYSANDBOX_MAX_CONCURRENT: ${PYSANDBOX_MAX_CONCURRENT:-4}
+    networks: [sandbox]
+
   # OPT-IN software-defined radio (docs/plans/SDR_RADIO_PLAN.md). Guarded by the `sdr`
   # profile so a stock deploy never starts it, and only started on a box that has a
   # dongle. The whole /dev/bus/usb tree is passed through rather than one node: devnum
@@ -890,6 +935,12 @@ networks:
   # EGRESS-FREE by declaration, same as `render`: a radio receiver has no business
   # reaching the internet. Only `sdr` + `api` join it.
   radio:
+    internal: true
+  # EGRESS-FREE by declaration, same as `render` and `radio`: only `pysandbox` + `api` join
+  # it, so the container that runs model-authored code has no route to the internet AND no
+  # route to db/supervisor/worker/embed/blobs. This is the outer of the layers listed on the
+  # service above, and the one the others are allowed to assume.
+  sandbox:
     internal: true
 
 volumes:
