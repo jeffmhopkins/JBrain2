@@ -50,14 +50,21 @@ export function ComputationPopover({
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<Placement | null>(null);
-  const panel = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDialogElement>(null);
 
-  // Measured after layout, and again when it expands: the panel's height decides whether it
-  // opens above or below, so guessing would flip it to the wrong side on a tall snippet.
+  // Re-placed whenever the panel's own SIZE changes, not when one particular control is
+  // tapped. The height is what decides which side of the marker it opens on, so expanding
+  // has to re-measure — and an observer covers every other way the body can grow (a long
+  // error, a wrapped line) rather than only the one boolean I happened to think of.
   useLayoutEffect(() => {
     const el = panel.current;
-    if (el) setPlacement(place(anchor, el.offsetHeight));
-  }, [anchor, open]);
+    if (!el) return;
+    const measure = () => setPlacement(place(anchor, el.offsetHeight));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [anchor]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -88,15 +95,18 @@ export function ComputationPopover({
     <>
       {/* Tap-anywhere-to-close, transparent: the popover is a glance, not a mode. */}
       <button type="button" className="fb-calc-scrim" aria-label="close" onClick={onClose} />
-      <div
+      {/* A real <dialog>, not a div wearing its role: non-modal (`open`, never showModal),
+          because the scrim above already handles dismissal and a modal would trap focus in
+          what is meant to be a glance. */}
+      <dialog
         ref={panel}
+        open
         className={`fb-calc-pop${placement?.above ? " above" : ""}${open ? " open" : ""}`}
         style={
           placement
             ? { left: `${placement.left}px`, top: `${placement.top}px`, width: `${WIDTH}px` }
             : { left: "-9999px", top: "0", width: `${WIDTH}px` }
         }
-        role="dialog"
         aria-label="how this number was worked out"
       >
         <div className="fb-calc-head">
@@ -114,7 +124,7 @@ export function ComputationPopover({
             show the working
           </button>
         )}
-      </div>
+      </dialog>
     </>
   );
 }

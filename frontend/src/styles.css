@@ -10627,7 +10627,13 @@ button.small {
   padding: 0;
   cursor: default;
 }
+/* A real <dialog>, so its UA defaults have to go: a non-modal open dialog is
+   `position: absolute` with its own margin, padding and border. */
 .fb-shell .fb-calc-pop {
+  margin: 0;
+  max-width: none;
+  max-height: none;
+  color: var(--text);
   position: fixed;
   z-index: 61;
   background: var(--surface);
