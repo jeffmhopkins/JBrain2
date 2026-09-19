@@ -200,7 +200,12 @@ async def test_analyze_by_generated_id_returns_vision_answer(maker: async_sessio
         {"prompt": "what is in this image?", "source_image_id": source_id}, _ctx(owner)
     )
     assert out == "a red bicycle leaning on a wall"
-    assert not isinstance(out, ToolOutput)  # a read — no inline view
+    # A read: it authors a step brief (SHOW_THE_WORKING_PLAN.md W1b) and nothing else.
+    # `ToolOutput` is a str subclass, so carrying a brief does not make this a card —
+    # what would is a `view`, and there is none.
+    assert isinstance(out, ToolOutput)
+    assert out.view is None
+    assert out.result_brief == "7 words"
     # The vision route saw the question and the image bytes (one LlmImage).
     call = router._clients["xai"].calls[0]  # type: ignore[attr-defined]
     assert call["user_text"] == "what is in this image?"
