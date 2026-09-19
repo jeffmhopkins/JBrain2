@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** Scheduled · **Last verified:** 2026-09-19 · **Waves:** W1◻ W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1🟡 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -131,6 +131,14 @@ it (Ops → Update).
 This is where the second unit earns its keep: keep one as the **bench unit** that can be
 bricked and re-flashed over USB, and one as the deployed unit that only ever takes OTAs that
 worked on the bench. Never OTA both at once.
+
+> **Superseded 2026-09-19.** The owner assigned the units: **one per twin**, both eventually in
+> their rooms. So the bench unit is a *phase*, not a unit — one panel is flashed and exercised
+> first, then joins the other in the field — and after that there is no sacrificial board and no
+> cable in either bedroom. Everything above still holds while a unit is on the bench; what
+> changes is that the safety net in §10.3 stops being insurance and becomes the only way back.
+> Staggering still applies in its new form: **never push an OTA to the second unit until the
+> first has taken it and come back.**
 
 ## 5. The safety surface is bigger than the Ditoo's
 
@@ -367,9 +375,37 @@ recovery images in Releases**, so the first steps are flash-and-look, not write-
 Step 0 is not ceremony. After the first flash, a dead panel and a wrong firmware look identical,
 and the return window is the thing being spent.
 
-**Label the units physically, now: `BENCH` and `FIELD`.** §4.4 asks for it and step 7 is where it
-pays — BENCH takes the cable and the mistakes; FIELD only ever takes an OTA that already worked
-on BENCH.
+**Label the units physically, now — one per twin.** Both end up in bedrooms (§4.4, superseded),
+so "bench" is the phase one of them is in, not a unit that stays behind. Whichever is flashed
+first takes the cable and the mistakes; the second is only ever flashed once the first has
+taken an OTA and come back. That ordering is the whole of what is left of the bench/field
+split, and step 7 is where it pays.
+
+### 10.4a What W1 has actually built (2026-09-19)
+
+`firmware/` — the ESP-IDF project, building clean against **v5.5.5** for esp32s3, with the
+§10.3 safety net in place from the first image: rollback enabled and gated on reaching the box,
+a frozen `factory` app, and the partition table above, ending at exactly 16 M. The built image
+is **894 K against the 1.5 M factory slot (42% free)**, which confirms the recovery app — which
+does strictly less — fits. `.github/workflows/firmware.yml` builds and publishes it; ESP-IDF is
+~3.5 GB, so `scripts/dev-setup.sh` deliberately does not install it and `scripts/firmware-setup.sh`
+is the opt-in local installer.
+
+Two errors were caught by compiling rather than by a board: inline comments in `partitions.csv`
+are parsed as the Flags column, and `esp_http_client_get_user_data` takes an out-parameter.
+Neither would have been visible without the toolchain, which is the argument for step 4 existing
+before step 5.
+
+Still to build for the first flash: the `deploy/endpoint/` sidecar, the Ops button, and the box
+side of the one endpoint the firmware needs —
+
+```
+GET {api}/endpoint/firmware        Authorization: Bearer <device token>
+→ 200 {"version": "0.1.0", "url": "…/endpoint/firmware/bin"}
+```
+
+— where `version` is compared verbatim against `firmware/version.txt`, so **bumping that file is
+what makes a unit update.**
 
 ### 10.5 Three findings from the board in hand
 
