@@ -2212,6 +2212,14 @@ function StepRow({
               </div>
               <SentBlock args={stepArgs} text={rawText} />
             </>
+          ) : step.view ? (
+            // A step that rendered its OWN view has already shown its result, structurally.
+            // The generic rung below would print the model-facing text again — for a
+            // `run_python` step that is the same stdout and the same result a second time,
+            // in prose, under the view that just showed them. The raw payload stays one tap
+            // away, which is where DESIGN.md puts it ("a step's arguments are not its
+            // result").
+            <SentBlock args={stepArgs} text={summary} />
           ) : summary ? (
             <>
               <div className="fb-res-lab">result</div>

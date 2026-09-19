@@ -74,7 +74,15 @@ export function ComputationPopover({
   }, [onClose]);
 
   const data = target.payload.data;
-  const expression = typeof data.code === "string" ? data.code : "";
+  const code = typeof data.code === "string" ? data.code : "";
+  // A one-line expression IS the head; an eight-line snippet is not. Flattening a program
+  // into one line produced `from decimal import Decimal rate = …`, which reads as neither
+  // code nor a summary — so a multi-line snippet says its shape instead, and the code
+  // itself is one tap away in the body below.
+  const lines = code.split("\n").filter((line) => line.trim() !== "").length;
+  const language = typeof data.language === "string" ? data.language : "python";
+  const expression =
+    lines > 1 ? `${lines} lines · ${language === "expression" ? "expression" : language}` : code;
 
   return (
     <>
