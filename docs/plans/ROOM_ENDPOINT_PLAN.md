@@ -499,6 +499,26 @@ The corner radius is measured off the photograph rather than a datasheet, so
 `CASE_CORNER_FRACTION` is approximate and deliberately slightly generous: over-masking
 hides a corner that might exist, under-masking invites a design that loses content.
 
+### 10.4d First contact, and why the next step is blind (2026-09-19)
+
+A panel plugged into the running box appeared in the PWA on the first try — see §10.6.
+
+**What that does not prove, and the problem it creates.** This firmware draws nothing: no
+display, no touch, no audio, deliberately (§10.3). So a *successfully* flashed panel shows
+a **black screen**, and is visually indistinguishable from a bricked one. The bring-up goes
+blind at exactly the point where being blind stops being cheap.
+
+The evidence a flash worked is on the **box**, not on the panel. The firmware's first act
+after joining Wi-Fi is `GET /api/endpoint/firmware` carrying its own device token, so that
+single request proves the entire chain: Wi-Fi joined, the box's certificate validated, the
+token accepted, the manifest parsed. It lands in the api's logs, which the owner can read
+through the debug console without a terminal.
+
+**This argues for a serial monitor in the flasher next.** `deploy/endpoint` already owns the
+port and already streams a log to the PWA; reading the panel's own boot output over the same
+USB connection would turn a blind bring-up into a legible one, and it is the cheapest
+feature left in this wave. Until it exists, the manifest request is the only signal.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
@@ -525,11 +545,16 @@ the flasher.
 
 ### 10.6 Still open after this section
 
-- **Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged `/dev/ttyACM*`?**
-  Built that way (§10.4b) and asserted in `supervisor/tests/test_deploy_scripts.py`, but the
-  assertion is about the compose file, not about the kernel. Still proven on the box at
-  step 5 — and **Endpoints → Rescan USB is the proof**: a panel that is plugged
-  in and does not appear there is this question failing.
+- ~~**Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged
+  `/dev/ttyACM*`?**~~ **ANSWERED YES on the box, 2026-09-19.** A panel plugged into the box
+  while the containers were already running appeared in the PWA as
+  `/dev/ttyACM0 — Espressif ESP32-S3 (native USB) (panel)`. So the cgroup grant admits a
+  hotplugged character device, the sysfs walk attributes it to vendor `303a`, and the whole
+  chain — kernel, container, api, phone — works on the first try. The host-side half was
+  confirmed independently through the debug console's USB scan: `303a:1001 Espressif USB
+  JTAG/serial debug unit`, `cdc_acm` bound. This was the largest unknown in W1 and it is
+  closed.
+
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
   if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
