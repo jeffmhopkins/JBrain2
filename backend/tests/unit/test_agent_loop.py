@@ -2177,3 +2177,76 @@ async def test_a_refused_tool_is_logged_too() -> None:
     (line,) = _tool_call_lines(entries)
     assert line["tool"] == "web_fetch" and line["ok"] is False
     assert any(e.get("event") == "agent.tool_refused" for e in entries)
+
+
+# --- the computed-number tail (SHOW_THE_WORKING_PLAN follow-up) -------------------
+# The bug this closes was found on the owner's box: `calculate` returned the right
+# number and the sentence under it carried a figure that traced to nothing. The turn
+# surfaced no source and staged no mutation, so EVERY Loop-1 arm read false and the
+# answer was never verified at all. These go through the real loop, because the pure
+# verifier passing says nothing about whether the turn ever reaches it.
+
+
+async def calc_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    """A stand-in for `calculate`: what matters to the loop is the `code_run` view,
+    which is how a computing tool is recognised without a name list to drift."""
+    return ToolOutput(
+        "2*pi*33*122 + 2*pi*33**2\nexact:   10230*pi\ndecimal: 32138.49285",
+        view=ViewPayload(
+            view="code_run",
+            surface="inline",
+            data={"language": "expression", "code": "2*pi*33*122", "result": "10230*pi"},
+        ),
+        result_brief="10230*pi",
+    )
+
+
+def _computed_turns() -> list[LlmTurn]:
+    return [
+        LlmTurn(
+            "",
+            (ToolCall("c1", "calculate", {"expression": "2*pi*33*122"}),),
+            "tool_use",
+            LlmUsage(1, 1),
+        ),
+        LlmTurn("answer", (), "end_turn", LlmUsage(1, 1)),
+    ]
+
+
+async def test_a_number_that_traces_to_nothing_is_flagged_after_done() -> None:
+    """The live failure, end to end: 32138.49285 came from the tool, 252.7 came from
+    nowhere. The turn has no sources at all, so this is exactly the case that used to
+    return unverified."""
+    router, _ = stream_router_with(
+        _computed_turns(),
+        stream_chunks=[[""], ["that is 32138.49285 mm², or about 252.7 cm²"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("calculate", calc_tool))))
+    assert isinstance(events[-2], DoneEvent)
+    verdict = events[-1]
+    assert isinstance(verdict, VerdictEvent)
+    assert verdict.passed is False
+    assert any("252.7" in i for i in verdict.issues)
+    assert verdict.ungrounded_claims == ["252.7"]
+
+
+async def test_an_answer_whose_numbers_all_trace_is_clean() -> None:
+    """Rounding the tool's own answer is the same number said plainly, not a new claim —
+    a verifier that flagged this would fire on nearly every correct turn."""
+    router, _ = stream_router_with(
+        _computed_turns(),
+        stream_chunks=[[""], ["the area is 32138.49 mm²"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("calculate", calc_tool))))
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def test_a_turn_that_computed_nothing_is_left_alone() -> None:
+    """The trigger is `code_run`, not "the answer has numbers in it". A turn that never
+    computed may quote a figure from memory; that is a grounding question, not this one."""
+    router, _ = stream_router_with(
+        [LlmTurn("about 355 ml", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["about 355 ml"]],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    assert not any(isinstance(e, VerdictEvent) for e in events)

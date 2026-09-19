@@ -35,6 +35,7 @@ def critique_worthy(
     entity_count: int = 0,
     mutated: bool,
     touched_sensitive: bool,
+    computed: bool = False,
 ) -> bool:
     """The Loop-1 trigger (docs/reference/ASSISTANT.md "Self-improvement loops"): a turn is
     worth verifying when it made a checkable claim or carried real-world
@@ -51,8 +52,15 @@ def critique_worthy(
     a sensitive domain?), NOT whether the session merely *holds* those scopes — Full
     Brain always holds general+health+finance+location, so a scope-membership test
     would make every Full Brain turn critique-worthy. Greetings and chit-chat — no
-    evidence, no mutation, nothing sensitive touched — are never critique-worthy."""
-    return source_count > 0 or entity_count > 0 or mutated or touched_sensitive
+    evidence, no mutation, nothing sensitive touched — are never critique-worthy.
+
+    `computed` is the arithmetic arm, and it is the one that needed adding rather than
+    tuning: a turn that works out a number surfaces no source, resolves no entity and
+    stages no mutation, so every other arm reads false and the turn was never verified at
+    all — which is how a wrong figure reached the owner sitting directly under a correct
+    tool result. A turn that called a math tool has made the most checkable claim there
+    is."""
+    return source_count > 0 or entity_count > 0 or mutated or touched_sensitive or computed
 
 
 # A claim is "grounded" when at least this fraction of its significant tokens
@@ -363,6 +371,100 @@ def verify_grounding(
         else:
             issues.append(f"claim not grounded in retrieved sources: {claim}")
     return VerificationResult(grounded / len(claims), tuple(issues))
+
+
+# A number as it appears in prose: optional thousands separators and an optional decimal
+# part. The separators are the COMMA and the thin/narrow no-break spaces a model actually
+# emits (gpt-oss writes "32 138.5" with U+202F) — never a plain space, which would weld
+# "3 apples 4 more" into one number.
+_ANSWER_NUMBER = re.compile(r"\d[\d,\u202f\u00a0]*(?:\.\d+)?|\.\d+")
+
+# Below this, a number is not worth tracing. "3 apples", "2 of the 5", a step number — a
+# turn is full of small integers that were never computed and never claimed to be, and
+# flagging them would drown the signal. Three significant digits (or any decimal point) is
+# where a number starts looking like an ANSWER rather than a count.
+_MIN_TRACEABLE_DIGITS = 3
+
+
+def _as_number(text: str) -> float | None:
+    """One matched run of digits as a float, separators stripped. None when it will not
+    parse — a lone "." or a malformed run — because an unparseable token is not a claim."""
+    try:
+        return float(text.replace(",", "").replace("\u202f", "").replace("\u00a0", ""))
+    except ValueError:
+        return None
+
+
+def _worth_tracing(text: str) -> bool:
+    """Whether a number in the answer is one the owner could be misled by. A decimal point
+    always qualifies; otherwise it needs `_MIN_TRACEABLE_DIGITS` digits."""
+    digits = [c for c in text if c.isdigit()]
+    return "." in text or len(digits) >= _MIN_TRACEABLE_DIGITS
+
+
+def _traces_to(value: float, shown: str, sources: Sequence[float]) -> bool:
+    """Whether a stated number came from somewhere the turn actually saw.
+
+    Exact match, or a ROUNDING of a source number to the precision the answer states it
+    at: the tool returns 321.3849285 and the answer says "321 cm²", which is the same
+    number said plainly, not a new claim. Scaling is deliberately NOT accepted — an answer
+    deriving 0.0321 m² from 321.38 cm² did arithmetic of its own, and that is exactly the
+    step this verifier exists to catch (the live failure was 32138.49 mm² reported as
+    252.7 cm², a number that traced to nothing)."""
+    decimals = len(shown.partition(".")[2])
+    return any(value == source or abs(round(source, decimals) - value) < 1e-9 for source in sources)
+
+
+def numbers_in(text: str) -> list[float]:
+    """Every parseable number in a text, for use as a SOURCE side. No significance filter
+    here: a small integer cannot be flagged, but it can certainly justify one."""
+    return [n for m in _ANSWER_NUMBER.finditer(text) if (n := _as_number(m.group())) is not None]
+
+
+def untraceable_numbers(answer: str, seen_texts: Sequence[str]) -> list[str]:
+    """The numbers the answer states that trace to nothing the turn saw — verbatim, in the
+    order they appear, deduplicated so one repeated figure is one issue."""
+    sources = [n for text in seen_texts for n in numbers_in(text)]
+    out: list[str] = []
+    for m in _ANSWER_NUMBER.finditer(answer):
+        shown = m.group()
+        value = _as_number(shown)
+        if value is None or not _worth_tracing(shown):
+            continue
+        if not _traces_to(value, shown, sources) and shown not in out:
+            out.append(shown)
+    return out
+
+
+def verify_computed_numbers(answer: str, seen_texts: Sequence[str]) -> VerificationResult:
+    """Every number in an answer should come from somewhere: the owner's own message, a
+    tool result, or the arguments of a call the turn made.
+
+    This is the arithmetic twin of `verify_grounding`, and it exists because prose rules
+    did not close the gap. The tools answer exactly; what went wrong on the box was the
+    step AFTER — a correct 32138.49285 mm² from `calculate`, and 252.7 cm² in the sentence
+    below it, which was the model's own stale figure divided by 100. Both numbers were in
+    the same answer and only one of them came from anywhere.
+
+    Deterministic on purpose (the module's whole posture): a number either traces to
+    something the turn saw or it does not, where a judge would have to guess. Scored, never
+    a veto — `strictly_improves` means a false positive costs one retry, never a worse
+    answer. Run this ONLY on a turn that actually computed (see `critique_worthy`'s
+    `computed`): in a turn that did no arithmetic, a recalled constant is not a defect."""
+    flagged = untraceable_numbers(answer, seen_texts)
+    stated = [
+        m.group()
+        for m in _ANSWER_NUMBER.finditer(answer)
+        if _as_number(m.group()) is not None and _worth_tracing(m.group())
+    ]
+    if not stated:
+        return VerificationResult(PASS_SCORE, ())
+    issues = tuple(
+        f"number in the answer traces to no tool result, argument or anything Jeff said: {n}"
+        f" — compute it with a tool rather than by hand, or drop it"
+        for n in flagged
+    )
+    return VerificationResult((len(stated) - len(flagged)) / len(stated), issues)
 
 
 def verify_mutation(payload: dict, required_fields: Iterable[str]) -> VerificationResult:

@@ -1,6 +1,7 @@
 """Reflexion (Loop 1): the deterministic verifiers and the strict-improvement,
 hard-capped retry controller. Pure — no persistence, no real model."""
 
+from jbrain.agent import reflexion
 from jbrain.agent.reflexion import (
     _GROUNDING_THRESHOLD,
     PASS_SCORE,
@@ -332,3 +333,87 @@ class TestReflectController:
         out = await reflect(produce, max_retries=2)
         assert out.retries == 2
         assert out.result.score == 0.3  # 1 initial + 2 retries = 3 produce() calls
+
+
+# --- the computed-number verifier -------------------------------------------------
+# The gap it closes was found on the box, not in a test: `calculate` returned
+# 10230*pi = 32138.49285 mm², the answer said "about 253 cm²" one line below it, and
+# nothing in the system noticed. Every other Loop-1 arm reads false on an arithmetic
+# turn — no sources, no entities, no mutation — so the turn was never verified.
+
+
+def test_a_number_that_came_from_the_tool_passes() -> None:
+    """Said plainly is not a new claim: the tool returned 321.3849285 and the answer
+    rounds it to 321. That is the same number, so it must not be flagged — a verifier
+    that fires on correct rounding would fire on almost every good answer."""
+    out = reflexion.verify_computed_numbers(
+        "The total surface area is about 321 cm².",
+        ["exact:   1023*pi/10\ndecimal: 321.3849285"],
+    )
+    assert out.passed
+    assert out.issues == ()
+
+
+def test_the_number_from_nowhere_is_caught() -> None:
+    """The live failure, verbatim. 32138.49285 traces to the tool; 252.7 traces to
+    nothing at all — it was the model's own earlier wrong figure divided by 100. Both
+    numbers sit in the same answer and only one of them came from anywhere."""
+    out = reflexion.verify_computed_numbers(
+        "The exact expression evaluates to 32138.49285 mm², which is about 252.7 cm².",
+        ["2 * pi * 33 * 122 + 2 * pi * 33**2\nexact:   10230*pi\ndecimal: 32138.49285"],
+    )
+    assert not out.passed
+    assert reflexion.untraceable_numbers(
+        "The exact expression evaluates to 32138.49285 mm², which is about 252.7 cm².",
+        ["decimal: 32138.49285"],
+    ) == ["252.7"]
+    assert "252.7" in out.issues[0]
+
+
+def test_a_scaled_number_is_not_treated_as_traceable() -> None:
+    """A unit conversion is arithmetic the turn did in its head, not the tool's answer
+    restated — so 0.0321 m² derived from 321.38 cm² is flagged even though it is RIGHT.
+    That is the deliberate trade: the verifier is scored, not a veto, so the cost of
+    insisting is one retry, and the invariant it buys is that every number came from
+    somewhere."""
+    out = reflexion.verify_computed_numbers(
+        "That is 321.38 cm², or 0.0321 m².", ["decimal: 321.3849285"]
+    )
+    assert not out.passed
+    assert any("0.0321" in i for i in out.issues)
+
+
+def test_small_counts_are_never_flagged() -> None:
+    """A turn is full of small integers nobody computed — "3 apples", "2 of the 5", a
+    step number. Flagging them would bury the one number that matters."""
+    out = reflexion.verify_computed_numbers("You have 7 apples after buying 4 more.", [])
+    assert out.passed
+
+
+def test_a_number_the_owner_supplied_traces_to_him() -> None:
+    """The owner's own message is a source. A figure he gave and the answer repeats was
+    never the model's to compute."""
+    out = reflexion.verify_computed_numbers(
+        "A 122 mm can is what I priced.", ["A soda can is 122 mm tall with a 66 mm diameter."]
+    )
+    assert out.passed
+
+
+def test_the_thin_space_a_model_actually_writes_is_parsed() -> None:
+    """gpt-oss writes 32 138.5 with U+202F, not a comma. Read as two numbers that answer
+    would be flagged for a "138.5" nobody claimed, and the real figure would go unchecked."""
+    assert reflexion.numbers_in("32 138.5 mm²") == [32138.5]
+    out = reflexion.verify_computed_numbers("It is 32 138.5 mm².", ["decimal: 32138.49285"])
+    assert out.passed
+
+
+def test_an_arithmetic_turn_is_now_worth_verifying() -> None:
+    """The trigger, which is the half that was missing. A turn that computes surfaces no
+    source, resolves no entity and stages no mutation, so before `computed` every arm read
+    false and Loop 1 never looked at it."""
+    assert not reflexion.critique_worthy(
+        source_count=0, entity_count=0, mutated=False, touched_sensitive=False
+    )
+    assert reflexion.critique_worthy(
+        source_count=0, entity_count=0, mutated=False, touched_sensitive=False, computed=True
+    )
