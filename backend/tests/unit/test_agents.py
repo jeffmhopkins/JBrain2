@@ -887,8 +887,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "ebfa145901f8528d8f0b090b882fc8d8769e12dc948881aa1ed8c63b75a6c2d1",
         ),
         "archivist": (
-            "agent-archivist-v10",
-            "3ed3cbf6699ad47ed9ff279d78282f23c7825921e32207777bd81e8b731e5119",
+            "agent-archivist-v11",
+            "127d6a537461b162ddc53173faa8b71c775c2e8363f9ea08bad4d4906ebab23b",
         ),
         "research": (
             "agent-research-v18",
