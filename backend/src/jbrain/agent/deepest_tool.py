@@ -192,6 +192,10 @@ class DeepestKickoffService:
             "other tool, and do NOT start a deep_research run on the same question — the card "
             "already tracks it.",
             view=started_card,
+            # Fire-and-forget: the report arrives as a LATER message. A blank row here reads
+            # like a call that did nothing, which is exactly what the sentence above is
+            # written to stop the model believing.
+            result_brief=f"run {run_id} started",
         )
 
 

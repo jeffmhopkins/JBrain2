@@ -1,6 +1,6 @@
 # Show the working — the code-run surfaces, and the question that reaches the chat
 
-> **Status:** In progress · **Last verified:** 2026-09-18 · **Waves:** W1✅ W1b◻️ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2◻️ W3◻️ W4◻️
 
 ## Thesis
 
@@ -246,27 +246,53 @@ Every row gets a right-hand side.
   a second test checks that the tools claiming to author an answer still pass `result_brief=`
   (verified by removing the argument and watching it go red).
 
-**What W1 did NOT do, stated plainly.** The plan said *"every handler in the roster fills it."*
-Two of 127 do. The other 125 are named in `_NO_AUTHORED_BRIEF`, which is the backlog written
-down rather than assumed away — a set that is meant to shrink, one `result_brief=` argument at
-a time. Those rows are not blank: `stepLedger` phrases a result from the step's structured
-fields wherever there is one (`3 notes`, the D3 write phrase, a resolve's cast, `2 results`),
-and a failed call always says so. A tool with none of those still shows nothing on its right,
-and that is the honest remaining gap.
+**The honest gap W1 left, now closed.** W1 shipped the mechanism with 2 of 127 handlers
+authoring an answer; W1b finished the sweep.
 
-⟲ **Corrected while starting W1b.** That sizing said filling the long tail "means changing 114
-`-> str` return types". It does not: `ToolOutput` is a `str` subclass, so a handler declared
-`-> str` can return one with no signature change at all. The sweep is one wrapped return per
-answer, not a typing migration — which is why W1b is being done now rather than deferred.
+### W1b ✅ — the long tail authors its answers
 
-### W1b — the long tail authors its answers
+**108 of 127 tools author a brief; the other 19 render from structured fields; none render
+blank.** That last clause is the wave's actual acceptance test, and it is now a gate rather
+than a claim.
 
-Mechanical follow-on: move names out of `_NO_AUTHORED_BRIEF` by having their handlers pass
-`result_brief=`. Worth doing in tranches by module rather than as one 125-file diff, and worth
-doing at all only where the answer is not already carried structurally — a tool whose row
-already reads `3 notes` gains nothing from a second phrasing of the same fact.
+The sweep was chosen by what would otherwise be EMPTY, which turned up the thing the plan had
+not noticed: **a `view` does not fill the ledger.** `stepLedger` reads `sources`, `facts`,
+`entities` and `web_sources` — not `view` — so every view-only tool (the charts, the canvas,
+the crops, the plan, the video and stream analyses, the rendered HTML) had a rich card in the
+bubble and nothing at all in the column the eye scans.
 
-The gate makes the progress legible: the set's size is the remaining work.
+Where a phrasing could mislead, the phrasing is the work:
+
+- **A staged write says it is staged.** `manage_appointment`, `save_place`, `prefs_write`,
+  `propose_merge`, `merge_entities`, `propose_correction`, `make_intake_link`, the connector
+  lookups and `remember` all read *staged, not applied* / *not merged* / *not saved* /
+  *nothing sent*. `merge_entities`' own result text ends "do not say they are merged"; the row
+  is held to the same rule, and it is the surface the owner reads without opening anything.
+- **A capped count keeps its `+`.** A bare number where `gmail_count` hit its cap would report
+  a cap as a total.
+- **A full-replace write reports the size CHANGE** (`archivist_memory_write`, `scratch_write`),
+  because a silent shrink is how work disappears.
+- **`render_html` says `rendered, clipped`** — a clipped render looks complete in the image.
+- **Attacker-controlled sources get a count, never a line.** `aprs_recent`, `jmolt_observe` and
+  the `moltbook` read umbrella put how much came back in the row; the text itself is only safe
+  inside the data/instruction fence its result already carries.
+- **A fire-and-forget run says so** (`analyze_stream`, `deepest_research`), so a turn that
+  ended on purpose does not read like a call that did nothing.
+
+**Reuse over reinvention.** The brief calls the module's own renderer — `_when`,
+`_place_phrase`, `_format_duration`, `_STATUS_LABEL`, `pace.headroom` — rather than growing a
+second one free to disagree with the sentence beside it. Where the answer had to come out of a
+formatter, the formatter returns it (`Rendered.brief`, `_signal_brief`, `_deliver`'s tuple)
+instead of the handler re-parsing prose it had just built.
+
+**The second gate is the one that matters.** `_STRUCTURAL_RESULT` says "this row is already
+filled", which is a claim about a handler, not a note to self — so it is checked: the handler's
+module must surface one of the four fields `stepLedger` phrases from, with the roster files
+(`agents.py`, `spawn.py`, `toolregistry.py`) excluded, since either would otherwise vouch for
+every tool in the repo. **It immediately caught three tools that would have rendered blank
+behind a label saying they were fine** — `weather_history`, the `moltbook` umbrella and
+`merge_entities`. Without that assertion the set becomes the place a tool goes when nobody
+could think what its answer was.
 
 ### W2 — the `code_run` view, rendered in the panel
 

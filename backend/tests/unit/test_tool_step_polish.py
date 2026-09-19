@@ -130,10 +130,13 @@ def test_inline_arg_keys_exist_in_each_tool_schema() -> None:
 _AUTHORS_BRIEF = {
     "add_list_item",
     "add_source_exclusion",
+    "analyze_image",
     "analyze_stream",
     "analyze_video",
+    "aprs_recent",
     "archivist_memory_read",
     "archivist_memory_write",
+    "ask_owner",
     "calculate",
     "canvas",
     "chart_measurements",
@@ -141,7 +144,12 @@ _AUTHORS_BRIEF = {
     "compare_images",
     "create_list",
     "crop_regions",
+    "current_location",
     "current_time",
+    "decompose_research",
+    "deep_produce",
+    "deep_research",
+    "deepest_research",
     "device_status",
     "external_video",
     "fetch_image",
@@ -160,13 +168,18 @@ _AUTHORS_BRIEF = {
     "grab_frame",
     "home_status",
     "hurricane",
+    "jmolt_observe",
     "journal",
     "location_history",
     "location_query",
+    "lookup_condition",
+    "lookup_medication",
     "make_intake_link",
     "manage_appointment",
     "memory_edit",
     "memory_read",
+    "merge_entities",
+    "moltbook",
     "moltbook_comment",
     "moltbook_post",
     "moltbook_profile_update",
@@ -212,10 +225,12 @@ _AUTHORS_BRIEF = {
     "show_canvas",
     "show_external_video",
     "show_research_report",
+    "spawn_subagent",
     "time_at_place",
     "time_left",
     "transcribe",
     "weather",
+    "weather_history",
     "web_fetch",
     "where_is",
     "where_was_i",
@@ -223,33 +238,20 @@ _AUTHORS_BRIEF = {
     "write_plan_result",
 }
 
-# Tools that do not author one (yet). Not a licence: a row here says what came back only if
-# `stepLedger.ts` can phrase it from the step's STRUCTURED fields — `sources` ("3 notes"),
-# `facts` (the D3 write phrase), `entities` (the resolve's cast), `web_sources`. A tool with
-# none of those still renders a blank right-hand side, which is a row the owner cannot check.
+# Tools that need no authored brief, because their result is already STRUCTURED and
+# `stepLedger.ts` phrases the row from it: `sources` ("3 notes"), `facts` (the D3 write
+# phrase), `entities` (a resolve's cast), `web_sources` ("2 results").
 #
-# This set is the backlog, and it is meant to SHRINK. Moving a name out of it is one
-# `result_brief=` argument in its handler.
-_NO_AUTHORED_BRIEF = {
-    "analyze_image",
-    "aprs_recent",
-    "ask_owner",
+# This is a different statement from "not done yet" — every one of these rows is filled.
+# It is checked below rather than asserted, because the whole point of the split is that a
+# tool cannot end up in here by being forgotten.
+_STRUCTURAL_RESULT = {
     "assert_fact",
     "check_channel",
     "close_reading",
     "correct_fact",
-    "current_location",
-    "decompose_research",
-    "deep_produce",
-    "deep_research",
-    "deepest_research",
     "find_entity",
     "grokipedia",
-    "jmolt_observe",
-    "lookup_condition",
-    "lookup_medication",
-    "merge_entities",
-    "moltbook",
     "neighborhood",
     "news_feed",
     "news_search",
@@ -262,24 +264,22 @@ _NO_AUTHORED_BRIEF = {
     "resolve_entity",
     "science_search",
     "search",
-    "spawn_subagent",
-    "weather_history",
     "web_search",
 }
 
 
 def test_every_tool_declares_a_result_brief_policy() -> None:
     roster = set(_roster())
-    declared = _AUTHORS_BRIEF | _NO_AUTHORED_BRIEF
+    declared = _AUTHORS_BRIEF | _STRUCTURAL_RESULT
     missing = sorted(roster - declared)
     assert not missing, (
         "these tools declare no result-brief policy — make the handler pass "
         "`result_brief=` and add the name to _AUTHORS_BRIEF, or add it to "
-        f"_NO_AUTHORED_BRIEF to record that its row has no authored answer yet: {missing}"
+        f"_STRUCTURAL_RESULT if its row is already filled from structured fields: {missing}"
     )
     stale = sorted(declared - roster)
     assert not stale, f"these names are no longer tools — drop them from the sets: {stale}"
-    both = sorted(_AUTHORS_BRIEF & _NO_AUTHORED_BRIEF)
+    both = sorted(_AUTHORS_BRIEF & _STRUCTURAL_RESULT)
     assert not both, f"a tool is in both result-brief sets — pick one: {both}"
 
 
@@ -305,6 +305,36 @@ def test_the_tools_that_author_their_answer_still_do() -> None:
     assert not silent, (
         "_AUTHORS_BRIEF claims these tools fill the Worked row's answer, but no handler "
         f"passes `result_brief=` any more: {silent}"
+    )
+
+
+def test_the_structural_tools_really_do_surface_structure() -> None:
+    """The other half of the split, checked the same way.
+
+    A name lands in `_STRUCTURAL_RESULT` to say "its row is already filled" — which is a
+    claim about the handler, not a note to self. Unchecked, it becomes the place a tool goes
+    when nobody could think what its answer was, and the blank row this gate exists to
+    prevent comes back wearing a label that says it is fine.
+
+    The handler's own module is searched for one of the fields `stepLedger` phrases from.
+    `agents.py` and `spawn.py` are excluded: they name tools in rosters and allowlists
+    without implementing any, so either would vouch for everything."""
+    roster_files = {"agents.py", "spawn.py", "toolregistry.py"}
+    modules = [
+        (path.name, path.read_text(encoding="utf-8"))
+        for path in sorted((_REPO / "backend" / "src" / "jbrain").rglob("*.py"))
+        if path.name not in roster_files
+    ]
+    fields = ("sources=", "web_sources=", "facts=", "entities=")
+    hollow = sorted(
+        name
+        for name in _STRUCTURAL_RESULT
+        if not any(f'"{name}"' in src and any(f in src for f in fields) for _, src in modules)
+    )
+    assert not hollow, (
+        "_STRUCTURAL_RESULT says these tools' rows are filled from structured fields, but "
+        "their handlers surface none — so the Worked row renders blank. Give each one a "
+        f"`result_brief=` and move it to _AUTHORS_BRIEF: {hollow}"
     )
 
 

@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 
 import structlog
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.citygeocode import CityGeocoder
 from jbrain.geocode import NominatimReverseClient
 
@@ -87,18 +87,23 @@ def _address_phrase(addr: str, ago: str | None) -> str:
     )
 
 
+def _brief(text: str, limit: int = 32) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
 def build_presence_handlers(
     city_geocoder: CityGeocoder, external_reverse: NominatimReverseClient | None = None
 ) -> dict[str, ToolHandler]:
     async def current_location_tool(arguments: dict, ctx: ToolContext) -> str:
         if ctx.here is None:
-            return _NO_FIX
+            return ToolOutput(_NO_FIX, result_brief="no fix")
         lat, lon = ctx.here
         ago = _staleness(ctx.here_as_of)
         detail = str(arguments.get("detail") or "city").lower()
         # Raw coordinates when explicitly asked — no geocoding, the fix is the answer.
         if detail == "coordinates":
-            return _coords_phrase(lat, lon, ago)
+            return ToolOutput(_coords_phrase(lat, lon, ago), result_brief=f"{lat:.3f}, {lon:.3f}")
         # A specific street address only when asked AND an external geocoder is set. An outage
         # of the external reverse-geocoder must fall through to the offline city path below, not
         # raise into the loop — the coarse city is the graceful answer to "where am I".
@@ -109,7 +114,7 @@ def build_presence_handlers(
                 log.warning("agent.current_location_reverse_failed", error=repr(exc))
                 addr = None
             if addr:
-                return _address_phrase(addr, ago)
+                return ToolOutput(_address_phrase(addr, ago), result_brief=_brief(str(addr)))
         # Default: name the nearest city offline — no service, no egress.
         try:
             hit = city_geocoder.nearest(lat, lon)
@@ -117,8 +122,11 @@ def build_presence_handlers(
             log.warning("agent.current_location_city_failed", error=repr(exc))
             hit = None
         if hit is not None:
-            return _city_phrase(hit, ago)
+            # The place itself, not the sentence about it: a row reading "The owner is in…"
+            # spends its width on words the label already said.
+            where = ", ".join(p for p in (hit.name, hit.region) if p)
+            return ToolOutput(_city_phrase(hit, ago), result_brief=_brief(where))
         # No populated place close enough — the coordinate is the answer.
-        return _coords_phrase(lat, lon, ago)
+        return ToolOutput(_coords_phrase(lat, lon, ago), result_brief=f"{lat:.3f}, {lon:.3f}")
 
     return {"current_location": current_location_tool}

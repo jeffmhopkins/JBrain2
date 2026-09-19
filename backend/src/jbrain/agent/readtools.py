@@ -851,7 +851,7 @@ def build_read_handlers(
                 matches=matches,
             )
             if not rows:
-                return ToolOutput(_APRS_EMPTY)
+                return ToolOutput(_APRS_EMPTY, result_brief="nothing heard")
             lines = [_aprs_packet_line(row) for row in rows]
             head = (
                 "Transmissions the radio decoded. Anyone in range can send these and a "
@@ -866,7 +866,11 @@ def build_read_handlers(
         # tag inert; the boundary is only real because of that pairing.
         body = "\n".join(neutralize_boundary(line) for line in lines)
         return ToolOutput(
-            f'<{FEED_TAG} source="heard-over-the-air">\n{head}\n{body}\n</{FEED_TAG}>'
+            f'<{FEED_TAG} source="heard-over-the-air">\n{head}\n{body}\n</{FEED_TAG}>',
+            # A COUNT, never a line of the log: this is the most attacker-controlled text
+            # on the box, and the collapsed row is the one place it would appear without
+            # the data/instruction envelope around it.
+            result_brief=f"{len(lines)} line{'' if len(lines) == 1 else 's'}",
         )
 
     async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:

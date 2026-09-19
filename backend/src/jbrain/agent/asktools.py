@@ -305,6 +305,10 @@ def build_ask_owner_handlers(
             " turn ends here — what you already wrote stands. When he answers, each"
             " answer is appended to the note and you pick the thread up from there.",
             halt=AWAITING_OWNER,
+            # The COUNT, never a question's text: the row is the collapsed strip and the
+            # questions are rendered, answerably, by the block above it. It matches the
+            # stream chip's wording ("3 questions") so the two surfaces agree.
+            result_brief=_count(len(asked)),
             # THE IDS GO WITH IT, onto the transcript step as well as the ledger row, and
             # this is R3f's third review, finding 1. The tool declares no `id`, so the
             # model never sends one and `_asked` mints them here; the ledger kept them and
@@ -385,6 +389,9 @@ def _already_waiting(open_set: list[AskedQuestion]) -> ToolOutput:
         f"This note is already waiting on Jeff for {_count(len(open_set))}, starting with:"
         f" {open_set[0].question!r}. One open set at a time — this ask was not recorded.",
         recorded_args=recorded_args(open_set),
+        # "not recorded", because it was not: a row reading like the ask above it would
+        # claim a second open set that does not exist.
+        result_brief="not recorded — already waiting",
     )
 
 

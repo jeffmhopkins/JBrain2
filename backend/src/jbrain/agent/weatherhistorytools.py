@@ -71,11 +71,22 @@ def build_weather_history_handlers(
         if hit is None:
             return f'I couldn\'t find a place called "{name}".' if name else _NO_LOCATION
         try:
+            span = (end - start).days + 1
+            days = f"{span} day{'' if span == 1 else 's'}"
             if detail == "hourly":
-                return _hourly_table(hit.name, await history.archive_hourly(hit, start, end))
+                return ToolOutput(
+                    _hourly_table(hit.name, await history.archive_hourly(hit, start, end)),
+                    result_brief=f"{hit.name}, {days} hourly",
+                )
             if detail == "daily":
-                return _daily_table(hit.name, await history.archive_daily(hit, start, end))
-            return _summarize(await history.archive(hit, start, end))
+                return ToolOutput(
+                    _daily_table(hit.name, await history.archive_daily(hit, start, end)),
+                    result_brief=f"{hit.name}, {days} daily",
+                )
+            return ToolOutput(
+                _summarize(await history.archive(hit, start, end)),
+                result_brief=f"{hit.name}, {days}",
+            )
         except WeatherError as exc:
             return str(exc)
 
