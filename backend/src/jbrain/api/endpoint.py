@@ -29,6 +29,7 @@ constant rather than a migration.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import zipfile
 from collections.abc import AsyncIterator
@@ -42,6 +43,7 @@ from pydantic import BaseModel, Field
 from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import BlobStoreDep, ctx_for
+from jbrain.config import Settings
 from jbrain.devices import service as devices
 from jbrain.settings_store import SqlSettingsStore
 
@@ -141,9 +143,85 @@ async def list_ports(_owner: OwnerDep, settings: SettingsDep) -> PortsOut:
     return PortsOut(ports=[PortOut(**p) for p in resp.json().get("ports", [])])
 
 
+# Release tags are `firmware-v<version>`, cut by .github/workflows/firmware.yml when
+# firmware/version.txt changes. The prefix matters: this repo tags other things too.
+RELEASE_PREFIX = "firmware-v"
+
+# A whole flashable set is ~1 MB; the cap is about a hostile response, not about firmware.
+MAX_ASSET_BYTES = 8 * 1024 * 1024
+FETCH_TIMEOUT_S = 60.0
+
+
 class FirmwareOut(BaseModel):
     version: str
     url: str
+
+
+class AvailableOut(BaseModel):
+    """What the box could install, next to what it has."""
+
+    installed: str | None
+    latest: str | None
+    # False when no source is configured, so the card can offer upload instead of
+    # pretending a fetch is possible.
+    fetchable: bool
+
+
+def _releases_url(settings: Settings) -> str:
+    return f"https://api.github.com/repos/{settings.endpoint_firmware_repo}/releases"
+
+
+async def _latest_release(settings: Settings) -> dict[str, Any] | None:
+    """The newest firmware release, or None when there is no source or no release yet.
+
+    Never raises for a reachability problem: the box not being able to see GitHub is a
+    normal state for a LAN device, and it must degrade to "upload it yourself" rather than
+    breaking the page that offers that fallback.
+    """
+    if not settings.endpoint_firmware_repo.strip():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_S) as client:
+            resp = await client.get(
+                _releases_url(settings),
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            resp.raise_for_status()
+            releases = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(releases, list):
+        return None
+    for release in releases:
+        tag = str(release.get("tag_name") or "")
+        if tag.startswith(RELEASE_PREFIX) and not release.get("draft"):
+            return release
+    return None
+
+
+def _assets(release: dict[str, Any]) -> dict[str, str]:
+    """Asset name -> browser download URL, for the names the flash actually needs."""
+    out: dict[str, str] = {}
+    for asset in release.get("assets") or []:
+        name = str(asset.get("name") or "")
+        url = str(asset.get("browser_download_url") or "")
+        if name and url:
+            out[name] = url
+    return out
+
+
+def _expected_digests(sums: str) -> dict[str, str]:
+    """Parse `sha256sum` output into base name -> digest.
+
+    Names come back as `./bootloader.bin` from the workflow's `cd out && sha256sum ./*.bin`,
+    so the leading path is stripped rather than matched literally.
+    """
+    digests: dict[str, str] = {}
+    for line in sums.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            digests[parts[1].lstrip("./").rsplit("/", 1)[-1]] = parts[0].lower()
+    return digests
 
 
 @router.get("/firmware")
@@ -167,6 +245,81 @@ def _public_base(request: Request) -> str:
     return str(request.base_url).rstrip("/") + "/api"
 
 
+@router.get("/firmware/available")
+async def firmware_available(
+    _owner: OwnerDep, request: Request, settings: SettingsDep
+) -> AvailableOut:
+    """What is installed, and what the box could fetch — the card's whole status line."""
+    stored = await _store(request).get(ctx_for(_owner), FIRMWARE_KEY)
+    release = await _latest_release(settings)
+    return AvailableOut(
+        installed=str(stored["version"]) if stored else None,
+        latest=(str(release["tag_name"]).removeprefix(RELEASE_PREFIX) if release else None),
+        fetchable=bool(settings.endpoint_firmware_repo.strip()),
+    )
+
+
+async def _sync(owner: Any, request: Request, settings: Settings, blobs: Any) -> FirmwareOut:
+    """Fetch the newest published firmware and store it.
+
+    The repository is public, so this needs no credential at all — which is what makes the
+    whole path possible: the owner taps a button instead of downloading an artifact and
+    uploading it back. Every asset is verified against the release's own SHA256SUMS before
+    anything is stored, because these bytes become a bootloader on a device that has no
+    cable attached to it once it is in a bedroom, and a truncated download that flashes is
+    worse than one that fails.
+    """
+    release = await _latest_release(settings)
+    if release is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No firmware release reachable — upload the artifact instead.",
+        )
+    version = str(release["tag_name"]).removeprefix(RELEASE_PREFIX)
+    assets = _assets(release)
+
+    missing = sorted(set(ARTIFACT_IMAGES) - set(assets))
+    if missing:
+        raise HTTPException(
+            status_code=502, detail=f"release {release['tag_name']} is missing {missing}"
+        )
+
+    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_S, follow_redirects=True) as client:
+        digests: dict[str, str] = {}
+        if "SHA256SUMS" in assets:
+            sums = await client.get(assets["SHA256SUMS"])
+            sums.raise_for_status()
+            digests = _expected_digests(sums.text)
+
+        images: dict[str, str] = {}
+        for name, offset in ARTIFACT_IMAGES.items():
+            resp = await client.get(assets[name])
+            resp.raise_for_status()
+            data = resp.content
+            if len(data) > MAX_ASSET_BYTES:
+                raise HTTPException(status_code=502, detail=f"{name} is implausibly large")
+            want = digests.get(name)
+            if want and hashlib.sha256(data).hexdigest() != want:
+                # Refuse the whole set rather than store a good image beside a bad one.
+                raise HTTPException(
+                    status_code=502, detail=f"{name} failed its checksum — nothing stored"
+                )
+            images[offset] = await blobs.put(data)
+
+    await _store(request).upsert(
+        ctx_for(owner), FIRMWARE_KEY, {"version": version, "images": images}
+    )
+    return FirmwareOut(version=version, url=f"{_public_base(request)}/endpoint/firmware/bin")
+
+
+@router.post("/firmware/sync")
+async def sync_firmware(
+    owner: OwnerDep, request: Request, settings: SettingsDep, blobs: BlobStoreDep
+) -> FirmwareOut:
+    """One tap: fetch the latest published firmware straight from the release."""
+    return await _sync(owner, request, settings, blobs)
+
+
 @router.post("/firmware")
 async def upload_firmware(
     owner: OwnerDep,
@@ -175,12 +328,11 @@ async def upload_firmware(
     version: Annotated[str, Field(min_length=1, max_length=48)],
     artifact: UploadFile,
 ) -> FirmwareOut:
-    """Take the CI artifact zip and keep it, so a flash and an OTA serve the same bytes.
+    """The fallback path: take the CI artifact zip directly.
 
-    The owner downloads `endpoint-firmware` from the `firmware` workflow run and picks it
-    here. That is one manual hop, and it buys something worth more than automating it: no
-    GitHub credential on this box, and no path by which this box fetches and then executes
-    something from the internet.
+    `POST /firmware/sync` is the normal way in — the box fetches its own firmware and the
+    owner taps a button. This exists for the box that cannot reach GitHub, which is a real
+    state for a LAN device and not worth leaving without an answer.
     """
     raw = await artifact.read(MAX_ARTIFACT_BYTES + 1)
     if len(raw) > MAX_ARTIFACT_BYTES:
@@ -239,7 +391,19 @@ async def flash_panel(
     base = _sidecar(settings)
     stored = await _store(request).get(ctx_for(owner), FIRMWARE_KEY)
     if not stored:
-        raise HTTPException(status_code=409, detail="upload a firmware artifact first")
+        # Fetch it rather than refusing. A box that has never flashed a panel has no
+        # firmware stored, and making that a 409 would hand the owner an errand for
+        # something the box can do itself in a second. Only when the fetch is impossible
+        # does this become a question for them.
+        try:
+            await _sync(owner, request, settings, blobs)
+        except HTTPException as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"no firmware stored and none could be fetched ({exc.detail})",
+            ) from exc
+        stored = await _store(request).get(ctx_for(owner), FIRMWARE_KEY)
+    assert stored is not None
 
     images = [
         {"offset": offset, "b64": base64.b64encode(await blobs.get(sha)).decode()}

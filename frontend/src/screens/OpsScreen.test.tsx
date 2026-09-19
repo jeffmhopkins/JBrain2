@@ -685,7 +685,8 @@ describe("OpsScreen", () => {
       const custom = extra?.(path);
       if (custom) return custom;
       if (path === "/api/endpoint/ports") return json({ ports, flasher: true });
-      if (path === "/api/endpoint/firmware") return new Response(null, { status: 404 });
+      if (path === "/api/endpoint/firmware/available")
+        return json({ installed: null, latest: "0.1.0", fetchable: true });
       return new Response(null, { status: 404 });
     };
   }
@@ -751,9 +752,42 @@ describe("OpsScreen", () => {
     expect(radios.every((r) => !r.checked)).toBe(true);
   });
 
-  it("will not offer to flash until there is firmware and a network", async () => {
-    // Every one of these is required to produce a panel that can be updated again; a
-    // flash missing any of them strands a unit that has no cable attached to it.
+  it("still lists ports when the firmware status call fails", async () => {
+    // Introduced twice by the same reflex (fetching the two together), and both times it
+    // hid the port list — the one thing the owner cannot find out any other way.
+    fetchMock.mockImplementation(
+      endpointsMock(
+        [{ device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true }],
+        (path) =>
+          path === "/api/endpoint/firmware/available" ? new Response(null, { status: 500 }) : null,
+      ),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    expect(await screen.findByText(/ESP32-S3/)).toBeTruthy();
+  });
+
+  it("offers a one-tap fetch instead of asking the owner to download anything", async () => {
+    fetchMock.mockImplementation(
+      endpointsMock([
+        { device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },
+      ]),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    // Nothing installed but something published: the card says what it will do.
+    expect(await screen.findByText(/no firmware yet/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /firmware/i })).toBeTruthy();
+  });
+
+  it("will not offer to flash without a port and a network", async () => {
+    // Firmware is deliberately NOT a precondition — a flash with none stored fetches it —
+    // but a panel flashed with no network is a unit that can never be updated again, and
+    // it has no cable attached to it once it is in a bedroom.
     fetchMock.mockImplementation(
       endpointsMock([
         { device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },

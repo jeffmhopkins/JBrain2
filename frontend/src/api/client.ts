@@ -2608,6 +2608,13 @@ export interface EndpointFirmware {
   url: string;
 }
 
+/** What is installed against what the box could fetch (GET /api/endpoint/firmware/available). */
+export interface EndpointFirmwareAvailable {
+  installed: string | null;
+  latest: string | null;
+  fetchable: boolean;
+}
+
 export interface FlashRequest {
   port: string;
   ssid: string;
@@ -4928,6 +4935,18 @@ export const api = {
       if (e instanceof ApiError && e.status === 404) return null;
       throw e;
     }
+  },
+
+  async getEndpointFirmwareAvailable(): Promise<EndpointFirmwareAvailable> {
+    const response = await request("/api/endpoint/firmware/available");
+    return (await response.json()) as EndpointFirmwareAvailable;
+  },
+
+  // The box fetches its own firmware from the public release. No credential is involved,
+  // which is exactly why this can be a button rather than a download-and-upload errand.
+  async syncEndpointFirmware(): Promise<EndpointFirmware> {
+    const response = await request("/api/endpoint/firmware/sync", { method: "POST" });
+    return (await response.json()) as EndpointFirmware;
   },
 
   async uploadEndpointFirmware(zip: Blob, version: string): Promise<EndpointFirmware> {

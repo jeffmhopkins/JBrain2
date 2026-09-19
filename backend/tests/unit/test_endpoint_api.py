@@ -7,6 +7,7 @@ cannot authenticate against, is recovered by walking to it with a screwdriver.
 """
 
 import asyncio
+import hashlib
 import io
 import zipfile
 from collections.abc import Iterator
@@ -24,6 +25,27 @@ from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
 
 SIDECAR = "http://endpoint:8000"
+
+ARTIFACT_NAMES = ("bootloader.bin", "partition-table.bin", "jbrain-endpoint.bin")
+
+
+def _release_stub(release: dict[str, Any] | None):
+    async def _stub(_settings: Any) -> dict[str, Any] | None:
+        return release
+
+    return _stub
+
+
+def _asset_stub(sums: str, blob: bytes):
+    """Serve SHA256SUMS as text and every other asset as the same bytes."""
+
+    async def _get(_self: Any, url: str, **_: Any) -> httpx.Response:
+        request = httpx.Request("GET", url)
+        if url.endswith("SHA256SUMS"):
+            return httpx.Response(200, text=sums, request=request)
+        return httpx.Response(200, content=blob, request=request)
+
+    return _get
 
 
 def _artifact(names: list[str]) -> bytes:
@@ -202,6 +224,75 @@ class TestManifest:
         body = c.get("/api/endpoint/firmware").json()
         assert set(body) == {"version", "url"}
         assert body["version"] == "0.3.0"
+
+
+class TestSync:
+    """Fetching the firmware from the public release, which is what removes the errand."""
+
+    def test_a_checksum_mismatch_stores_nothing_at_all(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """These bytes become a bootloader on a device with no cable attached to it. A
+        half-stored set is worse than no set, so one bad asset refuses the whole sync."""
+        c, store, _blobs, _sent = client
+        good = b"\x01" * 16
+        release = {
+            "tag_name": "firmware-v9.9.9",
+            "assets": [
+                {"name": n, "browser_download_url": f"https://example/{n}"}
+                for n in (*ARTIFACT_NAMES, "SHA256SUMS")
+            ],
+        }
+        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(release))
+
+        sums = "\n".join(
+            f"{'0' * 64}  ./{name}" for name in ARTIFACT_NAMES
+        )  # deliberately wrong digests
+        monkeypatch.setattr(httpx.AsyncClient, "get", _asset_stub(sums, good))
+
+        resp = c.post("/api/endpoint/firmware/sync")
+        assert resp.status_code == 502
+        assert "checksum" in resp.json()["detail"]
+        assert "endpoint_firmware" not in store.rows
+
+    def test_a_matching_checksum_stores_the_release_version(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, store, _blobs, _sent = client
+        good = b"\x01" * 16
+        digest = hashlib.sha256(good).hexdigest()
+        release = {
+            "tag_name": "firmware-v1.2.3",
+            "assets": [
+                {"name": n, "browser_download_url": f"https://example/{n}"}
+                for n in (*ARTIFACT_NAMES, "SHA256SUMS")
+            ],
+        }
+        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(release))
+        sums = "\n".join(f"{digest}  ./{name}" for name in ARTIFACT_NAMES)
+        monkeypatch.setattr(httpx.AsyncClient, "get", _asset_stub(sums, good))
+
+        resp = c.post("/api/endpoint/firmware/sync")
+        assert resp.status_code == 200, resp.text
+        assert store.rows["endpoint_firmware"]["version"] == "1.2.3"
+
+    def test_an_unreachable_source_points_at_the_upload_fallback(
+        self,
+        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A box that cannot reach GitHub is a normal state for a LAN device, and it must
+        be told the way out rather than just that something failed."""
+        c, _store, _blobs, _sent = client
+        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(None))
+
+        resp = c.post("/api/endpoint/firmware/sync")
+        assert resp.status_code == 503
+        assert "upload" in resp.json()["detail"].lower()
 
 
 class TestFlash:

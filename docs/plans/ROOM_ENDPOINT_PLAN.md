@@ -451,11 +451,26 @@ it used to hold should stop working at that moment.
 in a child's bedroom can reach. It is owner-or-`device_key`, and returns a version and a URL
 and nothing else.
 
-**What still needs the owner.** One thing, and it is not a shell step: downloading the
-`endpoint-firmware` artifact from the CI run and picking it in Ops. That hop is kept
-deliberately: the alternative is a GitHub
-credential on the box and a path by which the box fetches and then executes something from
-the internet.
+**What still needs the owner: nothing but the tap.** The box fetches its own firmware.
+
+The first design asked them to download the CI artifact and upload it, defended on the
+grounds that the alternative meant a GitHub credential on the box and a path by which the
+box fetches and then executes code from the internet. **Both halves were wrong.** This
+repository is public, so release assets download over plain HTTPS with no credential at
+all; and the box already `git fetch`es this repo and runs what it gets on every
+Ops → Update, so "fetches and then executes from the internet" describes an update, not a
+new risk — and a firmware image is the *less* dangerous of the two, since it runs on the
+panel rather than on the box.
+
+So `firmware.yml` cuts a **release** tagged `firmware-v<version>` (artifacts need a token
+even on a public repo; release assets do not), and `POST /endpoint/firmware/sync` pulls it,
+**verifying every asset against the release's own `SHA256SUMS` before storing any of
+them** — one bad image refuses the whole set, because a half-stored set is worse than none
+on a device with no cable attached to it. A flash with nothing stored syncs first, so the
+very first flash needs no separate action either.
+
+The manual upload survives as a fallback for a box that cannot reach GitHub, which is a
+real state for a LAN device and not worth leaving without an answer.
 
 ### 10.5 Three findings from the board in hand
 

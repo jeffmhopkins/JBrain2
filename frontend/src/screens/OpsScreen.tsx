@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
-  type EndpointFirmware,
+  type EndpointFirmwareAvailable,
   type EndpointPort,
   type FlashRequest,
   type HostSettings,
@@ -1298,7 +1298,8 @@ function MemoryCard({
 
 function EndpointsCard() {
   const [ports, setPorts] = useState<EndpointPort[] | null>(null);
-  const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
+  const [avail, setAvail] = useState<EndpointFirmwareAvailable | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [absent, setAbsent] = useState(false);
   const [error, setError] = useState("");
   const [port, setPort] = useState("");
@@ -1311,10 +1312,13 @@ function EndpointsCard() {
 
   const refresh = useCallback(async () => {
     setError("");
+    // Fetched INDEPENDENTLY, not as a Promise.all. The port list is the primary
+    // diagnostic — it is how the owner tells "not plugged in" from "the box cannot see
+    // it" — and pairing it with the firmware status meant one failing hid the other.
+    // That bug has now been introduced twice by the same reflex, so the shape is the fix.
     try {
-      const [p, f] = await Promise.all([api.getEndpointPorts(), api.getEndpointFirmware()]);
+      const p = await api.getEndpointPorts();
       setPorts(p.ports);
-      setFirmware(f);
       setAbsent(false);
       // Default to the panel when exactly one is visible: it is the overwhelmingly common
       // case, and picking it for them removes the one step where a wrong choice writes a
@@ -1330,6 +1334,14 @@ function EndpointsCard() {
       else setError(e instanceof Error ? e.message : String(e));
       setPorts([]);
     }
+
+    // Best-effort: not knowing the firmware version must never cost the owner the port
+    // list, and a flash with nothing stored fetches its own firmware anyway.
+    try {
+      setAvail(await api.getEndpointFirmwareAvailable());
+    } catch {
+      setAvail(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -1339,9 +1351,31 @@ function EndpointsCard() {
   const upload = async (file: File) => {
     setError("");
     try {
-      setFirmware(await api.uploadEndpointFirmware(file, version || file.name));
+      const f = await api.uploadEndpointFirmware(file, version || file.name);
+      setAvail((prev) => ({
+        installed: f.version,
+        latest: prev?.latest ?? null,
+        fetchable: prev?.fetchable ?? false,
+      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const sync = async () => {
+    setSyncing(true);
+    setError("");
+    try {
+      const f = await api.syncEndpointFirmware();
+      setAvail((prev) => ({
+        installed: f.version,
+        latest: prev?.latest ?? f.version,
+        fetchable: true,
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -1362,7 +1396,10 @@ function EndpointsCard() {
     }
   };
 
-  const ready = Boolean(port && ssid && firmware) && !flashing;
+  // Firmware is NOT required here: a flash with none stored fetches it first, so gating
+  // the button on it would reintroduce the errand this card exists to remove.
+  const ready = Boolean(port && ssid) && !flashing && !syncing;
+  const behind = Boolean(avail?.latest && avail.latest !== avail.installed);
   const last = log.length > 0 ? log[log.length - 1] : "";
 
   return (
@@ -1381,8 +1418,16 @@ function EndpointsCard() {
               Rescan USB
             </button>
             <span className="muted">
-              {firmware ? `firmware ${firmware.version}` : "no firmware uploaded yet"}
+              {avail?.installed
+                ? `firmware ${avail.installed}`
+                : "no firmware yet — flashing will fetch it"}
+              {behind && ` · ${avail?.latest} available`}
             </span>
+            {avail?.fetchable && (
+              <button type="button" onClick={() => void sync()} disabled={syncing}>
+                {syncing ? "Fetching…" : behind ? "Update firmware" : "Re-fetch firmware"}
+              </button>
+            )}
           </div>
 
           {ports !== null && ports.length === 0 && (

@@ -75,6 +75,16 @@ The bearer token is the unit's own `device_key`, minted and written into NVS by 
 (**Ops → Room endpoints**), so a panel authenticates as a device rather than as an owner and
 a re-flash revokes the identity the panel had before.
 
+## How it reaches the box
+
+`firmware.yml` publishes a **release** tagged `firmware-v<version>` on every push to `main`
+that bumps `version.txt`, carrying the flashable set plus `SHA256SUMS`. The box pulls it
+itself (**Ops → Room endpoints**), verifying each asset before storing it — this repository
+is public, so no credential is involved anywhere in that path.
+
+Bumping `version.txt` is therefore the single act that cuts a release *and* makes a flashed
+panel update itself, since the running image compares that same string against the manifest.
+
 ## Building
 
 CI is the authority (`.github/workflows/firmware.yml`, ESP-IDF **v5.5.5** — the version
