@@ -266,6 +266,12 @@ class Settings(BaseSettings):
     # (docs/plans/SDR_RADIO_PLAN.md §4.4). Empty (the default) means no radio on this box,
     # and the probe/capture routes report that rather than failing obscurely.
     sdr_url: str = ""
+    # The `endpoint` panel-flasher sidecar (deploy/endpoint), OPT-IN behind the
+    # `endpoint` compose profile and egress-free by topology. Pinned here and never
+    # model-supplied — nothing about flashing is reachable by an agent, only by the
+    # owner. Empty (the default) means no flasher on this box, and Ops reports that
+    # rather than failing obscurely (the `sdr_url` pattern).
+    endpoint_url: str = ""
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).

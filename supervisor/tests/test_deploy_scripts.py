@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
@@ -1257,6 +1258,66 @@ def test_every_sidecar_module_is_copied_into_the_sdr_image() -> None:
 
     for module in sorted((DEPLOY / "sdr").glob("*.py")):
         assert f"COPY deploy/sdr/{module.name} " in dockerfile, module.name
+
+
+def test_every_sidecar_module_is_copied_into_the_endpoint_image() -> None:
+    """Same trap as the sdr image, same cost: `deploy/endpoint/` is one WORKDIR whose
+    modules import each other by bare name, and a module missing from the COPY list
+    fails
+    `import server` at the build gate — during the owner's Ops -> Update, with no
+    terminal
+    to read the failure with (CLAUDE.md #10)."""
+    dockerfile = (DEPLOY / "Dockerfile.endpoint").read_text()
+
+    for module in sorted((DEPLOY / "endpoint").glob("*.py")):
+        assert f"COPY deploy/endpoint/{module.name} " in dockerfile, module.name
+
+
+def test_the_endpoint_image_can_see_a_hotplugged_tty() -> None:
+    """The one compose detail that decides whether any of this works.
+
+    The ESP32-S3 enumerates as a kernel CDC-ACM tty (/dev/ttyACM0), not as a libusb
+    device, so the `devices: /dev/bus/usb` mapping the sdr sidecar uses cannot reach it
+    —
+    and the node does not exist until the owner plugs a panel in, so a static `devices:`
+    entry would fail at container start on a box with nothing attached. A /dev mount
+    plus
+    cgroup rules for the tty character majors is what admits a hotplugged tty without
+    granting `privileged`."""
+    compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
+    endpoint = compose["services"]["endpoint"]
+
+    assert "/dev:/dev" in endpoint["volumes"]
+    rules = endpoint["device_cgroup_rules"]
+    assert any(r.startswith("c 166:") for r in rules), "166 is USB CDC-ACM — the panel"
+    assert any(r.startswith("c 188:") for r in rules), (
+        "188 is USB serial — bridge boards"
+    )
+    assert not endpoint.get("privileged"), (
+        "a /dev mount plus majors is the narrower grant"
+    )
+
+
+def test_the_panel_flasher_has_no_route_off_the_box() -> None:
+    """It writes a bootloader to a device the owner cannot recover without a cable, and
+    it never fetches firmware — the api hands over the images. Saying so with the
+    network
+    rather than with policy is what keeps a GitHub credential off this box."""
+    compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
+
+    assert compose["networks"]["panel"]["internal"] is True
+    assert compose["services"]["endpoint"]["networks"] == ["panel"]
+    joined = [
+        name
+        for name, svc in compose["services"].items()
+        if "panel" in (svc.get("networks") or [])
+    ]
+    assert sorted(joined) == ["api", "endpoint"], joined
+
+
+def test_the_endpoint_profile_keeps_it_out_of_a_stock_deploy() -> None:
+    compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
+    assert compose["services"]["endpoint"]["profiles"] == ["endpoint"]
 
 
 def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:

@@ -672,4 +672,98 @@ describe("OpsScreen", () => {
     expect(await screen.findByRole("button", { name: /Core/ })).toBeInTheDocument();
     expect(screen.getByText("unavailable", { exact: false })).toBeInTheDocument();
   });
+  // ===== Room endpoints =====
+  // On a box with no terminal this card is the owner's only window onto a panel plugged
+  // into the box's USB port, so what it says when nothing is there matters as much as
+  // what it says when something is.
+
+  function endpointsMock(ports: unknown[], extra?: (path: string) => Response | null) {
+    return async (input: RequestInfo | URL): Promise<Response> => {
+      const path = String(input);
+      const base = baseMock(input);
+      if (base) return base;
+      const custom = extra?.(path);
+      if (custom) return custom;
+      if (path === "/api/endpoint/ports") return json({ ports, flasher: true });
+      if (path === "/api/endpoint/firmware") return new Response(null, { status: 404 });
+      return new Response(null, { status: 404 });
+    };
+  }
+
+  it("says the flasher is off rather than showing an error when the profile is absent", async () => {
+    // A 503 here is a configuration answer, not a fault, and the two want different words.
+    fetchMock.mockImplementation(
+      endpointsMock([], (path) =>
+        path === "/api/endpoint/ports"
+          ? json(
+              { detail: "No panel flasher on this box — the `endpoint` compose profile is off." },
+              503,
+            )
+          : null,
+      ),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    expect(await screen.findByText(/compose profile is off/)).toBeTruthy();
+  });
+
+  it("distinguishes 'nothing plugged in' from a broken flasher", async () => {
+    fetchMock.mockImplementation(endpointsMock([]));
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    expect(await screen.findByText(/Nothing on USB/)).toBeTruthy();
+  });
+
+  it("marks an Espressif port as the panel and preselects it when it is the only one", async () => {
+    // Preselecting removes the one step where a wrong choice writes a bootloader to
+    // something that is not a panel.
+    fetchMock.mockImplementation(
+      endpointsMock([
+        { device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },
+      ]),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    const radio = (await screen.findByRole("radio")) as HTMLInputElement;
+    await waitFor(() => expect(radio.checked).toBe(true));
+    expect(screen.getByText(/ESP32-S3/)).toBeTruthy();
+  });
+
+  it("does not preselect when several ports are visible", async () => {
+    fetchMock.mockImplementation(
+      endpointsMock([
+        { device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },
+        { device: "/dev/ttyACM1", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },
+      ]),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
+    expect(radios).toHaveLength(2);
+    expect(radios.every((r) => !r.checked)).toBe(true);
+  });
+
+  it("will not offer to flash until there is firmware and a network", async () => {
+    // Every one of these is required to produce a panel that can be updated again; a
+    // flash missing any of them strands a unit that has no cable attached to it.
+    fetchMock.mockImplementation(
+      endpointsMock([
+        { device: "/dev/ttyACM0", label: "Espressif ESP32-S3 (native USB)", is_espressif: true },
+      ]),
+    );
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByText("Room endpoints"));
+
+    const button = await screen.findByRole("button", { name: "Flash panel" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
 });

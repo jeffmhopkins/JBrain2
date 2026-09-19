@@ -2,6 +2,9 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
+  type EndpointFirmware,
+  type EndpointPort,
+  type FlashRequest,
   type HostSettings,
   type MetricRange,
   type MetricsHistory,
@@ -1286,6 +1289,181 @@ function MemoryCard({
   );
 }
 
+// ===== Room endpoints — flashing an ESP32-S3 panel from the PWA =====
+//
+// The owner has no terminal (CLAUDE.md #10), so a panel plugged into the box's USB port
+// is only reachable through this card. Its most useful control is the least impressive
+// one: the port list. "The box cannot see the panel" and "the panel is not enumerating"
+// have completely different fixes and are otherwise indistinguishable from a phone.
+
+function EndpointsCard() {
+  const [ports, setPorts] = useState<EndpointPort[] | null>(null);
+  const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
+  const [absent, setAbsent] = useState(false);
+  const [error, setError] = useState("");
+  const [port, setPort] = useState("");
+  const [ssid, setSsid] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [log, setLog] = useState<string[]>([]);
+  const [flashing, setFlashing] = useState(false);
+  const [version, setVersion] = useState("");
+
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      const [p, f] = await Promise.all([api.getEndpointPorts(), api.getEndpointFirmware()]);
+      setPorts(p.ports);
+      setFirmware(f);
+      setAbsent(false);
+      // Default to the panel when exactly one is visible: it is the overwhelmingly common
+      // case, and picking it for them removes the one step where a wrong choice writes a
+      // bootloader to something that is not a panel.
+      const panels = p.ports.filter((x) => x.is_espressif);
+      if (panels.length === 1 && panels[0]) setPort(panels[0].device);
+    } catch (e) {
+      // A 503 is the box saying the `endpoint` profile is off — a configuration answer,
+      // not a fault, and worth a different sentence from a real failure. Keyed off
+      // ApiError.status rather than the message text, which is the backend's `detail`
+      // and carries no status at all.
+      if (e instanceof ApiError && e.status === 503) setAbsent(true);
+      else setError(e instanceof Error ? e.message : String(e));
+      setPorts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const upload = async (file: File) => {
+    setError("");
+    try {
+      setFirmware(await api.uploadEndpointFirmware(file, version || file.name));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const flash = async () => {
+    setFlashing(true);
+    setLog([]);
+    setError("");
+    try {
+      const body: FlashRequest = { port, ssid, password };
+      if (name) body.name = name;
+      for await (const line of api.flashEndpoint(body)) {
+        setLog((prev) => [...prev, line]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFlashing(false);
+    }
+  };
+
+  const ready = Boolean(port && ssid && firmware) && !flashing;
+  const last = log.length > 0 ? log[log.length - 1] : "";
+
+  return (
+    <OpsCard
+      title="Room endpoints"
+      headerRight={<span className="muted">{ports?.length ?? 0} port(s)</span>}
+    >
+      {absent ? (
+        <p className="muted">
+          No panel flasher on this box — the <code>endpoint</code> compose profile is off.
+        </p>
+      ) : (
+        <>
+          <div className="ops-row">
+            <button type="button" onClick={() => void refresh()}>
+              Rescan USB
+            </button>
+            <span className="muted">
+              {firmware ? `firmware ${firmware.version}` : "no firmware uploaded yet"}
+            </span>
+          </div>
+
+          {ports !== null && ports.length === 0 && (
+            <p className="muted">
+              Nothing on USB. Either no panel is plugged in, or the flasher cannot see it — plug one
+              in and rescan.
+            </p>
+          )}
+
+          {ports !== null && ports.length > 0 && (
+            <ul className="ops-list">
+              {ports.map((p) => (
+                <li key={p.device}>
+                  <label>
+                    <input
+                      type="radio"
+                      name="endpoint-port"
+                      checked={port === p.device}
+                      onChange={() => setPort(p.device)}
+                    />{" "}
+                    <code>{p.device}</code> — {p.label}
+                    {p.is_espressif ? " (panel)" : ""}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <label className="ops-field">
+            Firmware artifact (the <code>endpoint-firmware</code> zip from CI)
+            <input
+              type="file"
+              accept=".zip"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void upload(f);
+              }}
+            />
+          </label>
+          <label className="ops-field">
+            Version label
+            <input
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              placeholder="0.1.0"
+            />
+          </label>
+
+          <label className="ops-field">
+            Wi-Fi network (2.4 GHz — this radio has no 5 GHz)
+            <input value={ssid} onChange={(e) => setSsid(e.target.value)} />
+          </label>
+          <label className="ops-field">
+            Wi-Fi password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <label className="ops-field">
+            Which panel (optional)
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. left" />
+          </label>
+
+          <div className="ops-row">
+            <button type="button" onClick={() => void flash()} disabled={!ready}>
+              {flashing ? "Flashing…" : "Flash panel"}
+            </button>
+            {last && <span className="muted">{last}</span>}
+          </div>
+
+          {log.length > 0 && <pre className="ops-log">{log.join("\n")}</pre>}
+        </>
+      )}
+
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </OpsCard>
+  );
+}
+
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
@@ -1448,6 +1626,8 @@ export function OpsScreen() {
       <HostSettingsCard />
 
       <HistoryCard refreshKey={refreshKey} />
+
+      <EndpointsCard />
 
       {containers === null && !error ? (
         <p className="muted">Loading status…</p>

@@ -59,7 +59,7 @@ failure mode that still needs the cable.
 
 ## The server contract
 
-One endpoint, which the box does not implement yet:
+One endpoint, served by the box at `backend/src/jbrain/api/endpoint.py`:
 
 ```
 GET {api}/endpoint/firmware        Authorization: Bearer <device token>
@@ -70,6 +70,10 @@ Reaching it is *also* the health signal the rollback gate turns on, which is why
 separate `/healthz` probe: the thing that proves a unit is recoverable is exactly the thing
 that recovers it. `version` is compared verbatim against `firmware/version.txt` as built, so
 **bumping that file is what makes a unit update.**
+
+The bearer token is the unit's own `device_key`, minted and written into NVS by the flasher
+(**Ops → Room endpoints**), so a panel authenticates as a device rather than as an owner and
+a re-flash revokes the identity the panel had before.
 
 ## Building
 
