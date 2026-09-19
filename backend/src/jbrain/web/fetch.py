@@ -683,12 +683,15 @@ def _window_and_find(
     find_regex: bool = False,
     body_truncated: bool,
     tier: str,
+    window: int = _MAX_CHARS,
 ) -> FetchResult:
     """Build the FetchResult: window `text` at `offset` (pagination) and, when `find` is
     given, re-anchor the window on the first keyword match at/after `offset` (so the model
     lands on the right SECTION, not a guessed offset) and attach the match map + section
     outline. `find_regex` matches `find` as a regular expression. Shared by the direct and
-    reader paths so both page and locate identically."""
+    reader paths so both page and locate identically. `window` sizes one page of text: a
+    web page gets `_MAX_CHARS`, and a caller reading something smaller (an email body)
+    passes its own, so a single read can't spend a page-sized budget on one message."""
     match_offsets: tuple[int, ...] = ()
     match_count = 0
     start = offset
@@ -702,7 +705,7 @@ def _window_and_find(
     return FetchResult(
         url=url,
         title=title,
-        text=text[start : start + _MAX_CHARS],
+        text=text[start : start + max(1, window)],
         links=links,
         truncated=body_truncated,
         offset=start,
@@ -726,10 +729,12 @@ def window_text(
     find: str = "",
     find_regex: bool = False,
     tier: str = "youtube",
+    window: int = _MAX_CHARS,
 ) -> FetchResult:
-    """Wrap ready-made text (not fetched HTML — e.g. a composed YouTube view) in a FetchResult
-    with the SAME offset/find windowing a fetched page gets, so the tool pages and keyword-jumps
-    it identically. `truncated` is False: the caller already holds the whole text."""
+    """Wrap ready-made text (not fetched HTML — e.g. a composed YouTube view, an email body)
+    in a FetchResult with the SAME offset/find windowing a fetched page gets, so the tool pages
+    and keyword-jumps it identically. `truncated` is False: the caller already holds the whole
+    text. `window` sizes one page, for a caller whose text is smaller than a web page."""
     return _window_and_find(
         text,
         url=url,
@@ -740,6 +745,7 @@ def window_text(
         find_regex=find_regex,
         body_truncated=False,
         tier=tier,
+        window=window,
     )
 
 

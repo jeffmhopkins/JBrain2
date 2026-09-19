@@ -7,20 +7,85 @@ over the `GmailApi` client; the archivist is allowlisted to exactly these tools 
 reads no knowledge base, so no owner note/entity data rides along. Reads return Gmail
 content as DATA (the model treats it as such, never as instructions); the three writes
 (create_label / label / archive) act only on the owner's own mailbox and never delete.
+
+Reading is deliberately cheap. A body is rendered to clean text before the model sees it
+(`jbrain.gmail.body`), `gmail_read` windows it and can keyword-jump or regex-extract from
+it instead of dumping it whole, and `gmail_extract` runs ONE regex across many messages in
+a single call — so "what did each of this week's deliveries cost" costs one bounded reply
+rather than a full HTML body per message.
 """
 
+import asyncio
+import re
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from email.utils import parseaddr
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.gmail import GmailApi, GmailError
+from jbrain.gmail import GmailApi, GmailError, GmailMessage
+from jbrain.gmail.body import render_body
+
+# The windowing and regex-extraction engines jerv reads a web page with. They are pure text
+# functions that happen to live beside the fetcher; reusing them means an email pages,
+# keyword-jumps and extracts with exactly the semantics (and the offsets) a page does,
+# rather than growing a second, subtly different implementation here.
+from jbrain.web.fetch import extract_matches, window_text
 
 _SEARCH_DEFAULT = 25
 _SEARCH_MAX = 100
 _BREAKDOWN_DEFAULT = 200
 _BREAKDOWN_MAX = 500
 _BREAKDOWN_TOP = 20
+# One window of an email body. Far smaller than a web page's 30k: a rendered email is
+# usually a few thousand characters, so this only ever binds on a genuine monster (a long
+# statement, a deep quoted thread) — exactly the case where dumping the whole thing into
+# the context is the wrong default. The tail stays reachable with `offset`.
+_READ_WINDOW = 12_000
+# Per-message caps for the extract paths. The point of extracting is to spend a fraction of
+# what reading costs, so a runaway pattern is capped and the TRUE total still reported.
+_READ_EXTRACT_MATCHES = 40
+_SCAN_EXTRACT_MATCHES = 6
+_SCAN_CONTEXT = 50
+# gmail_extract's message budget: enough to answer "every delivery this week" in one call,
+# bounded so a wide query can't fetch hundreds of bodies.
+_SCAN_DEFAULT = 10
+_SCAN_MAX = 25
+# Bodies are fetched concurrently in small chunks, like the sender breakdown's metadata
+# reads — one slow id-at-a-time loop over 25 messages is a visibly stalled turn.
+_SCAN_FETCH_CHUNK = 5
+
+
+def _bad_regex(pattern: str) -> str:
+    """The error text for a `find` that will not compile, or "" when it is fine. Checked
+    before any Gmail call, so a typo'd pattern costs nothing and says what to fix."""
+    try:
+        re.compile(pattern, re.IGNORECASE)
+    except re.error as exc:
+        return f"That regex doesn't compile: {exc}. Fix the pattern and call again."
+    return ""
+
+
+def _headers(msg: GmailMessage) -> str:
+    return f"From: {msg.sender}\nTo: {msg.to}\nDate: {msg.date}\nSubject: {msg.subject}"
+
+
+def _present_matches(text: str, pattern: str, *, max_matches: int, context: int) -> str:
+    """Every regex match in one body as a compact numbered list — the match, its capture
+    groups, and a little surrounding context — instead of the body itself."""
+    matches, total = extract_matches(text, pattern, max_matches=max_matches, context=context)
+    if not total:
+        return f"[no match for regex '{pattern}' in this message ({len(text)} chars)]"
+    lines = []
+    for i, m in enumerate(matches, 1):
+        line = f"{i}. {m.match}"
+        if m.groups:
+            line += "  [groups: " + " | ".join(m.groups) + "]"
+        lines.append(line + f"\n   …{m.context}…  (offset {m.offset})")
+    body = "\n".join(lines)
+    if total > len(matches):
+        body += f"\n[+{total - len(matches)} more match(es) not shown — narrow the pattern.]"
+    return body
+
 
 # Resolves the live Gmail client per call (credentials come from the settings panel,
 # so they can change without a restart). Raises GmailError when Gmail isn't connected
@@ -51,7 +116,7 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             client = await get_client()
             ids = await client.search(query, max_results=limit)
             if not ids:
-                return f"No Gmail messages match '{query}'."
+                return ToolOutput(f"No Gmail messages match '{query}'.", result_brief="no messages")
             rows = []
             for mid in ids:
                 msg = await client.get(mid, metadata_only=True)
@@ -69,16 +134,171 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         message_id = str(arguments.get("message_id", "")).strip()
         if not message_id:
             return "gmail_read needs a message_id."
+        find = str(arguments.get("find", "") or "").strip()
+        extract = bool(arguments.get("extract"))
+        use_regex = bool(arguments.get("regex")) or extract
+        try:
+            offset = max(0, int(arguments.get("offset", 0) or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        if extract and not find:
+            return "gmail_read with extract=true needs `find` — the regex to pull out."
+        if find and use_regex and (bad := _bad_regex(find)):
+            return bad
         try:
             client = await get_client()
             msg = await client.get(message_id)
         except GmailError as exc:
             return str(exc)
-        header = f"From: {msg.sender}\nTo: {msg.to}\nDate: {msg.date}\nSubject: {msg.subject}\n\n"
-        # The subject, not a byte count: what the row is asked is "which message was that?"
+        # The body as clean text — HTML rendered to markdown, tracking URLs collapsed. Reading
+        # a modern email raw costs thousands of tokens of layout markup the model then has to
+        # see past; this is the same pass the triage sweep classifies on.
+        text = render_body(msg)
+        header = _headers(msg) + "\n\n"
+        if not text:
+            return ToolOutput(header + "(no readable body)", result_brief="no readable body")
+        if extract:
+            return ToolOutput(
+                header
+                + f"[Extracting regex '{find}' from this message ({len(text)} chars).]\n"
+                + _present_matches(
+                    text, find, max_matches=_READ_EXTRACT_MATCHES, context=_SCAN_CONTEXT
+                ),
+                result_brief=f"extracted from {len(text):,} chars",
+            )
+        result = window_text(
+            text,
+            url="",
+            title=msg.subject,
+            offset=offset,
+            find=find,
+            find_regex=use_regex,
+            window=_READ_WINDOW,
+        )
+        if find and not result.match_count:
+            kind = "regex" if use_regex else "'find'"
+            return ToolOutput(
+                header + f"[No match for {kind} '{find}' in this message ({len(text)} chars). Call"
+                " gmail_read again without `find` to read it, or try another term.]",
+                result_brief=f"no match in {len(text):,} chars",
+            )
+        notes = []
+        if find and result.match_count:
+            notes.append(
+                f"[found {result.match_count} match(es) for '{find}'; window at offset"
+                f" {result.offset}"
+                + (
+                    " — others at " + ", ".join(str(o) for o in result.match_offsets[1:6])
+                    if len(result.match_offsets) > 1
+                    else ""
+                )
+                + "]"
+            )
+        end = result.offset + len(result.text)
+        if end < result.total_chars:
+            notes.append(
+                f"[Showing chars {result.offset}–{end} of {result.total_chars}. Call gmail_read"
+                f' again with message_id="{message_id}" and offset={end} for the rest — or'
+                ' pass find="<term>" to jump straight to what you need.]'
+            )
+        elif not result.text:
+            notes.append(f"[Nothing at offset {offset}: this message is {len(text)} chars.]")
+        body = result.text
+        # WHERE the reading got to, which is what decides whether to call again — a paging
+        # reader's row saying only the subject would leave that invisible.
+        brief = (
+            f"{result.match_count} match{'' if result.match_count == 1 else 'es'}"
+            if find and result.match_count
+            else f"chars {result.offset}–{end} of {result.total_chars:,}"
+        )
         return ToolOutput(
-            header + (msg.body or msg.snippet or "(no readable body)"),
-            result_brief=_clip(msg.subject or "(no subject)"),
+            header + (body + ("\n\n" + "\n".join(notes) if notes else "")).strip(),
+            result_brief=brief,
+        )
+
+    async def gmail_extract(arguments: dict, ctx: ToolContext) -> str:
+        """Run one regex across the bodies of the messages a query matches — the answer to
+        "what did each of these cost / when is each appointment" in ONE call, instead of a
+        gmail_read (and a full body in the context) per message."""
+        query = str(arguments.get("query", "")).strip()
+        find = str(arguments.get("find", "")).strip()
+        if not query:
+            return "gmail_extract needs a non-empty query."
+        if not find:
+            return "gmail_extract needs `find` — the regex to pull out of each message."
+        if bad := _bad_regex(find):
+            return bad
+        try:
+            limit = max(
+                1, min(int(arguments.get("limit", _SCAN_DEFAULT) or _SCAN_DEFAULT), _SCAN_MAX)
+            )
+        except (TypeError, ValueError):
+            limit = _SCAN_DEFAULT
+        try:
+            client = await get_client()
+            ids = await client.search(query, max_results=limit)
+            if not ids:
+                return f"No Gmail messages match '{query}'."
+            msgs: list[GmailMessage] = []
+            for start in range(0, len(ids), _SCAN_FETCH_CHUNK):
+                chunk = ids[start : start + _SCAN_FETCH_CHUNK]
+                msgs.extend(await asyncio.gather(*(client.get(mid) for mid in chunk)))
+        except GmailError as exc:
+            return str(exc)
+        blocks: list[str] = []
+        empty: list[str] = []
+        hits = 0
+        for msg in msgs:
+            text = render_body(msg)
+            matches, total = extract_matches(
+                text, find, max_matches=_SCAN_EXTRACT_MATCHES, context=_SCAN_CONTEXT
+            )
+            if not total:
+                empty.append(msg.id)
+                continue
+            hits += 1
+            lines = [
+                f"  - {m.match}"
+                + ("  [groups: " + " | ".join(m.groups) + "]" if m.groups else "")
+                + f"  …{m.context}…"
+                for m in matches
+            ]
+            more = (
+                f"\n  (+{total - len(matches)} more in this message)"
+                if total > len(matches)
+                else ""
+            )
+            blocks.append(
+                f"- [{msg.id}] {msg.date} — from {msg.sender}\n  {msg.subject}\n"
+                + "\n".join(lines)
+                + more
+            )
+        head = (
+            f"Regex '{find}' across the {len(msgs)} message(s) matching '{query}' —"
+            f" {hits} with a match:"
+        )
+        tail = ""
+        if empty:
+            tail = f"\n\n[No match in {len(empty)}: " + ", ".join(empty[:10])
+            tail += ", …]" if len(empty) > 10 else "]"
+        if len(ids) >= limit:
+            tail += (
+                f"\n[Scanned the {limit} most recent matches — run gmail_count on the query to"
+                " see whether more exist, and narrow it or raise `limit` to cover them.]"
+            )
+        if not blocks:
+            return ToolOutput(
+                f"No match for regex '{find}' in any of the {len(msgs)} message(s) matching"
+                f" '{query}'. Check the pattern (it is case-insensitive over the whole body),"
+                " or gmail_read one of them to see the actual wording." + tail,
+                result_brief=f"0 of {len(msgs)} matched",
+            )
+        # The HIT RATE, which is the answer to "did that pattern work": a scan of 40 messages
+        # that matched 2 is a different result from one that matched 38, and the row is where
+        # that is decided without opening anything.
+        return ToolOutput(
+            head + "\n" + "\n".join(blocks) + tail,
+            result_brief=f"{hits} of {len(msgs)} matched",
         )
 
     async def gmail_list_labels(arguments: dict, ctx: ToolContext) -> str:
@@ -265,6 +485,7 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
     return {
         "gmail_search": gmail_search,
         "gmail_read": gmail_read,
+        "gmail_extract": gmail_extract,
         "gmail_list_labels": gmail_list_labels,
         "gmail_create_label": gmail_create_label,
         "gmail_label": gmail_label,

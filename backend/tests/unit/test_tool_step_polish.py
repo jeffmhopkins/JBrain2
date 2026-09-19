@@ -160,6 +160,7 @@ _AUTHORS_BRIEF = {
     "gmail_bulk_label",
     "gmail_count",
     "gmail_create_label",
+    "gmail_extract",
     "gmail_label",
     "gmail_list_labels",
     "gmail_read",

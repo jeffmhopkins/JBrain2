@@ -1535,8 +1535,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "gmail_read.tool": (
             "gmail_read",
+            2,
+            "42381ebc9081e834b1c3a8e937899d8ba888213b21d6af38214fcbf664628a21",
+        ),
+        "gmail_extract.tool": (
+            "gmail_extract",
             1,
-            "568ebdb2e62865b2044fa6ce35ee02e09fccf1f5dcc52d95c0a2df460925ab69",
+            "65f49f61bdf1dd833d7529e376df16d6f22001f14b715acde3795c423a44375e",
         ),
         "gmail_list_labels.tool": (
             "gmail_list_labels",

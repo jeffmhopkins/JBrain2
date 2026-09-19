@@ -135,6 +135,29 @@ async def test_html_body_is_rendered_to_markdown_for_the_model() -> None:
     assert "everything" in sent  # link text preserved
 
 
+async def test_tracking_urls_are_collapsed_to_their_host_for_the_model() -> None:
+    """The sweep classifies every new message, so it pays the body cost most often. A
+    click-tracker is a few hundred opaque characters carrying no bucketing signal — the
+    host, which does carry one, survives the collapse."""
+    tracker = "https://links.marketing.example/e3t/Ctc/" + "Z" * 300
+    fake = FakeGmail(
+        messages=[
+            _msg(
+                "m1",
+                date="Wed, 25 Jun 2026 09:00:00 +0000",
+                body=f"<p>Deal inside. <a href='{tracker}'>Shop now</a></p>",
+            )
+        ]
+    )
+    router, llm = _router([{"bucket": "spam", "confidence": 0.9}])
+    await InboxTriage(_factory(fake), router).run({})
+
+    sent = llm.calls[0]["user_text"]
+    assert tracker not in sent
+    assert "<link: links.marketing.example>" in sent
+    assert "Shop now" in sent
+
+
 async def test_empty_inbox_makes_no_llm_call() -> None:
     fake = FakeGmail(messages=[])
     router, llm = _router([])

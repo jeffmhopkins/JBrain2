@@ -306,6 +306,7 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
     {
         "gmail_search",
         "gmail_read",
+        "gmail_extract",
         "gmail_list_labels",
         "gmail_create_label",
         "gmail_label",

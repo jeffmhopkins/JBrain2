@@ -35,8 +35,8 @@ import structlog
 from sqlalchemy import text
 
 from jbrain.db.session import scoped_session
+from jbrain.gmail.body import render_body
 from jbrain.gmail.client import GmailApi, GmailMessage
-from jbrain.htmltext import html_to_markdown
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.router import LlmRouter
 from jbrain.models.archivist import ArchivistMemoryRepo
@@ -84,12 +84,6 @@ _CLARIFICATIONS_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# A cheap signal that a body is HTML (a full-document tag or any closing tag), so we
-# render it to markdown before classifying rather than feeding the model raw markup.
-# A text/plain body that happens to contain a stray "<" is left untouched.
-_HTML_HINT = re.compile(
-    r"<(?:html|head|body|div|p|table|td|tr|a|br|span|ul|ol|li|img|font)\b|</[a-zA-Z]+>", re.I
-)
 
 # Returned by the classifier for ONE email; defined here (not only in the prompt)
 # because the handler passes it to router.complete and reads the result back.
@@ -277,15 +271,14 @@ class InboxTriage:
 
     @staticmethod
     def _render_email(msg: GmailMessage) -> str:
-        """One email as the classifier sees it: sender, subject, and the FULL body as
-        clean text. Gmail hands us the text/plain part when present, else raw HTML; an
-        HTML body is rendered to markdown (tags/boilerplate stripped) so the model reads
-        content, not markup. No length cap — the whole message goes, and the markdown
-        pass keeps a marketing email's real size far below its raw-HTML bulk."""
-        body = msg.body
-        if _HTML_HINT.search(body):
-            body = html_to_markdown(body) or body
-        return f"From: {msg.sender}\nSubject: {msg.subject}\n\n{body}".strip()
+        """One email as the classifier sees it: sender, subject, and the FULL body as clean
+        text (`jbrain.gmail.body` — HTML rendered to markdown, tracking URLs collapsed to
+        their host). No length cap: the whole message goes, and that pass keeps a marketing
+        email's real size far below its raw-HTML bulk. This sweep runs unattended over every
+        new message, so it is where the saving compounds — and nothing it drops (markup, a
+        click-tracker's payload) carries a bucketing signal, while the link's host, which
+        does, survives."""
+        return f"From: {msg.sender}\nSubject: {msg.subject}\n\n{render_body(msg)}".strip()
 
     @staticmethod
     def _resolve_bucket(parsed: Any) -> str | None:

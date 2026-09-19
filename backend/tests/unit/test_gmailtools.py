@@ -245,6 +245,134 @@ async def test_read_path_errors_surface_cleanly() -> None:
     assert "upstream down" in await h["gmail_label"]({"message_id": "m1", "add": ["X"]}, CTX)
 
 
+# --- reading cheaply -------------------------------------------------------
+
+# A marketing email as Gmail actually hands one over: a layout-table shell around three
+# lines of prose, with a click-tracking URL far longer than the content it wraps.
+_TRACKER = "https://emails.example.com/e3t/Ctc/" + "V" * 400
+_HTML_EMAIL = (
+    '<!--[if mso | IE]><td class="undefined-outlook" width="700px"><![endif]-->'
+    '<div style="margin:0px auto;max-width:700px;">'
+    '<table align="center" border="0" cellpadding="0" role="presentation"><tbody><tr><td>'
+    "<h1>Your order is on the way</h1>"
+    "<p>Order #4412 &mdash; Total: $57.31</p>"
+    f'<p><a href="{_TRACKER}">Track your delivery</a></p>'
+    "</td></tr></tbody></table></div>"
+)
+
+
+async def test_read_renders_html_to_clean_text_and_collapses_trackers() -> None:
+    """The defect this closes: gmail_read used to hand the model the raw HTML alternative,
+    so a three-line order email arrived as a wall of Outlook conditionals and a 400-char
+    tracking payload — thousands of prefill tokens of markup to see past."""
+    fake = FakeGmail([_msg("m1", subject="Your order", body=_HTML_EMAIL)])
+    out = await _handlers(fake)["gmail_read"]({"message_id": "m1"}, CTX)
+    assert "Total: $57.31" in out and "Order #4412" in out
+    assert "<td" not in out and "undefined-outlook" not in out
+    assert _TRACKER not in out
+    assert "<link: emails.example.com>" in out  # the host survives; the payload doesn't
+    assert len(out) < len(_HTML_EMAIL) // 2
+
+
+async def test_read_keeps_short_readable_urls() -> None:
+    """Only the tracking payloads go: a short link names where it leads, so it stays whole."""
+    fake = FakeGmail([_msg("m1", body="See https://mychart.example.org/bill/22 for details")])
+    out = await _handlers(fake)["gmail_read"]({"message_id": "m1"}, CTX)
+    assert "https://mychart.example.org/bill/22" in out
+
+
+async def test_read_windows_a_long_message_and_names_the_next_offset() -> None:
+    fake = FakeGmail([_msg("m1", body="x" * 30_000)])
+    out = await _handlers(fake)["gmail_read"]({"message_id": "m1"}, CTX)
+    assert "offset=12000" in out and "of 30000" in out
+    tail = await _handlers(fake)["gmail_read"]({"message_id": "m1", "offset": 12_000}, CTX)
+    assert "offset=24000" in tail
+
+
+async def test_read_find_jumps_to_the_term() -> None:
+    body = "noise " * 3_000 + "CONFIRMATION 8891" + " tail" * 100
+    out = await _handlers(FakeGmail([_msg("m1", body=body)]))["gmail_read"](
+        {"message_id": "m1", "find": "confirmation"}, CTX
+    )
+    assert "CONFIRMATION 8891" in out
+    assert "found 1 match(es)" in out
+
+
+async def test_read_find_that_misses_says_so_instead_of_dumping_the_body() -> None:
+    out = await _handlers(FakeGmail([_msg("m1", body="hello " * 500)]))["gmail_read"](
+        {"message_id": "m1", "find": "invoice"}, CTX
+    )
+    assert "No match" in out
+    assert "hello hello" not in out
+
+
+async def test_read_extract_returns_matches_not_the_message() -> None:
+    fake = FakeGmail([_msg("m1", subject="Your order", body=_HTML_EMAIL)])
+    out = await _handlers(fake)["gmail_read"](
+        {"message_id": "m1", "find": r"total:\s*\$([\d,.]+)", "extract": True}, CTX
+    )
+    assert "[groups: 57.31]" in out
+    # Only the match and a snippet of context come back, never the message — extracting a
+    # value costs a fraction of reading one, which is the whole point.
+    padded = _HTML_EMAIL + "<p>" + "filler prose. " * 500 + "</p>"
+    long_out = await _handlers(FakeGmail([_msg("m2", body=padded)]))["gmail_read"](
+        {"message_id": "m2", "find": r"total:\s*\$([\d,.]+)", "extract": True}, CTX
+    )
+    assert "[groups: 57.31]" in long_out
+    assert "filler prose" not in long_out
+    assert len(long_out) < len(padded) // 10
+
+
+async def test_read_extract_needs_a_pattern_and_rejects_a_bad_one() -> None:
+    h = _handlers(FakeGmail([_msg("m1")]))
+    assert "needs `find`" in await h["gmail_read"]({"message_id": "m1", "extract": True}, CTX)
+    bad = await h["gmail_read"]({"message_id": "m1", "find": "total(", "extract": True}, CTX)
+    assert "doesn't compile" in bad
+
+
+async def test_extract_scans_many_messages_in_one_call() -> None:
+    """The call the owner's question needed: thirteen delivery emails, one total each,
+    answered without thirteen full bodies in the conversation."""
+    fake = FakeGmail(
+        [
+            _msg(
+                "m1", subject="Delivery 1", body="Total: $12.50 delivered", sender="w@walmart.com"
+            ),
+            _msg("m2", subject="Delivery 2", body="Total: $7.05 delivered", sender="w@walmart.com"),
+            _msg("m3", subject="Promo", body="delivered soon, no price", sender="w@walmart.com"),
+        ]
+    )
+    out = await _handlers(fake)["gmail_extract"](
+        {"query": "delivered", "find": r"total:\s*\$([\d,.]+)"}, CTX
+    )
+    assert "[groups: 12.50]" in out and "[groups: 7.05]" in out
+    assert "2 with a match" in out
+    assert "No match in 1: m3" in out  # the odd one out is named, not silently dropped
+    assert "delivered soon, no price" not in out
+
+
+async def test_extract_validates_its_inputs_before_touching_gmail() -> None:
+    h = _handlers(_BoomGmail())
+    assert "non-empty query" in await h["gmail_extract"]({"query": " ", "find": "x"}, CTX)
+    assert "needs `find`" in await h["gmail_extract"]({"query": "x", "find": ""}, CTX)
+    assert "doesn't compile" in await h["gmail_extract"]({"query": "x", "find": "("}, CTX)
+
+
+async def test_extract_reports_when_nothing_matched_the_pattern() -> None:
+    fake = FakeGmail([_msg("m1", body="no amounts here")])
+    out = await _handlers(fake)["gmail_extract"]({"query": "amounts", "find": r"\$\d+"}, CTX)
+    assert "No match for regex" in out
+    assert "gmail_read one of them" in out
+
+
+async def test_extract_says_when_it_scanned_only_the_most_recent() -> None:
+    fake = FakeGmail([_msg(f"m{i}", body="Total: $1.00") for i in range(5)])
+    out = await _handlers(fake)["gmail_extract"](
+        {"query": "total", "find": r"\$([\d.]+)", "limit": 2}, CTX
+    )
+    assert "Scanned the 2 most recent" in out
+
+
 # --- web gating ------------------------------------------------------------
 
 

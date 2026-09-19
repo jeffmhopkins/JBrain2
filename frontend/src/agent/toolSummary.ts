@@ -124,6 +124,7 @@ const STEP_LABELS: Record<string, string> = {
   gmail_create_label: "Created a label",
   gmail_list_labels: "Listed labels",
   gmail_sender_breakdown: "Broke down senders",
+  gmail_extract: "Scanned emails",
   // Health
   read_labs: "Read lab results",
   read_encounters: "Read medical encounters",
@@ -242,6 +243,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   gmail_count: ["query"],
   gmail_bulk_label: ["query"],
   gmail_sender_breakdown: ["query"],
+  gmail_extract: ["query", "find"],
   gmail_create_label: ["name"],
   find_entity: ["name"],
   neighborhood: ["anchor"],
