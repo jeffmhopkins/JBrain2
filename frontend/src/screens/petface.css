@@ -51,6 +51,10 @@
   padding: 9px;
   align-self: flex-start;
 }
+/* The canvas is always 368x448 backing pixels; only its CSS size varies, and that is
+   computed in JS (pet/scale.ts) because two of the three modes depend on runtime facts the
+   stylesheet cannot see — devicePixelRatio, and the viewer's own measurement of their
+   screen. A `mm` rule here would be the bug that module exists to remove. */
 .pf-stage canvas {
   display: block;
   border-radius: 6px;
@@ -58,12 +62,53 @@
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  width: 368px;
-  height: 448px;
 }
-.pf-stage.pf-true canvas {
-  width: 29.02mm;
-  height: 35.33mm;
+/* The calibration target: width is set inline, so only the look lives here. A bank card is
+   ISO/IEC 7810 ID-1, 85.60 x 53.98 mm, hence the aspect ratio. */
+.pf-card-ref {
+  aspect-ratio: 85.6 / 53.98;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 2px solid var(--accent);
+  /* ID-1's 3.18 mm corner radius, as a proportion — the element's width is the calibrated
+     length, so anything absolute here would drift away from it. */
+  border-radius: 3.7% / 5.9%;
+  background: var(--accent-tint);
+}
+/* Three exclusive choices, so they read as one control rather than three buttons. */
+.pf-seg {
+  display: flex;
+  gap: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+/* Named for screen readers only — the three labels carry the meaning visually. */
+.pf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.pf-seg button {
+  border-radius: 0;
+  margin-left: -1px;
+  padding: 8px 10px;
+}
+.pf-seg button:first-child {
+  border-radius: 12px 0 0 12px;
+  margin-left: 0;
+}
+.pf-seg button:last-child {
+  border-radius: 0 12px 12px 0;
+}
+.pf-seg button[aria-pressed="true"] {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--text);
 }
 .pf-note {
   color: var(--text-3);
