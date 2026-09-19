@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-09-01
+> **Status:** Living · **Last verified:** 2026-09-19
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -67,21 +67,10 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   re-exporting the moved private helpers from `deep_research` so the tests' imports still
   resolve. Its own PR, done in a git-push-capable session. Follows from the scratchpad work
   (PR #1049).
-- `ROOM_ENDPOINT_PLAN.md` — **supersedes `DITOO_PLAN.md`**, and the hardware is ordered
-  (2 × Waveshare ESP32-S3-Touch-AMOLED-1.8): a small AMOLED satellite that is the box's face
-  and ears in a room. **No Bluetooth anywhere**, so the whole §4 of the Ditoo plan evaporates;
-  the endpoint is a Wi-Fi client like any other. 368x448 AMOLED gives true blacks (pixel art
-  reads as *emitting*, not photographed) and **368/16 = 23 px per cell exactly**, leaving a
-  368x80 caption strip. 8 MB PSRAM leaves room for framebuffers, audio and an on-device
-  wake-word model, and **ESP-SR brings wake word + acoustic echo cancellation** — so
-  full-duplex barge-in, which the Ditoo could never do, is reachable. Server half is largely
-  shipped (Kokoro, whisper.cpp, `PetBroadcaster`, `notify/bus.py`, `ACTION_SPECS`) and the
-  endpoints need **no new auth model** — they are `Subject(kind='device')` +
-  `Principal(kind='device_key')`, the substrate MQTT already reuses. Net-new: firmware, one
-  protocol, renderers, an audio round-trip. Two units by design: one bench, one deployed, and
-  **OTA is a W1 feature** because rule 10 forbids a USB cable being the update path.
 _(`DITOO_PLAN.md` was superseded by `ROOM_ENDPOINT_PLAN.md` when the owner dropped the Ditoo
 for two Wi-Fi AMOLED endpoints, and now lives in `../archive/`.
+`ROOM_ENDPOINT_PLAN.md` itself was promoted to `../plans/` (Scheduled) on 2026-09-19, when the
+two panels arrived and the owner set the constraints that decide its delivery path.
 The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,

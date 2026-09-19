@@ -1,17 +1,18 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** Proposed (icebox) · **Last verified:** 2026-09-13
+> **Status:** Scheduled · **Last verified:** 2026-09-19 · **Waves:** W1◻ W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
 
-**Status: proposed / icebox.** Nothing built, no roadmap slot — but unlike most of this
-folder, **the hardware is ordered** (two units), so this is a plan against a real device
-rather than a thought experiment. Supersedes `../archive/DITOO_PLAN.md`, which chased the same
-goal through Bluetooth and paid for it; **the Ditoo itself is out of the picture** — cancelled,
-not retained as a speaker — and that doc is archived for its findings, not its design. When
-picked up, reconcile with the `CLAUDE.md` non-negotiables, get a `docs/ROADMAP.md` slot, and
-promote out of `proposed/`.
+**The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
+the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
+port is available **for the first flash only** — every update after that must arrive over
+Wi-Fi. So this promoted out of `proposed/`: W1 is designed (§10) rather than sketched, and the
+plan is against a device on the bench rather than a listing. Supersedes `../archive/DITOO_PLAN.md`,
+which chased the same goal through Bluetooth and paid for it; **the Ditoo itself is out of the
+picture** — cancelled, not retained as a speaker — and that doc is archived for its findings,
+not its design.
 
 > **Split, 2026-09-13.** The device-independent half — the face, the touch model, the voice
-> round-trip, the anti-boredom engine — moved to `../plans/PET_ENDPOINT_PWA_PLAN.md` and is being
+> round-trip, the anti-boredom engine — moved to `PET_ENDPOINT_PWA_PLAN.md` and is being
 > built as a **PWA surface first**, so the product is in use before the panels arrive. What stays
 > here is firmware, I2S audio, OTA and the enclosure. That plan's P5 live trial **gates W6**: if a
 > wake word cannot hear a four-year-old on a phone's microphone, it will not hear him on this panel.
@@ -57,7 +58,9 @@ Gained on top:
 - **Full-duplex voice is actually reachable.** Espressif's **ESP-SR** runs on the S3 and
   provides on-device wake word (microWakeWord/WakeNet) *and* **acoustic echo cancellation** —
   the exact thing the Ditoo could not do for want of a DSP. Barge-in stops being a stretch
-  goal.
+  goal. **— Wrong, corrected in §10.5-A:** ESP-SR runs on the S3, but AEC needs an echo
+  reference channel and *this board has none* (ES8311, one mic, no ES7210). The wake word
+  survives; barge-in probably does not.
 - **Wideband audio both directions**, instead of HFP's 8/16 kHz narrowband.
 - **A touchscreen**, so the endpoint is an input device too, not only a display.
 - **A general screen.** It can show the pet, a caption, a chart, text — things a 16×16 LED
@@ -154,7 +157,7 @@ some of its content must not leak sideways. Non-negotiables:
 
 | Wave | What | Notes |
 |---|---|---|
-| **W1** | **Bench bring-up + decisions.** Flash Waveshare's sample, confirm display/mic/speaker, settle §4.1 transport, §4.3 toolchain, and get **OTA** working. | The wave where the hardware votes. Bench unit only. |
+| **W1** | **Bench bring-up + decisions.** Flash Waveshare's sample, confirm display/mic/speaker, settle §4.1 transport, §4.3 toolchain, and get **OTA** working. | **Designed in §10** — the hardware arrived and the owner set the constraints. |
 | **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, `endpoint_url`/broker config defaulting to empty so the feature is simply absent when unset (the `sdr_url` pattern), Settings → Endpoints. | No new auth model. |
 | **W3** | **Display path.** Frame/scene protocol, renderers, notification cards. **GUI round 1 is drawn**: `../mocks/room-endpoint/device.html` — four shapes on one state model, awaiting the owner's pick. | See §8: the mock measured the panel and moved the goalposts. |
 | **W4** | **JPet on the endpoint.** One more `PetBroadcaster` subscriber + a sprite renderer. | The payoff. |
@@ -277,3 +280,128 @@ W6 must treat "robot" as the convenience layer over the deterministic one, never
 - **COPPA:** command audio deleted promptly is a narrow carve-out. Retaining his voice to
   fine-tune — which roughly halves child ASR error, the highest-leverage fix available — needs
   verifiable parental consent. That is a fork to decide deliberately, not to drift into.
+
+## 10. W1, settled — the bring-up path (2026-09-19)
+
+The units are on the bench, and the owner settled the two questions W1 was really waiting on:
+
+> **Same LAN as the box**, and **the box's own USB port is available for the first flash** —
+> but only the first. Everything after that has to arrive over Wi-Fi.
+
+That second sentence is §4.4 restated by the person who has to live with it, and it is the
+constraint this section is built around. It also makes the box — not a laptop, not a browser —
+the flashing seat, which turns out to be a better one: **the box can bake its own secrets in at
+flash time**, which a generic web flasher cannot.
+
+### 10.1 Generic firmware, personalised on the box
+
+| Stage | Where | Holds |
+|---|---|---|
+| Build | GitHub Actions, `espressif/idf` image | `firmware.bin` — **no credentials, no token, no certificate**. Identical for both units, safe to publish as a release artifact. |
+| Personalise | the box, at flash time | an **NVS blob** (`nvs_partition_gen.py`): Wi-Fi SSID + password, `https://jbrain.local`, this unit's device token, and **the box's own Caddy root certificate**. |
+| Flash | the box, over USB | `esptool` writes bootloader + partition table + factory + app + NVS. |
+| Update | the box, over Wi-Fi | `esp_https_ota` pulls the next `firmware.bin`, validating against the root already in NVS. OTA writes only the app slot, so the credentials survive. |
+
+The split matters for more than tidiness. The artifact CI publishes carries nothing sensitive,
+so the build can be public and cached; and the credentials never pass through a browser, a
+download, or this repo. It also closes §8-era finding **C** — that reading Caddy's root out of
+`proxy:/data/caddy/pki/authorities/local/root.crt` needs `docker cp`, i.e. a terminal — without
+adding an operator step: **the box already has that file**, and the flash action reads it.
+
+### 10.2 The flashing sidecar
+
+A profile-gated sidecar beside `deploy/sdr/` — `deploy/endpoint/`, `Dockerfile.endpoint`,
+profile `endpoint` — so a stock deploy never starts it, and an `endpoint_url`-shaped empty
+default means the feature is simply absent when unset (the `sdr_url` pattern). It runs
+`esptool`, which is pure Python over `pyserial`: **no `apt`**, which matters because the PWA
+update path cannot apt (`../archive/DITOO_PLAN.md` §4.3).
+
+`update-inner.sh` refreshes source and recreates the stack, so the compose change ships through
+**Ops → Update with no host step**. One difference from the SDR precedent to verify rather than
+assume: `sdr` maps `/dev/bus/usb`, which works because an RTL-SDR is a raw libusb device. The
+ESP32-S3's native USB enumerates as a **kernel CDC serial port** (`/dev/ttyACM*`), which is not
+under that path, and which does not exist until the board is plugged in. So this needs `/dev`
+plus `device_cgroup_rules` for the tty majors instead of a static `devices:` entry — a narrower
+grant than `privileged`, but a different one, and hotplug is the reason.
+
+The operator surface is a button, per rule 10: **Ops → Endpoints → Flash**, which lists the
+serial ports it can see, mints the device token, builds the NVS blob and runs the flash with
+its log streamed back. Nothing about it is shell-only.
+
+### 10.3 What makes "cable once" true rather than aspirational
+
+An OTA that boots but cannot join Wi-Fi, or joins but cannot reach the box, strands the unit
+back on the cable. Two mechanisms prevent it, and **both must be in the first flashed image** —
+they cannot be added later, because the image that lacks them is precisely the one that strands
+you:
+
+1. **Rollback gated on reaching the box.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, with the new
+   image calling `esp_ota_mark_app_valid_cancel_rollback()` **only after** it has joined Wi-Fi
+   *and* completed one round trip to the api. Anything less and the bootloader reverts to the
+   previous slot on the next reset. The bar is "it works", not "it booted".
+2. **A frozen factory recovery app.** 16 MB of flash affords factory + two OTA slots, and an
+   invalid otadata falls back to factory. Keep that image dumb — join Wi-Fi, fetch firmware,
+   flash it — and never change it.
+
+Sketch, to be pinned in the partition CSV: `nvs` 24 K · `otadata` 8 K · `phy_init` 4 K ·
+`factory` 1.5 M · `ota_0` 5 M · `ota_1` 5 M · the remainder for assets. Two full-size slots is
+what buys the rollback; do not trade them away for a bigger asset partition.
+
+### 10.4 Order of work, and what each step buys
+
+Waveshare ships 17 numbered examples on ESP-IDF 5.5.5/6.0.2 **with prebuilt binaries and factory
+recovery images in Releases**, so the first steps are flash-and-look, not write-code.
+
+| # | Step | Proves | Source |
+|---|---|---|---|
+| 0 | Power both units from any charger, **before flashing anything** | the panels are alive — and preserves the ability to tell "DOA" from "my firmware is wrong" | factory image, as shipped |
+| 1 | `14_lvgl_demo_v9` | SH8601 panel + FT3168 touch at 368×448 | vendor |
+| 2 | `10_wifi_station` | the radio joins the house network | vendor |
+| 3 | `12_i2s_codec` | ES8311 → speaker | vendor |
+| 4 | **our skeleton** — partitions, rollback, NVS config, Wi-Fi, one round trip | the safety net exists before anything depends on it; **CI proves it compiles without hardware** | ours |
+| 5 | the sidecar + Ops button | the first flash the owner drives themselves | ours |
+| 6 | one frame of `frontend/src/pet/draw.ts` at native 368×448 | **whether the design survives 29 × 35 mm** — the question no mock can answer | ours |
+| 7 | OTA, proven by shipping step 6's change to the FIELD unit over Wi-Fi | the cable is retired | ours |
+| 8 | mic capture + the barge-in test | finding A below, one way or the other | ours |
+
+Step 0 is not ceremony. After the first flash, a dead panel and a wrong firmware look identical,
+and the return window is the thing being spent.
+
+**Label the units physically, now: `BENCH` and `FIELD`.** §4.4 asks for it and step 7 is where it
+pays — BENCH takes the cable and the mistakes; FIELD only ever takes an OTA that already worked
+on BENCH.
+
+### 10.5 Three findings from the board in hand
+
+**A. There is no echo reference, so barge-in is probably not available.** The board carries an
+**ES8311** codec and one microphone — no ES7210. The ES7210 on the ESP-BOX and Korvo-2 reference
+boards is not there for extra microphones; it supplies the **reference channel** ESP-SR's
+acoustic echo cancellation needs. Without it this is software AEC at best, and the pet likely
+cannot hear its wake word while it is speaking.
+
+This contradicts §2's "barge-in stops being a stretch goal" — that sentence assumed ESP-SR's
+capability implied this board's. **It does not, and §2 is wrong on this point.** The design has
+already absorbed the blow without knowing it: §9's *touch = mic open* came out of the preschool
+research and makes press-to-talk the primary path with the wake word as convenience. That
+decision is now load-bearing rather than merely defensible. Step 8 confirms it in two minutes —
+play a TTS clip and try to interrupt it.
+
+**B. The panel has no credential to talk to the box today.** `/pet/*` is `owner_only`, and
+`/internal/pet/*` is 404'd by Caddy on every app surface, so an endpoint on the LAN cannot reach
+the path the on-box wall uses. W2's device principal is therefore not deferrable past step 4's
+round trip. The bench shortcut is a dedicated owner token, revoked when the spike ends — fine on
+a bench, **never on the unit that goes in a child's room** (§3 of `PET_ENDPOINT_PWA_PLAN.md`).
+
+**C. Resolved by 10.1** — the LAN certificate stops being an operator problem once the box is
+the flasher.
+
+### 10.6 Still open after this section
+
+- **Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged `/dev/ttyACM*`?**
+  Verified on the box at step 5, not assumed here.
+- **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
+  works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
+  if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
+- **Which transport (§4.1).** Step 4 deliberately uses plain HTTPS + SSE — the endpoints the PWA
+  screen already exercises — because that is zero new server work and it produces the latency
+  number the MQTT-versus-WebSocket decision needs. Decide after step 6, with data.

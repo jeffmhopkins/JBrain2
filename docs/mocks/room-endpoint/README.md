@@ -1,6 +1,6 @@
 # Room endpoint — GUI rounds
 
-Plan: `../../proposed/ROOM_ENDPOINT_PLAN.md` · Design system: `../../reference/DESIGN.md`
+Plan: `../../plans/ROOM_ENDPOINT_PLAN.md` · Design system: `../../reference/DESIGN.md`
 
 | Round | Mock | Question | Status |
 |---|---|---|---|

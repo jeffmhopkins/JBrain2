@@ -2683,7 +2683,7 @@ does **not** gate sends; the parent turn stays the single gated turn, and the
 in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
 child session rows — see the build plan's "Execution model").
 
-## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/proposed/ROOM_ENDPOINT_PLAN.md`)
+## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 
 The pet on a **368×448 AMOLED room endpoint** (physically **29.0 × 35.3 mm**, 322 ppi), for a
 **four-year-old**. Chosen **"small body"** over the rivals *eyes-only* (Vector's answer) and
