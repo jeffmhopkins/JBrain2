@@ -883,12 +883,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "db6b63a3e790ccfc861ddd23c806df9f2461ca5981f0c41df39103b8eae7621e",
         ),
         "jerv": (
-            "agent-jerv-v52",
-            "9b607879cab2eb7b14ad044d7e22823b86175979c24a1ca1c91a150305dfac58",
+            "agent-jerv-v53",
+            "ef03fa357f856dcce5389e2f4caa80567b026b8cd8cae4c4c7a3d8cc10d96c1b",
         ),
         "archivist": (
-            "agent-archivist-v13",
-            "215a8e8246219fa3ede56d391c2a83feac8d22ab8733e9f0a3c2438b5f9dfbc7",
+            "agent-archivist-v14",
+            "d87cdd595617e293773a6c77a602d90690320bb910e378512c68ce05e86825c2",
         ),
         "research": (
             "agent-research-v18",
