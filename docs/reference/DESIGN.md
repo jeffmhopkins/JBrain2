@@ -1670,7 +1670,7 @@ the step that made it. Not a surface of its own and not a note-screen change: th
     it. A reason with no owner-facing meaning renders nothing — a code he cannot act on is
     a code he has to ask about.
 - **A computed number cites its working** (`[=n]` → `ƒn`, `ComputationPopover.tsx`, build
-  plan `docs/plans/SHOW_THE_WORKING_PLAN.md` W3 — binding mock
+  plan `docs/archive/SHOW_THE_WORKING_PLAN.md` W3 — binding mock
   `docs/mocks/code-run/g-cited-floating.html`). Its own marker namespace, separate from the
   `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
   The model authors the MARKER only — the panel is filled from the persisted call, and a
@@ -1679,7 +1679,7 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   in place capped at 46vh; the expansion is the same `code_run` component the Worked step
   renders, so the two entry points cannot drift.
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
-  `docs/plans/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
+  `docs/archive/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some
   arithmetic. The `STEP_VIEWS` set in the registry is read by BOTH the bubble (which filters
   them out) and the step (which renders them), so a view cannot appear twice or nowhere.
@@ -1690,7 +1690,7 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   under a run name controls that are checked against the compose file, and `calculate`, which
   never enters the container, does not borrow them.
 - **Every step row says what came back**, not only what was asked (`stepLedger.ts`, build
-  plan `docs/plans/SHOW_THE_WORKING_PLAN.md` W1 — binding mock
+  plan `docs/archive/SHOW_THE_WORKING_PLAN.md` W1 — binding mock
   `docs/mocks/code-run/h-worked-ledger.html`). The right-hand column is one slot with one
   rule: the tool's own authored answer wins (`ToolResultEvent.result_brief` — only the
   handler knows which part of its result was the answer), else a phrase read off the step's

@@ -6,7 +6,7 @@
 // with nothing on its right is a row you cannot check.
 //
 // This is the one place that decides, so the four hardcoded per-tool branches in `StepRow`
-// become one call (docs/plans/SHOW_THE_WORKING_PLAN.md W1). The order below is the whole
+// become one call (docs/archive/SHOW_THE_WORKING_PLAN.md W1). The order below is the whole
 // design: a tool that AUTHORED its answer wins, because only the handler knows which part
 // of its own result was the answer; everything else is read off the structured fields the
 // step already carries. Nothing here parses `summary`, which is model-facing text.

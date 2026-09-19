@@ -1,6 +1,6 @@
 # JBrain2 — docs archive
 
-> **Status:** Living · **Last verified:** 2026-09-18
+> **Status:** Living · **Last verified:** 2026-09-19
 
 Historical documents: completed build plans, fulfilled contracts, rejected
 designs, and the design research that informed them. Kept for the audit trail
@@ -38,6 +38,7 @@ its ship evidence.
 | `SUBAGENT_FEEDING_WAVES_PLAN.md` / `SUBAGENT_FEEDING_WAVES_REVIEW.md` | Producer→consumer feeding waves (plan + review). |
 | `EMAIL_ARCHIVIST_PLAN.md` | Sandboxed `archivist` Gmail persona. |
 | `EXACT_MATH_TOOLS_PLAN.md` | `calculate` (exact in-process arithmetic) + `run_python` (the egress-free `pysandbox` sidecar), granted to every persona but the non-owner `intake`. Records why ASSISTANT.md's "no code execution in the agent" survives the second tool, and how the two costs `../proposed/JERV_CONTEXT_BUDGET_PLAN.md` §5 priced against a Python sandbox are paid by containerizing it. |
+| `SHOW_THE_WORKING_PLAN.md` | The surfaces that make the exact-math tools checkable, plus the question reaching a plain chat. Every Worked row says what came BACK, not only what was asked (`result_brief` + `stepLedger.ts`; 108 of 127 tools author their answer, the rest render from structured fields, none render blank); a run shows its code in its step (`code_run`, one component for `run_python` and `calculate`, highlighting owned by the component and containment chips checked against the compose file); a computed number cites its working through a `[=n]` marker and a floating popover that renders that same component; and `ask_owner` records its set on the turn when there is no note behind it, granted to curator and teacher and never to a non-owner persona. Records why each gate was made to bite — three tools were caught rendering blank behind a label saying they were fine, and the written-answer escape the owner asked for became a rule rather than behaviour that happened to be there. |
 | `HURRICANE_TABS_PLAN.md` | Tabbed hurricane card (track/cone/alerts/surge). |
 | `VIDEO_ANALYSIS_PLAN.md` | On-box video understanding. |
 | `STREAM_ANALYSIS_PLAN.md` | `analyze_stream`: jerv reads a video URL (live/VOD) via yt-dlp + ffmpeg. |

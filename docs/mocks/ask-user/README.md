@@ -7,8 +7,10 @@
 > **`QuestionBlock` is the binding surface.** What survives from this gate is the owner's
 > amendment — a multiple-choice question always carries a written answer — which the shipped
 > component already satisfies. What does not survive is A's posting model. See
-> `../../plans/SHOW_THE_WORKING_PLAN.md` W4, which widens the shipped surface rather than
-> building a second one.
+> `../../archive/SHOW_THE_WORKING_PLAN.md` W4, which widened the shipped surface rather than
+> building a second one — **now built**: `ask_owner` records its set on the turn when there
+> is no note behind it, and the owner's written-answer amendment is pinned by two tests that
+> fail if the escape is ever made conditional.
 
 ## What the shipped component decided differently, and better
 

@@ -1,5 +1,5 @@
 // The `code_run` tool-view: what `run_python` and `calculate` actually did
-// (docs/plans/SHOW_THE_WORKING_PLAN.md W2 — binding mock
+// (docs/archive/SHOW_THE_WORKING_PLAN.md W2 — binding mock
 // docs/mocks/code-run/h-worked-ledger.html).
 //
 // One component, two tools. `calculate` fills the same slots with an expression in place of

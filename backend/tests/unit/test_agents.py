@@ -38,7 +38,7 @@ from jbrain.agent.agents import (
 )
 from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
-from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
+from jbrain.agent.toolregistry import NEVER_DEFAULT, RegisteredTool, ToolRegistry
 
 
 def test_eighteen_agents_are_defined() -> None:
@@ -76,16 +76,19 @@ def test_curator_is_the_full_brain_default() -> None:
     curator = AGENTS["curator"]
     assert curator.tools is None
     assert curator.reads_knowledge_base is True
-    assert curator.version == "agent-system-v10"
+    assert curator.version == "agent-system-v11"
 
 
 def test_teacher_is_a_socratic_tutor_that_holds_only_the_math_tools() -> None:
-    """teacher's allowlist is the arithmetic pair and nothing else, and it still reads no
-    knowledge base — it teaches from the conversation. The pair is the owner-decided
-    reversal of the original empty allowlist: a tutor that cannot check a student's
-    arithmetic has to either trust it or assert its own."""
+    """teacher's allowlist is the arithmetic pair plus the question, and nothing else, and
+    it still reads no knowledge base — it teaches from the conversation. The pair is the
+    owner-decided reversal of the original empty allowlist: a tutor that cannot check a
+    student's arithmetic has to either trust it or assert its own. `ask_owner` joins them
+    for the same reason one level up: a tutor that guesses which reading a student meant
+    teaches the guess."""
     teacher = AGENTS["teacher"]
-    assert teacher.tools == MATH_TOOLS == frozenset({"calculate", "run_python"})
+    assert teacher.tools == MATH_TOOLS | {"ask_owner"}
+    assert frozenset({"calculate", "run_python"}) == MATH_TOOLS
     assert teacher.reads_knowledge_base is False
     # Nothing ELSE leaked in with them: no web, no knowledge base, no spawn.
     assert not ((teacher.tools or frozenset()) & (WEB_TOOLS | {SPAWN_TOOL}))
@@ -207,7 +210,9 @@ def test_curator_holds_deep_produce_via_extra_tools_only() -> None:
     # `run_python` rides the same mechanism, and for the same reason: it is `web`-class, so
     # curator holding it has to be a deliberate line rather than something a wildcard
     # absorbed. `calculate` is deliberately NOT here — it is `read`-class and needs no grant.
-    assert curator.extra_tools == frozenset({"deep_produce", "run_python"})
+    # `ask_owner` rides it too: NEVER_DEFAULT, so the wildcard cannot absorb a tool that
+    # puts a question in front of the owner and ends the turn.
+    assert curator.extra_tools == frozenset({"deep_produce", "run_python", "ask_owner"})
     assert "calculate" not in curator.extra_tools
     # No other persona carries an extra_tools grant — the grant does not leak.
     for name, profile in AGENTS.items():
@@ -222,8 +227,9 @@ def test_image_tools_are_jerv_only() -> None:
     assert "analyze_image" in JERV_TOOLS
     assert {"generate_image", "edit_image"} & JERV_TOOLS == set()
     assert AGENTS["curator"].tools is None
-    # teacher now holds the arithmetic pair, and nothing else — no vision tool reached it.
-    assert AGENTS["teacher"].tools == MATH_TOOLS
+    # teacher holds the arithmetic pair and the question, and nothing else — no vision
+    # tool reached it.
+    assert AGENTS["teacher"].tools == MATH_TOOLS | {"ask_owner"}
     assert "analyze_image" not in MATH_TOOLS
 
 
@@ -280,7 +286,7 @@ def test_archivist_tools_are_archivist_only() -> None:
     # The exclusivity that actually matters is unchanged — the mailbox surface is still
     # the archivist's alone; what it now shares reads nothing and reaches nothing.
     assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & (MATH_TOOLS | {"current_time"}))
-    assert AGENTS["teacher"].tools == MATH_TOOLS
+    assert AGENTS["teacher"].tools == MATH_TOOLS | {"ask_owner"}
 
 
 def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
@@ -868,12 +874,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
     version bump, like every .prompt file (DEVELOPMENT.md)."""
     pins = {
         "curator": (
-            "agent-system-v10",
-            "6e77aa1c53db8da4fa3dae5edd9fa8643f1e73e95bfd05c7177bd56a4b9884bc",
+            "agent-system-v11",
+            "a9bbf8b54ba38dc5eb6691b2c087816c57d7afd94064051ce29ca2450ece57d5",
         ),
         "teacher": (
-            "agent-teacher-v2",
-            "ef0c06932958572fe992bc896c0cfff7a963dc27bfd46f1b273df968b07e7bbc",
+            "agent-teacher-v3",
+            "db6b63a3e790ccfc861ddd23c806df9f2461ca5981f0c41df39103b8eae7621e",
         ),
         "jerv": (
             "agent-jerv-v50",
@@ -970,3 +976,39 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         profile = AGENTS[name]
         assert profile.version == version
         assert hashlib.sha256(profile.prompt.encode()).hexdigest() == digest
+
+
+# --- the question reaches the conversation (SHOW_THE_WORKING_PLAN.md W4) -----
+
+
+def test_a_non_owner_persona_can_never_put_a_question_to_the_owner() -> None:
+    """The one grant that must never happen, and the reason is already written in
+    `agents.py`: an intake question is MODEL-AUTHORED FROM STRANGER-CONTROLLED TEXT, it
+    reaches the owner wearing his own agent's voice after the review step that is the whole
+    trust boundary of the feature, and his typed answer is appended as SOURCE text and
+    re-ingested. That is an unreviewed inbound message channel with a stranger at its
+    source, and it costs nothing to not have one.
+
+    W4 widens the grant to the conversational personas, which is exactly the change that
+    could widen it here by accident — so this is asserted for every non-owner persona, not
+    only for the one that exists today."""
+    for name in NON_OWNER_PERSONAS:
+        profile = AGENTS[name]
+        allowed = profile.tools or frozenset()
+        assert "ask_owner" not in allowed, name
+        assert "ask_owner" not in (profile.extra_tools or frozenset()), name
+        # And it cannot arrive through a wildcard either, which is what NEVER_DEFAULT is for.
+        assert profile.tools is not None, f"{name} must not hold the wildcard"
+
+
+def test_asking_stays_a_deliberate_grant_rather_than_a_class() -> None:
+    """`ask_owner` is NEVER_DEFAULT, so no wildcard can absorb it — every persona that holds
+    it names it. A tool that ENDS THE TURN and puts a question in front of the owner must
+    not be something a permission class hands out."""
+    assert "ask_owner" in NEVER_DEFAULT
+    holders = sorted(
+        name
+        for name, profile in AGENTS.items()
+        if "ask_owner" in (profile.tools or frozenset()) | (profile.extra_tools or frozenset())
+    )
+    assert holders == ["curator", "note_ingest", "teacher"]

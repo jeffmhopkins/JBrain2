@@ -108,6 +108,11 @@ DEEPEST_RESEARCH_TOOL = "deepest_research"
 # explicit allowlist regardless of class.
 DEEP_PRODUCE_TOOL = "deep_produce"
 
+# The question tool, named here because three personas grant it and one must NEVER: see
+# NON_OWNER_PERSONAS below and `agents.py`'s own argument for keeping it out of the
+# third-party set.
+ASK_OWNER_TOOL = "ask_owner"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local vision read, the local audio transcription, the local video
@@ -773,14 +778,26 @@ AGENTS: dict[str, AgentProfile] = {
         # `web`-class so the wildcard can never absorb it, and curator holding it has to be a
         # deliberate line rather than a side effect of a class. `calculate` needs no grant —
         # it is `read`-class and the wildcard admits it.
-        extra_tools=frozenset({DEEP_PRODUCE_TOOL, RUN_PYTHON_TOOL}),
+        # `ask_owner` rides extra_tools for the third time over: it is NEVER_DEFAULT, so the
+        # wildcard cannot absorb it, and a tool that puts a question in front of the owner
+        # and ENDS THE TURN has to be a deliberate line per persona rather than a class
+        # (SHOW_THE_WORKING_PLAN.md W4). In a plain conversation it records its set on the
+        # turn rather than on a note conversation; the halt is the same.
+        extra_tools=frozenset({DEEP_PRODUCE_TOOL, RUN_PYTHON_TOOL, ASK_OWNER_TOOL}),
     ),
     # teacher is the one persona whose EMPTY allowlist was the design, so widening it is a
     # deliberate reversal, owner-decided: a Socratic tutor that cannot check a student's
     # arithmetic has to either trust it or assert its own, and asserting it is the failure
     # mode this pair removes. The tools change what it can VERIFY, not how it teaches — its
     # prompt still says to ask rather than answer, and it still reads no knowledge base.
-    "teacher": _profile("teacher", "teacher.prompt", tools=MATH_TOOLS, reads_knowledge_base=False),
+    "teacher": _profile(
+        "teacher",
+        # A tutor asking which of two readings a student meant is the same act as the
+        # curator asking which Dr. Reyes — and a tutor that guesses teaches the guess.
+        "teacher.prompt",
+        tools=MATH_TOOLS | frozenset({ASK_OWNER_TOOL}),
+        reads_knowledge_base=False,
+    ),
     "jerv": _profile(
         "jerv",
         "jerv.prompt",

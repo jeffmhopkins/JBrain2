@@ -3979,7 +3979,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
  * number (the Worked panel, and G's popover), not stacked under every reply that did some
  * arithmetic. Keeping the membership HERE rather than in the surface means the step and the
  * bubble read the same list, so a view can never render in both or in neither
- * (docs/plans/SHOW_THE_WORKING_PLAN.md D2). */
+ * (docs/archive/SHOW_THE_WORKING_PLAN.md D2). */
 export const STEP_VIEWS: ReadonlySet<string> = new Set(["code_run"]);
 
 export function isKnownView(name: string): boolean {

@@ -1,6 +1,6 @@
 # Show the working — the code-run surfaces, and the question that reaches the chat
 
-> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2✅ W3✅ W4◻️
+> **Status:** Shipped · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2✅ W3✅ W4✅
 
 ## Thesis
 
@@ -349,30 +349,46 @@ could think what its answer was.
   as clutter rather than rigour. That was the live-use risk G could not settle on a mock, and
   it is cheap to reverse — a prompt change, not a rebuild.
 
-### W4 — the question reaches the conversation
+### W4 ✅ — the question reaches the conversation
 
-Not a new tool and not a new card. `ask_owner` and `QuestionBlock` already do the asking;
-this wave is the binding that lets them happen outside a note thread.
+Not a new tool and not a new card. It turned out to be **smaller than the plan expected**,
+because the frontend was already generic: `FullBrainSurface` builds its `ask` from the
+MESSAGE'S OWN STEPS (`asked.askStep`), which never read a conversation row. The comment
+saying `ask` is "absent on every turn outside a note thread" described what `ask_owner`'s
+binding allowed, not a restriction in the surface. **No frontend change was needed to render
+a question in a plain chat.**
 
-- **Bind `ask_owner` past `note_ingest`** — the allowlist, and the personas that hold it.
-- **A turn-scoped open set** (O1). `waiting_on_owner` is a note-conversation state; a `/chat`
-  conversation records the set on the asking turn instead, and an unanswered question dies
-  with the conversation. No new column, no note-reply path, and — by construction — no route
-  from a chat question into the notes-tab queue.
-- **Feed `ask` outside a note thread.** `FullBrainSurface` already routes `ask` into
-  `QuestionBlock`; today nothing populates it for a plain conversation. The component and
-  its CSS are reused unchanged.
-- **The written-escape test** (D6).
-- **Personas: never `intake`.** Already argued in `agents.py` and stronger than the version
-  this plan first wrote: an intake question is *model-authored from stranger-controlled
-  text*, reaches the owner in his own agent's voice after the review step that is the whole
-  trust boundary, and his typed answer is appended as source and re-ingested — an unreviewed
-  inbound message channel with a stranger at its source. That reasoning is binding here too,
-  and it extends to any future non-owner principal.
+So the wave is three things:
 
-**Mock A survives only in part.** Its layout question is answered by a shipped component;
-its posting model is wrong (D4); its free-text rule is right and already enforced. The mock
-is kept as the record of the gate, marked accordingly.
+- **The handler stops refusing a conversation.** With no note conversation behind the
+  session, `ask_owner` records the set on the TURN — `recorded_args` puts the questions and
+  their server-minted ids on the transcript step, which is the only thing the question block
+  is built from — and halts exactly as it does in a thread. It writes no ledger row and
+  flips no state, which is asserted by exploding if it tries.
+- **One open set still holds, with no state to keep it.** The turn ENDS, so nothing can ask
+  again until the owner replies, and `askStep` renders the LAST recorded ask on a turn — so
+  a model emitting two calls in one message leaves one block, not two.
+- **The grant.** `curator` (via `extra_tools`, past the NEVER_DEFAULT gate) and `teacher`,
+  whose case is the same one level up: a tutor that guesses which reading a student meant
+  teaches the guess. Prompt guidance in both (`system` v11, `teacher` v3), each carrying the
+  bar — ask only what you cannot settle, never to have a reading approved, never as a hedge.
+
+**Never `intake`, and now mechanically.** Three independent assertions fail on that grant,
+and the test is written over `NON_OWNER_PERSONAS` rather than the one persona that exists
+today, because W4 is precisely the change that could widen it by accident. Verified by
+granting it and watching all three go red. The reasoning is `agents.py`'s own: an intake
+question is model-authored from stranger-controlled text, reaches the owner in his own
+agent's voice after the review step that is the whole trust boundary, and his typed answer
+is appended as source and re-ingested — an unreviewed inbound message channel with a
+stranger at its source.
+
+**D6, the written escape, is now a rule.** `QuestionRow` already appended *"Something else"*;
+what it lacked was a test saying that is a rule rather than behaviour that happens to be
+there. Two now pin it: the escape appears on EVERY candidate row whatever the model supplied,
+and a candidate the model LABELS "Something else" does not stand in for it. Verified by
+making the escape conditional on candidate count and watching both fail. Without them, a
+refactor keyed on "the model said these are exhaustive" would pass CI — and a closed set of
+choices is a new way to get a wrong answer, which is the failure this tool exists to prevent.
 
 ## Binding constraints
 
