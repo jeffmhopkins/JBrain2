@@ -10,7 +10,7 @@ and `remember` stages the change for owner approval (the Proposal surface lands 
 P4.8), so the agent has no autonomous path into behavioral memory.
 """
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import EpisodeHit, MemoryBlock, MemoryService
 
 _DEFAULT_RECALL = 5
@@ -46,12 +46,19 @@ def build_memory_handlers(memory: MemoryService) -> dict[str, ToolHandler]:
             return "recall needs a non-empty query."
         limit = int(arguments.get("limit", _DEFAULT_RECALL))
         hits = await memory.recall(ctx.session, query, limit)
-        return format_episodes(hits)
+        return ToolOutput(
+            format_episodes(hits),
+            result_brief=f"{len(hits)} episode{'' if len(hits) == 1 else 's'}",
+        )
 
     async def memory_read_tool(arguments: dict, ctx: ToolContext) -> str:
         block_kind = arguments.get("block_kind")
         kind = str(block_kind).strip() if block_kind else None
-        return format_blocks(await memory.read(ctx.session, kind))
+        blocks = await memory.read(ctx.session, kind)
+        return ToolOutput(
+            format_blocks(blocks),
+            result_brief=f"{len(blocks)} block{'' if len(blocks) == 1 else 's'}",
+        )
 
     async def memory_edit_tool(arguments: dict, ctx: ToolContext) -> str:
         block_id = str(arguments.get("block_id", "")).strip()
@@ -77,7 +84,7 @@ def build_memory_handlers(memory: MemoryService) -> dict[str, ToolHandler]:
             )
         except ValueError as exc:
             return f"edit rejected: {exc}"
-        return "Updated your task scratchpad."
+        return ToolOutput("Updated your task scratchpad.", result_brief=f"{op}ed")
 
     async def remember_tool(arguments: dict, ctx: ToolContext) -> str:
         if not str(arguments.get("body_md", "")).strip():
@@ -85,9 +92,12 @@ def build_memory_handlers(memory: MemoryService) -> dict[str, ToolHandler]:
         # Behavioral memory has no autonomous write path (#3). The owner-approval
         # surface is a Proposal (P4.8); until then this writes nothing and tells
         # the model the change is staged for the owner.
-        return (
+        # "staged", not "remembered": this tool writes nothing, and a row saying it did
+        # would be the model's own claim about its memory, which is the thing not to trust.
+        return ToolOutput(
             "I won't save this to memory on my own — behavioral memory changes only"
-            " with the owner's explicit confirmation. I've staged it for their approval."
+            " with the owner's explicit confirmation. I've staged it for their approval.",
+            result_brief="staged, not saved",
         )
 
     return {

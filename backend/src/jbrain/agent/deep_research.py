@@ -1528,6 +1528,7 @@ class DeepResearchService:
                 False,
                 rp.source_mode,
             ),
+            result_brief=f"{len(result.sources)} sources",
         )
 
     async def _run_preset(
@@ -2284,6 +2285,9 @@ class DeepResearchService:
                 revised,
                 source_mode,
             ),
+            # How much it actually READ. A research run's row is the one place the owner can
+            # see whether a long answer rests on twelve sources or on two.
+            result_brief=f"{len(sources)} sources, {rounds} round{'' if rounds == 1 else 's'}",
         )
 
     async def _persist(

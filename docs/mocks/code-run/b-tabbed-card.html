@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · B · tabbed card</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--violet-tint);color:var(--violet);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the registered tool-view: same frame as weather_card / hurricane_card / chart ===== */
+  .tv{margin:9px 0 2px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);overflow:hidden;}
+  .tv-head{display:flex;align-items:flex-start;gap:10px;padding:11px 12px 10px;}
+  .tv-ico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--violet-tint);color:var(--violet);}
+  .tv-ico svg{width:15px;height:15px;}
+  .tv-main{flex:1;min-width:0;}
+  .tv-title{font-size:13px;color:var(--text-2);}
+  .tv-hero{margin-top:3px;font-family:var(--font-mono);font-size:20px;color:var(--text);letter-spacing:-.01em;}
+  .tv-sub{margin-top:4px;font-size:11.5px;color:var(--text-3);display:flex;flex-wrap:wrap;gap:4px 9px;font-variant-numeric:tabular-nums;}
+  .tv-sub .ok{color:var(--green);}
+
+  .tabs{display:flex;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--bg);}
+  .tab{flex:1;padding:9px 6px;text-align:center;font-size:12px;color:var(--text-3);cursor:pointer;border-bottom:2px solid transparent;}
+  .tab.on{color:var(--text);border-bottom-color:var(--violet);background:var(--surface-2);}
+  .tab .badge{display:inline-block;margin-left:5px;font-size:10px;padding:1px 5px;border-radius:999px;background:var(--surface-2);color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .tab.on .badge{background:var(--violet-tint);color:var(--violet);}
+
+  .pane{display:none;padding:11px 12px 12px;}
+  .pane.on{display:block;}
+
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 11px;font-family:var(--font-mono);font-size:11.5px;line-height:1.62;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);}
+  .c{color:var(--text-3);font-style:italic;} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+
+  .pane-act{margin-top:8px;display:flex;gap:8px;}
+  .btn{flex:1;text-align:center;padding:8px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text-2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;}
+  .btn svg{width:12px;height:12px;}
+  .btn:active{background:var(--surface);}
+  .btn.done{color:var(--green);border-color:rgba(143,188,154,.3);}
+
+  .rows{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;align-items:baseline;}
+  .rows .lbl{font-size:11px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
+  .rows .val{font-size:12.5px;color:var(--text);font-family:var(--font-mono);word-break:break-word;}
+  .rows .val.good{color:var(--green);}
+  .rows .val.seal{color:var(--violet);}
+
+  .note{margin-top:10px;font-size:11.5px;line-height:1.5;color:var(--text-3);padding:9px 10px;border-radius:9px;background:var(--bg);border:1px solid var(--border);}
+  .note b{color:var(--text-2);font-weight:600;}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant B</span><br />
+  <b>Tabbed card.</b> A registered <code>code_run</code> tool-view in the house
+  tabbed-card frame — the same paradigm already settled for
+  <b>weather_card</b>, <b>hurricane_card</b> and <b>chart</b>. A compact headline carries
+  the answer; <b>Code · Output · Run</b> put the working one tap away without leaving the
+  bubble. Tap the tabs.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat">
+    <div class="bubble me">Lay out the twelve months at the new rate so I can check the total.</div>
+
+    <div class="bubble ai">
+      Running the months out with exact decimals so the cents don't drift:
+
+      <div class="tv">
+        <div class="tv-head">
+          <div class="tv-ico"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M13 6l-2 12"/></svg></div>
+          <div class="tv-main">
+            <div class="tv-title">Ran a computation</div>
+            <div class="tv-hero">Decimal('2917.80')</div>
+            <div class="tv-sub">
+              <span class="ok">✓ ran clean</span><span>44ms</span><span>8 lines</span><span>4 lines out</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <div class="tab on" data-tab="code">Code <span class="badge">8</span></div>
+          <div class="tab" data-tab="out">Output <span class="badge">4</span></div>
+          <div class="tab" data-tab="run">Run</div>
+        </div>
+
+        <div class="pane on" data-pane="code">
+<pre><span class="gut"> 1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut"> 2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut"> 3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut"> 4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut"> 5 </span>    running += rate
+<span class="gut"> 6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut"> 7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut"> 8 </span>running</pre>
+          <div class="pane-act">
+            <div class="btn" data-copy><svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy code</div>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="out">
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+          <div class="rows" style="margin-top:10px">
+            <div class="lbl">result</div><div class="val good">Decimal('2917.80')</div>
+            <div class="lbl">stderr</div><div class="val" style="color:var(--text-3)">—</div>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="run">
+          <div class="rows">
+            <div class="lbl">status</div><div class="val good">ran to completion</div>
+            <div class="lbl">duration</div><div class="val">44ms</div>
+            <div class="lbl">sandbox</div><div class="val seal">pysandbox</div>
+            <div class="lbl">network</div><div class="val seal">none</div>
+            <div class="lbl">files</div><div class="val seal">scratch only</div>
+            <div class="lbl">packages</div><div class="val">stdlib only</div>
+            <div class="lbl">timeout</div><div class="val">10s</div>
+          </div>
+          <div class="note">
+            <b>Each call is a fresh process.</b> No variables, files or imports carry over
+            from the run before, and the scratch directory does not survive the call.
+          </div>
+        </div>
+      </div>
+
+      The quarterly marks are $729.45, $1,458.90, $2,188.35 and <b>$2,917.80</b> at twelve.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> A fixed-height card can't show code and output at once, so
+  comparing the two is a tap back and forth — and the frame is heavier than a plain row
+  for a one-line <code>calculate</code>. <b>What it buys:</b> the bubble stays a constant,
+  predictable height however long the snippet is, and the <b>Run</b> tab gives the
+  containment a place to be stated rather than assumed.
+</div>
+
+<script>
+  for (const tab of document.querySelectorAll("[data-tab]")) {
+    tab.addEventListener("click", () => {
+      const card = tab.closest(".tv");
+      for (const t of card.querySelectorAll("[data-tab]")) t.classList.toggle("on", t === tab);
+      for (const p of card.querySelectorAll("[data-pane]"))
+        p.classList.toggle("on", p.dataset.pane === tab.dataset.tab);
+    });
+  }
+  for (const btn of document.querySelectorAll("[data-copy]")) {
+    btn.addEventListener("click", () => {
+      const code = btn.closest(".pane").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+      navigator.clipboard?.writeText(code);
+      btn.classList.add("done");
+      btn.lastChild.textContent = " Copied";
+      setTimeout(() => { btn.classList.remove("done"); btn.lastChild.textContent = " Copy code"; }, 1400);
+    });
+  }
+</script>
+</body>
+</html>

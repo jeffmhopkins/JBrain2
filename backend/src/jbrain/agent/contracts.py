@@ -344,6 +344,18 @@ class ToolResultEvent(BaseModel):
     tool_call_id: str
     ok: bool
     summary: str
+    # How long the handler took. Carried to the client and into the persisted step so a
+    # turn's cost is legible after the fact — "which call was the slow one" was previously
+    # answerable only from the run's total, which is the sum of everything that happened.
+    # Defaulted, so every existing construction and every stored turn without it still load.
+    duration_ms: int = 0
+    # The one-line ANSWER, for the Worked row's right-hand side — `5.15% · 30yr`,
+    # `Decimal('2917.80')`, `Thu 18 Sep, 20:54`. Authored by the handler, because only the
+    # handler knows which part of its own result was the answer; a client deriving it would
+    # have to parse `summary`, which is model-facing text and free to be long and sectioned.
+    # Empty where the row's result is already carried structurally (`sources`, `facts`,
+    # `entities`, `web_sources`) and the PWA phrases it from those instead.
+    result_brief: str = ""
     # Structured notes the tool surfaced (search hits, the note read), for the
     # response's source cards; empty for tools that cite nothing.
     sources: list[NoteSource] = Field(default_factory=list)

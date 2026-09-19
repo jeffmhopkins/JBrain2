@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · C · run sheet</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--green-tint);color:var(--green);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* the calm transcript chip — one line, whatever happened */
+  .rchip{margin:9px 0 2px;display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border);cursor:pointer;}
+  .rchip:active{background:var(--surface);}
+  .rchip .ico{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--violet-tint);color:var(--violet);}
+  .rchip .ico svg{width:14px;height:14px;}
+  .rchip .txt{flex:1;min-width:0;}
+  .rchip .t1{font-size:13px;}
+  .rchip .t2{margin-top:2px;font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .rchip .go{width:14px;height:14px;color:var(--text-3);flex:none;}
+
+  /* ===== the sheet ===== */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .2s ease;}
+  .scrim.on{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;height:88%;background:var(--bg);border-top-left-radius:20px;border-top-right-radius:20px;border:1px solid var(--border);border-bottom:none;transform:translateY(100%);transition:transform .26s cubic-bezier(.22,.9,.3,1);display:flex;flex-direction:column;}
+  .sheet.on{transform:translateY(0);}
+  .grab{height:20px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .grab i{width:36px;height:4px;border-radius:999px;background:var(--border);display:block;}
+  .shead{padding:2px 16px 11px;border-bottom:1px solid var(--border);flex:none;}
+  .shead .h1{font-size:17px;font-weight:600;}
+  .shead .h2{margin-top:4px;font-size:12px;color:var(--text-3);display:flex;flex-wrap:wrap;gap:4px 10px;font-variant-numeric:tabular-nums;}
+  .shead .h2 .ok{color:var(--green);}
+  .sbody{flex:1;overflow-y:auto;padding:12px 14px 22px;}
+
+  /* the timeline of every call in the turn */
+  .tl{position:relative;padding-left:20px;}
+  .tl::before{content:"";position:absolute;left:6px;top:8px;bottom:8px;width:1px;background:var(--border);}
+  .call{position:relative;margin-bottom:12px;}
+  .call::before{content:"";position:absolute;left:-17px;top:11px;width:9px;height:9px;border-radius:999px;background:var(--steel);border:2px solid var(--bg);}
+  .call.py::before{background:var(--violet);}
+  .call.bad::before{background:var(--rose);}
+
+  .cbox{border:1px solid var(--border);border-radius:11px;background:var(--surface-2);overflow:hidden;}
+  .chead{display:flex;align-items:center;gap:9px;padding:9px 11px;cursor:pointer;}
+  .chead .nm{font-size:12.5px;flex:1;min-width:0;}
+  .chead .nm small{display:block;margin-top:2px;color:var(--text-3);font-family:var(--font-mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chead .ms{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;flex:none;}
+  .chead .chev{width:13px;height:13px;color:var(--text-3);flex:none;transition:transform .16s ease;}
+  .call.open .chev{transform:rotate(90deg);}
+  .cbody{display:none;padding:0 11px 11px;}
+  .call.open .cbody{display:block;}
+
+  .lab{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:9px 0 5px;display:flex;align-items:center;gap:7px;}
+  .lab .copy{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;color:var(--steel);cursor:pointer;}
+  .lab .copy.done{color:var(--green);}
+
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 11px;font-family:var(--font-mono);font-size:11.5px;line-height:1.62;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);}
+  .f{color:var(--steel);} .gut{color:var(--text-3);user-select:none;}
+  .err{color:var(--rose);}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 11px;align-items:baseline;padding:9px 10px;border-radius:9px;background:var(--bg);border:1px solid var(--border);}
+  .kv .l{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .kv .v{font-family:var(--font-mono);font-size:12.5px;color:var(--text);}
+  .kv .v.good{color:var(--green);}
+
+  .foot{margin-top:6px;padding:10px 11px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);font-size:11.5px;line-height:1.5;color:var(--text-3);}
+  .foot b{color:var(--text-2);font-weight:600;}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant C</span><br />
+  <b>Run sheet.</b> The transcript keeps <i>one calm line</i> — "4 computations · 45ms" —
+  and tapping it opens a full-height sheet showing <b>everything that ran in the turn</b>
+  as a timeline: every call, its code, its output, and the retry after the one that
+  failed. The reading of "see everything that ran" is <i>plural</i>. Tap the chip.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15 — percentage increase, annual at the new rate, and one third of that.</div>
+
+    <div class="bubble ai">
+      I'll take the percentage first, then the annual total and the three-way split.
+
+      <div class="rchip" id="open">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M13 6l-2 12"/></svg></div>
+        <div class="txt">
+          <div class="t1">5 computations</div>
+          <div class="t2">46ms · 1 retried · all exact</div>
+        </div>
+        <svg class="go" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+
+      Your bill went up <b>29.7492%</b>. Twelve months at the new rate is <b>$2,917.80</b>;
+      split three ways that's exactly <b>$972.60</b> each, no rounding.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet">
+    <div class="grab"><i></i></div>
+    <div class="shead">
+      <div class="h1">What ran</div>
+      <div class="h2">
+        <span>5 calls</span><span>46ms total</span><span class="ok">✓ 4 clean</span><span style="color:var(--rose)">1 failed → retried</span>
+      </div>
+    </div>
+    <div class="sbody">
+      <div class="tl">
+
+        <div class="call open" data-call>
+          <div class="cbox">
+            <div class="chead">
+              <div class="nm">calculate<small>(243.15 - 187.40) / 187.40 * 100</small></div>
+              <div class="ms">1ms</div>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="cbody">
+              <div class="kv" style="margin-top:9px">
+                <div class="l">exact</div><div class="v good">27875/937</div>
+                <div class="l">decimal</div><div class="v">29.7492</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="call bad" data-call>
+          <div class="cbox">
+            <div class="chead">
+              <div class="nm">calculate<small>243.15 * 12mo</small></div>
+              <div class="ms">0ms</div>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="cbody">
+              <div class="lab">Error</div>
+<pre class="err">SyntaxError: unexpected 'm' at position 11</pre>
+              <div class="foot">The next call is the model's own correction. Keeping the
+              failed attempt is the point of this sheet — <b>a retry you can't see looks
+              like a result you should trust.</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="call" data-call>
+          <div class="cbox">
+            <div class="chead">
+              <div class="nm">calculate<small>243.15 * 12</small></div>
+              <div class="ms">0ms</div>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="cbody">
+              <div class="kv" style="margin-top:9px">
+                <div class="l">exact</div><div class="v good">14589/5</div>
+                <div class="l">decimal</div><div class="v">2917.8</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="call" data-call>
+          <div class="cbox">
+            <div class="chead">
+              <div class="nm">calculate<small>243.15 * 12 / 3</small></div>
+              <div class="ms">0ms</div>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="cbody">
+              <div class="kv" style="margin-top:9px">
+                <div class="l">exact</div><div class="v good">4863/5</div>
+                <div class="l">decimal</div><div class="v">972.6</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="call py open" data-call>
+          <div class="cbox">
+            <div class="chead">
+              <div class="nm">run_python<small>8 lines · decimal</small></div>
+              <div class="ms">44ms</div>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="cbody">
+              <div class="lab">Code <span class="copy" data-copy>copy</span></div>
+<pre><span class="gut"> 1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut"> 2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut"> 3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut"> 4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut"> 5 </span>    running += rate
+<span class="gut"> 6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut"> 7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut"> 8 </span>running</pre>
+              <div class="lab">stdout</div>
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+              <div class="kv" style="margin-top:9px">
+                <div class="l">result</div><div class="v good">Decimal('2917.80')</div>
+                <div class="l">sandbox</div><div class="v">no network · scratch only</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> The working is behind a tap and leaves the conversation, so the
+  code is never beside the sentence it produced — and it is the most new surface of the
+  three. <b>What it buys:</b> the transcript stays one line however much ran, and it is
+  the only variant that shows a <b>failed call and its retry together</b> — which is the
+  question you actually ask when a number looks wrong.
+</div>
+
+<script>
+  const sheet = document.getElementById("sheet"), scrim = document.getElementById("scrim");
+  const show = (on) => { sheet.classList.toggle("on", on); scrim.classList.toggle("on", on); };
+  document.getElementById("open").addEventListener("click", () => show(true));
+  scrim.addEventListener("click", () => show(false));
+  for (const call of document.querySelectorAll("[data-call]")) {
+    call.querySelector(".chead").addEventListener("click", () => call.classList.toggle("open"));
+  }
+  for (const btn of document.querySelectorAll("[data-copy]")) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const code = btn.closest(".cbody").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+      navigator.clipboard?.writeText(code);
+      btn.classList.add("done"); btn.textContent = "copied";
+      setTimeout(() => { btn.classList.remove("done"); btn.textContent = "copy"; }, 1400);
+    });
+  }
+</script>
+</body>
+</html>

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo
 
@@ -33,6 +33,9 @@ def build_jmolt_journal_handlers(
             return "journal needs an `entry` — a line or two in your own words."
         async with scoped_session(maker, ctx.session) as s:
             await repo.add(s, pid, entry)
-        return "Left a note for your human — they'll see it in the morning."
+        return ToolOutput(
+            "Left a note for your human — they'll see it in the morning.",
+            result_brief="left a note",
+        )
 
     return {"journal": journal}

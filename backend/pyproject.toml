@@ -43,6 +43,12 @@ dependencies = [
     # (dates, content:encoded, guid). Used for PARSING ONLY — feed bytes are fetched
     # through the SSRF-guarded WebFetcher, so feedparser never does its own network I/O.
     "feedparser>=6.0",
+    # Exact arithmetic for the `calculate` tool (jbrain.agent.mathtools): rationals stay
+    # rationals and irrationals stay symbolic, so 0.1 + 0.2 is 3/10 and sqrt(2)/3 is
+    # sqrt(2)/3 — the float artifacts the tool exists to remove never enter. Used for
+    # EVALUATION ONLY: the expression is parsed by our own restricted AST walker first, so
+    # sympy's own `sympify`/`parse_expr` (which eval() their input) is never reached.
+    "sympy>=1.13",
 ]
 
 [project.optional-dependencies]

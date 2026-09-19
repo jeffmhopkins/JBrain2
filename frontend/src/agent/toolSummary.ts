@@ -7,7 +7,7 @@
 // cannot ship as a raw snake_case row with no visible target.
 
 import type { SourceRef, ToolActivity } from "./transcript";
-import type { EntityRef, FactWrite, WebSource } from "./types";
+import type { EntityRef, FactWrite, ViewPayload, WebSource } from "./types";
 
 export type { SourceRef };
 
@@ -36,6 +36,14 @@ export interface ToolStep {
   args: Record<string, unknown> | undefined;
   /** The verbatim result text, for the expanded step's result/raw rung. */
   summary: string | undefined;
+  /** The handler's one-line ANSWER for the collapsed row's right-hand side —
+   * `ToolResultEvent.result_brief`. Empty for a tool whose result is already carried
+   * structurally (sources, facts, entities, web sources), which `stepLedger` phrases from
+   * those instead. Never derived from `summary`: that is model-facing text. */
+  result: string | undefined;
+  /** The registered view this step expands to, for the tools whose working belongs in the
+   * step rather than the bubble (`STEP_VIEWS`) — `run_python`'s code listing. */
+  view: ViewPayload | undefined;
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -139,6 +147,11 @@ const STEP_LABELS: Record<string, string> = {
   // Location + time + home
   current_location: "Checked your location",
   current_time: "Checked the clock",
+  // The arithmetic backstop (docs/archive/EXACT_MATH_TOOLS_PLAN.md). "Worked out" rather
+  // than "Calculated" so the row reads as the model showing its working, which is the
+  // behaviour the tool exists to encourage.
+  calculate: "Worked out a number",
+  run_python: "Ran a computation",
   location_history: "Read location history",
   location_query: "Checked a place",
   find_when_at: "Checked when you were somewhere",
@@ -279,6 +292,11 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   write_plan_result: ["heading", "note"],
   current_location: ["detail"],
   current_time: ["timezone"],
+  // The expression itself is the "what" — a row reading `Worked out a number ·
+  // (243.15 - 187.40) / 187.40 * 100` says exactly what was computed, which is the whole
+  // point of routing arithmetic through a tool. `run_python`'s code is multi-line and
+  // belongs in the expanded view, not on a collapsed row, so it opts out via NO_INLINE.
+  calculate: ["expression"],
   location_history: ["subject"],
   location_query: ["place"],
   find_when_at: ["place"],
@@ -317,6 +335,9 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
 const NO_INLINE: ReadonlySet<string> = new Set([
   // takes no arguments — there is only one radio to release
   "sdr_stop",
+  // the snippet is multi-line source; a collapsed row is the wrong place for it, and the
+  // expanded view is where the code belongs
+  "run_python",
   "read_note",
   "read_entity",
   // D15 injects the standing instructions into the prompt; the read takes no argument.
@@ -518,5 +539,7 @@ export function toolStep(t: ToolActivity): ToolStep {
     truncated: t.truncated === true,
     args: t.args,
     summary: t.summary,
+    result: t.result,
+    view: t.view,
   };
 }

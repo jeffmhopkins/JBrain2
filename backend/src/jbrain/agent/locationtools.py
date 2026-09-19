@@ -226,6 +226,18 @@ def _format_where(
     return f"{label} is {_place_phrase(place, near)}{when}.{stale}"
 
 
+def _brief_where(place: LatestPlace | None, near: NearestFix | None) -> str:
+    """The row's answer for a where-question: the place, nothing else.
+
+    It carries no more than the step's own result text already does over the same
+    owner-scoped channel — the domain firewall is enforced in Postgres on the read, not on
+    how the answer is phrased afterwards. It is NOT logged: `loop._log_call` records
+    argument NAMES only, for exactly this reason."""
+    phrase = _place_phrase(place, near)
+    flat = " ".join(phrase.split())
+    return flat if len(flat) <= 32 else flat[:31] + "\u2026"
+
+
 def _battery_tone(battery: int | None) -> str:
     if battery is None:
         return "unknown"
@@ -585,7 +597,10 @@ def build_location_handlers(
         near = await locations.nearest_fix(
             ctx.session, subject_id=sid, at=now, max_gap_seconds=_STALE_GAP_SECONDS
         )
-        return ToolOutput(_format_where(label, place, near, ctx.timezone, now=now))
+        return ToolOutput(
+            _format_where(label, place, near, ctx.timezone, now=now),
+            result_brief=_brief_where(place, near),
+        )
 
     async def device_status_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         now = datetime.now(UTC)
@@ -596,12 +611,20 @@ def build_location_handlers(
             label = linked.canonical_name if linked is not None else "unlinked device"
             labeled.append((label, act))
         labeled.sort(key=lambda t: t[0])
-        return ToolOutput(_format_device_status(labeled, ctx.timezone, now=now))
+        fresh = sum(1 for _, act in labeled if _freshness_tone(act.last_seen, now=now) == "fresh")
+        return ToolOutput(
+            _format_device_status(labeled, ctx.timezone, now=now),
+            result_brief=f"{fresh} of {len(labeled)} fresh",
+        )
 
     async def home_status_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         now = datetime.now(UTC)
         roster = await locations.home_roster(ctx.session)
-        return ToolOutput(_format_home_status(roster, ctx.timezone, now=now))
+        home = sum(1 for row in roster if getattr(row, "at_home", False))
+        return ToolOutput(
+            _format_home_status(roster, ctx.timezone, now=now),
+            result_brief=f"{home} of {len(roster)} home",
+        )
 
     async def nearby_now_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         radius = min(
@@ -617,7 +640,10 @@ def build_location_handlers(
             return ToolOutput("Your own device isn't linked yet, so I can't find nearby places.")
         sid = await _pick_latest(locations, ctx, subs)
         places = await locations.nearby(ctx.session, subject_id=sid, radius_m=radius, limit=limit)
-        return ToolOutput(_format_nearby(places))
+        return ToolOutput(
+            _format_nearby(places),
+            result_brief=f"{len(places)} place{'' if len(places) == 1 else 's'}",
+        )
 
     async def location_history_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         # Resolve the subject (a named person/device, or self) to its active device,
@@ -650,9 +676,13 @@ def build_location_handlers(
         summary = _format_trail_summary(label, data, ctx.timezone)
         if trail.is_empty:
             # No fixes → answer in prose, no empty map (the view would draw nothing).
-            return ToolOutput(summary)
+            return ToolOutput(summary, result_brief="no fixes")
         data.update(_freshness(data, now=now))
-        return ToolOutput(summary, view=_trail_view(data))
+        return ToolOutput(
+            summary,
+            view=_trail_view(data),
+            result_brief=f"{len(fixes)} fix{'' if len(fixes) == 1 else 'es'}",
+        )
 
     async def location_query_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         place_q = str(arguments.get("place", "")).strip()
@@ -690,11 +720,15 @@ def build_location_handlers(
         agg = _aggregate(fixes)
         text = _format_query(place_name, agg, ctx.timezone, fixes)
         if agg["count"] == 0:
-            return ToolOutput(text)
+            return ToolOutput(text, result_brief="never there")
         trail = build_trail(fixes)
         data = trail_view_data(trail, timezone=ctx.timezone)
         data.update(_freshness(data, now=now))
-        return ToolOutput(text, view=_trail_view(data))
+        return ToolOutput(
+            text,
+            view=_trail_view(data),
+            result_brief=f"{agg['count']} fix{'' if agg['count'] == 1 else 'es'}",
+        )
 
     async def _resolve_dwell_subject(
         arguments: dict, ctx: ToolContext
@@ -757,7 +791,9 @@ def build_location_handlers(
         total = _clamped_seconds(dwells, since, until)
         when_from = _when(since, ctx.timezone)
         if not dwells:
-            return ToolOutput(f"No recorded time at {place.name} since {when_from}.")
+            return ToolOutput(
+                f"No recorded time at {place.name} since {when_from}.", result_brief="no time there"
+            )
         lead = (
             f"{label} spent {_format_duration(total)} at {place.name} across {len(dwells)}"
             f" visit{'' if len(dwells) == 1 else 's'} since {when_from}."
@@ -771,7 +807,7 @@ def build_location_handlers(
                 f" Of {nights} night{'' if nights == 1 else 's'}, {away} away from"
                 f" {place.name} (by local calendar date)."
             )
-        return ToolOutput(lead)
+        return ToolOutput(lead, result_brief=_format_duration(total))
 
     async def find_when_at_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         place_q = str(arguments.get("place", "")).strip()
@@ -803,13 +839,16 @@ def build_location_handlers(
             until=until,
         )
         if not dwells:
-            return ToolOutput(f"No recorded visits to {place.name} on record.")
+            return ToolOutput(
+                f"No recorded visits to {place.name} on record.", result_brief="no visits"
+            )
         # `dwells` come back entered-ascending; the last is the most recent visit.
         last = dwells[-1]
         last_when = _when(last.entered_at, ctx.timezone)
         return ToolOutput(
             f"{label} last visited {place.name} on {last_when} — {len(dwells)}"
-            f" visit{'' if len(dwells) == 1 else 's'} since {_when(since, ctx.timezone)}."
+            f" visit{'' if len(dwells) == 1 else 's'} since {_when(since, ctx.timezone)}.",
+            result_brief=f"last {last_when}",
         )
 
     async def save_place_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
@@ -871,6 +910,8 @@ def build_location_handlers(
             " approval. I won't save it until you approve — it then becomes a place through the"
             " normal note pipeline.",
             proposal=ProposalRef(proposal_id=prop_id, kind="knowledge"),
+            # Staged, not saved: this tool never touches the graph or the fence mirror.
+            result_brief="staged, not saved",
         )
 
     handlers: dict[str, ToolHandler] = {

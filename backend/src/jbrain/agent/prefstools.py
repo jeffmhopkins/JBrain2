@@ -165,7 +165,11 @@ def build_owner_prefs_handlers(
     async def prefs_read_tool(arguments: dict, ctx: ToolContext) -> str:
         if not ctx.session.principal_id:
             return "Can't read the standing instructions — this session has no owner principal."
-        return f"{_PREFS_FRAME}\n{_listing(await _rules(ctx))}"
+        rules = await _rules(ctx)
+        return ToolOutput(
+            f"{_PREFS_FRAME}\n{_listing(rules)}",
+            result_brief=f"{len(rules)} rule{'' if len(rules) == 1 else 's'}",
+        )
 
     async def prefs_write_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if not ctx.session.principal_id:
@@ -233,6 +237,10 @@ def build_owner_prefs_handlers(
             " changed anything yet. Once you approve, they will read:\n"
             f"{_listing(updated)}",
             proposal=ProposalRef(proposal_id=prop_id, kind=PREFS_KIND),
+            # Nothing has changed yet. A row reading anything else would claim a write the
+            # owner has not approved — and these are the instructions injected into every
+            # future conversation's prompt.
+            result_brief="staged, not applied",
         )
 
     def _guarded(name: str, handler: ToolHandler) -> ToolHandler:

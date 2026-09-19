@@ -56,6 +56,11 @@ def _ref(arguments: dict) -> str:
     ).strip()
 
 
+def _clip(text: str, limit: int = 32) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
 def _report_view_data(rec: ReportRecord) -> dict:
     """Rebuild the `deep_research_report` view's data from a stored report, so a re-open renders
     exactly as the live run did (minus the live sub-agent roster, which isn't persisted — the
@@ -140,7 +145,10 @@ def build_research_report_handlers(
         footer = ""
         if page < pages:
             footer = f"\n\n{total - last} more — call again with page {page + 1}."
-        return f"{header}\n" + "\n".join(lines) + footer
+        return ToolOutput(
+            f"{header}\n" + "\n".join(lines) + footer,
+            result_brief=f"{total} report{'' if total == 1 else 's'}",
+        )
 
     async def read_research_report_tool(arguments: dict, ctx: ToolContext) -> str:
         ref = _ref(arguments)
@@ -174,7 +182,9 @@ def build_research_report_handlers(
         view = ViewPayload(
             view="deep_research_report", surface="inline", data=_report_view_data(rec)
         )
-        return ToolOutput(f'Showing the report for "{rec.question}".', view=view)
+        return ToolOutput(
+            f'Showing the report for "{rec.question}".', view=view, result_brief=_clip(rec.question)
+        )
 
     async def remove_research_report_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if proposals is None:
@@ -214,6 +224,7 @@ def build_research_report_handlers(
             f'Staged the removal of the report "{rec.question}". I won\'t delete anything until'
             " you approve it.",
             proposal=ProposalRef(proposal_id=prop_id, kind="remove-research-report"),
+            result_brief="staged, not deleted",
         )
 
     _reads: dict[str, ToolHandler] = {

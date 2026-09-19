@@ -19,7 +19,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.web.moltbook import MoltbookClient, MoltbookError, scrub_secret, strip_home_imperatives
 
 # A hard cap on one `moltbook` tool result — the final M12 backstop past the client's
@@ -613,9 +613,13 @@ def build_moltbook_handlers(client: MoltbookClient) -> dict[str, ToolHandler]:
         # key (M17/M18) and hard-cap the whole result so a nested-but-capped payload still
         # can't exceed one tool result's worth of text (M12 final backstop).
         finalized = client.scrub(result)
-        if len(finalized) > _MAX_FENCED_CHARS:
+        truncated = len(finalized) > _MAX_FENCED_CHARS
+        if truncated:
             finalized = _truncate_whole(finalized)
-        return finalized
+        # WHICH action ran and how much came back — never a line of the body, which is
+        # attacker-authorable Moltbook text and is only safe inside the fence around it.
+        brief = f"{action} · {len(finalized):,} chars"
+        return ToolOutput(finalized, result_brief=f"{brief}, truncated" if truncated else brief)
 
     return {"moltbook": moltbook}
 

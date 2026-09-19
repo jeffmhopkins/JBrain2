@@ -699,6 +699,9 @@ def build_reply_write_handlers(
             " survives and the other's mentions and facts repoint onto it, so nothing is"
             " lost. Say that it is waiting on him; do not say they are merged.",
             proposal=ProposalRef(proposal_id=prop_id, kind="merge"),
+            # The sentence above ends "do not say they are merged". The row is held to the
+            # same rule — it is the one surface the owner reads without opening anything.
+            result_brief="staged, not merged",
         )
 
     def _texted(name: str, handler: ToolHandler) -> ToolHandler:

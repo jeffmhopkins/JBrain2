@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 
 from jbrain.agent.jmolt_owner import jmolt_owner_principal_id
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.jmolt import JmoltJournalRepo, JmoltScratchRepo
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
@@ -289,10 +289,17 @@ def build_jmolt_observe_handlers(
                     " search for the text literally."
                 )
 
-        def _show(label: str, body: str) -> str:
+        def _show(label: str, body: str) -> ToolOutput:
             """This call's reading controls, bound to the presenter — so each action states
-            only WHAT it read and never has to re-implement the window."""
-            return _present(label, body, find=find, use_regex=use_regex, offset=offset)
+            only WHAT it read and never has to re-implement the window.
+
+            The row's answer is WHAT WAS READ and how much of it — never a line of the body,
+            which is one hop from attacker-authorable Moltbook text and is only safe inside
+            the fence `_present` puts around it."""
+            return ToolOutput(
+                _present(label, body, find=find, use_regex=use_regex, offset=offset),
+                result_brief=f"{label} · {len(body):,} chars",
+            )
 
         pid = await _owner_pid(maker)
         if pid is None:

@@ -1,0 +1,48 @@
+# The `pysandbox` sidecar: Python code in, stdout + final value + error out
+# (docs/archive/EXACT_MATH_TOOLS_PLAN.md). The api proxies a snippet here rather than running
+# it, which is what keeps `docs/reference/ASSISTANT.md`'s "no code execution in the agent"
+# intact — the same fronted-sidecar relationship `docs/archive/JCODE_PLAN.md` settled for
+# the coding sandbox, and the one the api already has with `htmlrender` and ComfyUI.
+#
+# Internal-only AND egress-free: compose puts it on a network declared `internal: true`, so
+# the container has no route off the box. Its root filesystem is read-only and its scratch
+# is a tmpfs, so a snippet can write only where it is meant to and nothing survives the call.
+#
+# STOCK PYTHON, NOTHING ELSE. No numpy, no pandas, no requests — every added package is
+# another import surface inside the thing whose whole job is to be boring, and the stdlib
+# already covers what this tool is for (arithmetic, statistics, dates, unit conversions, big
+# integers, working through a table of numbers the model brought with it). If a package ever
+# genuinely earns a place here, it is a deliberate line in this file, reviewed as one.
+FROM python:3.13-slim
+
+# Pinned exactly, like the htmlrender sidecar: this image serves one endpoint and should not
+# move under us on a rebuild.
+RUN pip install --no-cache-dir \
+      "fastapi==0.115.6" \
+      "uvicorn==0.34.0"
+
+WORKDIR /app
+COPY deploy/pysandbox/server.py ./server.py
+COPY deploy/pysandbox/runner.py ./runner.py
+
+# Fail the BUILD, not the first call. The htmlrender sidecar shipped once with its driver
+# missing and the only symptom on the box was the api failing to DNS-resolve a crash-looping
+# container — three layers from the cause. A smoke test of the real path costs a second.
+RUN python -c "import server" \
+ && printf 'x = sum(range(10))\nprint("hello")\nx\n' \
+    | python -I runner.py /tmp /tmp/build-check.json \
+ && python -c "import json; r = json.load(open('/tmp/build-check.json')); \
+    assert r['ok'] and r['result'] == '45' and r['stdout'].strip() == 'hello', r" \
+ && rm -f /tmp/build-check.json
+
+# Runs as a non-root user with no home of its own. `nobody` exists in the base image; the
+# scratch tmpfs is mounted world-writable by compose, which is the only place this needs to
+# write.
+USER nobody
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -21,7 +21,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from email.utils import parseaddr
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.gmail import GmailApi, GmailError, GmailMessage
 from jbrain.gmail.body import render_body
 
@@ -93,6 +93,16 @@ def _present_matches(text: str, pattern: str, *, max_matches: int, context: int)
 GmailClientGetter = Callable[[], Awaitable[GmailApi]]
 
 
+def _count(n: int, word: str) -> str:
+    return f"{n:,} {word}{'' if n == 1 else 's'}"
+
+
+def _clip(text: str, limit: int = 32) -> str:
+    """One line on a phone; the full text is in the step's result."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
 def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler]:
     """One handler per gmail_* tool, each resolving the live client on every call."""
 
@@ -106,7 +116,7 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             client = await get_client()
             ids = await client.search(query, max_results=limit)
             if not ids:
-                return f"No Gmail messages match '{query}'."
+                return ToolOutput(f"No Gmail messages match '{query}'.", result_brief="no messages")
             rows = []
             for mid in ids:
                 msg = await client.get(mid, metadata_only=True)
@@ -115,7 +125,10 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
                 )
         except GmailError as exc:
             return str(exc)
-        return f"{len(rows)} message(s) for '{query}':\n" + "\n".join(rows)
+        return ToolOutput(
+            f"{len(rows)} message(s) for '{query}':\n" + "\n".join(rows),
+            result_brief=_count(len(rows), "message"),
+        )
 
     async def gmail_read(arguments: dict, ctx: ToolContext) -> str:
         message_id = str(arguments.get("message_id", "")).strip()
@@ -143,14 +156,15 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         text = render_body(msg)
         header = _headers(msg) + "\n\n"
         if not text:
-            return header + "(no readable body)"
+            return ToolOutput(header + "(no readable body)", result_brief="no readable body")
         if extract:
-            return (
+            return ToolOutput(
                 header
                 + f"[Extracting regex '{find}' from this message ({len(text)} chars).]\n"
                 + _present_matches(
                     text, find, max_matches=_READ_EXTRACT_MATCHES, context=_SCAN_CONTEXT
-                )
+                ),
+                result_brief=f"extracted from {len(text):,} chars",
             )
         result = window_text(
             text,
@@ -163,9 +177,10 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         )
         if find and not result.match_count:
             kind = "regex" if use_regex else "'find'"
-            return (
+            return ToolOutput(
                 header + f"[No match for {kind} '{find}' in this message ({len(text)} chars). Call"
-                " gmail_read again without `find` to read it, or try another term.]"
+                " gmail_read again without `find` to read it, or try another term.]",
+                result_brief=f"no match in {len(text):,} chars",
             )
         notes = []
         if find and result.match_count:
@@ -189,7 +204,17 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         elif not result.text:
             notes.append(f"[Nothing at offset {offset}: this message is {len(text)} chars.]")
         body = result.text
-        return header + (body + ("\n\n" + "\n".join(notes) if notes else "")).strip()
+        # WHERE the reading got to, which is what decides whether to call again — a paging
+        # reader's row saying only the subject would leave that invisible.
+        brief = (
+            f"{result.match_count} match{'' if result.match_count == 1 else 'es'}"
+            if find and result.match_count
+            else f"chars {result.offset}–{end} of {result.total_chars:,}"
+        )
+        return ToolOutput(
+            header + (body + ("\n\n" + "\n".join(notes) if notes else "")).strip(),
+            result_brief=brief,
+        )
 
     async def gmail_extract(arguments: dict, ctx: ToolContext) -> str:
         """Run one regex across the bodies of the messages a query matches — the answer to
@@ -262,12 +287,19 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
                 " see whether more exist, and narrow it or raise `limit` to cover them.]"
             )
         if not blocks:
-            return (
+            return ToolOutput(
                 f"No match for regex '{find}' in any of the {len(msgs)} message(s) matching"
                 f" '{query}'. Check the pattern (it is case-insensitive over the whole body),"
-                " or gmail_read one of them to see the actual wording." + tail
+                " or gmail_read one of them to see the actual wording." + tail,
+                result_brief=f"0 of {len(msgs)} matched",
             )
-        return head + "\n" + "\n".join(blocks) + tail
+        # The HIT RATE, which is the answer to "did that pattern work": a scan of 40 messages
+        # that matched 2 is a different result from one that matched 38, and the row is where
+        # that is decided without opening anything.
+        return ToolOutput(
+            head + "\n" + "\n".join(blocks) + tail,
+            result_brief=f"{hits} of {len(msgs)} matched",
+        )
 
     async def gmail_list_labels(arguments: dict, ctx: ToolContext) -> str:
         try:
@@ -278,7 +310,10 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         if not labels:
             return "No labels exist yet."
         names = sorted(label.name for label in labels)
-        return "Labels:\n" + "\n".join(f"- {name}" for name in names)
+        return ToolOutput(
+            "Labels:\n" + "\n".join(f"- {name}" for name in names),
+            result_brief=_count(len(names), "label"),
+        )
 
     async def gmail_create_label(arguments: dict, ctx: ToolContext) -> str:
         name = str(arguments.get("name", "")).strip()
@@ -289,7 +324,9 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             label = await client.create_label(name)
         except GmailError as exc:
             return str(exc)
-        return f"Label '{label.name}' is ready to use."
+        return ToolOutput(
+            f"Label '{label.name}' is ready to use.", result_brief=f"'{label.name}' ready"
+        )
 
     async def gmail_label(arguments: dict, ctx: ToolContext) -> str:
         message_id = str(arguments.get("message_id", "")).strip()
@@ -322,7 +359,9 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             done.append("applied " + ", ".join(add))
         if removed:
             done.append("removed " + ", ".join(removed))
-        return f"Message {message_id}: " + "; ".join(done) + "."
+        return ToolOutput(
+            f"Message {message_id}: " + "; ".join(done) + ".", result_brief=_clip("; ".join(done))
+        )
 
     async def gmail_archive(arguments: dict, ctx: ToolContext) -> str:
         message_id = str(arguments.get("message_id", "")).strip()
@@ -333,7 +372,10 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             await client.modify(message_id, remove_label_ids=["INBOX"])
         except GmailError as exc:
             return str(exc)
-        return f"Message {message_id} archived — out of the inbox, still in All Mail."
+        return ToolOutput(
+            f"Message {message_id} archived — out of the inbox, still in All Mail.",
+            result_brief="archived",
+        )
 
     async def gmail_count(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -345,8 +387,15 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         except GmailError as exc:
             return str(exc)
         if capped:
-            return f"At least {total:,} messages match '{query}' (stopped counting at the cap)."
-        return f"{total:,} message(s) match '{query}'."
+            return ToolOutput(
+                f"At least {total:,} messages match '{query}' (stopped counting at the cap).",
+                # "at least" is the whole point of the capped branch and must survive into the
+                # row: a bare number there would report a cap as a total.
+                result_brief=f"{total:,}+ messages",
+            )
+        return ToolOutput(
+            f"{total:,} message(s) match '{query}'.", result_brief=_count(total, "message")
+        )
 
     async def gmail_sender_breakdown(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -386,7 +435,10 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
                 " among recent mail, not a full-history tally. Confirm an exact per-sender"
                 " total with gmail_count before a bulk move."
             )
-        return f"{head}\n" + "\n".join(rows) + note
+        return ToolOutput(
+            f"{head}\n" + "\n".join(rows) + note,
+            result_brief=f"{len(counts)} {by}s over {len(froms)}",
+        )
 
     async def gmail_bulk_label(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -428,7 +480,7 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
                 f" NOTE: more than {len(ids):,} matched — only the first {len(ids):,} were"
                 " changed. Narrow the query and run again for the rest."
             )
-        return result
+        return ToolOutput(result, result_brief=f"{len(ids):,} updated")
 
     return {
         "gmail_search": gmail_search,

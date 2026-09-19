@@ -367,7 +367,7 @@ def build_canvas_handlers(
         )
         if notes:
             summary += "\n" + "\n".join(notes)
-        return ToolOutput(summary, view=chat_image_view(row))
+        return ToolOutput(summary, view=chat_image_view(row), result_brief=f"canvas {canvas_id}")
 
     return {"canvas": canvas_tool, "show_canvas": show_canvas_tool}
 

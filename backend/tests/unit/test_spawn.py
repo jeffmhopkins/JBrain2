@@ -7,7 +7,7 @@ without a database or an LLM."""
 import pytest
 
 from jbrain.agent import spawn as spawn_mod
-from jbrain.agent.agents import AGENTS, JERV_TOOLS
+from jbrain.agent.agents import AGENTS, JERV_TOOLS, MATH_TOOLS
 from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.spawn import SpawnService, effective_child_tools
@@ -48,8 +48,11 @@ def test_clamp_intersects_persona_with_parent() -> None:
     child = effective_child_tools(AGENTS["research"].tools, narrowed)
     assert child <= narrowed
     assert "web_fetch" not in child
-    # summarize (no persona tools) clamps to nothing regardless of the parent.
-    assert effective_child_tools(AGENTS["summarize"].tools, JERV_TOOLS) == frozenset()
+    # summarize holds only the arithmetic pair, so the clamp yields exactly that against a
+    # parent that also holds it — and nothing at all against a parent that does not, which is
+    # the property that matters: the clamp is an intersection, never a floor.
+    assert effective_child_tools(AGENTS["summarize"].tools, JERV_TOOLS) == MATH_TOOLS
+    assert effective_child_tools(AGENTS["summarize"].tools, narrowed) == frozenset()
 
 
 # --- fakes + a loop seam ----------------------------------------------------
@@ -406,7 +409,9 @@ async def test_fan_mints_clamped_sandboxed_children_in_order(service: SpawnServi
     # No location is ever passed to a child (M2) — `here` stays unset → None.
     assert "here" not in research_call or research_call.get("here") is None
     summarize_call = next(c for c in _FakeLoop.calls if c["system"] == AGENTS["summarize"].prompt)
-    assert summarize_call["tools_allow"] == frozenset()  # summarize holds no tools
+    # summarize holds only the arithmetic pair — no web, no spawn (jerv, its parent, holds
+    # both tools, so the clamp keeps them).
+    assert summarize_call["tools_allow"] == MATH_TOOLS
 
     # Stable label order in the folded observation.
     assert out.index("Alpha") < out.index("Beta")

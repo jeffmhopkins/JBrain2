@@ -500,7 +500,11 @@ class SpawnService:
         # The text observation is what the parent synthesizes from; the view is the
         # UI's structured render of the same fan result (the registered
         # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
-        return ToolOutput(_observation(results), view=_synthesis_view(results))
+        return ToolOutput(
+            _observation(results),
+            view=_synthesis_view(results),
+            result_brief=f"{len(results)} agent{'' if len(results) == 1 else 's'}",
+        )
 
     async def _execute_fan(
         self,
@@ -866,7 +870,11 @@ class SpawnService:
         finally:
             tree.stage_reserve = 0
 
-        return ToolOutput(_observation(all_results), view=_synthesis_view(all_results))
+        return ToolOutput(
+            _observation(all_results),
+            view=_synthesis_view(all_results),
+            result_brief=f"{len(all_results)} agent{'' if len(all_results) == 1 else 's'}",
+        )
 
     async def _run_wave(
         self,

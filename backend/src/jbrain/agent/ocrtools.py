@@ -15,7 +15,7 @@ import uuid
 import structlog
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.storage import BlobStore
 from jbrain.vision import OcrServiceError, RapidOcrClient
@@ -84,8 +84,11 @@ def build_ocr_handlers(
             )
         text = text.strip()
         if not text:
-            return _NO_TEXT
-        return f'Text read from "{info.filename}":\n{text}'
+            return ToolOutput(_NO_TEXT, result_brief="no text")
+        return ToolOutput(
+            f'Text read from "{info.filename}":\n{text}',
+            result_brief=f"{len(text.split()):,} words",
+        )
 
     return {"ocr": ocr_tool}
 

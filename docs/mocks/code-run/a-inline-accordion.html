@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · A · inline accordion</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== the Worked strip ===== */
+  .worked{margin:9px 0 2px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden;}
+  .worked-head{display:flex;align-items:center;gap:8px;padding:9px 11px;font-size:11.5px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;}
+  .worked-head svg{width:13px;height:13px;flex:none;}
+  .worked-head .n{margin-left:auto;text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums;}
+
+  .step{border-top:1px solid var(--border);}
+  .step-row{display:flex;align-items:center;gap:9px;padding:9px 11px;cursor:pointer;}
+  .step-row:active{background:var(--surface);}
+  .ico{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none;background:var(--steel-tint);color:var(--steel);}
+  .ico svg{width:13px;height:13px;}
+  .ico.py{background:var(--violet-tint);color:var(--violet);}
+  .step-main{flex:1;min-width:0;}
+  .step-label{font-size:13px;color:var(--text);}
+  .step-arg{margin-top:2px;font-size:11.5px;color:var(--text-3);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ms{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;flex:none;}
+  .chev{width:14px;height:14px;color:var(--text-3);flex:none;transition:transform .16s ease;}
+  .step.open .chev{transform:rotate(90deg);}
+
+  /* ===== the expanded body ===== */
+  .body{display:none;padding:0 11px 11px;}
+  .step.open .body{display:block;}
+  .sec{margin-top:8px;}
+  .sec-head{display:flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:5px;}
+  .sec-head .copy{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;color:var(--steel);cursor:pointer;display:flex;align-items:center;gap:4px;}
+  .sec-head .copy svg{width:11px;height:11px;}
+  .sec-head .copy.done{color:var(--green);}
+
+  pre{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 11px;font-family:var(--font-mono);font-size:11.5px;line-height:1.62;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  /* tokens-only highlighting: a closed set of classes the component owns, never
+     model-authored color (DESIGN.md invariants #1/#9) */
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);}
+  .c{color:var(--text-3);font-style:italic;} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+
+  .result{margin-top:8px;display:flex;align-items:baseline;gap:8px;padding:9px 11px;border-radius:9px;background:var(--green-tint);border:1px solid rgba(143,188,154,.22);}
+  .result .lbl{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--green);flex:none;}
+  .result .val{font-family:var(--font-mono);font-size:13px;color:var(--text);word-break:break-all;}
+
+  .exact{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:baseline;padding:9px 11px;border-radius:9px;background:var(--bg);border:1px solid var(--border);}
+  .exact .lbl{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .exact .val{font-family:var(--font-mono);font-size:12.5px;color:var(--text);}
+  .exact .val.hero{color:var(--green);}
+
+  .meta{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{font-size:10.5px;padding:2px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border);color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .chip.ok{background:var(--green-tint);border-color:transparent;color:var(--green);}
+  .chip.sealed{background:var(--violet-tint);border-color:transparent;color:var(--violet);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant A</span><br />
+  <b>Inline accordion.</b> The Worked strip stays exactly as it is today; a
+  <b>run_python</b> or <b>calculate</b> row expands <i>in place</i> into the code and its
+  output. No new surface, no navigation — the transcript keeps its shape and the whole
+  turn stays readable while a run is open. Tap any row.
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15. What's the percentage increase, and what would 12 months at the new rate cost? Also, split three ways, what's exactly one third of the annual total?</div>
+
+    <div class="bubble ai">
+      I'll take the percentage first, then the annual total and the three-way split.
+
+      <div class="worked">
+        <div class="worked-head">
+          <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+          Worked <span class="n">4 steps · 45ms</span>
+        </div>
+
+        <!-- step 1 -->
+        <div class="step" data-step>
+          <div class="step-row">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></div>
+            <div class="step-main">
+              <div class="step-label">Worked out a number</div>
+              <div class="step-arg">(243.15 - 187.40) / 187.40 * 100</div>
+            </div>
+            <div class="ms">1ms</div>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="body">
+            <div class="exact" style="margin-top:8px">
+              <div class="lbl">exact</div><div class="val hero">27875/937</div>
+              <div class="lbl">decimal</div><div class="val">29.7492</div>
+            </div>
+            <div class="meta">
+              <span class="chip ok">exact</span>
+              <span class="chip">1ms</span>
+              <span class="chip">6 significant digits</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 2 -->
+        <div class="step" data-step>
+          <div class="step-row">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></div>
+            <div class="step-main">
+              <div class="step-label">Worked out a number</div>
+              <div class="step-arg">243.15 * 12</div>
+            </div>
+            <div class="ms">0ms</div>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="body">
+            <div class="exact" style="margin-top:8px">
+              <div class="lbl">exact</div><div class="val hero">14589/5</div>
+              <div class="lbl">decimal</div><div class="val">2917.8</div>
+            </div>
+            <div class="meta"><span class="chip ok">exact</span><span class="chip">0ms</span></div>
+          </div>
+        </div>
+
+        <!-- step 3 -->
+        <div class="step" data-step>
+          <div class="step-row">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></div>
+            <div class="step-main">
+              <div class="step-label">Worked out a number</div>
+              <div class="step-arg">243.15 * 12 / 3</div>
+            </div>
+            <div class="ms">0ms</div>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="body">
+            <div class="exact" style="margin-top:8px">
+              <div class="lbl">exact</div><div class="val hero">4863/5</div>
+              <div class="lbl">decimal</div><div class="val">972.6</div>
+            </div>
+            <div class="meta"><span class="chip ok">exact</span><span class="chip">0ms</span></div>
+          </div>
+        </div>
+
+        <!-- step 4 — the python run, open by default so the shape reads at a glance -->
+        <div class="step open" data-step>
+          <div class="step-row">
+            <div class="ico py"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M13 6l-2 12"/></svg></div>
+            <div class="step-main">
+              <div class="step-label">Ran a computation</div>
+              <div class="step-arg">8 lines · decimal</div>
+            </div>
+            <div class="ms">44ms</div>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="body">
+            <div class="sec">
+              <div class="sec-head">
+                Code
+                <span class="copy" data-copy><svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> copy</span>
+              </div>
+<pre><span class="gut"> 1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut"> 2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut"> 3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut"> 4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut"> 5 </span>    running += rate
+<span class="gut"> 6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut"> 7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut"> 8 </span>running</pre>
+            </div>
+
+            <div class="sec">
+              <div class="sec-head">stdout</div>
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+            </div>
+
+            <div class="result">
+              <div class="lbl">result</div>
+              <div class="val">Decimal('2917.80')</div>
+            </div>
+
+            <div class="meta">
+              <span class="chip ok">ran clean</span>
+              <span class="chip">44ms</span>
+              <span class="chip sealed">no network · no files</span>
+              <span class="chip">stdlib only</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      Your bill went up <b>29.7492%</b> — call it 29.7%. Twelve months at the new rate is
+      <b>$2,917.80</b>; split three ways that's exactly <b>$972.60</b> each, no rounding.
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> A long snippet makes the bubble tall, and the transcript has to
+  scroll past it to reach the answer. <b>What it buys:</b> zero navigation, the code sits
+  beside the sentence it produced, and several runs can be open at once for comparison —
+  which is the shape of "check my working".
+</div>
+
+<script>
+  for (const step of document.querySelectorAll("[data-step]")) {
+    step.querySelector(".step-row").addEventListener("click", () => step.classList.toggle("open"));
+  }
+  for (const btn of document.querySelectorAll("[data-copy]")) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const code = btn.closest(".sec").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+      navigator.clipboard?.writeText(code);
+      btn.classList.add("done");
+      btn.lastChild.textContent = " copied";
+      setTimeout(() => { btn.classList.remove("done"); btn.lastChild.textContent = " copy"; }, 1400);
+    });
+  }
+</script>
+</body>
+</html>

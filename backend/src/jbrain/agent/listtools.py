@@ -48,11 +48,15 @@ def list_card(lst: ListInfo) -> ViewPayload:
     )
 
 
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
     async def read_lists_tool(arguments: dict, ctx: ToolContext) -> str:
         include_archived = bool(arguments.get("include_archived", False))
         rows = await lists.list_lists(ctx.session, include_archived=include_archived)
-        return format_lists(rows)
+        return ToolOutput(format_lists(rows), result_brief=_count(len(rows), "list"))
 
     async def read_list_tool(arguments: dict, ctx: ToolContext) -> str:
         list_id = str(arguments.get("list_id", "")).strip()
@@ -62,7 +66,12 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
         if info is None:
             return "No list with that id is in scope."
         # The text is the model's; the card is the owner's tappable checklist.
-        return ToolOutput(format_list(info), view=list_card(info))
+        return ToolOutput(
+            format_list(info),
+            view=list_card(info),
+            # The open count, not the total: a list is read to find out what is LEFT.
+            result_brief=f"{info.open_count} of {info.total_count} open",
+        )
 
     async def create_list_tool(arguments: dict, ctx: ToolContext) -> str:
         title = str(arguments.get("title", "")).strip()
@@ -78,7 +87,10 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
             info = await lists.create_list(ctx.session, domain=domain, title=title)
         except UnknownDomain:
             return f"'{domain}' isn't a real domain — use general, health, finance, or location."
-        return f"Created list '{info.title}' [{info.domain}] id={info.id}."
+        return ToolOutput(
+            f"Created list '{info.title}' [{info.domain}] id={info.id}.",
+            result_brief=f"made '{info.title}'",
+        )
 
     async def add_list_item_tool(arguments: dict, ctx: ToolContext) -> str:
         list_id = str(arguments.get("list_id", "")).strip()
@@ -88,7 +100,7 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
         item = await lists.add_item(ctx.session, list_id, body)
         if item is None:
             return "No list with that id is in scope."
-        return f"Added '{item.body}' id={item.id}."
+        return ToolOutput(f"Added '{item.body}' id={item.id}.", result_brief=f"added '{item.body}'")
 
     async def check_list_item_tool(arguments: dict, ctx: ToolContext) -> str:
         item_id = str(arguments.get("item_id", "")).strip()
@@ -98,14 +110,19 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
         item = await lists.set_item_checked(ctx.session, item_id, checked=checked)
         if item is None:
             return "No item with that id is in scope."
-        return f"{'Checked off' if item.checked else 'Reopened'} '{item.body}'."
+        verb = "checked off" if item.checked else "reopened"
+        return ToolOutput(
+            f"{verb.capitalize()} '{item.body}'.", result_brief=f"{verb} '{item.body}'"
+        )
 
     async def remove_list_item_tool(arguments: dict, ctx: ToolContext) -> str:
         item_id = str(arguments.get("item_id", "")).strip()
         if not item_id:
             return "remove_list_item needs an item_id."
         removed = await lists.remove_item(ctx.session, item_id)
-        return "Removed the item." if removed else "No item with that id is in scope."
+        if not removed:
+            return "No item with that id is in scope."
+        return ToolOutput("Removed the item.", result_brief="removed")
 
     return {
         "read_lists": read_lists_tool,

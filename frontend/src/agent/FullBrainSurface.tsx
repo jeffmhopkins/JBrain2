@@ -21,6 +21,7 @@ import {
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { ComputationPopover } from "./ComputationPopover";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
 import { EntityWrites } from "./EntityWrites";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
@@ -41,23 +42,28 @@ import {
 import { attachmentKind } from "./attachmentKind";
 import {
   type LedgerRow,
-  entityPhrase,
   ledgerRows,
   ledgerWord,
   stepWriteState,
   turnWriteSummary,
-  writePhrase,
 } from "./entityWrites";
 import { BrainGlyph } from "./glyphs";
-import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import {
+  type CalcTarget,
+  type CiteTarget,
+  Markdown,
+  type MdFlag,
+  stripModelCitations,
+} from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
 import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
+import { stepLedger } from "./stepLedger";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
-import { ToolView } from "./views/registry";
+import { STEP_VIEWS, ToolView } from "./views/registry";
 
 // A tool call can finish in a blink; pin its label for at least this long so the
 // "what it's doing" status is actually readable. A new tool inside the window
@@ -874,6 +880,9 @@ function Bubble({
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
   const [openFlag, setOpenFlag] = useState<string | null>(null);
+  // The open computation popover, if any — one at a time per turn, because it is a glance
+  // at one number rather than a panel you leave up.
+  const [calc, setCalc] = useState<{ target: CalcTarget; anchor: DOMRect } | null>(null);
   // Pace the *displayed* prose: a steady typewriter reveal while the turn streams,
   // snapping to the full text once it settles. Only the Markdown text is paced —
   // sources, entities, and flags below still read the full `message.text`, so they
@@ -1009,6 +1018,15 @@ function Bubble({
     ...(t.webSources ?? []).map((w): CiteTarget => ({ kind: "web", url: w.url, title: w.title })),
     ...(t.entities ?? []).map((e): CiteTarget => ({ kind: "entity", entityId: e.entity_id })),
   ]);
+  // The turn's computations, positional with `[=n]` — one per call that produced a number,
+  // in call order. Built from the STEPS, not from anything the model wrote: a marker names a
+  // position and the popover's contents come from the persisted call, so a marker can never
+  // assert a computation that did not happen (SHOW_THE_WORKING_PLAN.md D3).
+  const calcTargets: CalcTarget[] = message.tools.flatMap((t) =>
+    t.view && t.view.view === "code_run"
+      ? [{ payload: t.view, brief: t.result ?? String(t.view.data.result ?? "") }]
+      : [],
+  );
   const onCite =
     onOpenNote || onOpenEntity
       ? (n: number) => {
@@ -1063,6 +1081,8 @@ function Bubble({
   // view through once the fan stands down.
   const viewsToRender = message.views
     .filter((v) => !(liveFanActive && v.view === "subagent_synthesis"))
+    // A step view renders in its own step, never here — see STEP_VIEWS.
+    .filter((v) => !STEP_VIEWS.has(v.view))
     // The plan_card is kept inline ONLY on the ORIGINAL turn that drafted the plan — the
     // one where the owner reads it and approves. That card (emitted while the plan was a
     // `not_approved` draft) stays put and, being live, reconciles to show the plan's current
@@ -1109,6 +1129,13 @@ function Bubble({
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
     <>
+      {calc && (
+        <ComputationPopover
+          target={calc.target}
+          anchor={calc.anchor}
+          onClose={() => setCalc(null)}
+        />
+      )}
       {message.text && (
         <Markdown
           text={shownText}
@@ -1119,6 +1146,11 @@ function Bubble({
           flags={flags}
           onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
           openFlag={openFlag}
+          calcs={calcTargets}
+          onCalc={(n, el) => {
+            const target = calcTargets[n - 1];
+            if (target) setCalc({ target, anchor: el.getBoundingClientRect() });
+          }}
           streaming={message.streaming}
         />
       )}
@@ -2093,8 +2125,7 @@ function StepRow({
   // phrase already say "writing…" / "failed", and a rung reading "nothing was written"
   // over a call still running would be a lie the owner cannot tell from the truth.
   const hasWrites = writes !== "none" && writes !== "writing" && writes !== "failed";
-  const writeNote = writePhrase(step);
-  const entityNote = entityPhrase(step);
+  const ledger = stepLedger(step);
   const stepArgs =
     step.args != null && Object.keys(step.args).length > 0
       ? (step.args as Record<string, unknown>)
@@ -2128,30 +2159,24 @@ function StepRow({
           </span>
         )}
         <span className={`fb-step-mark ${mark}`} aria-hidden="true" />
-        {step.name === "search" && (
-          <span className="fb-step-cnt">
-            {step.sources.length} result{step.sources.length === 1 ? "" : "s"}
-          </span>
-        )}
-        {step.name === "web_search" && hasWebSources && (
-          <span className="fb-step-cnt">
-            {step.webSources.length} result{step.webSources.length === 1 ? "" : "s"}
-          </span>
-        )}
-        {writeNote !== undefined && (
-          <span className={`fb-step-cnt fbw-cnt fbw-${writes}`}>{writeNote}</span>
-        )}
-        {/* A resolve writes no FACT, so it has no write phrase — and carried no mark at
-            all, which left the one call that creates the owner's records reading as a
-            call that did nothing. What it did is the cast: how many records it made and
-            how many it matched. */}
-        {writeNote === undefined && entityNote !== undefined && (
-          <span className="fb-step-cnt fbw-cnt fbw-ents">{entityNote}</span>
+        {/* What came back, in one phrase — for EVERY tool, not the four that used to be
+            named here (`stepLedger` decides; a write keeps its own D3 wording, a resolve
+            its cast, and a tool that authored an answer wins over any count). A row with
+            nothing on its right is a row the owner cannot check. */}
+        {ledger !== undefined && (
+          <span className={`fb-step-cnt ${ledger.cls}`.trimEnd()}>{ledger.text}</span>
         )}
         <ChevronGlyph className="fb-step-caret" />
       </button>
       <div className="fb-step-detail">
         <div className="fb-step-di">
+          {/* The tool's OWN view, above the fixed cascade — the one rung a tool can fill
+              itself. `run_python`'s code listing does not fit args→sources→summary, and the
+              alternative was a bespoke `code` rung that G's popover would then have to
+              duplicate. This way the step and the popover render the same component
+              (SHOW_THE_WORKING_PLAN.md D2); `ToolView` renders nothing for a name the
+              registry does not hold, so an unknown view is silently no rung at all. */}
+          {step.view && <ToolView payload={step.view} />}
           {hasWrites && <EntityWrites facts={step.facts} truncated={step.truncated} />}
           {isErr ? (
             <>
@@ -2187,6 +2212,14 @@ function StepRow({
               </div>
               <SentBlock args={stepArgs} text={rawText} />
             </>
+          ) : step.view ? (
+            // A step that rendered its OWN view has already shown its result, structurally.
+            // The generic rung below would print the model-facing text again — for a
+            // `run_python` step that is the same stdout and the same result a second time,
+            // in prose, under the view that just showed them. The raw payload stays one tap
+            // away, which is where DESIGN.md puts it ("a step's arguments are not its
+            // result").
+            <SentBlock args={stepArgs} text={summary} />
           ) : summary ? (
             <>
               <div className="fb-res-lab">result</div>

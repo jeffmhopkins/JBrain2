@@ -14,7 +14,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.mergetools import entity_merge_executor
 from jbrain.agent.prefstools import PREFS_OP, owner_prefs_executor
 from jbrain.agent.proposals import (
@@ -87,10 +87,13 @@ def _handler(name: str, registry: ConnectorRegistry, proposals: ProposalRepo) ->
         prop_id = await proposals.stage(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec
         )
-        return (
+        return ToolOutput(
             f"That needs an off-box lookup, which I won't make on my own. I've staged it for your"
             f" approval (proposal {prop_id}) — it calls {request.url} with {request.query}, and"
-            " nothing leaves the box until you approve."
+            " nothing leaves the box until you approve.",
+            # Nothing left the box. Every connector tool ends here, so this one phrase covers
+            # the whole family — and it must not read like an answer that came back.
+            result_brief="staged, nothing sent",
         )
 
     return connector_tool

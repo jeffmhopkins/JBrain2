@@ -155,6 +155,8 @@ def build_compare_handlers(
         except (UndecodableImage, ImageTooLarge) as exc:
             log.warning("compare_images_stitch_failed", error=str(exc))
             return text  # the comparison still stands; just no side-by-side card
-        return ToolOutput(text, view=chat_image_view(row) if show else None)
+        return ToolOutput(
+            text, view=chat_image_view(row) if show else None, result_brief="compared"
+        )
 
     return {"compare_images": compare_images_tool}

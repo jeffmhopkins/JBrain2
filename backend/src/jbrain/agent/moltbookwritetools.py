@@ -33,7 +33,7 @@ from jbrain.agent.jmolt_guards import (
 )
 from jbrain.agent.jmolt_owner import jmolt_settings_ctx
 from jbrain.agent.jmolt_pacing import WritePacer
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt_outbox import ActionLedgerRepo, OutboxRepo
 
@@ -82,7 +82,7 @@ async def _release_sentence(settings_store: SqlSettingsStore, ctx: ToolContext) 
     try:
         auto = await settings_store.moltbook_autonomy(jmolt_settings_ctx(ctx.session))
     except Exception:  # noqa: BLE001 — never fail a staged write over a settings read
-        return "It goes out when it is released."
+        return ToolOutput("It goes out when it is released.", result_brief="held")
     if auto:
         return (
             "Automatic release is ON tonight: it goes out at that time without your human "
@@ -115,18 +115,27 @@ def build_moltbook_write_handlers(
         except Exception:  # noqa: BLE001 — a settings blip stages rather than publishes
             return False
 
-    async def _deliver(row_id: str | None, ctx: ToolContext) -> str:
+    async def _deliver(row_id: str | None, ctx: ToolContext) -> tuple[str, str]:
         """Send it now if the switch is on, else leave it for the drip — and say which.
 
         The pacing budget is charged HERE, once a write has actually gone through, so a
-        refusal or a guard-blocked write never burns budget jmolt did not spend."""
+        refusal or a guard-blocked write never burns budget jmolt did not spend.
+
+        Returns `(sentence, brief)`. The brief is the Worked row's answer and it names the
+        DELIVERY — published or held — because "did that actually go out?" is the one
+        question about a write to a public site, and the pacing headroom beside it is what
+        says whether another one can follow."""
         pace.charge()
         note = ""
+        published = False
         if row_id and publish_now and await _autonomy(ctx):
-            _, note = await publish_now(row_id)
+            published, note = bool(row_id), (await publish_now(row_id))[1]
         if not note:
             note = await _release_sentence(settings_store, ctx)
-        return f"{note} {pace.headroom()}"
+            published = False
+        return f"{note} {pace.headroom()}", (
+            f"{'published' if published else 'held'} · {pace.headroom()}"
+        )
 
     async def _record(s: AsyncSession, pid: str, **kw: Any) -> None:
         await ledger.record(s, pid, **kw)
@@ -246,7 +255,8 @@ def build_moltbook_write_handlers(
                     "skipping the duplicate."
                 )
             await _record(s, pid, action="stage_comment", target=post_id, reacted_to=content[:200])
-        return "Your reply: " + await _deliver(row_id, ctx)
+        sentence, brief = await _deliver(row_id, ctx)
+        return ToolOutput("Your reply: " + sentence, result_brief=brief)
 
     async def moltbook_vote(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -282,7 +292,8 @@ def build_moltbook_write_handlers(
             if row_id is None:
                 return "You already staged that vote tonight — skipping the duplicate."
             await _record(s, pid, action="stage_vote", target=target)
-        return f"Your {'up' if up else 'down'}vote: " + await _deliver(row_id, ctx)
+        sentence, brief = await _deliver(row_id, ctx)
+        return ToolOutput(f"Your {'up' if up else 'down'}vote: " + sentence, result_brief=brief)
 
     async def moltbook_social(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -317,7 +328,8 @@ def build_moltbook_write_handlers(
             if row_id is None:
                 return f"You already staged: {action} {name} tonight — skipping the duplicate."
             await _record(s, pid, action=f"stage_{action}", target=name)
-        return f"{action.title()} {name}: " + await _deliver(row_id, ctx)
+        sentence, brief = await _deliver(row_id, ctx)
+        return ToolOutput(f"{action.title()} {name}: " + sentence, result_brief=brief)
 
     async def moltbook_profile_update(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -332,7 +344,10 @@ def build_moltbook_write_handlers(
         async with scoped_session(maker, ctx.session) as s:
             await outbox.stage(s, pid, kind="profile", payload={"description": description})
             await _record(s, pid, action="stage_profile")
-        return "Staged a profile update (your disclosure line stays fixed at the top)."
+        return ToolOutput(
+            "Staged a profile update (your disclosure line stays fixed at the top).",
+            result_brief="staged",
+        )
 
     return {
         "moltbook_post": moltbook_post,

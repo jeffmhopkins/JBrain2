@@ -43,6 +43,31 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
+# The deterministic-arithmetic backstop (docs/archive/EXACT_MATH_TOOLS_PLAN.md). Named here
+# because these two are the first tools granted to EVERY persona rather than to one, and
+# their two permission classes are deliberately different:
+#
+# - `calculate` is `read`-class. It evaluates a closed expression grammar — no names, no
+#   attributes, no calls outside a fixed table — so it reads nothing and runs nothing, and
+#   curator's `tools=None` wildcard picking it up is exactly right.
+# - `run_python` is `web`-class, and NOT because it reaches the internet (it cannot: the
+#   `pysandbox` sidecar sits on an `internal: true` network). It is the gate that matters,
+#   the same reasoning contracts.py records for the radio tools: `web` is the opt-in,
+#   never-in-the-wildcard class, and a tool that executes model-authored code must be
+#   granted deliberately per persona, never absorbed by a wildcard. curator therefore holds
+#   it through `extra_tools`, the way it holds `deep_produce`.
+#
+# `run_python` is absent from the registry when the sandbox is unconfigured, so naming it
+# in an allowlist is harmless on a box without it — the same degrade as the image tools.
+#
+# Spliced into each allowlist below as `{*MATH_TOOLS, …}` rather than unioned on as a third
+# operand: a third operand makes ruff wrap the whole expression one level deeper, which
+# re-indents four long comment-heavy set literals and buries a two-name change in 400 lines
+# of churn.
+CALCULATE_TOOL = "calculate"
+RUN_PYTHON_TOOL = "run_python"
+MATH_TOOLS = frozenset({CALCULATE_TOOL, RUN_PYTHON_TOOL})
+
 # The spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
 # for nesting, the research/review children — calls to launch a bounded fan of
 # web-sandboxed children. It is `web`-gated (it drives web-class egress through its
@@ -83,6 +108,11 @@ DEEPEST_RESEARCH_TOOL = "deepest_research"
 # explicit allowlist regardless of class.
 DEEP_PRODUCE_TOOL = "deep_produce"
 
+# The question tool, named here because three personas grant it and one must NEVER: see
+# NON_OWNER_PERSONAS below and `agents.py`'s own argument for keeping it out of the
+# third-party set.
+ASK_OWNER_TOOL = "ask_owner"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local vision read, the local audio transcription, the local video
@@ -106,6 +136,7 @@ DEEP_PRODUCE_TOOL = "deep_produce"
 # RLS is still the boundary, and jerv reads no note/entity/list/appointment.
 JERV_TOOLS = WEB_TOOLS | frozenset(
     {
+        *MATH_TOOLS,
         # A dated news search over SearXNG's news category — the current-events twin of
         # web_search (returns article leads with publish dates; recency filter, not date-stuffing).
         "news_search",
@@ -308,7 +339,7 @@ MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 # ground relative date queries (older_than:, before:/after:) against today, since
 # date-by-date filing is the heart of the job. Every turn already prepends today's date
 # (now_block); the tool covers an explicit fresh / other-zone read.
-ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
+ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({*MATH_TOOLS, "current_time"})
 
 # The jmolt persona's allowlist (docs/plans/JMOLT_PLAN.md). W1 is read-only lurking:
 # the `moltbook` read umbrella plus `current_time` to date its own observations honestly.
@@ -317,6 +348,7 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # knowledge-base, owner, or spawn tools; it is sandboxed to Moltbook + its own notes.
 JMOLT_TOOLS = frozenset(
     {
+        *MATH_TOOLS,
         "moltbook",
         "current_time",
         "time_left",
@@ -340,7 +372,7 @@ JMOLT_TOOLS = frozenset(
 # must be unable to act on what it reads, so a poisoned diary can never meet a live egress
 # call in the same turn. `jmolt_observe`'s handler enforces the same rule at runtime (it
 # refuses if any egress tool is present in the turn). Owner-selectable, never spawnable.
-JMOLT_OBSERVER_TOOLS = frozenset({"jmolt_observe", "current_time"})
+JMOLT_OBSERVER_TOOLS = frozenset({*MATH_TOOLS, "jmolt_observe", "current_time"})
 
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested
 # persona against this set BEFORE calling `agent_for` — which falls back to the
@@ -374,7 +406,7 @@ SUBAGENT_PERSONAS = frozenset(
 # via RESEARCH_DEEP_TOOLS), and `review` — so EVERY deep-research fan can reach them, not only
 # the preset scout path (research_scout already holds them). All ⊆ jerv, so the clamp keeps them.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset(
-    {"news_search", "science_search", "news_feed", "current_time", "portal_search"}
+    {*MATH_TOOLS, "news_search", "science_search", "news_feed", "current_time", "portal_search"}
 )
 REVIEW_TOOLS = RESEARCH_TOOLS
 # The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), split by ROLE (not by a
@@ -397,9 +429,17 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 # runs to its step cap regardless of the prompt). The reader (research_fetch/FETCH_TOOLS) does NOT
 # get it — it stays search-less by design so it can't wander off its handed URL list.
 SCOUT_TOOLS = frozenset(
-    {"web_search", "news_search", "science_search", "news_feed", "web_fetch", "current_time"}
+    {
+        *MATH_TOOLS,
+        "web_search",
+        "news_search",
+        "science_search",
+        "news_feed",
+        "web_fetch",
+        "current_time",
+    }
 )
-FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
+FETCH_TOOLS = frozenset({*MATH_TOOLS, "web_fetch", "current_time"})
 # The scout's HARD `web_search` ceiling, enforced by the engine (the web_search handler counts
 # against it and refuses past it) — not by the prompt, which states the same number but which
 # gpt-oss ignores, searching once per named outlet until the step cap stops it at ~40 tool calls
@@ -430,7 +470,7 @@ RESEARCH_DEEP_TOOLS = RESEARCH_TOOLS | frozenset({DECOMPOSE_TOOL})
 # holding it reaches the corpus and nothing owner-authored. Like the web children they are
 # leaves (no `spawn_subagent`) and KB-less. jerv holds `external_video`, so the parent⊆child
 # clamp keeps it; show/remove are separate tools, never granted here.
-RESEARCH_LIBRARY_TOOLS = frozenset({"external_video", "current_time"})
+RESEARCH_LIBRARY_TOOLS = frozenset({*MATH_TOOLS, "external_video", "current_time"})
 REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # research_reports / review_reports children: the research-REPORT library read tools and the
 # dataless clock, and NO web tools — `deep_research`'s `sources=reports` (the compare-from-
@@ -441,11 +481,13 @@ REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # jerv holds `research_report`, so the parent⊆child clamp keeps it. show_/remove_ are separate
 # tools, never granted here — a sub-agent needs only to find and read, never to render a card to
 # the owner or stage a deletion (the read-only umbrella is exactly that boundary).
-RESEARCH_REPORTS_TOOLS = frozenset({"research_report", "current_time"})
+RESEARCH_REPORTS_TOOLS = frozenset({*MATH_TOOLS, "research_report", "current_time"})
 REVIEW_REPORTS_TOOLS = RESEARCH_REPORTS_TOOLS
-# summarize: a pure transform — no tools at all, so it cannot reach the web and
-# cannot spawn.
-SUMMARIZE_TOOLS: frozenset[str] = frozenset()
+# summarize: a transform that holds the arithmetic pair and nothing else — it cannot reach
+# the web and cannot spawn. The pair is granted because rolling a set of findings into a
+# summary is exactly where a total or a percentage gets quietly invented, which is the
+# failure this backstop exists for; it widens nothing else (neither tool reads or egresses).
+SUMMARIZE_TOOLS: frozenset[str] = MATH_TOOLS
 
 # The guided-intake interviewer's allowlist: EMPTY. A non-owner stranger drives this
 # persona, so it reads no knowledge base and may call no tool at all — capture is the
@@ -733,9 +775,30 @@ AGENTS: dict[str, AgentProfile] = {
         "system.prompt",
         tools=None,
         reads_knowledge_base=True,
-        extra_tools=frozenset({DEEP_PRODUCE_TOOL}),
+        # `run_python` rides extra_tools for the same reason as deep_produce: it is
+        # `web`-class so the wildcard can never absorb it, and curator holding it has to be a
+        # deliberate line rather than a side effect of a class. `calculate` needs no grant —
+        # it is `read`-class and the wildcard admits it.
+        # `ask_owner` rides extra_tools for the third time over: it is NEVER_DEFAULT, so the
+        # wildcard cannot absorb it, and a tool that puts a question in front of the owner
+        # and ENDS THE TURN has to be a deliberate line per persona rather than a class
+        # (SHOW_THE_WORKING_PLAN.md W4). In a plain conversation it records its set on the
+        # turn rather than on a note conversation; the halt is the same.
+        extra_tools=frozenset({DEEP_PRODUCE_TOOL, RUN_PYTHON_TOOL, ASK_OWNER_TOOL}),
     ),
-    "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
+    # teacher is the one persona whose EMPTY allowlist was the design, so widening it is a
+    # deliberate reversal, owner-decided: a Socratic tutor that cannot check a student's
+    # arithmetic has to either trust it or assert its own, and asserting it is the failure
+    # mode this pair removes. The tools change what it can VERIFY, not how it teaches — its
+    # prompt still says to ask rather than answer, and it still reads no knowledge base.
+    "teacher": _profile(
+        "teacher",
+        # A tutor asking which of two readings a student meant is the same act as the
+        # curator asking which Dr. Reyes — and a tutor that guesses teaches the guess.
+        "teacher.prompt",
+        tools=MATH_TOOLS | frozenset({ASK_OWNER_TOOL}),
+        reads_knowledge_base=False,
+    ),
     "jerv": _profile(
         "jerv",
         "jerv.prompt",

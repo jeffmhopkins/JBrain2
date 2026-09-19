@@ -263,9 +263,30 @@ def build_ask_owner_handlers(
         async with scoped_session(maker, ctx.session) as s:
             conversation = await repo.get(s, session_id)
             if conversation is None:
-                return _refused(
-                    "ask_owner works only inside a note's conversation, and this one has no"
-                    " note behind it. Nothing was recorded; answer from what you have."
+                # A PLAIN CONVERSATION (SHOW_THE_WORKING_PLAN.md W4, O1). There is no note
+                # to correct and no ledger row to hold the set, so the set lives on the TURN
+                # that asked: `recorded_args` puts the questions and their ids on the
+                # transcript step, which is the only thing the PWA's question block is built
+                # from — it never reads the conversation row. The halt is the same.
+                #
+                # The consequence is deliberate: an unanswered chat question dies with the
+                # conversation and never reaches the notes tab's queue. That is the point
+                # rather than a cost — a chat question has no note to correct and no expiry
+                # ladder to climb, so a queue entry for it would be a row nothing could ever
+                # resolve. The note thread's own ladder (D2) is untouched.
+                #
+                # "One open set" still holds without state to keep it: the turn ENDS here, so
+                # nothing more can ask until the owner replies, and `asked.askStep` renders
+                # the LAST recorded ask on a turn — so a model that emits two calls in one
+                # message leaves one block, not two.
+                log.info("ask_owner.recorded_on_turn", session_id=session_id, questions=len(asked))
+                return ToolOutput(
+                    f"Recorded, {_count(len(asked))}. You are now waiting on Jeff, and your"
+                    " turn ends here — what you already wrote stands. When he answers, you"
+                    " pick up from there.",
+                    halt=AWAITING_OWNER,
+                    result_brief=_count(len(asked)),
+                    recorded_args=recorded_args(asked),
                 )
             if conversation.state == "waiting_on_owner":
                 return _already_waiting(await open_questions(s, repo, session_id))
@@ -305,6 +326,10 @@ def build_ask_owner_handlers(
             " turn ends here — what you already wrote stands. When he answers, each"
             " answer is appended to the note and you pick the thread up from there.",
             halt=AWAITING_OWNER,
+            # The COUNT, never a question's text: the row is the collapsed strip and the
+            # questions are rendered, answerably, by the block above it. It matches the
+            # stream chip's wording ("3 questions") so the two surfaces agree.
+            result_brief=_count(len(asked)),
             # THE IDS GO WITH IT, onto the transcript step as well as the ledger row, and
             # this is R3f's third review, finding 1. The tool declares no `id`, so the
             # model never sends one and `_asked` mints them here; the ledger kept them and
@@ -385,6 +410,9 @@ def _already_waiting(open_set: list[AskedQuestion]) -> ToolOutput:
         f"This note is already waiting on Jeff for {_count(len(open_set))}, starting with:"
         f" {open_set[0].question!r}. One open set at a time — this ask was not recorded.",
         recorded_args=recorded_args(open_set),
+        # "not recorded", because it was not: a row reading like the ask above it would
+        # claim a second open set that does not exist.
+        result_brief="not recorded — already waiting",
     )
 
 

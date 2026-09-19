@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Code run · E · collapsed ledger</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--green-tint);color:var(--green);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+
+  /* ===== level 0: one thin row for the whole turn ===== */
+  .led{margin-top:9px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);overflow:hidden;}
+  .led-top{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;}
+  .led-top:active{background:var(--surface);}
+  .led-top .fx{font-family:var(--font-mono);font-size:10.5px;color:var(--violet);background:var(--violet-tint);padding:2px 6px;border-radius:5px;flex:none;}
+  .led-top .sum{flex:1;min-width:0;font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .led-top .chev{width:13px;height:13px;color:var(--text-3);flex:none;transition:transform .16s ease;}
+  .led.open .led-top .chev{transform:rotate(90deg);}
+
+  /* ===== level 1: one compact line per call ===== */
+  .rows{display:none;border-top:1px solid var(--border);}
+  .led.open .rows{display:block;}
+  .row{border-bottom:1px solid var(--border);}
+  .row:last-child{border-bottom:0;}
+  .row-top{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:7px 10px;cursor:pointer;font-family:var(--font-mono);font-size:11px;}
+  .row-top:active{background:var(--bg);}
+  .row-top .ex{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .row-top .eq{color:var(--green);white-space:nowrap;}
+  .row-top .chev{width:11px;height:11px;color:var(--text-3);transition:transform .16s ease;}
+  .row.open .row-top .chev{transform:rotate(90deg);}
+  .row.bad .row-top .eq{color:var(--rose);}
+
+  /* ===== level 2: the full detail ===== */
+  .det{display:none;padding:2px 10px 10px;background:var(--bg);}
+  .row.open .det{display:block;}
+  .lab{margin-top:8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);display:flex;align-items:center;gap:7px;}
+  .lab .cp{margin-left:auto;text-transform:none;letter-spacing:0;font-size:10.5px;color:var(--steel);cursor:pointer;}
+  .lab .cp.done{color:var(--green);}
+  pre{margin-top:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.6;overflow-x:auto;white-space:pre;color:var(--text-2);}
+  pre.out{color:var(--text);}
+  pre.err{color:var(--rose);}
+  .k{color:var(--violet);} .s{color:var(--green);} .n{color:var(--amber);} .f{color:var(--steel);}
+  .gut{color:var(--text-3);user-select:none;}
+  .kv{margin-top:8px;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:baseline;}
+  .kv .l{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .kv .v{font-family:var(--font-mono);font-size:12px;color:var(--text);}
+  .kv .v.hero{color:var(--green);}
+  .note{margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--text-3);}
+  .note b{color:var(--text-2);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 14px 16px;display:flex;align-items:center;gap:10px;}
+  .composer .input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--text-3);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Code run · variant E</span><br />
+  <b>Collapsed ledger.</b> At rest the whole turn's working is <b>one 30px row</b>. Tap it
+  and you get a ledger — one line per call, expression on the left, answer on the right,
+  which is usually all you needed. Tap a <i>line</i> and only that one opens to its code.
+  <b>Three levels, each paid for only when you ask.</b>
+</div>
+
+<div class="phone">
+  <div class="bar">
+    <div class="ttl">Full Brain</div>
+    <div class="right"><span class="dot"></span> curator</div>
+  </div>
+
+  <div class="chat">
+    <div class="bubble me">My electric bill went from $187.40 to $243.15 — percentage increase, annual at the new rate, and one third of that. Then show me the months.</div>
+
+    <div class="bubble ai">
+      Your bill went up <b>29.7492%</b> — call it 29.7%. Twelve months at the new rate is
+      <b>$2,917.80</b>; split three ways that's exactly <b>$972.60</b> each, no rounding.
+      Quarterly marks are $729.45, $1,458.90, $2,188.35 and $2,917.80.
+
+      <div class="led" data-led>
+        <div class="led-top">
+          <span class="fx">ƒ</span>
+          <span class="sum">5 computations · 46ms · 1 retried</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+        </div>
+
+        <div class="rows">
+          <div class="row" data-row>
+            <div class="row-top">
+              <span class="ex">(243.15 - 187.40) / 187.40 * 100</span>
+              <span class="eq">= 29.7492</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="det">
+              <div class="kv">
+                <div class="l">exact</div><div class="v hero">27875/937</div>
+                <div class="l">decimal</div><div class="v">29.7492</div>
+                <div class="l">tool</div><div class="v">calculate · 1ms</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row bad" data-row>
+            <div class="row-top">
+              <span class="ex">243.15 * 12mo</span>
+              <span class="eq">failed</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="det">
+              <div class="lab">Error</div>
+<pre class="err">SyntaxError: unexpected 'm' at position 11</pre>
+              <div class="note">The next line is the model's own correction. <b>A retry you
+                can't see looks like a result you should trust.</b></div>
+            </div>
+          </div>
+
+          <div class="row" data-row>
+            <div class="row-top">
+              <span class="ex">243.15 * 12</span>
+              <span class="eq">= 2917.8</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="det">
+              <div class="kv">
+                <div class="l">exact</div><div class="v hero">14589/5</div>
+                <div class="l">tool</div><div class="v">calculate · 0ms</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row" data-row>
+            <div class="row-top">
+              <span class="ex">243.15 * 12 / 3</span>
+              <span class="eq">= 972.6</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="det">
+              <div class="kv">
+                <div class="l">exact</div><div class="v hero">4863/5</div>
+                <div class="l">tool</div><div class="v">calculate · 0ms</div>
+              </div>
+              <div class="note">Divides evenly — no rounding, so each share is exact.</div>
+            </div>
+          </div>
+
+          <div class="row" data-row>
+            <div class="row-top">
+              <span class="ex">run_python · 8 lines</span>
+              <span class="eq">= 2917.80</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+            <div class="det">
+              <div class="lab">Code <span class="cp" data-cp>copy</span></div>
+<pre><span class="gut">1 </span><span class="k">from</span> decimal <span class="k">import</span> Decimal
+<span class="gut">2 </span>rate = <span class="f">Decimal</span>(<span class="s">'243.15'</span>)
+<span class="gut">3 </span>running = <span class="f">Decimal</span>(<span class="s">'0'</span>)
+<span class="gut">4 </span><span class="k">for</span> month <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, <span class="n">13</span>):
+<span class="gut">5 </span>    running += rate
+<span class="gut">6 </span>    <span class="k">if</span> month % <span class="n">3</span> == <span class="n">0</span>:
+<span class="gut">7 </span>        <span class="f">print</span>(<span class="s">f'after month {month:2}: {running}'</span>)
+<span class="gut">8 </span>running</pre>
+              <div class="lab">stdout</div>
+<pre class="out">after month  3: 729.45
+after month  6: 1458.90
+after month  9: 2188.35
+after month 12: 2917.80</pre>
+              <div class="kv">
+                <div class="l">result</div><div class="v hero">Decimal('2917.80')</div>
+                <div class="l">sandbox</div><div class="v">no network · scratch only · 44ms</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer"><div class="input">Message…</div></div>
+</div>
+
+<div class="caption" style="margin-top:2px">
+  <b>What it costs.</b> One row per turn is not <i>zero</i> — a chat of twenty computed
+  answers carries twenty rows — and reaching the code is two taps, not one.
+  <b>What it buys:</b> the middle level is the one that actually answers "is this right?" —
+  expression beside answer, five calls readable at a glance, <b>the failed one visible in
+  the list</b> — without ever loading a wall of code you didn't ask for.
+</div>
+
+<script>
+  for (const led of document.querySelectorAll("[data-led]")) {
+    led.querySelector(".led-top").addEventListener("click", () => led.classList.toggle("open"));
+  }
+  for (const row of document.querySelectorAll("[data-row]")) {
+    row.querySelector(".row-top").addEventListener("click", () => row.classList.toggle("open"));
+  }
+  for (const cp of document.querySelectorAll("[data-cp]")) {
+    cp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const code = cp.closest(".det").querySelector("pre").innerText.replace(/^\s*\d+\s/gm, "");
+      navigator.clipboard?.writeText(code);
+      cp.classList.add("done"); cp.textContent = "copied";
+      setTimeout(() => { cp.classList.remove("done"); cp.textContent = "copy"; }, 1400);
+    });
+  }
+</script>
+</body>
+</html>

@@ -903,6 +903,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     shipped = {
         "search",
         "current_time",
+        # Exact arithmetic. `read`-class and domain-less like `current_time` — it reads
+        # nothing at all — so the curator wildcard holds it alongside the knowledge tools.
+        "calculate",
         "read_wiki",
         "file_correction",
         "request_rebuild",
@@ -1344,6 +1347,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "current_time",
             1,
             "1139d8705fe31c1738afc01d13487a27626339de11b370cbafea4a446f35e02c",
+        ),
+        "calculate.tool": (
+            "calculate",
+            1,
+            "92460bb3b090a5689b5fca13cbf0489865095e3112cc2150bf80f45634a877d6",
+        ),
+        "run_python.tool": (
+            "run_python",
+            1,
+            "18f0c0e4d8f244b144ba7a90126954fa4fa41ab5c3f0afdf77005a0016d09a89",
         ),
         "current_location.tool": (
             "current_location",
