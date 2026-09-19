@@ -56,7 +56,7 @@ import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
-import { ToolView } from "./views/registry";
+import { STEP_VIEWS, ToolView } from "./views/registry";
 
 // A tool call can finish in a blink; pin its label for at least this long so the
 // "what it's doing" status is actually readable. A new tool inside the window
@@ -1062,6 +1062,8 @@ function Bubble({
   // view through once the fan stands down.
   const viewsToRender = message.views
     .filter((v) => !(liveFanActive && v.view === "subagent_synthesis"))
+    // A step view renders in its own step, never here — see STEP_VIEWS.
+    .filter((v) => !STEP_VIEWS.has(v.view))
     // The plan_card is kept inline ONLY on the ORIGINAL turn that drafted the plan — the
     // one where the owner reads it and approves. That card (emitted while the plan was a
     // `not_approved` draft) stays put and, being live, reconciles to show the plan's current
@@ -2137,6 +2139,13 @@ function StepRow({
       </button>
       <div className="fb-step-detail">
         <div className="fb-step-di">
+          {/* The tool's OWN view, above the fixed cascade — the one rung a tool can fill
+              itself. `run_python`'s code listing does not fit args→sources→summary, and the
+              alternative was a bespoke `code` rung that G's popover would then have to
+              duplicate. This way the step and the popover render the same component
+              (SHOW_THE_WORKING_PLAN.md D2); `ToolView` renders nothing for a name the
+              registry does not hold, so an unknown view is silently no rung at all. */}
+          {step.view && <ToolView payload={step.view} />}
           {hasWrites && <EntityWrites facts={step.facts} truncated={step.truncated} />}
           {isErr ? (
             <>

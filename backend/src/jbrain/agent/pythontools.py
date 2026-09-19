@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import structlog
 
+from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.pysandbox import (
     DEFAULT_TIMEOUT_SECONDS,
     MAX_TIMEOUT_SECONDS,
+    SANDBOX_SEALS,
     PySandboxClient,
     PySandboxError,
     Ran,
@@ -112,6 +114,38 @@ def _last_line(stdout: str) -> str:
     return lines[-1] if lines else ""
 
 
+def run_view(ran: Ran, code: str, timeout: float) -> ViewPayload:
+    """The `code_run` view: data-only slots the registered component renders.
+
+    No markup, no colour and no URL cross this boundary (DESIGN.md invariant #1/#9) — the
+    component owns the syntax highlighting, applied from `language`, so a snippet can never
+    smuggle a span into the transcript. The same view serves `calculate`, with the code
+    section replaced by the expression: one component, two tools, because they are the
+    same act.
+
+    The containment chips are built from the sandbox's ACTUAL settings rather than a
+    sentence typed here. "Where did this run?" is a fair question to ask of something that
+    executed code, and an answer that cannot drift from the compose file is worth more than
+    one that reads well."""
+    return ViewPayload(
+        view="code_run",
+        surface="inline",
+        data={
+            "language": "python",
+            "code": code,
+            "stdout": ran.stdout,
+            "stderr": ran.stderr,
+            "result": ran.result,
+            "error": ran.error,
+            "ok": ran.ok,
+            "duration_ms": ran.duration_ms,
+            "truncated": ran.truncated,
+            "timeout_seconds": timeout,
+            "containment": list(SANDBOX_SEALS),
+        },
+    )
+
+
 def build_python_handlers(sandbox: PySandboxClient) -> dict[str, ToolHandler]:
     """The `run_python` tool. Built only when a sandbox URL is configured; otherwise the
     sidecar is dropped from the registry and the tool simply does not exist on that box
@@ -137,6 +171,10 @@ def build_python_handlers(sandbox: PySandboxClient) -> dict[str, ToolHandler]:
             # arguments under the owner's own RLS scope. A second, unscoped copy in the
             # container logs is a domain-firewall hole for no debugging gain.
         )
-        return ToolOutput(format_run(ran), result_brief=run_brief(ran))
+        return ToolOutput(
+            format_run(ran),
+            view=run_view(ran, code, timeout),
+            result_brief=run_brief(ran),
+        )
 
     return {"run_python": run_python_tool}

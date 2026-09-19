@@ -1,6 +1,6 @@
 # Show the working — the code-run surfaces, and the question that reaches the chat
 
-> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1✅ W1b✅ W2✅ W3◻️ W4◻️
 
 ## Thesis
 
@@ -294,19 +294,35 @@ behind a label saying they were fine** — `weather_history`, the `moltbook` umb
 `merge_entities`. Without that assertion the set becomes the place a tool goes when nobody
 could think what its answer was.
 
-### W2 — the `code_run` view, rendered in the panel
+### W2 ✅ — the `code_run` view, rendered in the panel
 
-- A registered `code_run` component (`views/registry.tsx`): data-only slots — code, stdout,
-  stderr, result, duration, ok, containment — and **no model-authored markup, URL or colour**.
-  Syntax highlighting is a closed set of component-owned token classes applied from the
-  language, never sent by the model.
-- `calculate` uses the same view, with the code section replaced by the expression and the
-  exact/decimal pair. One component, two tools — they are the same act.
-- The containment line (*no network · scratch only · stdlib only*) is rendered from the
-  sandbox's actual configuration, not a hardcoded string: "where did this run?" is a fair
-  question to ask of something that executed code, and an answer that cannot drift is worth
-  more than one that reads well.
-- `StepRow`'s cascade gains the view rung (D2).
+- **One component, two tools.** `code_run` (`views/codeRun.tsx`) renders a run's code,
+  stdout, stderr, result and verdict; `calculate` fills the same slots with an expression in
+  place of the code and its exact/decimal pair in place of the output. They are the same act,
+  and a second component would be a second place for them to disagree.
+- **The component owns the highlighting.** `language` selects a closed set of token classes
+  the stylesheet colours — the model fills data-only slots and authors no span, colour or URL
+  (DESIGN.md #1/#9). The code is TOKENIZED into React nodes rather than rendered as HTML, so
+  there is no path from tool output to the DOM as markup. A test feeds the view a snippet
+  containing `<span class="k">` and an `<img onerror>` and asserts both arrive as text.
+  **Output is never highlighted**, because colouring a program's own stdout would let it
+  print something that reads as syntax.
+- **`ok` is whether the code RAN, not whether it was right**, so the chip says *ran clean* or
+  *raised* and never *correct*.
+- **The containment is stated and CHECKED.** `SANDBOX_SEALS` are the chips the owner is shown
+  under every run, and `test_pysandbox_server.py` ties each one to the declaration that makes
+  it true — `internal: true` for *no network*, `read_only` + the tmpfs for *scratch only*,
+  `USER nobody` + `cap_drop: ALL` + `no-new-privileges` for *no root*. Verified by deleting
+  the `read_only` block and watching it go red. A reassurance nobody checks is the kind of
+  claim that outlives the thing that made it true. **`calculate` does not borrow those
+  chips** — it runs in-process on a restricted AST and never enters the container, so it says
+  *exact arithmetic · no code executed*.
+- **D2, implemented.** `StepRow`'s cascade gains one rung that renders the step's own
+  registered view, above the fixed args → sources → summary ladder. A `STEP_VIEWS` set in the
+  registry decides which views live in a step rather than the bubble, and BOTH sides read it —
+  the bubble filters them out, the step renders them — so a view can never appear twice or
+  nowhere. The view rides its `tool_call_id` onto its step on the live path and replays off
+  the persisted step, which already carried it.
 
 ### W3 — G, the cited computation
 

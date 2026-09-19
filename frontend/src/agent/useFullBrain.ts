@@ -27,6 +27,7 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "./types";
+import { STEP_VIEWS } from "./views/registry";
 
 export type Panel = "none" | "sessions" | "proposals";
 
@@ -260,11 +261,16 @@ export function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.facts?.length ? { facts: tool.facts } : {}),
       ...(tool.truncated ? { truncated: true } : {}),
       ...(tool.result_brief ? { result: tool.result_brief } : {}),
+      // A step view replays onto its own step; the bubble's list below skips the same set,
+      // so a reopened turn puts the code listing back exactly where it was live.
+      ...(tool.view && STEP_VIEWS.has(tool.view.view) ? { view: tool.view } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
       ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),
     // Rebuild the rich tool-result views (e.g. a list_card) so they replay too.
-    views: t.tools.flatMap((tool) => (tool.view ? [tool.view] : [])),
+    views: t.tools.flatMap((tool) =>
+      tool.view && !STEP_VIEWS.has(tool.view.view) ? [tool.view] : [],
+    ),
     streaming: false,
     reasoning: t.reasoning ?? "",
     thinking: false,

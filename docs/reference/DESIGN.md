@@ -1669,6 +1669,17 @@ the step that made it. Not a surface of its own and not a note-screen change: th
     true, no review card is filed for a conversation write, and nothing else will raise
     it. A reason with no owner-facing meaning renders nothing — a code he cannot act on is
     a code he has to ask about.
+- **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
+  `docs/plans/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
+  belongs where the owner goes to check a number, not stacked under every reply that did some
+  arithmetic. The `STEP_VIEWS` set in the registry is read by BOTH the bubble (which filters
+  them out) and the step (which renders them), so a view cannot appear twice or nowhere.
+  `calculate` renders the same component with an expression in place of the code — one
+  component, two tools, because they are the same act. Syntax highlighting is a closed set of
+  token classes the COMPONENT applies from `language`; the code is tokenized into nodes, never
+  rendered as markup, and a program's own output is never highlighted. The containment chips
+  under a run name controls that are checked against the compose file, and `calculate`, which
+  never enters the container, does not borrow them.
 - **Every step row says what came back**, not only what was asked (`stepLedger.ts`, build
   plan `docs/plans/SHOW_THE_WORKING_PLAN.md` W1 — binding mock
   `docs/mocks/code-run/h-worked-ledger.html`). The right-hand column is one slot with one

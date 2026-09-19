@@ -13,6 +13,7 @@ import type {
   ViewPayload,
   WebSource,
 } from "./types";
+import { STEP_VIEWS } from "./views/registry";
 
 /** A source note a tool surfaced, ready for a card: id to open, domain for the
  * dot, text for the line. */
@@ -103,6 +104,9 @@ export interface ToolActivity {
   truncated?: boolean;
   /** The handler's one-line answer for the Worked row (`ToolResultEvent.result_brief`). */
   result?: string;
+  /** This call's registered view, when it is one that renders inside the STEP rather than
+   * in the bubble (`STEP_VIEWS`) — the code listing a `run_python` step expands to. */
+  view?: ViewPayload;
   /** Live progress for an in-flight tool — image gen's sampler step/total + sharpening
    * preview, or a multi-phase tool's text `label` ("Analyzing frame 12/30"). Set by
    * `tool_progress`, cleared when the result lands (the final view then renders). */
@@ -354,6 +358,13 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
           (v) => !(v.view === "subagent_synthesis" && v.tool_call_id === event.tool_call_id),
         );
         next.views = [...kept, tagged];
+      } else if (STEP_VIEWS.has(event.view.view)) {
+        // A step view goes ON its call, not into the turn's view list: the step is where it
+        // renders, and the bubble filters the same set out the other side.
+        const payload = event.view;
+        next.tools = next.tools.map((t) =>
+          t.id === event.tool_call_id ? { ...t, view: payload } : t,
+        );
       } else {
         next.views = [...next.views, event.view];
       }

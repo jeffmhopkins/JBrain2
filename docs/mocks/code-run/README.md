@@ -3,7 +3,8 @@
 > **Status:** GUI gate **settled** — **two** binding mocks, because the surface turned out
 > to be two: **G** (`g-cited-floating.html`) for the in-prose path, and **H**
 > (`h-worked-ledger.html`) for the Worked panel. A–F are retained as the record. Nothing is
-> built yet; the build plan is `../../plans/SHOW_THE_WORKING_PLAN.md`. The tools themselves shipped in
+> **H is built** (W2 of `../../plans/SHOW_THE_WORKING_PLAN.md`: the `code_run` view, the step's
+> view rung, the ledger); G is not yet. The tools themselves shipped in
 > `../../archive/EXACT_MATH_TOOLS_PLAN.md`; this is the surface that makes their working
 > legible.
 

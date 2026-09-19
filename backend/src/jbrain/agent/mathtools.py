@@ -37,6 +37,7 @@ from typing import Any
 
 import sympy
 
+from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 
 # Every bound below exists because sympy is happy to be asked for something that never
@@ -380,10 +381,14 @@ class Rendered(str):
     further down."""
 
     brief: str
+    exact: str
+    decimal: str | None
 
-    def __new__(cls, content: str, brief: str) -> Rendered:
+    def __new__(cls, content: str, brief: str, exact: str, decimal: str | None) -> Rendered:
         out = super().__new__(cls, content)
         out.brief = brief
+        out.exact = exact
+        out.decimal = decimal
         return out
 
 
@@ -418,7 +423,31 @@ def _render(expression: str, value: sympy.Expr, digits: int) -> Rendered:
     # The EXACT form is the answer, because being exact is what this tool is for: a row
     # reading `3/10` is the whole argument for having it, where `0.3` is what any calculator
     # would have said.
-    return Rendered("\n".join(lines), _brief_answer(exact))
+    return Rendered("\n".join(lines), _brief_answer(exact), exact, approx)
+
+
+def calc_view(expression: str, rendered: Rendered) -> ViewPayload:
+    """The SAME `code_run` view `run_python` renders, with the expression in place of the
+    code and the exact/decimal pair in place of stdout. One component, two tools — they are
+    the same act, and a second component would be a second place for them to disagree.
+
+    Data-only, like every registered view: no markup, no colour, no URL."""
+    return ViewPayload(
+        view="code_run",
+        surface="inline",
+        data={
+            "language": "expression",
+            "code": expression,
+            "exact": rendered.exact,
+            "decimal": rendered.decimal,
+            "result": rendered.exact,
+            "ok": True,
+            # `calculate` runs in-process on a restricted AST — it never reaches the
+            # sandbox, so it must not borrow the sandbox's chips. What it claims is what it
+            # actually is.
+            "containment": ["exact arithmetic", "no code executed"],
+        },
+    )
 
 
 def build_math_handlers() -> dict[str, ToolHandler]:
@@ -441,7 +470,11 @@ def build_math_handlers() -> dict[str, ToolHandler]:
             return ToolOutput(
                 "TimeoutError: that expression took too long to evaluate — try breaking it up"
             )
-        return ToolOutput(rendered, result_brief=rendered.brief)
+        return ToolOutput(
+            rendered,
+            view=calc_view(expression, rendered),
+            result_brief=rendered.brief,
+        )
 
     return {"calculate": calculate_tool}
 

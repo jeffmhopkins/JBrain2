@@ -7,7 +7,7 @@
 // cannot ship as a raw snake_case row with no visible target.
 
 import type { SourceRef, ToolActivity } from "./transcript";
-import type { EntityRef, FactWrite, WebSource } from "./types";
+import type { EntityRef, FactWrite, ViewPayload, WebSource } from "./types";
 
 export type { SourceRef };
 
@@ -41,6 +41,9 @@ export interface ToolStep {
    * structurally (sources, facts, entities, web sources), which `stepLedger` phrases from
    * those instead. Never derived from `summary`: that is model-facing text. */
   result: string | undefined;
+  /** The registered view this step expands to, for the tools whose working belongs in the
+   * step rather than the bubble (`STEP_VIEWS`) — `run_python`'s code listing. */
+  view: ViewPayload | undefined;
 }
 
 const STEP_LABELS: Record<string, string> = {
@@ -535,5 +538,6 @@ export function toolStep(t: ToolActivity): ToolStep {
     args: t.args,
     summary: t.summary,
     result: t.result,
+    view: t.view,
   };
 }

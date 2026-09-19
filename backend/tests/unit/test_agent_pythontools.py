@@ -20,11 +20,13 @@ from jbrain.agent.pythontools import (
     build_python_handlers,
     format_run,
     run_brief,
+    run_view,
 )
 from jbrain.db.session import SessionContext
 from jbrain.pysandbox import (
     MAX_CODE_BYTES,
     MAX_TIMEOUT_SECONDS,
+    SANDBOX_SEALS,
     PySandboxClient,
     PySandboxError,
     Ran,
@@ -237,3 +239,33 @@ def test_the_row_says_so_when_a_run_printed_nothing() -> None:
 def test_the_answer_is_capped_and_flattened_to_one_row() -> None:
     assert run_brief(Ran(ok=True, result="x" * 200)) == "x" * (MAX_BRIEF_CHARS - 1) + "\u2026"
     assert run_brief(Ran(ok=True, result="a\n  b")) == "a b"
+
+
+# --- the code_run view (SHOW_THE_WORKING_PLAN.md W2) -------------------------
+
+
+def test_the_run_emits_a_data_only_code_run_view() -> None:
+    """Slots, not markup. The model fills them and authors no span, colour or URL — the
+    component owns the highlighting, applied from `language`."""
+    view = run_view(Ran(ok=True, stdout="214\n", result="214", duration_ms=44), "1+1", 10.0)
+    assert view.view == "code_run"
+    assert view.data["language"] == "python"
+    assert view.data["code"] == "1+1"
+    assert view.data["stdout"] == "214\n"
+    assert view.data["duration_ms"] == 44
+    assert view.data["ok"] is True
+
+
+def test_the_view_states_the_containment_rather_than_assuming_it() -> None:
+    """ "Where did this run?" is a fair question to ask of something that executed code.
+    The chips come from `SANDBOX_SEALS`, which `test_pysandbox_server.py` ties back to the
+    compose file declaration by declaration."""
+    view = run_view(Ran(ok=True), "x", 10.0)
+    assert tuple(view.data["containment"]) == SANDBOX_SEALS
+
+
+def test_a_failed_run_still_carries_its_error_into_the_view() -> None:
+    """The failure is the most useful thing to see, and the step opens itself on it."""
+    view = run_view(Ran(ok=False, error="ZeroDivisionError (line 1)"), "1/0", 10.0)
+    assert view.data["ok"] is False
+    assert view.data["error"] == "ZeroDivisionError (line 1)"

@@ -117,6 +117,26 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.views).toHaveLength(1);
   });
 
+  it("puts a STEP view on its own call, not in the turn's view list", () => {
+    // `code_run` is the working, not the answer: it belongs in the step the owner opens to
+    // check a number, and the bubble filters the same set out the other side. Keyed by
+    // tool_call_id, so a turn with two runs puts each listing on its own step.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "tool_call",
+      id: "c1",
+      name: "run_python",
+      arguments: { code: "1+1" },
+    });
+    ms = applyEvent(ms, {
+      type: "tool_view",
+      tool_call_id: "c1",
+      view: { view: "code_run", surface: "inline", data: { code: "1+1" }, refs: [] },
+    });
+    expect(ms[0]?.views).toHaveLength(0);
+    expect(ms[0]?.tools.find((t) => t.id === "c1")?.view?.view).toBe("code_run");
+  });
+
   it("supersedes the subagent_synthesis roster instead of stacking each update", () => {
     let ms: TranscriptMessage[] = [streaming()];
     const syn = (ran: number, tool_call_id = "sp1"): ChatEvent => ({

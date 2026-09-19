@@ -11,6 +11,7 @@ from jbrain.agent.mathtools import (
     MAX_RESULT_DIGITS,
     MathError,
     build_math_handlers,
+    calc_view,
     evaluate,
 )
 from jbrain.db.session import SessionContext
@@ -277,3 +278,21 @@ def test_a_huge_result_is_capped_to_a_row() -> None:
     brief = evaluate("factorial(200)").brief
     assert len(brief) == MAX_BRIEF_CHARS
     assert brief.endswith("…")
+
+
+def test_calculate_renders_the_same_view_run_python_does() -> None:
+    """One component, two tools — they are the same act, and a second component would be a
+    second place for them to disagree."""
+    view = calc_view("1/3", evaluate("1/3"))
+    assert view.view == "code_run"
+    assert view.data["language"] == "expression"
+    assert view.data["code"] == "1/3"
+    assert view.data["result"] == "1/3"
+    assert view.data["decimal"] == "0.333333333333333"
+
+
+def test_calculate_does_not_borrow_the_sandbox_containment() -> None:
+    """It runs in-process on a restricted AST and never reaches the sandbox. Claiming "no
+    network · scratch only" would be describing a container it never entered."""
+    seals = calc_view("2+2", evaluate("2+2")).data["containment"]
+    assert seals == ["exact arithmetic", "no code executed"]

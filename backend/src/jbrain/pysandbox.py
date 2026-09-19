@@ -42,6 +42,18 @@ MAX_CODE_BYTES = 128_000
 DEFAULT_TIMEOUT_SECONDS = 10.0
 MAX_TIMEOUT_SECONDS = 60.0
 
+# What the owner is told about where their code ran, shown as chips under a run
+# (`code_run` view). Each phrase names a control that is REAL and declared in
+# `deploy/docker-compose.yml`, and `test_pysandbox_server.py` ties every one of them back to
+# that file — because a containment claim nobody checks is worth less than no claim at all,
+# and this one is shown to the owner as reassurance.
+SANDBOX_SEALS: tuple[str, ...] = (
+    "no network",
+    "scratch only",
+    "stdlib only",
+    "no root",
+)
+
 
 class PySandboxError(RuntimeError):
     """The sandbox is unconfigured or unreachable. Recoverable: surfaced to the model as a

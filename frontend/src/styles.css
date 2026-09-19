@@ -10595,6 +10595,72 @@ button.small {
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-3);
 }
+/* the `code_run` view, rendered INSIDE its step (docs/mocks/code-run/h-worked-ledger.html).
+   Same inset and rail as the raw-payload block beside it, so a code listing sits where a
+   payload already does rather than introducing a second shape. */
+.fb-shell .fb-code {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.62;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: calc(8px * var(--font-scale));
+  padding: calc(9px * var(--font-scale)) calc(10px * var(--font-scale));
+  margin: 0 0 calc(8px * var(--font-scale)) calc(23px * var(--font-scale));
+  overflow-x: auto;
+  white-space: pre;
+}
+/* a program's OUTPUT reads at full strength and is never highlighted — colouring stdout
+   would let a snippet print something that looks like syntax. */
+.fb-shell .fb-code.out {
+  color: var(--text);
+}
+/* the closed token set the component applies from `language`. Model output selects a class
+   here; it never authors one (DESIGN.md #1/#9). */
+.fb-shell .fb-code .k {
+  color: var(--violet);
+}
+.fb-shell .fb-code .s {
+  color: var(--green);
+}
+.fb-shell .fb-code .n {
+  color: var(--amber);
+}
+.fb-shell .fb-code .f {
+  color: var(--accent);
+}
+.fb-shell .fb-code .c {
+  color: var(--text-3);
+}
+.fb-shell .fb-sealrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(5px * var(--font-scale));
+  padding-left: calc(23px * var(--font-scale));
+  margin-top: calc(2px * var(--font-scale));
+}
+/* where it ran, stated rather than assumed. Each chip names a control checked against the
+   compose file by test_pysandbox_server.py. */
+.fb-shell .sealchip {
+  font-size: calc(10px * var(--font-scale));
+  padding: calc(2px * var(--font-scale)) calc(7px * var(--font-scale));
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+.fb-shell .sealchip.ok {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--green);
+}
+.fb-shell .sealchip.bad {
+  background: var(--rose-tint);
+  border-color: transparent;
+  color: var(--rose);
+}
+
 /* a COMPUTED answer, the one result the row exists to make checkable. Green because it is
    a value the box worked out rather than a count of what it found. */
 .fb-shell .fb-step-cnt.fbl-res {

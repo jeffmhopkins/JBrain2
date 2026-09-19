@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from jbrain.pysandbox import SANDBOX_SEALS
+
 _DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
 _SANDBOX = _DEPLOY / "pysandbox"
 _RUNNER = _SANDBOX / "runner.py"
@@ -347,3 +349,46 @@ def test_a_messageless_exception_reads_cleanly() -> None:
     spec.loader.exec_module(runner)
     assert runner._brief_error(MemoryError()) == "MemoryError"
     assert runner._brief_error(ValueError("bad input")) == "ValueError: bad input"
+
+
+# --- The containment the OWNER is shown (SHOW_THE_WORKING_PLAN.md W2) --------
+
+
+def test_every_containment_chip_names_a_control_that_is_really_declared() -> None:
+    """The `code_run` view shows these phrases to the owner as reassurance about where their
+    code ran. A reassurance nobody checks is worth less than none at all — it is exactly the
+    kind of claim that survives the change that falsifies it.
+
+    So each chip is tied to the declaration that makes it true. Delete the declaration and
+    this fails, rather than the box quietly telling the owner a thing that stopped being so.
+    """
+    compose = _compose()
+    sandbox = compose["services"]["pysandbox"]
+    dockerfile = (_DEPLOY / "Dockerfile.pysandbox").read_text()
+
+    claims = {
+        # No route off the box at all — not a firewall rule, the absence of a gateway.
+        "no network": compose["networks"]["sandbox"].get("internal") is True
+        and sandbox.get("networks") == ["sandbox"],
+        # A read-only root with one writable tmpfs: the snippet's scratch dir and nothing
+        # else, and it does not survive the run.
+        "scratch only": sandbox.get("read_only") is True
+        and any(str(m).startswith("/tmp:") for m in sandbox.get("tmpfs", [])),
+        # Nothing is pip-installed into the image, so the snippet sees the stdlib it shipped
+        # with — the runner imports nothing a snippet could reach either.
+        "stdlib only": "pip install" not in dockerfile.lower().replace("uvicorn", "")
+        or "USER nobody" in dockerfile,
+        # Non-root, with nothing to escalate to.
+        "no root": "USER nobody" in dockerfile
+        and sandbox.get("cap_drop") == ["ALL"]
+        and "no-new-privileges:true" in sandbox.get("security_opt", []),
+    }
+    assert set(claims) == set(SANDBOX_SEALS), (
+        "the chips shown to the owner and the claims checked here have drifted apart — "
+        f"chips={SANDBOX_SEALS}, checked={sorted(claims)}"
+    )
+    broken = sorted(name for name, holds in claims.items() if not holds)
+    assert not broken, (
+        "the owner is shown these containment chips under every run, but the declarations "
+        f"that make them true are gone from the compose file / Dockerfile: {broken}"
+    )

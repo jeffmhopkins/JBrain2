@@ -20,6 +20,7 @@ function step(over: Partial<ToolStep> & { name: string }): ToolStep {
     args: undefined,
     summary: undefined,
     result: undefined,
+    view: undefined,
     ...over,
   };
 }
