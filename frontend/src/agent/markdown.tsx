@@ -34,8 +34,6 @@ import type { ViewPayload } from "./types";
  * POSITION; everything shown comes from the persisted call. */
 export interface CalcTarget {
   payload: ViewPayload;
-  /** The one-line answer, for the popover's collapsed head. */
-  brief: string;
 }
 
 export type CiteTarget =

@@ -1675,9 +1675,15 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
   The model authors the MARKER only — the panel is filled from the persisted call, and a
   marker that resolves to nothing renders as plain text rather than as an unbacked claim. The
-  panel floats and is clamped rather than reflowing the transcript, opens compact, and expands
-  in place capped at 46vh; the expansion is the same `code_run` component the Worked step
-  renders, so the two entry points cannot drift.
+  panel floats and is clamped rather than reflowing the transcript, and opens ON the working,
+  capped at 46vh and scrolling: it is the same `code_run` component the Worked step renders,
+  so the two entry points cannot drift. It used to open compact — an expression-and-answer
+  head over a "show the working" link — and on the box that head only restated what the body
+  labelled properly one line below, the same duplication the step itself had against its
+  prose. One tap on the marker is the only tap.
+  The marker covers `run_python` exactly as it covers `calculate`: one namespace, one
+  numbering, one panel, because *a number a program printed* and *a number an expression
+  evaluated to* are the same claim about where a figure came from.
 - **`code_run` is a STEP view, not a bubble card** (`views/codeRun.tsx`, build plan
   `docs/archive/SHOW_THE_WORKING_PLAN.md` W2). The working is not the answer: a run's code
   belongs where the owner goes to check a number, not stacked under every reply that did some

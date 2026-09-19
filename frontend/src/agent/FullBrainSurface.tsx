@@ -1023,9 +1023,7 @@ function Bubble({
   // position and the popover's contents come from the persisted call, so a marker can never
   // assert a computation that did not happen (SHOW_THE_WORKING_PLAN.md D3).
   const calcTargets: CalcTarget[] = message.tools.flatMap((t) =>
-    t.view && t.view.view === "code_run"
-      ? [{ payload: t.view, brief: t.result ?? String(t.view.data.result ?? "") }]
-      : [],
+    t.view && t.view.view === "code_run" ? [{ payload: t.view }] : [],
   );
   const onCite =
     onOpenNote || onOpenEntity
