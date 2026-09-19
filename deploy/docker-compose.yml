@@ -887,8 +887,15 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     networks: [radio]
 
-  # OPT-IN panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). Guarded by the
-  # `endpoint` profile so a stock deploy never starts it, and egress-free by topology:
+  # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
+  # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
+  # `sdr` is opt-in in the first place: most boxes have no RTL-SDR dongle, so running a
+  # radio sidecar on one is pointless. This box has panels. Gating it behind a profile
+  # would have cost the owner an edit to /opt/jbrain2/.env to turn on a feature they were
+  # always going to use, and a terminal step is precisely what CLAUDE.md #10 forbids as
+  # the answer. It costs ~30 MB idle when nothing is plugged in.
+  #
+  # Egress-free by topology:
   # only `endpoint` + `api` join the `panel` network, so the container that writes a
   # bootloader has no route to the internet. It never fetches firmware — the api hands
   # over the images — which is what keeps a GitHub credential off this box.
@@ -906,7 +913,6 @@ services:
     build:
       context: ./src
       dockerfile: deploy/Dockerfile.endpoint
-    profiles: [endpoint]
     restart: unless-stopped
     mem_limit: ${ENDPOINT_MEM_LIMIT:-256m}
     environment:

@@ -1315,9 +1315,22 @@ def test_the_panel_flasher_has_no_route_off_the_box() -> None:
     assert sorted(joined) == ["api", "endpoint"], joined
 
 
-def test_the_endpoint_profile_keeps_it_out_of_a_stock_deploy() -> None:
+def test_the_panel_flasher_needs_no_profile_and_no_env_edit() -> None:
+    """It is stock stack on purpose, and this pins the reason.
+
+    `sdr` is profile-gated because most boxes have no dongle; this box has panels.
+    A profile plus an empty `endpoint_url` would have meant editing /opt/jbrain2/.env
+    on the host to turn on a feature reachable only through the PWA — a terminal step
+    to remove a terminal step, which is CLAUDE.md #10 read backwards. The default URL
+    pointing at the running service is the `pysandbox` pattern; together they mean
+    Ops -> Update is the whole install."""
     compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
-    assert compose["services"]["endpoint"]["profiles"] == ["endpoint"]
+    assert "profiles" not in compose["services"]["endpoint"]
+
+    config = (
+        Path(__file__).resolve().parents[2] / "backend/src/jbrain/config.py"
+    ).read_text()
+    assert 'endpoint_url: str = "http://endpoint:8000"' in config
 
 
 def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:

@@ -414,9 +414,16 @@ The flash path exists, so a panel plugged into the box's USB port is now reachab
 terminal and the debug console's `host.read` scope reports memory and processes, never
 device nodes.
 
-**`deploy/endpoint/`** — the flasher sidecar, on the `endpoint` compose profile so a stock
-deploy never starts it, and on a `panel` network declared `internal: true` so the container
-that writes a bootloader has no route off the box. It never fetches firmware; the api hands
+**`deploy/endpoint/`** — the flasher sidecar, **stock stack rather than profile-gated**, on
+a `panel` network declared `internal: true` so the container that writes a bootloader has no
+route off the box.
+
+The profile was the first design and it was wrong. `sdr` is opt-in because most boxes have
+no dongle; this box has panels. Gating the flasher would have meant editing
+`/opt/jbrain2/.env` on the host to switch on a feature reachable only through the PWA — a
+terminal step to remove a terminal step, which is rule 10 read backwards. With the URL
+defaulting to the running service (the `pysandbox` pattern), **Ops → Update is the whole
+install**, and the cost is ~30 MB idle when nothing is plugged in. It never fetches firmware; the api hands
 over the images, which is what keeps a GitHub credential off this box entirely. It keeps
 nothing between requests: the Wi-Fi password and device token are written under a temporary
 directory that is removed whether the flash succeeds or fails.
@@ -444,8 +451,9 @@ it used to hold should stop working at that moment.
 in a child's bedroom can reach. It is owner-or-`device_key`, and returns a version and a URL
 and nothing else.
 
-**What still needs the owner.** Downloading the `endpoint-firmware` artifact from the CI run
-and picking it in Ops. One manual hop, kept deliberately: the alternative is a GitHub
+**What still needs the owner.** One thing, and it is not a shell step: downloading the
+`endpoint-firmware` artifact from the CI run and picking it in Ops. That hop is kept
+deliberately: the alternative is a GitHub
 credential on the box and a path by which the box fetches and then executes something from
 the internet.
 

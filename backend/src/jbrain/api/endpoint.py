@@ -101,11 +101,12 @@ def _store(request: Request) -> SqlSettingsStore:
 def _sidecar(settings: SettingsDep) -> str:
     base = settings.endpoint_url.strip().rstrip("/")
     if not base:
-        # Not an error the owner caused. The flasher is an opt-in compose profile, and
-        # saying so is more use than a 500 on a box that simply never enabled it.
+        # Not an error the owner caused, and not the normal state either: the flasher is
+        # stock stack, so an empty URL means someone deliberately blanked it. Saying which
+        # setting is more use than a 500.
         raise HTTPException(
             status_code=503,
-            detail="No panel flasher on this box — the `endpoint` compose profile is off.",
+            detail="No panel flasher on this box — JBRAIN_ENDPOINT_URL is empty.",
         )
     return base
 

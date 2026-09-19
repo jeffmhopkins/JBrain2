@@ -1372,7 +1372,7 @@ function EndpointsCard() {
     >
       {absent ? (
         <p className="muted">
-          No panel flasher on this box — the <code>endpoint</code> compose profile is off.
+          No panel flasher on this box — <code>JBRAIN_ENDPOINT_URL</code> is empty.
         </p>
       ) : (
         <>

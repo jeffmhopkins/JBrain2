@@ -279,10 +279,12 @@ fi
 # --- Panel flasher / `endpoint` sidecar (opt-in, NOT bootstrapped here) ---
 # deploy/endpoint/ flashes a room-endpoint panel over the box's USB port (Ops -> Room
 # endpoints). Its dependencies — esptool and esp-idf-nvs-partition-gen — live inside its
-# own image (deploy/Dockerfile.endpoint), not in any dev venv, and the sidecar is guarded
-# by the `endpoint` compose profile so a stock deploy never starts it. Empty
-# JBRAIN_ENDPOINT_URL (the default) disables the feature and Ops says so, which is why
-# this is a no-op in dev/CI. The pure halves ARE tested here: supervisor's pytest loads
+# own image (deploy/Dockerfile.endpoint), not in any dev venv, so there is nothing to
+# bootstrap. It is STOCK STACK rather than profile-gated (unlike `sdr`, which needs a
+# dongle most boxes do not have): gating it would have meant an .env edit on the host to
+# enable a feature reachable only through the PWA, which is CLAUDE.md #10 read backwards.
+# Nothing runs in dev/CI regardless — no compose here. The pure halves ARE tested:
+# supervisor's pytest loads
 # deploy/endpoint/*.py by path and its pyright typechecks them, exactly as it does for
 # deploy/sdr (CLAUDE.md #11). Mentioned per rule #8; see
 # docs/plans/ROOM_ENDPOINT_PLAN.md §10.

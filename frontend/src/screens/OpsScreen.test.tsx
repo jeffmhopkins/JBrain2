@@ -690,15 +690,13 @@ describe("OpsScreen", () => {
     };
   }
 
-  it("says the flasher is off rather than showing an error when the profile is absent", async () => {
+  it("says the flasher is off rather than showing an error when its URL is blank", async () => {
     // A 503 here is a configuration answer, not a fault, and the two want different words.
+    // The flasher is stock stack, so this is someone having deliberately blanked the URL.
     fetchMock.mockImplementation(
       endpointsMock([], (path) =>
         path === "/api/endpoint/ports"
-          ? json(
-              { detail: "No panel flasher on this box — the `endpoint` compose profile is off." },
-              503,
-            )
+          ? json({ detail: "No panel flasher on this box — JBRAIN_ENDPOINT_URL is empty." }, 503)
           : null,
       ),
     );
@@ -706,7 +704,9 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
     fireEvent.click(await screen.findByText("Room endpoints"));
 
-    expect(await screen.findByText(/compose profile is off/)).toBeTruthy();
+    // The setting name sits in its own <code>, so the sentence is split across elements.
+    expect(await screen.findByText(/No panel flasher on this box/)).toBeTruthy();
+    expect(screen.getByText("JBRAIN_ENDPOINT_URL")).toBeTruthy();
   });
 
   it("distinguishes 'nothing plugged in' from a broken flasher", async () => {

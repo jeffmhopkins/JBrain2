@@ -94,11 +94,12 @@ def client(
 
 
 class TestPorts:
-    def test_a_box_without_the_profile_says_so_rather_than_failing(
+    def test_a_blanked_url_says_which_setting_rather_than_failing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The flasher is an opt-in compose profile. "Not enabled" is a configuration
-        answer and must not arrive as a 500 the owner has to interpret."""
+        """The flasher is stock stack, so an empty URL means someone deliberately blanked
+        it. That is a configuration answer and must not arrive as a 500 the owner has to
+        interpret — it must name the setting."""
         settings = Settings(
             secure_cookies=False,
             database_url="postgresql+asyncpg://nobody@localhost:1/none",
@@ -111,7 +112,7 @@ class TestPorts:
             c.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
             resp = c.get("/api/endpoint/ports")
         assert resp.status_code == 503
-        assert "profile" in resp.json()["detail"]
+        assert "JBRAIN_ENDPOINT_URL" in resp.json()["detail"]
 
     def test_no_ports_is_success_not_an_error(
         self,
