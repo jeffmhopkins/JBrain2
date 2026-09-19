@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from jbrain.agent.jmolt_guards import lint_scratch_content, lint_scratch_filename
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.models.jmolt import MAX_FILES, MAX_TOTAL_BYTES, JmoltScratchRepo, QuotaError
 
@@ -90,9 +90,10 @@ def build_jmolt_scratch_handlers(
             f"- {f.filename}  ({f.bytes} bytes, last written {f.updated_at:%Y-%m-%d %H:%M})"
             for f in files
         ]
-        return (
+        return ToolOutput(
             f"Your files ({len(files)}/{MAX_FILES} files, {used}/{MAX_TOTAL_BYTES} bytes used):\n"
-            + "\n".join(lines)
+            + "\n".join(lines),
+            result_brief=f"{len(files)} files, {used:,} bytes",
         )
 
     async def scratch_read(a: dict, ctx: ToolContext) -> str:
@@ -145,7 +146,9 @@ def build_jmolt_scratch_handlers(
             content = await repo.read(s, pid, fn)
         if content is None:
             return f"You have no file named {fn!r}."
-        return _PROVENANCE + content
+        return ToolOutput(
+            _PROVENANCE + content, result_brief=f"{len(content.encode('utf-8')):,} bytes"
+        )
 
     async def scratch_write(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -220,7 +223,13 @@ def build_jmolt_scratch_handlers(
                 await repo.write(s, pid, fn, content)
         except QuotaError as exc:
             return str(exc)
-        return f"Saved {fn!r}.{_shrink_note(prior, content)}"
+        # The size CHANGE: a scratch write is a full replace, and the shrink note beside it
+        # exists because a silent one is how work disappears.
+        before = len(prior.encode("utf-8")) if prior else 0
+        return ToolOutput(
+            f"Saved {fn!r}.{_shrink_note(prior, content)}",
+            result_brief=f"{before:,} → {len(content.encode('utf-8')):,} bytes",
+        )
 
     async def scratch_manage(a: dict, ctx: ToolContext) -> str:
         pid = ctx.session.principal_id
@@ -266,9 +275,10 @@ def build_jmolt_scratch_handlers(
             if prior is None:
                 return f"You have no file named {fn!r}."
             await repo.write(s, pid, fn, "")
-        return (
+        return ToolOutput(
             f"Emptied {fn!r} ({len(prior.encode('utf-8'))} bytes cleared). "
-            "The version before this is in your archive."
+            "The version before this is in your archive.",
+            result_brief=f"emptied, {len(prior.encode('utf-8')):,} bytes cleared",
         )
 
     return {

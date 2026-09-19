@@ -250,7 +250,12 @@ def build_chart_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, T
                 f"I don't have at least two numeric '{measurement}' readings on record to"
                 " chart (nothing matched, or the values aren't a single number)."
             )
-        return ToolOutput(_measurement_summary(view, measurement), view=view)
+        points = view.data["series"][0]["points"]
+        return ToolOutput(
+            _measurement_summary(view, measurement),
+            view=view,
+            result_brief=f"{len(points)} readings",
+        )
 
     async def render_chart_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:  # noqa: ARG001
         title = str(arguments.get("title", "") or "").strip() or "Chart"
@@ -265,14 +270,19 @@ def build_chart_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, T
                     "I need at least one series with two or more points, each a date (x)"
                     " and a number (y), to plot."
                 )
-            return ToolOutput(_series_summary(view, title), view=view)
+            total = sum(len(one["points"]) for one in view.data["series"])
+            return ToolOutput(
+                _series_summary(view, title),
+                view=view,
+                result_brief=f"{len(view.data['series'])} series, {total} pts",
+            )
         view = series_chart_view(title, unit, kind, arguments.get("points"))
         if view is None:
             return ToolOutput(
                 "I need at least two points, each with a date (x) and a number (y), to plot."
             )
         n = len(view.data["series"][0]["points"])
-        return ToolOutput(f"Charted {n} points — {title}.", view=view)
+        return ToolOutput(f"Charted {n} points — {title}.", view=view, result_brief=f"{n} points")
 
     return {"chart_measurements": chart_measurements_tool, "render_chart": render_chart_tool}
 

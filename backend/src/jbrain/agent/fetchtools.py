@@ -92,6 +92,8 @@ def build_fetch_image_handlers(
             summary,
             view=chat_image_view(row) if show else None,
             web_sources=(WebSource(url=url, title=url, read=True),),
+            # The id is what the next call needs; "1 result" (the web-source fallback) is not.
+            result_brief=f"image_id {image_id}",
         )
 
     return {"fetch_image": fetch_image_tool}

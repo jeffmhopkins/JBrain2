@@ -192,7 +192,13 @@ def build_html_handlers(
         question = str(arguments.get("look", "")).strip()
         if question:
             summary += await _look(rendered.png, question, ctx)
-        return ToolOutput(summary, view=chat_image_view(row))
+        # "clipped" is the one outcome a reader must not have to expand the step to see:
+        # a render whose bottom was cut off looks complete in the image.
+        return ToolOutput(
+            summary,
+            view=chat_image_view(row),
+            result_brief="rendered, clipped" if rendered.clipped else "rendered",
+        )
 
     return {"render_html": render_html_tool}
 

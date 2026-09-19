@@ -243,7 +243,14 @@ def _present_fetch(
     # The fetched page is itself a citable source — title from the page, url the FINAL url after
     # redirects (what the favicon + link should point at).
     source = WebSource(url=result.url, title=result.title or result.url, read=True)
-    return ToolOutput(body, web_sources=(source,))
+    return ToolOutput(body, web_sources=(source,), result_brief=_page_brief(result))
+
+
+def _page_brief(result: FetchResult) -> str:
+    """WHICH page came back, not how many. A fetch always carries exactly one web source, so
+    the structural fallback would render a useless "1 result" — the title is the answer."""
+    title = " ".join((result.title or result.url).split())
+    return title if len(title) <= 32 else title[:31] + "\u2026"
 
 
 def _present_extract(result: FetchResult, url: str, pattern: str) -> str:
@@ -294,7 +301,7 @@ def _present_extract(result: FetchResult, url: str, pattern: str) -> str:
             " are not included in this count.]"
         )
     source = WebSource(url=result.url, title=result.title or result.url, read=True)
-    return ToolOutput(body, web_sources=(source,))
+    return ToolOutput(body, web_sources=(source,), result_brief=_page_brief(result))
 
 
 def _present_result(
@@ -993,7 +1000,13 @@ def build_web_handlers(
             )
         await artifacts.set_offset(read_ctx, artifact_id, next_offset)
         source = WebSource(url=art.source_url, title=art.title or art.source_url, read=True)
-        return ToolOutput(out, web_sources=(source,))
+        return ToolOutput(
+            out,
+            web_sources=(source,),
+            # Where the paging got to: the one thing you need to know to decide whether to
+            # call it again, and "1 result" — what the fallback would say — is not it.
+            result_brief=f"chars {start}–{next_offset} of {total}",
+        )
 
     handlers: dict[str, ToolHandler] = {
         "web_search": web_search_tool,

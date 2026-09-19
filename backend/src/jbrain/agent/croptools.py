@@ -221,6 +221,7 @@ def build_crop_handlers(
                     "truncated": truncated,
                 },
             ),
+            result_brief=f"{len(crops)} crop{'' if len(crops) == 1 else 's'}",
         )
 
     async def _ground(

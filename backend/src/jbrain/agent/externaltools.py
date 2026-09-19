@@ -127,6 +127,11 @@ def _ago(ts: datetime) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
+def _clip(text: str, limit: int = 32) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
 def _title_terms(raw: object) -> list[str]:
     """The optional title pre-filter as a list of lowercased OR-matched substrings. Accepts a
     single string (one phrase) or a list of strings (match ANY); blanks and non-strings drop
@@ -320,7 +325,11 @@ def build_external_handlers(
         if degraded:
             prefix += " (keyword-only search — semantic ranking is temporarily unavailable.)"
         body = f"{prefix}\n\nVideo library results:\n" + "\n".join(lines)
-        return ToolOutput(body, web_sources=tuple(sources))
+        return ToolOutput(
+            body,
+            web_sources=tuple(sources),
+            result_brief=f"{len(lines)} video{'' if len(lines) == 1 else 's'}",
+        )
 
     async def list_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         limit = max(1, min(int(arguments.get("limit", _LIST_DEFAULT) or _LIST_DEFAULT), _LIST_MAX))
@@ -488,7 +497,11 @@ def build_external_handlers(
         from_ms = raw_from if isinstance(raw_from, int) and not isinstance(raw_from, bool) else 0
         body = _render_transcript(transcript, max(0, from_ms))
         source = WebSource(url=transcript.url, title=transcript.title or transcript.url, read=True)
-        return ToolOutput(body, web_sources=(source,))
+        return ToolOutput(
+            body,
+            web_sources=(source,),
+            result_brief=_clip(transcript.title or transcript.url),
+        )
 
     async def show_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
@@ -505,7 +518,7 @@ def build_external_handlers(
         frames = await _frame_views(t.frames, blobs)
         view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t, frames))
         channel = f" — {t.channel_name}" if t.channel_name else ""
-        return ToolOutput(f'Showing "{t.title}"{channel}.', view=view)
+        return ToolOutput(f'Showing "{t.title}"{channel}.', view=view, result_brief=_clip(t.title))
 
     async def remove_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if proposals is None:
@@ -544,6 +557,7 @@ def build_external_handlers(
         return ToolOutput(
             f'Staged the removal of "{t.title}". I won\'t delete anything until you approve it.',
             proposal=ProposalRef(proposal_id=prop_id, kind="remove-library-video"),
+            result_brief="staged, not deleted",
         )
 
     _reads: dict[str, ToolHandler] = {

@@ -88,6 +88,7 @@ def build_merge_handlers(proposals: ProposalRepo, entities: EntityReader) -> dic
             " I won't combine them until you approve — the more-anchored identity survives and"
             " the other's mentions and facts repoint onto it, so nothing is lost.",
             proposal=ProposalRef(proposal_id=prop_id, kind="merge"),
+            result_brief="staged, not merged",
         )
 
     return {"propose_merge": propose_merge_tool}

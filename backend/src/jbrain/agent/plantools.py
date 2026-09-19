@@ -101,7 +101,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
         scratch = format_plan_results(plan.results)
         if scratch:
             text += f"\n\n--- Step results recorded so far ---\n\n{scratch}"
-        return ToolOutput(text, view=view)
+        return ToolOutput(text, view=view, result_brief=_STATUS_LABEL.get(plan.status, plan.status))
 
     async def write_plan(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if not ctx.agent_session_id:
@@ -199,7 +199,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             note = "Plan updated — marked in work."
         else:
             note = f"Plan saved (status: {_STATUS_LABEL.get(new_status, new_status)})."
-        return ToolOutput(note, view=view)
+        return ToolOutput(note, view=view, result_brief=_STATUS_LABEL.get(new_status, new_status))
 
     async def write_plan_result(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         if not ctx.agent_session_id:
@@ -246,6 +246,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
         return ToolOutput(
             f"Recorded result #{len(plan.results)} and checked off that step; {tail}.",
             view=view,
+            result_brief=f"step {len(plan.results)} recorded",
         )
 
     return {

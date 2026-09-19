@@ -124,6 +124,7 @@ def build_bar_handlers() -> dict[str, ToolHandler]:
                 "I need at least two labelled categories (or two series), each with a"
                 " numeric value, to draw a bar graph."
             )
-        return ToolOutput(_summary(view), view=view)
+        bars = view.data.get("bars") or view.data.get("series") or []
+        return ToolOutput(_summary(view), view=view, result_brief=f"{len(bars)} bars")
 
     return {"render_bars": render_bars_tool}

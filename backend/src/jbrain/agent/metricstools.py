@@ -156,6 +156,11 @@ def build_metrics_handlers(
         # The prose grounds the model's reasoning; the view (when there's data) is
         # the human-facing graph rendered in the chat bubble.
         view = _metrics_view(requested, data) if data["points"] else None
-        return ToolOutput(_format(requested, data), view=view)
+        n = len(data["points"])
+        return ToolOutput(
+            _format(requested, data),
+            view=view,
+            result_brief=f"{n} sample{'' if n == 1 else 's'}" if n else "no samples",
+        )
 
     return {"query_server_metrics": query_server_metrics_tool}

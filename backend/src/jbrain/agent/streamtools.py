@@ -60,6 +60,11 @@ log = structlog.get_logger()
 _DEFER_WINDOW_S = 30.0
 
 
+def _clip(text: str, limit: int = 32) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "\u2026"
+
+
 def build_stream_handlers(
     blobs: BlobStore,
     router: LlmRouter,
@@ -151,7 +156,9 @@ def build_stream_handlers(
             if show
             else None
         )
-        return ToolOutput(summary_line(resolved.title, result), view=view)
+        return ToolOutput(
+            summary_line(resolved.title, result), view=view, result_brief=_clip(resolved.title)
+        )
 
     return {"analyze_stream": analyze_stream_tool}
 
@@ -205,4 +212,7 @@ async def _kick_deferred(
         " it's ready.",
         view=view,
         deferred=DeferredRef(job_id=job_id, result_id=result_id, session_id=session_id),
+        # The turn ends here and the answer arrives later, so the row says it is running
+        # rather than leaving a blank that reads like a call that did nothing.
+        result_brief="running…",
     )

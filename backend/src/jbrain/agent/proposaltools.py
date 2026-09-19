@@ -80,6 +80,7 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
             "Staged a correction for your approval. I won't change anything until you approve"
             " it — it then re-enters as a normal, source-attributed note.",
             proposal=ProposalRef(proposal_id=prop_id, kind="correction"),
+            result_brief="staged, not applied",
         )
 
     return {"propose_correction": propose_correction_tool}
@@ -157,6 +158,7 @@ def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler
             "Staged an intake link for your approval. Edit the details if you like, then"
             " approve to mint it — I'll show you the link once, right after.",
             proposal=ProposalRef(proposal_id=prop_id, kind="intake-link"),
+            result_brief="staged, not minted",
         )
 
     return {"make_intake_link": make_intake_link_tool}
