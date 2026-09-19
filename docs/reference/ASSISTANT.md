@@ -1216,7 +1216,19 @@ agent write.
 
 | Loop | Trigger | Autonomy boundary | Degradation guard |
 |---|---|---|---|
-| **1. Reflexion / self-critique** | Task profile flags a turn "critique-worthy" (citation-bearing, mutating, sensitive-domain) | **Auto.** Fully ephemeral; never persists | Mostly **deterministic** verifiers (do cited facts exist and are in-scope? do claims ground in retrieved chunks? does a mutation validate against schema?); LLM critic is a tiebreaker only (judges are noisy). Retry only if the verifier score **strictly improves**; hard cap (N=2) → runaway impossible |
+| **1. Reflexion / self-critique** | Task profile flags a turn "critique-worthy" (citation-bearing, mutating, sensitive-domain, **or computed**) | **Auto.** Fully ephemeral; never persists | Mostly **deterministic** verifiers (do cited facts exist and are in-scope? do claims ground in retrieved chunks? does a mutation validate against schema? **does every number in the answer trace to a tool result, a call's arguments, or something Jeff said?**); LLM critic is a tiebreaker only (judges are noisy). Retry only if the verifier score **strictly improves**; hard cap (N=2) → runaway impossible |
+
+The **computed** arm is the one that had to be added rather than tuned. A turn that works
+out a number surfaces no source, resolves no entity and stages no mutation, so every other
+arm read false AND `_finish` returned early on the empty grounding corpus — the turn was
+never verified at all. That is how a figure tracing to nothing reached the owner one line
+under a correct `calculate` result. A turn is recognised as computing by its `code_run`
+view, the same signal the PWA's `ƒn` marker resolves against, so the trigger cannot drift
+out of step with the tool roster. `verify_computed_numbers` accepts a ROUNDING of a source
+number (321.3849285 stated as "321" is the same number said plainly) but never a SCALING:
+deriving 0.0321 m² from 321.38 cm² is arithmetic the model did itself, which is precisely
+the step that failed. Scored, never a veto — a false positive costs one retry, never a
+worse answer.
 
 **Memory / knowledge growth** is not a self-improvement loop but the ordinary
 memory discipline: a chat that reveals a durable behavioral preference writes only

@@ -5,11 +5,13 @@
 // guessed at. G is both — a visible `ƒn` on the number, and a panel that floats over the
 // transcript instead of reflowing it.
 //
-// It opens COMPACT (the expression and its answer) and expands in place, capped at 46% of
-// the frame with its body scrolling. That is the answer to the one flaw recorded against F:
-// a popover is a poor place for eight lines of code, so small content stays a popover and
-// large content stops being one — the expanded body renders the SAME `code_run` component
-// the Worked step does, which is what D2 bought.
+// It opens on the WORKING, not on a summary of it. The collapsed head that used to come
+// first (the expression on one line, its answer on the right, and a "show the working"
+// link under them) is gone: the panel was already open, so the first thing in it restated
+// the expression and the result that the body then labelled properly underneath — the same
+// duplication the `code_run` STEP had against its own prose. One tap on the marker is the
+// only tap; the body is capped at 46% of the frame and scrolls, so a long program is still
+// a glance rather than a mode.
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CalcTarget } from "./markdown";
@@ -20,22 +22,26 @@ import { ToolView } from "./views/registry";
 interface Placement {
   left: number;
   top: number;
+  width: number;
   above: boolean;
 }
 
 const MARGIN = 8;
-const WIDTH = 296;
+const MAX_WIDTH = 320;
 
 function place(anchor: DOMRect, height: number): Placement {
+  // A cap, not a width: on a narrow phone a fixed 320 would hang off the frame, and this
+  // panel now always carries the full working rather than a one-line head.
+  const width = Math.min(MAX_WIDTH, window.innerWidth - MARGIN * 2);
   // Clamped to the viewport on both axes: a popover that opens off-screen is a popover the
   // owner cannot read, and the marker can sit anywhere in a paragraph.
   const left = Math.min(
-    Math.max(MARGIN, anchor.left + anchor.width / 2 - WIDTH / 2),
-    Math.max(MARGIN, window.innerWidth - WIDTH - MARGIN),
+    Math.max(MARGIN, anchor.left + anchor.width / 2 - width / 2),
+    Math.max(MARGIN, window.innerWidth - width - MARGIN),
   );
   const below = anchor.bottom + 8;
   const above = below + height > window.innerHeight - MARGIN;
-  return { left, top: above ? Math.max(MARGIN, anchor.top - 8 - height) : below, above };
+  return { left, top: above ? Math.max(MARGIN, anchor.top - 8 - height) : below, width, above };
 }
 
 export function ComputationPopover({
@@ -48,14 +54,12 @@ export function ComputationPopover({
   anchor: DOMRect;
   onClose: () => void;
 }): ReactNode {
-  const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<Placement | null>(null);
   const panel = useRef<HTMLDialogElement>(null);
 
-  // Re-placed whenever the panel's own SIZE changes, not when one particular control is
-  // tapped. The height is what decides which side of the marker it opens on, so expanding
-  // has to re-measure — and an observer covers every other way the body can grow (a long
-  // error, a wrapped line) rather than only the one boolean I happened to think of.
+  // Re-placed whenever the panel's own SIZE changes. The height is what decides which side
+  // of the marker it opens on, and an observer covers every way the body can grow (a long
+  // error, a wrapped line, a rotated phone) rather than only the ones thought of here.
   useLayoutEffect(() => {
     const el = panel.current;
     if (!el) return;
@@ -80,17 +84,6 @@ export function ComputationPopover({
     };
   }, [onClose]);
 
-  const data = target.payload.data;
-  const code = typeof data.code === "string" ? data.code : "";
-  // A one-line expression IS the head; an eight-line snippet is not. Flattening a program
-  // into one line produced `from decimal import Decimal rate = …`, which reads as neither
-  // code nor a summary — so a multi-line snippet says its shape instead, and the code
-  // itself is one tap away in the body below.
-  const lines = code.split("\n").filter((line) => line.trim() !== "").length;
-  const language = typeof data.language === "string" ? data.language : "python";
-  const expression =
-    lines > 1 ? `${lines} lines · ${language === "expression" ? "expression" : language}` : code;
-
   return (
     <>
       {/* Tap-anywhere-to-close, transparent: the popover is a glance, not a mode. */}
@@ -101,29 +94,21 @@ export function ComputationPopover({
       <dialog
         ref={panel}
         open
-        className={`fb-calc-pop${placement?.above ? " above" : ""}${open ? " open" : ""}`}
+        className={`fb-calc-pop${placement?.above ? " above" : ""}`}
         style={
           placement
-            ? { left: `${placement.left}px`, top: `${placement.top}px`, width: `${WIDTH}px` }
-            : { left: "-9999px", top: "0", width: `${WIDTH}px` }
+            ? {
+                left: `${placement.left}px`,
+                top: `${placement.top}px`,
+                width: `${placement.width}px`,
+              }
+            : { left: "-9999px", top: "0", width: `${MAX_WIDTH}px` }
         }
         aria-label="how this number was worked out"
       >
-        <div className="fb-calc-head">
-          <span className="fb-calc-expr" title={expression}>
-            {expression}
-          </span>
-          <span className="fb-calc-ans">{target.brief}</span>
+        <div className="fb-calc-body">
+          <ToolView payload={target.payload} />
         </div>
-        {open ? (
-          <div className="fb-calc-body">
-            <ToolView payload={target.payload} />
-          </div>
-        ) : (
-          <button type="button" className="fb-calc-more" onClick={() => setOpen(true)}>
-            show the working
-          </button>
-        )}
       </dialog>
     </>
   );

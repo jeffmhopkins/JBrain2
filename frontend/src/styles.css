@@ -10645,52 +10645,26 @@ button.small {
   flex-direction: column;
   gap: calc(6px * var(--font-scale));
 }
-.fb-shell .fb-calc-head {
-  display: flex;
-  align-items: baseline;
-  gap: calc(8px * var(--font-scale));
-}
-.fb-shell .fb-calc-expr {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--font-scale));
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* the answer never truncates — it is what the marker was tapped for. */
-.fb-shell .fb-calc-ans {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--font-scale));
-  color: var(--ok);
-}
-.fb-shell .fb-calc-more {
-  align-self: flex-start;
-  font: inherit;
-  font-size: calc(10.5px * var(--font-scale));
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  text-decoration: underline;
-}
-/* capped and scrolling, which is the answer to "a popover is a poor place for eight lines of
-   code": small content stays a popover, large content stops being one. */
+/* capped and scrolling: the panel opens on the working, so a long program is a scroll
+   rather than a second tap. */
 .fb-shell .fb-calc-body {
   max-height: 46vh;
   overflow-y: auto;
-  margin: 0 calc(-8px * var(--font-scale)) calc(-8px * var(--font-scale));
-  padding: 0 calc(8px * var(--font-scale)) calc(4px * var(--font-scale));
 }
-/* inside the popover the code block has no step rail to line up with. */
-.fb-shell .fb-calc-body .fb-code,
-.fb-shell .fb-calc-body .fb-sealrow {
+/* Inside the popover there is no step rail to line up with, so every rung that carries the
+   rail inset drops it. The inset is a MARGIN on the code block and PADDING on the rest —
+   zeroing padding on `.fb-code` too is what pressed the listing against its own border. */
+.fb-shell .fb-calc-body .fb-code {
   margin-left: 0;
+}
+.fb-shell .fb-calc-body .fb-res-lab,
+.fb-shell .fb-calc-body .fb-res-txt,
+.fb-shell .fb-calc-body .fb-sealrow {
   padding-left: 0;
+}
+/* the last rung sets the panel's bottom gap; its own margin would double it. */
+.fb-shell .fb-calc-body .fb-code:last-child {
+  margin-bottom: 0;
 }
 
 /* the `code_run` view, rendered INSIDE its step (docs/mocks/code-run/h-worked-ledger.html).

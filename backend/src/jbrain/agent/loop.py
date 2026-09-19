@@ -52,6 +52,8 @@ from jbrain.agent.reflexion import (
     has_substantive_claim,
     reflect,
     ungrounded_claims,
+    untraceable_numbers,
+    verify_computed_numbers,
     verify_grounding,
 )
 from jbrain.agent.toolregistry import ToolRegistry
@@ -589,6 +591,15 @@ def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
         mutated=turn.mutated,
         touched_sensitive=_touched_sensitive(turn.sources, turn.entities),
     )
+
+
+def _user_text(conversation: Sequence[LlmMessage]) -> str:
+    """Everything Jeff himself said in this conversation, as one blob.
+
+    It is a SOURCE for the number verifier: a figure he supplied ("the can is 122 mm
+    tall") and the answer repeats was never the model's to compute, so it must not be
+    flagged as coming from nowhere."""
+    return "\n".join(m.text for m in conversation if isinstance(m, UserMessage))
 
 
 def _prompt_message(message: LlmMessage) -> dict[str, Any]:
@@ -1153,6 +1164,12 @@ class AgentLoop:
         surfaced_sources: list[NoteSource] = []
         surfaced_entities: list[EntityRef] = []
         mutated = False
+        # Everything this turn actually SAW a number in — each tool's result and the
+        # arguments it was called with — plus whether any of it was a computation. The
+        # number verifier traces the answer's figures back to these; `computed` is what
+        # makes an arithmetic turn critique-worthy at all (see `critique_worthy`).
+        seen_texts: list[str] = [_user_text(conversation)]
+        computed = False
         # The live meter's mid-stream base: the EXACT prompt size we last knew — the prior
         # turn's persisted fill to start (context_seed), then each completed step's real input.
         # Seeding with a real number (never a char-count estimate) is what keeps the meter from
@@ -1266,6 +1283,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1300,6 +1319,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1311,6 +1332,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1322,6 +1345,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1381,6 +1406,14 @@ class AgentLoop:
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)
                 surfaced_entities.extend(dispatched.entities)
+                seen_texts.append(dispatched.result.content or "")
+                seen_texts.append(json.dumps(call.arguments, ensure_ascii=False))
+                # A `code_run` view IS the math tools' signature — the same signal the
+                # PWA's `ƒn` marker resolves against — so the trigger cannot drift out of
+                # step with the tool roster the way a hard-coded name list would.
+                computed = computed or (
+                    dispatched.view is not None and dispatched.view.view == "code_run"
+                )
                 # A staged Proposal, or a tool whose spec declares it mutating, makes
                 # the turn critique-worthy — it carried a write, not just a read.
                 mutated = mutated or dispatched.proposal is not None or self._is_mutating(call.name)
@@ -1432,6 +1465,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1448,6 +1483,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1461,6 +1498,8 @@ class AgentLoop:
                     surfaced_entities,
                     mutated,
                     general_knowledge_label,
+                    seen_texts,
+                    computed,
                 ):
                     yield ev
                 return
@@ -1472,6 +1511,8 @@ class AgentLoop:
             surfaced_entities,
             mutated,
             general_knowledge_label,
+            seen_texts,
+            computed,
         ):
             yield ev
 
@@ -1798,6 +1839,8 @@ class AgentLoop:
         entities: list[EntityRef],
         mutated: bool,
         general_knowledge_label: bool = True,
+        seen_texts: Sequence[str] = (),
+        computed: bool = False,
     ) -> AsyncIterator[ChatEvent]:
         """Close the stream: emit the terminal `DoneEvent`, then exactly one of two
         mutually-exclusive tail annotations (or nothing). The answer the user saw
@@ -1818,6 +1861,22 @@ class AgentLoop:
         The two can never co-occur: general_knowledge requires an empty corpus, the
         verdict a non-empty one."""
         yield DoneEvent(stop_reason=stop_reason)
+        # The ARITHMETIC tail, checked before the grounding one and independently of it.
+        # A turn that worked out a number surfaces no source and resolves no entity, so it
+        # falls into the empty-corpus branch below and used to return unverified — which is
+        # how a figure that traced to nothing reached the owner sitting one line under a
+        # correct tool result. Scored, never a veto: the answer he saw still stands here,
+        # exactly as it does for grounding.
+        if computed:
+            numbers = verify_computed_numbers("".join(answer_parts), list(seen_texts))
+            if not numbers.passed:
+                yield VerdictEvent(
+                    passed=False,
+                    score=numbers.score,
+                    issues=list(numbers.issues),
+                    ungrounded_claims=untraceable_numbers("".join(answer_parts), list(seen_texts)),
+                )
+                return
         corpus = _grounding_corpus(sources, entities)
         if not corpus:
             # Empty corpus (no note snippets AND no entity texts) → grounding is
