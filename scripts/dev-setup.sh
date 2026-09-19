@@ -262,4 +262,18 @@ fi
 # tools, so this is a no-op here. Mentioned per CLAUDE.md rule #8; full click-path in
 # docs/archive/EMAIL_ARCHIVIST_PLAN.md ("OAuth setup" appendix).
 
+# --- Endpoint firmware / ESP-IDF (opt-in, NOT bootstrapped here) ---
+# firmware/ is the room endpoint's ESP32-S3 image (docs/plans/ROOM_ENDPOINT_PLAN.md). Its
+# toolchain is ESP-IDF plus an Xtensa cross-compiler — ~2.5 GB of clone and another ~1 GB of
+# toolchain — which would dominate the startup of every web session for a package almost no
+# session touches. So it is deliberately NOT installed here, and the authority on whether the
+# firmware builds is CI (.github/workflows/firmware.yml, pinned to v5.5.5, the version
+# Waveshare's own examples for this board target).
+#
+# To build it locally anyway:
+#   scripts/firmware-setup.sh          # one-time, ~10 min, installs into ~/esp-idf
+#   . ~/esp-idf/export.sh && (cd firmware && idf.py build)
+#
+# Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
+
 log "done"

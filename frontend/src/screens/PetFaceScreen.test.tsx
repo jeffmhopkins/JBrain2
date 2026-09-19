@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PetState } from "../api/client";
 import { drawScene } from "../pet/draw";
+import { clearCardPx } from "../pet/scale";
 import { speak } from "./speech";
 
 // jsdom has no speechSynthesis; the pet's voice is mocked so the reply can be asserted.
@@ -138,11 +139,66 @@ describe("PetFaceScreen", () => {
     expect(silly.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("switches the panel to true physical size", () => {
+  // The screen calibration persists by design, so order must not decide what a test sees.
+  beforeEach(() => clearCardPx());
+
+  // The panel is 29.02 x 35.33 mm. Showing that believably is the preview's whole job, and
+  // CSS cannot do it: `1in` is pinned to 96px whatever the screen is. These pin the three
+  // modes to what they claim, because a size that is quietly wrong is worse than no size.
+  function panel(): HTMLCanvasElement {
+    return screen.getByLabelText("Pet face preview panel") as HTMLCanvasElement;
+  }
+
+  it("asks to be calibrated rather than guessing at actual size", () => {
     const { deps } = makeDeps();
     render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
-    fireEvent.click(screen.getByText("True size"));
-    expect(screen.getByText(/29\.0 × 35\.3 mm/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Actual size"));
+    expect(screen.getByText(/not calibrated/)).toBeTruthy();
+    // And it holds the working size rather than falling back to the CSS-mm lie.
+    expect(panel().style.width).toBe("368px");
+  });
+
+  it("sizes the panel to the measured millimetres once calibrated", () => {
+    const { deps } = makeDeps();
+    render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+    // A dense phone: a bank card (85.6 mm) measured at 520 CSS px is ~154 CSS ppi.
+    fireEvent.change(screen.getByLabelText(/Card width in pixels/), {
+      target: { value: "520" },
+    });
+    fireEvent.click(screen.getByText("Actual size"));
+    const want = (29.02 * 520) / 85.6;
+    expect(Number.parseFloat(panel().style.width)).toBeCloseTo(want, 3);
+    expect(
+      screen.getByText(/actual size — 29\.0 × 35\.3 mm, your screen measured at 154/),
+    ).toBeTruthy();
+    // Well under what the shipped `width: 29.02mm` rule drew, which is the bug.
+    expect(want).toBeGreaterThan((29.02 * 96) / 25.4);
+  });
+
+  it("remembers the calibration, so it is measured once and not every visit", () => {
+    const { deps } = makeDeps();
+    const first = render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+    fireEvent.change(screen.getByLabelText(/Card width in pixels/), {
+      target: { value: "460" },
+    });
+    first.unmount();
+
+    render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+    fireEvent.click(screen.getByText("Actual size"));
+    expect(Number.parseFloat(panel().style.width)).toBeCloseTo((29.02 * 460) / 85.6, 3);
+  });
+
+  it("1:1 pixels means DEVICE pixels — the shipped mode was 1:1 CSS pixels", () => {
+    const { deps } = makeDeps();
+    const real = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { value: 3, configurable: true });
+    try {
+      render(<PetFaceScreen onClose={vi.fn()} deps={deps} />);
+      fireEvent.click(screen.getByText("1:1 pixels"));
+      expect(Number.parseFloat(panel().style.width)).toBeCloseTo(368 / 3, 3);
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { value: real, configurable: true });
+    }
   });
 
   it("survives the pet endpoint being down", async () => {

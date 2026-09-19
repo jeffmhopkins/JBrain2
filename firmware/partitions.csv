@@ -1,0 +1,26 @@
+# Partition table for the room endpoint (Waveshare ESP32-S3-Touch-AMOLED-1.8, 16 MB flash).
+#
+# THIS TABLE IS EFFECTIVELY PERMANENT. OTA rewrites an app slot and nothing else, so changing
+# the layout means a USB reflash — and both units are going to the twins, where a cable is a
+# physical trip. So it is laid out for what the endpoint will eventually be, not for what the
+# first firmware needs, and the space is reserved now while reserving it is free.
+#
+# Comments only ever get their own line here: anything after the size column is parsed as the
+# Flags field, which is how the first version of this file failed to build.
+#
+#   nvs       24K    wifi creds, api url, device token, box CA root
+#   otadata    8K    which slot boots, and whether it is trusted yet
+#   factory   1.5M   the frozen recovery app. Never OTA'd.
+#   ota_0/1   4.5M   each
+#   model     3.5M   reserved for ESP-SR wake-word models (W6); nothing uses it yet
+#   storage   1.875M assets. Ends exactly at 16M.
+#
+# Name,     Type, SubType,  Offset,    Size
+nvs,        data, nvs,      0x9000,    0x6000
+otadata,    data, ota,      0xF000,    0x2000
+phy_init,   data, phy,      0x11000,   0x1000
+factory,    app,  factory,  0x20000,   0x180000
+ota_0,      app,  ota_0,    0x1A0000,  0x480000
+ota_1,      app,  ota_1,    0x620000,  0x480000
+model,      data, spiffs,   0xAA0000,  0x380000
+storage,    data, spiffs,   0xE20000,  0x1E0000

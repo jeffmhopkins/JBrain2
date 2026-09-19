@@ -5,7 +5,7 @@
 Build the **room endpoint as a PWA surface first** — a full-screen pet the child talks to and
 touches, running on any phone or spare tablet — so the whole product exists and is being used
 before the two Waveshare ESP32-S3 panels arrive. Splits out of
-`../proposed/ROOM_ENDPOINT_PLAN.md`, which keeps only the firmware, audio and OTA waves.
+`ROOM_ENDPOINT_PLAN.md`, which keeps only the firmware, audio and OTA waves.
 
 Binding mock (chosen, `../reference/DESIGN.md`): `../mocks/room-endpoint/pet-face.html`.
 
@@ -155,5 +155,5 @@ press-to-talk-first before a line of firmware is written.
 ## 8. Out of scope
 
 Firmware, I2S audio, OTA, the panel's physical enclosure — all stay in
-`../proposed/ROOM_ENDPOINT_PLAN.md`. No new pet *behaviour*: this plan renders and routes what
+`ROOM_ENDPOINT_PLAN.md`. No new pet *behaviour*: this plan renders and routes what
 `jpet/` already owns, and never invents pet state.

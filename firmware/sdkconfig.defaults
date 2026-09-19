@@ -1,0 +1,26 @@
+# Baseline config for the room endpoint. Anything not needed to get on Wi-Fi and take an OTA
+# is deliberately absent — see README "What the first firmware does not do".
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB NOR flash, per the Waveshare spec for this board.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The whole point of this firmware. Without it a bad image is permanent and the fix is a cable.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# The box's LAN certificate comes from Caddy's internal CA, whose root is written into NVS at
+# flash time, so the bundled public-CA list would only be dead weight.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# Keep the image honest about which build is running: the OTA check compares this against the
+# manifest, so a hand-edited version string would loop or stall the updates.
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=n

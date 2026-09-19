@@ -1,6 +1,6 @@
 # Divoom Ditoo on the box — feasibility + build sketch
 
-> **Status:** Superseded 2026-09 · **Superseded-by:** `../proposed/ROOM_ENDPOINT_PLAN.md`
+> **Status:** Superseded 2026-09 · **Superseded-by:** `../plans/ROOM_ENDPOINT_PLAN.md`
 
 > **The device is out of the picture entirely** — the owner cancelled it rather than keep it
 > as a Bluetooth speaker, so nothing here is pending. The goal it chased (§0.2 — pixel art,

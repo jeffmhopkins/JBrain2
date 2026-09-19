@@ -33,6 +33,18 @@ import { type PetCommand, type PetState, type PetStep, api } from "../api/client
 import { COLOR_NAMES, FORMS, PANEL_H, PANEL_W, type Scene, drawScene } from "../pet/draw";
 import { type FaceKey, approach, isFaceKey, resolveFace } from "../pet/face";
 import { ACTIONS, actionForServerStep, figureFor, rigFor } from "../pet/rig";
+import {
+  CARD_MM_W,
+  CARD_PX_MAX,
+  CARD_PX_MIN,
+  NOMINAL_CARD_PX,
+  type StageMode,
+  clampCardPx,
+  cssPpi,
+  loadCardPx,
+  saveCardPx,
+  stageSize,
+} from "../pet/scale";
 import { type PoolMemory, newMemory, pickVariant, repetitionPenalty } from "../pet/variants";
 import { speak } from "./speech";
 import "./petface.css";
@@ -66,10 +78,30 @@ interface PetFaceScreenProps {
   deps?: PetFaceDeps;
 }
 
+const MODE_LABELS: readonly (readonly [StageMode, string])[] = [
+  ["fit", "Fit"],
+  ["pixels", "1:1 pixels"],
+  ["actual", "Actual size"],
+];
+
+/** What each mode is showing, said precisely enough that the viewer can catch it lying. */
+const STAGE_NOTE: Record<StageMode, (dpr: number, cardPx: number | null) => string> = {
+  fit: () => `${PANEL_W} × ${PANEL_H} enlarged to work on — the real panel is 29 × 35 mm`,
+  pixels: (dpr) => `1:1 device pixels at ${dpr}× — as crisp as the panel gets, and no crisper`,
+  actual: (_dpr, cardPx) =>
+    cardPx === null
+      ? "not calibrated — measure your screen below; until then this is the working size"
+      : `actual size — 29.0 × 35.3 mm, your screen measured at ${Math.round(cssPpi(cardPx))} CSS ppi`,
+};
+
 export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [pet, setPet] = useState<PetState | null>(null);
-  const [trueSize, setTrueSize] = useState(false);
+  const [mode, setMode] = useState<StageMode>("fit");
+  // null until the viewer measures their screen. Read once on mount rather than as a lazy
+  // initialiser so the server-render path never touches localStorage.
+  const [cardPx, setCardPx] = useState<number | null>(null);
+  const [dpr, setDpr] = useState(1);
   const [say, setSay] = useState("");
   const [log, setLog] = useState<string[]>([]);
   // Local overrides exist ONLY for design validation — they let the owner see a form or an
@@ -105,6 +137,24 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
   const petRef = useRef<PetState | null>(null);
   const overrides = useRef({ form: null as string | null, face: null as FaceKey | null });
   overrides.current = { form: formOverride, face: faceOverride };
+
+  // The screen's real pixel density, and the viewer's own measurement of it. devicePixelRatio
+  // changes when a window moves between monitors or the page zooms, and both fire `resize`.
+  useEffect(() => {
+    setCardPx(loadCardPx());
+    const read = () => setDpr(window.devicePixelRatio || 1);
+    read();
+    window.addEventListener("resize", read);
+    return () => window.removeEventListener("resize", read);
+  }, []);
+
+  const calibrate = useCallback((px: number) => {
+    const v = clampCardPx(px);
+    setCardPx(v);
+    saveCardPx(v);
+  }, []);
+
+  const stage = stageSize(mode, { panelW: PANEL_W, panelH: PANEL_H, dpr, cardPx });
 
   const note = useCallback((line: string) => {
     setLog((prev) =>
@@ -414,29 +464,36 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
           Back
         </button>
         <h1>Pet face — endpoint preview</h1>
-        <button type="button" aria-pressed={trueSize} onClick={() => setTrueSize((v) => !v)}>
-          {trueSize ? "1:1 pixels" : "True size"}
-        </button>
+        <fieldset className="pf-seg">
+          <legend className="pf-sr">Panel size</legend>
+          {MODE_LABELS.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={mode === key}
+              onClick={() => setMode(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </fieldset>
       </div>
 
       <div className="pf-body">
         <div>
-          <div className={`pf-stage${trueSize ? " pf-true" : ""}`}>
+          <div className="pf-stage">
             <canvas
               ref={canvasRef}
               width={PANEL_W}
               height={PANEL_H}
+              style={{ width: `${stage.w}px`, height: `${stage.h}px` }}
               aria-label="Pet face preview panel"
               onPointerDown={onDown}
               onPointerUp={onUp}
               onPointerCancel={onUp}
             />
           </div>
-          <p className="pf-note">
-            {trueSize
-              ? "true physical size — 29.0 × 35.3 mm, 322 ppi"
-              : "1:1 device pixels — 368 × 448; the real panel is 29 × 35 mm"}
-          </p>
+          <p className="pf-note">{STAGE_NOTE[mode](dpr, cardPx)}</p>
           <p className="pf-note">press and hold the panel · release to poke</p>
         </div>
 
@@ -514,6 +571,35 @@ export function PetFaceScreen({ onClose, deps = defaultDeps }: PetFaceScreenProp
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="pf-card">
+            <h2>Measure your screen</h2>
+            <p className="pf-note" style={{ textAlign: "left" }}>
+              A browser cannot read its own screen's pitch — CSS pins an inch to 96px whatever the
+              display really is, so a phone (~153) draws "29 mm" at about two-thirds of its real
+              size. Hold any bank card against the bar and drag until the two match; the panel is
+              then honest about its size on <em>this</em> screen.
+            </p>
+            <div
+              className="pf-card-ref"
+              style={{ width: `${cardPx ?? NOMINAL_CARD_PX}px` }}
+              aria-hidden="true"
+            />
+            <input
+              type="range"
+              min={CARD_PX_MIN}
+              max={CARD_PX_MAX}
+              step={1}
+              value={cardPx ?? NOMINAL_CARD_PX}
+              aria-label={`Card width in pixels (a bank card is ${CARD_MM_W} mm wide)`}
+              onChange={(e) => calibrate(Number.parseFloat(e.target.value))}
+            />
+            <p className="pf-note" style={{ textAlign: "left" }}>
+              {cardPx === null
+                ? "Not measured yet — using CSS's own guess of 96 ppi."
+                : `Measured: ${Math.round(cssPpi(cardPx))} CSS ppi. The panel itself is 322 ppi.`}
+            </p>
           </div>
 
           <div className="pf-card">

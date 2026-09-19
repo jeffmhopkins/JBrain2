@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-09-18
+> **Status:** Living · **Last verified:** 2026-09-19
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -264,7 +264,17 @@ The location + family + intake slices shipped; build records are under
   colour plus one mouth-bar width, and none at all in animal form). One whole-screen touch target,
   press-to-talk into the box's own whisper, and a non-owner `pet_endpoint` principal so a child's
   tablet never holds an owner session. Built ahead of, and gating, the ESP32-S3 panels in
-  `proposed/ROOM_ENDPOINT_PLAN.md`; binding mock `mocks/room-endpoint/pet-face.html`.
+  `plans/ROOM_ENDPOINT_PLAN.md`; binding mock `mocks/room-endpoint/pet-face.html`.
+
+- **Room endpoint (the panels)** — Scheduled (`plans/ROOM_ENDPOINT_PLAN.md`) — the firmware half:
+  2 × Waveshare ESP32-S3-Touch-AMOLED-1.8, arrived 2026-09-18, same LAN as the box. Promoted from
+  the icebox once the owner set the delivery constraint — **the box's USB port for the first flash
+  only, Wi-Fi for every update after** — which makes the box the flashing seat and lets it bake
+  its own Wi-Fi credentials, device token and Caddy root into a per-unit NVS blob at flash time,
+  from a profile-gated `deploy/endpoint/` sidecar reached through Ops. Rollback gated on reaching
+  the api, plus a frozen factory recovery app, have to be in the **first** image or "cable once"
+  is not true. The board has no echo reference (ES8311, one mic, no ES7210), so barge-in is
+  probably unavailable and press-to-talk is the primary path, not the fallback.
 
 - **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2,
   `archive/JPET_V3_PLAN.md` v3)
