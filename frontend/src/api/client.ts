@@ -2591,6 +2591,38 @@ function spectrumQuery(range: SpectrumRange): string {
   return parts.join("&");
 }
 
+/** A serial port the box can currently see (GET /api/endpoint/ports). */
+export interface EndpointPort {
+  device: string;
+  label: string;
+  is_espressif: boolean;
+}
+
+export interface EndpointPorts {
+  ports: EndpointPort[];
+  flasher: boolean;
+}
+
+export interface EndpointFirmware {
+  version: string;
+  url: string;
+}
+
+/** What is installed against what the box could fetch (GET /api/endpoint/firmware/available). */
+export interface EndpointFirmwareAvailable {
+  installed: string | null;
+  latest: string | null;
+  fetchable: boolean;
+}
+
+export interface FlashRequest {
+  port: string;
+  ssid: string;
+  password: string;
+  name?: string;
+  erase?: boolean;
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(
@@ -4878,6 +4910,81 @@ export const api = {
           boundary = buffer.indexOf("\n\n");
         }
       }
+    } finally {
+      reader.releaseLock();
+    }
+  },
+  // ===== Room endpoints (the ESP32-S3 panels) =====
+  // Owner-only. `GET /ports` is the one worth calling first: on a box with no terminal it
+  // is the only way to tell "the panel is not enumerating" from "the flasher container
+  // cannot see it", and the two have completely different fixes.
+  async getEndpointPorts(): Promise<EndpointPorts> {
+    const response = await request("/api/endpoint/ports");
+    return (await response.json()) as EndpointPorts;
+  },
+
+  async getEndpointFirmware(): Promise<EndpointFirmware | null> {
+    // `request` throws on any non-2xx, so the 404 has to be caught rather than read off
+    // the response — before the first upload there IS no firmware, and that is the
+    // normal state rather than a failure. Getting this wrong made the port list look
+    // empty on a box that could see a panel perfectly well.
+    try {
+      const response = await request("/api/endpoint/firmware");
+      return (await response.json()) as EndpointFirmware;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+
+  async getEndpointFirmwareAvailable(): Promise<EndpointFirmwareAvailable> {
+    const response = await request("/api/endpoint/firmware/available");
+    return (await response.json()) as EndpointFirmwareAvailable;
+  },
+
+  // The box fetches its own firmware from the public release. No credential is involved,
+  // which is exactly why this can be a button rather than a download-and-upload errand.
+  async syncEndpointFirmware(): Promise<EndpointFirmware> {
+    const response = await request("/api/endpoint/firmware/sync", { method: "POST" });
+    return (await response.json()) as EndpointFirmware;
+  },
+
+  async uploadEndpointFirmware(zip: Blob, version: string): Promise<EndpointFirmware> {
+    const form = new FormData();
+    form.append("artifact", zip, "endpoint-firmware.zip");
+    form.append("version", version);
+    const response = await request("/api/endpoint/firmware", { method: "POST", body: form });
+    return (await response.json()) as EndpointFirmware;
+  },
+
+  // The flash log, streamed as plain text lines. A flash takes tens of seconds and the
+  // owner is watching a phone, so this yields as it arrives rather than resolving at the
+  // end. The sidecar reports failure as a final `FAILED: …` LINE, not as a status code —
+  // the response has already begun by the time esptool can fail.
+  async *flashEndpoint(body: FlashRequest, signal?: AbortSignal): AsyncGenerator<string> {
+    const response = await request("/api/endpoint/flash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl = buffer.indexOf("\n");
+        while (nl !== -1) {
+          yield buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          nl = buffer.indexOf("\n");
+        }
+      }
+      if (buffer.trim()) yield buffer;
     } finally {
       reader.releaseLock();
     }

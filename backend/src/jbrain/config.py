@@ -266,6 +266,21 @@ class Settings(BaseSettings):
     # (docs/plans/SDR_RADIO_PLAN.md §4.4). Empty (the default) means no radio on this box,
     # and the probe/capture routes report that rather than failing obscurely.
     sdr_url: str = ""
+    # The panel-flasher sidecar (deploy/endpoint), egress-free by topology. Pinned here
+    # and never model-supplied — nothing about flashing is reachable by an agent, only by
+    # the owner. Part of the stock stack, so this default points at the running service
+    # (the `pysandbox_url` pattern, NOT `sdr_url`'s): a profile plus an empty default
+    # would mean editing .env on the host to enable a feature the owner reaches only
+    # through the PWA, which is the terminal dependency CLAUDE.md #10 exists to remove.
+    # Empty still disables it, and Ops says so rather than failing obscurely.
+    endpoint_url: str = "http://endpoint:8000"
+    # Where the panel firmware is published. This repo is PUBLIC, so its release assets
+    # download over plain HTTPS with no credential — which is the whole reason the box can
+    # fetch its own firmware instead of the owner downloading a zip and uploading it
+    # (CLAUDE.md #10). Pinned here and never model-supplied: the sync builds its URLs from
+    # this constant, so `stream.py`'s SSRF guard is untouched. Empty disables the fetch and
+    # leaves the manual upload as the only path, which is what an air-gapped box wants.
+    endpoint_firmware_repo: str = "jeffmhopkins/JBrain2"
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).

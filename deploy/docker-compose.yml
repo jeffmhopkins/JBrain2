@@ -217,6 +217,15 @@ services:
       # Read-only view of the provisioned image weights so the settings drawer can
       # report each image model's real on-disk footprint (the shared RAM meter).
       - ./comfyui-models:/data/comfyui-models:ro
+      # READ-ONLY, and only so a panel can be told who to trust. Caddy mints the LAN
+      # site's certificate from its own internal CA, whose root lives in this volume;
+      # the api writes that root into a panel's NVS at flash time so the panel can
+      # validate https://jbrain.local without the owner ever running `docker cp`
+      # (docs/runbooks/LOCAL_ACCESS.md makes that a terminal step, which CLAUDE.md #10
+      # forbids as the answer). Read-only because reading one public certificate is the
+      # entire need — nothing here should be able to touch Caddy's private keys, which
+      # live in the same volume.
+      - caddy_data:/data/caddy:ro
     # `jcode`: the api proxies the owner's code-mode control surface to the jcode
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
@@ -227,7 +236,7 @@ services:
     # the pysandbox sidecar (EXACT_MATH_TOOLS_PLAN.md): the api is its only caller, and
     # keeping the membership to exactly those two is what makes the sandbox's
     # egress-free claim true — `test_pysandbox_server.py` asserts it.
-    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox]
+    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel]
     depends_on:
       db:
         condition: service_healthy
@@ -878,6 +887,43 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     networks: [radio]
 
+  # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
+  # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
+  # `sdr` is opt-in in the first place: most boxes have no RTL-SDR dongle, so running a
+  # radio sidecar on one is pointless. This box has panels. Gating it behind a profile
+  # would have cost the owner an edit to /opt/jbrain2/.env to turn on a feature they were
+  # always going to use, and a terminal step is precisely what CLAUDE.md #10 forbids as
+  # the answer. It costs ~30 MB idle when nothing is plugged in.
+  #
+  # Egress-free by topology:
+  # only `endpoint` + `api` join the `panel` network, so the container that writes a
+  # bootloader has no route to the internet. It never fetches firmware — the api hands
+  # over the images — which is what keeps a GitHub credential off this box.
+  #
+  # NOT `devices: /dev/bus/usb` like `sdr`. That works for the SDR because an RTL-SDR is
+  # a raw libusb device; the ESP32-S3 presents its native USB as a KERNEL CDC-ACM tty at
+  # /dev/ttyACM0, which is not under that path — and does not exist until the owner
+  # plugs a panel in, so a static `devices:` entry would fail at container start on a box
+  # with nothing attached. A /dev mount plus cgroup rules for the tty character majors
+  # admits a hotplugged tty without granting `privileged`: 166 is USB CDC-ACM (the
+  # panel's native USB) and 188 is USB serial (a CP210x/CH340 bridge board).
+  endpoint:
+    logging: *logbound
+    image: jbrain2-endpoint:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.endpoint
+    restart: unless-stopped
+    mem_limit: ${ENDPOINT_MEM_LIMIT:-256m}
+    environment:
+      ENDPOINT_PORT: 8000
+    volumes:
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 166:* rmw"
+      - "c 188:* rmw"
+    networks: [panel]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin
@@ -941,6 +987,11 @@ networks:
   # route to db/supervisor/worker/embed/blobs. This is the outer of the layers listed on the
   # service above, and the one the others are allowed to assume.
   sandbox:
+    internal: true
+  # EGRESS-FREE by declaration, same as `render` and `radio`: only `endpoint` + `api`
+  # join it. The panel flasher writes a bootloader to a device the owner cannot recover
+  # without a cable, and it has no business reaching the internet to do it.
+  panel:
     internal: true
 
 volumes:

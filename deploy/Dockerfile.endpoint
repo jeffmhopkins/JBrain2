@@ -1,0 +1,53 @@
+# The `endpoint` sidecar: flash a room-endpoint panel over USB
+# (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2).
+#
+# `python:3.12-slim` and PIP, which is a different rule from `Dockerfile.sdr`'s
+# APT-ONLY — and the difference is not a relaxation, it is that the sdr rule's reason
+# does not exist here. That rule is about ABI: Debian's `python3-soapysdr` is a CPython
+# extension built against the interpreter it ships beside. Nothing in this image is
+# compiled. `esptool` and `esp-idf-nvs-partition-gen` are Espressif's own pure-Python
+# tools, and the alternative to installing them is maintaining a private copy of a
+# flasher and an NVS serialiser — which is how a unit gets bricked by a subtle
+# divergence nobody is looking for.
+#
+# EGRESS-FREE by topology: compose puts this on a network declared `internal: true`.
+# It never fetches firmware — the api hands over the images — which is exactly what
+# keeps a GitHub credential off the owner's box.
+#
+# Runs as ROOT deliberately, for the same reason `sdr` does: `/dev/ttyACM*` is
+# root-owned and appears only when the owner plugs a panel in, so a udev rule and a
+# matching GID would be two moving parts solving a problem this container does not
+# have. It is egress-free, holds no owner data between requests, and its whole job is
+# to open one serial port.
+FROM python:3.12-slim
+
+# Pinned, because this is the software that writes a bootloader to a device the owner
+# cannot recover without a cable. A silent minor bump here is not the place to find out
+# that esptool changed a default.
+RUN pip install --no-cache-dir \
+        "esptool==5.4.0" \
+        "esp-idf-nvs-partition-gen==0.3.0"
+
+WORKDIR /app
+# Enumerating what the box can see: the half with no device in it, so it is testable in
+# CI on a machine with nothing plugged in.
+COPY deploy/endpoint/ports.py ./ports.py
+# Building the NVS image and driving esptool.
+COPY deploy/endpoint/flash.py ./flash.py
+COPY deploy/endpoint/server.py ./server.py
+
+# Fail the BUILD, not the first flash. This is the one image the owner builds on their
+# own box during Ops -> Update, with no terminal to read a traceback with (CLAUDE.md
+# #10) — so a missing COPY line or a renamed entry point has to surface here. The NVS
+# generator is exercised rather than merely imported: it is invoked as `python -m`, and
+# "the module is importable" is a weaker claim than "that command line works".
+RUN python -c "import server, ports, flash" \
+    && command -v esptool >/dev/null \
+    && python -m esp_idf_nvs_partition_gen --help >/dev/null
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["python", "server.py"]

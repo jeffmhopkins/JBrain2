@@ -41,12 +41,13 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-# `../deploy/sdr` is IN the include: the sidecar is typechecked by nothing else — no
+# `../deploy/sdr` and `../deploy/endpoint` are IN the include: the sidecars are
+# typechecked by nothing else — no
 # ruff config, no pyright config of its own — and the execution environment below was
 # dead configuration until this line existed, describing files pyright never opened.
 # It is this package's job because this package's pytest already loads those files by
 # path (CLAUDE.md #8).
-include = ["src", "tests", "../deploy/sdr"]
+include = ["src", "tests", "../deploy/sdr", "../deploy/endpoint"]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
@@ -66,6 +67,16 @@ reportMissingImports = "none"
 # The sidecar runs on Debian trixie's CPython, not the supervisor's 3.11 floor — the
 # rebase to `debian:trixie-slim` is what put an interpreter version in two places.
 pythonVersion = "3.13"
+
+# The panel flasher, same bare-name imports off one image WORKDIR. Its missing imports
+# are NOT waived: everything it imports is pip-installed into its own image, so an
+# unresolved name here is a real defect rather than an apt package pyright cannot see.
+# `Dockerfile.endpoint`'s build-time `import server, ports, flash` is the backstop.
+[[tool.pyright.executionEnvironments]]
+root = "../deploy/endpoint"
+extraPaths = ["../deploy/endpoint"]
+# python:3.12-slim, not the supervisor's 3.11 floor.
+pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

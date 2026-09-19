@@ -32,6 +32,10 @@ jobs:
   firmware:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # toolchain pull dominates; no baseline measured yet
+    permissions:
+      # Only what publishing a release needs. The default token is read-only for
+      # contents, so without this the release step 403s after a successful build.
+      contents: write
     steps:
       - uses: actions/checkout@v5
       # Pinned to the version Waveshare's own examples for this board target, so the vendor
@@ -53,6 +57,11 @@ jobs:
           cp firmware/build/bootloader/bootloader.bin out/
           cp firmware/build/partition_table/partition-table.bin out/
           cp firmware/build/flash_args out/ 2>/dev/null || true
+          # Checksums travel WITH the images, because the box verifies them after
+          # downloading: these bytes become a bootloader on a device that, once it is in a
+          # bedroom, has no cable attached to it. A truncated download that flashes is
+          # worse than one that fails.
+          ( cd out && sha256sum ./*.bin > SHA256SUMS )
           echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
           ls -l out/ >> "$GITHUB_STEP_SUMMARY"
 
@@ -61,3 +70,30 @@ jobs:
           name: endpoint-firmware
           path: out/
           if-no-files-found: error
+
+      # A RELEASE, not just an artifact, and that difference is the whole point: artifact
+      # downloads need a GitHub token even on a public repo, while release assets do not.
+      # This repo is public, so the box fetches its own firmware over plain HTTPS with no
+      # credential — which is what lets Ops -> Room endpoints offer "Update firmware"
+      # instead of asking the owner to download a zip and upload it (CLAUDE.md #10).
+      #
+      # Tagged from firmware/version.txt and SKIPPED when that tag already exists, so
+      # bumping that file is what cuts a release — the same file the running firmware
+      # compares itself against, so a version can never be published under a tag the
+      # image does not report.
+      - name: Publish the firmware release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          tag="firmware-v$(cat firmware/version.txt)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already published — bump firmware/version.txt to cut a new one." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh release create "$tag" out/* \
+            --title "Room endpoint firmware $(cat firmware/version.txt)" \
+            --notes "Flashable set for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Fetched by the box at Ops -> Room endpoints; see docs/plans/ROOM_ENDPOINT_PLAN.md."
+          echo "published $tag" >> "$GITHUB_STEP_SUMMARY"

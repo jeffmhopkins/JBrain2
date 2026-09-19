@@ -407,6 +407,71 @@ GET {api}/endpoint/firmware        Authorization: Bearer <device token>
 — where `version` is compared verbatim against `firmware/version.txt`, so **bumping that file is
 what makes a unit update.**
 
+### 10.4b The box side, built (2026-09-19)
+
+The flash path exists, so a panel plugged into the box's USB port is now reachable from
+**Ops → Room endpoints** and from nowhere else — which is the point, since the owner has no
+terminal and the debug console's `host.read` scope reports memory and processes, never
+device nodes.
+
+**`deploy/endpoint/`** — the flasher sidecar, **stock stack rather than profile-gated**, on
+a `panel` network declared `internal: true` so the container that writes a bootloader has no
+route off the box.
+
+The profile was the first design and it was wrong. `sdr` is opt-in because most boxes have
+no dongle; this box has panels. Gating the flasher would have meant editing
+`/opt/jbrain2/.env` on the host to switch on a feature reachable only through the PWA — a
+terminal step to remove a terminal step, which is rule 10 read backwards. With the URL
+defaulting to the running service (the `pysandbox` pattern), **Ops → Update is the whole
+install**, and the cost is ~30 MB idle when nothing is plugged in. It never fetches firmware; the api hands
+over the images, which is what keeps a GitHub credential off this box entirely. It keeps
+nothing between requests: the Wi-Fi password and device token are written under a temporary
+directory that is removed whether the flash succeeds or fails.
+
+It is **not** the `sdr` device mapping, and §10.6's open question is now answered in code
+rather than in prose: `sdr` maps `/dev/bus/usb`, which works for a raw libusb dongle, but
+the ESP32-S3 enumerates as a kernel CDC-ACM tty that does not live under that path and does
+not exist until a panel is plugged in. So: a `/dev` mount plus `device_cgroup_rules` for
+the tty character majors (166 CDC-ACM, 188 USB-serial) — narrower than `privileged`, and
+able to admit a hotplugged device. **Whether it works is still proven on the box, not here.**
+
+**Generic image, personalised at flash time**, as §10.1 designed. The owner uploads the CI
+artifact once; the api stores the images in `BlobStore` and the version in `app.settings`
+(owner-only RLS, and a new key there is a constant rather than a migration — so no new
+table and no new isolation test). At flash time it mints a **fresh `device_key`** on the
+shipped substrate, reads **Caddy's own root certificate** from a new read-only `caddy_data`
+mount, and sends both into NVS. That last part closes finding **C** in code: the owner never
+runs the `docker cp` that `../runbooks/LOCAL_ACCESS.md` otherwise requires.
+
+A re-flash therefore issues a **new** identity and revokes the old one. That is correct
+rather than incidental: re-flashing is how a panel is handed over or recovered, and the key
+it used to hold should stop working at that moment.
+
+`GET /api/endpoint/firmware` is the manifest the firmware polls, and the one route a panel
+in a child's bedroom can reach. It is owner-or-`device_key`, and returns a version and a URL
+and nothing else.
+
+**What still needs the owner: nothing but the tap.** The box fetches its own firmware.
+
+The first design asked them to download the CI artifact and upload it, defended on the
+grounds that the alternative meant a GitHub credential on the box and a path by which the
+box fetches and then executes code from the internet. **Both halves were wrong.** This
+repository is public, so release assets download over plain HTTPS with no credential at
+all; and the box already `git fetch`es this repo and runs what it gets on every
+Ops → Update, so "fetches and then executes from the internet" describes an update, not a
+new risk — and a firmware image is the *less* dangerous of the two, since it runs on the
+panel rather than on the box.
+
+So `firmware.yml` cuts a **release** tagged `firmware-v<version>` (artifacts need a token
+even on a public repo; release assets do not), and `POST /endpoint/firmware/sync` pulls it,
+**verifying every asset against the release's own `SHA256SUMS` before storing any of
+them** — one bad image refuses the whole set, because a half-stored set is worse than none
+on a device with no cable attached to it. A flash with nothing stored syncs first, so the
+very first flash needs no separate action either.
+
+The manual upload survives as a fallback for a box that cannot reach GitHub, which is a
+real state for a LAN device and not worth leaving without an answer.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
@@ -434,7 +499,10 @@ the flasher.
 ### 10.6 Still open after this section
 
 - **Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged `/dev/ttyACM*`?**
-  Verified on the box at step 5, not assumed here.
+  Built that way (§10.4b) and asserted in `supervisor/tests/test_deploy_scripts.py`, but the
+  assertion is about the compose file, not about the kernel. Still proven on the box at
+  step 5 — and **Ops → Room endpoints → Rescan USB is the proof**: a panel that is plugged
+  in and does not appear there is this question failing.
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
   if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
