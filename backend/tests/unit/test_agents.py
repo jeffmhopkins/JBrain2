@@ -76,7 +76,7 @@ def test_curator_is_the_full_brain_default() -> None:
     curator = AGENTS["curator"]
     assert curator.tools is None
     assert curator.reads_knowledge_base is True
-    assert curator.version == "agent-system-v12"
+    assert curator.version == "agent-system-v13"
 
 
 def test_teacher_is_a_socratic_tutor_that_holds_only_the_math_tools() -> None:
@@ -875,20 +875,20 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
     version bump, like every .prompt file (DEVELOPMENT.md)."""
     pins = {
         "curator": (
-            "agent-system-v12",
-            "bfde7af91a665ef13858f1183f4630e49a61ed188f6d8a27ac024defab79bbc3",
+            "agent-system-v13",
+            "abc86f578cbe43a7f2393cc2304ce48868f903498c4661c5aa41c1ab9e8f756a",
         ),
         "teacher": (
             "agent-teacher-v3",
             "db6b63a3e790ccfc861ddd23c806df9f2461ca5981f0c41df39103b8eae7621e",
         ),
         "jerv": (
-            "agent-jerv-v51",
-            "0d2edea7f14f45bad780fc28c7f06e9bef5cf2f1ca33b311e60f83591a48bd8e",
+            "agent-jerv-v52",
+            "9b607879cab2eb7b14ad044d7e22823b86175979c24a1ca1c91a150305dfac58",
         ),
         "archivist": (
-            "agent-archivist-v12",
-            "a1ce73690da3ab8a2ec0cf8b975c647dd0d6fceed1c42b1b7fc7d0b03d47d537",
+            "agent-archivist-v13",
+            "215a8e8246219fa3ede56d391c2a83feac8d22ab8733e9f0a3c2438b5f9dfbc7",
         ),
         "research": (
             "agent-research-v18",
