@@ -70,9 +70,12 @@ def build_session_handlers(sessions: AgentSessionRepo) -> dict[str, ToolHandler]
         # so a second call — a confused model, a retry, or text in a fetched page telling
         # the agent to rename the chat — changes nothing.
         if current.title.strip():
-            return ToolOutput(f"This chat is already named “{current.title}” — leaving it as is.")
+            return ToolOutput(
+                f"This chat is already named “{current.title}” — leaving it as is.",
+                result_brief="already named",
+            )
 
         await sessions.rename(ctx.session, ctx.agent_session_id, title)
-        return ToolOutput(f"Named this chat “{title}”.")
+        return ToolOutput(f"Named this chat “{title}”.", result_brief=title)
 
     return {"name_session": name_session_tool}

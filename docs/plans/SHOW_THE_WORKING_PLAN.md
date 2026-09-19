@@ -254,9 +254,10 @@ fields wherever there is one (`3 notes`, the D3 write phrase, a resolve's cast, 
 and a failed call always says so. A tool with none of those still shows nothing on its right,
 and that is the honest remaining gap.
 
-Sizing it that way was deliberate: 114 handlers are declared `-> str`, so filling the long tail
-means changing 114 return types — mechanical, reviewable on its own, and worth nothing until
-the mechanism it feeds exists. **W1b** is that sweep.
+⟲ **Corrected while starting W1b.** That sizing said filling the long tail "means changing 114
+`-> str` return types". It does not: `ToolOutput` is a `str` subclass, so a handler declared
+`-> str` can return one with no signature change at all. The sweep is one wrapped return per
+answer, not a typing migration — which is why W1b is being done now rather than deferred.
 
 ### W1b — the long tail authors its answers
 

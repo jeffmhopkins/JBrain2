@@ -100,6 +100,10 @@ def appointment_card(appt: AppointmentInfo) -> ViewPayload:
     )
 
 
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, ToolHandler]:
     async def read_appointments_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         include_past = bool(arguments.get("include_past", False))
@@ -115,7 +119,10 @@ def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, Tool
         rows = await appointments.list_appointments(
             ctx.session, since=since, include_cancelled=include_cancelled
         )
-        return ToolOutput(format_appointments(rows, ctx.timezone))
+        return ToolOutput(
+            format_appointments(rows, ctx.timezone),
+            result_brief=_count(len(rows), "appointment"),
+        )
 
     async def read_appointment_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         appt_id = str(arguments.get("appointment_id", "")).strip()
@@ -125,7 +132,12 @@ def build_appointment_handlers(appointments: AppointmentsRepo) -> dict[str, Tool
         if appt is None:
             return ToolOutput("No appointment with that id is in scope.")
         # The text is the model's; the card is the owner's tappable appointment.
-        return ToolOutput(format_appointment(appt, ctx.timezone), view=appointment_card(appt))
+        return ToolOutput(
+            format_appointment(appt, ctx.timezone),
+            view=appointment_card(appt),
+            # WHEN it is: the one fact an appointment is opened for.
+            result_brief=_when(appt, ctx.timezone),
+        )
 
     return {
         "read_appointments": read_appointments_tool,
@@ -219,6 +231,9 @@ def build_appointment_write_handlers(
             f"Staged a request to {verb} this appointment for your approval. I won't change"
             " your calendar until you approve it — it then re-enters as a normal, dated note.",
             proposal=ProposalRef(proposal_id=prop_id, kind="appointment"),
+            # "staged", never "moved": nothing has changed until the owner approves, and a
+            # row that says otherwise is the one lie this tool must not tell.
+            result_brief=f"staged: {verb}",
         )
 
     return {"manage_appointment": manage_appointment_tool}
