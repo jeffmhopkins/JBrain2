@@ -18,6 +18,11 @@ on:
     paths:
       - "firmware/**"
       - ".github/workflows/firmware.yml"
+  # GitHub starts no workflow runs for a pull request opened through an App, so a PR raised by
+  # an assistant carries no checks at all — see the same note in ci.yml. A dispatch is the
+  # supported way back, and without one this workflow could never gate such a PR. No path
+  # filter applies to a dispatch, which is what makes it usable as that fallback.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
