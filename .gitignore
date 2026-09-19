@@ -21,3 +21,9 @@ secrets/
 
 # Claude Code agent worktrees (harness scratch)
 .claude/worktrees/
+
+# ESP-IDF build output. sdkconfig is GENERATED from sdkconfig.defaults (which is committed);
+# committing it would freeze whatever the last local build happened to negotiate.
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old

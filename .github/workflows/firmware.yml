@@ -1,0 +1,58 @@
+# The endpoint firmware builds against a ~2 GB ESP-IDF toolchain and only depends on
+# firmware/**, so it runs on its own path filter rather than on every PR — the android.yml
+# pattern. The workflow file is in the filter so changes to it still trigger a run.
+#
+# There is no hardware in CI, so what this proves is that the image COMPILES and that it fits
+# the partition table. That is most of the value: the alternative is discovering a typo on a
+# board that has to be found, unplugged and cabled to the box.
+name: firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # toolchain pull dominates; no baseline measured yet
+    steps:
+      - uses: actions/checkout@v5
+      # Pinned to the version Waveshare's own examples for this board target, so the vendor
+      # drivers we port from in later waves compile against the same headers.
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.5
+          target: esp32s3
+          path: firmware
+
+      # The artifact IS the product: generic, credential-free, and the exact bytes the box
+      # flashes over USB and later serves for OTA. Nothing here is unit-specific — the Wi-Fi
+      # credentials, device token and box CA live in an NVS blob the box writes at flash time.
+      - name: Collect the flashable set
+        run: |
+          set -eu
+          mkdir -p out
+          cp firmware/build/jbrain-endpoint.bin out/
+          cp firmware/build/bootloader/bootloader.bin out/
+          cp firmware/build/partition_table/partition-table.bin out/
+          cp firmware/build/flash_args out/ 2>/dev/null || true
+          echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
+          ls -l out/ >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: endpoint-firmware
+          path: out/
+          if-no-files-found: error

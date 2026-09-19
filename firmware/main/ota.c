@@ -1,0 +1,158 @@
+#include "ota.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cJSON.h"
+#include "esp_app_desc.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
+#include "esp_log.h"
+#include "esp_ota_ops.h"
+
+static const char *TAG = "ota";
+
+#define MANIFEST_MAX 1024
+#define HTTP_TIMEOUT_MS 15000
+
+static char *bearer(const cfg_t *cfg)
+{
+    size_t n = strlen(cfg->token) + 8;
+    char *v = malloc(n);
+    if (v != NULL) snprintf(v, n, "Bearer %s", cfg->token);
+    return v;
+}
+
+/* esp_https_ota opens its own client, so the credential is attached through this hook rather
+   than through the config struct. */
+static esp_err_t attach_auth(esp_http_client_handle_t client)
+{
+    void *value = NULL;
+    if (esp_http_client_get_user_data(client, &value) != ESP_OK || value == NULL) return ESP_OK;
+    return esp_http_client_set_header(client, "Authorization", (const char *)value);
+}
+
+esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
+{
+    char url[256];
+    snprintf(url, sizeof(url), "%s/endpoint/firmware", cfg->api);
+
+    char *auth = bearer(cfg);
+    if (auth == NULL) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t hc = {
+        .url = url,
+        .cert_pem = cfg->ca,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&hc);
+    if (client == NULL) {
+        free(auth);
+        return ESP_FAIL;
+    }
+    esp_http_client_set_header(client, "Authorization", auth);
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "manifest unreachable: %s", esp_err_to_name(err));
+        goto done;
+    }
+    esp_http_client_fetch_headers(client);
+
+    int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        ESP_LOGW(TAG, "manifest returned HTTP %d", status);
+        err = ESP_FAIL;
+        goto done;
+    }
+
+    char body[MANIFEST_MAX];
+    int len = esp_http_client_read_response(client, body, sizeof(body) - 1);
+    if (len <= 0) {
+        ESP_LOGW(TAG, "manifest body empty");
+        err = ESP_FAIL;
+        goto done;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (root == NULL) {
+        ESP_LOGW(TAG, "manifest is not JSON");
+        err = ESP_FAIL;
+        goto done;
+    }
+    const cJSON *version = cJSON_GetObjectItemCaseSensitive(root, "version");
+    const cJSON *bin = cJSON_GetObjectItemCaseSensitive(root, "url");
+    if (!cJSON_IsString(version) || !cJSON_IsString(bin)) {
+        ESP_LOGW(TAG, "manifest is missing version or url");
+        cJSON_Delete(root);
+        err = ESP_FAIL;
+        goto done;
+    }
+    strlcpy(out->version, version->valuestring, sizeof(out->version));
+    strlcpy(out->url, bin->valuestring, sizeof(out->url));
+    cJSON_Delete(root);
+    err = ESP_OK;
+
+done:
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    free(auth);
+    return err;
+}
+
+const char *ota_running_version(void)
+{
+    return esp_app_get_description()->version;
+}
+
+esp_err_t ota_apply(const cfg_t *cfg, const char *url)
+{
+    ESP_LOGI(TAG, "installing %s", url);
+    char *auth = bearer(cfg);
+    if (auth == NULL) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t hc = {
+        .url = url,
+        .cert_pem = cfg->ca,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .keep_alive_enable = true,
+        .user_data = auth,
+    };
+    esp_https_ota_config_t oc = {
+        .http_config = &hc,
+        .http_client_init_cb = attach_auth,
+    };
+    esp_err_t err = esp_https_ota(&oc);
+    free(auth);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "installed; rebooting into the new slot on probation");
+    esp_restart();
+    return ESP_OK;
+}
+
+void ota_confirm_health(bool reachable)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
+    if (state != ESP_OTA_IMG_PENDING_VERIFY) return;
+
+    if (reachable) {
+        ESP_LOGI(TAG, "reached the box — marking this image good");
+        esp_ota_mark_app_valid_cancel_rollback();
+        return;
+    }
+
+    /* Nothing to fall back to means this is the first flash, where reverting would only
+       replace a reachable-nothing image with no image at all. Say so and stay put; the
+       cable is already attached at this point in a unit's life. */
+    ESP_LOGE(TAG, "could not reach the box — reverting to the previous image");
+    esp_err_t err = esp_ota_mark_app_invalid_rollback_and_reboot();
+    ESP_LOGE(TAG, "rollback unavailable (%s) — no previous image to return to",
+             esp_err_to_name(err));
+}
