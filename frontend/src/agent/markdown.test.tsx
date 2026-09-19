@@ -690,10 +690,44 @@ describe("Markdown", () => {
 
   it("a marker that resolves to no call renders as plain text, never as a claim", () => {
     // The rule that keeps a marker from asserting a computation that did not happen: the
-    // model authors the marker, and everything shown comes from the persisted call.
-    const { container } = render(<Markdown text="I worked it out[=3]." calcs={[calc("2568")]} />);
+    // model authors the marker, and everything shown comes from the persisted call. Two
+    // computations here, so the DIGIT is load-bearing — it is the only thing that could say
+    // which of them is meant, and [=3] names neither.
+    const { container } = render(
+      <Markdown text="I worked it out[=3]." calcs={[calc("2568"), calc("99")]} />,
+    );
     expect(container.querySelector(".md-calc")).toBeNull();
     expect(container.textContent).toContain("[=3]");
+  });
+
+  it("forgives the digit when this message has only one computation to point at", () => {
+    // Found on the box: the model numbers `[=n]` across the CONVERSATION while the surface
+    // builds `calcs` per MESSAGE, so a second turn's only computation arrives as [=2] and
+    // rendered as raw text next to the answer. One computation and one marker leaves the
+    // digit nothing to disambiguate, so the marker resolves — and renders as ƒ1, the
+    // position it actually is.
+    const onCalc = vi.fn();
+    const { container } = render(
+      <Markdown text="≈ 22.46 inches[=2]" calcs={[calc("22.46")]} onCalc={onCalc} />,
+    );
+    const marker = container.querySelector(".md-calc");
+    expect(marker).not.toBeNull();
+    expect(marker?.textContent).toBe("\u01921");
+    expect(container.textContent).not.toContain("[=2]");
+    fireEvent.click(marker as Element);
+    expect(onCalc).toHaveBeenCalledWith(1, marker);
+  });
+
+  it("will not guess when the message has several computations and several markers", () => {
+    // The forgiveness is narrow on purpose. With two of each the digit is the only thing
+    // distinguishing them, so a stray [=5] must stay text rather than be attached to
+    // whichever call happens to be first — a marker on the WRONG computation is worse than
+    // one that renders as prose.
+    const { container } = render(
+      <Markdown text="first[=1] and then[=5]." calcs={[calc("1"), calc("2")]} />,
+    );
+    expect(container.querySelectorAll(".md-calc")).toHaveLength(1);
+    expect(container.textContent).toContain("[=5]");
   });
 
   it("keeps computations in their own namespace, separate from source citations", () => {

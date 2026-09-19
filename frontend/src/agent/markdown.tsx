@@ -341,6 +341,9 @@ interface Ctx {
   /** The turn's computations, positional with the `[=n]` numbering — one per `calculate`
    * or `run_python` call that produced a number. */
   calcs?: CalcTarget[] | undefined;
+  /** This message states exactly ONE computation and carries exactly ONE marker, so the
+   * marker's DIGIT cannot be telling us anything the position does not — see `soleCalc`. */
+  soleCalc?: boolean | undefined;
   onCalc?: ((n: number, anchor: HTMLElement) => void) | undefined;
   onEntity?: ((entityId: string) => void) | undefined;
   onFlag?: ((flagId: string) => void) | undefined;
@@ -609,7 +612,11 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       // the persisted call, so a marker cannot assert a computation that did not happen; one
       // that resolves to no call renders as plain text, the same rule `ToolView` applies to
       // an unknown view name.
-      const num = Number(tok.slice(2, -1));
+      const stated = Number(tok.slice(2, -1));
+      // `soleCalc` means the digit carries no information this message's shape does not
+      // already fix, so the one computation wins and the marker RENDERS as the position it
+      // really is — showing ƒ2 beside a single call would be its own small lie.
+      const num = ctx.soleCalc ? 1 : stated;
       const target = ctx.calcs?.[num - 1];
       if (!target) {
         out.push(<Fragment key={k}>{tok}</Fragment>);
@@ -1053,10 +1060,23 @@ export function Markdown({
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
   const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
+  // The model numbers `[=n]` across the CONVERSATION while the surface builds `calcs` per
+  // MESSAGE, so a second turn's only computation arrives as `[=2]` and resolves to nothing.
+  // Observed on the box: "0.5705128205 [=1]" then "22.46 inches [=2]", the second rendering
+  // as raw text. The prompt already says "this turn" and the model does not honour it, so
+  // the renderer forgives the digit — but ONLY where it cannot be wrong: one computation and
+  // one marker leaves nothing for the number to disambiguate. Two of either and the digit is
+  // load-bearing again, and a marker that still resolves to nothing stays plain text rather
+  // than pointing at the wrong call.
+  const soleCalc = useMemo(
+    () => (calcs?.length ?? 0) === 1 && (text.match(/\[=\d+\]/g) ?? []).length === 1,
+    [calcs, text],
+  );
   const ctx: Ctx = {
     onCite,
     cites,
     calcs,
+    soleCalc,
     onCalc,
     onEntity,
     onFlag,

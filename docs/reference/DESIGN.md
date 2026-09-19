@@ -1674,7 +1674,14 @@ the step that made it. Not a surface of its own and not a note-screen change: th
   `docs/mocks/code-run/g-cited-floating.html`). Its own marker namespace, separate from the
   `[^n]` source citation: *from your note* and *from arithmetic I did* are different claims.
   The model authors the MARKER only — the panel is filled from the persisted call, and a
-  marker that resolves to nothing renders as plain text rather than as an unbacked claim. The
+  marker that resolves to nothing renders as plain text rather than as an unbacked claim.
+  With ONE exception, measured rather than assumed: the model numbers `[=n]` across the
+  CONVERSATION while the surface builds the targets per MESSAGE, so a later turn's only
+  computation arrives as `[=2]` and rendered as raw prose beside the answer. Where a message
+  holds one computation and one marker the digit cannot be saying anything the message's own
+  shape does not, so the marker resolves and renders as `ƒ1` — the position it really is.
+  Two of either and the digit is load-bearing again: a marker pointing at the WRONG call is
+  worse than one that reads as text. The
   panel floats and is clamped rather than reflowing the transcript, and opens ON the working,
   capped at 46vh and scrolling: it is the same `code_run` component the Worked step renders,
   so the two entry points cannot drift. It used to open compact — an expression-and-answer
