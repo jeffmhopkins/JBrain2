@@ -516,6 +516,22 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
+  panel-console) # [--port /dev/ttyACM0] [--seconds N] [--no-reset] — a panel's own boot log
+    # The owner has no terminal AND, before this, no way to hand over what a panel said:
+    # the live console is owner-only in the PWA, so diagnosing a flashed unit meant asking
+    # them to read lines back. Resets by default — a panel checks for firmware every 15
+    # minutes, and a reset puts the whole boot in the first few seconds.
+    cport=""; csecs="25"; creset="true"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --port) cport="$2"; shift 2 ;;
+        --seconds) csecs="$2"; shift 2 ;;
+        --no-reset) creset="false"; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    _call GET "/api/debug/endpoint/console?port=$cport&seconds=$csecs&reset=$creset" | _pp ;;
+
   sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?
   sdr-sessions) _call GET /api/debug/sdr/sessions | _pp ;;  # which radios are held, and which the icon shows
 

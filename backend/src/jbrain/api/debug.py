@@ -189,6 +189,10 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # the assistant may not use, and a session that believes it cannot deploy
             # waits on a human for something it was handed the means to do.
             "ops.update",
+            # A panel's own console over USB (`GET /endpoint/console`). Listed for the
+            # same reason as the two above: without it an assistant reads "cannot see the
+            # device" and hands the owner an errand instead of looking.
+            "endpoint.console",
         ],
     )
 
@@ -1724,6 +1728,71 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         sdrs=sdrs,
         devices=every,
     )
+
+
+class PanelConsoleOut(BaseModel):
+    """What one panel said, as lines. `ok` false means it could not be watched at all."""
+
+    ok: bool
+    port: str
+    lines: list[str]
+    detail: str = ""
+
+
+@router.get("/endpoint/console")
+async def panel_console(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    port: str = "",
+    seconds: int = 25,
+    reset: bool = True,
+) -> PanelConsoleOut:
+    """A panel's own console, collected and returned — the debug-token twin of the PWA's
+    live console (`/endpoint/monitor`, owner-only).
+
+    It exists because the owner had to be a relay. A flashed panel logs the reason an OTA
+    failed to a console only the PWA could read, so diagnosing it meant asking them to open
+    a screen, press a button and paste lines back — precisely the shape of errand CLAUDE.md
+    #10 says not to hand someone who is operating this box remotely.
+
+    Buffered rather than streamed: this surface returns JSON, and a bounded collection is
+    what makes it answerable in one call. `reset` defaults TRUE here and false on the PWA
+    route, and the difference is the caller — a console opened over a debug token is being
+    read by something debugging, and waiting out a 15-minute poll to see a boot is not a
+    reasonable use of the one window we have.
+    """
+    request.state.debug_detail = f"panel console {port or 'auto'} {seconds}s"
+    base = settings.endpoint_url.strip().rstrip("/")
+    if not base:
+        return PanelConsoleOut(ok=False, port=port, lines=[], detail="no panel flasher on this box")
+
+    try:
+        async with httpx.AsyncClient(timeout=float(seconds) + 30.0) as client:
+            if not port:
+                # Convenience that matters on a box with two panels on one cable tray: an
+                # explicit port always wins, but the common case is one plugged in.
+                resp = await client.get(f"{base}/ports")
+                resp.raise_for_status()
+                found = [p for p in resp.json().get("ports", []) if p.get("is_espressif")]
+                if len(found) != 1:
+                    return PanelConsoleOut(
+                        ok=False,
+                        port="",
+                        lines=[],
+                        detail=f"{len(found)} panels visible; name one with ?port=",
+                    )
+                port = str(found[0]["device"])
+
+            params = {"port": port, "seconds": str(seconds), "reset": "1" if reset else "0"}
+            async with client.stream("GET", f"{base}/monitor", params=params) as stream:
+                body = b"".join([chunk async for chunk in stream.aiter_bytes()])
+    except httpx.HTTPError as exc:
+        return PanelConsoleOut(ok=False, port=port, lines=[], detail=f"flasher: {exc}")
+
+    lines = body.decode("utf-8", "replace").splitlines()
+    failed = any(x.startswith("FAILED:") for x in lines)
+    return PanelConsoleOut(ok=not failed, port=port, lines=lines)
 
 
 @router.get("/sdr")
