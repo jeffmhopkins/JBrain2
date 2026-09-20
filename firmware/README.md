@@ -117,9 +117,14 @@ So changing the firmware is three commits' worth of one act:
 
 ```sh
 # 1. edit main/, 2. bump version.txt, 3. rebuild and commit dist/
-. ~/esp-idf/export.sh && (cd firmware && idf.py build)
+. ~/esp-idf/export.sh && (cd firmware && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh
 ```
+
+**`fullclean` is not belt-and-braces.** An incremental build can carry a component that was
+added to `main/CMakeLists.txt`'s `REQUIRES` and then removed again — the link order keeps the
+ghost, the binary differs from what the committed source produces, and the only thing that
+says so is CI failing this check. That cost a cycle on 0.2.8.
 
 `firmware.yml` rebuilds on CI and **fails the PR if `dist/` is not byte-for-byte what the
 source produces** — `CONFIG_APP_REPRODUCIBLE_BUILD=y` is what makes that check possible at
