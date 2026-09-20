@@ -290,6 +290,58 @@ class TestAPanelCanActuallyAuthenticate:
         )
 
 
+class TestReadingTheBoxsOwnRoot:
+    """Which file the LAN root is read from, and why there are two.
+
+    Caddy mints its internal CA as root, into a directory that also holds the CA PRIVATE
+    key, so that directory is not world-traversable. This api runs as uid 1000 and cannot
+    get to it — measured on the live box as `[Errno 13] Permission denied`. The failure was
+    silent because "" is also what a box with no LAN site returns, so every panel was quietly
+    handed the public hostname and routed through Cloudflare from three metres away.
+    """
+
+    def test_the_published_root_is_preferred(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        published = tmp_path / "lan-root.crt"
+        published.write_text("-----BEGIN CERTIFICATE-----\npublished\n", encoding="utf-8")
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PUBLISHED", str(published))
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PATH", str(tmp_path / "nope.crt"))
+        assert "published" in endpoint_api._lan_ca()
+
+    def test_the_original_path_still_works_on_a_box_that_can_read_it(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A proxy image that predates the publisher must not lose a LAN site it already
+        had — the fallback is what makes this deployable without ordering the two."""
+        original = tmp_path / "root.crt"
+        original.write_text("-----BEGIN CERTIFICATE-----\noriginal\n", encoding="utf-8")
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PUBLISHED", str(tmp_path / "absent.crt"))
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PATH", str(original))
+        assert "original" in endpoint_api._lan_ca()
+
+    def test_a_half_written_file_is_not_treated_as_a_certificate(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The publisher copies to a temp name and renames, but a truncated or empty file
+        must never become the root a panel pins: it would fail every handshake forever, on
+        a device with no cable attached to it."""
+        published = tmp_path / "lan-root.crt"
+        published.write_text("", encoding="utf-8")
+        original = tmp_path / "root.crt"
+        original.write_text("-----BEGIN CERTIFICATE-----\noriginal\n", encoding="utf-8")
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PUBLISHED", str(published))
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PATH", str(original))
+        assert "original" in endpoint_api._lan_ca()
+
+    def test_neither_present_is_a_tunnel_only_box(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PUBLISHED", str(tmp_path / "a.crt"))
+        monkeypatch.setattr(endpoint_api, "CADDY_ROOT_PATH", str(tmp_path / "b.crt"))
+        assert endpoint_api._lan_ca() == ""
+
+
 class TestTheSchemeHandedToAPanel:
     """Never `http://`, and this is the test that would have saved a whole evening.
 

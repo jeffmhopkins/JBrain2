@@ -1382,6 +1382,45 @@ def test_the_committed_firmware_images_are_what_the_box_would_flash() -> None:
         assert hashlib.sha256((dist / name).read_bytes()).hexdigest() == want, name
 
 
+def test_the_proxy_publishes_its_ca_root_where_the_api_can_read_it() -> None:
+    """The api cannot read Caddy's root, and the failure is SILENT.
+
+    Caddy mints its internal CA as root into a directory that also holds the CA private
+    key, so it is not world-traversable — correctly. The api runs as uid 1000 and gets
+    `[Errno 13] Permission denied`, which `_lan_ca` collapses to "" — the same answer a
+    box with no LAN site gives. So every panel was handed the PUBLIC hostname and routed
+    its traffic out through Cloudflare and back from three metres away, with nothing
+    anywhere saying so.
+
+    Three things have to hold together and none of them fails loudly on its own: the
+    script ships in the image, the entrypoint starts it, and it runs in the BACKGROUND —
+    Caddy mints the CA lazily when it first serves the LAN site, which is after the
+    entrypoint has exec'd, so a one-shot copy would find nothing and a foreground loop
+    would never start Caddy at all.
+    """
+    entrypoint = (DEPLOY / "proxy-entrypoint.sh").read_text()
+    runs_it = "/usr/local/bin/proxy-publish-ca.sh &"
+    assert runs_it in entrypoint, "must run in the background"
+    assert entrypoint.index("proxy-publish-ca.sh") < entrypoint.index("exec caddy run")
+
+    dockerfile = (DEPLOY / "Dockerfile.proxy").read_text()
+    assert "deploy/proxy-publish-ca.sh" in dockerfile
+    assert "/usr/local/bin/proxy-publish-ca.sh" in dockerfile, "must be chmod +x"
+
+    script = (DEPLOY / "proxy-publish-ca.sh").read_text()
+    # The ROOT, never the key: copying a public certificate is safe by definition,
+    # and the alternative considered — loosening the mode on the directory — would
+    # have exposed a real secret to buy a convenience.
+    assert "root.crt" in script
+    assert "root.key" not in script, "the private key must never be copied out"
+    # Atomic: the api may read this at any moment, and half a PEM validates nothing.
+    assert ".tmp" in script and "mv " in script
+
+    root = Path(__file__).resolve().parents[2]
+    api_path = root / "backend/src/jbrain/api/endpoint.py"
+    assert 'CADDY_ROOT_PUBLISHED = "/data/caddy/lan-root.crt"' in api_path.read_text()
+
+
 def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:
     """The one thing `docker build` cannot catch, on the one image the owner builds.
 

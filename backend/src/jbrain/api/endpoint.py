@@ -75,6 +75,21 @@ SIDECAR_TIMEOUT_S = 600.0
 # Caddy's internal-CA root, as the read-only `caddy_data` mount exposes it. A panel needs
 # it to validate https://jbrain.local, and reading it here is what stops the owner needing
 # the `docker cp` that docs/runbooks/LOCAL_ACCESS.md otherwise requires (CLAUDE.md #10).
+# WHERE THE ROOT IS READ FROM, and why there are two paths.
+#
+# Caddy mints its internal CA as root, into a directory that also holds the CA PRIVATE
+# KEY — so that directory is not world-traversable, correctly. This process runs as
+# `appuser` (uid 1000) and cannot get to it: measured on the live box, `[Errno 13]
+# Permission denied`, with the parent not even listable. The consequence was silent,
+# because "" is also what a box with no LAN site returns: every panel was handed the
+# PUBLIC hostname and routed its traffic out through Cloudflare and back from three
+# metres away.
+#
+# So the proxy publishes the ROOT — the public half — to a readable path beside it
+# (`deploy/proxy-publish-ca.sh`), and that is preferred here. The original path stays as a
+# fallback for a box whose proxy has not been rebuilt yet, where this process might still
+# be running as root and able to read it.
+CADDY_ROOT_PUBLISHED = "/data/caddy/lan-root.crt"
 CADDY_ROOT_PATH = "/data/caddy/caddy/pki/authorities/local/root.crt"
 
 
@@ -84,12 +99,19 @@ def _lan_ca() -> str:
     Empty is a real state rather than a failure: a box reached only through the tunnel has
     a publicly-trusted certificate and no internal CA to distribute. The panel is told so
     by getting no `ca` key, and a flash against a tunnel URL still works.
+
+    It is ALSO what an unreadable file returns, which is why `GET /api/debug/endpoint/address`
+    exists — the two states are indistinguishable here and need completely different fixes.
     """
-    try:
-        with open(CADDY_ROOT_PATH, encoding="utf-8") as fh:
-            return fh.read()
-    except OSError:
-        return ""
+    for path in (CADDY_ROOT_PUBLISHED, CADDY_ROOT_PATH):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        if "BEGIN CERTIFICATE" in text:
+            return text
+    return ""
 
 
 def _sidecar(settings: SettingsDep) -> str:
