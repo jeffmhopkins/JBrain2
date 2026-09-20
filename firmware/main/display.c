@@ -28,10 +28,12 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
+#include "audio.h"
 #include "esp_log.h"
 #include "face.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "i2c_bus.h"
 #include "touch.h"
 
 static const char *TAG = "display";
@@ -49,9 +51,6 @@ static const char *TAG = "display";
 #define LCD_D2 GPIO_NUM_6
 #define LCD_D3 GPIO_NUM_7
 
-#define I2C_PORT I2C_NUM_0
-#define I2C_SDA GPIO_NUM_15
-#define I2C_SCL GPIO_NUM_14
 #define CST816_ADDR 0x15
 #define V2_X_GAP 0x10
 
@@ -79,24 +78,15 @@ static const co5300_lcd_init_cmd_t init_cmds[] = {
 
 static bool is_v2_board(void)
 {
-    const i2c_master_bus_config_t cfg = {
-        .i2c_port = I2C_PORT,
-        .sda_io_num = I2C_SDA,
-        .scl_io_num = I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_master_bus_handle_t bus = NULL;
-    if (i2c_new_master_bus(&cfg, &bus) != ESP_OK) {
+    i2c_master_bus_handle_t bus = i2c_bus_get();
+    if (bus == NULL) {
         /* Not fatal and not even unusual to be unable to answer: the gap offset is 16 px,
            so guessing V1 costs a slightly shifted image rather than a blank one. */
         ESP_LOGW(TAG, "could not probe the revision; assuming V1");
         return false;
     }
-    const bool v2 = i2c_master_probe(bus, CST816_ADDR, 50) == ESP_OK;
-    i2c_del_master_bus(bus);
-    return v2;
+    /* Borrowed, never deleted — touch and the codec are on this same bus. */
+    return i2c_master_probe(bus, CST816_ADDR, 50) == ESP_OK;
 }
 
 static void fill_stripe(bool reversed)
@@ -223,6 +213,11 @@ static void face_task(void *arg)
     }
 
     const bool touch = touch_start();
+    /* Silence is a failure mode with no symptom, so it is logged rather than inferred: a
+       beep that never comes could be the codec, the amplifier pin, the volume, or a tap
+       that was never registered, and only the first of those is visible from here. */
+    const bool sound = audio_start();
+    if (!sound) ESP_LOGW(TAG, "no codec — taps will be silent");
     int colour = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
 
@@ -231,6 +226,9 @@ static void face_task(void *arg)
         if (touch && touch_tapped()) {
             colour = (colour + 1) % face_colour_count();
             ESP_LOGI(TAG, "tap -> colour %d", colour);
+            /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
+               over QSPI, and the tap feels answered by whichever lands first. */
+            if (sound) audio_beep();
             dirty = true;
         }
         if (dirty || since_draw >= FACE_FLOOR_MS) {

@@ -1,0 +1,148 @@
+/* The ES8311 codec: speaker out, and the same part does the microphone later.
+ *
+ * Pins are the BSP's (`waveshare/esp32_s3_touch_amoled_1_8`), read from the component rather
+ * than from the Arduino `pin_config.h` in the sample repo — that header carries BOTH
+ * `I2S_DO_IO 8`/`I2S_DI_IO 10` and `DOPIN 10`/`DIPIN 8`, which are the same two pins named
+ * from opposite ends of the link. Guessing between them gives silence AND a dead microphone,
+ * with no error from either.
+ *
+ * VOLUME IS A SAFETY LIMIT HERE, not a preference. The vendor example ships 90/100 for V2
+ * hardware. This is a 29 mm object a four-year-old will hold to his ear, and ASTM F963 /
+ * EN 71-1 cap close-to-ear toys at 65 dB(A) (ROOM_ENDPOINT_PLAN.md). Nothing in this session
+ * can measure decibels, so the starting point is deliberately low and the owner's ear is the
+ * instrument. Raise it only against a measurement.
+ */
+
+#include "audio.h"
+
+#include <math.h>
+
+#include "driver/i2s_std.h"
+#include "es8311_codec.h"
+#include "esp_codec_dev.h"
+#include "esp_codec_dev_defaults.h"
+#include "esp_log.h"
+#include "i2c_bus.h"
+
+static const char *TAG = "audio";
+
+#define I2S_PORT I2S_NUM_0
+#define PIN_MCLK GPIO_NUM_16
+#define PIN_BCLK GPIO_NUM_9
+#define PIN_WS GPIO_NUM_45
+#define PIN_DOUT GPIO_NUM_8 /* ESP -> codec: the speaker */
+#define PIN_DSIN GPIO_NUM_10 /* codec -> ESP: the microphone */
+#define PIN_PA GPIO_NUM_46
+
+#define SAMPLE_RATE 22050
+#define BEEP_HZ 880
+#define BEEP_MS 90
+/* See the header note: this is a cap, not a taste. */
+#define VOLUME 55
+
+static esp_codec_dev_handle_t s_speaker;
+
+/* The tone is built once. `audio_beep` runs on the face task, between two frames of a
+   500 ms floor the panel needs to stay lit — so it may spend its time in the I2S write
+   and not in two thousand calls to sinf. */
+#define BEEP_SAMPLES (SAMPLE_RATE * BEEP_MS / 1000)
+static int16_t s_beep[BEEP_SAMPLES];
+
+static void build_beep(void)
+{
+    const float step = 2.0f * (float)M_PI * BEEP_HZ / SAMPLE_RATE;
+    const int fade = BEEP_SAMPLES / 5;
+    for (int i = 0; i < BEEP_SAMPLES; i++) {
+        /* Raised-cosine in and out: a square-edged tone clicks, and the click is the
+           loudest thing in it — which is the part a 65 dB(A) cap is really about. */
+        float env = 1.0f;
+        if (i < fade) {
+            env = 0.5f - 0.5f * cosf((float)M_PI * (float)i / (float)fade);
+        } else if (i > BEEP_SAMPLES - fade) {
+            env = 0.5f - 0.5f * cosf((float)M_PI * (float)(BEEP_SAMPLES - i) / (float)fade);
+        }
+        s_beep[i] = (int16_t)(sinf(step * (float)i) * 9000.0f * env);
+    }
+}
+
+bool audio_start(void)
+{
+    i2c_master_bus_handle_t bus = i2c_bus_get();
+    if (bus == NULL) return false;
+
+    i2s_chan_handle_t tx = NULL;
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
+    chan_cfg.auto_clear = true;
+    if (i2s_new_channel(&chan_cfg, &tx, NULL) != ESP_OK) {
+        ESP_LOGE(TAG, "i2s channel");
+        return false;
+    }
+    const i2s_std_config_t std_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                        I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = PIN_MCLK,
+            .bclk = PIN_BCLK,
+            .ws = PIN_WS,
+            .dout = PIN_DOUT,
+            .din = PIN_DSIN,
+            .invert_flags = {0},
+        },
+    };
+    if (i2s_channel_init_std_mode(tx, &std_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "i2s std mode");
+        return false;
+    }
+
+    audio_codec_i2s_cfg_t i2s_cfg = {.port = I2S_PORT, .tx_handle = tx};
+    const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    audio_codec_i2c_cfg_t i2c_cfg = {
+        .port = I2C_NUM_0, .addr = ES8311_CODEC_DEFAULT_ADDR, .bus_handle = bus};
+    const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
+    if (data_if == NULL || ctrl_if == NULL || gpio_if == NULL) {
+        ESP_LOGE(TAG, "codec interfaces");
+        return false;
+    }
+
+    es8311_codec_cfg_t es_cfg = {
+        .ctrl_if = ctrl_if,
+        .gpio_if = gpio_if,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .pa_pin = PIN_PA,
+        .use_mclk = true,
+        .hw_gain = {.pa_voltage = 5.0f, .codec_dac_voltage = 3.3f},
+    };
+    const audio_codec_if_t *dev = es8311_codec_new(&es_cfg);
+    if (dev == NULL) {
+        ESP_LOGE(TAG, "es8311 not found");
+        return false;
+    }
+    esp_codec_dev_cfg_t dev_cfg = {
+        .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = dev, .data_if = data_if};
+    s_speaker = esp_codec_dev_new(&dev_cfg);
+    if (s_speaker == NULL) return false;
+
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = 16,
+        .channel = 1,
+        .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
+        .sample_rate = SAMPLE_RATE,
+    };
+    if (esp_codec_dev_open(s_speaker, &fs) != 0) {
+        ESP_LOGE(TAG, "codec open");
+        s_speaker = NULL;
+        return false;
+    }
+    esp_codec_dev_set_out_vol(s_speaker, VOLUME);
+    build_beep();
+    ESP_LOGI(TAG, "es8311 ready, volume %d/100", VOLUME);
+    return true;
+}
+
+void audio_beep(void)
+{
+    if (s_speaker == NULL) return;
+    esp_codec_dev_write(s_speaker, s_beep, sizeof(s_beep));
+}

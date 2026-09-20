@@ -13,9 +13,12 @@ Both units go to the girls' rooms, so there is no permanent bench unit and no ca
 device lives. That makes recovery the product rather than a convenience, and it decides what is
 in this image and what is deliberately left out.
 
-Not here, on purpose: display, touch and audio. A misconfiguration in any of them is the class
-of fault that ends in a boot loop, and a boot loop ends with a screwdriver. They arrive over
-the air, onto a unit that has already proved it can take an update.
+Kept out of the first image on purpose: display, touch and audio. A misconfiguration in any of
+them is the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver.
+They arrive over the air, onto a unit that has already proved it can take an update — and they
+have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7.
+Every one of those carried a byte-identical `bootloader.bin`, so each was a pure app OTA whose
+rollback lands on the same bootloader. **Check that before shipping a release**, not after.
 
 **PSRAM arrived that way in 0.2.3**, which is the first time that sentence was cashed rather
 than written. Two things made it safe to try: only the app image changes (PSRAM is brought up
