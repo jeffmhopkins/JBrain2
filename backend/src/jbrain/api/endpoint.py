@@ -280,8 +280,30 @@ async def firmware_image(principal: PanelDep, settings: SettingsDep) -> Response
 
 
 def _public_base(request: Request) -> str:
-    """The address the OWNER reached this box at — used for the manifest's own `url`."""
-    return str(request.base_url).rstrip("/") + "/api"
+    """The address the OWNER reached this box at, as a PANEL has to be able to use it.
+
+    ALWAYS https, and the word "always" is doing real work. `request.base_url` reports the
+    scheme of the hop that reached uvicorn, which is plain HTTP: Caddy runs in Cloudflare
+    Tunnel mode, where its own site address is `http://<domain>` and TLS terminates at the
+    edge, and uvicorn is not told to trust `X-Forwarded-Proto` from a container address.
+    So the honest-looking answer is the wrong one, in two ways that both shipped:
+
+    - `esp_https_ota` refuses a plain-HTTP URL outright, so EVERY over-the-air update
+      failed instantly, silently, on the panel, forever (ROOM_ENDPOINT_PLAN.md §10.4h).
+    - the same value is written into a panel's NVS at flash time as the address it calls
+      home on, so a unit polled the box over http and put its bearer token on the wire in
+      the clear.
+
+    A forwarded scheme is honoured when one is present, because a deployment that does
+    front this box with a TLS-terminating proxy that says so is telling the truth about
+    itself. Absent that, https is not a guess: every way into this box — the LAN site
+    Caddy mints a certificate for, and the tunnel — is TLS, and there is no supported
+    deployment where handing a panel `http://` is right.
+    """
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    url = httpx.URL(str(request.base_url))
+    scheme = forwarded if forwarded in ("http", "https") else "https"
+    return str(url.copy_with(scheme=scheme)).rstrip("/") + "/api"
 
 
 def _panel_base(request: Request, settings: Settings) -> tuple[str, str]:

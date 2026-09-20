@@ -290,6 +290,62 @@ class TestAPanelCanActuallyAuthenticate:
         )
 
 
+class TestTheSchemeHandedToAPanel:
+    """Never `http://`, and this is the test that would have saved a whole evening.
+
+    Caddy runs in Cloudflare Tunnel mode, so its own site address is plain HTTP and TLS
+    terminates at the edge; uvicorn is not told to trust `X-Forwarded-Proto` from a
+    container address either. `request.base_url` therefore reports `http`, honestly and
+    uselessly, and that value went two places that both matter:
+
+    - into the manifest as the image URL, where `esp_https_ota` refuses it outright, so
+      every OTA failed instantly and silently ON THE PANEL — a 200 in the access log and
+      no download, forever
+    - into a panel's NVS at flash time as the address it calls home on, so a unit polled
+      the box over http with its bearer token in the clear
+
+    The old tests asserted the url merely ended in `/endpoint/firmware/bin`, which was
+    true of the broken value. A suffix is not an address.
+    """
+
+    def test_the_manifest_never_offers_an_image_over_plain_http(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        url = c.get("/api/endpoint/firmware").json()["url"]
+        assert url.startswith("https://"), url
+
+    def test_a_panel_is_never_told_to_call_home_over_plain_http(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The flash-time half. A token on the wire in the clear is worse than a failed
+        update, because nothing about it looks wrong afterwards."""
+        c, _fw, sent = client
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
+        assert sent[-1]["nvs"]["api"].startswith("https://")
+
+    def test_a_proxy_that_declares_the_scheme_is_believed(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """A deployment that really does front this box and says so is telling the truth
+        about itself; only the absence of a declaration falls back to https."""
+        c, _fw, _sent = client
+        url = c.get("/api/endpoint/firmware", headers={"X-Forwarded-Proto": "https"}).json()["url"]
+        assert url.startswith("https://")
+
+    def test_the_host_the_panel_was_reached_at_is_preserved(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Only the scheme is corrected. Rewriting the host would send a panel somewhere
+        nobody asked for."""
+        c, _fw, _sent = client
+        url = c.get("/api/endpoint/firmware", headers={"Host": "box.example"}).json()["url"]
+        assert url.startswith("https://box.example/"), url
+
+
 class TestPanelAddress:
     """Where a panel is told to find the box, and which certificate it is given.
 
