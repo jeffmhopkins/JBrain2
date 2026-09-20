@@ -25,6 +25,16 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
+## The panel will not hold a still image
+
+Drawn once, it goes dark within minutes; written to every ten seconds, it stays lit. The
+power rail is not the cause — that was tested and eliminated (ROOM_ENDPOINT_PLAN.md §10.4o).
+
+**So something must keep writing to it, always.** A low frame rate is fine; zero is not. This
+is free for an animated face and a trap for everything that stops moving — quiet hours, a
+sleeping pet, a notification left up. Each of those is a still screen, and a still screen
+here reads as a dead device.
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.
