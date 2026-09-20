@@ -18,14 +18,11 @@
 
 #include "touch.h"
 
-#include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "i2c_bus.h"
 
 static const char *TAG = "touch";
 
-#define I2C_PORT I2C_NUM_0
-#define I2C_SDA GPIO_NUM_15
-#define I2C_SCL GPIO_NUM_14
 #define CST_ADDR 0x15
 #define REG_FINGERS 0x02
 
@@ -34,26 +31,14 @@ static bool s_down;
 
 bool touch_start(void)
 {
-    const i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = I2C_PORT,
-        .sda_io_num = I2C_SDA,
-        .scl_io_num = I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_master_bus_handle_t bus = NULL;
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &bus);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2c bus: %s", esp_err_to_name(err));
-        return false;
-    }
+    i2c_master_bus_handle_t bus = i2c_bus_get();
+    if (bus == NULL) return false;
     const i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = CST_ADDR,
         .scl_speed_hz = 400000,
     };
-    err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
+    const esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "add device: %s", esp_err_to_name(err));
         return false;

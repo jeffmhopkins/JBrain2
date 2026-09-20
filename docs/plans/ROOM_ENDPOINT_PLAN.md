@@ -924,6 +924,48 @@ requirement, and W4's animation simply raises it.
 Still absent and deliberately so: the emotions, the tweening, the gags. This is the thing the
 rig will animate, not a substitute for it.
 
+#### 10.4q A beep on every tap (2026-09-20)
+
+0.2.7 gives the tap a sound. The ES8311 is brought up through Espressif's `esp_codec_dev`
+rather than the vendor's BSP — the BSP would also want to own the display and the touch
+controller this firmware already drives.
+
+**The pin map had a contradiction in it, and getting it wrong is silent.** The vendor's
+Arduino `pin_config.h` carries both `I2S_DO_IO 8`/`I2S_DI_IO 10` **and** `DOPIN 10`/`DIPIN 8`
+— the same two pins named from opposite ends of the link. A coin flip there gives no speaker
+*and* no microphone, with no error from either side: I2S clocks out happily into a pin
+nothing is listening on. Resolved against the BSP component
+(`waveshare/esp32_s3_touch_amoled_1_8` v2.0.3, pulled from the registry and read):
+`BSP_I2S_DOUT = GPIO_NUM_8` is ESP→codec, `BSP_I2S_DSIN = GPIO_NUM_10` is codec→ESP, with
+MCLK 16, BCLK 9, WS 45 and the amplifier enable on 46. The microphone work in 0.2.8 depends
+on the same answer, which is why it was resolved by authority rather than by trying one.
+
+**Volume is a safety limit, not a preference.** The vendor example ships 90/100 for V2
+hardware. This is a 29 mm object a four-year-old will hold to his ear, and ASTM F963 /
+EN 71-1 cap close-to-ear toys at 65 dB(A) (§"Carried into the plan"). Nothing available here
+can measure decibels, so it starts at 55 and the owner's ear is the instrument. It moves up
+only against a measurement, never against "it seems quiet".
+
+**The tone is shaped, not switched on and off.** 880 Hz for 90 ms with a raised-cosine fade
+over the first and last fifth. A square-edged tone clicks at both ends, and the click is the
+loudest thing in it — which is precisely the part a dB(A) cap exists to govern. It is built
+once at start-up and written from the face task between frames, so a tap costs an I2S write
+rather than two thousand calls to `sinf`.
+
+**The I2C bus now has one owner** (`i2c_bus.c`). This is a bug that had not happened yet: the
+display's revision probe created a bus and deleted it, touch created its own, and the codec
+would have been the third. Deleting after probing is what kept that working, and it worked by
+accident — `i2c_new_master_bus` fails with a laconic `ESP_ERR_INVALID_STATE` on a port that
+already has one, on a device whose only symptom is that one peripheral silently does nothing.
+
+Silence is logged rather than inferred: a beep that never comes could be the codec, the
+amplifier pin, the volume or a tap that was never registered, and only the first of those is
+visible from the firmware. `audio_start` returning false logs *"no codec — taps will be
+silent"* and the face carries on.
+
+`bootloader.bin` and `partition-table.bin` are byte-identical to 0.2.6, so this is a pure app
+OTA and a rollback lands on the same bootloader.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
