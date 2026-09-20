@@ -1854,3 +1854,107 @@ class TestPanelAddressDecision:
         assert body["on_the_lan"] is True
         assert body["panel_base"] == "https://jbrain.local/api"
         assert body["pins_ca"] is True
+
+
+class TestPanelFlashOverDebug:
+    """Flashing a panel with no phone involved, which is the point of the whole surface.
+
+    A panel ends up on a bedroom wall and the owner has no terminal. When one stops
+    working the fix is a re-flash, and needing them at the PWA with the Wi-Fi password
+    retyped is the errand CLAUDE.md #10 exists to remove.
+    """
+
+    def test_it_refuses_when_no_network_was_remembered(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """And names the one action that fixes it, rather than reporting a bare failure."""
+        client, key = debug_client
+
+        async def none_stored(_r: Any, _c: Any) -> tuple[str, str]:
+            return "", ""
+
+        monkeypatch.setattr(endpoint_api, "remembered_wifi", none_stored)
+        body = client.post(
+            "/api/debug/endpoint/flash", json={"port": "/dev/ttyACM0"}, headers=_auth(key)
+        ).json()
+        assert body["ok"] is False
+        assert "Remember this network" in body["detail"]
+
+    def test_it_never_accepts_a_password_from_the_request(
+        self, debug_client: tuple[TestClient, str]
+    ) -> None:
+        """A Wi-Fi password passed in here would live in a debug transcript forever. The
+        schema simply has nowhere to put one, and this pins that."""
+        from jbrain.api.debug import PanelFlashIn
+
+        assert "password" not in PanelFlashIn.model_fields
+        assert "ssid" not in PanelFlashIn.model_fields
+
+    def test_it_refuses_to_guess_between_two_panels(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A flash ROTATES the unit's identity. Doing that to the wrong twin's panel by
+        inference is worse than doing nothing."""
+        client, key = debug_client
+
+        async def stored(_r: Any, _c: Any) -> tuple[str, str]:
+            return "net", "pw"
+
+        monkeypatch.setattr(endpoint_api, "remembered_wifi", stored)
+
+        async def fake_get(_self: Any, url: str, **_: Any) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "ports": [
+                        {"device": "/dev/ttyACM0", "label": "a", "is_espressif": True},
+                        {"device": "/dev/ttyACM1", "label": "b", "is_espressif": True},
+                    ]
+                },
+                request=httpx.Request("GET", url),
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+        body = client.post("/api/debug/endpoint/flash", json={}, headers=_auth(key)).json()
+        assert body["ok"] is False
+        assert "2 panels visible" in body["detail"]
+
+    def test_a_failed_flash_is_reported_as_failed(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sidecar reports failure as a final FAILED: LINE, not a status code — the
+        response has already begun by the time esptool can fail. Reading the status alone
+        would call a half-written board a success."""
+        client, key = debug_client
+
+        async def stored(_r: Any, _c: Any) -> tuple[str, str]:
+            return "net", "pw"
+
+        async def fake_build(*_a: Any, **_k: Any) -> dict[str, Any]:
+            return {"port": "/dev/ttyACM0", "images": [], "nvs": {}}
+
+        monkeypatch.setattr(endpoint_api, "remembered_wifi", stored)
+        monkeypatch.setattr(endpoint_api, "build_flash", fake_build)
+
+        class Streamed:
+            async def __aenter__(self) -> "Streamed":
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+            async def aiter_bytes(self) -> Any:
+                yield b"Writing at 0x0...\n"
+                yield b"FAILED: could not open /dev/ttyACM0\n"
+
+        monkeypatch.setattr(httpx.AsyncClient, "stream", lambda *_a, **_k: Streamed())
+        body = client.post(
+            "/api/debug/endpoint/flash", json={"port": "/dev/ttyACM0"}, headers=_auth(key)
+        ).json()
+        assert body["ok"] is False
+        assert any("FAILED" in line for line in body["lines"])
+
+    def test_the_scope_is_advertised(self, debug_client: tuple[TestClient, str]) -> None:
+        client, key = debug_client
+        scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+        assert "endpoint.flash" in scopes

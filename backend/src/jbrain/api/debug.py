@@ -195,6 +195,10 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # same reason as the two above: without it an assistant reads "cannot see the
             # device" and hands the owner an errand instead of looking.
             "endpoint.console",
+            # Flashing a panel over USB with the remembered network (`POST
+            # /endpoint/flash`). Listed for the same reason as the rest: a capability
+            # missing from this list reads as one the assistant may not use.
+            "endpoint.flash",
         ],
     )
 
@@ -1760,6 +1764,104 @@ def _ca_read_failure() -> tuple[str, bool]:
     except OSError:
         listable = False
     return last, listable
+
+
+# A flash writes ~1 MB over a serial link and may erase first. Generous but bounded: the
+# sidecar holds the only device, and a request that has stopped making progress should end.
+SIDECAR_FLASH_TIMEOUT_S = 600.0
+
+
+class PanelFlashOut(BaseModel):
+    """What the flasher did, as lines. `ok` false means the board was not written."""
+
+    ok: bool
+    port: str
+    lines: list[str]
+    detail: str = ""
+
+
+class PanelFlashIn(BaseModel):
+    # Omitted when exactly one panel is plugged in; required when two are, because a flash
+    # ROTATES the unit's identity and doing that to the wrong twin's panel by inference is
+    # not a thing this should be able to do.
+    port: str = ""
+    name: str = ""
+    erase: bool = False
+
+
+@router.post("/endpoint/flash")
+async def panel_flash(
+    request: Request, settings: SettingsDep, _p: DebugDep, body: PanelFlashIn
+) -> PanelFlashOut:
+    """Flash a panel over USB from the debug console, using the remembered network.
+
+    The owner runs this box remotely and a panel ends up on a bedroom wall. When one stops
+    working, the fix is a re-flash — and until now that needed them at the PWA with the
+    Wi-Fi password retyped, which is the errand CLAUDE.md #10 exists to remove. It is the
+    same code path as the PWA's flash (`endpoint.build_flash`), so the two cannot drift.
+
+    The credentials come from what the owner explicitly asked the box to remember, never
+    from this request: a Wi-Fi password should not travel through a debug transcript, and
+    a surface that accepted one would invite exactly that. No remembered network is a 409
+    naming the one action that fixes it.
+
+    It still mints a FRESH device key and revokes the old one, like every flash. That is
+    the point of a re-flash as much as the firmware is.
+    """
+    request.state.debug_detail = f"flash panel {body.port or 'auto'} {body.name}".strip()
+    base = settings.endpoint_url.strip().rstrip("/")
+    if not base:
+        return PanelFlashOut(ok=False, port=body.port, lines=[], detail="no panel flasher")
+
+    ssid, password = await endpoint_api.remembered_wifi(request, _OWNER_CTX)
+    if not ssid:
+        return PanelFlashOut(
+            ok=False,
+            port=body.port,
+            lines=[],
+            detail=(
+                "this box has not been asked to remember a network — flash once from the "
+                "PWA with 'Remember this network' ticked, and re-flashes can happen here"
+            ),
+        )
+
+    port = body.port
+    try:
+        async with httpx.AsyncClient(timeout=SIDECAR_FLASH_TIMEOUT_S) as client:
+            if not port:
+                resp = await client.get(f"{base}/ports")
+                resp.raise_for_status()
+                found = [p for p in resp.json().get("ports", []) if p.get("is_espressif")]
+                if len(found) != 1:
+                    return PanelFlashOut(
+                        ok=False,
+                        port="",
+                        lines=[],
+                        detail=f'{len(found)} panels visible; name one with "port"',
+                    )
+                port = str(found[0]["device"])
+
+            payload = await endpoint_api.build_flash(
+                request,
+                settings,
+                request.app.state.device_repo,
+                _OWNER_CTX,
+                port=port,
+                ssid=ssid,
+                password=password,
+                name=body.name,
+                erase=body.erase,
+            )
+            async with client.stream("POST", f"{base}/flash", json=payload) as stream:
+                raw = b"".join([chunk async for chunk in stream.aiter_bytes()])
+    except httpx.HTTPError as exc:
+        return PanelFlashOut(ok=False, port=port, lines=[], detail=f"flasher: {exc}")
+
+    lines = raw.decode("utf-8", "replace").splitlines()
+    # The sidecar reports failure as a final `FAILED:` LINE, not a status code — the
+    # response has already begun by the time esptool can fail.
+    failed = any(x.startswith("FAILED:") for x in lines)
+    return PanelFlashOut(ok=not failed and bool(lines), port=port, lines=lines)
 
 
 class PanelAddressOut(BaseModel):

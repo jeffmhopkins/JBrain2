@@ -48,6 +48,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [erase, setErase] = useState(false);
+  const [remember, setRemember] = useState(true);
 
   const [log, setLog] = useState<string[]>([]);
   const [flashing, setFlashing] = useState(false);
@@ -96,7 +97,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
     setLog([]);
     setError("");
     try {
-      const body: FlashRequest = { port, ssid, password, erase };
+      const body: FlashRequest = { port, ssid, password, erase, remember };
       if (name) body.name = name;
       for await (const line of api.flashEndpoint(body)) {
         setLog((prev) => [...prev, line]);
@@ -222,6 +223,22 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
+            <label className="ep-check">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              <span>
+                Remember this network on the box
+                <em>
+                  So a panel can be re-flashed later without a phone and this password retyped —
+                  including remotely, from the owner debug console. The box stores it; untick if you
+                  would rather type it every time.
+                </em>
+              </span>
+            </label>
+
             <label className="ep-field">
               Which panel (optional)
               <input

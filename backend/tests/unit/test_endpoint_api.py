@@ -26,6 +26,7 @@ from jbrain.api import endpoint as endpoint_api
 from jbrain.auth import keys
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.db.session import SessionContext
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
 
@@ -609,6 +610,103 @@ class TestTheConsoleMonitor:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 401
+
+
+class TestRememberingTheNetwork:
+    """The one secret this surface stores, and it stores it only when asked.
+
+    A panel ends up on a bedroom wall; when one stops working the fix is a re-flash, and
+    the owner has no terminal (CLAUDE.md #10). Making that possible without them standing
+    at the PWA means the box keeps the Wi-Fi password — so starting to keep it has to be
+    something they did, not something that began happening.
+    """
+
+    def test_a_flash_stores_nothing_by_default(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, _fw, sent = client
+        stored: dict[str, Any] = {}
+        monkeypatch.setattr(
+            endpoint_api.SqlSettingsStore,
+            "upsert",
+            lambda _s, _c, k, v: stored.update({k: v}),
+        )
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
+        assert stored == {}, "the password must not be kept unless the owner asked"
+
+    def test_remembering_keeps_the_network_for_a_later_reflash(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, _fw, sent = client
+        stored: dict[str, Any] = {}
+
+        async def fake_upsert(_s: Any, _c: Any, key: str, value: Any) -> None:
+            stored[key] = value
+
+        monkeypatch.setattr(endpoint_api.SqlSettingsStore, "upsert", fake_upsert)
+        _fake_sidecar(monkeypatch, sent)
+        resp = c.post(
+            "/api/endpoint/flash",
+            json={
+                "port": "/dev/ttyACM0",
+                "ssid": "bleepbloop",
+                "password": "hunter2",
+                "remember": True,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert stored[endpoint_api.WIFI_KEY] == {"ssid": "bleepbloop", "password": "hunter2"}
+
+
+class TestTheSharedFlashBuilder:
+    """One assembly for both surfaces, so the PWA and the debug console cannot drift.
+
+    A second copy would be a second place to forget the CA pairing rule, and the failure
+    there is a panel that joins Wi-Fi perfectly and is then silent forever.
+    """
+
+    def test_it_mints_a_new_identity_every_time(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        app = cast(FastAPI, c.app)
+
+        async def build() -> dict[str, Any]:
+            from starlette.requests import Request as StarletteRequest
+
+            scope = {
+                "type": "http",
+                "app": app,
+                "headers": [(b"host", b"box.example")],
+                "scheme": "http",
+                "server": ("box.example", 80),
+                "path": "/",
+                "method": "GET",
+                "query_string": b"",
+                "root_path": "",
+            }
+            return await endpoint_api.build_flash(
+                StarletteRequest(scope),  # type: ignore[arg-type]
+                app.state.settings,
+                app.state.device_repo,
+                SessionContext(principal_kind="owner"),
+                port="/dev/ttyACM0",
+                ssid="net",
+                password="pw",
+                name="Elora",
+                erase=False,
+            )
+
+        first = asyncio.run(build())
+        second = asyncio.run(build())
+        assert first["nvs"]["token"] != second["nvs"]["token"], (
+            "a re-flash must revoke the identity the panel had"
+        )
+        assert first["nvs"]["api"].startswith("https://")
 
 
 class TestFlash:

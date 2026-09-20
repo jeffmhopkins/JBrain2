@@ -516,6 +516,22 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
+  panel-flash) # [--port /dev/ttyACM0] [--name Elora] [--erase] — flash a panel over USB
+    # Uses the network the owner asked this box to REMEMBER; a Wi-Fi password is never
+    # taken from here, because it would then live in a debug transcript. Mints a fresh
+    # device key and revokes the old one, like every flash.
+    fport=""; fname=""; ferase="false"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --port) fport="$2"; shift 2 ;;
+        --name) fname="$2"; shift 2 ;;
+        --erase) ferase="true"; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    body="$(P="$fport" N="$fname" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "erase": os.environ["E"] == "true"}))')"
+    _call POST /api/debug/endpoint/flash "$body" | _pp ;;
+
   panel-address) # why a panel is, or is not, reaching this box over the LAN
     _call GET /api/debug/endpoint/address | _pp ;;
 
