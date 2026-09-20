@@ -447,11 +447,14 @@ class TestTheConsoleMonitor:
         c, _fw, _sent = client
         asked: list[Any] = []
 
-        class FakeStream:
+        # Named apart from the module-level `FakeStream`: a nested class does not shadow
+        # it for a STRING annotation, which resolves at module scope — so `-> "FakeStream"`
+        # here would silently mean the other one, and pyright is right to say so.
+        class FakeConsole:
             def __init__(self, params: dict[str, str]) -> None:
                 asked.append(params)
 
-            async def __aenter__(self) -> "FakeStream":
+            async def __aenter__(self) -> "FakeConsole":
                 return self
 
             async def __aexit__(self, *_: Any) -> None:
@@ -461,8 +464,8 @@ class TestTheConsoleMonitor:
                 yield b"-- restarting the panel --\n"
                 yield b"I (612) jbrain: up to date at 0.2.1\n"
 
-        def fake_stream(_self: Any, _m: str, _u: str, params: dict[str, str]) -> FakeStream:
-            return FakeStream(params)
+        def fake_stream(_self: Any, _m: str, _u: str, params: dict[str, str]) -> FakeConsole:
+            return FakeConsole(params)
 
         monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
         resp = c.get("/api/endpoint/monitor", params={"port": "/dev/ttyACM0", "reset": "true"})
