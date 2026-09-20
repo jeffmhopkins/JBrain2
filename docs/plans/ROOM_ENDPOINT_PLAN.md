@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-20 · **Waves:** W1🟡 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-20 · **Waves:** W1🟢 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -657,6 +657,40 @@ rather than `https://jbrain.local`, so its traffic leaves the LAN and comes back
 the tunnel. `_panel_base` exists to prevent precisely that and did not apply, which means
 either `JBRAIN_LAN_ADDR` is unset on this box or Caddy's internal root is not readable at
 the mount. Worth its own look; it costs latency rather than correctness.
+
+#### 10.4i The loop closed (2026-09-20)
+
+Read off the panel's own console, through the debug route added the same hour:
+
+```
+I (287) boot: Loaded app from partition at offset 0x1a0000
+I (317) app_init: App version:      0.2.1
+I (397) endpoint: jbrain room endpoint, version 0.2.1
+I (637) wifi:connected with bleepbloop, rssi: -60
+I (2217) net: got 192.168.1.40
+I (2717) endpoint: up to date at 0.2.1
+```
+
+**`0x1a0000` is `ota_0`.** The unit was USB-flashed into `factory` at `0x20000`; nothing but
+`esp_https_ota` writes that other offset. So the image it is running arrived **over Wi-Fi**,
+and W1's whole reason for existing is now demonstrated rather than argued: a panel on a
+wall takes a firmware change from a `version.txt` bump with no cable.
+
+Boot to "up to date" is **2.7 seconds**, all of it in the log above: Wi-Fi, DHCP, a TLS
+fetch of the manifest, and the version comparison.
+
+**A reading error worth recording, because it nearly caused a wrong fix.** Twice after the
+scheme fix landed, this session concluded the OTA was still failing "on the panel side" —
+from the ABSENCE of an `endpoint.image_served` line. The download had already happened; the
+line was written by a container that `docker compose up -d` then replaced, and container
+recreation discards the log. Absence of a log line is not evidence when the log itself is
+younger than the event. The panel's own console settled it in one call, which is the
+argument for §10.4g in one sentence.
+
+**Still outstanding: the cleartext poll.** The panel's NVS holds the `http://` base it was
+given at flash time, so its manifest requests still carry the bearer token in the clear.
+Only a re-flash rewrites NVS — and that re-flash issues a new `device_key` and revokes the
+old one, so the remediation and the fix are the same action.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
