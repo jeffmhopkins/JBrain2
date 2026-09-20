@@ -789,6 +789,43 @@ that comes up *without* PSRAM still reaches the box and still marks itself good.
 the safety net would notice. So the boot log reports the size explicitly, and **that reading —
 not "it booted" — is what says this worked.**
 
+#### 10.4m The display, and four things guessing would have got wrong (2026-09-20)
+
+W3's first milestone: the panel draws. Colour bars, nothing else — same discipline as PSRAM,
+so that a failure has one variable.
+
+The product documentation publishes neither the pin map nor the init sequence, so the source
+is the vendor's own `13_display_colorbar` example (`waveshareteam/ESP32-S3-Touch-AMOLED-1.8`),
+read rather than inferred. Four things in it would not have been guessed:
+
+1. **This board ships in two revisions and does not say which it is.** V1 is SH8601 + FT3168;
+   V2 is CO5300 + CST820. The plan's §1 hardware table names V1 because that is what was
+   ordered — but the units arrived later, and nothing in the boot log distinguishes them.
+2. **One driver covers both.** The vendor drives V1's SH8601 with the **CO5300** driver; the
+   two controllers take the same command set here. The only difference that reaches the
+   screen is a **16-pixel column offset** on V2.
+3. **So the revision is probed at runtime**, the way the vendor probes it: V2's touch
+   controller answers at I2C `0x15` and V1's does not. Getting it wrong costs a shifted
+   image, not a blank one — which is why an unanswerable probe assumes V1 and continues.
+4. **There is no reset line.** `reset_gpio_num = GPIO_NUM_NC`; the init sequence does the work.
+
+**The one deliberate departure from the vendor's code: nothing here aborts.** The example is
+`ESP_ERROR_CHECK` throughout, which is right for a bench demo and wrong for this. An abort is
+a boot loop; a boot loop on a unit with no cable is a screwdriver; and a panel that cannot
+reach the box cannot be sent the fix. A dark screen is a bad day, an unreachable unit is the
+end of the line — so every failure returns and `app_main` continues to Wi-Fi regardless.
+
+**A correction to §10.4l.** That entry said the display "cannot exist without" PSRAM. Too
+strong: this draws in 16-row stripes, 11.5 KB of DMA-capable internal RAM, and needs no PSRAM
+at all. PSRAM is what the **animated** face needs — a full 368×448 framebuffer is 322 KB, and
+double-buffering it is 644 KB. The claim was right about W4 and wrong about W3.
+
+**Reproducibility survived a fetched dependency.** `esp_lcd_co5300` comes from the component
+registry and resolved to 2.2.0 rather than the vendor's pinned 2.1.0, which is exactly how a
+byte-for-byte CI check dies quietly. `firmware/dependencies.lock` is committed and pins every
+component by version *and content hash*; `managed_components/` is ignored. Verified by
+building the same tree at two different paths for identical SHA-256s, as with 0.2.1.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

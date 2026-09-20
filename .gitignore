@@ -29,5 +29,9 @@ secrets/
 # ESP-IDF build output. sdkconfig is GENERATED from sdkconfig.defaults (which is committed);
 # committing it would freeze whatever the last local build happened to negotiate.
 firmware/build/
+# Fetched by the IDF component manager. `firmware/dependencies.lock` IS committed and pins
+# each one by version AND content hash, which is what keeps the CI byte-for-byte rebuild
+# honest — without the lock, a new release of a dependency would silently change the image.
+firmware/managed_components/
 firmware/sdkconfig
 firmware/sdkconfig.old
