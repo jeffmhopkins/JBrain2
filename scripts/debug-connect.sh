@@ -516,6 +516,9 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
+  panel-address) # why a panel is, or is not, reaching this box over the LAN
+    _call GET /api/debug/endpoint/address | _pp ;;
+
   panel-console) # [--port /dev/ttyACM0] [--seconds N] [--no-reset] — a panel's own boot log
     # The owner has no terminal AND, before this, no way to hand over what a panel said:
     # the live console is owner-only in the PWA, so diagnosing a flashed unit meant asking

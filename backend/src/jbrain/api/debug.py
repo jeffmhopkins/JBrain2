@@ -41,6 +41,7 @@ from jbrain.agent.grounding import (
     to_pixels,
 )
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.api import endpoint as endpoint_api
 from jbrain.api import llm_settings
 from jbrain.api import sdr as sdr_api
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
@@ -1727,6 +1728,68 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
         usb_device_count=len(devices),
         sdrs=sdrs,
         devices=every,
+    )
+
+
+class PanelAddressOut(BaseModel):
+    """Where a panel would be told to find this box, and WHY that answer."""
+
+    lan_addr: str
+    ca_path: str
+    ca_readable: bool
+    ca_bytes: int
+    panel_base: str
+    pins_ca: bool
+    on_the_lan: bool
+    why: str
+
+
+@router.get("/endpoint/address")
+async def panel_address(request: Request, settings: SettingsDep, _p: DebugDep) -> PanelAddressOut:
+    """Why a panel is, or is not, talking to this box over the LAN.
+
+    A panel sits on the same network as the box, so sending its traffic out through the
+    tunnel and back is latency bought for nothing — and worse, it makes the box's
+    availability depend on the internet for a device three metres away. `_panel_base`
+    exists to prevent that, and it takes the LAN branch only when BOTH halves hold: an
+    address is configured AND Caddy's internal root is readable at the mount.
+
+    When it falls back there is nothing to see. The manifest log records the address a
+    panel was given but not which of the two halves was missing, and they have completely
+    different fixes — one is a host `.env` value, the other is a certificate that Caddy
+    mints only when it actually serves the LAN site. This says which.
+    """
+    request.state.debug_detail = "panel address decision"
+    ca = endpoint_api._lan_ca()
+    lan = settings.lan_addr.strip().rstrip("/")
+    base, pinned = endpoint_api._panel_base(request, settings)
+
+    if lan and ca:
+        why = "LAN address configured and its root is readable, so a panel stays on the LAN"
+    elif not lan and not ca:
+        why = "no LAN address set and no internal root readable — the tunnel is all there is"
+    elif not lan:
+        why = (
+            "Caddy's internal root is readable but JBRAIN_LAN_ADDR is empty, so nothing "
+            "names the LAN site. Set it in the host .env and re-run Ops -> Update."
+        )
+    else:
+        why = (
+            f"JBRAIN_LAN_ADDR is {lan!r} but no root is readable at "
+            f"{endpoint_api.CADDY_ROOT_PATH}. Caddy mints that root only once it actually "
+            "serves the `tls internal` LAN site, "
+            "so either the site is not configured in the proxy or the caddy_data mount is absent."
+        )
+
+    return PanelAddressOut(
+        lan_addr=lan,
+        ca_path=endpoint_api.CADDY_ROOT_PATH,
+        ca_readable=bool(ca),
+        ca_bytes=len(ca),
+        panel_base=base,
+        pins_ca=bool(pinned),
+        on_the_lan=bool(lan and ca),
+        why=why,
     )
 
 

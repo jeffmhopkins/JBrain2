@@ -15,6 +15,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from jbrain.api import endpoint as endpoint_api
 from jbrain.api.debug import VisionRequest, _jsonable, _run_vision
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
@@ -1802,3 +1803,51 @@ class TestPanelConsole:
         client, key = debug_client
         scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
         assert "endpoint.console" in scopes
+
+
+class TestPanelAddressDecision:
+    """Why a panel is, or is not, on the LAN — and which half is missing.
+
+    A panel three metres from the box routing through Cloudflare is latency bought for
+    nothing, and it makes a local device depend on the internet. `_panel_base` takes the
+    LAN branch only when BOTH an address is configured AND Caddy's internal root is
+    readable; when it falls back, the manifest log records the address given but not which
+    half was absent — and those have completely different fixes.
+    """
+
+    def test_a_missing_root_is_named_as_the_reason(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, key = debug_client
+        _state(client).settings.lan_addr = "https://jbrain.local"
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
+
+        body = client.get("/api/debug/endpoint/address", headers=_auth(key)).json()
+        assert body["on_the_lan"] is False
+        assert body["ca_readable"] is False
+        assert "JBRAIN_LAN_ADDR is 'https://jbrain.local'" in body["why"]
+        assert endpoint_api.CADDY_ROOT_PATH in body["why"]
+
+    def test_a_missing_address_is_named_as_the_reason(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half, which needs a host `.env` edit rather than a certificate."""
+        client, key = debug_client
+        _state(client).settings.lan_addr = ""
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
+
+        body = client.get("/api/debug/endpoint/address", headers=_auth(key)).json()
+        assert body["on_the_lan"] is False
+        assert "JBRAIN_LAN_ADDR is empty" in body["why"]
+
+    def test_both_halves_present_keeps_the_panel_on_the_lan(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, key = debug_client
+        _state(client).settings.lan_addr = "https://jbrain.local"
+        monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
+
+        body = client.get("/api/debug/endpoint/address", headers=_auth(key)).json()
+        assert body["on_the_lan"] is True
+        assert body["panel_base"] == "https://jbrain.local/api"
+        assert body["pins_ca"] is True
