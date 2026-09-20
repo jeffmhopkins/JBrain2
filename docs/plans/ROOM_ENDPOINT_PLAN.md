@@ -765,6 +765,30 @@ Two rules follow from where the caller is:
 - **Two panels visible refuses to guess.** A flash rotates the unit's identity; doing that
   to the wrong twin's panel by inference is worse than doing nothing.
 
+#### 10.4l PSRAM, over the air (2026-09-20)
+
+The first change W1 was built to make safe. `firmware/README.md` had said it in advance —
+display, touch, audio and PSRAM are absent *on purpose*, and "those arrive over the air, onto
+a unit that has already proved it can take an update" — and the unit has now taken three.
+
+It is the gate for everything visual rather than a nice-to-have. One RGB565 framebuffer at
+368×448 is **322 KB**; this chip reports **332 KB** of internal RAM free at boot, with Wi-Fi
+and TLS still to feed. The display cannot exist without it.
+
+Two properties made it safe to attempt remotely, and both were checked before pushing:
+
+- **Only the app image changes.** `bootloader.bin` is byte-identical to 0.2.2, because PSRAM
+  is brought up by the app. Had the bootloader moved, an OTA could not have carried this at
+  all — OTA rewrites an app slot and nothing else — and the change would have needed a cable.
+- **`CONFIG_SPIRAM_IGNORE_NOTFOUND=y`.** The default on a wrong mode (Quad silicon behind an
+  Octal config) is to panic in early boot, which is a boot loop on a device with no cable.
+  This degrades it to "came up without PSRAM".
+
+That second one creates a gap the rollback gate cannot close, and it is worth naming: a panel
+that comes up *without* PSRAM still reaches the box and still marks itself good. Nothing about
+the safety net would notice. So the boot log reports the size explicitly, and **that reading —
+not "it booted" — is what says this worked.**
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

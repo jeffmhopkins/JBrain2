@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "esp_psram.h"
 #include "nvs_flash.h"
 #include "ota.h"
 
@@ -47,6 +48,16 @@ static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)
 void app_main(void)
 {
     ESP_LOGI(TAG, "jbrain room endpoint, version %s", ota_running_version());
+
+    /* Reported explicitly because the rollback gate cannot catch this one. PSRAM is
+       configured to DEGRADE rather than abort when it is not found, so a wrong mode gives a
+       panel that boots, reaches the box and marks itself good — while being 8 MB short of
+       what the display needs. "It came up" is not the reading; this line is. */
+    if (esp_psram_is_initialized()) {
+        ESP_LOGI(TAG, "psram: %u KB", (unsigned)(esp_psram_get_size() / 1024));
+    } else {
+        ESP_LOGE(TAG, "psram: ABSENT — the display cannot be driven from internal RAM");
+    }
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
