@@ -576,6 +576,42 @@ port and already streams a log to the PWA; reading the panel's own boot output o
 USB connection would turn a blind bring-up into a legible one, and it is the cheapest
 feature left in this wave. Until it exists, the manifest request is the only signal.
 
+**Built 2026-09-20 (§10.4g), after it cost us exactly what this paragraph predicted.**
+
+#### 10.4g The monitor, and the bill that came due for not having it (2026-09-20)
+
+The first OTA did not happen. The box served 0.2.1, the panel ran 0.2.0, and the panel
+polled the manifest every 15 minutes, got `200`, and never requested the image.
+
+From the box, that is indistinguishable from a panel that is correctly up to date — the
+same two log lines either way, with completely different fixes. The reason was a line the
+panel was printing to a console nobody could read. §10.4d called this exactly, and the
+first real debugging session after it was written is the one that got stuck on it.
+
+Two instruments were added, in the order that cost least:
+
+- **`endpoint.manifest_served`** (#1435) — the version and the **url** the box hands over,
+  because the url is *derived* from the request's own base address and so is the field most
+  able to be quietly wrong. A manifest a panel can read pointing at an image it cannot
+  fetch fails inside `esp_https_ota`, where nothing on the box can see it.
+- **The console monitor** (`deploy/endpoint/monitor.py`) — the panel's own output, over the
+  same USB it was flashed through. No second cable and no UART header: the S3's native USB
+  carries both, and `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` (ESP-IDF's default,
+  now pinned) is what puts the console on it.
+
+**Resetting is the feature, not a side effect to avoid.** A panel checks for firmware every
+15 minutes, so watching a running one means waiting up to a quarter of an hour for the
+interesting line. A reset makes the whole boot — Wi-Fi, TLS, manifest, version comparison,
+OTA attempt — happen in the first few seconds. So it is offered explicitly and defaults to
+off in the API: an unasked-for reset of a panel on a child's wall is not a surprise this
+surface should have. The PWA defaults it *on*, because someone who opened a console window
+is debugging.
+
+**The port is exclusive and a flash outranks a watch.** `POST /flash` asks any monitor on
+that port to let go and waits for it, before the response status is committed so a refusal
+is still a status code. Getting this backwards would mean the owner pressing Flash and
+being refused by their own debugging tool.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

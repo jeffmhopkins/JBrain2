@@ -139,11 +139,44 @@ describe("EndpointsScreen", () => {
     await waitFor(() => expect(button.disabled).toBe(false));
   });
 
+  it("offers a console watch, defaulting to restarting the panel first", async () => {
+    // A panel only checks for firmware every 15 minutes, so watching a running one means
+    // waiting a quarter of an hour for the interesting line. Restarting makes the whole
+    // boot happen in seconds — which is the reason this surface is useful at all.
+    fetchMock.mockImplementation(mock([PANEL]));
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByText(/ESP32-S3/);
+
+    expect(await screen.findByRole("button", { name: "Watch console" })).toBeTruthy();
+    const restart = screen.getByRole("checkbox", { name: /Restart it first/ }) as HTMLInputElement;
+    expect(restart.checked).toBe(true);
+  });
+
+  it("streams the panel's own console lines into the log", async () => {
+    // The whole point: the box's access log cannot tell "up to date" from "offered an
+    // update it cannot take", and this is the only place the difference is visible.
+    fetchMock.mockImplementation(
+      mock([PANEL], (path) =>
+        path.startsWith("/api/endpoint/monitor")
+          ? new Response("-- restarting the panel --\nI (612) jbrain: install failed\n", {
+              status: 200,
+              headers: { "Content-Type": "text/plain" },
+            })
+          : null,
+      ),
+    );
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByText(/ESP32-S3/);
+    fireEvent.click(await screen.findByRole("button", { name: "Watch console" }));
+
+    expect(await screen.findByText(/install failed/)).toBeTruthy();
+  });
+
   it("offers erase as the recovery path, relabelling the action", async () => {
     fetchMock.mockImplementation(mock([PANEL]));
     render(<EndpointsScreen onClose={vi.fn()} />);
     await screen.findByText(/ESP32-S3/);
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Erase first/ }));
     expect(await screen.findByRole("button", { name: "Erase and flash" })).toBeTruthy();
     expect(screen.getByText(/hold BOOT/)).toBeTruthy();
   });

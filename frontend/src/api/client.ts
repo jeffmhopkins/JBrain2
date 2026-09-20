@@ -4933,6 +4933,44 @@ export const api = {
     }
   },
 
+  // The panel's OWN console, streamed as plain text lines. Everything else on this
+  // surface reports what the box saw; this is the only view from the panel's side, and
+  // the only way to find out why a panel that polls happily is not updating.
+  async *monitorEndpoint(
+    port: string,
+    opts: { seconds?: number; reset?: boolean } = {},
+    signal?: AbortSignal,
+  ): AsyncGenerator<string> {
+    const q = new URLSearchParams({
+      port,
+      seconds: String(opts.seconds ?? 120),
+      reset: opts.reset ? "1" : "0",
+    });
+    const response = await request(`/api/endpoint/monitor?${q}`, {
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl = buffer.indexOf("\n");
+        while (nl !== -1) {
+          yield buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          nl = buffer.indexOf("\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    if (buffer) yield buffer;
+  },
+
   // The flash log, streamed as plain text lines. A flash takes tens of seconds and the
   // owner is watching a phone, so this yields as it arrives rather than resolving at the
   // end. The sidecar reports failure as a final `FAILED: …` LINE, not as a status code —
