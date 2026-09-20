@@ -1741,18 +1741,25 @@ def _ca_read_failure() -> tuple[str, bool]:
     there and denied (the api runs as a non-root user; Caddy writes that tree as root, and
     the directory holds the CA private key).
     """
-    error = ""
-    try:
-        with open(endpoint_api.CADDY_ROOT_PATH, encoding="utf-8") as fh:
-            fh.read(1)
-    except OSError as exc:
-        error = str(exc)
+    # The PUBLISHED copy first, because that is the one `_lan_ca` actually prefers. An
+    # earlier version reported only the original path, so a box where the publisher was
+    # working answered `ca_readable: true` beside a `ca_error` saying permission denied —
+    # true of two different files, and confusing in exactly the moment this route is read.
+    last = ""
+    for path in (endpoint_api.CADDY_ROOT_PUBLISHED, endpoint_api.CADDY_ROOT_PATH):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                fh.read(1)
+        except OSError as exc:
+            last = str(exc)
+            continue
+        return "", True
     try:
         list(Path(endpoint_api.CADDY_ROOT_PATH).parent.iterdir())
         listable = True
     except OSError:
         listable = False
-    return error, listable
+    return last, listable
 
 
 class PanelAddressOut(BaseModel):
