@@ -273,6 +273,13 @@ fi
 # To build it locally anyway:
 #   scripts/firmware-setup.sh          # one-time, ~10 min, installs into ~/esp-idf
 #   . ~/esp-idf/export.sh && (cd firmware && idf.py build)
+#   scripts/firmware-dist.sh           # REQUIRED after any firmware change
+#
+# That third step is not optional bookkeeping: the built images in firmware/dist/ ARE the
+# distribution — the box flashes them off its own checkout instead of downloading a release
+# — so a firmware change that skips it ships the old image under a new version number.
+# firmware.yml rebuilds and fails the PR when dist/ is not byte-for-byte what the source
+# produces, so this is caught, but it is caught in CI rather than here.
 #
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
 

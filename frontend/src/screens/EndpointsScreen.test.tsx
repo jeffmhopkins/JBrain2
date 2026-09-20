@@ -25,8 +25,8 @@ function mock(ports: unknown[], extra?: (path: string) => Response | null) {
     const custom = extra?.(path);
     if (custom) return custom;
     if (path === "/api/endpoint/ports") return json({ ports, flasher: true });
-    if (path === "/api/endpoint/firmware/available")
-      return json({ installed: null, latest: "0.1.0", fetchable: true });
+    if (path === "/api/endpoint/firmware")
+      return json({ version: "0.2.0", url: "https://box/api/endpoint/firmware/bin" });
     return new Response(null, { status: 404 });
   };
 }
@@ -84,7 +84,7 @@ describe("EndpointsScreen", () => {
     // hid the port list — the one thing the owner cannot find out any other way.
     fetchMock.mockImplementation(
       mock([PANEL], (path) =>
-        path === "/api/endpoint/firmware/available" ? new Response(null, { status: 500 }) : null,
+        path === "/api/endpoint/firmware" ? new Response(null, { status: 500 }) : null,
       ),
     );
     render(<EndpointsScreen onClose={vi.fn()} />);
@@ -92,7 +92,7 @@ describe("EndpointsScreen", () => {
   });
 
   it("will not flash without a network, and says why", async () => {
-    // Firmware is deliberately NOT a precondition — a flash with none stored fetches it —
+    // Firmware is deliberately NOT a precondition — it ships with the box's own checkout —
     // but a panel flashed with no network can never be updated again, and it has no cable
     // attached to it once it is in a bedroom.
     fetchMock.mockImplementation(mock([PANEL]));
@@ -104,14 +104,28 @@ describe("EndpointsScreen", () => {
     expect(screen.getByText(/can never be updated again/)).toBeTruthy();
   });
 
-  it("offers no file picker — the box fetches its own firmware", async () => {
-    // The upload was removed once the box pulled from the public release: a fallback
-    // nothing can reach is not a fallback, it is a control that invites a wrong turn.
+  it("offers neither a file picker nor a sync button — the firmware is already here", async () => {
+    // Both controls were errands standing between a plugged-in board and the button next
+    // to it: an upload the owner had to perform, then a fetch they had to remember to
+    // press. The firmware arrives with the box's own update, so there is nothing to do.
     fetchMock.mockImplementation(mock([PANEL]));
     const { container } = render(<EndpointsScreen onClose={vi.fn()} />);
     await screen.findByText(/ESP32-S3/);
     expect(container.querySelector('input[type="file"]')).toBeNull();
-    expect(screen.getByText(/fetches firmware/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /sync|update firmware/i })).toBeNull();
+    expect(await screen.findByText(/Firmware 0\.2\.0, already on the box/)).toBeTruthy();
+  });
+
+  it("says to run Ops -> Update when the checkout carries no firmware", async () => {
+    // The owner has no terminal (CLAUDE.md #10), so the only useful thing to say here is
+    // the one thing they can actually do from the PWA.
+    fetchMock.mockImplementation(
+      mock([PANEL], (path) =>
+        path === "/api/endpoint/firmware" ? new Response(null, { status: 503 }) : null,
+      ),
+    );
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    expect(await screen.findByText(/Ops → Update/)).toBeTruthy();
   });
 
   it("enables the flash once a port and a network are given", async () => {

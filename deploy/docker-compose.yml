@@ -230,6 +230,12 @@ services:
       # entire need — nothing here should be able to touch Caddy's private keys, which
       # live in the same volume.
       - caddy_data:/data/caddy:ro
+      # READ-ONLY view of the panel firmware, straight out of the checkout this box
+      # already keeps current. `update-inner.sh` fetches main and hard-resets `src` on
+      # every update, so the firmware a panel can be flashed with is simply the firmware
+      # in the source this stack was built from — no GitHub release, no CDN host, no
+      # credential, and nothing for the owner to press before the Flash button works.
+      - ./src/firmware:/firmware:ro
     # `jcode`: the api proxies the owner's code-mode control surface to the jcode
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy

@@ -9,6 +9,7 @@ which import/reset call by path) must declare `#!/bin/sh` and parse under a
 POSIX shell. Host-only scripts (restore.sh, install.sh) may stay bash.
 """
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -1331,6 +1332,54 @@ def test_the_panel_flasher_needs_no_profile_and_no_env_edit() -> None:
         Path(__file__).resolve().parents[2] / "backend/src/jbrain/config.py"
     ).read_text()
     assert 'endpoint_url: str = "http://endpoint:8000"' in config
+
+
+def test_the_api_can_reach_the_panel_firmware_without_leaving_the_box() -> None:
+    """The mount IS the distribution, so its absence is a silent loss of the feature.
+
+    The firmware used to arrive as a GitHub release: api.github.com, github.com and a
+    signed CDN host standing between a board plugged into this box's own USB socket and
+    the button next to it. The first real flash died on a DNS lookup in that chain. The
+    box already pulls this whole repo from main on every Ops -> Update and rebuilds
+    itself from the result, so the images ride in with everything else and the api reads
+    them off `src`.
+
+    Read-only because reading three files is the entire need, and because `src` is a
+    git checkout that `update-inner.sh` hard-resets: anything writing there would be
+    silently reverted by the next update.
+    """
+    compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
+    assert "./src/firmware:/firmware:ro" in compose["services"]["api"]["volumes"]
+
+    config = (
+        Path(__file__).resolve().parents[2] / "backend/src/jbrain/config.py"
+    ).read_text()
+    assert 'firmware_dir: str = "/firmware"' in config
+    # The release path is gone, not merely unused: a lingering repo setting is how a
+    # second distribution channel grows back.
+    assert "endpoint_firmware_repo" not in config
+
+
+def test_the_committed_firmware_images_are_what_the_box_would_flash() -> None:
+    """`firmware/dist/` is shipped state, so it has to be internally consistent.
+
+    CI proves the images match the SOURCE (it rebuilds them); nothing but this proves
+    the checksum file beside them matches the images, and that file is what the api
+    verifies against before writing a bootloader to a panel that has no cable attached
+    to it once it is in a bedroom.
+    """
+    dist = Path(__file__).resolve().parents[2] / "firmware/dist"
+    sums = (dist / "SHA256SUMS").read_text().split("\n")
+    digests = {
+        line.split()[1]: line.split()[0] for line in sums if len(line.split()) == 2
+    }
+    assert set(digests) == {
+        "bootloader.bin",
+        "partition-table.bin",
+        "jbrain-endpoint.bin",
+    }
+    for name, want in digests.items():
+        assert hashlib.sha256((dist / name).read_bytes()).hexdigest() == want, name
 
 
 def test_the_sdr_image_starts_with_the_interpreter_debian_actually_ships() -> None:

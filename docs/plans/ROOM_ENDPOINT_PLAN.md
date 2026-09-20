@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-19 · **Waves:** W1🟡 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-20 · **Waves:** W1🟡 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -305,7 +305,7 @@ flash time**, which a generic web flasher cannot.
 
 | Stage | Where | Holds |
 |---|---|---|
-| Build | GitHub Actions, `espressif/idf` image | `firmware.bin` — **no credentials, no token, no certificate**. Identical for both units, safe to publish as a release artifact. |
+| Build | GitHub Actions, `espressif/idf` image | `firmware.bin` — **no credentials, no token, no certificate**. Identical for both units, so it is committed to `firmware/dist/` and travels with the repo (§10.4b). |
 | Personalise | the box, at flash time | an **NVS blob** (`nvs_partition_gen.py`): Wi-Fi SSID + password, `https://jbrain.local`, this unit's device token, and **the box's own Caddy root certificate**. |
 | Flash | the box, over USB | `esptool` writes bootloader + partition table + factory + app + NVS. |
 | Update | the box, over Wi-Fi | `esp_https_ota` pulls the next `firmware.bin`, validating against the root already in NVS. OTA writes only the app slot, so the credentials survive. |
@@ -451,29 +451,51 @@ it used to hold should stop working at that moment.
 in a child's bedroom can reach. It is owner-or-`device_key`, and returns a version and a URL
 and nothing else.
 
-**What still needs the owner: nothing but the tap.** The box fetches its own firmware.
+**What still needs the owner: nothing but the tap.** The firmware is already on the box.
 
-The first design asked them to download the CI artifact and upload it, defended on the
-grounds that the alternative meant a GitHub credential on the box and a path by which the
-box fetches and then executes code from the internet. **Both halves were wrong.** This
-repository is public, so release assets download over plain HTTPS with no credential at
-all; and the box already `git fetch`es this repo and runs what it gets on every
-Ops → Update, so "fetches and then executes from the internet" describes an update, not a
-new risk — and a firmware image is the *less* dangerous of the two, since it runs on the
-panel rather than on the box.
+This took three passes, each removing something the previous one had argued for.
 
-So `firmware.yml` cuts a **release** tagged `firmware-v<version>` (artifacts need a token
-even on a public repo; release assets do not), and `POST /endpoint/firmware/sync` pulls it,
-**verifying every asset against the release's own `SHA256SUMS` before storing any of
-them** — one bad image refuses the whole set, because a half-stored set is worse than none
-on a device with no cable attached to it. A flash with nothing stored syncs first, so the
-very first flash needs no separate action either.
+1. **Download the CI artifact and upload it.** Defended on the grounds that the alternative
+   meant a GitHub credential on the box and a path by which the box fetches and then
+   executes code from the internet. Both halves were wrong: this repository is public, so
+   nothing needs a credential; and the box already `git fetch`es this repo and runs what it
+   gets on every Ops → Update, so "fetches and executes from the internet" describes an
+   update, not a new risk — and a firmware image is the *less* dangerous of the two, since
+   it runs on the panel rather than on the box. Removed 2026-09-19.
+2. **`firmware.yml` cuts a release; `POST /endpoint/firmware/sync` pulls it** into the
+   `BlobStore`, verifying every asset against the release's own `SHA256SUMS` first. Correct
+   in principle, and it failed on the first real flash: `httpx.ConnectError: [Errno -5] No
+   address associated with hostname`, surfaced to the owner as `Request failed: 500` while
+   they stood there holding the board. Removed 2026-09-20.
+3. **The committed images are the distribution.** `firmware/dist/` holds the built set, the
+   api mounts `firmware/` read-only off `src`, and a flash reads the bytes straight off the
+   checkout the box already keeps current.
 
-**The manual upload was removed** (2026-09-19). It was kept as a fallback for a box that
-cannot reach GitHub — but a box in that state cannot update itself either, since
-`update-inner.sh` fetches this repo from the same place, so the fallback answered a
-situation in which nothing else works. A control nobody can reach is not a fallback; it is
-an invitation to a wrong turn on a screen where the wrong turn writes a bootloader.
+The third is not a workaround for the second's outage — it is what the second should have
+been. `update-inner.sh` already pulls this whole repository from `main` and rebuilds the
+stack from it on every Ops → Update, over a path proven to work on this box because
+*everything else on the box arrives through it*. A second channel, reaching three hosts the
+box otherwise never talks to, existed only to deliver a ~1 MB file that the first channel
+was already fetching the source of. So the firmware a panel can be flashed with is simply
+the firmware in the checkout the box is running: **no release, no CDN, no credential, no
+network at all at flash time, and no button to press before the Flash button works.**
+
+The price is ~1 MB of built images in git per firmware version, and a rule that a firmware
+change is not finished until `scripts/firmware-dist.sh` has run. `firmware.yml` enforces the
+rule exactly — it rebuilds and **fails the PR unless `dist/` is byte-for-byte what the
+source produces**, which `CONFIG_APP_REPRODUCIBLE_BUILD=y` makes possible at all (ESP-IDF
+otherwise stamps the build date and absolute build paths into every image; verified here by
+building the same tree at two different paths and getting identical SHA-256s).
+
+Two things came out of the rewrite that the release path had been hiding:
+
+- `GET /endpoint/firmware/bin` — the URL the manifest advertises to a panel — **had no
+  implementation**. Every OTA a panel attempted would have 404'd; nothing had noticed
+  because no panel had yet got far enough to attempt one.
+- The checksum verification survives, now against `dist/SHA256SUMS` at flash time. It no
+  longer guards a hostile network — it guards a half-finished update or a stale `dist/`
+  beside a newer `version.txt`, and a truncated image that flashes is still worse than one
+  that refuses.
 
 ### 10.4c What the assembled unit showed (2026-09-19)
 

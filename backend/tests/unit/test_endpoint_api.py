@@ -4,11 +4,17 @@ What matters here is not that the happy path works — it is the set of ways the
 must NOT behave, because the thing on the other end is a device in a child's bedroom with
 no cable attached to it. A panel that takes a bad flash, or that is handed a manifest it
 cannot authenticate against, is recovered by walking to it with a screwdriver.
+
+The firmware itself comes off the box's own checkout (`firmware/dist/`, mounted read-only),
+so the fixture here builds a real one on disk rather than faking a store: the failure modes
+worth pinning — a missing image, an image that does not match its checksum — are properties
+of files, and stubbing the reads away would pin nothing.
 """
 
 import asyncio
 import hashlib
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -17,7 +23,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.api import endpoint as endpoint_api
-from jbrain.api.notes import get_blob_store
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.main import create_app
@@ -26,119 +31,82 @@ from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
 SIDECAR = "http://endpoint:8000"
 
 ARTIFACT_NAMES = ("bootloader.bin", "partition-table.bin", "jbrain-endpoint.bin")
+APP_IMAGE = "jbrain-endpoint.bin"
+VERSION = "9.9.9"
 
 
-def _release_stub(release: dict[str, Any] | None):
-    async def _stub(_settings: Any) -> dict[str, Any] | None:
-        return release
-
-    return _stub
-
-
-def _asset_stub(sums: str, blob: bytes):
-    """Serve SHA256SUMS as text and every other asset as the same bytes."""
-
-    async def _get(_self: Any, url: str, **_: Any) -> httpx.Response:
-        request = httpx.Request("GET", url)
-        if url.endswith("SHA256SUMS"):
-            return httpx.Response(200, text=sums, request=request)
-        return httpx.Response(200, content=blob, request=request)
-
-    return _get
-
-
-class FakeStore:
-    """Stands in for `app.settings`, whose owner-only RLS this surface inherits."""
-
-    def __init__(self) -> None:
-        self.rows: dict[str, Any] = {}
-
-    async def get(self, _ctx: Any, key: str, default: Any = None) -> Any:
-        return self.rows.get(key, default)
-
-    async def upsert(self, _ctx: Any, key: str, value: Any) -> None:
-        self.rows[key] = value
-
-
-class FakeBlobs:
-    def __init__(self) -> None:
-        self.blobs: dict[str, bytes] = {}
-
-    async def put(self, data: bytes) -> str:
-        sha = f"sha{len(self.blobs)}"
-        self.blobs[sha] = data
-        return sha
-
-    async def get(self, sha: str) -> bytes:
-        return self.blobs[sha]
+def _write_firmware(root: Path, *, version: str = VERSION, sums: bool = True) -> Path:
+    """A stand-in for the mounted checkout: a version file and a signed set of images."""
+    dist = root / "dist"
+    dist.mkdir(parents=True)
+    (root / "version.txt").write_text(f"{version}\n", encoding="utf-8")
+    lines = []
+    for i, name in enumerate(ARTIFACT_NAMES):
+        data = bytes([i + 1]) * 64
+        (dist / name).write_bytes(data)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    if sums:
+        (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return root
 
 
 @pytest.fixture
 def client(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[tuple[TestClient, FakeStore, FakeBlobs, list[Any]]]:
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[tuple[TestClient, Path, list[Any]]]:
+    firmware = _write_firmware(tmp_path / "firmware")
     settings = Settings(
         secure_cookies=False,
         database_url="postgresql+asyncpg://nobody@localhost:1/none",
         endpoint_url=SIDECAR,
+        firmware_dir=str(firmware),
     )
     app = create_app(settings)
-    store = FakeStore()
-    blobs = FakeBlobs()
     sent: list[Any] = []
 
-    monkeypatch.setattr(endpoint_api, "_store", lambda _request: store)
     # No LAN certificate in a unit test; the "" branch is the tunnel-only box.
     monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
 
     with TestClient(app) as c:
         app.state.auth_repo = FakeAuthRepo()
         app.state.device_repo = FakeDeviceRepo()
-        # Override the dependency FUNCTION rather than reaching into the Annotated alias:
-        # `BlobStoreDep.__metadata__` is an implementation detail of typing, and pyright
-        # is right to refuse it.
-        app.dependency_overrides[get_blob_store] = lambda: blobs
         key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
         assert (
             c.post("/api/auth/session", json={"owner_key": key, "device_label": "t"}).status_code
             == 204
         )
-        yield c, store, blobs, sent
+        yield c, firmware, sent
+
+
+class FakeStream:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    async def __aenter__(self) -> "FakeStream":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+    async def aiter_bytes(self) -> Any:
+        yield b"OK\n"
+
+
+def _fake_sidecar(monkeypatch: pytest.MonkeyPatch, sent: list[Any]) -> None:
+    def fake_stream(_self: Any, _method: str, _url: str, json: dict[str, Any]) -> FakeStream:
+        sent.append(json)
+        return FakeStream(json)
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
 
 
 def _stub_flash(
-    c: TestClient,
-    store: "FakeStore",
-    blobs: "FakeBlobs",
-    monkeypatch: pytest.MonkeyPatch,
-    sent: list[Any],
-    *,
-    lan_addr: str,
+    c: TestClient, monkeypatch: pytest.MonkeyPatch, sent: list[Any], *, lan_addr: str
 ) -> None:
     """Run one flash against a faked sidecar, capturing the NVS payload it would write."""
     # TestClient.app is typed as a bare ASGI callable, which has no `.state`.
     cast(FastAPI, c.app).state.settings.lan_addr = lan_addr
-    sha = asyncio.run(blobs.put(b"\x00" * 32))
-    store.rows["endpoint_firmware"] = {"version": "9.9.9", "images": {"0x0": sha}}
-
-    class FakeStream:
-        def __init__(self, payload: dict[str, Any]) -> None:
-            sent.append(payload)
-
-        async def __aenter__(self) -> "FakeStream":
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def aiter_bytes(self) -> Any:
-            yield b"OK\n"
-
-    monkeypatch.setattr(
-        httpx.AsyncClient,
-        "stream",
-        lambda _self, _m, _u, json: FakeStream(json),
-    )
+    _fake_sidecar(monkeypatch, sent)
     resp = c.post(
         "/api/endpoint/flash",
         json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
@@ -147,9 +115,7 @@ def _stub_flash(
 
 
 class TestPorts:
-    def test_a_blanked_url_says_which_setting_rather_than_failing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_blanked_url_says_which_setting_rather_than_failing(self) -> None:
         """The flasher is stock stack, so an empty URL means someone deliberately blanked
         it. That is a configuration answer and must not arrive as a 500 the owner has to
         interpret — it must name the setting."""
@@ -169,13 +135,13 @@ class TestPorts:
 
     def test_no_ports_is_success_not_an_error(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """ "Nothing is plugged in" is the answer to a real question. Returning it as a
         failure would make it indistinguishable from the flasher being broken — and those
         have completely different fixes."""
-        c, _store, _blobs, _sent = client
+        c, _fw, _sent = client
 
         async def fake_get(self: Any, url: str, **_: Any) -> httpx.Response:
             return httpx.Response(200, json={"ports": []}, request=httpx.Request("GET", url))
@@ -187,23 +153,41 @@ class TestPorts:
 
 
 class TestManifest:
-    def test_absent_firmware_is_a_404_rather_than_an_empty_version(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
+    def test_absent_firmware_is_not_reported_as_an_empty_version(
+        self, client: tuple[TestClient, Path, list[Any]]
     ) -> None:
         """A panel comparing its version against "" would flash-loop."""
-        c, _store, _blobs, _sent = client
-        assert c.get("/api/endpoint/firmware").status_code == 404
+        c, fw, _sent = client
+        (fw / "version.txt").unlink()
+        resp = c.get("/api/endpoint/firmware")
+        assert resp.status_code == 503
+        # CLAUDE.md #10: the owner has no terminal, so the fix named has to be one they
+        # can actually carry out.
+        assert "Update" in resp.json()["detail"]
 
     def test_the_manifest_carries_a_version_and_a_url_and_nothing_else(
-        self, client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]]
+        self, client: tuple[TestClient, Path, list[Any]]
     ) -> None:
         """This is the one route a panel in a child's room can call. It must not become a
         place where anything about this box leaks to a device on the LAN."""
-        c, store, _blobs, _sent = client
-        store.rows["endpoint_firmware"] = {"version": "0.3.0", "images": {}}
+        c, _fw, _sent = client
         body = c.get("/api/endpoint/firmware").json()
         assert set(body) == {"version", "url"}
-        assert body["version"] == "0.3.0"
+        assert body["version"] == VERSION
+
+    def test_the_url_the_manifest_advertises_actually_serves_the_app_image(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """The manifest advertised `/endpoint/firmware/bin` while nothing served it, so
+        every OTA a panel attempted would have 404'd — invisible only because no panel had
+        yet got far enough to attempt one. The two must be checked together."""
+        c, fw, _sent = client
+        url = c.get("/api/endpoint/firmware").json()["url"]
+        assert url.endswith("/endpoint/firmware/bin")
+
+        resp = c.get("/api/endpoint/firmware/bin")
+        assert resp.status_code == 200, resp.text
+        assert resp.content == (fw / "dist" / APP_IMAGE).read_bytes()
 
 
 class TestPanelAddress:
@@ -217,14 +201,14 @@ class TestPanelAddress:
 
     def test_a_lan_box_sends_its_own_address_and_its_own_root(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A panel is on the same LAN as the box, so that — not the owner's browser
         address — is where it should look. Pinning one root also beats trusting ~150."""
-        c, store, blobs, sent = client
+        c, _fw, sent = client
         monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
-        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="https://jbrain.local")
+        _stub_flash(c, monkeypatch, sent, lan_addr="https://jbrain.local")
 
         nvs = sent[-1]["nvs"]
         assert nvs["api"] == "https://jbrain.local/api"
@@ -232,15 +216,15 @@ class TestPanelAddress:
 
     def test_a_box_with_no_lan_site_sends_no_root_at_all(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The failure this pins: a public URL plus an internal root. The firmware then
         trusts ONLY that root, so every handshake against a publicly-signed certificate
         fails and the panel is mute. No root means it falls back to the public bundle."""
-        c, store, blobs, sent = client
+        c, _fw, sent = client
         monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
-        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="https://jbrain.local")
+        _stub_flash(c, monkeypatch, sent, lan_addr="https://jbrain.local")
 
         nvs = sent[-1]["nvs"]
         assert "ca" not in nvs, "an internal root beside a public URL is worse than none"
@@ -248,134 +232,116 @@ class TestPanelAddress:
 
     def test_a_readable_root_without_a_lan_address_is_not_used(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The same pairing from the other side: a root is only right for the address it
         was minted for, so an unconfigured LAN name means the root goes unused."""
-        c, store, blobs, sent = client
+        c, _fw, sent = client
         monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "-----BEGIN CERTIFICATE-----\nx\n")
-        _stub_flash(c, store, blobs, monkeypatch, sent, lan_addr="")
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
 
         assert "ca" not in sent[-1]["nvs"]
 
 
-class TestSync:
-    """Fetching the firmware from the public release, which is what removes the errand."""
+class TestFirmwareFromTheCheckout:
+    """The images come off this box's own checkout — no release, no CDN, no credential.
 
-    def test_a_checksum_mismatch_stores_nothing_at_all(
+    The path this replaced reached api.github.com, github.com and a signed CDN host before
+    it could flash a board plugged into the box's own USB port, and the first real flash
+    died on a DNS lookup inside it. These tests pin the property that removed: a flash
+    touches no network at all beyond the sidecar on the internal network.
+    """
+
+    def test_a_flash_needs_no_outbound_request_of_any_kind(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """These bytes become a bootloader on a device with no cable attached to it. A
-        half-stored set is worse than no set, so one bad asset refuses the whole sync."""
-        c, store, _blobs, _sent = client
-        good = b"\x01" * 16
-        release = {
-            "tag_name": "firmware-v9.9.9",
-            "assets": [
-                {"name": n, "browser_download_url": f"https://example/{n}"}
-                for n in (*ARTIFACT_NAMES, "SHA256SUMS")
-            ],
-        }
-        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(release))
+        c, _fw, sent = client
 
-        sums = "\n".join(
-            f"{'0' * 64}  ./{name}" for name in ARTIFACT_NAMES
-        )  # deliberately wrong digests
-        monkeypatch.setattr(httpx.AsyncClient, "get", _asset_stub(sums, good))
+        async def forbidden(_self: Any, url: str, **_: Any) -> httpx.Response:
+            raise AssertionError(f"a flash must not fetch anything: {url}")
 
-        resp = c.post("/api/endpoint/firmware/sync")
-        assert resp.status_code == 502
-        assert "checksum" in resp.json()["detail"]
-        assert "endpoint_firmware" not in store.rows
+        monkeypatch.setattr(httpx.AsyncClient, "get", forbidden)
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
+        assert sent, "the flash never reached the sidecar"
 
-    def test_a_matching_checksum_stores_the_release_version(
+    def test_every_image_is_sent_in_flash_order(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        c, store, _blobs, _sent = client
-        good = b"\x01" * 16
-        digest = hashlib.sha256(good).hexdigest()
-        release = {
-            "tag_name": "firmware-v1.2.3",
-            "assets": [
-                {"name": n, "browser_download_url": f"https://example/{n}"}
-                for n in (*ARTIFACT_NAMES, "SHA256SUMS")
-            ],
-        }
-        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(release))
-        sums = "\n".join(f"{digest}  ./{name}" for name in ARTIFACT_NAMES)
-        monkeypatch.setattr(httpx.AsyncClient, "get", _asset_stub(sums, good))
+        """Offsets ascending, and the whole set: a board written out of order or missing
+        its partition table is recovered with a cable, which is the thing to avoid."""
+        c, _fw, sent = client
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
 
-        resp = c.post("/api/endpoint/firmware/sync")
-        assert resp.status_code == 200, resp.text
-        assert store.rows["endpoint_firmware"]["version"] == "1.2.3"
+        offsets = [int(img["offset"], 16) for img in sent[-1]["images"]]
+        assert offsets == sorted(offsets)
+        assert offsets == [0x0, 0x8000, 0x20000]
 
-    def test_an_unreachable_source_names_both_things_it_could_be(
+    def test_a_missing_image_refuses_and_names_a_fix_the_owner_can_run(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """ "Nothing to fetch" has two causes with different fixes — no network, or no
-        release cut yet — and the owner is holding a board, so the message names both."""
-        c, _store, _blobs, _sent = client
-        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(None))
+        """The owner has no terminal (CLAUDE.md #10), so "rebuild the firmware" is not an
+        answer they can act on. `Ops -> Update` is."""
+        c, fw, sent = client
+        (fw / "dist" / APP_IMAGE).unlink()
+        _fake_sidecar(monkeypatch, sent)
 
-        resp = c.post("/api/endpoint/firmware/sync")
-        assert resp.status_code == 503
-        detail = resp.json()["detail"]
-        assert "github.com" in detail and "version.txt" in detail
-
-
-class TestFlash:
-    def test_flashing_with_no_firmware_and_no_release_is_refused(
-        self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        c, _store, _blobs, _sent = client
-        # With no stored firmware AND no release reachable, the flash refuses rather than
-        # writing a partial board — and says both halves of why.
-        monkeypatch.setattr(endpoint_api, "_latest_release", _release_stub(None))
         resp = c.post(
             "/api/endpoint/flash",
             json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
         )
-        assert resp.status_code == 409
-        assert "none could be fetched" in resp.json()["detail"]
+        assert resp.status_code == 503
+        assert "Update" in resp.json()["detail"]
+        assert not sent, "nothing may reach the board once an image is missing"
 
-    def test_the_panel_is_given_a_fresh_device_key_and_the_api_url(
+    def test_an_image_that_does_not_match_its_checksum_is_never_written(
         self,
-        client: tuple[TestClient, FakeStore, FakeBlobs, list[Any]],
+        client: tuple[TestClient, Path, list[Any]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The published firmware is generic; everything that makes a unit itself is
-        written at flash time. The token is minted per flash and never stored here, which
-        is what makes re-flashing a panel revoke the identity it had."""
-        c, store, blobs, sent = client
-        sha = asyncio.run(blobs.put(b"\x00" * 32))
-        store.rows["endpoint_firmware"] = {"version": "0.4.0", "images": {"0x0": sha}}
+        """A half-finished update leaves a truncated image beside a correct SHA256SUMS.
+        Flashing it would brick a panel that has no cable attached once it is in a bedroom,
+        so the whole set is refused rather than partially written."""
+        c, fw, sent = client
+        (fw / "dist" / "bootloader.bin").write_bytes(b"\xff" * 8)
+        _fake_sidecar(monkeypatch, sent)
 
-        class FakeStream:
-            def __init__(self, payload: dict[str, Any]) -> None:
-                sent.append(payload)
+        resp = c.post(
+            "/api/endpoint/flash",
+            json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
+        )
+        assert resp.status_code == 500
+        assert "SHA256SUMS" in resp.json()["detail"]
+        assert not sent
 
-            async def __aenter__(self) -> "FakeStream":
-                return self
+    def test_the_version_is_whatever_the_checkout_says_right_now(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Nothing caches it, so an `Ops -> Update` that lands a new firmware is live for
+        the very next flash with nothing to invalidate and no button to press."""
+        c, fw, _sent = client
+        assert c.get("/api/endpoint/firmware").json()["version"] == VERSION
+        (fw / "version.txt").write_text("1.2.3\n", encoding="utf-8")
+        assert c.get("/api/endpoint/firmware").json()["version"] == "1.2.3"
 
-            async def __aexit__(self, *_: Any) -> None:
-                return None
 
-            async def aiter_bytes(self) -> Any:
-                yield b"OK\n"
-
-        def fake_stream(self: Any, _method: str, _url: str, json: dict[str, Any]) -> FakeStream:
-            return FakeStream(json)
-
-        monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+class TestFlash:
+    def test_the_panel_is_given_a_fresh_device_key_and_the_api_url(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The built firmware is generic; everything that makes a unit itself is written at
+        flash time. The token is minted per flash and never stored here, which is what
+        makes re-flashing a panel revoke the identity it had."""
+        c, _fw, sent = client
+        _fake_sidecar(monkeypatch, sent)
         resp = c.post(
             "/api/endpoint/flash",
             json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw", "name": "left"},
