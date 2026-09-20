@@ -191,13 +191,34 @@ bool display_start(void)
 }
 
 
-/* THE PANEL MUST NEVER GO STILL. Drawn once it was dark within minutes; written to
-   periodically it stays lit (ROOM_ENDPOINT_PLAN.md §10.4o). So this loop redraws on a floor
-   cadence even when nothing has changed — the floor is the product requirement, not a
-   workaround, and W4's animation will simply raise it.
-   Slow, because nothing here moves yet: a full frame is ~330 KB over QSPI. */
-#define FACE_FLOOR_MS 500
+/* THE PANEL MUST NEVER GO STILL, AND "STILL" MEANS UNCHANGING — NOT UNWRITTEN.
+ *
+ * §10.4o read the 0.2.5 experiment as "something must keep writing to the panel", and that
+ * was the wrong reading of its own evidence: what 0.2.5 did every ten seconds was write a
+ * DIFFERENT frame (it alternated the bar order). 0.2.7 honoured the rule as written —
+ * identical frames every 500 ms — and went dark anyway, while a tap, whose only distinction
+ * is that it changes the colour, brought it straight back. Writes are not the variable.
+ * Change is.
+ *
+ * So the idle state is a slow bob rather than a repeated still, and it is load-bearing: if
+ * the figure ever stops moving, the screen goes black and the device reads as dead. W4's
+ * rig replaces this with real animation; nothing may replace it with nothing.
+ */
+#define BOB_PX 5
+#define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
+
+/* A triangle in whole pixels, one step per frame, so CONSECUTIVE FRAMES ARE NEVER EQUAL.
+   A sine was the obvious shape and the wrong one: rounded to integers it repeats a value at
+   each turning point, which hands the panel exactly the still frame this exists to prevent.
+   0,1,..,5,4,..,-5,..,-1 — twenty frames, 4 s at the floor cadence, every step a change. */
+static int bob_step(int frame)
+{
+    const int k = frame % (4 * BOB_PX);
+    if (k <= BOB_PX) return k;
+    if (k <= 3 * BOB_PX) return 2 * BOB_PX - k;
+    return k - 4 * BOB_PX;
+}
 
 static void face_task(void *arg)
 {
@@ -219,6 +240,7 @@ static void face_task(void *arg)
     const bool sound = audio_start();
     if (!sound) ESP_LOGW(TAG, "no codec — taps will be silent");
     int colour = 0;
+    int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
 
     while (true) {
@@ -232,7 +254,7 @@ static void face_task(void *arg)
             dirty = true;
         }
         if (dirty || since_draw >= FACE_FLOOR_MS) {
-            face_draw(fb, colour);
+            face_draw(fb, colour, bob_step(frame++));
             /* One call for the whole frame: the panel takes a full-window write happily and
                it is simpler to be right about than a stripe loop. */
             const esp_err_t err =
