@@ -1808,12 +1808,21 @@ async def panel_address(request: Request, settings: SettingsDep, _p: DebugDep) -
             "Caddy's internal root is readable but JBRAIN_LAN_ADDR is empty, so nothing "
             "names the LAN site. Set it in the host .env and re-run Ops -> Update."
         )
+    elif "Permission denied" in ca_error:
+        why = (
+            f"JBRAIN_LAN_ADDR is {lan!r} and the root EXISTS but this process cannot read "
+            "it: the api runs as a non-root user and Caddy writes that tree as root, into a "
+            "directory that also holds the CA private key. The proxy is supposed to publish "
+            f"the public root to {endpoint_api.CADDY_ROOT_PUBLISHED} "
+            "(deploy/proxy-publish-ca.sh) — if that file is absent, the proxy image predates "
+            "it and needs an Ops -> Update."
+        )
     else:
         why = (
-            f"JBRAIN_LAN_ADDR is {lan!r} but no root is readable at "
-            f"{endpoint_api.CADDY_ROOT_PATH}. Caddy mints that root only once it actually "
-            "serves the `tls internal` LAN site, "
-            "so either the site is not configured in the proxy or the caddy_data mount is absent."
+            f"JBRAIN_LAN_ADDR is {lan!r} but no root is readable "
+            f"({ca_error or 'no error reported'}). Caddy mints that root only once it "
+            "actually serves the `tls internal` LAN site, so either the site is not "
+            "configured in the proxy or the caddy_data mount is absent."
         )
 
     return PanelAddressOut(

@@ -93,7 +93,15 @@ docker compose -f /opt/jbrain2/docker-compose.yml cp \
 ```
 
 Import `jbrain-local-ca.crt` into each device's trust store (OS/browser "trusted
-root certificate authorities"). The key is stable across restarts, so this is a
+root certificate authorities").
+
+> The box also publishes this same root to `/data/lan-root.crt` in the `caddy_data`
+> volume (`deploy/proxy-publish-ca.sh`), because the api runs as a non-root user and
+> cannot read it where Caddy writes it — the directory holds the CA private key. That
+> copy is what lets a room-endpoint panel be given the LAN address with a certificate it
+> can validate, instead of being sent out through the tunnel
+> (`../plans/ROOM_ENDPOINT_PLAN.md` §10.4j). It is the public root only; the key is never
+> copied. The key is stable across restarts, so this is a
 one-time step per device.
 
 > ⚠️ That `docker compose cp` is a **host-shell step** the owner cannot run

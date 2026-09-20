@@ -692,6 +692,48 @@ given at flash time, so its manifest requests still carry the bearer token in th
 Only a re-flash rewrites NVS — and that re-flash issues a new `device_key` and revokes the
 old one, so the remediation and the fix are the same action.
 
+#### 10.4j The panel was on the wrong side of the house (2026-09-20)
+
+A panel three metres from the box was routing every request out to Cloudflare and back.
+`_panel_base` exists to prevent exactly that, and its LAN branch needs two things: an
+address, and Caddy's internal root to pin. Nothing said which was missing, so a diagnostic
+was added first (`GET /api/debug/endpoint/address`). It answered in one call:
+
+```json
+{"lan_addr": "https://jbrain.local",
+ "ca_error": "[Errno 13] Permission denied: /data/caddy/caddy/pki/authorities/local/root.crt",
+ "ca_parent_listable": false,
+ "panel_base": "https://hopkinsbrain.com/api"}
+```
+
+The LAN site was configured all along. **Caddy mints its CA as root, into a directory that
+also holds the CA private key, so it is not world-traversable — correctly.** The api runs
+as `appuser` (uid 1000) and cannot get to it. `_lan_ca` catches the `OSError` and returns
+`""`, which is *also* what a box with no LAN site returns, so the fallback was silent and
+indistinguishable from the normal state.
+
+The fix is the one the owner proposed and the one `LOCAL_ACCESS.md` already tells a human
+to do by hand: **copy the root out.** `deploy/proxy-publish-ca.sh` publishes it to
+`/data/lan-root.crt` (mode 0644, written to a temp name and renamed), and `_lan_ca` prefers
+that path with the original as a fallback for a proxy image that predates it.
+
+Three details that are the whole design:
+
+- **The root, never the key.** A root certificate is public by construction — every device
+  that trusts this box already has it. The alternative considered was loosening the mode on
+  the directory, which trades a real secret for a convenience.
+- **A loop, not a one-shot.** Caddy mints the CA lazily, when it first serves the `tls
+  internal` site — after the entrypoint has `exec`'d. There is no moment at startup when
+  the file is reliably present, so the publisher runs in the background and re-copies.
+- **A half-written file must never be pinned.** `_lan_ca` requires `BEGIN CERTIFICATE`
+  rather than merely a readable file: a truncated root fails every handshake forever, on a
+  device with no cable attached to it.
+
+Verified viable before building: `firmware/sdkconfig` carries
+`CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y`, so a panel's ordinary resolver handles
+`jbrain.local` over mDNS. Without that, pointing a panel at the LAN name would have been
+worse than the hairpin it fixes.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
