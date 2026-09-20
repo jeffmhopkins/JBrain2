@@ -46,25 +46,6 @@ static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)
     return false;
 }
 
-/* DIAGNOSTIC, and the reason it is worth the lines: the panel drew its test pattern and was
-   dark minutes later while this firmware kept running and polling the box on schedule. Two
-   causes fit and they need opposite fixes — the controller dropping display-on, which a
-   repaint undoes, or the AXP2101 cutting the display rail, which a repaint cannot touch.
-   Alternating the pattern is what makes the answer readable from across a desk: a panel that
-   flips every ten seconds is being driven, a frozen one is not, and a dark one is neither.
-   It replaces a plain sleep, so the update cadence is unchanged. */
-#define REPAINT_PERIOD_MS 10000
-
-static void wait_and_repaint(uint32_t total_ms)
-{
-    for (uint32_t waited = 0; waited < total_ms; waited += REPAINT_PERIOD_MS) {
-        const uint32_t slice = (total_ms - waited) < REPAINT_PERIOD_MS ? (total_ms - waited)
-                                                                       : REPAINT_PERIOD_MS;
-        vTaskDelay(pdMS_TO_TICKS(slice));
-        display_repaint();
-    }
-}
-
 void app_main(void)
 {
     ESP_LOGI(TAG, "jbrain room endpoint, version %s", ota_running_version());
@@ -85,6 +66,8 @@ void app_main(void)
        available rather than a safe one. */
     if (!display_start()) {
         ESP_LOGE(TAG, "display did not come up — continuing, the box is still reachable");
+    } else {
+        display_run_face();
     }
 
     esp_err_t err = nvs_flash_init();
@@ -132,7 +115,7 @@ void app_main(void)
                 ESP_LOGI(TAG, "up to date at %s", running);
             }
         }
-        wait_and_repaint(CHECK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(CHECK_PERIOD_MS));
         reachable = ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
     }
 }
