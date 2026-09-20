@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-19
+> **Status:** Living · **Last verified:** 2026-09-20
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -77,13 +77,31 @@ a re-flash revokes the identity the panel had before.
 
 ## How it reaches the box
 
-`firmware.yml` publishes a **release** tagged `firmware-v<version>` on every push to `main`
-that bumps `version.txt`, carrying the flashable set plus `SHA256SUMS`. The box pulls it
-itself (the PWA's **Endpoints** screen), verifying each asset before storing it — this repository
-is public, so no credential is involved anywhere in that path.
+**The built images are committed, in `dist/`, and that is the whole distribution.** The box
+already pulls this entire repository from `main` on every Ops → Update (`deploy/update-inner.sh`
+does a `git fetch` + `reset --hard`) and builds its own images out of that tree, so the api
+mounts `firmware/` read-only and flashes what it finds there. No release, no CDN, no
+credential, no network at all at flash time, and nothing for the owner to press first.
 
-Bumping `version.txt` is therefore the single act that cuts a release *and* makes a flashed
-panel update itself, since the running image compares that same string against the manifest.
+This replaced a GitHub release. The release worked in principle and failed in practice: it
+put api.github.com, github.com and a signed CDN host between a board plugged into the box's
+own USB socket and the button next to it, and the first real flash died on a DNS lookup
+inside that chain with nothing to show for it but `Request failed: 500`.
+
+So changing the firmware is three commits' worth of one act:
+
+```sh
+# 1. edit main/, 2. bump version.txt, 3. rebuild and commit dist/
+. ~/esp-idf/export.sh && (cd firmware && idf.py build)
+scripts/firmware-dist.sh
+```
+
+`firmware.yml` rebuilds on CI and **fails the PR if `dist/` is not byte-for-byte what the
+source produces** — `CONFIG_APP_REPRODUCIBLE_BUILD=y` is what makes that check possible at
+all, since ESP-IDF otherwise stamps the build date and absolute paths into every image.
+
+Bumping `version.txt` is still the single act that makes a flashed panel update itself, since
+the running image compares that same string against the manifest.
 
 ## Building
 
@@ -93,6 +111,7 @@ Waveshare's own examples for this board target). Locally:
 ```sh
 scripts/firmware-setup.sh                      # one-time, ~3.5 GB
 . ~/esp-idf/export.sh && (cd firmware && idf.py build)
+scripts/firmware-dist.sh                       # copy the built set into dist/ — it ships
 ```
 
 There is no hardware in CI, so what a green run proves is that the image compiles and fits the

@@ -274,13 +274,11 @@ class Settings(BaseSettings):
     # through the PWA, which is the terminal dependency CLAUDE.md #10 exists to remove.
     # Empty still disables it, and Ops says so rather than failing obscurely.
     endpoint_url: str = "http://endpoint:8000"
-    # Where the panel firmware is published. This repo is PUBLIC, so its release assets
-    # download over plain HTTPS with no credential — which is the whole reason the box can
-    # fetch its own firmware instead of the owner downloading a zip and uploading it
-    # (CLAUDE.md #10). Pinned here and never model-supplied: the sync builds its URLs from
-    # this constant, so `stream.py`'s SSRF guard is untouched. Empty disables the fetch and
-    # leaves the manual upload as the only path, which is what an air-gapped box wants.
-    endpoint_firmware_repo: str = "jeffmhopkins/JBrain2"
+    # Read-only mount of this repo's `firmware/` directory, off the checkout the box
+    # already keeps current (deploy/update-inner.sh). The panel firmware IS that checkout:
+    # `version.txt` plus the built images in `dist/`, so a flash needs no network and no
+    # credential, and `Ops -> Update` is what ships a new firmware (CLAUDE.md #10).
+    firmware_dir: str = "/firmware"
     # The box's own LAN address (`https://jbrain.local`), already set on the host as
     # JBRAIN_LAN_ADDR for Caddy's local HTTPS site — declared here so the api can read the
     # same value. A room endpoint sits on this LAN, so this is the address it should be

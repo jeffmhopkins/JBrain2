@@ -2608,13 +2608,6 @@ export interface EndpointFirmware {
   url: string;
 }
 
-/** What is installed against what the box could fetch (GET /api/endpoint/firmware/available). */
-export interface EndpointFirmwareAvailable {
-  installed: string | null;
-  latest: string | null;
-  fetchable: boolean;
-}
-
 export interface FlashRequest {
   port: string;
   ssid: string;
@@ -4923,30 +4916,21 @@ export const api = {
     return (await response.json()) as EndpointPorts;
   },
 
+  // Which firmware this box would flash. There is only ever one — the images committed in
+  // `firmware/dist/`, which arrive with every Ops -> Update like the rest of the box — so
+  // there is no "installed vs available" to reconcile and nothing to sync.
   async getEndpointFirmware(): Promise<EndpointFirmware | null> {
-    // `request` throws on any non-2xx, so the 404 has to be caught rather than read off
-    // the response — before the first upload there IS no firmware, and that is the
-    // normal state rather than a failure. Getting this wrong made the port list look
-    // empty on a box that could see a panel perfectly well.
+    // `request` throws on any non-2xx, so an absent firmware has to be caught rather than
+    // read off the response. It is a real state rather than a failure (a checkout with no
+    // built images), and treating it as one made the port list look empty on a box that
+    // could see a panel perfectly well.
     try {
       const response = await request("/api/endpoint/firmware");
       return (await response.json()) as EndpointFirmware;
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return null;
+      if (e instanceof ApiError && (e.status === 404 || e.status === 503)) return null;
       throw e;
     }
-  },
-
-  async getEndpointFirmwareAvailable(): Promise<EndpointFirmwareAvailable> {
-    const response = await request("/api/endpoint/firmware/available");
-    return (await response.json()) as EndpointFirmwareAvailable;
-  },
-
-  // The box fetches its own firmware from the public release. No credential is involved,
-  // which is exactly why this can be a button rather than a download-and-upload errand.
-  async syncEndpointFirmware(): Promise<EndpointFirmware> {
-    const response = await request("/api/endpoint/firmware/sync", { method: "POST" });
-    return (await response.json()) as EndpointFirmware;
   },
 
   // The flash log, streamed as plain text lines. A flash takes tens of seconds and the

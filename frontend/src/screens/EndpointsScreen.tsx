@@ -12,7 +12,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   ApiError,
-  type EndpointFirmwareAvailable,
+  type EndpointFirmware,
   type EndpointPort,
   type FlashRequest,
   api,
@@ -38,7 +38,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
   const [ports, setPorts] = useState<EndpointPort[] | null>(null);
-  const [avail, setAvail] = useState<EndpointFirmwareAvailable | null>(null);
+  const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
   const [absent, setAbsent] = useState(false);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -75,11 +75,10 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
     }
 
     try {
-      setAvail(await api.getEndpointFirmwareAvailable());
+      setFirmware(await api.getEndpointFirmware());
     } catch {
-      // Best-effort: not knowing the version must never cost the owner the port list,
-      // and a flash with nothing stored fetches its own firmware anyway.
-      setAvail(null);
+      // Best-effort: not knowing the version must never cost the owner the port list.
+      setFirmware(null);
     }
   }, []);
 
@@ -199,13 +198,9 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
 
           <Step n={3} title="Flash">
             <p className="ep-hint">
-              {avail?.installed
-                ? `Firmware ${avail.installed} stored${
-                    avail.latest && avail.latest !== avail.installed
-                      ? ` · ${avail.latest} available`
-                      : ""
-                  }.`
-                : `The box fetches firmware ${avail?.latest ?? ""} itself — nothing to download.`}
+              {firmware
+                ? `Firmware ${firmware.version}, already on the box — nothing to fetch or download.`
+                : "This box has no firmware built into its checkout. Run Ops → Update, then rescan."}
             </p>
 
             <label className="ep-check">

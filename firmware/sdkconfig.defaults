@@ -27,3 +27,9 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # Keep the image honest about which build is running: the OTA check compares this against the
 # manifest, so a hand-edited version string would loop or stall the updates.
 CONFIG_APP_PROJECT_VER_FROM_CONFIG=n
+
+# The committed images in `dist/` ARE the release (see README), so CI has to be able to
+# prove they match this source — which it can only do if the same source builds the same
+# bytes. Without this, ESP-IDF stamps __DATE__/__TIME__ and absolute build paths into the
+# app descriptor and every build differs, making the check unwritable.
+CONFIG_APP_REPRODUCIBLE_BUILD=y

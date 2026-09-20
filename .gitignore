@@ -7,6 +7,10 @@ __pycache__/
 .ruff_cache/
 node_modules/
 dist/
+# EXCEPT the panel firmware, which is committed on purpose. The box flashes these images
+# off its own checkout rather than downloading a release, so `firmware/dist/` is shipped
+# product rather than build output — see firmware/README.md "How it reaches the box".
+!firmware/dist/
 
 # Secrets must never be committed. Runtime config (incl. the xAI API key) lives
 # in an untracked .env / environment variables, read via pydantic-settings.
