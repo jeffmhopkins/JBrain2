@@ -637,9 +637,15 @@ the box over plain HTTP with its bearer token on the wire. Treat that key as exp
 a re-flash issues a new `device_key` and revokes the old one, which is exactly the
 remediation and exactly what re-flashing already did.
 
-`_public_base` now honours a declared `X-Forwarded-Proto` and otherwise returns https,
-which is not a guess: every way into this box is TLS, and there is no supported
-deployment where handing a panel `http://` is right.
+`_public_base` now returns https **unconditionally**.
+
+The first fix honoured a declared `X-Forwarded-Proto`, on the reasoning that a proxy which
+says so is telling the truth about itself. It is — **about its own hop.** In tunnel mode
+Caddy takes the request from `cloudflared` over plain HTTP and accurately declares `http`,
+while the panel's connection to Cloudflare's edge was TLS the whole time. So the header
+re-emitted the broken url verbatim and the OTA stayed broken **through a deploy**, with the
+evidence sitting in the very log line added to catch it. The same mistake as the original,
+moved one hop out: trusting a local observation to describe a remote fact.
 
 **The test that existed asserted the url ended in `/endpoint/firmware/bin`** — true of the
 broken value. A suffix is not an address, and four tests now pin the scheme on both halves

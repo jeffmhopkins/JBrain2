@@ -327,11 +327,24 @@ class TestTheSchemeHandedToAPanel:
         _stub_flash(c, monkeypatch, sent, lan_addr="")
         assert sent[-1]["nvs"]["api"].startswith("https://")
 
-    def test_a_proxy_that_declares_the_scheme_is_believed(
+    def test_a_proxy_declaring_plain_http_is_not_believed(
         self, client: tuple[TestClient, Path, list[Any]]
     ) -> None:
-        """A deployment that really does front this box and says so is telling the truth
-        about itself; only the absence of a declaration falls back to https."""
+        """The SECOND version of this bug, which survived a deploy.
+
+        The first fix honoured `X-Forwarded-Proto`, reasoning that a proxy saying so is
+        telling the truth about itself. It is — about its own hop. In tunnel mode Caddy
+        takes the request from `cloudflared` over plain HTTP and accurately declares
+        `http`, while the panel's connection to the edge was TLS the whole time.
+        Believing it re-emitted the broken url verbatim and the OTA stayed broken.
+        """
+        c, _fw, _sent = client
+        url = c.get("/api/endpoint/firmware", headers={"X-Forwarded-Proto": "http"}).json()["url"]
+        assert url.startswith("https://"), url
+
+    def test_a_proxy_declaring_https_also_gets_https(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
         c, _fw, _sent = client
         url = c.get("/api/endpoint/firmware", headers={"X-Forwarded-Proto": "https"}).json()["url"]
         assert url.startswith("https://")

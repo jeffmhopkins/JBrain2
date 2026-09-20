@@ -294,16 +294,19 @@ def _public_base(request: Request) -> str:
       home on, so a unit polled the box over http and put its bearer token on the wire in
       the clear.
 
-    A forwarded scheme is honoured when one is present, because a deployment that does
-    front this box with a TLS-terminating proxy that says so is telling the truth about
-    itself. Absent that, https is not a guess: every way into this box — the LAN site
-    Caddy mints a certificate for, and the tunnel — is TLS, and there is no supported
-    deployment where handing a panel `http://` is right.
+    `X-Forwarded-Proto` is NOT consulted, which was the first attempt at this fix and was
+    wrong in the same way for one hop further out. A forwarded scheme describes the hop
+    that set it, not the client's connection: in tunnel mode Caddy receives the request
+    from `cloudflared` over plain HTTP and says so, accurately, while the panel's actual
+    connection to Cloudflare's edge was TLS all along. Believing that header re-emitted
+    `http://` verbatim and the OTA stayed broken through a deploy.
+
+    So: https, unconditionally. Every way into this box is TLS — the LAN site Caddy mints
+    a certificate for, and the edge in front of the tunnel — and there is no supported
+    deployment where handing a panel `http://` is right. Only the scheme is replaced;
+    rewriting the host would send a panel somewhere nobody asked for.
     """
-    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-    url = httpx.URL(str(request.base_url))
-    scheme = forwarded if forwarded in ("http", "https") else "https"
-    return str(url.copy_with(scheme=scheme)).rstrip("/") + "/api"
+    return str(httpx.URL(str(request.base_url)).copy_with(scheme="https")).rstrip("/") + "/api"
 
 
 def _panel_base(request: Request, settings: Settings) -> tuple[str, str]:
