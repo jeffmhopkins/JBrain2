@@ -20,6 +20,7 @@ import json
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import httpx
@@ -1731,6 +1732,29 @@ def _sdr_verdict(payload: dict[str, Any]) -> SdrProbeOut:
     )
 
 
+def _ca_read_failure() -> tuple[str, bool]:
+    """Why Caddy's root is unreadable, and whether its directory can even be listed.
+
+    Off the event loop because it touches a filesystem, and split out from the route for
+    the same reason. The two facts together separate the only two causes that matter: a
+    file that is not there yet (Caddy has never served the LAN site) from one that is
+    there and denied (the api runs as a non-root user; Caddy writes that tree as root, and
+    the directory holds the CA private key).
+    """
+    error = ""
+    try:
+        with open(endpoint_api.CADDY_ROOT_PATH, encoding="utf-8") as fh:
+            fh.read(1)
+    except OSError as exc:
+        error = str(exc)
+    try:
+        list(Path(endpoint_api.CADDY_ROOT_PATH).parent.iterdir())
+        listable = True
+    except OSError:
+        listable = False
+    return error, listable
+
+
 class PanelAddressOut(BaseModel):
     """Where a panel would be told to find this box, and WHY that answer."""
 
@@ -1738,6 +1762,11 @@ class PanelAddressOut(BaseModel):
     ca_path: str
     ca_readable: bool
     ca_bytes: int
+    # WHY the read failed, verbatim. "No such file" and "Permission denied" are entirely
+    # different faults with entirely different fixes, and `_lan_ca` deliberately collapses
+    # both to "" because a caller deciding an address does not care which.
+    ca_error: str
+    ca_parent_listable: bool
     panel_base: str
     pins_ca: bool
     on_the_lan: bool
@@ -1761,6 +1790,12 @@ async def panel_address(request: Request, settings: SettingsDep, _p: DebugDep) -
     """
     request.state.debug_detail = "panel address decision"
     ca = endpoint_api._lan_ca()
+
+    # Re-read deliberately rather than reusing the "" above: this surface exists to say
+    # WHICH failure it was, and the api runs as a non-root user while Caddy writes that
+    # tree as root — so "cannot read" is at least as likely to be a traversal denial on a
+    # directory holding the CA private key as it is a missing file.
+    ca_error, parent_listable = await asyncio.to_thread(_ca_read_failure)
     lan = settings.lan_addr.strip().rstrip("/")
     base, pinned = endpoint_api._panel_base(request, settings)
 
@@ -1786,6 +1821,8 @@ async def panel_address(request: Request, settings: SettingsDep, _p: DebugDep) -
         ca_path=endpoint_api.CADDY_ROOT_PATH,
         ca_readable=bool(ca),
         ca_bytes=len(ca),
+        ca_error=ca_error,
+        ca_parent_listable=parent_listable,
         panel_base=base,
         pins_ca=bool(pinned),
         on_the_lan=bool(lan and ca),

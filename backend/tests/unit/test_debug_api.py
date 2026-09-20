@@ -1827,6 +1827,9 @@ class TestPanelAddressDecision:
         assert body["ca_readable"] is False
         assert "JBRAIN_LAN_ADDR is 'https://jbrain.local'" in body["why"]
         assert endpoint_api.CADDY_ROOT_PATH in body["why"]
+        # The distinction the whole route exists for: a file that is not there yet is a
+        # different fault from one that is there and denied, and `_lan_ca` collapses both.
+        assert body["ca_error"], "an unreadable root must say WHY it was unreadable"
 
     def test_a_missing_address_is_named_as_the_reason(
         self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
