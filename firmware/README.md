@@ -28,26 +28,24 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel does not hold a still image, and the reason is still open
+## The panel goes dark and we do not yet know why
 
-Drawn once it goes dark within minutes, and **redrawing an identical frame every 500 ms does
-not prevent it** (0.2.7). A tap — whose only distinction is that it changes the picture —
-brings it straight back.
+Drawn once it goes dark within minutes. **Two fixes have been tried and neither worked:**
+redrawing an identical frame every 500 ms (0.2.7), and bobbing the figure so every frame
+differs from the last (0.2.9). Both went black. A tap or a reboot brings it back.
 
-This was briefly blamed on the debug console, which really could strand a panel in the ROM
-bootloader and really is fixed (ROOM_ENDPOINT_PLAN.md §10.4s). But the panel blanks with
-nobody on its serial port, so that was a second bug sitting on top of this one, not this one
-(§10.4t). Beware the reading trap: when a console read "brings the robot back", that is the
-reset it performs, not a cure.
+It was briefly blamed on the debug console, which really could strand a panel in the ROM
+bootloader and really is fixed (ROOM_ENDPOINT_PLAN.md §10.4s) — but the panel blanks with
+nobody on its serial port, so that was a second bug on top of this one (§10.4t). Beware the
+reading trap: when a console read "brings the robot back", that is the reset it performs, not
+a cure.
 
-**Working rule, under test in 0.2.9: consecutive frames must differ.** The idle is a slow bob
-for exactly that reason, and it is load-bearing rather than decoration. Whatever W4's rig
-becomes, its idle path must keep changing the picture — a dimmed *still* face is a face that
-vanishes, so quiet hours dims with a `0x51` write and never freezes the frame.
+**Do not add a third guess.** 0.2.10 reads the controller's own `RDDPM` (0x0A) and brightness
+(0x52) every ten seconds and logs them, which answers directly whether the chip still thinks
+the display is on, whether it has entered an idle mode, or whether it has stopped answering
+at all (§10.4u). Design around the reading, not around the symptom.
 
-If 0.2.9 still blanks, the next instrument is the CO5300's power-mode register (`0x0A`) read
-while the screen is dark: it says directly whether the controller still thinks the display is
-on.
+The bob stays regardless — an animated pet wants it, and it costs nothing.
 
 ## The two things that make "cable once" true
 

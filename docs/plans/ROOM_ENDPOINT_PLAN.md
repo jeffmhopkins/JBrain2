@@ -1057,6 +1057,44 @@ correlation turned out to be a second real bug sitting on top of the first. Neit
 retraction nor re-assertion was free: what was missing both times was an experiment that
 could separate them, which is what 0.2.9 is.
 
+#### 10.4u The bob did not fix it either, so stop guessing and read the part (2026-09-20)
+
+0.2.9 reached the panel at 23:51:30, marked itself good nineteen seconds later, and the robot
+went black anyway — while bobbing, so every frame differed from the one before it.
+
+**That kills the content-change hypothesis**, which was §10.4s's, restated in §10.4t, and the
+thing 0.2.9 existed to test. Two explanations have now been built from the symptom alone and
+both were wrong:
+
+| version | hypothesis | result |
+| --- | --- | --- |
+| 0.2.7 | the panel must be WRITTEN to (§10.4o) | identical frames every 500 ms → dark |
+| 0.2.9 | consecutive frames must DIFFER (§10.4s) | a bob on every frame → dark |
+
+A third guess is not worth an OTA cycle, and the pattern is the point: every one of these was
+reasoned from the outside, from what the symptom looked like, when the CO5300 has been able to
+answer the question directly the whole time.
+
+**0.2.10 asks it.** `RDDPM` (0x0A) is the MIPI DCS register that reports what the controller
+believes about its own state, and `RDDISBV` (0x52) reports the brightness it thinks it is
+running. Read every ten seconds, logged, read-only. The answer partitions cleanly:
+
+| reading, while the screen is dark | conclusion |
+| --- | --- |
+| display bit SET, brightness high | not the controller — the OLED rail, or the AXP2101 this firmware has never spoken to |
+| display bit CLEAR | the controller dropped display-on; re-issuing `0x29` is the fix |
+| idle-mode bit SET | the part has an idle mode nobody asked for, which would explain every observation including why a tap helps |
+| the read itself fails | the panel is not answering at all, which is its own answer |
+
+The probe gives up after three consecutive failures rather than logging forever: it is an
+instrument, and an instrument that floods the console is one more thing hiding the evidence.
+
+**§10.4n is the part to be sorry about.** It listed exactly two candidates — the controller
+dropping display-on, and the AXP2101 cutting the rail — said plainly that they *need opposite
+fixes*, and then settled the question by watching bars flip rather than by asking the chip.
+Everything since has been an elaboration of that shortcut. The bob stays in regardless: an
+animated pet wants it, and it costs nothing.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

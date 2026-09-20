@@ -105,6 +105,8 @@ static void fill_stripe(bool reversed)
 
 /* Kept so a repaint needs no second bring-up. */
 static esp_lcd_panel_handle_t s_panel;
+/* Kept so the controller can be ASKED what it thinks its state is — see probe_panel(). */
+static esp_lcd_panel_io_handle_t s_io;
 static bool s_swap;
 
 static bool paint(void)
@@ -185,6 +187,7 @@ bool display_start(void)
     }
 
     s_panel = panel;
+    s_io = io;
     if (!paint()) return false;
     ESP_LOGI(TAG, "colour bars drawn, %dx%d", LCD_H_RES, LCD_V_RES);
     return true;
@@ -204,6 +207,28 @@ bool display_start(void)
  * the figure ever stops moving, the screen goes black and the device reads as dead. W4's
  * rig replaces this with real animation; nothing may replace it with nothing.
  */
+/* ASK THE CONTROLLER, STOP GUESSING.
+ *
+ * Two hypotheses have now been built from the symptom alone and both were wrong: that the
+ * panel needs continuous writes (0.2.7 wrote every 500 ms and went dark), and that it needs
+ * consecutive frames to DIFFER (0.2.9 bobs every frame and went dark). A third guess is not
+ * worth an OTA cycle. The CO5300 can be read, and RDDPM (0x0A) answers the question that has
+ * been inferred past since §10.4n: does the controller still believe the display is on?
+ *
+ *   display bit set, brightness high, screen dark -> not the controller. The rail to the
+ *     OLED, or the AXP2101 this firmware has never spoken to.
+ *   display bit CLEAR -> the controller dropped display-on, and re-issuing 0x29 is the fix.
+ *   idle-mode bit SET -> the part has an idle mode nobody asked for, which would explain
+ *     every observation including why a tap helps.
+ *   the read itself fails -> the panel is not answering at all, which is its own answer.
+ *
+ * Read-only, and it gives up after a few failures rather than logging every ten seconds
+ * forever: this is an instrument, and an instrument that floods the console is one more
+ * thing hiding the evidence.
+ */
+#define PROBE_MS 10000
+#define PROBE_GIVE_UP 3
+
 #define BOB_PX 5
 #define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
@@ -218,6 +243,27 @@ static int bob_step(int frame)
     if (k <= BOB_PX) return k;
     if (k <= 3 * BOB_PX) return 2 * BOB_PX - k;
     return k - 4 * BOB_PX;
+}
+
+static void probe_panel(void)
+{
+    static int failures;
+    if (s_io == NULL || failures >= PROBE_GIVE_UP) return;
+
+    uint8_t pm = 0, bv = 0;
+    const esp_err_t e1 = esp_lcd_panel_io_rx_param(s_io, 0x0A, &pm, 1);
+    const esp_err_t e2 = esp_lcd_panel_io_rx_param(s_io, 0x52, &bv, 1);
+    if (e1 != ESP_OK || e2 != ESP_OK) {
+        failures++;
+        ESP_LOGW(TAG, "panel read failed (0x0A %s, 0x52 %s)%s", esp_err_to_name(e1),
+                 esp_err_to_name(e2), failures >= PROBE_GIVE_UP ? " — giving up" : "");
+        return;
+    }
+    failures = 0;
+    /* MIPI DCS RDDPM: D7 booster, D6 idle, D5 partial, D4 sleep-out, D3 normal, D2 display. */
+    ESP_LOGI(TAG, "panel 0x0A=0x%02x [display %s, sleep %s, idle %s, booster %s] 0x52=0x%02x",
+             pm, (pm & 0x04) ? "ON" : "OFF", (pm & 0x10) ? "OUT" : "IN",
+             (pm & 0x40) ? "ON" : "off", (pm & 0x80) ? "on" : "OFF", bv);
 }
 
 static void face_task(void *arg)
@@ -242,6 +288,7 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    int since_probe = 0;
 
     while (true) {
         bool dirty = false;
@@ -262,8 +309,13 @@ static void face_task(void *arg)
             if (err != ESP_OK) ESP_LOGE(TAG, "blit: %s", esp_err_to_name(err));
             since_draw = 0;
         }
+        if (since_probe >= PROBE_MS) {
+            probe_panel();
+            since_probe = 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
         since_draw += TOUCH_POLL_MS;
+        since_probe += TOUCH_POLL_MS;
     }
 }
 
