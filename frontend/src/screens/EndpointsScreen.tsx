@@ -9,7 +9,7 @@
 // The panel is also the only thing here that talks to hardware the owner can hold, so it
 // earns a door of its own.
 
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type EndpointFirmware,
@@ -51,6 +51,11 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
 
   const [log, setLog] = useState<string[]>([]);
   const [flashing, setFlashing] = useState(false);
+
+  const [watchLog, setWatchLog] = useState<string[]>([]);
+  const [watching, setWatching] = useState(false);
+  const [restartFirst, setRestartFirst] = useState(true);
+  const watchAbort = useRef<AbortController | null>(null);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -102,6 +107,37 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
       setFlashing(false);
     }
   };
+
+  const watch = async () => {
+    watchAbort.current?.abort();
+    const ctrl = new AbortController();
+    watchAbort.current = ctrl;
+    setWatching(true);
+    setWatchLog([]);
+    setError("");
+    try {
+      for await (const line of api.monitorEndpoint(
+        port,
+        { seconds: 180, reset: restartFirst },
+        ctrl.signal,
+      )) {
+        // Capped in the UI as well as the sidecar: a panel in a boot loop produces lines
+        // faster than anyone reads them, and the newest ones are the ones that matter.
+        setWatchLog((prev) => (prev.length > 800 ? [...prev.slice(-600), line] : [...prev, line]));
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWatching(false);
+    }
+  };
+
+  const stopWatching = () => {
+    watchAbort.current?.abort();
+    setWatching(false);
+  };
+
+  useEffect(() => () => watchAbort.current?.abort(), []);
 
   const panels = (ports ?? []).filter((p) => p.is_espressif);
   const ready = Boolean(port && ssid) && !flashing;
@@ -230,6 +266,42 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
             {done && <p className="ep-ok">Done. The panel reboots into the new firmware.</p>}
             {failed && <p className="ep-warn">Flash failed — the log below says where.</p>}
             {log.length > 0 && <pre className="ep-log">{log.join("\n")}</pre>}
+          </Step>
+
+          <Step n={4} title="Watch the panel">
+            <p className="ep-hint">
+              The panel's own console, over the same USB. Everything else here shows what the box
+              saw; this is the only view from the panel's side — Wi-Fi, TLS, and whether it decides
+              to take an update.
+            </p>
+
+            <label className="ep-check">
+              <input
+                type="checkbox"
+                checked={restartFirst}
+                onChange={(e) => setRestartFirst(e.target.checked)}
+                disabled={watching}
+              />
+              <span>
+                Restart it first
+                <em>
+                  A panel only checks for firmware every 15 minutes. Restarting makes the whole boot
+                  — network, box, update decision — happen in the first few seconds.
+                </em>
+              </span>
+            </label>
+
+            <button
+              type="button"
+              className="ep-primary"
+              onClick={() => (watching ? stopWatching() : void watch())}
+              disabled={!port || flashing}
+            >
+              {watching ? "Stop watching" : "Watch console"}
+            </button>
+            {!port && <p className="ep-hint">Pick a port above first.</p>}
+
+            {watchLog.length > 0 && <pre className="ep-log">{watchLog.join("\n")}</pre>}
           </Step>
         </div>
       )}

@@ -431,6 +431,62 @@ class TestFirmwareFromTheCheckout:
         assert c.get("/api/endpoint/firmware").json()["version"] == "1.2.3"
 
 
+class TestTheConsoleMonitor:
+    """The only view from the PANEL's side, which is why it exists at all.
+
+    A panel that polled the manifest and then quietly did not update looked, from the
+    box, exactly like one that was correctly up to date: a 200 and nothing else. The
+    reason was a log line on the panel that nobody could read.
+    """
+
+    def test_the_owner_sees_the_panel_console_streamed_through(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, _fw, _sent = client
+        asked: list[Any] = []
+
+        class FakeStream:
+            def __init__(self, params: dict[str, str]) -> None:
+                asked.append(params)
+
+            async def __aenter__(self) -> "FakeStream":
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+            async def aiter_bytes(self) -> Any:
+                yield b"-- restarting the panel --\n"
+                yield b"I (612) jbrain: up to date at 0.2.1\n"
+
+        def fake_stream(_self: Any, _m: str, _u: str, params: dict[str, str]) -> FakeStream:
+            return FakeStream(params)
+
+        monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+        resp = c.get("/api/endpoint/monitor", params={"port": "/dev/ttyACM0", "reset": "true"})
+        assert resp.status_code == 200, resp.text
+        assert "up to date at 0.2.1" in resp.text
+        assert asked[-1]["port"] == "/dev/ttyACM0"
+        assert asked[-1]["reset"] == "1"
+
+    def test_a_panel_cannot_watch_anything(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """A panel's key opens the manifest and the image. A console — the owner's window
+        onto every unit plugged into this box — is not part of that bargain."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        resp = c.get(
+            "/api/endpoint/monitor",
+            params={"port": "/dev/ttyACM0"},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 401
+
+
 class TestFlash:
     def test_the_panel_is_given_a_fresh_device_key_and_the_api_url(
         self,

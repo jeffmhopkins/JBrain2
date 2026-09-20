@@ -26,7 +26,8 @@ FROM python:3.12-slim
 # that esptool changed a default.
 RUN pip install --no-cache-dir \
         "esptool==5.4.0" \
-        "esp-idf-nvs-partition-gen==0.3.0"
+        "esp-idf-nvs-partition-gen==0.3.0" \
+        "pyserial==3.5"
 
 WORKDIR /app
 # Enumerating what the box can see: the half with no device in it, so it is testable in
@@ -34,6 +35,8 @@ WORKDIR /app
 COPY deploy/endpoint/ports.py ./ports.py
 # Building the NVS image and driving esptool.
 COPY deploy/endpoint/flash.py ./flash.py
+# Reading the panel's own console back over the same USB it was flashed through.
+COPY deploy/endpoint/monitor.py ./monitor.py
 COPY deploy/endpoint/server.py ./server.py
 
 # Fail the BUILD, not the first flash. This is the one image the owner builds on their
@@ -41,7 +44,7 @@ COPY deploy/endpoint/server.py ./server.py
 # #10) — so a missing COPY line or a renamed entry point has to surface here. The NVS
 # generator is exercised rather than merely imported: it is invoked as `python -m`, and
 # "the module is importable" is a weaker claim than "that command line works".
-RUN python -c "import server, ports, flash" \
+RUN python -c "import server, ports, flash, monitor" \
     && command -v esptool >/dev/null \
     && python -m esp_idf_nvs_partition_gen --help >/dev/null
 

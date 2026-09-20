@@ -308,6 +308,44 @@ def _panel_base(request: Request, settings: Settings) -> tuple[str, str]:
     return _public_base(request), ""
 
 
+# A watch runs until it is stopped, so the ceiling is high and the sidecar enforces its
+# own (monitor.MAX_SECONDS). This only has to outlast the request.
+MONITOR_TIMEOUT_S = 960.0
+
+
+@router.get("/monitor")
+async def monitor_panel(
+    _owner: OwnerDep, settings: SettingsDep, port: str, seconds: int = 120, reset: bool = False
+) -> StreamingResponse:
+    """Stream a panel's own console back to the owner.
+
+    The counterpart to everything else here, which reports only what the BOX saw. A panel
+    that polled the manifest and then quietly did not update looked, from this side,
+    exactly like one that was correctly up to date — the reason was a log line on the
+    panel that nobody could read (ROOM_ENDPOINT_PLAN.md §10.4d).
+
+    Owner-only and `port`-checked by the sidecar against what is actually plugged in, the
+    same as a flash: this opens a device node in a root container, so the path is never
+    taken on trust from the request.
+    """
+    base = _sidecar(settings)
+    query = {"port": port, "seconds": str(seconds), "reset": "1" if reset else "0"}
+
+    async def stream() -> AsyncIterator[bytes]:
+        async with (
+            httpx.AsyncClient(timeout=MONITOR_TIMEOUT_S) as client,
+            client.stream("GET", f"{base}/monitor", params=query) as resp,
+        ):
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
 class FlashIn(BaseModel):
     port: str
     ssid: str

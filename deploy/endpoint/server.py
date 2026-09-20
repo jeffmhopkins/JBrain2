@@ -33,8 +33,10 @@ import os
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import flash
+import monitor
 import ports
 
 PORT = int(os.environ.get("ENDPOINT_PORT", "8000"))
@@ -68,7 +70,44 @@ class Handler(BaseHTTPRequestHandler):
             # has no terminal, and it must arrive as data rather than as a 500.
             self._json(200, {"ports": ports.as_json(ports.scan())})
             return
+        if urlparse(self.path).path == "/monitor":
+            self._monitor()
+            return
         self._json(404, {"error": "no such route"})
+
+    def _monitor(self) -> None:
+        """Stream a panel's own console back, as chunked text.
+
+        Same shape as `/flash` and for the same reason: the interesting line arrives
+        whenever the panel feels like saying it, and an owner watching a phone needs to
+        see it then rather than when the request ends.
+        """
+        q = parse_qs(urlparse(self.path).query)
+        port = (q.get("port") or [""])[0]
+        known = {p.device for p in ports.scan()}
+        if port not in known:
+            self._json(400, {"error": f"unknown port {port!r}; visible: {sorted(known) or 'none'}"})
+            return
+        try:
+            seconds = int((q.get("seconds") or ["120"])[0])
+        except ValueError:
+            self._json(400, {"error": "seconds must be a number"})
+            return
+        reset = (q.get("reset") or ["0"])[0] in ("1", "true", "yes")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for line in monitor.watch(port, seconds=seconds, reset=reset):
+                self.wfile.write(f"{line}\n".encode())
+                self.wfile.flush()
+        except RuntimeError as exc:
+            self.wfile.write(f"FAILED: {exc}\n".encode())
+        except Exception:  # noqa: BLE001 - the stream must carry the reason, not drop
+            self.wfile.write(f"FAILED: {traceback.format_exc(limit=3)}\n".encode())
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
         if self.path != "/flash":
@@ -93,6 +132,12 @@ class Handler(BaseHTTPRequestHandler):
             port, images, values, offset, size, erase = _request(body)
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
+            return
+
+        # The tty is exclusive and a flash outranks a watch. Done BEFORE the status line,
+        # because it is the last thing that can still be reported as a status code.
+        if not monitor.release(port):
+            self._json(409, {"error": f"{port} is held by a monitor that will not let go"})
             return
 
         # Streamed as chunked plain text rather than returned as JSON: a flash takes tens

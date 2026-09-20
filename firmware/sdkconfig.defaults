@@ -20,6 +20,13 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # with no symptom but silence — the panel joins Wi-Fi and can never reach the box.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
+# The panel's console goes out over the SAME native USB it is flashed through, which is
+# what lets `deploy/endpoint`'s monitor read it with no second cable and no UART header.
+# Already ESP-IDF's default for this target; pinned because it is load-bearing for the
+# only view anyone has of a flashed unit, and silence would be indistinguishable from a
+# panel that had nothing to say.
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

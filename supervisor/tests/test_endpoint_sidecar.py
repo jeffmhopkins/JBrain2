@@ -31,6 +31,7 @@ def _load(name: str, filename: str):
 
 ports = _load("endpoint_ports", "ports.py")
 flash = _load("endpoint_flash", "flash.py")
+monitor = _load("endpoint_monitor", "monitor.py")
 
 
 def _fake_tree(
@@ -213,3 +214,100 @@ class TestRecoveryNet:
         table = self._table()
         assert table["ota_0"][1] == table["ota_1"][1]
         assert table["ota_0"][1] >= 4 * 1024 * 1024
+
+
+class TestConsoleDecoding:
+    """Turning bytes off a serial port into the lines an owner reads.
+
+    Pinned with no device attached because the failures worth catching are all framing:
+    a line that arrives in two reads, a CRLF, a half-finished line when the watch ends.
+    Each of those looks like "the panel said nothing" on a screen, which is the one
+    reading this surface exists to make impossible.
+    """
+
+    def test_a_line_split_across_reads_arrives_whole(self) -> None:
+        chunks = [b"I (417) jbrain: up ", b"to date at 0.2.0\n"]
+        want = ["I (417) jbrain: up to date at 0.2.0"]
+        assert list(monitor.decode_lines(chunks)) == want
+
+    def test_several_lines_in_one_read_are_separated(self) -> None:
+        chunks = [b"first\nsecond\nthird\n"]
+        assert list(monitor.decode_lines(chunks)) == ["first", "second", "third"]
+
+    def test_carriage_returns_do_not_survive(self) -> None:
+        """ESP-IDF emits CRLF; a stray \r renders as an overstrike inside a <pre>."""
+        assert list(monitor.decode_lines([b"boot\r\nrun\r\n"])) == ["boot", "run"]
+
+    def test_a_trailing_partial_line_is_still_reported(self) -> None:
+        """The last thing a panel says before it reboots has no newline after it, and it
+        is frequently the most interesting line in the whole log."""
+        assert list(monitor.decode_lines([b"install failed: ESP_ERR"])) == [
+            "install failed: ESP_ERR"
+        ]
+
+    def test_rom_bootloader_garbage_does_not_end_the_stream(self) -> None:
+        """The first bytes after a reset are the ROM talking at a different line rate.
+        Arriving as mojibake is CORRECT — it is a real thing the panel said, and a
+        decoder that raised here would hide the evidence that a reset happened."""
+        out = list(monitor.decode_lines([b"\xff\xfe garbage\nESP-ROM:esp32s3\n"]))
+        assert len(out) == 2
+        assert out[1] == "ESP-ROM:esp32s3"
+
+
+class TestThePortIsExclusive:
+    """Only one process can hold a tty, and a flash outranks a watch.
+
+    Getting this backwards means the owner presses Flash and is refused by their own
+    debugging tool — with a board in their hand and no terminal to kill it from.
+    """
+
+    def test_releasing_an_unwatched_port_is_immediately_true(self) -> None:
+        assert monitor.release("/dev/ttyACM9") is True
+
+    def test_a_watching_monitor_is_told_to_stop(self) -> None:
+        import threading
+
+        stop = threading.Event()
+        monitor._active["/dev/ttyACM0"] = stop
+        try:
+            # Nothing releases it, so this reports failure — but it must still have
+            # ASKED, which is what a real monitor loop is watching for.
+            assert monitor.release("/dev/ttyACM0", timeout=0.2) is False
+            assert stop.is_set(), "a flash must ask the monitor to let go"
+        finally:
+            monitor._active.pop("/dev/ttyACM0", None)
+
+    def test_a_monitor_that_lets_go_frees_the_port(self) -> None:
+        import threading
+
+        stop = threading.Event()
+        monitor._active["/dev/ttyACM0"] = stop
+
+        def _let_go() -> None:
+            stop.wait(1.0)
+            monitor._active.pop("/dev/ttyACM0", None)
+
+        t = threading.Thread(target=_let_go)
+        t.start()
+        try:
+            assert monitor.release("/dev/ttyACM0", timeout=2.0) is True
+        finally:
+            t.join()
+            monitor._active.pop("/dev/ttyACM0", None)
+
+    def test_a_watch_is_bounded_in_time(self) -> None:
+        """This streams to a phone. An unbounded watch on a panel in a boot loop is
+        a way to fill a screen and hold the only device forever."""
+        assert monitor.MAX_SECONDS <= 900
+        assert monitor.MAX_LINES <= 5000
+
+
+def test_the_monitor_ships_in_the_image_and_can_be_imported() -> None:
+    """The flasher image is built on the owner's own box during Ops -> Update, with no
+    terminal to read a traceback with. A missing COPY line has to fail the BUILD."""
+    dockerfile = (DEPLOY / "Dockerfile.endpoint").read_text()
+    assert "COPY deploy/endpoint/monitor.py ./monitor.py" in dockerfile
+    assert "import server, ports, flash, monitor" in dockerfile
+    # pyserial arrives transitively through esptool, and a direct import on a transitive
+    # dependency is exactly the thing that breaks on an unrelated upgrade.
+    assert "pyserial==" in dockerfile

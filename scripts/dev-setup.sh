@@ -284,8 +284,9 @@ fi
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
 
 # --- Panel flasher / `endpoint` sidecar (opt-in, NOT bootstrapped here) ---
-# deploy/endpoint/ flashes a room-endpoint panel over the box's USB port (Ops -> Room
-# endpoints). Its dependencies — esptool and esp-idf-nvs-partition-gen — live inside its
+# deploy/endpoint/ flashes a room-endpoint panel over the box's USB port, and reads that
+# panel's console back over the same one (Ops -> Room endpoints). Its dependencies —
+# esptool, esp-idf-nvs-partition-gen and pyserial — live inside its
 # own image (deploy/Dockerfile.endpoint), not in any dev venv, so there is nothing to
 # bootstrap. It is STOCK STACK rather than profile-gated (unlike `sdr`, which needs a
 # dongle most boxes do not have): gating it would have meant an .env edit on the host to
