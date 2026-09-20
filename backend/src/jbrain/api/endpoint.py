@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -44,6 +45,8 @@ from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.devices import service as devices
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/endpoint", tags=["endpoint"])
 
@@ -217,7 +220,7 @@ def _image(settings: Settings, name: str) -> bytes:
 
 @router.get("/firmware")
 async def firmware_manifest(
-    _principal: PanelDep, request: Request, settings: SettingsDep
+    principal: PanelDep, request: Request, settings: SettingsDep
 ) -> FirmwareOut:
     """What a panel should be running — the one route a flashed panel itself calls.
 
@@ -237,19 +240,40 @@ async def firmware_manifest(
                 "current main."
             ),
         )
-    return FirmwareOut(version=version, url=f"{_public_base(request)}/endpoint/firmware/bin")
+    out = FirmwareOut(version=version, url=f"{_public_base(request)}/endpoint/firmware/bin")
+    # The ONLY window onto a panel's update decision from where the owner sits. A panel that
+    # polls happily and never updates is indistinguishable, in an access log, from one that
+    # is correctly up to date — and the two have completely different fixes. The `url` is
+    # here because it is DERIVED (from this request's own base), so it is the field most
+    # able to be quietly wrong: a manifest the panel can read pointing at an image it cannot
+    # fetch fails inside the firmware, where nothing on this box can see it.
+    log.info(
+        "endpoint.manifest_served",
+        version=out.version,
+        url=out.url,
+        principal=principal.kind,
+        host=request.headers.get("host", ""),
+    )
+    return out
 
 
 @router.get("/firmware/bin")
-async def firmware_image(_principal: PanelDep, settings: SettingsDep) -> Response:
+async def firmware_image(principal: PanelDep, settings: SettingsDep) -> Response:
     """The app image itself: the URL the manifest hands a panel, and so the OTA download.
 
     This had no implementation before. The manifest advertised the path and nothing served
     it, so the first OTA any panel attempted would have 404'd — invisible until now only
     because no panel had ever got far enough to attempt one.
     """
+    image = _image(settings, APP_IMAGE)
+    log.info(
+        "endpoint.image_served",
+        bytes=len(image),
+        version=_firmware_version(settings),
+        principal=principal.kind,
+    )
     return Response(
-        content=_image(settings, APP_IMAGE),
+        content=image,
         media_type="application/octet-stream",
         headers={"Cache-Control": "no-store"},
     )
