@@ -16,7 +16,7 @@ in this image and what is deliberately left out.
 Kept out of the first image on purpose: display, touch and audio. A misconfiguration in any of
 them is the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver.
 They arrive over the air, onto a unit that has already proved it can take an update — and they
-have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7.
+have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7, a moving idle in 0.2.9.
 Every one of those carried a byte-identical `bootloader.bin`, so each was a pure app OTA whose
 rollback lands on the same bootloader. **Check that before shipping a release**, not after.
 
@@ -28,21 +28,26 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## Does the panel hold a still image? Unknown — the instrument was faulty
+## The panel does not hold a still image, and the reason is still open
 
-Earlier versions of this file stated, confidently and twice over, that the panel goes dark
-unless it is continually written to (and then: unless consecutive frames differ). **Both
-claims are in doubt.**
+Drawn once it goes dark within minutes, and **redrawing an identical frame every 500 ms does
+not prevent it** (0.2.7). A tap — whose only distinction is that it changes the picture —
+brings it straight back.
 
-Every observation behind them was made while reading the panel's console, and
-`deploy/endpoint/monitor.py` could leave the chip in the ROM bootloader with the application
-never started — RTS is reset and DTR is the boot pin on the S3's USB Serial/JTAG, and the tty
-close dropped both. That produces a black screen that persists until the cable is pulled,
-which is what was being attributed to the display (ROOM_ENDPOINT_PLAN.md §10.4s).
+This was briefly blamed on the debug console, which really could strand a panel in the ROM
+bootloader and really is fixed (ROOM_ENDPOINT_PLAN.md §10.4s). But the panel blanks with
+nobody on its serial port, so that was a second bug sitting on top of this one, not this one
+(§10.4t). Beware the reading trap: when a console read "brings the robot back", that is the
+reset it performs, not a cure.
 
-The tool now leaves the panel pulsed back into its application. Until a panel has been watched
-for a long stretch with **nobody touching the console**, treat "the panel cannot hold a still
-image" as unproven, and do not design around it.
+**Working rule, under test in 0.2.9: consecutive frames must differ.** The idle is a slow bob
+for exactly that reason, and it is load-bearing rather than decoration. Whatever W4's rig
+becomes, its idle path must keep changing the picture — a dimmed *still* face is a face that
+vanishes, so quiet hours dims with a `0x51` write and never freezes the frame.
+
+If 0.2.9 still blanks, the next instrument is the CO5300's power-mode register (`0x0A`) read
+while the screen is dark: it says directly whether the controller still thinks the display is
+on.
 
 ## The two things that make "cable once" true
 

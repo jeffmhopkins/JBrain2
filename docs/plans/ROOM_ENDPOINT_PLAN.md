@@ -1010,6 +1010,53 @@ observation of the display in this session was taken through a tool that can hal
 none of the reasoning accounted for it. A diagnosis built on such observations is worth less
 than the confidence it was delivered with — and it was delivered with a great deal.
 
+#### 10.4t The panel blanks with nobody on its console (2026-09-20)
+
+§10.4s retracted the content-change finding in favour of the owner's hypothesis: that the
+blackouts were **my own console reads** leaving the chip in the ROM bootloader. That
+hypothesis had a real mechanism and a real symptom match, and the tool was genuinely broken,
+so it was the right call on the evidence available.
+
+**It is not the whole story.** After 0.2.8 deployed, the panel went black again during a
+stretch when the only thing being read was the *box's* API log — nothing touched the panel's
+serial port. So the display blanks on its own.
+
+One thing to be careful about, because it reads the wrong way round: when a console read
+"brings the robot back", **that is a reboot, not a revival.** `panel-console` resets by
+default. It is the same restoration a power cycle gives and says nothing about the console
+being a cure.
+
+So the ledger, honestly:
+
+| observation | what it rules on |
+| --- | --- |
+| blanks with nobody on the serial port | the tooling bug is not sufficient to explain it |
+| a reboot restores it | consistent with everything; discriminates nothing |
+| a tap restores it | the content changed |
+| identical frames every 500 ms do not prevent it | write rate is not the variable |
+
+The last two are what §10.4s originally reasoned from, and they are back in play. **The
+tooling bug was real and is fixed; it was just not the cause of this.** Two true things were
+competing for one symptom.
+
+0.2.9 is therefore the bob, restored unchanged from the version that was pulled: the figure
+moves ±5 px on a four-second integer triangle, so consecutive frames are unequal by
+construction. It is the treatment for the surviving hypothesis and a clean experiment either
+way:
+
+- **stays lit** → consecutive frames must differ; §10.4o's rule was the weaker reading of its
+  own evidence, as §10.4s first argued.
+- **still blanks** → content is not the variable either, and the next instrument is the
+  CO5300's own power-mode register (`0x0A`), read while the screen is dark. That says
+  directly whether the controller still believes the display is on, which is the §10.4n
+  question that was inferred past rather than answered.
+
+**The process lesson is not "trust the first theory".** It is that the first theory was
+argued from two clean controls and then abandoned on a single correlation, and the
+correlation turned out to be a second real bug sitting on top of the first. Neither
+retraction nor re-assertion was free: what was missing both times was an experiment that
+could separate them, which is what 0.2.9 is.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
