@@ -18,6 +18,21 @@ the version comparison, an OTA attempt — happen in the first few seconds. So t
 offered explicitly, and NOT doing it is the default: an unasked-for reset of a panel on a
 child's wall is the kind of surprise this surface should not have.
 
+LETTING GO IS THE DANGEROUS PART, and this is the bug that taught it. Opening is careful —
+DTR and RTS are set false BEFORE open, precisely so listening does not restart anything —
+and then `close()` was left to do whatever a Linux tty close does, which is drop both
+lines. On this chip those lines are not bookkeeping: RTS is reset and DTR is the boot pin,
+so the wrong transition on the way out leaves the panel sitting in the ROM bootloader with
+the application never started. From the room that is a dead black screen that stays dead
+until someone unplugs it — which is exactly what the owner saw, and exactly what he worked
+out, after a session of me reading these logs and blaming the display.
+
+So a watch now ENDS by pulsing the panel back into its application. That costs a reboot
+nobody asked for, which the paragraph above calls a surprise worth avoiding, and it is
+still the right trade: a two-second restart against a panel that is dark until someone
+finds it and pulls the cable. Being sure of the state we leave behind beats being clever
+about not disturbing it.
+
 THE PORT IS EXCLUSIVE. Only one process can hold a tty, and a flash matters more than a
 watch, so a monitor registers itself here and `/flash` asks it to let go first. Getting
 that backwards would mean the owner pressing Flash and being told the device is busy by
@@ -158,6 +173,14 @@ def watch(port: str, *, seconds: int, reset: bool) -> Iterator[str]:
                 "-- stopped: the port was needed for a flash --"
             )
         finally:
+            # Never leave the chip's boot pin to chance — see the module docstring.
+            try:
+                ser.dtr = False
+                ser.rts = True
+                time.sleep(RESET_HOLD_S)
+                ser.rts = False
+            except Exception:  # noqa: BLE001 - a port that already went away is not news
+                pass
             ser.close()
     finally:
         with _lock:

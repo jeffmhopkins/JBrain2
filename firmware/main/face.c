@@ -131,11 +131,8 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark)
                 rgb(0xFF, 0xFF, 0xFF));
 }
 
-void face_draw(uint16_t *fb, int colour, int bob)
+void face_draw(uint16_t *fb, int colour)
 {
-    /* Everything hangs off this, so one offset moves the whole figure. See
-       ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int oy = OY + bob;
     const uint32_t hex = PALETTE[colour % face_colour_count()];
     const uint16_t col = shade(hex, 1.0f);
     const uint16_t dark = shade(hex, 0.22f);
@@ -149,15 +146,15 @@ void face_draw(uint16_t *fb, int colour, int bob)
     /* Rest pose from the mock's `rig()`: arms +/-12 degrees, legs +/-4. Drawing order is the
        mock's too — legs behind everything, arms behind the torso while they hang. */
     const uint16_t limb = shade(hex, 0.78f);
-    draw_limb(fb, OX - 34, oy + HIP_Y, 4.0f, LEG_L, 30, limb);
-    draw_limb(fb, OX + 34, oy + HIP_Y, -4.0f, LEG_L, 30, limb);
-    draw_limb(fb, OX - 66, oy + SHOULDER_Y, 12.0f, ARM_L, 28, limb);
-    draw_limb(fb, OX + 66, oy + SHOULDER_Y, -12.0f, ARM_L, 28, limb);
+    draw_limb(fb, OX - 34, OY + HIP_Y, 4.0f, LEG_L, 30, limb);
+    draw_limb(fb, OX + 34, OY + HIP_Y, -4.0f, LEG_L, 30, limb);
+    draw_limb(fb, OX - 66, OY + SHOULDER_Y, 12.0f, ARM_L, 28, limb);
+    draw_limb(fb, OX + 66, OY + SHOULDER_Y, -12.0f, ARM_L, 28, limb);
 
-    fill_round_rect(fb, OX - 72, oy - 26, 144, 132, 40, torso);
-    fill_round_rect(fb, OX - 26, oy + 10, 52, 40, 12, plate);
+    fill_round_rect(fb, OX - 72, OY - 26, 144, 132, 40, torso);
+    fill_round_rect(fb, OX - 26, OY + 10, 52, 40, 12, plate);
 
-    const int hy = oy + HEAD_Y;
+    const int hy = OY + HEAD_Y;
     /* Antenna first: it sits behind the head, as the mock's silhouette pass does. */
     fill_rect(fb, OX - 4, hy - HH - 30, 8, 30, col);
     fill_circle(fb, OX, hy - HH - 36, 11, col);

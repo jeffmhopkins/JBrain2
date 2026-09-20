@@ -16,7 +16,7 @@ in this image and what is deliberately left out.
 Kept out of the first image on purpose: display, touch and audio. A misconfiguration in any of
 them is the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver.
 They arrive over the air, onto a unit that has already proved it can take an update — and they
-have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7, a moving idle in 0.2.8.
+have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7.
 Every one of those carried a byte-identical `bootloader.bin`, so each was a pure app OTA whose
 rollback lands on the same bootloader. **Check that before shipping a release**, not after.
 
@@ -28,19 +28,21 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel will not hold an UNCHANGING image
+## Does the panel hold a still image? Unknown — the instrument was faulty
 
-Drawn once it goes dark within minutes. The power rail is not the cause — that was tested and
-eliminated (ROOM_ENDPOINT_PLAN.md §10.4o).
+Earlier versions of this file stated, confidently and twice over, that the panel goes dark
+unless it is continually written to (and then: unless consecutive frames differ). **Both
+claims are in doubt.**
 
-**Redrawing is not enough: consecutive frames must DIFFER.** 0.2.7 redrew an identical frame
-every 500 ms and still went black, while a tap — whose only distinction is that it changes the
-colour — revived it instantly (§10.4s). An earlier version of this file said "something must
-keep writing", which was the wrong reading of the same evidence and cost a release.
+Every observation behind them was made while reading the panel's console, and
+`deploy/endpoint/monitor.py` could leave the chip in the ROM bootloader with the application
+never started — RTS is reset and DTR is the boot pin on the S3's USB Serial/JTAG, and the tty
+close dropped both. That produces a black screen that persists until the cable is pulled,
+which is what was being attributed to the display (ROOM_ENDPOINT_PLAN.md §10.4s).
 
-This is free for an animated face and a trap for everything that stops moving — quiet hours,
-a sleeping pet, a notification left up. Each of those is a fixed image, and a fixed image here
-reads as a dead device. Quiet hours dims with a `0x51` write; it must never freeze the frame.
+The tool now leaves the panel pulsed back into its application. Until a panel has been watched
+for a long stretch with **nobody touching the console**, treat "the panel cannot hold a still
+image" as unproven, and do not design around it.
 
 ## The two things that make "cable once" true
 

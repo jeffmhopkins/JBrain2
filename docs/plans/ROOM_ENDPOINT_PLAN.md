@@ -966,51 +966,49 @@ silent"* and the face carries on.
 `bootloader.bin` and `partition-table.bin` are byte-identical to 0.2.6, so this is a pure app
 OTA and a rollback lands on the same bootloader.
 
-#### 10.4s §10.4o was wrong: the panel needs CHANGE, not writes (2026-09-20)
+#### 10.4s The black screen was probably the debug console, not the panel (2026-09-20)
 
-0.2.7 reached the panel, the beep worked, and **the robot went black** — while the render
-loop was redrawing every 500 ms exactly as §10.4o demanded. Tapping brought it straight back;
-left alone it went dark again.
+0.2.7 reached the panel, the beep worked, and the robot went black. The first explanation
+written here was that §10.4o had misread its own experiment — that the variable was *changed*
+content rather than writes, since 0.2.7 redrew identical frames every 500 ms and a tap revived
+it. A bob was built and a rule was rewritten.
 
-**§10.4o drew the wrong conclusion from its own experiment.** What 0.2.5 did every ten
-seconds was not merely *write* — it wrote a **different** frame, alternating the bar order,
-and that was deliberately chosen so the result would be readable from across a desk. The two
-properties were fused in that one experiment, and the rule was written down as the weaker of
-them: *"something must keep writing to the panel."* 0.2.7 is the control that separates them.
-Identical frames at 500 ms is a far higher write rate than 0.2.5's and it went dark anyway;
-the only thing a tap changes is the **content**.
+**Then the owner supplied the observation that beats it:** unplugging and replugging brings
+the robot straight back, and the blackouts line up with *me reading the panel's console*.
 
-So the rule, corrected: **consecutive frames must differ.** Write rate is not the variable and
-never was.
+That has a mechanism, and it is in our own tooling. `deploy/endpoint/monitor.py` is careful on
+the way in — DTR and RTS are set false **before** `open()`, precisely so listening does not
+restart anything — and then hands `close()` to the Linux tty layer, which drops both lines. On
+the S3's USB Serial/JTAG those lines are not bookkeeping: **RTS is reset and DTR is the boot
+pin.** The wrong transition on the way out leaves the chip in the ROM bootloader with the
+application never started. From the room that is a black screen that stays black until someone
+pulls the cable — which is precisely the reported symptom, including the part my hypothesis
+could not explain at all: that it *came back by itself* (a later read resetting it into the
+app) and that a power cycle fixes it.
 
-What makes this the right reading rather than another guess is that the tap is a clean
-control: a tap-triggered redraw and a floor-triggered redraw run the *same* `face_draw` and
-the *same* `draw_bitmap`, on the same task, microseconds apart in the code. The single
-difference between the one that revives the panel and the one that does not is whether the
-pixels changed.
+**This also puts §10.4n and §10.4o in doubt**, because the console tool has existed since
+#1439 and every "the panel went dark" observation since has been made in a session where I was
+reading it. The 0.2.5 bars appearing to flip may mean only that the panel was reset into a
+working app between glances. **The "panel will not hold a still image" finding is suspect and
+is no longer being built on.**
 
-The mechanism inside the CO5300 is still not pinned, and still deliberately: the product is an
-animated face, and every fix for every candidate mechanism is "keep changing the picture".
+Three things follow:
 
-**The idle is therefore a slow bob** — the whole figure moves ±5 px on a four-second cycle —
-and it is load-bearing, not decoration. `face_draw` grew a `bob` parameter for it.
+- **The bob was pulled from 0.2.8 before merge.** Not because it is bad — an animated pet wants
+  it, and W4 will have something like it — but because shipping it now would destroy the
+  experiment. If the panel then stayed lit, the bob would get the credit that belongs to *not
+  being poked*. One change at a time cuts both ways: it also means not adding one.
+- **The tool is fixed** so a watch cannot leave a panel dead: it now ends by pulsing the chip
+  back into its application. That costs an unasked-for reboot, which this module's own
+  docstring calls a surprise worth avoiding, and it is still the right trade against a panel
+  that is dark until someone finds it.
+- **The experiment is to leave it alone.** A static face, nobody reading the console, and see
+  whether it stays lit. Costs nothing but patience, and it is the only clean read available.
 
-**A sine was the obvious shape and the wrong one.** Rounded to whole pixels it repeats a value
-at each turning point, which hands the panel two identical consecutive frames — precisely the
-thing being prevented, reintroduced by the fix for it. The bob is an integer triangle instead,
-one pixel per frame, so consecutive frames are unequal *by construction* rather than by
-argument. That was checked before it was flashed: twenty steps, no repeat, clean wrap.
-
-The host harness earned itself a second time here — the bob's extremes were rendered and
-diffed (≈20,000 bytes differ per 5 px step) without touching the panel.
-
-**Carried forward to W4:** the rig may replace the bob with real animation. Nothing may
-replace it with nothing, and no idle, quiet-hours or sleeping state may hold a fixed image.
-Quiet hours dims with a `0x51` write; it must not freeze the frame.
-
-**Volume 55 → 70.** The owner's ear reported 0.2.7 as "a little bit quiet". That is the
-measurement §10.4q said it was waiting for, and the only kind available. Still well under the
-vendor's 90.
+The general lesson is the expensive one: **the instrument was changing what it measured.** Every
+observation of the display in this session was taken through a tool that can halt the CPU, and
+none of the reasoning accounted for it. A diagnosis built on such observations is worth less
+than the confidence it was delivered with — and it was delivered with a great deal.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 

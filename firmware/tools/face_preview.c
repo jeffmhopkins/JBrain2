@@ -3,7 +3,7 @@
 #include <stdlib.h>
 int main(int argc, char **argv) {
     uint16_t *fb = malloc((size_t)FACE_W * FACE_H * 2);
-    face_draw(fb, argc > 1 ? atoi(argv[1]) : 0, argc > 3 ? atoi(argv[3]) : 0);
+    face_draw(fb, argc > 1 ? atoi(argv[1]) : 0);
     FILE *f = fopen(argv[2], "wb");
     fprintf(f, "P6\n%d %d\n255\n", FACE_W, FACE_H);
     for (int i = 0; i < FACE_W * FACE_H; i++) {
