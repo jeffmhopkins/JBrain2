@@ -888,6 +888,42 @@ write, not a pause.
 Brightness itself is still at `0xFF` and still wrong for a bedroom; it was held back only so
 it could not be mistaken for the fix, and that reason has now expired.
 
+#### 10.4p The robot, and a tap that changes it (2026-09-20)
+
+The rest pose, on the glass: head, eyes with pupils and catchlights, antenna, smile, torso,
+chest plate, arms and legs. A tap cycles the eleven shipped colours.
+
+**Every number came from the mock, not from taste.** `pet-face.html`'s canvas is 368×448 —
+the panel exactly — so its coordinates need no mapping at all. That is what building the mock
+at true geometry bought: the design was measured against this screen before the screen
+existed, and copying is more faithful than re-deriving.
+
+**What made this checkable before it touched hardware:** `face.c` has no ESP dependencies —
+`face.h`, `math.h`, `string.h` — so it compiles on the host. A twenty-line harness renders the
+framebuffer to a PNG, which means the geometry was *looked at* rather than flashed and hoped
+for. It caught the real defect immediately: omitting the limbs left ~100 px of dead black
+below the torso and a figure that sat high. The legs reach y≈396; they are load-bearing for
+the composition, not decoration. **Keep that harness** — W4's rig is where a wrong sign in a
+tween costs an OTA cycle to see.
+
+Three decisions worth recording:
+
+- **Touch is not a touch driver.** One register (`0x02`, the finger count) on the CST820,
+  because the whole screen is the only target the measurement allows — a coordinate would be
+  a component dependency and a rotation convention to get wrong, in service of a distinction
+  this design does not make.
+- **It reports the EDGE, never the hold.** 4–5 year olds produce ordinary taps lasting up to
+  4.2 seconds; a level-triggered read would change colour eleven times while he looked at it.
+- **The face runs in its own task.** A frame rate must never be able to delay an OTA check —
+  the update path outranks the picture, always.
+
+The render loop has a **500 ms floor** rather than drawing once, which is §10.4o's rule
+honoured rather than worked around: nothing moves yet, so the floor is the product
+requirement, and W4's animation simply raises it.
+
+Still absent and deliberately so: the emotions, the tweening, the gags. This is the thing the
+rig will animate, not a substitute for it.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

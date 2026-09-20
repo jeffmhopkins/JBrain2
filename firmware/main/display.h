@@ -11,3 +11,7 @@ bool display_start(void);
    frozen one by eye. Returns whether the SPI writes succeeded — which is NOT the same
    question as whether anything appeared. See display.c. */
 bool display_repaint(void);
+
+/* Start the render loop: the robot, and a tap that changes its colour. Its own task, so the
+   OTA loop's timing is not something a frame rate can disturb. */
+void display_run_face(void);

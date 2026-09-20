@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "cfg.c" "net.c" "ota.c" "display.c"
+    SRCS "main.c" "cfg.c" "net.c" "ota.c" "display.c" "face.c" "touch.c"
     INCLUDE_DIRS "."
     # `mbedtls` is here for esp_crt_bundle.h, not for mbedtls itself: the public-CA
     # bundle lives in that component, and without this the header is off the include

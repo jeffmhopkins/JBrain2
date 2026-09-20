@@ -26,8 +26,13 @@
 #include "esp_err.h"
 #include "esp_lcd_co5300.h"
 #include "esp_lcd_panel_io.h"
+#include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_log.h"
+#include "face.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "touch.h"
 
 static const char *TAG = "display";
 
@@ -193,4 +198,62 @@ bool display_start(void)
     if (!paint()) return false;
     ESP_LOGI(TAG, "colour bars drawn, %dx%d", LCD_H_RES, LCD_V_RES);
     return true;
+}
+
+
+/* THE PANEL MUST NEVER GO STILL. Drawn once it was dark within minutes; written to
+   periodically it stays lit (ROOM_ENDPOINT_PLAN.md §10.4o). So this loop redraws on a floor
+   cadence even when nothing has changed — the floor is the product requirement, not a
+   workaround, and W4's animation will simply raise it.
+   Slow, because nothing here moves yet: a full frame is ~330 KB over QSPI. */
+#define FACE_FLOOR_MS 500
+#define TOUCH_POLL_MS 40
+
+static void face_task(void *arg)
+{
+    (void)arg;
+    /* The framebuffer PSRAM was enabled for: 368x448x2 = 322 KB, which does not fit in the
+       332 KB of internal RAM with Wi-Fi and TLS also to feed. */
+    uint16_t *fb = heap_caps_malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t),
+                                    MALLOC_CAP_SPIRAM);
+    if (fb == NULL) {
+        ESP_LOGE(TAG, "no framebuffer — falling back to the test pattern");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    const bool touch = touch_start();
+    int colour = 0;
+    int since_draw = FACE_FLOOR_MS; /* draw immediately */
+
+    while (true) {
+        bool dirty = false;
+        if (touch && touch_tapped()) {
+            colour = (colour + 1) % face_colour_count();
+            ESP_LOGI(TAG, "tap -> colour %d", colour);
+            dirty = true;
+        }
+        if (dirty || since_draw >= FACE_FLOOR_MS) {
+            face_draw(fb, colour);
+            /* One call for the whole frame: the panel takes a full-window write happily and
+               it is simpler to be right about than a stripe loop. */
+            const esp_err_t err =
+                esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
+            if (err != ESP_OK) ESP_LOGE(TAG, "blit: %s", esp_err_to_name(err));
+            since_draw = 0;
+        }
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+        since_draw += TOUCH_POLL_MS;
+    }
+}
+
+void display_run_face(void)
+{
+    if (s_panel == NULL) {
+        ESP_LOGE(TAG, "no panel; not starting the face");
+        return;
+    }
+    /* Its own task so a frame rate can never delay an OTA check — the update path outranks
+       the picture, always. */
+    xTaskCreate(face_task, "face", 4096, NULL, 4, NULL);
 }
