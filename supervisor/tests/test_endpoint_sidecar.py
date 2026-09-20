@@ -153,3 +153,63 @@ class TestEsptoolArgv:
         argv = flash.esptool_argv("/dev/ttyACM0", [("0x0", "boot.bin")])
         assert "&&" not in argv
         assert "erase_flash" not in argv
+
+
+class TestRecoveryNet:
+    """The offsets a bricked panel's recovery depends on.
+
+    Asserted here rather than left as prose in the runbook because the whole "a panel in
+    a
+    bedroom is recoverable without a cable" claim rests on them, and an offset is
+    exactly
+    the kind of constant that gets adjusted by someone who does not know what it
+    carries.
+    """
+
+    def _table(self) -> dict[str, tuple[int, int]]:
+        rows: dict[str, tuple[int, int]] = {}
+        for line in (
+            (DEPLOY.parent / "firmware/partitions.csv").read_text().splitlines()
+        ):
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 5:
+                rows[parts[0]] = (int(parts[3], 16), int(parts[4], 16))
+        return rows
+
+    def test_the_app_is_flashed_into_the_factory_partition(self) -> None:
+        """Rung 2 of the recovery ladder is "invalid otadata falls through to factory",
+        and
+        that only helps if a USB flash actually put something bootable there. It also
+        means
+        the day a GROWN app is flashed over USB, factory stops being a safety net and
+        becomes a second copy of whatever is broken — see ENDPOINT_RECOVERY.md."""
+        api = (DEPLOY.parent / "backend/src/jbrain/api/endpoint.py").read_text()
+        factory_offset = self._table()["factory"][0]
+        assert f'APP_OFFSET = "{hex(factory_offset)}"' in api, (
+            "the flasher must write the app where the bootloader falls back to"
+        )
+
+    def test_otadata_is_where_the_flasher_writes_it(self) -> None:
+        """A mismatch here corrupts the one partition whose loss costs a cable: the
+        bootloader would read which slot to boot from the wrong place."""
+        api = (DEPLOY.parent / "backend/src/jbrain/api/endpoint.py").read_text()
+        assert f'OTA_DATA_OFFSET = "{hex(self._table()["otadata"][0])}"' in api
+
+    def test_the_nvs_the_flasher_writes_matches_the_table(self) -> None:
+        """A generated NVS image larger than its partition overwrites otadata, which is
+        the
+        single most expensive thing to corrupt on this layout."""
+        api = (DEPLOY.parent / "backend/src/jbrain/api/endpoint.py").read_text()
+        offset, size = self._table()["nvs"]
+        assert f'NVS_OFFSET = "{hex(offset)}"' in api
+        assert f'NVS_SIZE = "{hex(size)}"' in api
+
+    def test_two_full_size_ota_slots_survive(self) -> None:
+        """Rung 1 is rollback, and rollback needs somewhere to roll back TO. Trading a
+        slot
+        away for a bigger asset partition would quietly remove it."""
+        table = self._table()
+        assert table["ota_0"][1] == table["ota_1"][1]
+        assert table["ota_0"][1] >= 4 * 1024 * 1024

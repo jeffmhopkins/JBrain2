@@ -281,6 +281,13 @@ class Settings(BaseSettings):
     # this constant, so `stream.py`'s SSRF guard is untouched. Empty disables the fetch and
     # leaves the manual upload as the only path, which is what an air-gapped box wants.
     endpoint_firmware_repo: str = "jeffmhopkins/JBrain2"
+    # The box's own LAN address (`https://jbrain.local`), already set on the host as
+    # JBRAIN_LAN_ADDR for Caddy's local HTTPS site — declared here so the api can read the
+    # same value. A room endpoint sits on this LAN, so this is the address it should be
+    # told to use: the alternative is whatever host the OWNER's browser happened to be on
+    # when they pressed Flash, which sends every frame out through the tunnel and back.
+    # Empty (no LAN site) falls back to that request address, which still works.
+    lan_addr: str = ""
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).

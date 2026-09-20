@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { PANEL_H, PANEL_W } from "./draw";
 import {
   CARD_MM_W,
+  CASE_CORNER_FRACTION,
   NOMINAL_CARD_PX,
   PANEL_MM_H,
   PANEL_MM_W,
   clampCardPx,
+  cornerRadius,
   cssPpi,
   pxPerMm,
   stageSize,
@@ -96,5 +98,20 @@ describe("stageSize", () => {
     const honest = stageSize("actual", { ...base, dpr: 3, cardPx: 520 }).w;
     expect(cssMmWidth / honest).toBeCloseTo(96 / cssPpi(520), 2);
     expect(cssMmWidth / honest).toBeLessThan(0.7);
+  });
+});
+
+describe("case corners", () => {
+  // From a photograph of the assembled unit: the enclosure rounds the display into a
+  // squircle, so the AMOLED's rectangular corners are not visible to anyone holding it.
+  it("rounds by a fraction of the panel's own width, not a fixed pixel count", () => {
+    // A fixed radius would stop matching the moment the preview is drawn at another size.
+    expect(cornerRadius(PANEL_W)).toBe(Math.round(PANEL_W * CASE_CORNER_FRACTION));
+    expect(cornerRadius(PANEL_W * 2)).toBe(2 * cornerRadius(PANEL_W));
+  });
+
+  it("stays well inside the panel, so the mask cannot swallow the face", () => {
+    expect(cornerRadius(PANEL_W)).toBeGreaterThan(20);
+    expect(cornerRadius(PANEL_W)).toBeLessThan(PANEL_W / 4);
   });
 });

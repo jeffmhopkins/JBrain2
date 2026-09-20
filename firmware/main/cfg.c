@@ -52,8 +52,17 @@ esp_err_t cfg_load(cfg_t *out)
         char **dst;
         bool required;
     } fields[] = {
-        {"api", &out->api, true},   {"token", &out->token, true}, {"ca", &out->ca, true},
-        {"ssid", &out->ssid, true}, {"pass", &out->pass, true},   {"name", &out->name, false},
+        {"api", &out->api, true},
+        {"token", &out->token, true},
+        // OPTIONAL, and the reason matters: `ca` is the box's OWN root, which exists only
+        // when it is reached at its LAN name behind Caddy's internal CA. A box reached at a
+        // public hostname has a publicly-trusted certificate and no root to hand over, and
+        // refusing to boot for want of one would strand a panel that is otherwise fine.
+        // Absent means "validate against the public bundle" — see ota.c.
+        {"ca", &out->ca, false},
+        {"ssid", &out->ssid, true},
+        {"pass", &out->pass, true},
+        {"name", &out->name, false},
     };
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
         err = dup_str(h, fields[i].key, fields[i].dst, fields[i].required);

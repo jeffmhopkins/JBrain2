@@ -13,9 +13,12 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # The whole point of this firmware. Without it a bad image is permanent and the fix is a cable.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
-# The box's LAN certificate comes from Caddy's internal CA, whose root is written into NVS at
-# flash time, so the bundled public-CA list would only be dead weight.
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n
+# BOTH trust paths are compiled in, because which one a panel needs is decided at flash
+# time, not here. A box reached at its LAN name sits behind Caddy's internal CA and hands
+# its own root over in NVS; a box reached at a public hostname has an ordinary certificate
+# and needs the bundle. Shipping only the first made the second fail TLS on every request
+# with no symptom but silence — the panel joins Wi-Fi and can never reach the box.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

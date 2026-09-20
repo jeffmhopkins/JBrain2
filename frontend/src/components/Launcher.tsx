@@ -52,6 +52,7 @@ export type LauncherTarget =
   | "tasks"
   | "petcontrol"
   | "petface"
+  | "endpoints"
   | "jcode"
   | "jlaunch"
   | "jmolt";
@@ -106,6 +107,11 @@ const SECTIONS: Section[] = [
       // the pet — and it carries AnimalIcon rather than BotIcon so it cannot be mistaken for
       // one (BotIcon is already doing duty for both "Pet" and "LLM").
       { title: "Pet face", icon: <AnimalIcon size={24} />, target: "petface" },
+      // Flashing a physical panel over the box's USB port. Its own door rather than a card
+      // inside Ops: Ops is a dashboard you scan, this is a form you work with a board in
+      // your hand, and folding a multi-step sequence into a scrolling dashboard made both
+      // worse on a phone.
+      { title: "Endpoints", icon: <PinIcon size={24} />, target: "endpoints" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },

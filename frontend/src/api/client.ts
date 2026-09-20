@@ -4949,14 +4949,6 @@ export const api = {
     return (await response.json()) as EndpointFirmware;
   },
 
-  async uploadEndpointFirmware(zip: Blob, version: string): Promise<EndpointFirmware> {
-    const form = new FormData();
-    form.append("artifact", zip, "endpoint-firmware.zip");
-    form.append("version", version);
-    const response = await request("/api/endpoint/firmware", { method: "POST", body: form });
-    return (await response.json()) as EndpointFirmware;
-  },
-
   // The flash log, streamed as plain text lines. A flash takes tens of seconds and the
   // owner is watching a phone, so this yields as it arrives rather than resolving at the
   // end. The sidecar reports failure as a final `FAILED: …` LINE, not as a status code —

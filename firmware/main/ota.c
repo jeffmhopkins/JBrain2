@@ -6,6 +6,7 @@
 
 #include "cJSON.h"
 #include "esp_app_desc.h"
+#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_log.h"
@@ -15,6 +16,26 @@ static const char *TAG = "ota";
 
 #define MANIFEST_MAX 1024
 #define HTTP_TIMEOUT_MS 15000
+
+/* Who this panel is willing to believe.
+ *
+ * Exactly one of two answers, and which one is decided at flash time by where the box told
+ * the panel to find it. A LAN name (https://jbrain.local) is served by Caddy's INTERNAL CA,
+ * which no public bundle contains — so the box hands over its own root and that root is the
+ * only thing trusted. A public hostname has an ordinary certificate, so the bundle is the
+ * only thing that can validate it.
+ *
+ * Never both: pinning one root is a stronger guarantee than "any of ~150 CAs", and it is
+ * available for free on the LAN path, which is the one a panel in a bedroom should be using.
+ */
+static void trust(esp_http_client_config_t *hc, const cfg_t *cfg)
+{
+    if (cfg->ca != NULL && cfg->ca[0] != '\0') {
+        hc->cert_pem = cfg->ca;
+        return;
+    }
+    hc->crt_bundle_attach = esp_crt_bundle_attach;
+}
 
 static char *bearer(const cfg_t *cfg)
 {
@@ -43,9 +64,9 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 
     esp_http_client_config_t hc = {
         .url = url,
-        .cert_pem = cfg->ca,
         .timeout_ms = HTTP_TIMEOUT_MS,
     };
+    trust(&hc, cfg);
     esp_http_client_handle_t client = esp_http_client_init(&hc);
     if (client == NULL) {
         free(auth);
@@ -115,11 +136,11 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
 
     esp_http_client_config_t hc = {
         .url = url,
-        .cert_pem = cfg->ca,
         .timeout_ms = HTTP_TIMEOUT_MS,
         .keep_alive_enable = true,
         .user_data = auth,
     };
+    trust(&hc, cfg);
     esp_https_ota_config_t oc = {
         .http_config = &hc,
         .http_client_init_cb = attach_auth,

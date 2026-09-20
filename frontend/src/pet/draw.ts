@@ -12,6 +12,7 @@
 
 import type { FaceParams, MouthShape } from "./face";
 import type { FigurePose, RigPose } from "./rig";
+import { cornerRadius } from "./scale";
 
 export const PANEL_W = 368;
 export const PANEL_H = 448;
@@ -293,19 +294,44 @@ function drawSilhouette(
   }
 }
 
+/** The visible display area: the panel rectangle rounded by the case, inset by `pad`. */
+function roundedPanelPath(ctx: CanvasRenderingContext2D, pad = 0): void {
+  const r = Math.max(0, cornerRadius(PANEL_W) - pad);
+  ctx.beginPath();
+  ctx.roundRect(pad, pad, PANEL_W - pad * 2, PANEL_H - pad * 2, r);
+}
+
 export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   const col = bodyColor(s.color, s.form, s.t);
   const dark = shade(col, 0.22);
   const limb = shade(col, 0.78);
   const torso = shade(col, 0.88);
 
+  // The assembled unit's case rounds the display into a squircle (photographed
+  // 2026-09-19), so the rectangle's corners are not visible to anyone holding it. Clipping
+  // to that shape is the same class of honesty as the calibrated size: a preview that
+  // draws pixels the case hides invites a design that loses them on the desk.
+  //
+  // The corners are left TRANSPARENT rather than filled black. On an AMOLED black and off
+  // are the same thing, so a black corner would say "this part of the display is dark"
+  // when the truth is "there is no display here" — and the two look identical until
+  // someone puts a caption in one.
+  ctx.clearRect(0, 0, PANEL_W, PANEL_H);
+  ctx.save();
+  roundedPanelPath(ctx);
+  ctx.clip();
+
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, PANEL_W, PANEL_H);
+
   if (s.listening) {
     const q = 0.5 + 0.5 * Math.sin(s.t / 240);
     ctx.strokeStyle = `rgba(143,188,154,${0.35 + 0.35 * q})`;
     ctx.lineWidth = 10;
-    ctx.strokeRect(5, 5, PANEL_W - 10, PANEL_H - 10);
+    // Traces the case's own curve rather than a rectangle, so the listening ring reads as
+    // a rim light around the bezel instead of a box with clipped corners.
+    roundedPanelPath(ctx, 5);
+    ctx.stroke();
   }
 
   ctx.save();
@@ -420,4 +446,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     ctx.font = "400 19px system-ui";
     ctx.fillText(s.caption, PANEL_W / 2, PANEL_H - 18);
   }
+
+  // Ends the case-shape clip opened at the top.
+  ctx.restore();
 }

@@ -57,8 +57,10 @@
    screen. A `mm` rule here would be the bug that module exists to remove. */
 .pf-stage canvas {
   display: block;
-  border-radius: 6px;
-  background: #000;
+  /* No background and no radius of its own: the renderer leaves the case's rounded
+     corners TRANSPARENT (pet/draw.ts), so the stage's black shows through them — which is
+     what the real case is. Painting the canvas black would put the corners back. */
+  background: transparent;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;

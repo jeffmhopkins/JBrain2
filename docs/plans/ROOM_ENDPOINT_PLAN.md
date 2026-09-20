@@ -166,7 +166,7 @@ some of its content must not leak sideways. Non-negotiables:
 | Wave | What | Notes |
 |---|---|---|
 | **W1** | **Bench bring-up + decisions.** Flash Waveshare's sample, confirm display/mic/speaker, settle §4.1 transport, §4.3 toolchain, and get **OTA** working. | **Designed in §10** — the hardware arrived and the owner set the constraints. |
-| **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, `endpoint_url`/broker config defaulting to empty so the feature is simply absent when unset (the `sdr_url` pattern), Settings → Endpoints. | No new auth model. |
+| **W2** | **Protocol + device identity.** N-endpoint addressing on the shipped `device_key` model, broker config defaulting to empty so that half of the feature is absent when unset (the `sdr_url` pattern). **Note `endpoint_url` went the other way** — it defaults to the running service (`pysandbox`'s pattern), because gating the flasher behind a profile meant an `.env` edit on the host to enable a PWA-only feature; see §10.4b. | No new auth model. |
 | **W3** | **Display path.** Frame/scene protocol, renderers, notification cards. **GUI round 1 is drawn**: `../mocks/room-endpoint/device.html` — four shapes on one state model, awaiting the owner's pick. | See §8: the mock measured the panel and moved the goalposts. |
 | **W4** | **JPet on the endpoint.** One more `PetBroadcaster` subscriber + a sprite renderer. | The payoff. |
 | **W5** | **Voice out.** Kokoro → endpoint over the audio channel, with a `speak` action. | |
@@ -410,7 +410,7 @@ what makes a unit update.**
 ### 10.4b The box side, built (2026-09-19)
 
 The flash path exists, so a panel plugged into the box's USB port is now reachable from
-**Ops → Room endpoints** and from nowhere else — which is the point, since the owner has no
+**Endpoints** (its own launcher tile) and from nowhere else — which is the point, since the owner has no
 terminal and the debug console's `host.read` scope reports memory and processes, never
 device nodes.
 
@@ -469,8 +469,92 @@ them** — one bad image refuses the whole set, because a half-stored set is wor
 on a device with no cable attached to it. A flash with nothing stored syncs first, so the
 very first flash needs no separate action either.
 
-The manual upload survives as a fallback for a box that cannot reach GitHub, which is a
-real state for a LAN device and not worth leaving without an answer.
+**The manual upload was removed** (2026-09-19). It was kept as a fallback for a box that
+cannot reach GitHub — but a box in that state cannot update itself either, since
+`update-inner.sh` fetches this repo from the same place, so the fallback answered a
+situation in which nothing else works. A control nobody can reach is not a fallback; it is
+an invitation to a wrong turn on a screen where the wrong turn writes a bootloader.
+
+### 10.4c What the assembled unit showed (2026-09-19)
+
+A photograph of a panel in the hand, plugged into the box, settled three things no
+datasheet had:
+
+1. **It works out of the box.** The factory demo runs — Wi-Fi glyph, battery, clock, four
+   app icons, page dots — so the step-0 smoke test is passed on at least one unit, and a
+   dead screen after flashing is now unambiguous rather than a question.
+2. **The case rounds the display into a squircle.** The AMOLED is a 368×448 rectangle, but
+   the enclosure hides its corners: anything drawn there is invisible to whoever is holding
+   it. The PWA preview drew the full rectangle, which is wrong in the same family as the
+   CSS-`mm` size bug — it shows pixels that cannot be seen, and invites a design that loses
+   content on the desk. `pet/draw.ts` now clips to the case shape and leaves the corners
+   **transparent** rather than black: on an AMOLED black and off are identical, so a black
+   corner would say "this part of the display is dark" when the truth is "there is no
+   display here". Verified in a real browser by sampling the rendered canvas — all four
+   corners `alpha 0`, edges and centre opaque.
+3. **Portrait, with USB-C on the right.** Which the enclosure work will care about, and
+   which decides how a unit sits on a shelf.
+
+The corner radius is measured off the photograph rather than a datasheet, so
+`CASE_CORNER_FRACTION` is approximate and deliberately slightly generous: over-masking
+hides a corner that might exist, under-masking invites a design that loses content.
+
+### 10.4d First contact, and why the next step is blind (2026-09-19)
+
+A panel plugged into the running box appeared in the PWA on the first try — see §10.6.
+
+**What that does not prove, and the problem it creates.** This firmware draws nothing: no
+display, no touch, no audio, deliberately (§10.3). So a *successfully* flashed panel shows
+a **black screen**, and is visually indistinguishable from a bricked one. The bring-up goes
+blind at exactly the point where being blind stops being cheap.
+
+The evidence a flash worked is on the **box**, not on the panel. The firmware's first act
+after joining Wi-Fi is `GET /api/endpoint/firmware` carrying its own device token, so that
+single request proves the entire chain: Wi-Fi joined, the box's certificate validated, the
+token accepted, the manifest parsed. It lands in the api's logs, which the owner can read
+through the debug console without a terminal.
+
+**This argues for a serial monitor in the flasher next.** `deploy/endpoint` already owns the
+port and already streams a log to the PWA; reading the panel's own boot output over the same
+USB connection would turn a blind bring-up into a legible one, and it is the cheapest
+feature left in this wave. Until it exists, the manifest request is the only signal.
+
+### 10.4e Two bugs found before the first flash (2026-09-19)
+
+Both surfaced from the owner asking a plain question — *does this firmware connect to
+Wi-Fi, and can we test it?* — which is worth recording, because neither had a symptom that
+would have been diagnosable after the fact. Each produces a panel that joins Wi-Fi
+perfectly and is then silent forever.
+
+**1. `ca` was required by the firmware and conditional in the flasher.** `cfg.c` listed it
+as a mandatory NVS key; the api wrote it only when a Caddy root was readable. A box without
+a LAN site would therefore flash a panel that fails `cfg_load` on boot, logs *"no
+provisioning"* and stops — before touching the radio. `ca` is now optional.
+
+**2. The panel was told whatever address the owner's browser was on.** `_public_base()`
+returns `request.base_url`, so flashing from the PWA at a public hostname handed the panel
+that URL — **while also handing it the box's internal CA root**, which is the only thing
+the firmware trusted (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n`). Every handshake against a
+publicly-signed certificate would fail, forever, with no symptom: the panel joins Wi-Fi,
+fetches nothing, marks itself unhealthy and rolls back. On this box, reached at its public
+hostname, that was the likely outcome of the very first flash.
+
+The address and the certificate now travel together or not at all (`_panel_base`):
+
+- LAN address configured **and** its root readable → `https://jbrain.local/api` + that root
+  pinned. This is the intended path: a panel is on the same LAN, pinning one certificate
+  beats trusting ~150 public CAs, and it keeps the pet off the internet round trip.
+- otherwise → the owner's address + **no** root, validated against the public bundle the
+  firmware now carries.
+
+`JBRAIN_LAN_ADDR` already existed on the host for Caddy's local site but was only passed to
+the `proxy` service; the api now receives it too, which is what lets it answer "where should
+a panel look for me" with something better than "wherever you happened to be".
+
+Cost: the CA bundle grows the image from 894 K to 985 K, still 37% free in the factory slot.
+Firmware is **0.2.0**; three backend tests pin the pairing and were confirmed to fail
+against the shipped behaviour. Adding the bundle also needed `mbedtls` in the component's
+`REQUIRES` — the third defect in this wave that only compiling would find.
 
 ### 10.5 Three findings from the board in hand
 
@@ -498,11 +582,16 @@ the flasher.
 
 ### 10.6 Still open after this section
 
-- **Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged `/dev/ttyACM*`?**
-  Built that way (§10.4b) and asserted in `supervisor/tests/test_deploy_scripts.py`, but the
-  assertion is about the compose file, not about the kernel. Still proven on the box at
-  step 5 — and **Ops → Room endpoints → Rescan USB is the proof**: a panel that is plugged
-  in and does not appear there is this question failing.
+- ~~**Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged
+  `/dev/ttyACM*`?**~~ **ANSWERED YES on the box, 2026-09-19.** A panel plugged into the box
+  while the containers were already running appeared in the PWA as
+  `/dev/ttyACM0 — Espressif ESP32-S3 (native USB) (panel)`. So the cgroup grant admits a
+  hotplugged character device, the sysfs walk attributes it to vendor `303a`, and the whole
+  chain — kernel, container, api, phone — works on the first try. The host-side half was
+  confirmed independently through the debug console's USB scan: `303a:1001 Espressif USB
+  JTAG/serial debug unit`, `cdc_acm` bound. This was the largest unknown in W1 and it is
+  closed.
+
 - **mDNS from ESP-IDF.** `jbrain.local` needs the mDNS component and a `.local` resolver that
   works from the firmware; the fallback is the box's LAN IP in NVS, which costs a re-provision
   if the lease moves. A DHCP reservation is the cheap answer and needs the router, not the box.
