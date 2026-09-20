@@ -1,0 +1,7 @@
+dependencies:
+  idf: ">=5.5,<6.1"
+  # The AMOLED driver. Espressif's own component, and the one the VENDOR's example uses for
+  # BOTH board revisions — V1's SH8601 and V2's CO5300 take the same command set here.
+  espressif/esp_lcd_co5300:
+    version: "^2.1.0"
+    public: true

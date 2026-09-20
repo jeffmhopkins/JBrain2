@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "display.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
 #include "ota.h"
@@ -57,6 +58,14 @@ void app_main(void)
         ESP_LOGI(TAG, "psram: %u KB", (unsigned)(esp_psram_get_size() / 1024));
     } else {
         ESP_LOGE(TAG, "psram: ABSENT — the display cannot be driven from internal RAM");
+    }
+
+    /* Before the network on purpose: it is the slow, visible thing, and a unit that shows
+       something while it joins Wi-Fi is one whose owner can tell "working" from "dead". It
+       cannot fail fatally — see display.c on why an abort here would be the worst outcome
+       available rather than a safe one. */
+    if (!display_start()) {
+        ESP_LOGE(TAG, "display did not come up — continuing, the box is still reachable");
     }
 
     esp_err_t err = nvs_flash_init();
