@@ -39,7 +39,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
@@ -217,15 +217,17 @@ def _image(settings: Settings, name: str) -> bytes:
 
 @router.get("/firmware")
 async def firmware_manifest(
-    principal: PrincipalDep, request: Request, settings: SettingsDep
+    _principal: PanelDep, request: Request, settings: SettingsDep
 ) -> FirmwareOut:
     """What a panel should be running — the one route a flashed panel itself calls.
 
     Reaching this is the health signal the firmware's rollback gate turns on, so it is
     deliberately cheap and says nothing about this box beyond a version and a URL.
+
+    `PanelDep`, not `PrincipalDep`: the latter reads the owner's session cookie and nothing
+    else, so the `device_key` half of this route's contract was unreachable and every panel
+    poll 401'd. See its docstring — the kind check that used to sit here was dead code.
     """
-    if principal.kind not in ("owner", "device_key"):
-        raise HTTPException(status_code=403, detail="not permitted")
     version = _firmware_version(settings)
     if version is None:
         raise HTTPException(
@@ -239,15 +241,13 @@ async def firmware_manifest(
 
 
 @router.get("/firmware/bin")
-async def firmware_image(principal: PrincipalDep, settings: SettingsDep) -> Response:
+async def firmware_image(_principal: PanelDep, settings: SettingsDep) -> Response:
     """The app image itself: the URL the manifest hands a panel, and so the OTA download.
 
     This had no implementation before. The manifest advertised the path and nothing served
     it, so the first OTA any panel attempted would have 404'd — invisible until now only
     because no panel had ever got far enough to attempt one.
     """
-    if principal.kind not in ("owner", "device_key"):
-        raise HTTPException(status_code=403, detail="not permitted")
     return Response(
         content=_image(settings, APP_IMAGE),
         media_type="application/octet-stream",

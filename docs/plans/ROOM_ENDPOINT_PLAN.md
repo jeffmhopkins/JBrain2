@@ -451,6 +451,8 @@ it used to hold should stop working at that moment.
 in a child's bedroom can reach. It is owner-or-`device_key`, and returns a version and a URL
 and nothing else.
 
+**It was not actually reachable by a panel until 2026-09-20 (§10.4f).**
+
 **What still needs the owner: nothing but the tap.** The firmware is already on the box.
 
 This took three passes, each removing something the previous one had argued for.
@@ -496,6 +498,39 @@ Two things came out of the rewrite that the release path had been hiding:
   longer guards a hostile network — it guards a half-finished update or a stale `dist/`
   beside a newer `version.txt`, and a truncated image that flashes is still worse than one
   that refuses.
+
+#### 10.4f The first panel to boot found the door shut
+
+Within minutes of the first successful flash, the api log filled with
+`GET /api/endpoint/firmware → 401`.
+
+Both panel-facing routes were written against `PrincipalDep` and then checked
+`principal.kind in ("owner", "device_key")`. `PrincipalDep` resolves the owner's **session
+cookie** as a session token and reads no `Authorization` header at all, so a panel's bearer
+key never reached that check — **it was dead code guarding a door that was already shut**.
+The firmware had always sent the credential correctly (`ota.c`, and `firmware/README.md`
+documented the contract); the backend simply never implemented its half.
+
+Nothing caught it because nothing could: the tests exercised the manifest through an
+authenticated owner client, which takes the cookie branch and never touches the bearer path.
+A panel had to boot, join Wi-Fi and knock before the gap was observable — which is exactly
+what W1 exists to make possible, and the first thing it found.
+
+It matters more than a 401 usually does. Reaching that route is the panel's **health
+signal**, the thing the firmware's rollback gate waits on before marking an image good, and
+it is also the **OTA download path**. A panel that cannot reach it can never be updated
+again over the air — the single property this whole wave was built to guarantee.
+
+The fix is `PanelDep` (`api/deps.py`): owner cookie, or `Authorization: Bearer <device_key>`
+resolved through the same kind-filtered lookup the OwnTracks and MQTT paths use. Deliberately
+a **separate dependency** rather than teaching `current_principal` to read bearer tokens —
+that would hand a device key every cookie-gated route in the app, and a panel is a device on
+a child's wall. A test asserts the key opens the manifest and the image **and nothing else**,
+and the positive tests were confirmed to fail against the shipped code.
+
+The near-miss worth naming: the first version of those tests passed while the bug was still
+present, because the test client still carried the owner cookie. Clearing it is what made
+them honest.
 
 ### 10.4c What the assembled unit showed (2026-09-19)
 

@@ -123,6 +123,45 @@ def _bearer(authorization: str) -> str | None:
     return token.strip()
 
 
+async def current_panel_principal(
+    request: Request, repo: AuthRepoDep, settings: SettingsDep
+) -> PrincipalInfo:
+    """The OWNER by cookie, or a room-endpoint panel by `Authorization: Bearer <device_key>`.
+
+    Exists because the panel-facing firmware routes had no way to authenticate a panel at
+    all. They were written against `PrincipalDep` and then checked `principal.kind` for
+    `device_key` — but `current_principal` reads the session COOKIE and resolves it as a
+    session token, so a bearer key never got that far and the kind check was unreachable.
+    A panel on a bedroom wall 401'd on every poll, which is also its OTA path and the health
+    signal its rollback gate waits on. It shipped that way because nothing had yet booted far
+    enough to make the request.
+
+    A bearer key rather than Basic (that is the OwnTracks path) because an ESP32 setting one
+    header is simpler than one doing base64, and the token is the unit's own `device_key` on
+    the shipped substrate rather than a new credential kind.
+
+    Deliberately a SEPARATE dependency rather than widening `current_principal`: doing that
+    would hand a device key every cookie-gated route in the app. The device lookup here is
+    the same kind-filtered one the OwnTracks and MQTT paths use, so an owner or capability
+    key presented as a bearer token resolves to nothing (L4).
+    """
+    token = request.cookies.get(settings.session_cookie, "")
+    principal = await service.authenticate(repo, token) if token else None
+    if principal is not None and principal.kind == "owner":
+        return principal
+
+    key = _bearer(request.headers.get("Authorization", ""))
+    panel = await service.authenticate_device(repo, key) if key else None
+    if panel is None:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return panel
+
+
+# Owner cookie, or a panel's own device key as a bearer token. ONLY the two firmware
+# routes a flashed panel calls use this.
+PanelDep = Annotated[PrincipalInfo, Depends(current_panel_principal)]
+
+
 async def current_debug_principal(
     request: Request, repo: AuthRepoDep, settings: SettingsDep
 ) -> PrincipalInfo:

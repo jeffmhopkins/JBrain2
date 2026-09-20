@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jbrain.api import endpoint as endpoint_api
+from jbrain.auth import keys
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.main import create_app
@@ -114,6 +115,27 @@ def _stub_flash(
     assert resp.status_code == 200, resp.text
 
 
+PANEL_KEY = "panel-key-for-the-unit-under-test"
+
+
+def _provision_panel(c: TestClient) -> str:
+    """Give this box a panel identity and return the key that panel holds.
+
+    Registered straight on the auth repo, which is how `test_owntracks_api` and
+    `test_mqtt_api` do it: production keeps devices and principals in ONE table, and the
+    unit fakes split them, so a `provision_device` call against `FakeDeviceRepo` leaves
+    nothing for `authenticate_device` to find. The real flash path that mints this is
+    covered by `TestFlash`; what is under test here is whether the credential it hands
+    over opens the door it was minted for.
+    """
+    asyncio.run(
+        cast(FastAPI, c.app).state.auth_repo.create_principal(
+            "device_key", keys.hash_key(PANEL_KEY), "panel Elora"
+        )
+    )
+    return PANEL_KEY
+
+
 class TestPorts:
     def test_a_blanked_url_says_which_setting_rather_than_failing(self) -> None:
         """The flasher is stock stack, so an empty URL means someone deliberately blanked
@@ -188,6 +210,84 @@ class TestManifest:
         resp = c.get("/api/endpoint/firmware/bin")
         assert resp.status_code == 200, resp.text
         assert resp.content == (fw / "dist" / APP_IMAGE).read_bytes()
+
+
+class TestAPanelCanActuallyAuthenticate:
+    """The one thing a panel on a bedroom wall does, and it 401'd on every attempt.
+
+    The two firmware routes were written against `PrincipalDep` and then checked
+    `principal.kind` for `device_key`. `PrincipalDep` reads the owner SESSION COOKIE, so a
+    bearer key never reached that check — it was dead code guarding a door that was already
+    shut. Nothing noticed because no panel had booted far enough to knock, and reaching this
+    route is both the panel's OTA path and the health signal its rollback gate waits on.
+
+    These tests are written against the credential a real panel holds: its own `device_key`,
+    presented exactly the way `firmware/main/ota.c` presents it.
+    """
+
+    def test_a_panel_reaches_the_manifest_with_its_own_device_key(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()  # a panel has no owner session; only its own key
+
+        resp = c.get("/api/endpoint/firmware", headers={"Authorization": f"Bearer {key}"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["version"] == VERSION
+
+    def test_a_panel_can_download_the_image_the_manifest_points_at(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """The OTA itself. A manifest it can read pointing at an image it cannot is no
+        better than a manifest it cannot read."""
+        c, fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.get("/api/endpoint/firmware/bin", headers={"Authorization": f"Bearer {key}"})
+        assert resp.status_code == 200, resp.text
+        assert resp.content == (fw / "dist" / APP_IMAGE).read_bytes()
+
+    def test_no_credential_is_still_refused(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        c.cookies.clear()
+        assert c.get("/api/endpoint/firmware").status_code == 401
+        assert c.get("/api/endpoint/firmware/bin").status_code == 401
+
+    def test_a_garbage_bearer_token_is_refused(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        c.cookies.clear()
+        resp = c.get("/api/endpoint/firmware", headers={"Authorization": "Bearer not-a-real-key"})
+        assert resp.status_code == 401
+
+    def test_a_panel_key_opens_nothing_else(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """The reason this is its own dependency rather than a widening of the owner one.
+
+        Widening `current_principal` to read bearer tokens would have handed a device key
+        every cookie-gated route in the app. A panel is a device in a child's bedroom; the
+        blast radius of one being lifted off a wall has to stay at "it can ask what firmware
+        to run"."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        auth = {"Authorization": f"Bearer {key}"}
+
+        assert c.get("/api/endpoint/ports", headers=auth).status_code == 401
+        assert (
+            c.post(
+                "/api/endpoint/flash",
+                headers=auth,
+                json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
+            ).status_code
+            == 401
+        )
 
 
 class TestPanelAddress:
