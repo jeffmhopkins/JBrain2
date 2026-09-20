@@ -734,6 +734,37 @@ Verified viable before building: `firmware/sdkconfig` carries
 `jbrain.local` over mDNS. Without that, pointing a panel at the LAN name would have been
 worse than the hairpin it fixes.
 
+#### 10.4k Flashing without a phone, and the secret that costs (2026-09-20)
+
+The over-the-air loop was proven twice — once retroactively, once **watched**: the box
+served 0.2.2, the panel fetched the manifest at 16:37:13, downloaded 985,440 bytes at
+16:37:15, and checked in from `ota_1` at 16:37:29. Slot AND version moved together, which a
+re-read of the same image cannot do.
+
+That closes updates. It does not close **recovery**: a panel that stops working is fixed by
+a re-flash, and a re-flash needed the owner at the PWA with the Wi-Fi password retyped —
+the errand CLAUDE.md #10 exists to remove, on the one surface where it had quietly come
+back.
+
+So `POST /api/debug/endpoint/flash`, sharing `endpoint.build_flash` with the PWA's route.
+One assembly for both, because a second copy would be a second place to forget the CA
+pairing rule, and that failure mode is a panel that joins Wi-Fi perfectly and is then
+silent forever.
+
+**The cost, stated plainly: this is the first secret this surface keeps.** A flash needs the
+Wi-Fi password, and nothing else here is stored — the device token is minted per request,
+the CA is read per request. So the network is written to `app.settings` (owner-only RLS),
+and **only when the owner ticks the box that says so**. Starting to store someone's Wi-Fi
+password should be something they did, not something that began happening.
+
+Two rules follow from where the caller is:
+
+- **The password never comes from the request.** `PanelFlashIn` has nowhere to put one,
+  because a password passed over the debug surface would live in a transcript forever. A
+  box with no remembered network refuses and names the one action that fixes it.
+- **Two panels visible refuses to guess.** A flash rotates the unit's identity; doing that
+  to the wrong twin's panel by inference is worse than doing nothing.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

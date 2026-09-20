@@ -2614,6 +2614,8 @@ export interface FlashRequest {
   password: string;
   name?: string;
   erase?: boolean;
+  /** Keep this network on the box so a panel can be re-flashed without a phone. */
+  remember?: boolean;
 }
 
 export const api = {

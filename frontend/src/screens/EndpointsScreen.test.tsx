@@ -128,6 +128,34 @@ describe("EndpointsScreen", () => {
     expect(await screen.findByText(/Ops → Update/)).toBeTruthy();
   });
 
+  it("offers to remember the network, so a re-flash needs no phone", async () => {
+    // A panel ends up on a bedroom wall; when one stops working the fix is a re-flash, and
+    // the owner has no terminal. The box keeping the password is what makes that possible
+    // remotely — so it is offered explicitly rather than done quietly.
+    fetchMock.mockImplementation(mock([PANEL]));
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByText(/ESP32-S3/);
+    const box = screen.getByRole("checkbox", {
+      name: /Remember this network/,
+    }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+  });
+
+  it("sends the remember choice with the flash", async () => {
+    fetchMock.mockImplementation(mock([PANEL]));
+    render(<EndpointsScreen onClose={vi.fn()} />);
+    await screen.findByText(/ESP32-S3/);
+    fireEvent.change(screen.getByLabelText(/Network name/), { target: { value: "n" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Remember this network/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Flash panel" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/endpoint/flash"));
+      expect(call).toBeTruthy();
+      expect(JSON.parse(String((call?.[1] as RequestInit)?.body)).remember).toBe(false);
+    });
+  });
+
   it("enables the flash once a port and a network are given", async () => {
     fetchMock.mockImplementation(mock([PANEL]));
     render(<EndpointsScreen onClose={vi.fn()} />);

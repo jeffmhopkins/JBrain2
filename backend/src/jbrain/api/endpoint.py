@@ -44,7 +44,9 @@ from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
+from jbrain.db.session import SessionContext
 from jbrain.devices import service as devices
+from jbrain.settings_store import SqlSettingsStore
 
 log = structlog.get_logger()
 
@@ -71,6 +73,28 @@ ARTIFACT_IMAGES = {
 }
 
 SIDECAR_TIMEOUT_S = 600.0
+
+# The network a panel is put on, remembered so a re-flash does not need someone standing at
+# the PWA with the password. THIS IS A SECRET AT REST and the only one this surface keeps —
+# everything else here (the device token, the CA) is minted or read per request. It lives in
+# `app.settings`, owner-only RLS, and it is written ONLY when the owner ticks the box that
+# says so. The reason it is worth having: a panel on a bedroom wall that stops working is
+# recovered by re-flashing it, and CLAUDE.md #10 means that must not require a phone and a
+# retyped password (ROOM_ENDPOINT_PLAN.md §10.4k).
+WIFI_KEY = "endpoint_wifi"
+
+
+def _store(request: Request) -> SqlSettingsStore:
+    return SqlSettingsStore(request.app.state.session_maker)
+
+
+async def remembered_wifi(request: Request, ctx: SessionContext) -> tuple[str, str]:
+    """The stored network, or ("", "") when the owner has never asked this box to keep one."""
+    row = await _store(request).get(ctx, WIFI_KEY)
+    if not isinstance(row, dict):
+        return "", ""
+    return str(row.get("ssid") or ""), str(row.get("password") or "")
+
 
 # Caddy's internal-CA root, as the read-only `caddy_data` mount exposes it. A panel needs
 # it to validate https://jbrain.local, and reading it here is what stops the owner needing
@@ -401,6 +425,66 @@ class FlashIn(BaseModel):
     # a serial port that changes between plugs.
     name: str = ""
     erase: bool = False
+    # Keep this network on the box so a later re-flash needs no phone and no retyped
+    # password. Defaults OFF: it is the one secret this surface stores, and starting to
+    # store it should be something the owner did rather than something that happened.
+    remember: bool = False
+
+
+async def build_flash(
+    request: Request,
+    settings: Settings,
+    device_repo: Any,
+    ctx: SessionContext,
+    *,
+    port: str,
+    ssid: str,
+    password: str,
+    name: str,
+    erase: bool,
+) -> dict[str, Any]:
+    """Everything a panel needs, assembled: the images, and the config that makes it a unit.
+
+    Shared by the owner's PWA flash and the debug console's, so the two cannot drift. That
+    matters more than the duplication it saves: a second copy of this would be a second
+    place to forget the CA pairing rule below, and the failure mode there is a panel that
+    joins Wi-Fi perfectly and is then silent forever.
+    """
+    images = [
+        {"offset": offset, "b64": base64.b64encode(_image(settings, iname)).decode()}
+        for iname, offset in sorted(ARTIFACT_IMAGES.items(), key=lambda kv: int(kv[1], 16))
+    ]
+
+    # A fresh device identity per flash, on the shipped `device_key` substrate rather than
+    # a new auth model (ROOM_ENDPOINT_PLAN.md §3). The plaintext key exists only inside
+    # this request: it goes into NVS and is never stored here, which is the same contract
+    # the owner's own key rotation has. Re-flashing a panel therefore issues a NEW
+    # identity — correct, because a re-flash is how a unit is handed over or recovered,
+    # and the old key should stop working at that moment.
+    label = f"panel {name}".strip() if name else "room endpoint panel"
+    provisioned = await devices.provision_device(device_repo, ctx, label)
+
+    api_base, ca = _panel_base(request, settings)
+    nvs = {
+        "ssid": ssid,
+        "pass": password,
+        "api": api_base,
+        "token": provisioned.key,
+        "name": name,
+    }
+    # Only when it is the right root for that address. An internal root beside a public
+    # URL is worse than no root: it fails every handshake and looks like a network fault.
+    if ca:
+        nvs["ca"] = ca
+
+    return {
+        "port": port,
+        "images": images,
+        "nvs": nvs,
+        "nvs_offset": NVS_OFFSET,
+        "nvs_size": NVS_SIZE,
+        "erase": erase,
+    }
 
 
 @router.post("/flash")
@@ -417,44 +501,25 @@ async def flash_panel(
     watching a PWA has no other signal that anything is happening.
     """
     base = _sidecar(settings)
+    ctx = ctx_for(owner)
 
-    # In flash order. Read fresh each time rather than cached, so an Ops -> Update that
-    # lands a new firmware is picked up by the very next flash with nothing to invalidate.
-    images = [
-        {"offset": offset, "b64": base64.b64encode(_image(settings, name)).decode()}
-        for name, offset in sorted(ARTIFACT_IMAGES.items(), key=lambda kv: int(kv[1], 16))
-    ]
+    if body.remember:
+        # Written BEFORE the flash, deliberately: a flash that fails half way still leaves
+        # the owner able to retry from the debug console without their phone, which is the
+        # situation this exists for.
+        await _store(request).upsert(ctx, WIFI_KEY, {"ssid": body.ssid, "password": body.password})
 
-    # A fresh device identity per flash, on the shipped `device_key` substrate rather than
-    # a new auth model (ROOM_ENDPOINT_PLAN.md §3). The plaintext key exists only inside
-    # this request: it goes into NVS and is never stored here, which is the same contract
-    # the owner's own key rotation has. Re-flashing a panel therefore issues a NEW
-    # identity — correct, because a re-flash is how a unit is handed over or recovered,
-    # and the old key should stop working at that moment.
-    label = f"panel {body.name}".strip() if body.name else "room endpoint panel"
-    provisioned = await devices.provision_device(device_repo, ctx_for(owner), label)
-
-    api_base, ca = _panel_base(request, settings)
-    nvs = {
-        "ssid": body.ssid,
-        "pass": body.password,
-        "api": api_base,
-        "token": provisioned.key,
-        "name": body.name,
-    }
-    # Only when it is the right root for that address. An internal root beside a public
-    # URL is worse than no root: it fails every handshake and looks like a network fault.
-    if ca:
-        nvs["ca"] = ca
-
-    payload: dict[str, Any] = {
-        "port": body.port,
-        "images": images,
-        "nvs": nvs,
-        "nvs_offset": NVS_OFFSET,
-        "nvs_size": NVS_SIZE,
-        "erase": body.erase,
-    }
+    payload = await build_flash(
+        request,
+        settings,
+        device_repo,
+        ctx,
+        port=body.port,
+        ssid=body.ssid,
+        password=body.password,
+        name=body.name,
+        erase=body.erase,
+    )
 
     async def stream() -> AsyncIterator[bytes]:
         async with (
