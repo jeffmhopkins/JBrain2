@@ -13,9 +13,17 @@ Both units go to the girls' rooms, so there is no permanent bench unit and no ca
 device lives. That makes recovery the product rather than a convenience, and it decides what is
 in this image and what is deliberately left out.
 
-Not here, on purpose: display, touch, audio, and **PSRAM**. A PSRAM misconfiguration is exactly
-the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver. Those
-arrive over the air, onto a unit that has already proved it can take an update.
+Not here, on purpose: display, touch and audio. A misconfiguration in any of them is the class
+of fault that ends in a boot loop, and a boot loop ends with a screwdriver. They arrive over
+the air, onto a unit that has already proved it can take an update.
+
+**PSRAM arrived that way in 0.2.3**, which is the first time that sentence was cashed rather
+than written. Two things made it safe to try: only the app image changes (PSRAM is brought up
+by the app, not the bootloader, so an OTA can carry it and a rollback lands on the same
+bootloader), and `CONFIG_SPIRAM_IGNORE_NOTFOUND` degrades a wrong mode to "came up without
+PSRAM" instead of panicking in early boot. That second one is also why the boot log reports
+the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
+marks itself good while being 8 MB short of what the display needs.
 
 ## The two things that make "cable once" true
 

@@ -27,6 +27,25 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 # panel that had nothing to say.
 CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
+# PSRAM: 8 MB of it, Octal, on the ESP32-S3R8 this board carries. Deliberately absent from
+# 0.2.x until a unit had proved it could take an OTA, because a PSRAM misconfiguration is the
+# class of fault that ends in a boot loop and a boot loop ends with a screwdriver
+# (firmware/README.md). It arrives now, over the air, onto a panel that has taken two.
+#
+# It is the gate for everything visual rather than a nice-to-have: one RGB565 framebuffer at
+# 368x448 is 322 KB and this chip has ~332 KB of internal RAM free at boot, with Wi-Fi and
+# TLS still to feed. The display cannot exist without this line.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# DEGRADE, do not abort. If the mode is wrong — Quad silicon behind an Octal config, say —
+# the default is to panic in early boot, which is a boot loop on a device with no cable. This
+# turns that into "came up without PSRAM", which the rollback gate does NOT catch (the panel
+# still reaches the box and marks itself good) — so the boot log reports the size explicitly
+# and that reading, not "it booted", is what says this worked.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
