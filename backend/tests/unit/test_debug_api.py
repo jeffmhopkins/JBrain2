@@ -1706,3 +1706,99 @@ def test_auto_restore_is_settable_from_the_debug_surface(
 def test_the_auto_restore_route_needs_the_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.put("/api/debug/llm/auto-restore", params={"enabled": True}).status_code == 401
+
+
+class TestPanelConsole:
+    """A panel's own boot log, over a debug token.
+
+    The PWA's live console is owner-only, so before this route existed the owner was the
+    only one who could read what a panel said — and diagnosing a failed OTA meant asking
+    them to open a screen, press a button and paste lines back. That is the shape of
+    errand CLAUDE.md #10 exists to stop, and it cost a real debugging session.
+    """
+
+    def test_it_returns_the_lines_a_panel_printed(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, key = debug_client
+        asked: dict[str, Any] = {}
+
+        class Streamed:
+            async def __aenter__(self) -> "Streamed":
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+            async def aiter_bytes(self) -> Any:
+                yield b"-- restarting the panel --\n"
+                yield b"I (612) jbrain: update offered: 0.2.0 -> 0.2.1\n"
+                yield b"E (900) jbrain: install failed: ESP_ERR_NO_MEM\n"
+
+        def fake_stream(_self: Any, _m: str, _u: str, params: dict[str, str]) -> Streamed:
+            asked.update(params)
+            return Streamed()
+
+        monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
+        resp = client.get(
+            "/api/debug/endpoint/console",
+            params={"port": "/dev/ttyACM0", "seconds": "5"},
+            headers=_auth(key),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ok"] is True
+        assert any("install failed" in line for line in body["lines"])
+        # Reset defaults ON here and off on the PWA route: a console opened over a debug
+        # token is being read by something debugging, and a panel only polls every 15
+        # minutes.
+        assert asked["reset"] == "1"
+
+    def test_a_flasher_that_cannot_be_reached_is_an_answer_not_a_500(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The owner is holding a board. "I could not look" is information; a traceback
+        with a 500 is not."""
+        client, key = debug_client
+
+        def boom(_self: Any, _m: str, _u: str, params: dict[str, str]) -> Any:
+            raise httpx.ConnectError("no route")
+
+        monkeypatch.setattr(httpx.AsyncClient, "stream", boom)
+        resp = client.get(
+            "/api/debug/endpoint/console", params={"port": "/dev/ttyACM0"}, headers=_auth(key)
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+        assert "flasher" in resp.json()["detail"]
+
+    def test_it_refuses_to_guess_between_two_panels(
+        self, debug_client: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both twins' panels on one tray is the expected steady state. Picking one is how
+        a console attaches to the wrong child's unit and resets it."""
+        client, key = debug_client
+
+        async def fake_get(_self: Any, url: str, **_: Any) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "ports": [
+                        {"device": "/dev/ttyACM0", "label": "a", "is_espressif": True},
+                        {"device": "/dev/ttyACM1", "label": "b", "is_espressif": True},
+                    ]
+                },
+                request=httpx.Request("GET", url),
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+        resp = client.get("/api/debug/endpoint/console", headers=_auth(key))
+        assert resp.json()["ok"] is False
+        assert "?port=" in resp.json()["detail"]
+
+    def test_the_scope_is_advertised(self, debug_client: tuple[TestClient, str]) -> None:
+        """`whoami` is what an assistant reads to decide what it may attempt; a capability
+        missing from it reads as one it may not use."""
+        client, key = debug_client
+        scopes = client.get("/api/debug/whoami", headers=_auth(key)).json()["scopes"]
+        assert "endpoint.console" in scopes
