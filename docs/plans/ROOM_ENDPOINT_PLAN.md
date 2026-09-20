@@ -826,6 +826,37 @@ byte-for-byte CI check dies quietly. `firmware/dependencies.lock` is committed a
 component by version *and content hash*; `managed_components/` is ignored. Verified by
 building the same tree at two different paths for identical SHA-256s, as with 0.2.1.
 
+#### 10.4n The panel drew, and then went dark (2026-09-20)
+
+0.2.4 worked: eight colour bars, correct order, and the V2 gap offset right — the runtime
+revision probe earned itself immediately, because **this board is V2 (CO5300/CST820)** and
+§1's hardware table says V1. That table records what was *ordered*; the units arrived later.
+Hardcoding V1 from it would have produced a 16-pixel column shift — an image that looks
+almost right, which is the worst kind of thing to chase.
+
+Then the owner looked at it and the screen was black. A power cycle brought the bars back.
+
+**The firmware was never in trouble.** `endpoint.manifest_served` at 19:35:02, 19:35:21 (the
+OTA reboot) and 19:50:23 — a 15-minute cadence, exactly on schedule. No crash, no reboot
+loop. The display went dark while everything else kept working, which rules out the whole
+family of explanations worth reaching for first.
+
+Two candidates fit, and they need opposite fixes:
+
+- **The controller dropped display-on.** We draw once and never touch it again; if the panel
+  loses that state, SPI is still alive and a repaint brings it back.
+- **The AXP2101 cut the display rail.** The board has a PMU this firmware has never spoken
+  to, brightness is at `0x51 = 0xFF` (full), and a full-brightness AMOLED plus Wi-Fi TX
+  spikes is exactly the load a PMU protects itself against. If the rail is off, no amount of
+  SPI helps.
+
+0.2.5 is the experiment rather than a fix, and deliberately does **not** touch brightness —
+lowering it would confound the two. It repaints every ten seconds, **alternating** the bar
+order, because that makes the answer readable from across a desk: flipping means the panel is
+being driven, frozen means the writes are landing nowhere, dark means neither. The log line
+says only that the bus accepted the write, which is a different question from whether
+anything appeared, and it says so.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
