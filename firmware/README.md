@@ -28,15 +28,21 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel will not hold a still image
+## Does the panel hold a still image? Unknown — the instrument was faulty
 
-Drawn once, it goes dark within minutes; written to every ten seconds, it stays lit. The
-power rail is not the cause — that was tested and eliminated (ROOM_ENDPOINT_PLAN.md §10.4o).
+Earlier versions of this file stated, confidently and twice over, that the panel goes dark
+unless it is continually written to (and then: unless consecutive frames differ). **Both
+claims are in doubt.**
 
-**So something must keep writing to it, always.** A low frame rate is fine; zero is not. This
-is free for an animated face and a trap for everything that stops moving — quiet hours, a
-sleeping pet, a notification left up. Each of those is a still screen, and a still screen
-here reads as a dead device.
+Every observation behind them was made while reading the panel's console, and
+`deploy/endpoint/monitor.py` could leave the chip in the ROM bootloader with the application
+never started — RTS is reset and DTR is the boot pin on the S3's USB Serial/JTAG, and the tty
+close dropped both. That produces a black screen that persists until the cable is pulled,
+which is what was being attributed to the display (ROOM_ENDPOINT_PLAN.md §10.4s).
+
+The tool now leaves the panel pulsed back into its application. Until a panel has been watched
+for a long stretch with **nobody touching the console**, treat "the panel cannot hold a still
+image" as unproven, and do not design around it.
 
 ## The two things that make "cable once" true
 
@@ -113,9 +119,14 @@ So changing the firmware is three commits' worth of one act:
 
 ```sh
 # 1. edit main/, 2. bump version.txt, 3. rebuild and commit dist/
-. ~/esp-idf/export.sh && (cd firmware && idf.py build)
+. ~/esp-idf/export.sh && (cd firmware && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh
 ```
+
+**`fullclean` is not belt-and-braces.** An incremental build can carry a component that was
+added to `main/CMakeLists.txt`'s `REQUIRES` and then removed again — the link order keeps the
+ghost, the binary differs from what the committed source produces, and the only thing that
+says so is CI failing this check. That cost a cycle on 0.2.8.
 
 `firmware.yml` rebuilds on CI and **fails the PR if `dist/` is not byte-for-byte what the
 source produces** — `CONFIG_APP_REPRODUCIBLE_BUILD=y` is what makes that check possible at

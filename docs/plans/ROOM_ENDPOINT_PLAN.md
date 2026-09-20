@@ -966,6 +966,50 @@ silent"* and the face carries on.
 `bootloader.bin` and `partition-table.bin` are byte-identical to 0.2.6, so this is a pure app
 OTA and a rollback lands on the same bootloader.
 
+#### 10.4s The black screen was probably the debug console, not the panel (2026-09-20)
+
+0.2.7 reached the panel, the beep worked, and the robot went black. The first explanation
+written here was that §10.4o had misread its own experiment — that the variable was *changed*
+content rather than writes, since 0.2.7 redrew identical frames every 500 ms and a tap revived
+it. A bob was built and a rule was rewritten.
+
+**Then the owner supplied the observation that beats it:** unplugging and replugging brings
+the robot straight back, and the blackouts line up with *me reading the panel's console*.
+
+That has a mechanism, and it is in our own tooling. `deploy/endpoint/monitor.py` is careful on
+the way in — DTR and RTS are set false **before** `open()`, precisely so listening does not
+restart anything — and then hands `close()` to the Linux tty layer, which drops both lines. On
+the S3's USB Serial/JTAG those lines are not bookkeeping: **RTS is reset and DTR is the boot
+pin.** The wrong transition on the way out leaves the chip in the ROM bootloader with the
+application never started. From the room that is a black screen that stays black until someone
+pulls the cable — which is precisely the reported symptom, including the part my hypothesis
+could not explain at all: that it *came back by itself* (a later read resetting it into the
+app) and that a power cycle fixes it.
+
+**This also puts §10.4n and §10.4o in doubt**, because the console tool has existed since
+#1439 and every "the panel went dark" observation since has been made in a session where I was
+reading it. The 0.2.5 bars appearing to flip may mean only that the panel was reset into a
+working app between glances. **The "panel will not hold a still image" finding is suspect and
+is no longer being built on.**
+
+Three things follow:
+
+- **The bob was pulled from 0.2.8 before merge.** Not because it is bad — an animated pet wants
+  it, and W4 will have something like it — but because shipping it now would destroy the
+  experiment. If the panel then stayed lit, the bob would get the credit that belongs to *not
+  being poked*. One change at a time cuts both ways: it also means not adding one.
+- **The tool is fixed** so a watch cannot leave a panel dead: it now ends by pulsing the chip
+  back into its application. That costs an unasked-for reboot, which this module's own
+  docstring calls a surprise worth avoiding, and it is still the right trade against a panel
+  that is dark until someone finds it.
+- **The experiment is to leave it alone.** A static face, nobody reading the console, and see
+  whether it stays lit. Costs nothing but patience, and it is the only clean read available.
+
+The general lesson is the expensive one: **the instrument was changing what it measured.** Every
+observation of the display in this session was taken through a tool that can halt the CPU, and
+none of the reasoning accounted for it. A diagnosis built on such observations is worth less
+than the confidence it was delivered with — and it was delivered with a great deal.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
