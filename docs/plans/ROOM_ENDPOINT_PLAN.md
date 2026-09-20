@@ -612,6 +612,46 @@ that port to let go and waits for it, before the response status is committed so
 is still a status code. Getting this backwards would mean the owner pressing Flash and
 being refused by their own debugging tool.
 
+#### 10.4h Why the first OTA never happened: one scheme (2026-09-20)
+
+The instrument added in §10.4g answered it on its first firing:
+
+```json
+{"version": "0.2.1", "url": "http://hopkinsbrain.com/api/endpoint/firmware/bin",
+ "principal": "device_key", "host": "hopkinsbrain.com"}
+```
+
+**`http://`.** `esp_https_ota` refuses a plain-HTTP URL outright, so every over-the-air
+update failed the instant it was attempted — on the panel, where nothing on this box
+could see it. From here it was a 200 and no download, forever.
+
+The cause is honest and useless: `request.base_url` reports the scheme of the hop that
+reached uvicorn. Caddy runs in **Cloudflare Tunnel mode**, where its own site address is
+`http://<domain>` and TLS terminates at the edge, and uvicorn is not told to trust
+`X-Forwarded-Proto` from a container address. So the framework told the truth about the
+internal hop and the wrong thing about the world.
+
+**The same value is written into a panel's NVS at flash time** as the address it calls
+home on, so the consequence is not only a failed update: Elora's panel had been polling
+the box over plain HTTP with its bearer token on the wire. Treat that key as exposed —
+a re-flash issues a new `device_key` and revokes the old one, which is exactly the
+remediation and exactly what re-flashing already did.
+
+`_public_base` now honours a declared `X-Forwarded-Proto` and otherwise returns https,
+which is not a guess: every way into this box is TLS, and there is no supported
+deployment where handing a panel `http://` is right.
+
+**The test that existed asserted the url ended in `/endpoint/firmware/bin`** — true of the
+broken value. A suffix is not an address, and four tests now pin the scheme on both halves
+(the manifest, and what a flash writes into NVS), each confirmed to fail against what
+shipped.
+
+One thing this does NOT fix: the panel is reaching the box at the **public** hostname
+rather than `https://jbrain.local`, so its traffic leaves the LAN and comes back through
+the tunnel. `_panel_base` exists to prevent precisely that and did not apply, which means
+either `JBRAIN_LAN_ADDR` is unset on this box or Caddy's internal root is not readable at
+the mount. Worth its own look; it costs latency rather than correctness.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
