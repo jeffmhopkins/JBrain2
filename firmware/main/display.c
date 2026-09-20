@@ -94,16 +94,51 @@ static bool is_v2_board(void)
     return v2;
 }
 
-static void fill_stripe(void)
+static void fill_stripe(bool reversed)
 {
     static const uint16_t bars[8] = {
         0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000,
     };
     for (int y = 0; y < STRIPE_ROWS; y++) {
         for (int x = 0; x < LCD_H_RES; x++) {
-            stripe[y * LCD_H_RES + x] = SPI_SWAP_DATA_TX(bars[(x * 8) / LCD_H_RES], LCD_BPP);
+            const int i = (x * 8) / LCD_H_RES;
+            stripe[y * LCD_H_RES + x] =
+                SPI_SWAP_DATA_TX(bars[reversed ? 7 - i : i], LCD_BPP);
         }
     }
+}
+
+/* Kept so a repaint needs no second bring-up. */
+static esp_lcd_panel_handle_t s_panel;
+static bool s_swap;
+
+static bool paint(void)
+{
+    if (s_panel == NULL) return false;
+    fill_stripe(s_swap);
+    for (int y = 0; y < LCD_V_RES; y += STRIPE_ROWS) {
+        const esp_err_t err =
+            esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_H_RES, y + STRIPE_ROWS, stripe);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "draw at y=%d: %s", y, esp_err_to_name(err));
+            return false;
+        }
+    }
+    return true;
+}
+
+bool display_repaint(void)
+{
+    s_swap = !s_swap;
+    const bool ok = paint();
+    /* SAYS ONLY THAT THE BUS ACCEPTED IT. The panel went dark once while the firmware kept
+       running and polling on schedule, and the two candidates need opposite fixes: the
+       controller dropping display-on (a repaint revives it) versus the AXP2101 cutting the
+       display rail (a repaint writes happily into the dark). This line distinguishes them
+       only in combination with someone looking at the screen — which is the honest state of
+       this question until the PMU is read. */
+    ESP_LOGI(TAG, "repaint %s (%s)", ok ? "ok" : "FAILED", s_swap ? "inverted" : "normal");
+    return ok;
 }
 
 bool display_start(void)
@@ -154,14 +189,8 @@ bool display_start(void)
         return false;
     }
 
-    fill_stripe();
-    for (int y = 0; y < LCD_V_RES; y += STRIPE_ROWS) {
-        err = esp_lcd_panel_draw_bitmap(panel, 0, y, LCD_H_RES, y + STRIPE_ROWS, stripe);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "draw at y=%d: %s", y, esp_err_to_name(err));
-            return false;
-        }
-    }
+    s_panel = panel;
+    if (!paint()) return false;
     ESP_LOGI(TAG, "colour bars drawn, %dx%d", LCD_H_RES, LCD_V_RES);
     return true;
 }
