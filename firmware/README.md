@@ -16,7 +16,7 @@ in this image and what is deliberately left out.
 Kept out of the first image on purpose: display, touch and audio. A misconfiguration in any of
 them is the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver.
 They arrive over the air, onto a unit that has already proved it can take an update — and they
-have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7.
+have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7, a moving idle in 0.2.8.
 Every one of those carried a byte-identical `bootloader.bin`, so each was a pure app OTA whose
 rollback lands on the same bootloader. **Check that before shipping a release**, not after.
 
@@ -28,15 +28,19 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel will not hold a still image
+## The panel will not hold an UNCHANGING image
 
-Drawn once, it goes dark within minutes; written to every ten seconds, it stays lit. The
-power rail is not the cause — that was tested and eliminated (ROOM_ENDPOINT_PLAN.md §10.4o).
+Drawn once it goes dark within minutes. The power rail is not the cause — that was tested and
+eliminated (ROOM_ENDPOINT_PLAN.md §10.4o).
 
-**So something must keep writing to it, always.** A low frame rate is fine; zero is not. This
-is free for an animated face and a trap for everything that stops moving — quiet hours, a
-sleeping pet, a notification left up. Each of those is a still screen, and a still screen
-here reads as a dead device.
+**Redrawing is not enough: consecutive frames must DIFFER.** 0.2.7 redrew an identical frame
+every 500 ms and still went black, while a tap — whose only distinction is that it changes the
+colour — revived it instantly (§10.4s). An earlier version of this file said "something must
+keep writing", which was the wrong reading of the same evidence and cost a release.
+
+This is free for an animated face and a trap for everything that stops moving — quiet hours,
+a sleeping pet, a notification left up. Each of those is a fixed image, and a fixed image here
+reads as a dead device. Quiet hours dims with a `0x51` write; it must never freeze the frame.
 
 ## The two things that make "cable once" true
 

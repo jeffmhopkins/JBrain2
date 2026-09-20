@@ -966,6 +966,52 @@ silent"* and the face carries on.
 `bootloader.bin` and `partition-table.bin` are byte-identical to 0.2.6, so this is a pure app
 OTA and a rollback lands on the same bootloader.
 
+#### 10.4s §10.4o was wrong: the panel needs CHANGE, not writes (2026-09-20)
+
+0.2.7 reached the panel, the beep worked, and **the robot went black** — while the render
+loop was redrawing every 500 ms exactly as §10.4o demanded. Tapping brought it straight back;
+left alone it went dark again.
+
+**§10.4o drew the wrong conclusion from its own experiment.** What 0.2.5 did every ten
+seconds was not merely *write* — it wrote a **different** frame, alternating the bar order,
+and that was deliberately chosen so the result would be readable from across a desk. The two
+properties were fused in that one experiment, and the rule was written down as the weaker of
+them: *"something must keep writing to the panel."* 0.2.7 is the control that separates them.
+Identical frames at 500 ms is a far higher write rate than 0.2.5's and it went dark anyway;
+the only thing a tap changes is the **content**.
+
+So the rule, corrected: **consecutive frames must differ.** Write rate is not the variable and
+never was.
+
+What makes this the right reading rather than another guess is that the tap is a clean
+control: a tap-triggered redraw and a floor-triggered redraw run the *same* `face_draw` and
+the *same* `draw_bitmap`, on the same task, microseconds apart in the code. The single
+difference between the one that revives the panel and the one that does not is whether the
+pixels changed.
+
+The mechanism inside the CO5300 is still not pinned, and still deliberately: the product is an
+animated face, and every fix for every candidate mechanism is "keep changing the picture".
+
+**The idle is therefore a slow bob** — the whole figure moves ±5 px on a four-second cycle —
+and it is load-bearing, not decoration. `face_draw` grew a `bob` parameter for it.
+
+**A sine was the obvious shape and the wrong one.** Rounded to whole pixels it repeats a value
+at each turning point, which hands the panel two identical consecutive frames — precisely the
+thing being prevented, reintroduced by the fix for it. The bob is an integer triangle instead,
+one pixel per frame, so consecutive frames are unequal *by construction* rather than by
+argument. That was checked before it was flashed: twenty steps, no repeat, clean wrap.
+
+The host harness earned itself a second time here — the bob's extremes were rendered and
+diffed (≈20,000 bytes differ per 5 px step) without touching the panel.
+
+**Carried forward to W4:** the rig may replace the bob with real animation. Nothing may
+replace it with nothing, and no idle, quiet-hours or sleeping state may hold a fixed image.
+Quiet hours dims with a `0x51` write; it must not freeze the frame.
+
+**Volume 55 → 70.** The owner's ear reported 0.2.7 as "a little bit quiet". That is the
+measurement §10.4q said it was waiting for, and the only kind available. Still well under the
+vendor's 90.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

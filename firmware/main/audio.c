@@ -38,7 +38,7 @@ static const char *TAG = "audio";
 #define BEEP_HZ 880
 #define BEEP_MS 90
 /* See the header note: this is a cap, not a taste. */
-#define VOLUME 55
+#define VOLUME 70
 
 static esp_codec_dev_handle_t s_speaker;
 
