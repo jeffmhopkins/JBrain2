@@ -33,6 +33,13 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      # "Run everything regardless of what changed." This is deliberately NOT
+      # `event_name != 'pull_request'`: GitHub starts no runs for a PR opened through an
+      # App, so every assistant-raised PR is gated by `workflow_dispatch` instead — which
+      # that test read as "not a PR, so run the lot". The filtering below has therefore
+      # never once applied to those PRs, and a firmware-only change ran the whole Postgres
+      # suite. A dispatch aimed at main is still a full run; a dispatch at a branch is not.
+      full: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
       backend: ${{ steps.f.outputs.backend }}
       supervisor: ${{ steps.f.outputs.supervisor }}
       jcode: ${{ steps.f.outputs.jcode }}
@@ -43,9 +50,18 @@ jobs:
       # local git on push (merge to main) — where it needs a checkout, or it exits
       # 128 ("not a git repository") and the job (cosmetically) fails on every merge.
       - uses: actions/checkout@v5
+        with:
+          # A dispatch diffs against main locally, which needs history the default
+          # shallow clone does not have. QUOTED, because 0 is FALSY in a GitHub
+          # expression: `… && 0 || 1` evaluates to 1 and silently never deepens.
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
       - uses: dorny/paths-filter@v3
         id: f
         with:
+          # On `pull_request` the action uses the compare API and needs no base. On a
+          # dispatch there is none at all, so every filter came back false and the
+          # `full` escape hatch above was the only thing deciding anything.
+          base: ${{ github.event_name == 'workflow_dispatch' && 'main' || '' }}
           filters: |
             backend:
               - 'backend/**'
@@ -121,19 +137,19 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
           python-version: "3.13"
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff check .
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff format --check .
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pyright
       # The pysandbox sidecar's image, built (not pushed) as a PR gate — the same reasoning
       # the supervisor job records for Dockerfile.sdr. It belongs here rather than in
@@ -143,7 +159,7 @@ jobs:
       # and result — so a sidecar that would crash-loop on the box fails here instead.
       # `working-directory: .` because the job defaults to `backend/` and the image's
       # context is the repo root.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.pysandbox .
 
@@ -175,15 +191,15 @@ jobs:
       # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media),
       # which skip WHOLESALE without them -- see the action for why it is not a
       # plain `apt-get install`, and why it is one shared copy rather than two.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: ./.github/actions/setup-ffmpeg
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
           python-version: "3.13"
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
       # No Docker here: everything Docker-backed carries the `integration` marker and runs
       # in the job below, so this half never waits on a container to come up.
@@ -191,7 +207,7 @@ jobs:
       # `-m "not integration"` still applies on top of the shard's file list: it is what
       # keeps a stray Docker-backed test out of a runner that has no container, and it
       # costs nothing when the list is already unit files.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: |
           files=($(ls tests/unit/test_*.py | sort))
           shard=()
@@ -200,9 +216,9 @@ jobs:
           done
           echo "shard $SHARD/$SHARDS: ${#shard[@]} of ${#files[@]} files"
           uv run pytest "${shard[@]}" -m "not integration" -n auto --dist loadscope --cov
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: mv .coverage .coverage.unit-${{ matrix.shard }}
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit-${{ matrix.shard }}
@@ -226,26 +242,26 @@ jobs:
       - uses: actions/checkout@v5
       # Same ffmpeg install as backend-unit -- literally, now: one composite action,
       # so the two cannot drift.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: ./.github/actions/setup-ffmpeg
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
           python-version: "3.13"
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
       # Runners have Docker, so the testcontainers RLS suite runs here. One
       # Postgres container is provisioned per xdist worker (session-scoped, shared
       # via a filelock) and each test module clones a fresh DB from the migrated
       # template — so spread modules across cores with xdist; loadscope keeps a
       # module (and its DB) on one worker so the module-scoped fixtures stay valid.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pytest -m integration -n auto --dist loadscope --cov
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: mv .coverage .coverage.integration
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
@@ -266,15 +282,15 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
           python-version: "3.13"
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
@@ -285,9 +301,9 @@ jobs:
       # same file.
       # No arguments: combine globs every .coverage.* in the directory, so changing the
       # shard count above needs no edit here.
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run coverage combine
-      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         run: uv run coverage report --fail-under=80
 
   supervisor:
@@ -299,20 +315,20 @@ jobs:
         working-directory: supervisor
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: supervisor/uv.lock
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff check .
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff format --check .
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pyright
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pytest
       # The sdr sidecar's image, built (not pushed) as a PR gate. It belongs here rather
       # than in `images`, which is `if: github.event_name == 'push'` and so post-merge
@@ -321,7 +337,7 @@ jobs:
       # asserts `import server, SoapySDR, numpy` and the radio tools, and SoapySDR is
       # apt-only, so it can be proved nowhere else in CI. `working-directory: .` because
       # the job defaults to `supervisor/` and the image's context is the repo root.
-      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.sdr .
 
@@ -337,20 +353,20 @@ jobs:
         working-directory: jcode
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: jcode/uv.lock
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff check .
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff format --check .
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pyright
-      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pytest
 
   # The jlaunch control server (job launcher for long one-shot computations) — same
@@ -366,20 +382,20 @@ jobs:
         working-directory: jlaunch
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: jlaunch/uv.lock
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         run: uv sync --all-extras
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff check .
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         run: uv run ruff format --check .
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pyright
-      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.jlaunch == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pytest
 
   frontend:
@@ -391,21 +407,21 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v5
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         run: npm ci
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         run: npm run lint
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         run: npm run typecheck
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         run: npm run test
-      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.full == 'true'
         run: npm run build
 
   # Documentation freshness — enforces docs/DOC_LIFECYCLE.md: no stale migration
