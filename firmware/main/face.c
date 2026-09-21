@@ -117,6 +117,24 @@ static void draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uin
 }
 
 /* Mock geometry, verbatim. Origin is translate(W/2, H*0.545) for the small-body variant. */
+/* THE WHOLE FIGURE, SHRUNK TO FIT A DIFFERENT SHAPE OF PANEL.
+ *
+ * The owner mounts a unit with the cable out the side, so the panel is 448 wide and 368 tall
+ * to the viewer rather than the other way round. The figure is composed for 448 of height and
+ * is 428 px of it; in landscape it has 368. So everything scales by 368/448 and renders into
+ * a 368x368 SQUARE, which is the shape a quarter turn maps onto itself.
+ *
+ * A scalar rather than a second set of constants: every number in this file was measured
+ * against the mock, and a second hand-tuned layout would be a second thing to keep true. */
+static float s_fit = 1.0f;
+static int s_fit_oy = -1;
+
+void face_set_fit(float scale, int origin_y)
+{
+    s_fit = scale > 0.05f ? scale : 0.05f;
+    s_fit_oy = origin_y;
+}
+
 #define OX (FACE_W / 2)
 #define OY ((int)(FACE_H * 0.545f))
 #define HEAD_Y (-96)
@@ -582,9 +600,10 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 {
     /* Everything hangs off these, so one pair of offsets moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int ox = OX + st->lean + (int)lrintf(st->fig.ox);
-    const int oy = OY + st->bob + (int)lrintf(st->fig.oy);
-    const float sx = st->fig.sx, sy = st->fig.sy;
+    const int ox = OX + (int)lrintf(((float)st->lean + st->fig.ox) * s_fit);
+    const int oy = (s_fit_oy >= 0 ? s_fit_oy : OY) +
+                   (int)lrintf(((float)st->bob + st->fig.oy) * s_fit);
+    const float sx = st->fig.sx * s_fit, sy = st->fig.sy * s_fit;
     /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
        the head against the torso is the cue curious and silly actually need, and it costs two
        adds instead of resampling 165 000 pixels. */

@@ -2979,6 +2979,80 @@ Separately and regardless of which it is: **the panel now stops listening to its
 chunks of deafness after the speaker runs, covering the 90 ms beep and a tail. Feeding our own
 tone to the recogniser is not merely noise, it is a false trigger with a loudspeaker behind it.
 
+#### 10.4bj A quarter turn is not a rotation (0.2.51, 2026-09-21)
+
+The owner: *"Can we also have the capability of having it 90 degrees out so if it came from
+the cable and it's 90 the bottom is lower? You'd have to scale the bird and all of this but I
+think it would be beneficial to the usability for the twins."*
+
+**`rig.h` refuses to rotate the figure, and that reasoning still holds — but it does not apply
+here.** What it rejects is an *arbitrary* angle: a per-pixel resample this panel cannot spend
+25 times a second, and which in source space tears holes in filled shapes. A quarter turn is
+neither. It is an **index permutation** — every destination pixel is exactly one source pixel,
+no interpolation, no gaps — the same class of operation as the 180° flip this panel has done
+since 0.2.19.
+
+##### The square is what makes it free
+
+A quarter turn maps a **square** onto itself. So the figure renders into a 368x368 region of
+the 368x448 frame and the rotated blit is source-square to destination-square: no second
+framebuffer, no reallocation, the same two 11,776-byte stripe buffers. The 40 px above and
+below are never written, and on an AMOLED an unwritten pixel is an unlit one, so the bars are
+invisible rather than grey.
+
+**And the direction of the scan is the whole performance story.** The obvious loop reads the
+source across a row and writes down a column, which on a framebuffer in PSRAM is 368 cache
+misses per stripe. Blitting **column** stripes instead — `esp_lcd_panel_draw_bitmap` takes any
+rectangle, not only full-width bands — inverts it: for a fixed destination column the source
+addresses are consecutive, so PSRAM is read sequentially and the scattered writes land in
+internal SRAM where a stride costs nothing.
+
+##### Four ways up, from the two axes the flip already used
+
+Gravity on X is portrait and its sign says which way up; gravity on Y is landscape — mounted
+with the cable out the side — and its sign says which. Whichever axis is larger wins, with the
+same half-a-gravity hysteresis the two-way version needed, because a panel lying near flat has
+almost nothing on either axis and a bare comparison would flip back and forth on noise.
+
+##### The scale, which the owner called before it was measured
+
+The figure is composed for 448 of height and is 428 px of it. On its side it has 368, so
+everything scales by 368/448 through one scalar (`face_set_fit`) rather than a second
+hand-tuned layout — every number in `face.c` was measured against the mock, and a second set
+would be a second thing to keep true.
+
+**The first version of the test demanded no clipping at all, and failed.** Measured:
+
+| scale | poses clipped (of 646) |
+|---|---|
+| portrait, 1.00 | **0** |
+| square, 0.82 | 76 (11.8%) |
+| square, 0.78 | 56 (8.7%) |
+| square, 0.66 | 0 |
+
+Reaching zero needs **0.66 — a third smaller than portrait**, and §10.4at already rejected
+that trade for the portrait figure in almost the same words: *"shrinking the approved bird by
+a sixth to save an average of four pixels a frame, on a figure already 428 px tall in a 448 px
+panel, is the wrong trade on a 29 mm screen; a cropped toe at the peak of a gag reads as
+energy."* Shrinking by a third to save a crest tip during a boing is the same trade and worse.
+
+So the test asks two different questions instead of one: **nothing clips at rest** — a pet
+cropped while standing still is simply drawn wrong — and clipping across all poses stays
+inside the 15% §10.4at accepted for portrait. It lands at 11.8%.
+
+##### What a quarter turn would have silently eaten
+
+Both overlays sat outside the square: the version label at y=6 is above it, and the caption is
+anchored to the bottom of the frame and is below it. The rotation would simply not have
+carried them, so the first thing lost on a side-mounted panel would have been **the caption —
+the one piece of feedback that says a command was heard**. Both take the square's bounds now
+instead of the frame's.
+
+The permutation is checked on the host rather than reasoned about: turning one way then the
+other is the identity across every pixel of the square, and a named corner is asserted by hand,
+because "it round-trips" is also true of doing nothing. An off-by-one in a permutation is a
+mirrored pet, which looks deliberate.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

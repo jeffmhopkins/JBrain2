@@ -540,6 +540,118 @@ static void test_the_bird_keeps_its_head_on_its_neck(void)
     }
 }
 
+static void test_the_side_mounted_fit_stays_in_the_square(void)
+{
+    /* THE PANEL MOUNTED WITH ITS CABLE OUT THE SIDE. A quarter turn maps a SQUARE onto
+       itself, which is the only reason the rotated blit needs no second framebuffer — so the
+       figure renders into a 368x368 region of the 368x448 frame, scaled by 368/448.
+       
+       TWO DIFFERENT QUESTIONS, and the first version of this test asked only the strict one
+       and failed. Nothing may clip AT REST — a pet that is cropped while standing still is
+       simply drawn wrong. But eliminating clipping at the PEAK OF A GAG needs scale 0.66, a
+       third smaller than portrait, and §10.4at already rejected that exact trade for the
+       portrait figure: "shrinking the approved bird by a sixth to save an average of four
+       pixels a frame, on a figure already 428 px tall in a 448 px panel, is the wrong trade
+       on a 29 mm screen; a cropped toe at the peak of a gag reads as energy." Shrinking by a
+       third to save a crest tip during a boing is the same trade and worse.
+       
+       So: strict at rest, and bounded by the tolerance portrait already accepts elsewhere. */
+    const int SQ = FACE_W;
+    const int SQ_Y0 = (FACE_H - SQ) / 2;
+    face_set_fit((float)SQ / (float)FACE_H, SQ_Y0 + (int)(SQ * 0.545f));
+
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        int x0, x1, y0, y1;
+        bbox(&x0, &x1, &y0, &y1);
+        CHECK(y0 >= SQ_Y0 && y1 < SQ_Y0 + SQ, "at rest the figure is wholly inside the square");
+    }
+
+    int poses = 0, clipped = 0;
+    for (int f = 0; f < FORM_COUNT; f++) {
+        for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+            for (int step = 0; step <= 16; step++) {
+                const float q = (float)step / 16.0f;
+                face_state_t st;
+                face_rest(&st);
+                st.form = (face_form_t)f;
+                rig_for((action_t)a, q, 1.0f, (uint32_t)(step * 200), &st.rig);
+                rig_figure((action_t)a, q, 1.0f, (uint32_t)(step * 200), st.eyes.face_ang,
+                           &st.fig);
+                face_draw(fb, 0, &st);
+                int x0, x1, y0, y1;
+                bbox(&x0, &x1, &y0, &y1);
+                if (y1 < y0) continue;
+                poses++;
+                if (y0 < SQ_Y0 || y1 >= SQ_Y0 + SQ) clipped++;
+            }
+        }
+    }
+    face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
+    /* Measured at 11.8% when this landed. The gate is the 15% §10.4at accepted for the
+       portrait figure's own clipping, so a change that makes the side-mounted pet visibly
+       more cropped than the portrait one has to argue for itself here. */
+    CHECK(poses > 500, "enough poses sampled to mean anything");
+    CHECK(clipped * 100 <= poses * 15, "a side-mounted gag clips no worse than portrait does");
+}
+
+/* The quarter turn itself, as `display.c` performs it. Duplicated here rather than shared
+   because that file is full of ESP headers and this suite is the only place the index maths
+   can be CHECKED rather than reasoned about — and an off-by-one in a permutation is a
+   mirrored pet, which looks deliberate. */
+static void rotate_square(const uint16_t *src, uint16_t *dst, bool clockwise)
+{
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2, CS = 16;
+    for (int x0 = 0; x0 < FACE_W; x0 += CS) {
+        for (int c = 0; c < CS; c++) {
+            const int x = x0 + c;
+            const uint16_t *s = clockwise ? &src[(size_t)(SQ_Y0 + x) * FACE_W + (SQ - 1)]
+                                          : &src[(size_t)(SQ_Y0 + SQ - 1 - x) * FACE_W];
+            const int step = clockwise ? -1 : 1;
+            for (int r = 0; r < SQ; r++) dst[(SQ_Y0 + r) * FACE_W + x] = s[r * step];
+        }
+    }
+}
+
+static void test_a_quarter_turn_is_a_permutation(void)
+{
+    /* Two properties, and together they are the whole correctness argument for the rotated
+       blit: every destination pixel comes from exactly one source pixel (nothing is invented
+       and nothing is lost), and turning one way then the other returns the original. */
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2;
+    uint16_t *cw = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    uint16_t *back = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    uint16_t *src = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(cw != NULL && back != NULL && src != NULL, "scratch frames allocated");
+
+    /* A pattern where every pixel in the square is distinct, so a duplicate or a dropped
+       pixel cannot hide behind a neighbour of the same colour. */
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) src[y * FACE_W + x] = (uint16_t)(y * FACE_W + x);
+    }
+    memset(cw, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    rotate_square(src, cw, true);
+    rotate_square(cw, back, false);
+
+    long same = 0;
+    for (int y = SQ_Y0; y < SQ_Y0 + SQ; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            if (back[y * FACE_W + x] == src[y * FACE_W + x]) same++;
+        }
+    }
+    CHECK(same == (long)SQ * FACE_W, "clockwise then anticlockwise is the identity");
+
+    /* A corner, by hand, because "it round-trips" is also true of doing nothing. */
+    CHECK(cw[SQ_Y0 * FACE_W + 0] == src[SQ_Y0 * FACE_W + (SQ - 1)],
+          "the square's top-right corner turns into its top-left");
+    free(cw);
+    free(back);
+    free(src);
+}
+
 static void test_peekaboo_covers_the_eyes(void)
 {
     /* `hide` is peekaboo, and peekaboo that does not hide the eyes is the shipped dud this
@@ -1623,6 +1735,8 @@ int main(void)
     test_every_face_and_action_draws();
     test_every_action_changes_the_picture();
     test_peekaboo_covers_the_eyes();
+    test_the_side_mounted_fit_stays_in_the_square();
+    test_a_quarter_turn_is_a_permutation();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

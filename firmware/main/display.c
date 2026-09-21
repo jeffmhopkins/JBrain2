@@ -508,6 +508,10 @@ static DMA_ATTR uint16_t s_strip[2][METER_W * METER_SPAN];
 /* Off until the box says otherwise — see `display_set_debug_overlay`. */
 static volatile bool s_debug_overlay;
 
+/* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
+static int s_quarter;
+static bool s_quarter_changed = true;
+
 void display_set_debug_overlay(bool on)
 {
     s_debug_overlay = on;
@@ -577,9 +581,68 @@ static int s_blit_ok;
  *
  * The cost is 28 memcpys of 11,776 bytes per frame, which at the face's 5 fps is 1.6 MB/s
  * against a core doing nothing else with those cycles. That is the cheap half of the trade. */
+/* LANDSCAPE: THE PANEL MOUNTED WITH ITS CABLE OUT THE SIDE.
+ *
+ * `rig.h` refuses to rotate the figure, and that reasoning still holds — an arbitrary angle
+ * is a per-pixel resample this panel cannot afford 25 times a second, and in source space it
+ * tears holes in filled shapes. **A quarter turn is neither.** It is an index permutation:
+ * every destination pixel is exactly one source pixel, no interpolation, no gaps. The same
+ * class of operation as the 180 flip this panel has always done.
+ *
+ * The square is what makes it cheap. The figure renders scaled into a 368x368 region of the
+ * frame (`face_set_fit`), and a quarter turn maps that square onto itself — so the source and
+ * destination are the same shape and no second framebuffer is needed. The 40 px above and
+ * below are never written; on an AMOLED an unwritten black pixel is an unlit one, so the bars
+ * are invisible rather than grey.
+ *
+ * AND THE DIRECTION OF THE SCAN IS THE WHOLE PERFORMANCE STORY. The obvious loop reads the
+ * source across a row and writes down a column, which on a framebuffer in PSRAM is 368 cache
+ * misses per stripe. Blitting COLUMN stripes instead — `draw_bitmap` takes any rectangle —
+ * inverts it: for a fixed destination column the source addresses are consecutive, so PSRAM
+ * is read sequentially and the scattered writes land in internal SRAM, where a stride costs
+ * nothing. Same buffers, same 11,776 bytes, no second frame. */
+#define SQ 368                        /* the side of the square a quarter turn preserves */
+#define SQ_Y0 ((FACE_H - SQ) / 2)     /* 40: where it sits in the portrait frame */
+#define COL_STRIPE 16                 /* columns per transfer; 368 / 16 = 23 exactly */
+
+static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
+{
+    if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    bool odd = false;
+    for (int x0 = 0; x0 < FACE_W; x0 += COL_STRIPE) {
+        uint16_t *dst = odd ? stripe_b : stripe;
+        odd = !odd;
+        for (int c = 0; c < COL_STRIPE; c++) {
+            const int x = x0 + c;
+            /* Both directions walk the source consecutively; only the sign differs. */
+            const uint16_t *src = clockwise ? &fb[(size_t)(SQ_Y0 + x) * FACE_W + (SQ - 1)]
+                                            : &fb[(size_t)(SQ_Y0 + SQ - 1 - x) * FACE_W];
+            const int step = clockwise ? -1 : 1;
+            for (int r = 0; r < SQ; r++) dst[r * COL_STRIPE + c] = src[r * step];
+        }
+        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, SQ_Y0, x0 + COL_STRIPE,
+                                                        SQ_Y0 + SQ, dst);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t blit_frame(const uint16_t *fb)
 {
     if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_quarter == 1 || s_quarter == 3) {
+        if (s_quarter_changed) {
+            /* The bars beside the square are never written again, so whatever the portrait
+               frame last left there would stay forever. Once, on the turn, not per frame. */
+            s_quarter_changed = false;
+            memset(stripe, 0, sizeof(stripe));
+            for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
+                esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + STRIPE_ROWS, stripe);
+            }
+        }
+        return blit_frame_rotated(fb, s_quarter == 1);
+    }
+    s_quarter_changed = false;
     bool odd = false;
     for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
         int rows = FACE_H - y;
@@ -643,12 +706,31 @@ static void update_orientation(void)
     if (target < -LEAN_MAX) target = -LEAN_MAX;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
 
-    const bool was = s_upside_down;
-    if (ax < -FLIP_THRESHOLD) s_upside_down = true;
-    else if (ax > FLIP_THRESHOLD) s_upside_down = false;
-    if (was != s_upside_down) {
-        ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)",
-                 s_upside_down ? "upside down" : "upright", ax, ay, az);
+    /* FOUR WAYS UP, FROM THE TWO AXES THE FLIP ALREADY USED. Gravity on X is portrait and
+       its sign says which way; gravity on Y is landscape, mounted with the cable out the
+       side, and its sign says which. Whichever axis is larger wins, with the same half-a-
+       gravity hysteresis the two-way version needed — a panel lying near flat has almost
+       nothing on either axis, and a bare comparison would flip it back and forth on noise. */
+    const int mag_x = ax < 0 ? -ax : ax;
+    const int mag_y = ay < 0 ? -ay : ay;
+    const int was = s_quarter;
+    if (mag_x > mag_y) {
+        if (ax < -FLIP_THRESHOLD) s_quarter = 2;
+        else if (ax > FLIP_THRESHOLD) s_quarter = 0;
+    } else {
+        if (ay < -FLIP_THRESHOLD) s_quarter = 1;
+        else if (ay > FLIP_THRESHOLD) s_quarter = 3;
+    }
+    s_upside_down = (s_quarter == 2);
+    if (was != s_quarter) {
+        static const char *NAMES[] = {"upright", "clockwise", "upside down", "anticlockwise"};
+        s_quarter_changed = true;
+        /* The figure is composed for 448 of height and gets 368 on its side, so the whole
+           thing scales by 368/448 into the square a quarter turn preserves. */
+        const bool side = (s_quarter == 1 || s_quarter == 3);
+        face_set_fit(side ? (float)SQ / (float)FACE_H : 1.0f,
+                     side ? SQ_Y0 + (int)(SQ * 0.545f) : -1);
+        ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)", NAMES[s_quarter], ax, ay, az);
     }
 }
 
@@ -1095,10 +1177,19 @@ static void face_task(void *arg)
             PHASE(6);
             face_draw(fb, colour, &st);
             PHASE(7);
-            font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
+            const bool side = (s_quarter == 1 || s_quarter == 3);
+            /* EVERYTHING OVERLAID HAS TO LAND IN THE SQUARE TOO, and both of these sat
+               outside it: the version label at y=6 is above the square, the caption is
+               anchored to the bottom of the frame and is below it. A quarter turn simply
+               would not carry them, so the first thing lost on a side-mounted panel would
+               have been the caption — the one piece of feedback that says a command was
+               heard. Both take the square's bounds instead of the frame's. */
+            const int over_y0 = side ? SQ_Y0 : 0;
+            const int over_h = side ? SQ_Y0 + SQ : FACE_H;
+            font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
-            caption_draw(&cap, fb, FACE_W, FACE_H, CAPTION_COLOUR, MIC_COLOUR);
+            caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR, MIC_COLOUR);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
             /* After the flip, because the finger is in PANEL coordinates and the flip has
