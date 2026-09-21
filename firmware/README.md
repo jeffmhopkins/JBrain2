@@ -180,6 +180,11 @@ So changing the firmware is three commits' worth of one act:
 scripts/firmware-dist.sh
 ```
 
+**Every source change rebuilds the image, including a comment-only one.** The app descriptor
+embeds `app_elf_sha256`, a hash of the ELF — and the ELF carries debug info, so touching a
+comment changes the binary. A docs-and-comments commit still needs `dist/` regenerated, and
+assuming otherwise is a red `firmware` job.
+
 **`fullclean` is not belt-and-braces.** An incremental build can carry a component that was
 added to `main/CMakeLists.txt`'s `REQUIRES` and then removed again — the link order keeps the
 ghost, the binary differs from what the committed source produces, and the only thing that
