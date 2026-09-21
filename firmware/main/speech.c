@@ -31,6 +31,7 @@
 #include "esp_mn_models.h"
 #include "esp_mn_speech_commands.h"
 #include "freertos/FreeRTOS.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 #include "model_path.h"
 #include "vocab.h"
@@ -52,6 +53,10 @@ static const char *TAG = "speech";
    only 140 KB of it on this board. */
 #define SPEECH_MIN_INTERNAL (48 * 1024)
 
+/* How often the detect loop says what it is hearing. Often enough to watch someone talk to
+   it over a console, rare enough not to bury the log. */
+#define SPEECH_REPORT_MS 3000
+
 #define SR_CORE 1
 #define SR_STACK 6144
 #define SR_PRIO 5
@@ -62,6 +67,12 @@ static const esp_mn_iface_t *s_mn;
 static model_iface_data_t *s_mn_data;
 
 static int s_feed_chunk;      /* samples per feed call, per channel */
+static int s_fetch_chunk;     /* samples the front end hands back per fetch */
+static int s_mn_chunk;        /* samples MultiNet wants per detect call */
+static int16_t *s_mn_fill;    /* accumulator, because the two are not the same number */
+static int s_mn_filled;
+static volatile uint32_t s_fed, s_fetched;  /* counted so "is audio arriving" is answerable */
+static volatile int s_peak;   /* loudest sample the front end has handed back lately */
 static int16_t *s_fill;       /* accumulator, s_feed_chunk samples */
 static int s_filled;
 
@@ -132,22 +143,72 @@ void speech_feed(const int16_t *pcm, int samples)
         if (s_filled == s_feed_chunk) {
             s_afe->feed(s_afe_data, s_fill);
             s_filled = 0;
+            s_fed++;
         }
     }
+}
+
+/* Hand MultiNet exactly the number of samples it asks for, however many the front end
+ * happened to return.
+ *
+ * THIS IS WHY NOTHING WAS RECOGNISED. `detect()` reads `get_samp_chunksize()` samples from the
+ * pointer it is given and trusts the caller; the front end's `get_fetch_chunksize()` is a
+ * different number. Feeding one to the other reads the wrong length every frame, so the model
+ * sees an audio stream that skips or repeats a few milliseconds at every boundary — which
+ * decodes to nothing at all, silently and forever, while every log line says "listening".
+ * Espressif's own examples assert the two are equal rather than handling it; asserting would
+ * have made this loud, and buffering makes it correct. */
+static esp_mn_state_t feed_multinet(const int16_t *pcm, int samples)
+{
+    esp_mn_state_t st = ESP_MN_STATE_DETECTING;
+    while (samples > 0) {
+        const int want = s_mn_chunk - s_mn_filled;
+        const int take = samples < want ? samples : want;
+        memcpy(s_mn_fill + s_mn_filled, pcm, (size_t)take * sizeof(int16_t));
+        s_mn_filled += take;
+        pcm += take;
+        samples -= take;
+        if (s_mn_filled == s_mn_chunk) {
+            const esp_mn_state_t r = s_mn->detect(s_mn_data, s_mn_fill);
+            s_mn_filled = 0;
+            if (r != ESP_MN_STATE_DETECTING) st = r;
+        }
+    }
+    return st;
 }
 
 static void detect_task(void *arg)
 {
     (void)arg;
+    uint32_t last_report = 0;
     while (true) {
         afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
         if (res == NULL || res->ret_value == ESP_FAIL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+        s_fetched++;
         s_hearing = res->vad_state == VAD_SPEECH;
 
-        const esp_mn_state_t st = s_mn->detect(s_mn_data, res->data);
+        /* The loudest sample in this frame, so "the microphone is dead" and "the model is
+           deaf" are distinguishable from a console without anyone describing a noise. */
+        const int n = res->data_size / (int)sizeof(int16_t);
+        int peak = 0;
+        for (int i = 0; i < n; i++) {
+            const int v = res->data[i] < 0 ? -res->data[i] : res->data[i];
+            if (v > peak) peak = v;
+        }
+        s_peak = peak;
+
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now - last_report >= SPEECH_REPORT_MS) {
+            last_report = now;
+            ESP_LOGI(TAG, "fed %u fetched %u | peak %5d | vad %s | %.1f dBFS", (unsigned)s_fed,
+                     (unsigned)s_fetched, peak, s_hearing ? "SPEECH " : "silence",
+                     (double)res->data_volume);
+        }
+
+        const esp_mn_state_t st = feed_multinet(res->data, n);
         if (st == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *r = s_mn->get_results(s_mn_data);
             const vocab_t *v = r->num > 0 ? vocab_get(r->command_id[0]) : NULL;
@@ -160,6 +221,10 @@ static void detect_task(void *arg)
                whether it resolved or not. */
             s_mn->clean(s_mn_data);
         } else if (st == ESP_MN_STATE_TIMEOUT) {
+            /* What the decoder HEARD, before the command graph rejected it. Without this a
+               phrase that missed and a microphone that is dead look identical from here. */
+            esp_mn_results_t *r = s_mn->get_results(s_mn_data);
+            ESP_LOGI(TAG, "timeout, raw decode: '%s'", r != NULL ? r->raw_string : "?");
             s_mn->clean(s_mn_data);
         }
     }
@@ -252,6 +317,18 @@ bool speech_start(void)
         ESP_LOGE(TAG, "the command model would not load");
         return false;
     }
+    /* THE TWO CHUNK SIZES ARE NOT THE SAME NUMBER, and assuming they were is what made this
+       feature silently deaf. Both are logged so the next reader never has to wonder. */
+    s_fetch_chunk = s_afe->get_fetch_chunksize(s_afe_data);
+    s_mn_chunk = s_mn->get_samp_chunksize(s_mn_data);
+    s_mn_fill = heap_caps_malloc((size_t)s_mn_chunk * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (s_mn_fill == NULL) {
+        ESP_LOGE(TAG, "no room for a %d sample recogniser buffer", s_mn_chunk);
+        return false;
+    }
+    ESP_LOGI(TAG, "chunks: feed %d, fetch %d, multinet %d%s", s_feed_chunk, s_fetch_chunk,
+             s_mn_chunk, s_fetch_chunk == s_mn_chunk ? " (equal)" : " (DIFFERENT — buffered)");
+
     load_vocabulary();
 
     if (xTaskCreatePinnedToCore(detect_task, "sr", SR_STACK, NULL, SR_PRIO, NULL, SR_CORE) !=

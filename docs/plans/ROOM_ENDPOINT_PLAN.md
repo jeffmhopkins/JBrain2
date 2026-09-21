@@ -2298,6 +2298,32 @@ takes a big bite — `boot`, `display`, `imu`, `wifi`, `pre-speech`, `post-speec
 error that printed 150 identical lines during the 0.2.38 capture now logs once, then every
 hundredth, with the heap attached, and says when it recovered.
 
+#### 10.4ay "Listening" and hearing are different claims (2026-09-21)
+
+0.2.39 came up on the network, reached the box, and logged
+`speech: listening: mn7_en, 512 samples per feed`. The owner talked to it and **nothing was
+ever recognised.** Every line said the feature was working.
+
+The suspect is the one Espressif's own examples guard with an assert rather than handle:
+`multinet->detect()` reads **`get_samp_chunksize()`** samples from the pointer it is given and
+trusts the caller, while the front end returns **`get_fetch_chunksize()`** samples. They are not
+the same number. Feeding one straight to the other misreads the length at every frame boundary,
+so the model sees an audio stream that skips or repeats a few milliseconds 30 times a second —
+which decodes to nothing, silently, forever, while the log still says "listening".
+
+`feed_multinet()` now accumulates the fetched audio and hands the model exactly the chunk it
+asks for, so the two sizes never have to agree. Both are logged at start-up, with `(equal)` or
+`(DIFFERENT — buffered)` said out loud, because a number nobody printed is how this survived.
+
+**The deeper failure is a claim that could not be checked.** "Listening" only ever meant "the
+models loaded and a task is running" — it never meant audio was arriving or being decoded, and
+nothing on the panel distinguished a dead microphone from a deaf model. So the detect loop now
+reports, every three seconds: frames fed, frames fetched, the **loudest sample** in the frame,
+the VAD verdict, and the front end's own dBFS. And a MultiNet timeout prints **`raw_string`** —
+what the decoder actually heard before the command graph rejected it. With those, "it did not
+hear me" splits into four distinguishable faults: no audio, quiet audio, audio that does not
+trigger VAD, and a decode that misses the vocabulary.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
