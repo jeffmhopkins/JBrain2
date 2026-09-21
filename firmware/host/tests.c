@@ -15,6 +15,7 @@
 
 #include "emotion.h"
 #include "face.h"
+#include "calib.h"
 #include "gesture.h"
 #include "rig.h"
 #include "variants.h"
@@ -440,45 +441,400 @@ static void test_every_pool_answers(void)
     }
 }
 
+/* ---- calibration ------------------------------------------------------------------- */
+
+/* The fault the owner actually reported: the middle reads true and the outer band is pulled
+   in toward the centre. Modelled here as a cubic ease that is the identity at the centre and
+   compresses increasingly toward both edges — sensed = f(true). Calibration must invert it. */
+static int16_t squash(int v, int span, float k)
+{
+    const float c = (float)(span - 1) * 0.5f;
+    const float t = ((float)v - c) / c; /* -1 .. +1 */
+    const float s = t * (1.0f - k * (1.0f - t * t) * 0.0f) - k * t * t * t;
+    float out = c + s * c;
+    if (out < 0.0f) out = 0.0f;
+    if (out > (float)(span - 1)) out = (float)(span - 1);
+    return (int16_t)(out + 0.5f);
+}
+
+static void fill_grid(int16_t mx[CAL_KNOTS][CAL_KNOTS], int16_t my[CAL_KNOTS][CAL_KNOTS],
+                      float k)
+{
+    for (int j = 0; j < CAL_KNOTS; j++) {
+        for (int i = 0; i < CAL_KNOTS; i++) {
+            mx[j][i] = squash(calib_target_x(i), FACE_W, k);
+            my[j][i] = squash(calib_target_y(j), FACE_H, k);
+        }
+    }
+}
+
+static void test_samples_need_agreement_not_just_count(void)
+{
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 200);
+    CHECK(!calib_sample_settled(&s), "one tap is never a measurement");
+    calib_sample_add(&s, 102, 201);
+    CHECK(!calib_sample_settled(&s), "nor are two");
+    calib_sample_add(&s, 101, 199);
+    CHECK(calib_sample_settled(&s), "three that agree settle");
+
+    /* The owner's actual complaint: the contact patch moves the reading. A run that is
+       merely NUMEROUS but scattered must not be accepted. */
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 200);
+    calib_sample_add(&s, 100 + CAL_SPREAD_MAX + 6, 200);
+    calib_sample_add(&s, 100, 200);
+    CHECK(!calib_sample_settled(&s), "three that disagree do not settle");
+}
+
+static void test_samples_use_the_median_not_the_mean(void)
+{
+    /* One slip with the side of a finger drags a mean and cannot move a median. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 300);
+    calib_sample_add(&s, 104, 302);
+    calib_sample_add(&s, 102, 301);
+    calib_sample_add(&s, 260, 40); /* the slip */
+    int16_t x = 0, y = 0;
+    calib_sample_result(&s, &x, &y);
+    CHECK(x >= 100 && x <= 104, "a wild sample does not move the x result");
+    CHECK(y >= 300 && y <= 302, "nor the y result");
+    CHECK(!calib_sample_settled(&s), "and it keeps the target unsettled");
+}
+
+static void test_samples_recover_from_a_bad_start(void)
+{
+    /* A target the owner kept tapping until it felt right is judged on the taps that felt
+       right: the buffer keeps the most recent CAL_SAMPLES_MAX. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    for (int i = 0; i < 4; i++) calib_sample_add(&s, 40 + i * 30, 40 + i * 30);
+    CHECK(!calib_sample_settled(&s), "a scattered start does not settle");
+    for (int i = 0; i < CAL_SAMPLES_MAX; i++) calib_sample_add(&s, 200 + (i % 2), 300);
+    CHECK(calib_sample_settled(&s), "a run that settles, settles");
+    int16_t x = 0;
+    calib_sample_result(&s, &x, NULL);
+    CHECK(x >= 200 && x <= 201, "and reports where it settled");
+}
+
+static void test_samples_always_yield_something(void)
+{
+    /* A target that will not settle must not trap the owner on it. Past the cap the routine
+       accepts the median anyway, so the result has to be defined for any n. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    for (int i = 0; i < CAL_SAMPLES_MAX + 4; i++) calib_sample_add(&s, 10 + i * 40, 500 - i * 30);
+    CHECK(s.n == CAL_SAMPLES_MAX, "the buffer is bounded");
+    int16_t x = -1, y = -1;
+    calib_sample_result(&s, &x, &y);
+    CHECK(x >= 0 && y >= 0, "a capped-out target still yields its best estimate");
+    CHECK(calib_sample_spread(&s) > CAL_SPREAD_MAX, "and is honest that it never agreed");
+}
+
+/* One trial: build a grid either from single taps or from medians of agreeing taps, on a
+   panel with both edge skew and per-tap contact noise, and return the total residual. */
+static long noisy_trial(uint32_t *rnd, float k, int samples)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    for (int j = 0; j < CAL_KNOTS; j++) {
+        for (int i = 0; i < CAL_KNOTS; i++) {
+            const int tx = calib_target_x(i), ty = calib_target_y(j);
+            cal_samples_t s;
+            calib_sample_reset(&s);
+            for (int t = 0; t < samples; t++) {
+                *rnd = *rnd * 1103515245u + 12345u;
+                const int nx = (int)((*rnd >> 16) % 19u) - 9;
+                *rnd = *rnd * 1103515245u + 12345u;
+                const int ny = (int)((*rnd >> 16) % 19u) - 9;
+                calib_sample_add(&s, squash(tx, FACE_W, k) + nx, squash(ty, FACE_H, k) + ny);
+            }
+            calib_sample_result(&s, &mx[j][i], &my[j][i]);
+        }
+    }
+    calib_t c;
+    if (!calib_build(mx, my, &c)) return -1;
+    long err = 0;
+    for (int tx = 8; tx < FACE_W - 8; tx++) {
+        const int raw = squash(tx, FACE_W, k);
+        int a = 0;
+        calib_apply(&c, raw, 0, &a, NULL);
+        err += a > tx ? a - tx : tx - a;
+    }
+    return err;
+}
+
+static void test_samples_beat_single_taps_on_a_noisy_panel(void)
+{
+    /* THE WHOLE POINT, end to end — and stated as a claim about MANY runs, because it is one.
+       The median of three taps has roughly 70% of the noise of one, so a single seeded trial
+       can go either way and asserting on one would be measuring the seed. */
+    const float k = 0.18f;
+    uint32_t r1 = 12345u, r3 = 12345u;
+    long tot1 = 0, tot3 = 0;
+    int wins = 0, trials = 0;
+    for (int t = 0; t < 200; t++) {
+        const long e1 = noisy_trial(&r1, k, 1);
+        const long e3 = noisy_trial(&r3, k, CAL_SAMPLES_MIN);
+        if (e1 < 0 || e3 < 0) continue; /* a noisy single-tap grid can fold; that is its own cost */
+        tot1 += e1;
+        tot3 += e3;
+        if (e3 < e1) wins++;
+        trials++;
+    }
+    CHECK(trials > 150, "most trials produced usable grids");
+    CHECK(tot3 < tot1, "medians of agreeing taps beat single taps overall");
+    CHECK(wins * 2 > trials, "and win the majority of individual runs");
+}
+
+/* Occasional gross misses, which is what the owner actually described: most taps tight, and
+   one in six landing well off because of how much fingertip went down. Uniform jitter is the
+   wrong model — against THAT, extra samples barely help, because the residual is dominated by
+   the piecewise-linear model's own error rather than by noise. The tail is the whole story. */
+static int slip_noise(uint32_t *r)
+{
+    *r = *r * 1103515245u + 12345u;
+    if (((*r >> 16) % 6u) == 0) {
+        *r = *r * 1103515245u + 12345u;
+        return (int)((*r >> 16) % 81u) - 40;
+    }
+    *r = *r * 1103515245u + 12345u;
+    return (int)((*r >> 16) % 7u) - 3;
+}
+
+static long slip_trial(uint32_t *r, float k, bool adaptive)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    for (int j = 0; j < CAL_KNOTS; j++) {
+        for (int i = 0; i < CAL_KNOTS; i++) {
+            const int tx = calib_target_x(i), ty = calib_target_y(j);
+            cal_samples_t s;
+            calib_sample_reset(&s);
+            int guard = 0;
+            do {
+                calib_sample_add(&s, squash(tx, FACE_W, k) + slip_noise(r),
+                                 squash(ty, FACE_H, k) + slip_noise(r));
+                guard++;
+            } while (adaptive && !calib_sample_settled(&s) && guard < CAL_SAMPLES_MAX);
+            calib_sample_result(&s, &mx[j][i], &my[j][i]);
+        }
+    }
+    calib_t c;
+    if (!calib_build(mx, my, &c)) return -1;
+    long worst = 0;
+    for (int tx = 8; tx < FACE_W - 8; tx++) {
+        const int raw = squash(tx, FACE_W, k);
+        int a = 0;
+        calib_apply(&c, raw, 0, &a, NULL);
+        const long d = a > tx ? a - tx : tx - a;
+        if (d > worst) worst = d;
+    }
+    return worst;
+}
+
+static void test_agreement_removes_the_bad_tail(void)
+{
+    /* THE CLAIM THAT JUSTIFIES THE EXTRA TAPS, and it is about the tail, not the mean: a
+       single tap per target leaves a real chance of a calibration that is WORSE than none in
+       places, and requiring agreement removes it. */
+    uint32_t r1 = 777u, r2 = 777u;
+    int bad_single = 0, bad_adaptive = 0, runs = 0;
+    long worst_single = 0, worst_adaptive = 0;
+    for (int t = 0; t < 300; t++) {
+        const long a = slip_trial(&r1, 0.18f, false);
+        const long b = slip_trial(&r2, 0.18f, true);
+        if (a < 0 || b < 0) continue;
+        if (a > 15) bad_single++;
+        if (b > 15) bad_adaptive++;
+        if (a > worst_single) worst_single = a;
+        if (b > worst_adaptive) worst_adaptive = b;
+        runs++;
+    }
+    CHECK(runs > 250, "most trials produced usable grids");
+    CHECK(bad_single > runs / 10, "single taps really do go badly wrong sometimes");
+    CHECK(bad_adaptive == 0, "requiring agreement removes the bad tail entirely");
+    CHECK(worst_adaptive * 2 < worst_single, "and halves the worst case");
+}
+
+static void test_calib_identity_until_built(void)
+{
+    /* An uncalibrated panel must behave EXACTLY as it did before this file existed. */
+    int sx = -1, sy = -1;
+    calib_apply(NULL, 123, 231, &sx, &sy);
+    CHECK(sx == 123 && sy == 231, "no calibration is the identity");
+    calib_t c;
+    memset(&c, 0, sizeof(c));
+    calib_apply(&c, 40, 400, &sx, &sy);
+    CHECK(sx == 40 && sy == 400, "an invalid calibration is the identity");
+}
+
+static void test_calib_exact_at_the_knots(void)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    fill_grid(mx, my, 0.18f);
+    calib_t c;
+    CHECK(calib_build(mx, my, &c), "the grid builds");
+    for (int i = 0; i < CAL_KNOTS; i++) {
+        int sx = 0, sy = 0;
+        calib_apply(&c, c.raw_x[i], c.raw_y[i], &sx, &sy);
+        CHECK(sx == calib_target_x(i), "a knot maps to its own target in x");
+        CHECK(sy == calib_target_y(i), "a knot maps to its own target in y");
+    }
+}
+
+static void test_calib_corrects_the_edges(void)
+{
+    /* The point of the whole exercise: error near the bezel must come DOWN, and the centre
+       must not be made worse in the process. */
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    calib_t c;
+
+    /* Swept across three distortion strengths rather than fitted to one. The real panel's
+       curve is unknown, and a threshold tuned to the single model this test invented would
+       measure the test rather than the code. */
+    for (int s = 0; s < 3; s++) {
+        const float k = 0.10f + 0.09f * (float)s;
+        fill_grid(mx, my, k);
+        CHECK(calib_build(mx, my, &c), "the grid builds at every strength");
+        int worst_before = 0, worst_after = 0;
+        for (int tx = 8; tx < FACE_W - 8; tx++) {
+            const int raw = squash(tx, FACE_W, k);
+            int sx = 0;
+            calib_apply(&c, raw, 0, &sx, NULL);
+            const int before = raw > tx ? raw - tx : tx - raw;
+            const int after = sx > tx ? sx - tx : tx - sx;
+            if (before > worst_before) worst_before = before;
+            if (after > worst_after) worst_after = after;
+        }
+        CHECK(worst_before > 12, "the simulated panel really is skewed");
+        CHECK(worst_after * 3 < worst_before, "calibration removes most of the error");
+        CHECK(worst_after < 15, "and what is left is well inside a fingertip");
+    }
+}
+
+static void test_calib_extends_past_the_outer_targets(void)
+{
+    /* The outer 12% lies beyond the outermost target — a target on the bezel cannot be
+       tapped — so that band is extrapolated. Clamping there would flatten exactly the region
+       the owner reported as wrong. */
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    fill_grid(mx, my, 0.18f);
+    calib_t c;
+    CHECK(calib_build(mx, my, &c), "the grid builds");
+
+    int a = 0, b = 0;
+    calib_apply(&c, c.raw_x[0] - 30, 0, &a, NULL);
+    calib_apply(&c, c.raw_x[0] - 10, 0, &b, NULL);
+    CHECK(a < b, "readings outside the first knot still separate");
+    CHECK(a >= 0, "and stay on the panel");
+    calib_apply(&c, c.raw_x[CAL_KNOTS - 1] + 400, 0, &a, NULL);
+    CHECK(a <= FACE_W - 1, "a wild reading is clamped to the panel");
+}
+
+static void test_calib_is_monotone_everywhere(void)
+{
+    /* A map that folds puts two places on the panel at one coordinate, and the only way to
+       undo it is the touchscreen it just broke. */
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    fill_grid(mx, my, 0.18f);
+    calib_t c;
+    CHECK(calib_build(mx, my, &c), "the grid builds");
+    int prev = -1;
+    for (int v = -50; v < FACE_W + 50; v++) {
+        int sx = 0;
+        calib_apply(&c, v, 0, &sx, NULL);
+        CHECK(sx >= prev, "the x map never goes backwards");
+        prev = sx;
+    }
+}
+
+static void test_calib_rejects_a_folded_grid(void)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    fill_grid(mx, my, 0.18f);
+    /* One column tapped out of order — a slip, or a child helping. */
+    for (int j = 0; j < CAL_KNOTS; j++) mx[j][2] = mx[j][0];
+    calib_t c;
+    CHECK(!calib_build(mx, my, &c), "a non-monotone grid is refused");
+}
+
+static void test_calib_round_trips_through_nvs(void)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    fill_grid(mx, my, 0.18f);
+    calib_t c, back;
+    CHECK(calib_build(mx, my, &c), "the grid builds");
+    uint8_t blob[CAL_BLOB_BYTES];
+    CHECK(calib_save(&c, blob, sizeof(blob)) == CAL_BLOB_BYTES, "it serialises");
+    CHECK(calib_load(blob, CAL_BLOB_BYTES, &back), "and loads");
+    CHECK(memcmp(&c, &back, sizeof(c)) == 0, "unchanged by the round trip");
+
+    CHECK(!calib_load(blob, CAL_BLOB_BYTES - 1, &back), "a short blob is refused");
+    uint8_t bad[CAL_BLOB_BYTES];
+    memcpy(bad, blob, sizeof(bad));
+    bad[0] ^= 0xFF;
+    CHECK(!calib_load(bad, sizeof(bad), &back), "a blob without the magic is refused");
+    memcpy(bad, blob, sizeof(bad));
+    bad[2] = 0x7F;
+    bad[3] = 0x7F; /* first x knot enormous -> not ascending */
+    CHECK(!calib_load(bad, sizeof(bad), &back), "a folded stored map is refused on load");
+}
+
 /* ---- gesture ---------------------------------------------------------------------- */
 
 #define DT 40 /* the render loop's poll interval */
 
 /* Drive the gesture for `ms` with the finger up, returning true if it ever fired (it must
    not). */
-static bool idle_for(gesture_t *g, int ms)
+static gesture_action_t idle_for(gesture_t *g, int ms)
 {
-    bool fired = false;
-    for (int t = 0; t < ms; t += DT) fired |= gesture_poll(g, false, false, DT);
+    gesture_action_t fired = GESTURE_NONE;
+    for (int t = 0; t < ms; t += DT) {
+        const gesture_action_t a = gesture_poll(g, false, false, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
     return fired;
 }
 
 /* One press of `ms`, edge on the first frame. */
-static bool press_for(gesture_t *g, int ms)
+static gesture_action_t press_for(gesture_t *g, int ms)
 {
-    bool fired = gesture_poll(g, true, true, DT);
-    for (int t = DT; t < ms; t += DT) fired |= gesture_poll(g, false, true, DT);
-    fired |= gesture_poll(g, false, false, DT); /* the release frame */
+    gesture_action_t fired = gesture_poll(g, true, true, DT);
+    for (int t = DT; t < ms; t += DT) {
+        const gesture_action_t a = gesture_poll(g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
+    const gesture_action_t r = gesture_poll(g, false, false, DT); /* the release frame */
+    return r != GESTURE_NONE ? r : fired;
+}
+
+static gesture_action_t do_sequence_n(gesture_t *g, int taps, int gap_ms, int hold_ms)
+{
+    gesture_action_t fired = GESTURE_NONE;
+    for (int i = 0; i < taps; i++) {
+        press_for(g, 120);
+        idle_for(g, gap_ms);
+    }
+    gesture_poll(g, true, true, DT);
+    for (int t = DT; t < hold_ms; t += DT) {
+        const gesture_action_t a = gesture_poll(g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
     return fired;
 }
 
-static bool do_sequence(gesture_t *g, int gap_ms, int hold_ms)
+static gesture_action_t do_sequence(gesture_t *g, int gap_ms, int hold_ms)
 {
-    bool fired = false;
-    for (int i = 0; i < GESTURE_TAPS; i++) {
-        fired |= press_for(g, 120);
-        fired |= idle_for(g, gap_ms);
-    }
-    fired |= gesture_poll(g, true, true, DT);
-    for (int t = DT; t < hold_ms; t += DT) fired |= gesture_poll(g, false, true, DT);
-    return fired;
+    return do_sequence_n(g, GESTURE_TAPS_REBOOT, gap_ms, hold_ms);
 }
 
 static void test_gesture_happy_path(void)
 {
     gesture_t g;
     gesture_reset(&g);
-    CHECK(do_sequence(&g, 200, GESTURE_HOLD_MS + 200), "three taps then a hold reboots");
+    CHECK(do_sequence(&g, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
+          "three taps then a hold reboots");
 }
 
 static void test_gesture_hold_alone_does_nothing(void)
@@ -486,9 +842,12 @@ static void test_gesture_hold_alone_does_nothing(void)
     /* The old gesture. It must no longer be enough on its own, or nothing has changed. */
     gesture_t g;
     gesture_reset(&g);
-    bool fired = gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < 20000; t += DT) fired |= gesture_poll(&g, false, true, DT);
-    CHECK(!fired, "a long hold with no taps never reboots");
+    gesture_action_t fired = gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < 20000; t += DT) {
+        const gesture_action_t a = gesture_poll(&g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
+    CHECK(fired == GESTURE_NONE, "a long hold with no taps never reboots");
     CHECK(gesture_cue(&g) == 0.0f, "and it draws no cue");
 }
 
@@ -497,7 +856,7 @@ static void test_gesture_slow_taps_do_not_count(void)
     /* "Within half a second of each other." A lazy rhythm is a new attempt, not a failure. */
     gesture_t g;
     gesture_reset(&g);
-    CHECK(!do_sequence(&g, GESTURE_GAP_MS + 200, GESTURE_HOLD_MS + 200),
+    CHECK(do_sequence(&g, GESTURE_GAP_MS + 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
           "taps spaced too far apart never arm the hold");
 }
 
@@ -506,14 +865,17 @@ static void test_gesture_long_taps_do_not_count(void)
     /* Mashing produces presses of every length; only SHORT ones are part of the sequence. */
     gesture_t g;
     gesture_reset(&g);
-    bool fired = false;
-    for (int i = 0; i < GESTURE_TAPS; i++) {
-        fired |= press_for(&g, GESTURE_TAP_MAX_MS + 200);
-        fired |= idle_for(&g, 200);
+    gesture_action_t fired = GESTURE_NONE;
+    for (int i = 0; i < GESTURE_TAPS_REBOOT; i++) {
+        press_for(&g, GESTURE_TAP_MAX_MS + 200);
+        idle_for(&g, 200);
     }
-    fired |= gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) fired |= gesture_poll(&g, false, true, DT);
-    CHECK(!fired, "slow presses do not count as taps");
+    gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) {
+        const gesture_action_t a = gesture_poll(&g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
+    CHECK(fired == GESTURE_NONE, "slow presses do not count as taps");
 }
 
 static void test_gesture_release_abandons(void)
@@ -522,19 +884,25 @@ static void test_gesture_release_abandons(void)
        rebooting, indefinitely, is exactly the accident this change exists to stop. */
     gesture_t g;
     gesture_reset(&g);
-    for (int i = 0; i < GESTURE_TAPS; i++) {
+    for (int i = 0; i < GESTURE_TAPS_REBOOT; i++) {
         press_for(&g, 120);
         idle_for(&g, 200);
     }
-    bool fired = gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < GESTURE_HOLD_MS / 2; t += DT) fired |= gesture_poll(&g, false, true, DT);
-    fired |= gesture_poll(&g, false, false, DT); /* let go */
-    CHECK(!fired, "an abandoned hold does not reboot");
+    gesture_action_t fired = gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_HOLD_MS / 2; t += DT) {
+        const gesture_action_t a = gesture_poll(&g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
+    const gesture_action_t rel = gesture_poll(&g, false, false, DT); /* let go */
+    CHECK(fired == GESTURE_NONE && rel == GESTURE_NONE, "an abandoned hold does not reboot");
     CHECK(g.taps == 0, "an abandoned hold clears the taps");
     /* And a fresh press right afterwards is just a tap. */
     fired = gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) fired |= gesture_poll(&g, false, true, DT);
-    CHECK(!fired, "the next hold alone does not reboot either");
+    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) {
+        const gesture_action_t a = gesture_poll(&g, false, true, DT);
+        if (a != GESTURE_NONE) fired = a;
+    }
+    CHECK(fired == GESTURE_NONE, "the next hold alone does not reboot either");
 }
 
 static void test_gesture_fires_once(void)
@@ -543,9 +911,9 @@ static void test_gesture_fires_once(void)
     gesture_t g;
     gesture_reset(&g);
     int count = 0;
-    if (do_sequence(&g, 200, GESTURE_HOLD_MS + 200)) count++;
+    if (do_sequence(&g, 200, GESTURE_HOLD_MS + 200) != GESTURE_NONE) count++;
     for (int t = 0; t < 10000; t += DT)
-        if (gesture_poll(&g, false, true, DT)) count++;
+        if (gesture_poll(&g, false, true, DT) != GESTURE_NONE) count++;
     CHECK(count == 1, "a single hold reboots exactly once");
 }
 
@@ -574,18 +942,66 @@ static void test_gesture_child_mashing(void)
         r = r * 1103515245u + 12345u;
         const int gap = 40 + (int)((r >> 16) % 1200u);
         if (press >= GESTURE_HOLD_MS) old_would_fire++;
-        if (press_for(&g, press)) fired++;
-        if (idle_for(&g, gap)) fired++;
+        if (press_for(&g, press) != GESTURE_NONE) fired++;
+        if (idle_for(&g, gap) != GESTURE_NONE) fired++;
     }
     CHECK(old_would_fire > 500, "the model actually contains long holds");
     CHECK(fired * 50 < old_would_fire, "the tap prefix blocks the overwhelming majority");
+}
+
+static void test_gesture_selects_by_tap_count(void)
+{
+    /* The point of the generalisation: the same rhythm, a different count, a different
+       action — and a count that means nothing does nothing. */
+    gesture_t g;
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
+          "three taps then hold reboots");
+    gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_CALIBRATE, 200, GESTURE_HOLD_MS + 200) ==
+              GESTURE_CALIBRATE,
+          "five taps then hold calibrates");
+    for (int n = 1; n <= GESTURE_TAPS_MAX; n++) {
+        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_CALIBRATE) continue;
+        gesture_reset(&g);
+        CHECK(do_sequence_n(&g, n, 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
+              "a count that selects nothing does nothing");
+    }
+}
+
+static void test_gesture_five_taps_survive_the_reboot_threshold(void)
+{
+    /* The trap this design avoids: if the hold armed on the PRESS EDGE, the fourth tap would
+       arm a reboot and its release would clear the count, so five taps could never be
+       reached at all. Deciding on press DURATION instead is what makes both live together. */
+    gesture_t g;
+    gesture_reset(&g);
+    for (int i = 0; i < GESTURE_TAPS_CALIBRATE; i++) {
+        CHECK(press_for(&g, 120) == GESTURE_NONE, "a short tap never fires anything");
+        idle_for(&g, 200);
+    }
+    CHECK(g.taps == GESTURE_TAPS_CALIBRATE, "all five taps counted");
+}
+
+static void test_gesture_no_cue_for_a_count_that_does_nothing(void)
+{
+    /* Growing a bar promises an action. Four taps then a hold has none, so it must not. */
+    gesture_t g;
+    gesture_reset(&g);
+    for (int i = 0; i < 4; i++) {
+        press_for(&g, 120);
+        idle_for(&g, 200);
+    }
+    gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_CUE_MS + 500; t += DT) gesture_poll(&g, false, true, DT);
+    CHECK(gesture_cue(&g) == 0.0f, "no cue for a hold that will do nothing");
 }
 
 static void test_gesture_cue(void)
 {
     gesture_t g;
     gesture_reset(&g);
-    for (int i = 0; i < GESTURE_TAPS; i++) {
+    for (int i = 0; i < GESTURE_TAPS_REBOOT; i++) {
         press_for(&g, 120);
         idle_for(&g, 200);
     }
@@ -617,6 +1033,19 @@ int main(void)
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
     test_blink_is_a_line_not_a_hole();
+    test_samples_need_agreement_not_just_count();
+    test_samples_use_the_median_not_the_mean();
+    test_samples_recover_from_a_bad_start();
+    test_samples_always_yield_something();
+    test_samples_beat_single_taps_on_a_noisy_panel();
+    test_agreement_removes_the_bad_tail();
+    test_calib_identity_until_built();
+    test_calib_exact_at_the_knots();
+    test_calib_corrects_the_edges();
+    test_calib_extends_past_the_outer_targets();
+    test_calib_is_monotone_everywhere();
+    test_calib_rejects_a_folded_grid();
+    test_calib_round_trips_through_nvs();
     test_zones_hit_the_right_parts();
     test_zones_follow_the_flip();
     test_zones_follow_the_lean();
@@ -629,6 +1058,9 @@ int main(void)
     test_gesture_release_abandons();
     test_gesture_fires_once();
     test_gesture_child_mashing();
+    test_gesture_selects_by_tap_count();
+    test_gesture_five_taps_survive_the_reboot_threshold();
+    test_gesture_no_cue_for_a_count_that_does_nothing();
     test_gesture_cue();
 
     free(fb);

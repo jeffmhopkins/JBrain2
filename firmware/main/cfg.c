@@ -87,3 +87,32 @@ void cfg_free(cfg_t *c)
     free(c->name);
     memset(c, 0, sizeof(*c));
 }
+
+/* Deliberately not the `jbrain` namespace: that one is the box's to write and this one is the
+   panel's, and a bug here must not be able to corrupt a unit's credentials. */
+#define CAL_NS "jbraincal"
+#define CAL_KEY "map"
+
+int cfg_calibration_load(uint8_t *buf, int cap)
+{
+    if (buf == NULL || cap <= 0) return 0;
+    nvs_handle_t h;
+    if (nvs_open(CAL_NS, NVS_READONLY, &h) != ESP_OK) return 0;
+    size_t len = (size_t)cap;
+    const esp_err_t err = nvs_get_blob(h, CAL_KEY, buf, &len);
+    nvs_close(h);
+    if (err != ESP_OK) return 0;
+    return (int)len;
+}
+
+esp_err_t cfg_calibration_save(const uint8_t *buf, int len)
+{
+    if (buf == NULL || len <= 0) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CAL_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(h, CAL_KEY, buf, (size_t)len);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}

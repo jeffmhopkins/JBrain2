@@ -14,7 +14,7 @@ CC ?= cc
 # under -std=c11 every trig call here fails to build while the firmware is fine.)
 CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror -I../main
 LDLIBS = -lm
-SRC = ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c
+SRC = ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c
 
 .PHONY: test clean
 test: run_tests
