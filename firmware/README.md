@@ -149,6 +149,26 @@ flips the frame 180° when the panel is inverted. A 180° rotation of a row-majo
 exactly its reversal, so it is one pass and it takes the version label and the meter with it.
 Ninety degrees does not fit a 368×448 panel.
 
+## One task owns the codec, one owns the panel
+
+`audio.c` runs its own task and performs **every** codec operation. `audio_beep()` and
+`audio_set_levels()` are requests, not actions.
+
+That is not tidiness. `esp_codec_dev.c` contains no lock of any kind — read, write,
+`set_out_vol` and `set_in_gain` all walk straight into the device struct and the chip's I2C
+registers, and the component's only mutex guards the I2S *data* path. Two tasks on one handle
+is the race that cost a panic (§10.4al). The same rule already applies to the panel in
+`display.c`, arrived at the same way, and ESP-SR would have reintroduced the codec half of it:
+a feed task reading while the render task beeped.
+
+It also takes the blocking 40 ms capture **out of the render loop**, which is where that loop
+spent most of its wall clock — and why `crash_phase` reported stage 10 whatever actually
+failed. **Stage 10 changed meaning in 0.2.33**; breadcrumb readings do not compare across that
+line.
+
+The rate is **16 kHz**, not the vendor BSP's 22050, because ESP-SR's front end takes 16-bit
+16 kHz and nothing else. A beep and a level meter are no worse for it.
+
 ## The microphone is always on, and the meter is down the left edge
 
 A green bar at x 4..16 tracks the loudest sample in each frame. Always running, no gesture: a

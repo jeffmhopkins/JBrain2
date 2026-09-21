@@ -341,7 +341,6 @@ void display_last_tap(int *x, int *y, int *zone)
  * capture is drained exactly as fast as the I2S DMA fills it. Reading less would show a meter
  * falling further behind the room every second — the kind of fault that looks like bad
  * calibration and is actually a backlog. */
-#define MIC_CHUNK (AUDIO_RATE * TOUCH_POLL_MS / 1000)
 #define METER_X 4
 #define METER_W 12
 #define METER_TOP 40
@@ -549,10 +548,16 @@ static volatile int s_stack_free;
  * difference between "somewhere in the firmware" and "in the I2S read" — and it costs one
  * store per stage.
  *
- * 1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip, 9 full
- * blit, 10 microphone read, 11 meter blit, 12 panel re-assert, 13 PMU sample, 14 brightness,
- * 15 codec levels. Keep this list and the one in ROOM_ENDPOINT_PLAN.md §10.4aj together; a
+ * 1 loop top, 2 touch, 3 beep request, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip,
+ * 9 full blit, 10 frame delay, 11 meter blit, 12 panel re-assert, 13 PMU sample,
+ * 14 brightness. Keep this list and the one in ROOM_ENDPOINT_PLAN.md §10.4aj together; a
  * number whose stage nobody can name is worth nothing.
+ *
+ * STAGE 10 CHANGED MEANING IN 0.2.33 and readings do not compare across that line. It was the
+ * blocking microphone read, where this loop spent most of its wall clock — which is why every
+ * breadcrumb so far reported 10 whatever actually failed. The capture moved to `audio.c`'s own
+ * task, so 10 is now an ordinary frame delay and a crash there means something quite different.
+ * Stage 15, the codec levels, went with it.
  *
  * READ IT AS THE RENDER TASK'S POSITION, NOT AS THE CRASH SITE. This records where THIS task
  * was; a fault in the main task reports whatever stage the render loop happened to be parked
@@ -660,9 +665,6 @@ static void face_task(void *arg)
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
-    /* Internal RAM, not PSRAM: this is an I2S DMA destination on every frame. */
-    int16_t *mic = malloc(MIC_CHUNK * sizeof(int16_t));
-    if (mic == NULL) ESP_LOGW(TAG, "no mic buffer — the meter will stay empty");
 
     while (true) {
         PHASE(1);
@@ -820,10 +822,6 @@ static void face_task(void *arg)
             PHASE(14);
             apply_brightness();
         }
-        /* Same rule, other chip: `apply_settings()` records on the main task, and the
-           levels reach the codec here, where nothing else is talking to it. */
-        PHASE(15);
-        audio_apply_levels();
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);
             reassert_panel();
@@ -834,18 +832,19 @@ static void face_task(void *arg)
             pmu_sample();
             since_sample = 0;
         }
-        /* The capture is the clock when it is available: one frame's worth, which blocks for
-           about TOUCH_POLL_MS and drains the DMA at exactly the rate it fills. */
+        /* THE CAPTURE USED TO BE THIS LOOP'S CLOCK, and it is not any more: `audio.c` owns
+           the codec on its own task (see its header — two tasks on one `esp_codec_dev` handle
+           is the race that cost a panic). So the pacing is an honest delay, and the level is
+           whatever the audio task last measured. */
         PHASE(10);
-        if (sound && mic != NULL && audio_record(mic, MIC_CHUNK)) {
-            level = audio_peak(mic, MIC_CHUNK);
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+        if (sound) {
+            level = audio_level();
             if (level > s_mic_peak) s_mic_peak = level;
-            /* Every capture, not every face: 8.8 KB against 322 KB is what makes 25 fps
-               affordable for the one part of the screen that has something new to say. */
+            /* Every frame, not every face: 8.8 KB against 322 KB is what makes the one part
+               of the screen with something new to say affordable at this rate. */
             PHASE(11);
             blit_meter(level);
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
         }
         since_draw += TOUCH_POLL_MS;
         since_reassert += TOUCH_POLL_MS;
