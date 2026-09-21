@@ -1095,6 +1095,41 @@ fixes*, and then settled the question by watching bars flip rather than by askin
 Everything since has been an elaboration of that shortcut. The bob stays in regardless: an
 animated pet wants it, and it costs nothing.
 
+#### 10.4v The version on the glass, and a hold that means it (2026-09-21)
+
+Two operator affordances the owner asked for, both of which this session's confusion argued
+for independently.
+
+**The running version, top-left, in a 5x7 font.** Until now the only ways to know what a panel
+was running were to ask the box what it last *served* — which is not the same question, and
+§10.4t is the section where I got exactly that wrong — or to cable it up and read its console,
+which resets it. Neither is available to someone standing in the room looking at the thing.
+
+The corner is not arbitrary and was not guessed: the head spans x 76..292 and starts at y 60,
+and the antenna ball is centred, so the top-left is the one region the robot never occupies.
+Checked by compositing the label over the real `face_draw` on the host rather than by reading
+coordinates, because reading coordinates is how the limbs went missing in §10.4p.
+
+**The font is deliberately tiny** — digits, `.`, `v`, `-`, space. Hand-drawing twenty-six more
+glyphs for words nothing renders yet would be inventory, not work. An unknown character draws
+as a blank of the right width, so a wrong string is visibly wrong rather than silently short.
+
+**A five-second hold reboots, which re-pulls firmware.** The number is the owner's and it is
+well chosen, for a reason worth writing down: §10.4p measured 4-5 year olds producing
+*ordinary* taps lasting up to **4.2 seconds**, so five is the first threshold that sits outside
+a child's accidental press at all. That margin is 0.8 s and it is thin — which is precisely why
+the hold is not silent. From 1.5 s an amber bar grows across the top edge, full width at the
+moment it reboots, so the gesture announces itself in time to let go.
+
+A reboot *is* the firmware re-check: `main.c` asks the box before its first sleep, so the
+gesture doubles as "go and get the update now" without any new protocol.
+
+The ordering inside the render loop is load-bearing and was wrong first: the hold is measured
+**before** the frame is composed, so `held` describes the frame about to be drawn, and the
+restart happens **after** the blit, so the full-width cue actually reaches the glass. Written
+the other way round, the `dirty` flag was a dead store cleared at the top of the next
+iteration, and a reboot with no warning is indistinguishable from the fault §10.4u is chasing.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

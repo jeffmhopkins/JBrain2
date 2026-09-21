@@ -16,7 +16,7 @@ in this image and what is deliberately left out.
 Kept out of the first image on purpose: display, touch and audio. A misconfiguration in any of
 them is the class of fault that ends in a boot loop, and a boot loop ends with a screwdriver.
 They arrive over the air, onto a unit that has already proved it can take an update — and they
-have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7, a moving idle in 0.2.9.
+have: PSRAM in 0.2.3, the display in 0.2.4, the face and touch in 0.2.6, the speaker in 0.2.7, a moving idle in 0.2.9, the version on the glass in 0.2.11.
 Every one of those carried a byte-identical `bootloader.bin`, so each was a pure app OTA whose
 rollback lands on the same bootloader. **Check that before shipping a release**, not after.
 
@@ -46,6 +46,19 @@ the display is on, whether it has entered an idle mode, or whether it has stoppe
 at all (§10.4u). Design around the reading, not around the symptom.
 
 The bob stays regardless — an animated pet wants it, and it costs nothing.
+
+## Reading a panel without a cable
+
+**The running version is on the glass, top-left.** Asking the box what it last *served* is a
+different question from what a panel is *running*, and confusing the two cost a wrong diagnosis
+(ROOM_ENDPOINT_PLAN.md §10.4t). Reading the console answers it properly but resets the panel.
+The label answers it from across the room.
+
+**Hold the screen for five seconds and it reboots**, which re-pulls firmware — the OTA check
+runs at boot, before the first sleep. An amber bar grows across the top from 1.5 s so the
+gesture announces itself; five seconds is the first threshold outside a child's accidental
+press, and only by 0.8 s (§10.4p measured ordinary taps up to 4.2 s), which is why the cue is
+not optional.
 
 ## The two things that make "cable once" true
 
