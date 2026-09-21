@@ -69,3 +69,15 @@ CONFIG_APP_REPRODUCIBLE_BUILD=y
 # only decides the wake word and the model generation, which is why one USB flash is enough.
 CONFIG_SR_WN_WN9_HIESP=y
 CONFIG_SR_MN_EN_MULTINET7_QUANT=y
+
+# THE RECOGNISER'S SCRATCH SPACE LIVES IN PSRAM, AND SO DO THE RADIO'S BUFFERS.
+# This board has 8 MB of PSRAM and 341 KB of DIRAM, and linking esp-sr took static DIRAM to
+# 90.4% — leaving `esp_wifi_init` 18 KB of internal heap where it needs far more for DMA
+# descriptors that can live nowhere else. Two settings claw it back:
+#   * BSS_SEG_EXTERNAL_MEMORY lets `main/linker.lf` exile libnsnet3's 117 KB scratch buffer,
+#     which belongs to a noise-suppression model this firmware never selects or runs.
+#   * TRY_ALLOCATE_WIFI_LWIP lets the Wi-Fi and TCP/IP stacks take their non-DMA buffers from
+#     PSRAM, so what is left of internal RAM goes to the descriptors that genuinely need it.
+# See ROOM_ENDPOINT_PLAN.md §10.4ax.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y

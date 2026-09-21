@@ -25,6 +25,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "mem.h"
 #include "ota.h"
 #include "speech.h"
 #include "pmu.h"
@@ -148,11 +149,13 @@ void app_main(void)
        something while it joins Wi-Fi is one whose owner can tell "working" from "dead". It
        cannot fail fatally — see display.c on why an abort here would be the worst outcome
        available rather than a safe one. */
+    mem_log("boot");
     if (!display_start()) {
         ESP_LOGE(TAG, "display did not come up — continuing, the box is still reachable");
     } else {
         display_run_face();
     }
+    mem_log("display");
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -179,12 +182,14 @@ void app_main(void)
        Two symptoms, one cause, and the cause was an ordering nobody chose deliberately.
        The IMU is on I2C and owes the radio nothing, so it goes first. */
     imu_start();
+    mem_log("imu");
 
     /* A FAILED JOIN IS A RETRY, NOT AN EXIT. This used to `return` out of `app_main`, which
        ended the OTA loop with it: a panel that booted while the router was down stayed
        unreachable until someone power-cycled it, on a device whose whole premise is that
        nobody has to touch it. Thirty seconds of bad timing is not a reason to need hands. */
     bool joined = net_connect(&cfg, WIFI_TIMEOUT_MS) == ESP_OK;
+    mem_log("wifi");
     if (!joined) {
         /* Still gives up probation: no Wi-Fi means no possible update, which is the one
            thing a pending image must not persist through. On a settled image this is a
@@ -230,7 +235,9 @@ void app_main(void)
            first. */
         if (!ears_tried) {
             ears_tried = true;
+            mem_log("pre-speech");
             if (!speech_start()) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+            mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router
            reboot should cost a minute, not a quarter of an hour. */
