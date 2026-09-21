@@ -3,11 +3,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Capture and playback share one rate: the ES8311 is one part, opened once, and this is the
-   vendor BSP's own duplex default. */
-#define AUDIO_RATE 22050
+/* Capture and playback share one rate: the ES8311 is one part, opened once.
+   16 kHz, not the vendor BSP's 22050, because ESP-SR's audio front end takes "16-bit signed,
+   16 kHz" and nothing else — and the models are already on the board (`firmware/README.md`).
+   Nothing here is worse for it: this rate carries a beep and a level meter perfectly well. */
+#define AUDIO_RATE 16000
 
-/* Bring up the ES8311. False means no codec answered; the caller carries on in silence. */
+/* One capture chunk, and therefore the audio task's period. */
+#define AUDIO_CHUNK_MS 40
+#define AUDIO_CHUNK (AUDIO_RATE * AUDIO_CHUNK_MS / 1000)
+
+/* ONE TASK OWNS THE CODEC, AND IT IS NOT THE CALLER OF ANY FUNCTION HERE.
+ *
+ * `esp_codec_dev.c` contains no lock of any kind — read, write, `set_out_vol` and
+ * `set_in_gain` all walk straight into the device struct and the chip's I2C registers, and the
+ * component's only mutex guards the I2S data path (§10.4al, which cost a panic to find). So
+ * this file runs its own task, that task performs every codec operation, and everything below
+ * is a REQUEST rather than an action. It is the same rule `display.c` states for the panel,
+ * arrived at the same way.
+ *
+ * It also takes the blocking capture out of the render loop, which is where that loop spent
+ * most of its wall clock — the reason `crash_phase` kept reporting stage 10 whatever failed.
+ *
+ * Brings up the ES8311 and starts the task. False means no codec answered; the caller carries
+ * on in silence. */
 bool audio_start(void);
 
 /* RECORD the box's settings — it does NOT touch the codec, and the task that calls it is
@@ -18,21 +37,16 @@ bool audio_start(void);
    would hide a bad one. */
 void audio_set_levels(int volume, int mic_gain_db);
 
-/* Apply whatever `audio_set_levels` last recorded. Called from the render task, between two
-   captures, because that task owns the codec. A no-op when nothing is pending. */
-void audio_apply_levels(void);
 
-/* A short tone, played synchronously. Cheap enough to call from a touch handler. */
+
+/* ASK for a tone. Returns immediately; the audio task plays it between two captures, within
+   one chunk. Safe from any task, which a direct `esp_codec_dev_write` from the render loop
+   was not. */
 void audio_beep(void);
 
-/* Capture exactly `samples` frames of mono int16, blocking until they arrive — roughly
-   `samples`/AUDIO_RATE seconds. False means the read failed.
+/* Largest absolute sample of the most recent chunk, 0..32767 — the one number that says
+   whether anything reached the ADC at all, and what the meter draws. */
+int audio_level(void);
 
-   BLOCKING IS THE POINT, not a limitation: sized to one render frame, the read paces the
-   loop and guarantees the microphone is drained as fast as it fills. Consuming slower than
-   the I2S DMA produces would show a meter lagging further behind the room every second. */
-bool audio_record(int16_t *buf, int samples);
-
-/* Largest absolute sample, 0..32767 — the one number that says whether anything reached the
-   ADC at all. */
+/* Largest absolute sample of a buffer. Pure, and exposed for the host tests. */
 int audio_peak(const int16_t *buf, int samples);

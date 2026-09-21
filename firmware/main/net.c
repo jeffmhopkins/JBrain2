@@ -78,3 +78,19 @@ esp_err_t net_connect(const cfg_t *cfg, int timeout_ms)
     ESP_LOGE(TAG, "no IP after %d ms", timeout_ms);
     return ESP_ERR_TIMEOUT;
 }
+
+esp_err_t net_retry(int timeout_ms)
+{
+    /* Nothing to retry on a radio that never started; the caller has a bigger problem. */
+    if (s_events == NULL) return ESP_ERR_INVALID_STATE;
+    xEventGroupClearBits(s_events, GOT_IP | FAILED);
+    /* The handler gives up after MAX_RETRY disconnects and latches FAILED. A fresh attempt
+       gets a fresh budget, or the first bad minute after boot would be permanent. */
+    s_retries = 0;
+    esp_wifi_connect();
+    const EventBits_t bits = xEventGroupWaitBits(s_events, GOT_IP | FAILED, pdFALSE, pdFALSE,
+                                                 pdMS_TO_TICKS(timeout_ms));
+    if (bits & GOT_IP) return ESP_OK;
+    if (bits & FAILED) return ESP_FAIL;
+    return ESP_ERR_TIMEOUT;
+}

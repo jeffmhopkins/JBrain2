@@ -23,6 +23,8 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "i2c_bus.h"
 
 static const char *TAG = "audio";
@@ -52,6 +54,9 @@ static const char *TAG = "audio";
    direction — two objects writing the same chip's registers over the same I2C bus. A single
    IN_OUT device is the same hardware with one owner. */
 static esp_codec_dev_handle_t s_codec;
+
+/* The one task that touches `s_codec`. Defined below, beside the requests it services. */
+static void audio_task(void *arg);
 
 /* The tone is built once. `audio_beep` runs on the face task, between two frames of a
    500 ms floor the panel needs to stay lit — so it may spend its time in the I2S write
@@ -155,19 +160,60 @@ bool audio_start(void)
     build_beep();
     ESP_LOGI(TAG, "es8311 ready: out %d/100, in %.0f dB, %d Hz", VOLUME, MIC_GAIN_DB,
              AUDIO_RATE);
+
+    /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
+       capture is a dropped chunk and a meter that lags the room. The stack is small because
+       this task calls into the codec and computes a peak, and nothing else. */
+    if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "audio task");
+        return false;
+    }
     return true;
 }
 
+/* The latest chunk's peak, and a pending tone. Both are single words touched by two tasks:
+   the writer sets, the audio task clears or overwrites. No lock is needed for that and none
+   would help — what needed a lock was the CODEC, and the answer to that is that only one task
+   touches it at all. */
+static volatile int s_level;
+static volatile bool s_beep_want;
+
+/* Defined with the rest of the level machinery, below the task that is its only caller. */
+static void apply_levels(void);
+
 void audio_beep(void)
 {
-    if (s_codec == NULL) return;
-    esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+    s_beep_want = true;
 }
 
-bool audio_record(int16_t *buf, int samples)
+int audio_level(void)
 {
-    if (s_codec == NULL) return false;
-    return esp_codec_dev_read(s_codec, buf, samples * (int)sizeof(int16_t)) == 0;
+    return s_level;
+}
+
+/* Internal RAM, not PSRAM: this is an I2S DMA destination on every chunk. */
+static int16_t s_chunk[AUDIO_CHUNK];
+
+static void audio_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        /* Before the read, so a tap is answered within one chunk rather than after it. */
+        if (s_beep_want) {
+            s_beep_want = false;
+            esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+        }
+        apply_levels();
+
+        /* THE READ IS THE CLOCK. It blocks for exactly one chunk and drains the DMA at the
+           rate it fills, so this task needs no delay of its own and cannot fall behind the
+           room. On failure it would spin, so that path delays instead. */
+        if (esp_codec_dev_read(s_codec, s_chunk, sizeof(s_chunk)) == 0) {
+            s_level = audio_peak(s_chunk, AUDIO_CHUNK);
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(AUDIO_CHUNK_MS));
+        }
+    }
 }
 
 int audio_peak(const int16_t *buf, int samples)
@@ -212,7 +258,8 @@ void audio_set_levels(int volume, int mic_gain_db)
     if (any) s_levels_pending = true;
 }
 
-void audio_apply_levels(void)
+/* Called only from the audio task, between two captures. */
+static void apply_levels(void)
 {
     if (!s_levels_pending) return;
     s_levels_pending = false;
