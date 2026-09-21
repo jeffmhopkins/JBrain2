@@ -114,6 +114,23 @@ room every second, which looks like bad calibration and is a backlog.
 The peak also rides out in telemetry as `mic_peak`, so the microphone can be confirmed from
 the box once the panel is on a charger in another room (ROOM_ENDPOINT_PLAN.md §10.4aa).
 
+## Volume, microphone gain and brightness are settings, not constants
+
+`GET /api/endpoint/settings` (panel key) and `PUT` (owner). The panel applies them at boot and
+on every cycle, and the five-second hold reboots — so it is also how a change takes effect at
+once. Tuning is seconds rather than a build, CI run, deploy and OTA.
+
+They live in `app.endpoint_settings`, **not** `app.settings`: that table is gated on
+`app.is_owner()` and holds the Gmail client secret, the Moltbook key and the global kill, and a
+panel is a `device_key` precisely so a stolen one cannot reach them. The panel policy is
+`FOR SELECT`, so read-only is structural; an RLS isolation test pins both halves
+(ROOM_ENDPOINT_PLAN.md §10.4ab).
+
+Ceilings are clamped at the API and say so in the log: volume 85 (above the confirmed-good 70,
+below the vendor's 90, so a slipped digit cannot reach a child's ear), mic gain 42 (the
+ES8311's PGA truncates above it), brightness floor 10 (zero looks exactly like the blanking
+fault).
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.

@@ -10,6 +10,10 @@
 /* Bring up the ES8311. False means no codec answered; the caller carries on in silence. */
 bool audio_start(void);
 
+/* Apply the box's settings. Out of range values are ignored rather than clamped here: the
+   box already clamps, and a panel silently re-interpreting a number would hide a bad one. */
+void audio_set_levels(int volume, int mic_gain_db);
+
 /* A short tone, played synchronously. Cheap enough to call from a touch handler. */
 void audio_beep(void);
 

@@ -54,6 +54,60 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
     return esp_http_client_set_header(client, "Authorization", (const char *)value);
 }
 
+esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
+{
+    char url[256];
+    snprintf(url, sizeof(url), "%s/endpoint/settings", cfg->api);
+
+    char *auth = bearer(cfg);
+    if (auth == NULL) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t hc = {.url = url, .timeout_ms = HTTP_TIMEOUT_MS};
+    trust(&hc, cfg);
+    esp_http_client_handle_t client = esp_http_client_init(&hc);
+    if (client == NULL) {
+        free(auth);
+        return ESP_FAIL;
+    }
+    esp_http_client_set_header(client, "Authorization", auth);
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) goto done;
+    esp_http_client_fetch_headers(client);
+    if (esp_http_client_get_status_code(client) != 200) {
+        err = ESP_FAIL;
+        goto done;
+    }
+
+    char body[MANIFEST_MAX];
+    const int len = esp_http_client_read_response(client, body, sizeof(body) - 1);
+    if (len <= 0) {
+        err = ESP_FAIL;
+        goto done;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (root == NULL) {
+        err = ESP_FAIL;
+        goto done;
+    }
+    /* Each field independently: a box running older code that omits one should still deliver
+       the others rather than leaving the panel on every default. */
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(root, "volume");
+    const cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "mic_gain_db");
+    const cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "brightness");
+    if (cJSON_IsNumber(v)) out->volume = v->valueint;
+    if (cJSON_IsNumber(g)) out->mic_gain_db = g->valueint;
+    if (cJSON_IsNumber(b)) out->brightness = b->valueint;
+    cJSON_Delete(root);
+
+done:
+    esp_http_client_cleanup(client);
+    free(auth);
+    return err;
+}
+
 esp_err_t ota_report(const cfg_t *cfg, const char *body)
 {
     char url[256];
