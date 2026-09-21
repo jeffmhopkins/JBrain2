@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -1862,6 +1862,68 @@ screen goes, that is the answer. If all eighteen bytes are identical lit and dar
 on this bus is doing it, and the search moves to the panel controller's own state or the OLED
 supply beyond these two parts — which is worth knowing too, and is the first time that would be
 a measurement rather than an inference.
+
+#### 10.4an W4 and W4b land, as a transcription (2026-09-21)
+
+The owner asked for the animations the PWA already plays on a poke. That was not a design task,
+because `frontend/src/pet/` was written to be ported: `face.ts` says outright that "the ESP32-S3
+panel will run the same model in C, so this file is the reference implementation", and `rig.ts`
+that it is "in the same figure-space the panel will use, so the firmware port is a transcription
+rather than a redesign". Three files crossed over, keeping their numbers:
+
+| web | panel | what it carries |
+| --- | --- | --- |
+| `face.ts` | `emotion.c` | the six emotions plus `bewildered`, as lid geometry |
+| `rig.ts` | `rig.c` | seventeen actions, limb poses, the figure transform, the gag skeleton |
+| `variants.ts` | `variants.c` | weighted pools, per-variant cooldowns, the repetition penalty |
+
+A poke now picks from a pool rather than doing one thing: wiggle and giggle at weight 3, boing
+at 2, blush at 1, sneeze at 1, and hiccup at 0.4 with a 45-second cooldown — rare on purpose,
+because a child who sees something once in three weeks talks about it for a month. Hammering it
+softens the magnitude toward the 0.35 floor and never to zero, since a motionless response is
+indistinguishable from a broken one.
+
+**What did not cross over, and why.** The web rig rotates the whole figure. Rotating a 368x448
+framebuffer 25 times a second is a per-pixel resample this panel should not spend, and rotating
+in source space tears holes in filled shapes — so `ang` becomes a **head tilt**, the head and
+eyes offset against the torso, which is the cue curious and silly actually need. `spin` is left
+out of the pools rather than faked badly. Everything else — squash, offset, the breathing that
+runs under even the idle pose — is coordinate arithmetic the renderer was already doing.
+
+**The eye needed real work.** The web version clips the pupil to the eye and fills a quadratic
+cheek-arc; both have closed forms. The upper lid is a half-plane in a frame rotated about the
+eye's top centre, so a point test is two multiplies. The lower lid's Bezier has
+`x(t) = bw(2t - 1)`, which is **linear in t** — so `t` comes straight from `x` and the curve is
+`y = ly - 2t(1-t)·bend` with no root-finding. The lids cost one pass over two 60x70 boxes.
+
+#### 10.4ao The firmware gets its first tests, and they immediately paid (2026-09-21)
+
+`face.c` and `font.c` have been "pure C, no ESP dependencies, host-renderable" since they were
+written, and **nothing ever compiled them on a host.** `firmware/host/` now does, in CI, before
+the toolchain pull, in two seconds. It found three defects in code that had already built clean
+for the ESP32:
+
+1. **Missing includes.** `rig.c` used `uint32_t` and `variants.c` used `NULL` without including
+   the headers that define them. ESP-IDF supplied both transitively; a different include order
+   would have broken the build with no change to this code.
+2. **A transcription bug the reference could not have.** `variants.ts` gets "never played" free
+   from `lastPlayed[key] ?? -Infinity`. Zero-initialised C does not: a variant that had never
+   been chosen looked like one chosen at boot, so early on the WHOLE pool read as still cooling,
+   the picker fell through to its "everything is cooling" branch — which is allowed to
+   repeat — and the first pokes of the day would repeat themselves. That is precisely the
+   boredom the file exists to prevent, and it would have been invisible on the bench and
+   obvious to a four-year-old in week two.
+3. **The wrong language.** The harness was first written `-std=c11`, under which `M_PI` does not
+   exist and every trig call fails. ESP-IDF builds this code as `-std=gnu17`, so a stricter host
+   dialect was testing a language the device never compiles. It is `-std=gnu11` now.
+
+**And one wrong test, twice, which is its own lesson.** The blink case first asserted that a shut
+eye lights fewer pixels. It lights MORE: lids are drawn black inside the eye — as the web
+renderer's `#000` fills are — and black is the field colour, so a happy face's cheek-raise
+punches "unlit" pixels into the head and a shut eye covers them. Counting lit pixels says a blink
+makes the robot bigger. The bounding box says what was actually meant: the figure's extent must
+not move. Four instruments in this investigation have now failed by measuring something adjacent
+to the question (§10.4am), and this is the first one that failed loudly.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 

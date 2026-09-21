@@ -34,8 +34,11 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "face.h"
 #include "font.h"
+#include "rig.h"
+#include "variants.h"
 #include "ota.h"
 #include "pmu.h"
 #include "freertos/FreeRTOS.h"
@@ -614,6 +617,16 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    /* The rig's running state. `st` persists between frames because the emotion TWEENS: a
+       pose system that snaps is a slide show, and the halving approach in `emotion.c` is what
+       turns one into an animation system. */
+    face_state_t st;
+    face_rest(&st);
+    pool_memory_t poke_mem;
+    variants_reset(&poke_mem);
+    action_t action = ACT_NONE;
+    uint32_t action_start = 0;
+    float action_mag = 1.0f;
     float s_open = 1.0f;
     int s_drawn_lean = 0;
     int since_reassert = 0;
@@ -627,11 +640,21 @@ static void face_task(void *arg)
     while (true) {
         PHASE(1);
         bool dirty = false;
+        /* One clock read per frame, shared by the rig, the pools and the cooldowns, so every
+           part of a frame agrees about when it is. */
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         PHASE(2);
         if (touch && touch_tapped()) {
             colour = (colour + 1) % face_colour_count();
-            ESP_LOGI(TAG, "tap -> colour %d", colour);
             s_flinch = 1.0f;
+            /* THE POKE IS THE PRODUCT. Which reaction you get is chosen here — weighted,
+               cooled-down, and softened if you are hammering it (`variants.c`). The colour
+               cycle stays, because it is the one thing a child can steer. */
+            action = (action_t)variants_pick(POOL_POKE, &poke_mem, now, esp_random());
+            action_mag = variants_penalty(POOL_POKE, &poke_mem, now);
+            action_start = now;
+            ESP_LOGI(TAG, "tap -> colour %d, action %d, mag %.2f", colour, (int)action,
+                     (double)action_mag);
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
@@ -648,6 +671,9 @@ static void face_task(void *arg)
         /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
            frame long and read as a glitch; the floor is for a face that is holding still. */
         if (s_flinch > 0.0f || s_open < 1.0f) dirty = true;
+        /* A running action animates at the poll rate; the idle floor is for a face holding
+           still, and a wave drawn five times a second is a twitch. */
+        if (action != ACT_NONE) dirty = true;
         /* A moved figure is a new frame, so tilting redraws at the poll rate rather than
            waiting out the idle floor — but only once it has moved enough to see, or every
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
@@ -667,13 +693,36 @@ static void face_task(void *arg)
 
         if (dirty || since_draw >= FACE_FLOOR_MS) {
             s_drawn_lean = s_lean;
-            const face_state_t st = {
-                .bob = bob_step(frame++),
-                .lean = s_lean,
-                .dip = (int)(FLINCH_DIP * s_flinch),
-                .open = s_open,
-                .startle = s_flinch,
-            };
+            /* Where we are in the running action, and what face it wears. An action that has
+               run out returns to ACT_NONE, whose face is happy — so the robot always settles
+               rather than holding the last frame of a sneeze forever. */
+            float p = 0.0f;
+            if (action != ACT_NONE) {
+                const int dur = rig_spec(action)->dur_ms;
+                const uint32_t el = now - action_start;
+                if (dur <= 0 || (int)el >= dur) {
+                    action = ACT_NONE;
+                } else {
+                    p = (float)el / (float)dur;
+                }
+            }
+            face_params_t target;
+            emotion_resolve(rig_spec(action)->face, &target);
+            /* TWICE PER FRAME, ON PURPOSE. `emotion_approach` halves per FRAME, and it was
+               written against a 50 fps surface; this panel renders at 25. Applying it once
+               here would make every emotion arrive at half its intended speed, and speed is
+               part of the emotion — sleepy and excited differ by `rate` alone. Two steps of a
+               20 ms tween is exactly one 40 ms frame. */
+            emotion_approach_face(&st.eyes, &target, target.rate);
+            emotion_approach_face(&st.eyes, &target, target.rate);
+            rig_for(action, p, action_mag, now, &st.rig);
+            rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
+            st.bob = bob_step(frame++);
+            st.lean = s_lean;
+            st.open = s_open;
+            st.startle = s_flinch;
+            /* The poke recoil rides on top of whatever the action is already doing. */
+            st.fig.oy += FLINCH_DIP * s_flinch;
             PHASE(6);
             face_draw(fb, colour, &st);
             PHASE(7);

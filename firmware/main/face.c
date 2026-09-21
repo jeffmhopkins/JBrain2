@@ -5,11 +5,11 @@
  * having built the mock at true geometry: the design was measured against this screen before
  * the screen existed, and copying the numbers is more faithful than re-deriving them.
  *
- * WHAT THIS IS NOT. The mock's robot is a rig: ~17 tweened floats, six emotions in lid
- * geometry, limbs that exist for the gags. This is the REST POSE only — head, eyes, antenna,
- * torso, chest plate, smile — with no tweening, no emotion and no limbs. It is the thing that
- * proves the geometry and the colour pipeline are right, so that W4's rig has something true
- * to animate rather than a drawing to argue with.
+ * IT IS NOW THE RIG, not the rest pose it started as. Emotion arrives as lid geometry
+ * (`emotion.c`), limbs and the figure transform as poses (`rig.c`), and this file draws one
+ * instant of whatever the caller has tweened. The eye is the only part that needed new
+ * rasterising: the web version clips a pupil and fills a quadratic cheek-arc, and both have a
+ * closed form here, so the lids cost a per-pixel pass over two 60x70 boxes and nothing else.
  */
 
 #include "face.h"
@@ -119,75 +119,198 @@ static void draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uin
 #define ARM_L 74
 #define LEG_L 54
 
-static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, float open, float startle)
+/* One eye, with lids.
+ *
+ * The web renderer (`frontend/src/pet/draw.ts:drawEye`) clips the pupil to the eye, fills a
+ * rotated rect for the upper lid and a quadratic-capped region for the lower. Both reduce to
+ * arithmetic, so this is one pass over the eye's box rather than a scanline rasteriser:
+ *
+ *   upper lid — a half-plane in a frame rotated by `ua` about the eye's TOP CENTRE, covering
+ *               the first `h*uy` of it. Inverse-rotating the point is two multiplies.
+ *   lower lid — the quadratic Bezier from (-bw, ly) through (0, ly-bend) to (+bw, ly) has
+ *               x(t) = bw(2t-1), which is LINEAR in t. So t is recoverable from x directly
+ *               and the curve is y(x) = ly - 2t(1-t)*bend with no root-finding at all.
+ *
+ * Lids are drawn in the field colour (black) rather than skipped, because an eye is drawn over
+ * the head and "not drawn" would show the head through it.
+ */
+static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_params_t *p,
+                     float open, float startle, float scale)
 {
     /* 52x62 in the mock, scaled 0.78 because the eyes shrink with the head on a body. */
     const float grow = 1.0f + 0.20f * startle;
-    const int w = (int)(52 * 0.78f * grow);
-    const int h = (int)(62 * 0.78f * grow * open);
+    float w = 52.0f * 0.78f * p->sx * grow * scale;
+    float h = 62.0f * 0.78f * p->sy * grow * scale * open;
+    /* The eye WIDENS as it closes — squash-and-stretch on a blink, straight from Cozmo. */
+    const float bw = w * (1.0f + 0.35f * (1.0f - open));
+    w = bw;
 
     /* Shut: a lid LINE, not an absent eye. A blink drawn as nothing reads as the face
        breaking for a frame; a line reads as a blink. */
-    if (h < 5) {
-        fill_round_rect(fb, cx - w / 2, cy - 2, w, 5, 2, dark);
+    if (h < 5.0f) {
+        fill_round_rect(fb, cx - (int)(w / 2), cy - 2, (int)w, 5, 2, dark);
         return;
     }
 
-    const int r = (int)((w < h ? w : h) * 0.38f);
-    fill_round_rect(fb, cx - w / 2, cy - h / 2, w, h, r, rgb(0xF6, 0xF9, 0xFC));
+    const uint16_t white = rgb(0xF6, 0xF9, 0xFC);
+    const uint16_t glint = rgb(0xFF, 0xFF, 0xFF);
+    const uint16_t field = rgb(0x00, 0x00, 0x00);
+    const float hw = w * 0.5f, hh = h * 0.5f;
+    const float rr = (w < h ? w : h) * 0.38f;
 
-    /* The pupil is clamped to the lid: without this a half-closed eye shows a bar of pupil
-       spilling past the white, which reads as damage rather than as a blink. */
-    int pr = (int)(17 * 0.78f * (1.0f - 0.30f * startle));
-    if (pr > h / 2) pr = h / 2;
-    fill_circle(fb, cx, cy, pr, dark);
-    /* The catchlight is what stops the eye reading as a hole. */
-    if (pr > 5) {
-        fill_circle(fb, cx - (int)(6 * 0.78f), cy - (int)(7 * 0.78f), (int)(5 * 0.78f),
-                    rgb(0xFF, 0xFF, 0xFF));
+    float pr = 17.0f * 0.78f * scale * (1.0f - 0.30f * startle);
+    if (pr > hh) pr = hh;
+    const float gx = -6.0f * 0.78f * scale, gy = -7.0f * 0.78f * scale;
+    const float gr = 5.0f * 0.78f * scale;
+
+    const float ua = p->ua * (float)M_PI / 180.0f;
+    const float ca = cosf(ua), sa = sinf(ua);
+    const float upper = h * p->uy;
+    const float lower_y = hh - h * p->ly; /* eye-local y where the lower lid starts */
+    const float bend = h * p->lb;
+
+    const int x0 = (int)(-hw) - 1, x1 = (int)(hw) + 1;
+    const int y0 = (int)(-hh) - 1, y1 = (int)(hh) + 1;
+    for (int j = y0; j <= y1; j++) {
+        const float fy = (float)j;
+        for (int i = x0; i <= x1; i++) {
+            const float fx = (float)i;
+
+            /* Rounded-rect membership: outside the corner discs is outside the eye. */
+            const float ax = fabsf(fx), ay = fabsf(fy);
+            if (ax > hw || ay > hh) continue;
+            if (ax > hw - rr && ay > hh - rr) {
+                const float dx = ax - (hw - rr), dy = ay - (hh - rr);
+                if (dx * dx + dy * dy > rr * rr) continue;
+            }
+
+            uint16_t c = white;
+            const float dpx = fx - gx * 0.0f, dpy = fy; /* pupil is centred; gaze is the glint */
+            if (dpx * dpx + dpy * dpy <= pr * pr) c = dark;
+            if (pr > 5.0f) {
+                const float lx = fx - gx, ly2 = fy - gy;
+                if (lx * lx + ly2 * ly2 <= gr * gr) c = glint;
+            }
+
+            /* Upper lid, in the frame rotated about the eye's top centre. */
+            if (p->uy > 0.01f) {
+                const float X = fx, Y = fy + hh;
+                const float py = -X * sa + Y * ca;
+                const float px2 = X * ca + Y * sa;
+                if (py >= 0.0f && py <= upper && fabsf(px2) <= hw * 2.0f) c = field;
+            }
+            /* Lower lid / cheek arc: the Duchenne raise, and what makes "happy" read at all. */
+            if (p->ly > 0.01f) {
+                const float t = (fx / hw + 1.0f) * 0.5f;
+                const float cyv = lower_y - 2.0f * t * (1.0f - t) * bend;
+                if (fy >= cyv) c = field;
+            }
+            px(fb, cx + i, cy + j, c);
+        }
     }
+}
+
+/* The cheek blush and the gag puff: two extras the whole-figure transform cannot express, and
+   the only artwork in the rig that is not the robot itself. */
+static void draw_extra(uint16_t *fb, int ox, int hy, extra_t extra, float scale)
+{
+    if (extra == EXTRA_BLUSH) {
+        const uint16_t pink = rgb(0xFF, 0x7A, 0x9C);
+        const int dx = (int)(78.0f * scale), r = (int)(16.0f * scale);
+        fill_circle(fb, ox - dx, hy + (int)(26.0f * scale), r, pink);
+        fill_circle(fb, ox + dx, hy + (int)(26.0f * scale), r, pink);
+    } else if (extra == EXTRA_PUFF) {
+        /* Deliberately a cloud and not a colour: the gag has to read on a dark panel from
+           across a room, and a tinted robot reads as a new robot. */
+        const uint16_t puff = rgb(0x8C, 0x9A, 0x8C);
+        const int r = (int)(18.0f * scale);
+        fill_circle(fb, ox - (int)(96.0f * scale), hy + (int)(200.0f * scale), r, puff);
+        fill_circle(fb, ox - (int)(124.0f * scale), hy + (int)(186.0f * scale),
+                    (int)(r * 0.7f), puff);
+        fill_circle(fb, ox - (int)(120.0f * scale), hy + (int)(216.0f * scale),
+                    (int)(r * 0.6f), puff);
+    }
+}
+
+void face_rest(face_state_t *st)
+{
+    if (st == NULL) return;
+    st->bob = 0;
+    st->lean = 0;
+    st->open = 1.0f;
+    st->startle = 0.0f;
+    emotion_resolve(FACE_HAPPY, &st->eyes);
+    rig_for(ACT_NONE, 0.0f, 1.0f, 0, &st->rig);
+    rig_figure(ACT_NONE, 0.0f, 1.0f, 0, 0.0f, &st->fig);
 }
 
 void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 {
-    /* Everything hangs off this, so one offset moves the whole figure. See
+    /* Everything hangs off these, so one pair of offsets moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int oy = OY + st->bob + st->dip;
-    /* Everything hangs off these two, so one pair of offsets moves the whole figure. */
-    const int ox = OX + st->lean;
+    const int ox = OX + st->lean + (int)lrintf(st->fig.ox);
+    const int oy = OY + st->bob + (int)lrintf(st->fig.oy);
+    const float sx = st->fig.sx, sy = st->fig.sy;
+    /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
+       the head against the torso is the cue curious and silly actually need, and it costs two
+       adds instead of resampling 165 000 pixels. */
+    const int tilt = (int)lrintf(st->fig.tilt * 1.6f);
+    /* One scalar for radii and stroke widths, which cannot take independent x and y. */
+    const float s = (sx + sy) * 0.5f;
+
+#define SX(v) ((int)lrintf((float)(v) * sx))
+#define SY(v) ((int)lrintf((float)(v) * sy))
+
     const uint32_t hex = PALETTE[colour % face_colour_count()];
     const uint16_t col = shade(hex, 1.0f);
     const uint16_t dark = shade(hex, 0.22f);
     const uint16_t torso = shade(hex, 0.88f);
     const uint16_t plate = shade(hex, 0.55f);
+    const uint16_t limb = shade(hex, 0.78f);
 
     /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's
        field is #000 and why the robot reads as emitting rather than as a picture. */
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
 
-    /* Rest pose from the mock's `rig()`: arms +/-12 degrees, legs +/-4. Drawing order is the
-       mock's too — legs behind everything, arms behind the torso while they hang. */
-    const uint16_t limb = shade(hex, 0.78f);
-    draw_limb(fb, ox - 34, oy + HIP_Y, 4.0f, LEG_L, 30, limb);
-    draw_limb(fb, ox + 34, oy + HIP_Y, -4.0f, LEG_L, 30, limb);
-    draw_limb(fb, ox - 66, oy + SHOULDER_Y, 12.0f, ARM_L, 28, limb);
-    draw_limb(fb, ox + 66, oy + SHOULDER_Y, -12.0f, ARM_L, 28, limb);
+    const int hy = oy + SY(HEAD_Y);
+    draw_extra(fb, ox, hy, st->fig.extra, s);
 
-    fill_round_rect(fb, ox - 72, oy - 26, 144, 132, 40, torso);
-    fill_round_rect(fb, ox - 26, oy + 10, 52, 40, 12, plate);
+    /* Drawing order is the mock's: legs behind everything, arms behind the torso. */
+    draw_limb(fb, ox - SX(34), oy + SY(HIP_Y), st->rig.leg_l, SY(LEG_L), SX(30), limb);
+    draw_limb(fb, ox + SX(34), oy + SY(HIP_Y), st->rig.leg_r, SY(LEG_L), SX(30), limb);
+    draw_limb(fb, ox - SX(66), oy + SY(SHOULDER_Y), st->rig.arm_l, SY(ARM_L), SX(28), limb);
+    draw_limb(fb, ox + SX(66), oy + SY(SHOULDER_Y), st->rig.arm_r, SY(ARM_L), SX(28), limb);
 
-    const int hy = oy + HEAD_Y;
+    fill_round_rect(fb, ox - SX(72), oy - SY(26), SX(144), SY(132), (int)(40 * s), torso);
+    fill_round_rect(fb, ox - SX(26), oy + SY(10), SX(52), SY(40), (int)(12 * s), plate);
+
     /* Antenna first: it sits behind the head, as the mock's silhouette pass does. */
-    fill_rect(fb, ox - 4, hy - HH - 30, 8, 30, col);
-    fill_circle(fb, ox, hy - HH - 36, 11, col);
+    fill_rect(fb, ox + tilt - SX(4), hy - SY(HH + 30), SX(8), SY(30), col);
+    fill_circle(fb, ox + tilt, hy - SY(HH + 36), (int)(11 * s), col);
 
-    fill_round_rect(fb, ox - HW, hy - HH, HW * 2, HH * 2, 40, col);
+    fill_round_rect(fb, ox + tilt - SX(HW), hy - SY(HH), SX(HW * 2), SY(HH * 2),
+                    (int)(40 * s), col);
 
-    const int ex = (int)(HW * 0.43f), ey = hy - (int)(HH * 0.17f);
-    draw_eye(fb, ox - ex, ey, dark, st->open, st->startle);
-    draw_eye(fb, ox + ex, ey, dark, st->open, st->startle);
+    const int ex = SX((int)(HW * 0.43f)), ey = hy - SY((int)(HH * 0.17f));
+    draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
+    draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
-    arc_stroke(fb, ox, hy + (int)(HH * 0.52f) - 16, 30, (float)M_PI * 0.15f,
-               (float)M_PI * 0.85f, 9, dark);
+    arc_stroke(fb, ox + tilt, hy + SY((int)(HH * 0.52f)) - SY(16), (int)(30 * s),
+               (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s), dark);
+
+    /* PEEKABOO LAST, over the eyes it is hiding. Posing the arms by angle cannot do this —
+       the hands have to AIM at the eyes, which is the difference between hiding and squatting
+       in a corner (`rig.ts` on the shipped dud this replaces). */
+    if (st->rig.hands_up > 0.01f) {
+        const float u = st->rig.hands_up > 1.0f ? 1.0f : st->rig.hands_up;
+        const int rest_x = SX(66), rest_y = oy + SY(SHOULDER_Y) + SY(ARM_L);
+        const int hx = (int)lrintf((float)rest_x + ((float)(ex) - (float)rest_x) * u);
+        const int hyy = (int)lrintf((float)rest_y + ((float)ey - (float)rest_y) * u);
+        const int hr = (int)(28 * 0.62f * s);
+        fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
+        fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
+    }
+#undef SX
+#undef SY
 }

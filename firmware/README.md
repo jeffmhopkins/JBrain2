@@ -92,6 +92,40 @@ panic (ROOM_ENDPOINT_PLAN.md §10.4ai).
 Do not debug this from the display side. Check `reset_reason` and `stack_free` in telemetry
 first — the console cannot help, because opening it resets the panel.
 
+## The robot is a rig, and a poke picks from a pool
+
+Three modules ported from `frontend/src/pet/`, which was written to be ported — `face.ts` says
+so in its own header. They keep the reference's numbers:
+
+| web | panel | what it carries |
+| --- | --- | --- |
+| `face.ts` | `emotion.c` | six emotions plus `bewildered`, as lid geometry |
+| `rig.ts` | `rig.c` | seventeen actions, limb poses, the figure transform, the gag skeleton |
+| `variants.ts` | `variants.c` | weighted pools, per-variant cooldowns, the repetition penalty |
+
+A tap picks a reaction rather than doing one thing, and hammering it softens the magnitude
+toward a 0.35 floor — never to zero, because a motionless response is indistinguishable from a
+broken one. Emotion is carried by lid geometry, whole-face motion and timing, **never colour**
+(`docs/reference/DESIGN.md`); the colour cycle stays orthogonal, as the one thing a child steers.
+
+Two deliberate omissions: whole-figure **rotation** (a per-pixel resample 25 times a second;
+`ang` becomes a head tilt instead) and therefore `spin`, which is left out of the pools rather
+than faked badly. See ROOM_ENDPOINT_PLAN.md §10.4an.
+
+## Host tests: `make -C firmware/host test`
+
+`face.c`, `font.c`, `emotion.c`, `rig.c` and `variants.c` have **no ESP dependencies** — a
+standing claim that nothing checked until now. The host build is the check, and it runs in CI
+before the toolchain pull because it takes two seconds. It is also the only place this firmware
+has assertions at all, since there is no hardware in CI.
+
+It is `-std=gnu11`, not `-std=c11`, deliberately: ESP-IDF builds this code as `-std=gnu17`, and
+a host build in a *stricter* dialect tests a language the device never compiles.
+
+Run it before every firmware push. It found three real defects the ESP build had compiled
+cleanly — two missing includes that IDF supplied transitively, and a zero-init bug that made the
+variant pool repeat itself on the first pokes after boot (§10.4ao).
+
 ## The robot stays upright, and the meter keeps up
 
 The accelerometer (not the gyroscope — gravity says which way is down, rotation rate does not)

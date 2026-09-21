@@ -43,6 +43,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+
+      # The pure-C half, on the host, BEFORE the toolchain pull — it takes two seconds and it
+      # is the only place this firmware has assertions at all. There is no hardware in CI, so
+      # anything testable off-device should be: the rig's selection logic (weights, cooldowns,
+      # the repetition penalty) and the renderer's invariants are exactly that. It also
+      # enforces the standing claim that `face.c`, `font.c`, `emotion.c`, `rig.c` and
+      # `variants.c` have no ESP dependencies — include `esp_log.h` in one of them and this
+      # link fails here rather than on a panel in a bedroom.
+      - name: Host tests for the pure-C modules
+        run: make -C firmware/host test
+
       # Pinned to the version Waveshare's own examples for this board target, so the vendor
       # drivers we port from in later waves compile against the same headers.
       - uses: espressif/esp-idf-ci-action@v1
