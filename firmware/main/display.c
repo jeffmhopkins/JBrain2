@@ -79,6 +79,22 @@ static const char *TAG = "display";
    wrong about on the first attempt. */
 #define STRIPE_ROWS 16
 static DMA_ATTR uint16_t stripe[LCD_H_RES * STRIPE_ROWS];
+/* THE SECOND HALF OF THE STRIPE BLIT, AND 0.2.46 SHIPPED WITHOUT IT.
+ *
+ * `esp_lcd_panel_draw_bitmap` QUEUES the transfer and returns; it does not wait. That is not
+ * an implementation detail to look up — this panel said so in its own error message for three
+ * versions, "recycle spi transactions failed", which is the driver reclaiming transactions
+ * queued by EARLIER calls. With `trans_queue_depth` at the vendor macro's 10, up to ten
+ * transfers can be reading the buffer while the next memcpy is writing it.
+ *
+ * 0.2.46 memcpy'd every stripe into one shared buffer, so the DMA read bytes that had already
+ * been overwritten by the following stripe: thin horizontal bands of the figure displaced
+ * sideways, in the owner's photograph, on the very version that fixed the black screen.
+ *
+ * Two buffers and a queue one deep is the whole fix. Depth 1 means a call blocks until the
+ * previous transfer has completed, so at most ONE is ever in flight when we return — and the
+ * stripe we are about to fill is by definition the other one. */
+static DMA_ATTR uint16_t stripe_b[LCD_H_RES * STRIPE_ROWS];
 
 static const co5300_lcd_init_cmd_t init_cmds[] = {
     {0xFE, (uint8_t[]){0x00}, 1, 0},
@@ -199,6 +215,8 @@ bool display_start(void)
      * for a fixed 11,776 bytes. */
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+    /* See `stripe_b`: two buffers only suffice if at most one transfer is ever in flight. */
+    io_cfg.trans_queue_depth = 1;
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "panel io: %s", esp_err_to_name(err));
@@ -480,7 +498,12 @@ void display_last_tap(int *x, int *y, int *zone)
  * A strip 12 px wide is 8.8 KB against 322 KB for the frame, so it can be pushed on every
  * capture while the face keeps its slower cadence. Internal RAM because it is a DMA source. */
 #define METER_SPAN (METER_BOTTOM - METER_TOP)
-static DMA_ATTR uint16_t s_strip[METER_W * METER_SPAN];
+/* TWO, FOR THE SAME REASON THE FACE STRIPE NEEDS TWO — see `stripe_b`. The meter is refilled
+   25 times a second and pushed on every one, so the buffer being written is the buffer the
+   previous transfer may still be reading. It is a narrower window than the face's back-to-back
+   stripes (8,832 bytes clears in well under the 40 ms between meter updates), which is exactly
+   why it would have survived testing and corrupted the bar in the owner's bedroom. */
+static DMA_ATTR uint16_t s_strip[2][METER_W * METER_SPAN];
 
 /* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
    getting the sign wrong costs one release and is obvious on sight, which is cheaper than
@@ -549,12 +572,15 @@ static int s_blit_ok;
 static esp_err_t blit_frame(const uint16_t *fb)
 {
     if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    bool odd = false;
     for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
         int rows = FACE_H - y;
         if (rows > STRIPE_ROWS) rows = STRIPE_ROWS;
-        memcpy(stripe, fb + (size_t)y * FACE_W, (size_t)rows * FACE_W * sizeof(uint16_t));
-        const esp_err_t err =
-            esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + rows, stripe);
+        /* ALTERNATING, because the previous stripe may still be in flight — see `stripe_b`. */
+        uint16_t *dst = odd ? stripe_b : stripe;
+        odd = !odd;
+        memcpy(dst, fb + (size_t)y * FACE_W, (size_t)rows * FACE_W * sizeof(uint16_t));
+        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + rows, dst);
         if (err != ESP_OK) return err;
     }
     return ESP_OK;
@@ -649,23 +675,26 @@ static void blit_meter(int level)
     int h = s_shown * METER_SPAN / METER_FULL;
     if (h > METER_SPAN) h = METER_SPAN;
     if (h < 0) h = 0;
+    static int slot;
+    slot ^= 1;
+    uint16_t *strip = s_strip[slot];
     for (int row = 0; row < METER_SPAN; row++) {
         const uint16_t c = (row >= METER_SPAN - h) ? METER_COLOUR : 0;
-        for (int col = 0; col < METER_W; col++) s_strip[row * METER_W + col] = c;
+        for (int col = 0; col < METER_W; col++) strip[row * METER_W + col] = c;
     }
     int x0 = METER_X, y0 = METER_TOP;
     if (s_upside_down) {
         /* The strip reverses and the window moves to the opposite corner, so the bar stays on
            the viewer's left rather than travelling to the other side of the screen. */
         for (int i = 0, j = METER_W * METER_SPAN - 1; i < j; i++, j--) {
-            const uint16_t t = s_strip[i];
-            s_strip[i] = s_strip[j];
-            s_strip[j] = t;
+            const uint16_t t = strip[i];
+            strip[i] = strip[j];
+            strip[j] = t;
         }
         x0 = FACE_W - METER_X - METER_W;
         y0 = FACE_H - METER_BOTTOM;
     }
-    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x0 + METER_W, y0 + METER_SPAN, s_strip);
+    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x0 + METER_W, y0 + METER_SPAN, strip);
 }
 
 #define BOB_PX 5

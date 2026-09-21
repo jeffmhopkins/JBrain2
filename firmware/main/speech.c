@@ -73,6 +73,7 @@ static int16_t *s_mn_fill;    /* accumulator, because the two are not the same n
 static int s_mn_filled;
 static volatile uint32_t s_fed, s_fetched;  /* counted so "is audio arriving" is answerable */
 static volatile int s_peak;   /* loudest sample the front end has handed back lately */
+static unsigned s_clipped;    /* samples at the rail since the last report */
 static int16_t *s_fill;       /* accumulator, s_feed_chunk samples */
 static int s_filled;
 
@@ -197,15 +198,23 @@ static void detect_task(void *arg)
         for (int i = 0; i < n; i++) {
             const int v = res->data[i] < 0 ? -res->data[i] : res->data[i];
             if (v > peak) peak = v;
+            /* CLIPPING, COUNTED RATHER THAN INFERRED. A peak of 32768 says the loudest
+               sample hit the rail; it does not say whether one sample did or ten thousand
+               did, and those are a healthy transient and an unrecognisable phrase. The
+               owner's first successful decode came with peak 32768 at -2.0 dBFS, which is
+               why this number exists. */
+            if (v >= 32000) s_clipped++;
         }
         s_peak = peak;
 
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (now - last_report >= SPEECH_REPORT_MS) {
             last_report = now;
-            ESP_LOGI(TAG, "fed %u fetched %u | peak %5d | vad %s | %.1f dBFS", (unsigned)s_fed,
-                     (unsigned)s_fetched, peak, s_hearing ? "SPEECH " : "silence",
-                     (double)res->data_volume);
+            ESP_LOGI(TAG,
+                     "fed %u fetched %u | peak %5d | clipped %u | vad %s | %.1f dBFS",
+                     (unsigned)s_fed, (unsigned)s_fetched, peak, (unsigned)s_clipped,
+                     s_hearing ? "SPEECH " : "silence", (double)res->data_volume);
+            s_clipped = 0;
         }
 
         const esp_mn_state_t st = feed_multinet(res->data, n);
@@ -213,7 +222,22 @@ static void detect_task(void *arg)
             esp_mn_results_t *r = s_mn->get_results(s_mn_data);
             const vocab_t *v = r->num > 0 ? vocab_get(r->command_id[0]) : NULL;
             if (v != NULL) {
-                ESP_LOGI(TAG, "heard '%s' p=%.2f", v->phrase, (double)r->prob[0]);
+                /* THE RAW DECODE AND THE RUNNERS-UP, NOT JUST THE WINNER.
+                   The owner said "turn red" — which is not in the vocabulary at all — and
+                   this fired 'jump up' at p=0.19 and published it. There is no confidence
+                   floor here, and a floor cannot be chosen honestly until it is known what a
+                   CORRECT decode scores on this hardware; guessing one would silently stop
+                   real commands working and look exactly like the recogniser being broken.
+                   So this logs the number instead of acting on it, and the floor lands in the
+                   version after a capture of phrases that ARE in the vocabulary. */
+                ESP_LOGI(TAG, "heard '%s' p=%.2f | raw '%s' | %d candidate%s", v->phrase,
+                         (double)r->prob[0], r->raw_string != NULL ? r->raw_string : "",
+                         r->num, r->num == 1 ? "" : "s");
+                for (int k = 1; k < r->num && k < 3; k++) {
+                    const vocab_t *alt = vocab_get(r->command_id[k]);
+                    ESP_LOGI(TAG, "  also '%s' p=%.2f",
+                             alt != NULL ? alt->phrase : "?", (double)r->prob[k]);
+                }
                 publish(r->command_id[0], v->phrase);
             }
             /* MUST be cleaned after a detection or the next phrase decodes against this

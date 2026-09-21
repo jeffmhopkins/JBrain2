@@ -2633,6 +2633,108 @@ uptime guard is what keeps that trade honest: a fault present from boot would ot
 forever, and a reboot loop is no better than a freeze. Past the guard, a panel that cannot draw
 for ten seconds has nothing to lose by starting over.
 
+#### 10.4bf The screen works, the mic works, and both were half-right (0.2.47, 2026-09-21)
+
+0.2.46's stripe blit ended the black screen: `render: 65 / 188 / 318 frames ok, **0 failed**`
+across 68 s, and the owner's photograph shows a whole ostrich. The underflow is gone, the
+`INVALID_STATE` is gone, and the largest free internal block sits at 31,744 with everything
+running.
+
+**And the recogniser decoded a phrase for the first time in this feature.**
+
+```
+I (16874) speech: heard 'jump up' p=0.19
+```
+
+Every earlier conclusion about the microphone was drawn against a silent room. With someone
+actually speaking, the levels are not what any of those readings suggested:
+
+| | measured with nobody talking | measured with a voice at the panel |
+|---|---|---|
+| peak | 194–3,493 | **32,768** |
+| level | −54 dBFS | **−2.0 dBFS** |
+
+Three in-vocabulary phrases have now been confirmed working from the owner's photographs:
+**"pick a new color"** (the bird turned yellow), **"jump up"** and **"do a dance"**.
+
+##### Both halves need correcting, and one of them is mine
+
+**The blit tore, and 0.2.46 shipped the tear.** `esp_lcd_panel_draw_bitmap` QUEUES the
+transfer and returns — which this panel had been saying in its own error message for three
+versions, *"recycle spi transactions failed"*, the driver reclaiming transactions queued by
+earlier calls. With the vendor macro's `trans_queue_depth` of 10, up to ten transfers can be
+reading the buffer while the next `memcpy` writes it. 0.2.46 used ONE shared stripe, so the
+DMA read bytes already overwritten by the following stripe: thin horizontal bands of the
+figure displaced sideways, in the owner's photo, on the very version that fixed the black
+screen. Two buffers and `trans_queue_depth = 1`. The driver source is what settles that this is the
+right fix rather than a plausible one (`esp_lcd_panel_io_spi.c`, `tx_color`):
+
+```c
+if (spi_panel_io->num_trans_inflight < spi_panel_io->queue_size) {
+    lcd_trans = &spi_panel_io->trans_pool[...];              /* queue, do not wait */
+} else {
+    ret = spi_device_get_trans_result(..., portMAX_DELAY);   /* BLOCK */
+}
+```
+
+With `queue_size = 1` the second call blocks until the first completes, so exactly one
+transfer is ever in flight and the buffer about to be filled is by definition the other one.
+
+**Reading it also found the same bug in the meter**, which the face blit had hidden. `s_strip`
+is one buffer, refilled 25 times a second and pushed on every frame, so the buffer being
+written is the one the previous transfer may still be reading. Its window is much narrower —
+8,832 bytes clear in well under the 40 ms between meter updates — which is precisely why it
+would pass every test on the bench and corrupt the bar in a bedroom. Doubled too. The owner
+reports the panel freezing at random on 0.2.46, and a transfer reading a buffer that is being
+rewritten can desync the panel's command stream rather than merely its pixels, so these two
+are the same fault with two outcomes.
+
+**The gain change this version nearly shipped was wrong, and the same capture says so.**
+A peak of 32,768 at −2.0 dBFS looked like an obvious argument for backing 36 dB off to 27.
+Two things in the same reading contradict it:
+
+- the panel was being **held at the owner's face** for a photograph. Ambient in that room
+  reads −46 to −54 dBFS, so a voice at the distance this thing is actually used from lands
+  near −20 dBFS, which is about where MultiNet wants it. Nine dB down would have put
+  room-distance speech at −29 to fix a case that only happens at arm's length;
+- and **both successful decodes happened while it was clipping.** "pick a new color" changed
+  the colour and "jump up" fired, at −2.0 dBFS. The premise that clipping was preventing
+  recognition is contradicted by the only evidence there is for it.
+
+So 36 dB stays, and `MIC_GAIN_FALLBACK_DB` stays at 30 — the two move together or not at all,
+which is the actual bug the aborted change surfaced: it briefly left the fallback at 30 while
+the primary went to 27, turning "the part refused your setting" into "the part is now
+clipping".
+
+The real shape of this is **dynamic range**. Close talk and across-the-room want different
+gains, and one fixed number only chooses which end to fail at. That is what AGC is for, and
+§10.4ba rejected it because it cost ~103 KB of internal RAM and collapsed the largest free
+block to 9,728 — which killed the display, *because the display allocated a DMA buffer per
+frame from that heap*. **It does not any more.** `blit_frame()` uses static buffers, so the
+number AGC has to survive is no longer the display's. That does not make AGC affordable — Wi-Fi
+and TLS still want heap — but it retires the specific reason it was refused, and it is the
+first thing to re-measure.
+
+`clipped` now rides in the 3 s report, to measure that trade rather than argue about it. A
+peak of 32,768 says the loudest sample hit the rail; it does not say whether one sample did or
+ten thousand, and those are a healthy transient and an unrecognisable phrase.
+
+##### The confidence floor is deliberately NOT in this version
+
+The owner said **"turn red"** — which is not in the vocabulary at all, the colour phrases being
+"change your color" and "pick a new color" — and the recogniser published `jump up` at
+p=0.19. There is no confidence floor in the detect path: `publish()` runs on any
+`ESP_MN_STATE_DETECTED` regardless of probability.
+
+A floor obviously belongs there, and it is **not added here**, because nothing in this feature
+yet records what a CORRECT decode scores on this hardware. A number picked to reject 0.19
+would be picked to reject the only two data points that exist, both of them false accepts, and
+if a genuine command also scores low the result is a recogniser that silently stops working
+and looks exactly like the microphone being broken again — which is the failure mode this
+whole sequence has been made of. So this version logs `p`, the raw decode and the runners-up,
+and the floor lands in the next one, from a capture of phrases that are actually in the
+vocabulary.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
