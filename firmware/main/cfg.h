@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include "esp_err.h"
 
 /* Everything that makes one unit different from another. The firmware image itself is
@@ -19,3 +21,15 @@ typedef struct {
    been provisioned, which is a normal state on a freshly flashed board and not a fault. */
 esp_err_t cfg_load(cfg_t *out);
 void cfg_free(cfg_t *c);
+
+/* THE TOUCH CALIBRATION, kept apart from the provisioning above.
+ *
+ * Its own namespace because the two have opposite lifecycles: provisioning is written by the
+ * box at flash time and never by the firmware, while this is measured on the panel, by the
+ * owner, and written from here. A re-flash regenerates the whole NVS partition and takes this
+ * with it — which is why the panel also reports its calibration in telemetry, so a wipe costs
+ * a re-run of the routine rather than a fact nobody has any more.
+ *
+ * `cfg_calibration_load` returns the number of bytes read, 0 when there is none. */
+int cfg_calibration_load(uint8_t *buf, int cap);
+esp_err_t cfg_calibration_save(const uint8_t *buf, int len);

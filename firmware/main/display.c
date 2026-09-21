@@ -31,6 +31,8 @@
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
+#include "calib.h"
+#include "cfg.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -319,6 +321,64 @@ static const pool_t ZONE_POOL[] = {
 static int s_tap_x = -1;
 static int s_tap_y = -1;
 static int s_tap_zone = 0;
+
+/* THE TOUCH CALIBRATION. The owner reports the middle of the panel reading true and the outer
+   20% skewed, which is the ordinary edge behaviour of these controllers and exactly what a
+   fitted piecewise-linear map corrects (`calib.h`). Entered with five taps then a hold — the
+   same rhythm as the reboot, a different count — because calibrating is something you do
+   standing at the panel, and routing it through a setting on the box would put a round trip
+   in the middle of a hands-on job. */
+static calib_t s_cal;
+static bool s_cal_active;
+static int s_cal_i; /* which target, 0 .. CAL_KNOTS*CAL_KNOTS-1 */
+static int16_t s_cal_mx[CAL_KNOTS][CAL_KNOTS];
+static int16_t s_cal_my[CAL_KNOTS][CAL_KNOTS];
+/* Held after a run so the glass says what happened rather than just returning to the robot. */
+static int s_cal_note_ms;
+static bool s_cal_ok;
+
+#define CAL_TARGETS (CAL_KNOTS * CAL_KNOTS)
+#define CAL_NOTE_MS 1500
+
+static void cal_begin(void)
+{
+    s_cal_active = true;
+    s_cal_i = 0;
+    ESP_LOGI(TAG, "calibration: %d targets", CAL_TARGETS);
+}
+
+/* A crosshair, drawn into a cleared frame. Deliberately thin and long: a fat blob invites a
+   tap at its edge, and the whole routine is only as good as where the finger actually lands. */
+static void cal_draw(uint16_t *fb, int cx, int cy, int done, int total)
+{
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    for (int d = -22; d <= 22; d++) {
+        for (int w = -1; w <= 1; w++) {
+            const int x = cx + d, y = cy + w;
+            if (x >= 0 && x < FACE_W && y >= 0 && y < FACE_H) fb[y * FACE_W + x] = CUE_COLOUR;
+            const int x2 = cx + w, y2 = cy + d;
+            if (x2 >= 0 && x2 < FACE_W && y2 >= 0 && y2 < FACE_H) {
+                fb[y2 * FACE_W + x2] = CUE_COLOUR;
+            }
+        }
+    }
+    /* Progress along the top edge, so the owner knows how many taps are left without
+       counting crosshairs. */
+    const int w = FACE_W * done / (total > 0 ? total : 1);
+    for (int y = 0; y < 4; y++) {
+        for (int x = 0; x < w && x < FACE_W; x++) fb[y * FACE_W + x] = LABEL_COLOUR;
+    }
+}
+
+/* The verdict: a wide bar, green-ish for a map that was accepted and red for one refused. */
+static void cal_note(uint16_t *fb, bool ok)
+{
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    const uint16_t c = ok ? SWAP16(0x07E0) : SWAP16(0xF800);
+    for (int y = FACE_H / 2 - 20; y < FACE_H / 2 + 20; y++) {
+        for (int x = 40; x < FACE_W - 40; x++) fb[y * FACE_W + x] = c;
+    }
+}
 
 void display_last_tap(int *x, int *y, int *zone)
 {
@@ -640,6 +700,18 @@ static void face_task(void *arg)
     }
 
     const bool touch = touch_start();
+    {
+        uint8_t blob[CAL_BLOB_BYTES];
+        const int n = cfg_calibration_load(blob, sizeof(blob));
+        if (n > 0 && calib_load(blob, n, &s_cal)) {
+            ESP_LOGI(TAG, "touch calibration loaded");
+        } else if (n > 0) {
+            /* Stored but unusable. Saying so matters: a silently ignored calibration and a
+               panel that was never calibrated look identical from the outside, and they need
+               completely different fixes. */
+            ESP_LOGW(TAG, "stored touch calibration rejected — running uncalibrated");
+        }
+    }
     /* Silence is a failure mode with no symptom, so it is logged rather than inferred: a
        beep that never comes could be the codec, the amplifier pin, the volume, or a tap
        that was never registered, and only the first of those is visible from here. */
@@ -685,7 +757,11 @@ static void face_task(void *arg)
                pool; the pool picks the reaction, weighted, cooled-down, and softened if you
                are hammering it (`variants.c`). The colour cycle stays, because it is the one
                thing a child can steer deliberately. */
-            touch_point(&s_tap_x, &s_tap_y);
+            int rx = -1, ry = -1;
+            touch_point(&rx, &ry);
+            /* Corrected before anything reads it, so the zones, the marker and the telemetry
+               all speak the same coordinates. The identity until a calibration exists. */
+            calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
             s_tap_zone = (int)face_zone(s_tap_x, s_tap_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
@@ -699,6 +775,53 @@ static void face_task(void *arg)
             if (sound) audio_beep();
             dirty = true;
         }
+        /* THE CALIBRATION ROUTINE OWNS THE FRAME while it runs. It deliberately bypasses the
+           rig rather than drawing over it: a robot reacting to the taps being measured would
+           move the thing the owner is aiming at. */
+        if (s_cal_active || s_cal_note_ms > 0) {
+            if (s_cal_note_ms > 0) {
+                s_cal_note_ms -= TOUCH_POLL_MS;
+                cal_note(fb, s_cal_ok);
+            } else {
+                const int i = s_cal_i % CAL_KNOTS, j = s_cal_i / CAL_KNOTS;
+                if (tapped) {
+                    int rx = -1, ry = -1;
+                    touch_point(&rx, &ry);
+                    s_cal_mx[j][i] = (int16_t)rx;
+                    s_cal_my[j][i] = (int16_t)ry;
+                    if (sound) audio_beep();
+                    s_cal_i++;
+                    if (s_cal_i >= CAL_TARGETS) {
+                        s_cal_active = false;
+                        s_cal_ok = calib_build(s_cal_mx, s_cal_my, &s_cal);
+                        if (s_cal_ok) {
+                            uint8_t blob[CAL_BLOB_BYTES];
+                            const int n = calib_save(&s_cal, blob, sizeof(blob));
+                            if (n > 0) cfg_calibration_save(blob, n);
+                            ESP_LOGI(TAG, "calibration accepted: x %d %d %d %d, y %d %d %d %d",
+                                     s_cal.raw_x[0], s_cal.raw_x[1], s_cal.raw_x[2],
+                                     s_cal.raw_x[3], s_cal.raw_y[0], s_cal.raw_y[1],
+                                     s_cal.raw_y[2], s_cal.raw_y[3]);
+                        } else {
+                            /* Refused rather than stored: a non-monotone map folds the panel
+                               onto itself, and the only way out of that is the touchscreen it
+                               just broke. The previous calibration, if any, is untouched. */
+                            ESP_LOGW(TAG, "calibration refused — not monotone, keeping the old");
+                        }
+                        s_cal_note_ms = CAL_NOTE_MS;
+                    }
+                }
+                cal_draw(fb, calib_target_x(s_cal_i % CAL_KNOTS),
+                         calib_target_y(s_cal_i / CAL_KNOTS), s_cal_i, CAL_TARGETS);
+            }
+            PHASE(9);
+            const esp_err_t cerr = esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
+            if (cerr != ESP_OK) ESP_LOGE(TAG, "cal blit: %s", esp_err_to_name(cerr));
+            PHASE(10);
+            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+            continue;
+        }
+
         PHASE(4);
         s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
         PHASE(5);
@@ -722,7 +845,9 @@ static void face_task(void *arg)
         /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
-        const bool rebooting = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+        const gesture_action_t act = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+        const bool rebooting = act == GESTURE_REBOOT;
+        if (act == GESTURE_CALIBRATE) cal_begin();
         const float cue = gesture_cue(&gest);
         if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
@@ -794,7 +919,7 @@ static void face_task(void *arg)
                    hold succeeds, and a gesture with no feedback until it works is one an
                    owner cannot tell from a broken panel. They clear themselves half a second
                    after the rhythm lapses, so ordinary play leaves nothing on screen. */
-                for (int i = 0; i < gest.taps && i < GESTURE_TAPS; i++) {
+                for (int i = 0; i < gest.taps && i < GESTURE_TAPS_MAX; i++) {
                     const int x0 = i * (PIP_W + PIP_GAP);
                     for (int y = 0; y < 4; y++) {
                         for (int x = x0; x < x0 + PIP_W && x < FACE_W; x++) {

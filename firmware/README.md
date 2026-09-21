@@ -199,7 +199,43 @@ below the vendor's 90, so a slipped digit cannot reach a child's ear), mic gain 
 ES8311's PGA truncates above it), brightness floor 10 (zero looks exactly like the blanking
 fault).
 
-## The reboot gesture: three short taps, then hold
+## Maintenance gestures: N short taps, then hold
+
+The tap count selects the action — **three reboots, five calibrates the touchscreen** — and the
+rhythm is the guard. Each press must begin within 500 ms of the previous release. Against
+20 000 simulated presses including 3-9 s leans, a bare hold fires 1937 times and this fires 12;
+not zero on purpose, because a gesture that can never happen by accident cannot be performed on
+purpose either.
+
+One amber pip appears per counted tap and the bar grows during a hold that will actually do
+something — a hold after four taps draws nothing, because a bar promises an action.
+
+**The hold is decided on press *duration*, not on the press edge.** That is what lets five taps
+exist at all: arming at the fourth press would clear the count before the fifth ever landed.
+
+Letting go mid-hold abandons the whole sequence, so a half-finished gesture never leaves the
+panel one press from acting. It lives in `gesture.c`, pure and host-tested, because **both**
+failure directions cost something: a false positive acts on a toy in a child's hands, a false
+negative strands an owner who has no terminal.
+
+## Touch calibration: five taps, then hold
+
+The middle of the panel reads true and the outer 20% is skewed — the ordinary edge behaviour of
+these controllers, and exactly what a fixed scale cannot fix, because the error is zero in the
+centre and grows outward.
+
+Sixteen targets (4 knots per axis), one tap each, then a piecewise-linear correction per axis.
+**Four knots is a measurement**: against a simulated edge compression whose worst error is
+29 px, three knots leave 12.3, four leave 7.1 and five leave 4.6 — and four holds that ratio
+across distortion strengths, which matters because the real curve is unknown and over-fitting a
+model we invented would be its own mistake.
+
+The outer 6% is extrapolated from the outer segment rather than clamped, because clamping would
+flatten precisely the band that is wrong. A non-monotone result is **refused** and the previous
+calibration kept: a folded map puts two places at one coordinate, and the only way out of it is
+the touchscreen it just broke. Stored in its own NVS namespace, re-checked on load, and also
+reported in telemetry so a re-flash costs a re-run rather than a fact nobody has any more.
+
 
 The hold alone used to be the whole gesture, guarded by its length — five seconds, because
 4-5 year olds were measured producing *ordinary* taps lasting up to 4.2 s. A 0.8 s margin
