@@ -143,6 +143,7 @@ bool display_repaint(void)
 
 bool display_start(void)
 {
+    i2c_bus_scan();
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 

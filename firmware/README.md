@@ -44,6 +44,15 @@ Two things to know before adding a fourth idea:
   on open, before pyserial's settings apply. Every console log in this investigation is of a
   fresh boot, never of the dark state.
 
+**A soft reset does not fix it; a power cycle does.** The five-second hold reboots the panel
+and it comes back black, while pulling the plug brings the robot straight back. The driver
+already sends `SWRESET` (there is no reset GPIO, so `panel_co5300_reset` takes the software
+path) and the whole init sequence re-runs — so whatever holds the display off lives **outside
+the ESP32**, in a part a power cycle clears and `esp_restart()` does not.
+
+Which part is unknown, because nobody has ever confirmed what is on the I2C bus. 0.2.12 logs a
+scan at startup to find out.
+
 0.2.12 therefore re-asserts rather than interrogates — `0x29` and `0x51` every thirty seconds
 — and the result is read off the glass (ROOM_ENDPOINT_PLAN.md §10.4w). If it still blanks, the
 remaining candidate is the OLED rail and the AXP2101 this firmware has never spoken to, and

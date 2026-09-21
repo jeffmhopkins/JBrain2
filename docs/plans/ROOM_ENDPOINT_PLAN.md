@@ -1170,6 +1170,28 @@ seconds — with the experiment read off the glass rather than out of a log:
 Brightness is re-sent at `0xFF` to match the init sequence exactly. It is still wrong for a
 bedroom and still has to come down, but not in the release that is testing one thing.
 
+**A soft reset does not fix it; a power cycle does.** The owner found this by using the new
+five-second hold: the amber cue filled, the panel rebooted, and it came back **black**. The
+gesture works exactly as designed and the display does not come back with it.
+
+That is the most informative thing observed all night, because of what it excludes. The driver
+already issues `SWRESET` on this board — `reset_gpio_num` is `GPIO_NUM_NC`, and
+`panel_co5300_reset` takes the software path when there is no reset GPIO — and the whole init
+sequence re-runs on every boot. So the ESP32 does everything it does from cold, and the panel
+still stays dark. **Whatever holds the display off therefore lives outside the ESP32**, in a
+part that a power cycle clears and `esp_restart()` does not.
+
+The candidates are the chips on the I2C bus, and here is the embarrassing part: **nobody has
+ever confirmed which chips those are.** §10.4n named the AXP2101 and ruled it out by
+inference; the vendor BSP does not mention a PMU at all, and it *does* expose a TCA9554 IO
+expander that this firmware has never touched. Both `BSP_LCD_RST` and `BSP_LCD_BACKLIGHT` are
+`GPIO_NUM_NC`, so neither is a line we are failing to drive.
+
+0.2.12 therefore also logs an **I2C scan at startup** — twelve lines that answer what has been
+assumed twice. If 0x34 acknowledges there is an AXP2101 and §10.4n's second candidate is alive;
+if 0x20 acknowledges the expander is real and worth reading; if neither, the search moves off
+this bus entirely.
+
 **If 0.2.12 does not settle it, the next move is not another firmware guess — it is
 telemetry.** The panel should report its own state to the box over HTTP on a cadence, because
 every other channel either resets it or lies, and a panel that can only be diagnosed with a
