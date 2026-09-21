@@ -661,6 +661,12 @@ static int s_lean;
 static int s_blit_fails;
 static int s_blit_ok;
 
+void display_blit_counts(int *ok, int *fail)
+{
+    if (ok != NULL) *ok = s_blit_ok;
+    if (fail != NULL) *fail = s_blit_fails;
+}
+
 /* THE WHOLE FRAME, THROUGH ONE STATIC INTERNAL BUFFER, A STRIPE AT A TIME.
  *
  * Three versions argued about who should copy the frame out of PSRAM and where the copy

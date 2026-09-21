@@ -3187,6 +3187,42 @@ allows the halo to erode a few where a letter sits on a toe — that erosion is 
 pass with it gone, in that order; four tests in this feature have now passed for the wrong
 reason, and checking the direction costs one minute.
 
+#### 10.4bn Off the cable, and every diagnostic went with it (0.2.54, 2026-09-21)
+
+The owner: *"I moved to not be on USB."*
+
+That is the product working as designed — §10 has always said the box's USB port is for the
+first flash only and every update after it arrives over Wi-Fi — and it removes two fault
+sources at a stroke: the `ESP_RST_USB` resets a console attach causes (§10.4bh), and the
+power cycles a box update inflicts on a panel drawing power from it.
+
+**And it silently invalidated every instrument added today.** The ALC register reading, the
+render heartbeat, the restart line: all `ESP_LOG`, and an `ESP_LOG` exists only on a serial
+console. The panel no longer has one, and never will again in its real place. The single
+question the owner actually asked — is the codec's automatic gain railing the microphone
+after a beep — was being written to a wire that is not connected.
+
+This is the same mistake as §10.4bh in a new costume. There the console could not see a fault
+that had already happened; here it cannot see anything at all. Both times the channel that
+worked was `POST /endpoint/telemetry`, whose docstring said so in advance: *"the owner moving
+one to a plain USB charger, which is the whole premise, must not cost the ability to see what
+it is doing."*
+
+So the answers move to the channel that survives:
+
+| field | what it settles |
+|---|---|
+| `alc` | `"f8-78 off"`, `"78 already-off"`, `"REFUSED"` — the ES8311's gain register before and after, read back |
+| `blit_ok` / `blit_fail` | frames that reached the glass and frames that did not |
+
+`TelemetryIn` is deliberately a flat bag of short strings and ints — *"a migration per question
+would mean the question does not get asked"* — so this costs two fields and no schema change.
+
+**The general rule this sequence keeps re-teaching:** a diagnostic is only worth what its
+channel can carry. Five values were set and never read back (§10.4bb, §10.4bi); two channels
+were trusted past what they could see (§10.4bh, here). Every wrong turn in this feature has
+been one of those two shapes.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

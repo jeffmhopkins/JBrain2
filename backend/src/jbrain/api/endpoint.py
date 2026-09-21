@@ -414,6 +414,15 @@ class TelemetryIn(BaseModel):
     version: str
     uptime_ms: int
     reset_reason: str = ""
+    # The ES8311's ALC register before and after the firmware cleared it — "f8-78 off",
+    # "78 already-off", "REFUSED". It answers whether the codec's own automatic gain was
+    # railing the microphone after a beep, and it is here rather than only in a console log
+    # because a panel in its real place is on a charger, not a cable.
+    alc: str = ""
+    # Frames that reached the glass and frames that did not. A screen that has stopped
+    # drawing cannot say so on a channel that needs someone standing next to it.
+    blit_ok: int = 0
+    blit_fail: int = 0
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -472,6 +481,9 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         accel=body.accel,
         stack_free=body.stack_free,
         crash_phase=body.crash_phase,
+        alc=body.alc,
+        blit_ok=body.blit_ok,
+        blit_fail=body.blit_fail,
         pmu_history=body.pmu_history,
         note=body.note,
     )

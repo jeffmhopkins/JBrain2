@@ -49,4 +49,9 @@ void audio_beep(void);
 int audio_level(void);
 
 /* Largest absolute sample of a buffer. Pure, and exposed for the host tests. */
+/* What the ES8311's ALC register actually held and what it holds now, as a short string for
+   telemetry — "f8-78 off", "78 already-off", "REFUSED". The console line this mirrors cannot
+   be read on a panel that is no longer on a cable, which is every panel in its real place. */
+const char *audio_alc_state(void);
+
 int audio_peak(const int16_t *buf, int samples);

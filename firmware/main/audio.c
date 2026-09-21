@@ -267,34 +267,52 @@ static int16_t s_chunk[AUDIO_CHUNK];
  * size, and READ IT BACK. Four values in this sequence were set and never read back — the
  * memory mode, the chunk sizes, the AGC mode and the mic gain — and every wrong diagnosis
  * traced to exactly that. This one is not joining them. */
+/* WRITTEN DOWN WHERE SOMEONE CAN READ IT. Every line below is also an ESP_LOG, and an
+   ESP_LOG only exists on a serial console — which this panel no longer has, because the owner
+   moved it to a plain charger, which was always the point (§10.4ab). A diagnosis that only
+   reaches a cable is not a diagnosis on this product, so the answer rides telemetry too. */
+static char s_alc[24] = "unread";
+
+const char *audio_alc_state(void)
+{
+    return s_alc;
+}
+
 static void alc_settle(void)
 {
     if (s_ctrl == NULL || s_ctrl->read_reg == NULL || s_ctrl->write_reg == NULL) {
         ESP_LOGW(TAG, "alc: no control interface; state unknown");
+        snprintf(s_alc, sizeof(s_alc), "no-ctrl");
         return;
     }
     uint8_t v = 0;
     if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
         ESP_LOGW(TAG, "alc: register unreadable; state unknown");
+        snprintf(s_alc, sizeof(s_alc), "unreadable");
         return;
     }
     const uint8_t before = v;
     if ((v & ES8311_ALC_ENABLE) == 0) {
         ESP_LOGI(TAG, "alc: already off (reg18 0x%02x)", before);
+        snprintf(s_alc, sizeof(s_alc), "%02x already-off", before);
         return;
     }
     v = (uint8_t)(before & (uint8_t)~ES8311_ALC_ENABLE);
     if (s_ctrl->write_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
         ESP_LOGW(TAG, "alc: write REFUSED (reg18 still 0x%02x)", before);
+        snprintf(s_alc, sizeof(s_alc), "%02x REFUSED", before);
         return;
     }
     uint8_t after = 0;
     if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &after, 1) != 0) {
         ESP_LOGW(TAG, "alc: wrote 0x%02x but cannot read back", v);
+        snprintf(s_alc, sizeof(s_alc), "%02x no-readback", before);
         return;
     }
     ESP_LOGI(TAG, "alc: 0x%02x -> 0x%02x (%s)", before, after,
              (after & ES8311_ALC_ENABLE) ? "STILL ON" : "off");
+    snprintf(s_alc, sizeof(s_alc), "%02x-%02x %s", before, after,
+             (after & ES8311_ALC_ENABLE) ? "STILL-ON" : "off");
 }
 
 /* Chunks to ignore after the speaker runs. The codec routes the DAC into the ADC by design

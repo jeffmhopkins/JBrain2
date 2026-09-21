@@ -38,6 +38,11 @@ int display_crash_phase(void);
    rebuild. */
 void display_set_debug_overlay(bool on);
 
+/* Frames that reached the glass and frames that did not, since the last recovery. The render
+   heartbeat says this on the console every ten seconds; this is the same two numbers for a
+   panel with no console, which is the only kind there will be from now on. */
+void display_blit_counts(int *ok, int *fail);
+
 /* Where the last tap landed and which zone it was classified as. Reported so the touch
    controller's orientation is a measurement rather than an assumption — see display.c. */
 void display_last_tap(int *x, int *y, int *zone);
