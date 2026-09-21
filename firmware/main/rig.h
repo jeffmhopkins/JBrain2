@@ -59,6 +59,16 @@ typedef struct {
     float leg_l;
     float leg_r;
     float hands_up;
+    /* BIRD CHANNELS. The ostrich has no arms, so every action's energy had to be read off the
+       arm angles — and an action that moves both arms the same way (dance, wiggle) moved the
+       bird not at all. A bird's expressive parts are the neck, the head, the tail and the
+       legs, so they get channels of their own. The robot ignores all five; they cost this
+       struct 20 bytes and remove the need for a parallel pose type. */
+    float neck;  /* degrees the neck leans, + = toward the beak side */
+    float bob;   /* figure-space px the head rides, + = down */
+    float tail;  /* degrees of tail flap, on top of the arm-driven swing */
+    float step;  /* + lifts the left leg, - the right; magnitude is the lift */
+    float crest; /* degrees the plumes trail — follow-through, never authored per action */
 } rig_pose_t;
 
 /* Whole-figure transform. `extra` is a one-shot the renderer draws on top. */

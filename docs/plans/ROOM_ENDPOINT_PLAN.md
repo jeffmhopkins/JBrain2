@@ -2462,6 +2462,107 @@ refused" — and on a device with no terminal, indistinguishable means invisible
 **Still not measured:** every audio capture so far was taken with nobody talking to the panel.
 No further gain or front-end change is made before a reading with a voice in the room.
 
+#### 10.4bc The frame was copied into internal RAM every blit (0.2.44, 2026-09-21)
+
+**The black screen, root-caused — and §10.4bb's `max_transfer_sz` change was treating a
+symptom and made it worse.**
+
+`esp_lcd_panel_io_spi` only hands the SPI driver a PSRAM pointer when `psram_dma_direct` is
+set on its IO config, and `CO5300_PANEL_IO_QSPI_CONFIG` never sets it. Without it
+`setup_dma_priv_buffer()` in `spi_master.c` takes the `!use_psram` branch: it
+`heap_caps_aligned_alloc`s an **internal copy of every chunk** and memcpys the frame into it,
+per transfer, forever. The framebuffer lives in PSRAM; every byte of it was being moved
+through internal RAM on its way to a bus that could have read it where it lay.
+
+| `max_transfer_sz` | what the driver then does | what the owner sees |
+|---|---|---|
+| 11,776 (0.2.41 and earlier) | 28 small internal allocs per frame | top of the frame new, bottom stale — **the owner's photo** |
+| 329,728 (0.2.42–0.2.43) | ONE alloc of 329,728 B from a 341 KB pool | black, whenever anything else is running |
+
+The owner's 0.2.43 photo settled it: the pet drawn across the top third and **the boot colour
+bars still showing underneath**. Those bars are written once at startup (`display.c`), so the
+lower two-thirds of that panel had not been written since boot.
+
+**0.2.42's number was a measurement artefact and it was reported here as an improvement.**
+"Blit failures fell from 200+ to 3 over 70 s" was counted without its denominator: the idle
+loop redraws rarely, so there were only a handful of attempts in that window and nearly all of
+them failed. A rate needs both terms. §10.4bb is left standing with this correction attached
+rather than edited, because the wrong conclusion is the useful part.
+
+`io_cfg.flags.psram_dma_direct = true` removes the bounce buffer entirely, and
+`max_transfer_sz` goes back to the stripe size — there is no longer a large internal
+allocation to size.
+
+#### 10.4bd The bird had no channels of its own (0.2.45, 2026-09-21)
+
+The owner, on the ostrich: *"They lack motion and funness that the robot has... it doesn't have
+the arms. Maybe like kicking legs and moving the tail and the whole head and neck."*
+
+That is exactly the shape of the bug. Every expressive channel on this form was **derived from
+the arm angles**, because the robot was built first and the ostrich was fitted to its rig. A
+bird has no arms, so the one place the arm signal was spent — the tail flap — carried the whole
+performance.
+
+And §10.4at's fix for that made it worse. Driving the flap off `arm_l` alone had made `wave`
+render zero pixels, so it was changed to the **mean** of the two arms:
+
+```c
+const float dev = ((st->rig.arm_l - 12.0f) + (-st->rig.arm_r - 12.0f)) * 0.5f;
+```
+
+Dance, bop, shimmy, wiggle and giggle all swing both arms the **same** way, so that mean is a
+constant and the tail stopped moving for every one of them. One action rescued, five broken,
+and the suite was silent because `rig_pose_t` still changed. The signed larger deviation tracks
+whichever arm is actually doing something.
+
+**The real fix is that the bird gets channels of its own** — `neck`, `bob`, `tail`, `step` and
+`crest` on `rig_pose_t`, filled by `bird_channels()` and ignored by the robot. Measured as the
+largest change between *consecutive* frames, which is what a child actually sees:
+
+| | before | after | |
+|---|---|---|---|
+| `wave` | **999** | 5,936 | a bird waves its neck; it has nothing else to wave |
+| `blush` | **465** | 1,712 | |
+| `wiggle` | 6,915 | 13,120 | |
+| `nod` | 9,601 | 13,788 | the whole neck, not a body offset |
+| `sleep` | 3,260 | 5,318 | |
+| `dance` / `bop` / `shimmy` | 18,030 / 18,092 / 18,081 | 20,386 / 21,523 / 21,179 | |
+
+**Those three were byte-for-byte identical** at a matched clock — measured, not inferred. They
+share one `case` in `rig_for`, which is a decision about the *robot*; the bird inherited one
+animation under three names. They are separate in `bird_channels`: dance sweeps and strides,
+bop pumps the head on the beat, shimmy is a fast tail over slow feet.
+
+`crest` is not authored per action. It is the same curve evaluated 60 ms ago — light things
+trail heavy ones — so every action gets follow-through for free, including ones added later.
+
+**The robot is byte-identical across all 16 actions**, checked frame by frame, which is the
+point of putting these on their own channels.
+
+##### A test that measured the wrong thing, twice
+
+The neck segments were drawn at a bare `ox` while the head sat at `ox + tilt`, so a tilt slid
+the head sideways and dragged the join. The first two attempts to test it both passed on the
+broken renderer:
+
+1. *"no empty row between body and head"* — there never is one. A 128 px head overlaps a 34 px
+   neck at any tilt this rig produces. Nothing is lost; it moves.
+2. *"the neck's centre tracks the head's centre"* — sampled at dy −75, which is **inside the
+   head**. It was comparing the head with itself and reporting agreement.
+
+The head reaches down to about dy −70. At dy −60, which is neck:
+
+| | tilt 0 | tilt +14 |
+|---|---|---|
+| before | 170..206 (**w 37**) | 170..218 (**w 49**) — left edge pinned, right edge dragged |
+| after | 170..206 (w 37) | 185..221 (**w 37**) — translates, keeps its width |
+
+So the property is *a tilt may lean the join but may not widen it*, and each neck segment now
+carries its share of the head's displacement. Recorded at length because two plausible tests
+passed against a renderer with the defect still in it, which is the same failure mode as
+§10.4at's `test_every_action_moves`: **a test that does not render cannot see a rendering bug,
+and a test that renders the wrong pixels is no better.**
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

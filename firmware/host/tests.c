@@ -407,6 +407,139 @@ static void test_every_action_changes_the_picture(void)
     free(idle);
 }
 
+/* ---- the bird's own motion ---------------------------------------------------------- */
+
+/* Render `a` on `form` at progress `q` with the clock at `t_ms`, into `dst`. */
+static void render_at(uint16_t *dst, face_form_t form, action_t a, float q, uint32_t t_ms)
+{
+    face_state_t st;
+    face_rest(&st);
+    st.form = form;
+    rig_for(a, q, 1.0f, t_ms, &st.rig);
+    rig_figure(a, q, 1.0f, t_ms, 0.0f, &st.fig);
+    face_draw(dst, 0, &st);
+}
+
+static void test_the_bird_moves_between_frames(void)
+{
+    /* `test_every_action_changes_the_picture` asks whether an action differs from IDLE, which
+       a single frozen pose satisfies. A child watching does not compare against an idle they
+       never see — they see one frame after another, and a pose that holds still for a second
+       reads as a hang. So this measures FRAME TO FRAME.
+
+       The ostrich failed it badly before the bird channels: `wave` moved 999 px between its
+       biggest consecutive frames and `blush` 465, because everything on this form was driven
+       off arm angles a bird does not have. The floor is set under the weakest action that now
+       passes (`blush`, 1712) and over the strongest that did not (`wave`, 999).
+
+       THE BIRD ONLY, and the floor is why. The robot's `blush` moves 1146 px between frames —
+       it is nearly all static pink over a breathing body, which is what that action IS on that
+       form. Holding the robot to a number calibrated for the bird would mean either loosening
+       the floor until the pre-fix ostrich slips under it, or changing an approved robot
+       animation to satisfy a test about a different form. The robot is unchanged by this work
+       and `test_every_action_changes_the_picture` still covers it. */
+    const long FLOOR = 1400;
+    uint16_t *prev = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(prev != NULL, "scratch frame allocated");
+
+    {
+        const int f = FORM_OSTRICH;
+        for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+            const int dur = rig_spec((action_t)a)->dur_ms;
+            long best = 0;
+            for (int step = 0; step <= 40; step++) {
+                const float q = (float)step / 40.0f;
+                const uint32_t t = (uint32_t)(q * (float)dur);
+                render_at(fb, (face_form_t)f, (action_t)a, q, t);
+                if (step > 1) {
+                    const long d = frame_delta(prev, fb);
+                    if (d > best) best = d;
+                }
+                memcpy(prev, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            }
+            CHECK(best >= FLOOR, "every action moves the bird between consecutive frames");
+        }
+    }
+    free(prev);
+}
+
+static void test_the_three_dances_differ_on_the_bird(void)
+{
+    /* `dance`, `bop` and `shimmy` share one arm pose in `rig_for` — three names for one robot
+       animation, which is a decision about the ROBOT. The ostrich has no arms, so inheriting
+       it meant the bird performed the identical animation under three different words: at a
+       matched clock the frames were byte-for-byte equal. They are separate cases in
+       `bird_channels` now, and this is what stops them merging again. */
+    uint16_t *other = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(other != NULL, "scratch frame allocated");
+    const action_t DANCES[] = {ACT_DANCE, ACT_BOP, ACT_SHIMMY};
+
+    for (unsigned i = 0; i < 3; i++) {
+        for (unsigned j = i + 1; j < 3; j++) {
+            long best = 0;
+            for (int step = 0; step <= 20; step++) {
+                const float q = (float)step / 20.0f;
+                render_at(fb, FORM_OSTRICH, DANCES[i], q, (uint32_t)(step * 100));
+                memcpy(other, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+                render_at(fb, FORM_OSTRICH, DANCES[j], q, (uint32_t)(step * 100));
+                const long d = frame_delta(other, fb);
+                if (d > best) best = d;
+            }
+            CHECK(best > 3000, "the bird's three dances are three different dances");
+        }
+    }
+    free(other);
+}
+
+/* The lit span on one figure-space row, as [lo, hi]; hi < lo when the row is empty. */
+static void lit_span(int dy, int *lo, int *hi)
+{
+    const int y = FACE_H / 2 + dy;
+    *lo = FACE_W;
+    *hi = -1;
+    for (int x = 0; x < FACE_W; x++) {
+        if (fb[y * FACE_W + x] == 0) continue;
+        if (x < *lo) *lo = x;
+        *hi = x;
+    }
+}
+
+static void test_the_bird_keeps_its_head_on_its_neck(void)
+{
+    /* The neck segments were drawn at a bare `ox` while the head sat at `ox + tilt`, so a head
+       tilt slid the head sideways and left the neck behind — the join SMEARED rather than
+       leaned. It is invisible to any test that counts pixels, because no pixels are lost; they
+       move. It shows up as the width of the row at the join:
+
+                          tilt 0        tilt +14
+         before          170..206 (37)  170..218 (49)   left edge pinned, right edge dragged
+         after           170..206 (37)  185..221 (37)   translates, keeps its width
+
+       So: the join may LEAN, but it may not get wider. dy -60 is the topmost row that is neck
+       rather than head — the head reaches down to about -70, which is the trap that made an
+       earlier version of this test measure the head twice and conclude there was no bug. */
+    int lo0, hi0;
+    face_state_t st;
+    face_rest(&st);
+    st.form = FORM_OSTRICH;
+    face_draw(fb, 0, &st);
+    lit_span(-60, &lo0, &hi0);
+    const int w0 = hi0 - lo0 + 1;
+    CHECK(w0 > 20, "the neck is visible below the head");
+
+    for (int sgn = -1; sgn <= 1; sgn += 2) {
+        face_rest(&st);
+        st.form = FORM_OSTRICH;
+        rig_figure(ACT_NONE, 0.0f, 1.0f, 0, (float)sgn * 14.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        int lo, hi;
+        lit_span(-60, &lo, &hi);
+        const int w = hi - lo + 1;
+        CHECK(w <= w0 + 3, "a tilt leans the neck rather than smearing the join");
+        CHECK(lo != lo0 || hi != hi0, "a tilt actually moves the neck");
+    }
+}
+
 static void test_peekaboo_covers_the_eyes(void)
 {
     /* `hide` is peekaboo, and peekaboo that does not hide the eyes is the shipped dud this
@@ -1471,6 +1604,9 @@ int main(void)
     test_every_face_and_action_draws();
     test_every_action_changes_the_picture();
     test_peekaboo_covers_the_eyes();
+    test_the_bird_moves_between_frames();
+    test_the_three_dances_differ_on_the_bird();
+    test_the_bird_keeps_its_head_on_its_neck();
     test_the_blush_lands_on_the_face();
     test_the_gag_puff_shows_on_both_forms();
     test_blink_is_a_line_not_a_hole();

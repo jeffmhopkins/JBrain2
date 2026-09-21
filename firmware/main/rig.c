@@ -28,6 +28,124 @@ const action_spec_t *rig_spec(action_t a)
     return &SPECS[a];
 }
 
+/* THE BIRD CHANNELS. Split out of the limb switch because the two disagree about what an
+   action is: dance, bop and shimmy share one arm pose (they are three names for one robot
+   animation), but on a bird they are three different dances — a sweep, a pump and a shimmy —
+   and there is no reason the form that has no arms should inherit the form that does.
+
+   Everything here is authored EXCEPT `crest`, which is the same curve evaluated a moment ago:
+   light things trail heavy ones, and computing the lag rather than hand-keying it means every
+   action gets follow-through for free, including the ones added later. */
+#define BIRD_LAG 0.06f
+
+static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
+{
+    /* Idle drift, on periods that do not divide into each other so the bird never repeats a
+       pose exactly. A bird standing perfectly still reads as taxidermy. */
+    const float t = (float)t_ms;
+    out->neck = sinf(t / 1700.0f) * 4.0f;
+    out->bob = sinf(t / 1100.0f) * 3.0f;
+    out->tail = sinf(t / 2300.0f) * 5.0f;
+    out->step = 0.0f;
+    out->crest = 0.0f;
+    if (a == ACT_NONE || (unsigned)a >= (unsigned)ACT_COUNT) return;
+
+    switch (a) {
+    case ACT_WIGGLE: {
+        const float q = sinf(p * (float)M_PI * 9.0f) * mag;
+        out->neck += q * 26.0f;
+        out->tail += q * 16.0f;
+        out->step += q * 9.0f;
+        break;
+    }
+    case ACT_GIGGLE: {
+        const float q = sinf(p * (float)M_PI * 7.0f) * mag;
+        out->bob -= fabsf(q) * 14.0f;
+        out->neck += q * 12.0f;
+        out->tail += q * 20.0f;
+        break;
+    }
+    case ACT_BOING:
+        /* The neck IS the boing on this form — it is the only part long enough to stretch. */
+        out->bob -= sinf(p * (float)M_PI * 3.0f) * 20.0f * mag;
+        break;
+    case ACT_NOD: {
+        const float q = sinf(p * (float)M_PI * 5.0f) * mag;
+        out->neck += q * 30.0f;
+        out->bob += q * 8.0f;
+        break;
+    }
+    case ACT_JUMP: {
+        const float q = sinf(p * (float)M_PI);
+        out->neck -= q * 18.0f * mag; /* head thrown back on the way up */
+        out->bob -= q * 14.0f * mag;
+        break;
+    }
+    case ACT_WAVE:
+        /* A bird cannot wave an arm, so it waves the neck — which is why this action scored
+           zero rendered pixels on the ostrich for three versions. */
+        out->neck += sinf(p * (float)M_PI * 3.0f) * 34.0f * mag;
+        out->bob -= fabsf(sinf(p * (float)M_PI * 3.0f)) * 8.0f * mag;
+        break;
+    case ACT_DANCE: {
+        const float q = sinf(p * (float)M_PI * 6.0f) * mag;
+        out->neck += q * 22.0f;
+        out->tail += q * 18.0f;
+        out->step += q * 26.0f; /* big alternating strides */
+        break;
+    }
+    case ACT_BOP: {
+        const float q = sinf(p * (float)M_PI * 8.0f) * mag;
+        out->bob += q * 16.0f; /* the head pumps on the beat */
+        out->neck += sinf(p * (float)M_PI * 4.0f) * 10.0f * mag;
+        out->step += q * 8.0f;
+        break;
+    }
+    case ACT_SHIMMY: {
+        const float q = sinf(p * (float)M_PI * 14.0f) * mag;
+        out->tail += q * 26.0f; /* fast tail, slow feet: that is a shimmy */
+        out->neck -= q * 10.0f;
+        out->step += sinf(p * (float)M_PI * 7.0f) * 14.0f * mag;
+        break;
+    }
+    case ACT_SNEEZE:
+    case ACT_HICCUP:
+        if (p < 0.35f) {
+            out->neck -= 20.0f * mag; /* rear back */
+        } else if (p < 0.55f) {
+            out->neck += 42.0f * mag; /* and snap forward */
+            out->bob += 10.0f * mag;
+        }
+        break;
+    case ACT_BLUSH: {
+        const float q = sinf(p * (float)M_PI) * mag;
+        out->neck -= q * 12.0f; /* turns away */
+        out->bob += q * 6.0f;
+        break;
+    }
+    case ACT_SLEEP: {
+        const float q = fminf(1.0f, p * 3.0f);
+        out->neck += q * 18.0f;
+        out->bob += q * 22.0f; /* the neck folds and the head sinks */
+        break;
+    }
+    case ACT_HIDE:
+        out->bob += 8.0f * (p < 0.72f ? 1.0f : 0.0f); /* tucked under the wing */
+        break;
+    case ACT_FART:
+        if (p > 0.12f && p < 0.32f) {
+            out->neck -= 26.0f * mag;
+            out->bob -= 10.0f * mag;
+        }
+        break;
+    case ACT_BURP:
+        if (p > 0.12f && p < 0.6f) out->neck += 30.0f * mag;
+        break;
+    default:
+        break;
+    }
+}
+
 void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
 {
     if (out == NULL) return;
@@ -37,6 +155,16 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
     out->leg_l = 4.0f;
     out->leg_r = -4.0f;
     out->hands_up = 0.0f;
+    bird_channels(a, p, mag, t_ms, out);
+    {
+        /* Follow-through: the plumes are the lightest thing on the bird, so they show where
+           the head WAS. One extra evaluation of the same curve, no state to keep. */
+        rig_pose_t lag;
+        bird_channels(a, p > BIRD_LAG ? p - BIRD_LAG : 0.0f,
+                      mag, t_ms > 60u ? t_ms - 60u : 0u, &lag);
+        out->crest = (lag.neck - out->neck) * 1.6f;
+        out->tail += (lag.neck - out->neck) * 0.8f;
+    }
     if (a == ACT_NONE || (unsigned)a >= (unsigned)ACT_COUNT) return;
 
     switch (a) {
