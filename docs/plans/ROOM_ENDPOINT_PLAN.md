@@ -1513,10 +1513,21 @@ was asked instead: at full lean the figure spans 16..231 and 136..351, clearing 
 rendered image *looked* clipped to me and the measurement said otherwise — the eye is not a
 measuring instrument, which is the whole reason that harness exists (§10.4p).
 
-**The sign needs no special case when inverted**, which is worth knowing before someone adds
-one. Rotating the panel 180° negates `ay` for the same physical tilt, and `flip_frame` negates
-the drawn offset again; the two cancel and the robot slides towards the viewer's downhill side
-either way.
+**The sign DOES need a case when inverted**, and the paragraph that used to sit here said the
+opposite. It claimed two negations cancel: the panel's rotation negates `ay`, and `flip_frame`
+negates the drawn offset. **The second is not a negation the viewer sees.** `flip_frame`
+reverses the framebuffer and the panel is then physically rotated 180° in the viewer's hands —
+*those* two cancel, so the viewer reads framebuffer coordinates directly in both orientations.
+Only the accelerometer's sign actually flips.
+
+The owner found it in one sentence: *"tilt is backwards when right side up, correct when upside
+down and flipped"* — which is precisely the signature of one uncompensated negation rather than
+two cancelling ones. 0.2.22 takes the tilt in viewer terms explicitly: the chip turns over with
+the panel, the rendered image does not.
+
+The mistake was reasoning about a rotation without asking where the observer was standing. It
+is the same shape as §10.4af, where a sign was read off a pose nobody had named — both times
+the arithmetic was fine and the frame of reference was missing.
 
 Tilting now redraws at the poll rate rather than waiting out the idle floor, but only once the
 lean has moved more than two pixels — otherwise every frame would be a full 322 KB blit for a
