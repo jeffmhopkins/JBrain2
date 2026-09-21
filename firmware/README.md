@@ -44,9 +44,12 @@ survives the reset a panic performs, and the next boot reports the last stage re
 `crash_phase`. Not a line number, but it localises the crash — the backtrace is unreachable
 because it prints to a console this panel does not have and which resets it on open, and there
 is no coredump partition to add without a USB reflash. The stage list is next to `PHASE()` in
-`display.c` and in ROOM_ENDPOINT_PLAN.md §10.4aj; keep the two together.
+`display.c` and in ROOM_ENDPOINT_PLAN.md §10.4aj; keep the two together. **Read it as the
+render task's position, not as the crash site** — a fault in the main task reports whichever
+stage the render loop was parked in, and it parks in stage 10, where the capture blocks for a
+full 40 ms of every 40 ms frame (§10.4al).
 
-**One task owns the panel, and that rule is load-bearing.** `esp_lcd_panel_io_spi` is not
+**One task owns each chip, and that rule is load-bearing.** `esp_lcd_panel_io_spi` is not
 thread-safe: `tx_param` drains the queue `tx_color` fills and reuses the same descriptor slot,
 so two tasks on one io handle can wait forever on each other's transfers or `memset` a
 descriptor under DMA. Until 0.2.26 there was exactly one such caller —
@@ -55,6 +58,14 @@ fifteen-minute settings fetch, against a handle the face task drives at ~25 fps.
 the value and the render loop applies it (phase 14). Nothing outside `face_task` may touch
 `s_panel` or `s_io`; see ROOM_ENDPOINT_PLAN.md §10.4ak, including what that fix does **not**
 yet claim.
+
+The codec is the same story and 0.2.27 is the same fix. `esp_codec_dev.c` has **no lock at
+all** — read, write, `set_out_vol` and `set_in_gain` go straight at the device struct and the
+chip's I2C registers; the component's only mutex is in `audio_codec_data_i2s.c` and guards the
+data path, not a control write. `audio_set_levels()` was the second main-task caller in the
+same `apply_settings()` window that the 12:16 panic was bounded to, so it now records and
+`audio_apply_levels()` runs on the render task as phase 15 (§10.4al). Nothing outside
+`face_task` may touch `s_codec` either.
 
 Superseded suspect: the render task's stack, created at 4096 bytes when it drew a static pattern and
 now running an I2S capture, an accelerometer read, font rendering, PMU sampling, float tweening

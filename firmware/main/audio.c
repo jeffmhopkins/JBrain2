@@ -181,12 +181,45 @@ int audio_peak(const int16_t *buf, int samples)
     return peak;
 }
 
+/* ONE TASK OWNS THE CODEC, AND IT IS THE RENDER TASK — the same rule display.c states for
+ * the panel, and for the same reason. `esp_codec_dev.c` contains no lock of any kind: read,
+ * write, set_out_vol and set_in_gain all walk straight into the device struct and the codec's
+ * I2C registers. The component's one mutex lives in `audio_codec_data_i2s.c` and serialises
+ * the DATA path only, so it does nothing for a control write.
+ *
+ * `apply_settings()` calls this from the MAIN task, at boot and every fifteen minutes, while
+ * the render task sits inside `esp_codec_dev_read` for about 40 ms of every 40 ms frame. On
+ * 2026-09-21 the panel panicked in exactly that window: the box logged `GET /settings`
+ * answered and then NO telemetry post, which puts the fault between this call and the next
+ * two lines of `report()` (ROOM_ENDPOINT_PLAN.md §10.4al).
+ *
+ * So this records, and the render task applies. */
+static volatile int s_want_volume = -1;
+static volatile int s_want_gain = -1;
+static volatile bool s_levels_pending;
+
 void audio_set_levels(int volume, int mic_gain_db)
 {
-    if (s_codec == NULL) return;
-    if (volume >= 0 && volume <= 100) esp_codec_dev_set_out_vol(s_codec, volume);
-    if (mic_gain_db >= 0 && mic_gain_db <= 42) {
-        esp_codec_dev_set_in_gain(s_codec, (float)mic_gain_db);
+    bool any = false;
+    if (volume >= 0 && volume <= 100) {
+        s_want_volume = volume;
+        any = true;
     }
-    ESP_LOGI(TAG, "levels: out %d/100, in %d dB", volume, mic_gain_db);
+    if (mic_gain_db >= 0 && mic_gain_db <= 42) {
+        s_want_gain = mic_gain_db;
+        any = true;
+    }
+    if (any) s_levels_pending = true;
+}
+
+void audio_apply_levels(void)
+{
+    if (!s_levels_pending) return;
+    s_levels_pending = false;
+    if (s_codec == NULL) return;
+    const int vol = s_want_volume;
+    const int gain = s_want_gain;
+    if (vol >= 0) esp_codec_dev_set_out_vol(s_codec, vol);
+    if (gain >= 0) esp_codec_dev_set_in_gain(s_codec, (float)gain);
+    ESP_LOGI(TAG, "levels: out %d/100, in %d dB", vol, gain);
 }

@@ -521,9 +521,15 @@ static volatile int s_stack_free;
  * store per stage.
  *
  * 1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip, 9 full
- * blit, 10 microphone read, 11 meter blit, 12 panel re-assert, 13 PMU sample, 14 brightness.
- * Keep this list and the one in ROOM_ENDPOINT_PLAN.md §10.4aj together; a number whose stage
- * nobody can name is worth nothing. */
+ * blit, 10 microphone read, 11 meter blit, 12 panel re-assert, 13 PMU sample, 14 brightness,
+ * 15 codec levels. Keep this list and the one in ROOM_ENDPOINT_PLAN.md §10.4aj together; a
+ * number whose stage nobody can name is worth nothing.
+ *
+ * READ IT AS THE RENDER TASK'S POSITION, NOT AS THE CRASH SITE. This records where THIS task
+ * was; a fault in the main task reports whatever stage the render loop happened to be parked
+ * in, and it parks in stage 10 — the capture blocks for a full 40 ms frame, most of the
+ * loop's wall clock. The first breadcrumb to come back read 10 and §10.4ak had already
+ * called that exonerating for a main-task race. It is not. See §10.4al. */
 #define PHASE_MAGIC 0x50484131u
 static RTC_NOINIT_ATTR uint32_t s_phase_magic;
 static RTC_NOINIT_ATTR uint32_t s_phase;
@@ -705,6 +711,10 @@ static void face_task(void *arg)
             PHASE(14);
             apply_brightness();
         }
+        /* Same rule, other chip: `apply_settings()` records on the main task, and the
+           levels reach the codec here, where nothing else is talking to it. */
+        PHASE(15);
+        audio_apply_levels();
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);
             reassert_panel();
