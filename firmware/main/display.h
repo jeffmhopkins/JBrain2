@@ -15,3 +15,8 @@ bool display_repaint(void);
 /* Start the render loop: the robot, and a tap that changes its colour. Its own task, so the
    OTA loop's timing is not something a frame rate can disturb. */
 void display_run_face(void);
+
+/* The loudest microphone sample since this was last called, 0..32767; reading clears it.
+   Reported in telemetry so the microphone can be confirmed from the box rather than by
+   asking someone to describe a sound. */
+int display_mic_peak(void);

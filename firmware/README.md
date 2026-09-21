@@ -101,6 +101,19 @@ in this firmware — so a panel can live on any charger. The cost is that **OTA 
 then the only recovery path**, which is what the frozen factory app and the reach-the-box
 rollback gate were built for.
 
+## The microphone is always on, and the meter is down the left edge
+
+A green bar at x 4..16 tracks the loudest sample in each frame. Always running, no gesture: a
+microphone has no symptom, and a meter answers "is it working" at a glance. The left edge is
+free by construction — the head spans x 76..292 and the arms reach x 104.
+
+The capture **paces the render loop**: one chunk per frame, sized to the frame period, so it
+drains as fast as the I2S DMA fills. Read any slower and the meter falls further behind the
+room every second, which looks like bad calibration and is a backlog.
+
+The peak also rides out in telemetry as `mic_peak`, so the microphone can be confirmed from
+the box once the panel is on a charger in another room (ROOM_ENDPOINT_PLAN.md §10.4aa).
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.

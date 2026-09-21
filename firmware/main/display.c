@@ -20,6 +20,8 @@
 
 #include "display.h"
 
+#include <stdlib.h>
+
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_attr.h"
@@ -269,6 +271,30 @@ bool display_start(void)
 #define HOLD_REBOOT_MS 5000
 #define HOLD_CUE_MS 1500
 
+/* THE MICROPHONE, ALWAYS ON, DRAWN DOWN THE LEFT EDGE.
+ *
+ * A microphone has no symptom: silence could be the ADC, the PGA, the I2S receive direction,
+ * or a pin map read from the wrong end of the link — and none of those announce themselves.
+ * A meter that is simply always running answers it at a glance and needs no gesture to
+ * operate, which matters for the four-year-old this is for as much as for debugging it.
+ *
+ * The left edge is free by construction: the head spans x 76..292 and the arms reach x 104 at
+ * their widest, so a bar at x 4..16 never touches the robot.
+ *
+ * ONE CHUNK PER FRAME, and the read is what paces the loop. Sized to the frame period, the
+ * capture is drained exactly as fast as the I2S DMA fills it. Reading less would show a meter
+ * falling further behind the room every second — the kind of fault that looks like bad
+ * calibration and is actually a backlog. */
+#define MIC_CHUNK (AUDIO_RATE * TOUCH_POLL_MS / 1000)
+#define METER_X 4
+#define METER_W 12
+#define METER_TOP 40
+#define METER_BOTTOM (FACE_H - 40)
+/* Full scale is 32767 and a child at arm's length lands nowhere near it, so the meter is
+   scaled to what he actually produces rather than to the codec's range. */
+#define METER_FULL 12000
+#define METER_COLOUR SWAP16(0x07E0) /* green: unmistakably not the robot's blue */
+
 #define BOB_PX 5
 #define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
@@ -283,6 +309,28 @@ static int bob_step(int frame)
     if (k <= BOB_PX) return k;
     if (k <= 3 * BOB_PX) return 2 * BOB_PX - k;
     return k - 4 * BOB_PX;
+}
+
+/* The loudest thing heard since the last telemetry report, so the box can see the microphone
+   working without anyone describing a noise into a chat window. Reading it clears it. */
+static volatile int s_mic_peak;
+
+int display_mic_peak(void)
+{
+    const int p = s_mic_peak;
+    s_mic_peak = 0;
+    return p;
+}
+
+static void draw_meter(uint16_t *fb, int level)
+{
+    const int span = METER_BOTTOM - METER_TOP;
+    int h = level * span / METER_FULL;
+    if (h > span) h = span;
+    if (h <= 0) return;
+    for (int y = METER_BOTTOM - h; y < METER_BOTTOM; y++) {
+        for (int x = METER_X; x < METER_X + METER_W; x++) fb[y * FACE_W + x] = METER_COLOUR;
+    }
 }
 
 static void reassert_panel(void)
@@ -321,6 +369,10 @@ static void face_task(void *arg)
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
     int since_reassert = 0;
     int since_sample = 0;
+    int level = 0;
+    /* Internal RAM, not PSRAM: this is an I2S DMA destination on every frame. */
+    int16_t *mic = malloc(MIC_CHUNK * sizeof(int16_t));
+    if (mic == NULL) ESP_LOGW(TAG, "no mic buffer — the meter will stay empty");
     int held = 0;
 
     while (true) {
@@ -349,6 +401,7 @@ static void face_task(void *arg)
             face_draw(fb, colour, bob_step(frame++));
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
+            draw_meter(fb, level);
             if (held >= HOLD_CUE_MS) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot
@@ -379,7 +432,14 @@ static void face_task(void *arg)
             pmu_sample();
             since_sample = 0;
         }
-        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+        /* The capture is the clock when it is available: one frame's worth, which blocks for
+           about TOUCH_POLL_MS and drains the DMA at exactly the rate it fills. */
+        if (sound && mic != NULL && audio_record(mic, MIC_CHUNK)) {
+            level = audio_peak(mic, MIC_CHUNK);
+            if (level > s_mic_peak) s_mic_peak = level;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+        }
         since_draw += TOUCH_POLL_MS;
         since_reassert += TOUCH_POLL_MS;
         since_sample += TOUCH_POLL_MS;

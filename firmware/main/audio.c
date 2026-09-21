@@ -1,4 +1,4 @@
-/* The ES8311 codec: speaker out, and the same part does the microphone later.
+/* The ES8311 codec: speaker out and microphone in, one part, one I2S link, one handle.
  *
  * Pins are the BSP's (`waveshare/esp32_s3_touch_amoled_1_8`), read from the component rather
  * than from the Arduino `pin_config.h` in the sample repo — that header carries BOTH
@@ -16,6 +16,7 @@
 #include "audio.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include "driver/i2s_std.h"
 #include "es8311_codec.h"
@@ -34,26 +35,33 @@ static const char *TAG = "audio";
 #define PIN_DSIN GPIO_NUM_10 /* codec -> ESP: the microphone */
 #define PIN_PA GPIO_NUM_46
 
-#define SAMPLE_RATE 22050
 #define BEEP_HZ 880
 #define BEEP_MS 90
+/* The microphone is ANALOGUE into the ES8311's own ADC (`digital_mic = false` in the vendor
+   BSP), so it needs the codec's PGA. The part quantises to 6 dB steps up to 42; 30 is the
+   middle and a first guess — the peak this firmware reports is what moves it, not a listen. */
+#define MIC_GAIN_DB 30.0f
+
 /* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
    70 as good at the distance a child holds it. That is the measurement §10.4q said it was
    waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
 #define VOLUME 70
 
-static esp_codec_dev_handle_t s_speaker;
+/* One handle for both directions. The vendor BSP builds two codec instances, one per
+   direction — two objects writing the same chip's registers over the same I2C bus. A single
+   IN_OUT device is the same hardware with one owner. */
+static esp_codec_dev_handle_t s_codec;
 
 /* The tone is built once. `audio_beep` runs on the face task, between two frames of a
    500 ms floor the panel needs to stay lit — so it may spend its time in the I2S write
    and not in two thousand calls to sinf. */
-#define BEEP_SAMPLES (SAMPLE_RATE * BEEP_MS / 1000)
+#define BEEP_SAMPLES (AUDIO_RATE * BEEP_MS / 1000)
 static int16_t s_beep[BEEP_SAMPLES];
 
 static void build_beep(void)
 {
-    const float step = 2.0f * (float)M_PI * BEEP_HZ / SAMPLE_RATE;
+    const float step = 2.0f * (float)M_PI * BEEP_HZ / AUDIO_RATE;
     const int fade = BEEP_SAMPLES / 5;
     for (int i = 0; i < BEEP_SAMPLES; i++) {
         /* Raised-cosine in and out: a square-edged tone clicks, and the click is the
@@ -74,14 +82,15 @@ bool audio_start(void)
     if (bus == NULL) return false;
 
     i2s_chan_handle_t tx = NULL;
+    i2s_chan_handle_t rx = NULL;
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-    if (i2s_new_channel(&chan_cfg, &tx, NULL) != ESP_OK) {
+    if (i2s_new_channel(&chan_cfg, &tx, &rx) != ESP_OK) {
         ESP_LOGE(TAG, "i2s channel");
         return false;
     }
     const i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
                                                         I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
@@ -93,12 +102,15 @@ bool audio_start(void)
             .invert_flags = {0},
         },
     };
-    if (i2s_channel_init_std_mode(tx, &std_cfg) != ESP_OK) {
+    /* Both directions take the same config; the codec layer enables and disables each
+       channel around a read or a write, so neither is enabled here. */
+    if (i2s_channel_init_std_mode(tx, &std_cfg) != ESP_OK ||
+        i2s_channel_init_std_mode(rx, &std_cfg) != ESP_OK) {
         ESP_LOGE(TAG, "i2s std mode");
         return false;
     }
 
-    audio_codec_i2s_cfg_t i2s_cfg = {.port = I2S_PORT, .tx_handle = tx};
+    audio_codec_i2s_cfg_t i2s_cfg = {.port = I2S_PORT, .tx_handle = tx, .rx_handle = rx};
     const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_cfg);
     audio_codec_i2c_cfg_t i2c_cfg = {
         .port = I2C_NUM_0, .addr = ES8311_CODEC_DEFAULT_ADDR, .bus_handle = bus};
@@ -112,7 +124,7 @@ bool audio_start(void)
     es8311_codec_cfg_t es_cfg = {
         .ctrl_if = ctrl_if,
         .gpio_if = gpio_if,
-        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_BOTH,
         .pa_pin = PIN_PA,
         .use_mclk = true,
         .hw_gain = {.pa_voltage = 5.0f, .codec_dac_voltage = 3.3f},
@@ -123,29 +135,48 @@ bool audio_start(void)
         return false;
     }
     esp_codec_dev_cfg_t dev_cfg = {
-        .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = dev, .data_if = data_if};
-    s_speaker = esp_codec_dev_new(&dev_cfg);
-    if (s_speaker == NULL) return false;
+        .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT, .codec_if = dev, .data_if = data_if};
+    s_codec = esp_codec_dev_new(&dev_cfg);
+    if (s_codec == NULL) return false;
 
     esp_codec_dev_sample_info_t fs = {
         .bits_per_sample = 16,
         .channel = 1,
         .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
-        .sample_rate = SAMPLE_RATE,
+        .sample_rate = AUDIO_RATE,
     };
-    if (esp_codec_dev_open(s_speaker, &fs) != 0) {
+    if (esp_codec_dev_open(s_codec, &fs) != 0) {
         ESP_LOGE(TAG, "codec open");
-        s_speaker = NULL;
+        s_codec = NULL;
         return false;
     }
-    esp_codec_dev_set_out_vol(s_speaker, VOLUME);
+    esp_codec_dev_set_out_vol(s_codec, VOLUME);
+    esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_DB);
     build_beep();
-    ESP_LOGI(TAG, "es8311 ready, volume %d/100", VOLUME);
+    ESP_LOGI(TAG, "es8311 ready: out %d/100, in %.0f dB, %d Hz", VOLUME, MIC_GAIN_DB,
+             AUDIO_RATE);
     return true;
 }
 
 void audio_beep(void)
 {
-    if (s_speaker == NULL) return;
-    esp_codec_dev_write(s_speaker, s_beep, sizeof(s_beep));
+    if (s_codec == NULL) return;
+    esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+}
+
+bool audio_record(int16_t *buf, int samples)
+{
+    if (s_codec == NULL) return false;
+    return esp_codec_dev_read(s_codec, buf, samples * (int)sizeof(int16_t)) == 0;
+}
+
+int audio_peak(const int16_t *buf, int samples)
+{
+    int peak = 0;
+    for (int i = 0; i < samples; i++) {
+        /* INT16_MIN has no positive counterpart; clamp rather than negate it. */
+        const int v = buf[i] == INT16_MIN ? 32767 : (buf[i] < 0 ? -buf[i] : buf[i]);
+        if (v > peak) peak = v;
+    }
+    return peak;
 }

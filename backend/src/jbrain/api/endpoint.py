@@ -397,6 +397,11 @@ class TelemetryIn(BaseModel):
     reset_reason: str = ""
     free_heap: int = 0
     free_psram: int = 0
+    # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
+    # reports while someone is talking near it means the capture path is dead — which a
+    # meter drawn on the panel shows to whoever is standing there, and this shows to whoever
+    # is not.
+    mic_peak: int = 0
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
@@ -430,6 +435,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         reset_reason=body.reset_reason,
         free_heap=body.free_heap,
         free_psram=body.free_psram,
+        mic_peak=body.mic_peak,
         pmu_history=body.pmu_history,
         note=body.note,
     )
