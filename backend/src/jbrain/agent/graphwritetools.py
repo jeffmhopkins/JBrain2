@@ -413,6 +413,87 @@ def _precision(when: str) -> str:
     return "instant"
 
 
+# `_precision`'s vocabulary, coarsest first, so "is this reading finer?" is a comparison
+# rather than a pile of ifs.
+_PRECISION_RANK = ("year", "month", "day", "instant")
+
+
+def _same_period(precision: str, coarse: datetime, fine: datetime, tz: Any) -> bool:
+    """Whether `fine` falls inside the period `coarse` names — compared only as far as
+    that precision actually asserts, and in the zone each was resolved in.
+
+    A day/month/year binding is anchored at UTC midnight of the LABEL (`_temporal` reads
+    a dateless value as UTC precisely because a bare date is not an instant), while a
+    clock was read in the note's own zone. So the two are compared by their own calendars
+    — otherwise an evening appointment west of UTC reads as the following day and a
+    genuine refinement looks like a disagreement."""
+    c = coarse.astimezone(UTC)
+    f = fine.astimezone(tz)
+    if precision == "year":
+        return f.year == c.year
+    if precision == "month":
+        return (f.year, f.month) == (c.year, c.month)
+    return f.date() == c.date()
+
+
+def _sharpened(
+    temporal: ExtractedTemporal | None,
+    *,
+    value_shape: str | None,
+    literal: str,
+    anchor: datetime,
+    tz_offset_minutes: int | None,
+) -> ExtractedTemporal | None:
+    """A date-shaped predicate's OBJECT, when it restates the same moment as `when` more
+    precisely, is the binding — `when` is where the model put the phrase it read, the
+    object is where it put the value.
+
+    MEASURED on the live box: for "my cardiology appointment for tomorrow is actually at
+    12:45" the ingest agent sent `when: "2026-09-22"` — a DAY — and
+    `object: "2026-09-22T12:45"`. The binding resolved to midnight, so the appointment
+    reached the calendar (once its predicate was normalized) as an all-day Tuesday, and
+    the clock the note plainly stated survived only as an opaque string in `value_json`.
+
+    Resolving it HERE rather than in a reader is what makes it right rather than merely
+    finer: `_temporal` reads a naive clock in the NOTE'S OWN ZONE, an offset no
+    downstream projection holds. A reader recovering that 12:45 could only pin it to
+    12:45Z — wrong by the owner's offset, forever, and silently.
+
+    Three guards, each closing a way this could do harm rather than good:
+
+    - **Only sharpens, never dates.** `temporal is None` passes straight through, so a
+      fact the model left undated stays undated. An object that began SETTING
+      `valid_from` would quietly re-key supersession (validity-newest-wins) for every
+      date-shaped predicate — `birthDate` ordering by the birth date — which is a far
+      larger change than the bug being fixed.
+    - **Only a strictly finer reading wins**, so a `when` that already carries the clock
+      (and with it an explicit offset the object may lack) is never second-guessed.
+    - **Only a restatement of the same period**, via `_same_period`. An object naming a
+      different day than `when` is a disagreement, not a refinement, and there the
+      phrase the note actually used is the one to trust."""
+    if temporal is None or value_shape != "date" or not literal:
+        return temporal
+    body = literal.strip()
+    try:
+        fine_rank = _PRECISION_RANK.index(_precision(body))
+        coarse_rank = _PRECISION_RANK.index(temporal.precision)
+    except ValueError:
+        return temporal
+    if fine_rank <= coarse_rank:
+        return temporal
+    try:
+        sharper = _temporal(body, anchor, tz_offset_minutes)
+    except ValueError:
+        return temporal
+    coarse, fine = temporal.resolved_start, sharper.resolved_start
+    if coarse is None or fine is None:
+        # An unresolved binding names no period to be inside of, so there is nothing to
+        # check the object against and nothing it could be refining.
+        return temporal
+    tz = timezone(timedelta(minutes=tz_offset_minutes)) if tz_offset_minutes is not None else UTC
+    return sharper if _same_period(temporal.precision, coarse, fine, tz) else temporal
+
+
 def _temporal(when: str, anchor: datetime, tz_offset_minutes: int | None) -> ExtractedTemporal:
     """One ISO string as the temporal the write path stores, or a raise for a value that
     is not a date at all (the caller turns that into a result line and commits the fact
@@ -1644,6 +1725,17 @@ class NoteGraphWriter:
                 temporal = _temporal(when, self._target.anchor, self._target.tz_offset_minutes)
             except ValueError:
                 notes.append(f'when "{when}" is not a date — recorded undated')
+        # Before the interval closes over it: a date-shaped predicate whose OBJECT
+        # restates `when` with a clock on it binds the clock. See `_sharpened` — the
+        # model routinely puts the day in `when` and the instant in `object`.
+        declared = registry.predicate_for_kind(subject.kind, predicate)
+        temporal = _sharpened(
+            temporal,
+            value_shape=declared.value_shape if declared is not None else None,
+            literal=literal,
+            anchor=self._target.anchor,
+            tz_offset_minutes=self._target.tz_offset_minutes,
+        )
         temporal, refused = _close_interval(
             temporal, _text(item, "when_end", "until", "end"), self._target.tz_offset_minutes
         )

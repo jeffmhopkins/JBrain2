@@ -9,6 +9,13 @@ scheduled time. It runs inside the caller's transaction on the owner-scoped
 session (the pipeline's SYSTEM_CTX, or the owner deleting a note), so it is
 atomic with the write that touched the graph and idempotent on re-analysis.
 
+What it reads is deliberately WIDER than one canonical spelling. Under the two-tier
+predicate model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md) a long-tail predicate
+commits raw and unreviewed, so a projection that gates on `predicate == "scheduledTime"`
+silently drops appointments the notes plainly state — measured, on the owner's only one.
+`_TIME_PREDICATES` and `_TYPE` are that tolerance, and it is safe HERE in a way a global
+rename would not be: only an appointment/event entity ever reaches this module.
+
 Projected onto the row (all same-domain as the appointment, so the row's own RLS
 gates them): title, start/end, lifecycle status, recurrence RRULE, plus the
 where/who facets — organizer, attendance mode, online URL, description, type, and
@@ -25,7 +32,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +48,26 @@ from jbrain.models.appointments import Appointment, AppointmentLocation
 # is excluded by kind.
 _APPOINTMENT_KINDS = frozenset({"appointment", "event"})
 _SCHEDULED_TIME = "scheduledTime"
+# What can carry the appointment's time, MOST SPECIFIC FIRST. `scheduledTime` is the
+# type's own predicate and `normalize_predicate` rewrites appointment.yaml's
+# `renamed_from` spellings onto it at WRITE time, so a fact written today lands there.
+# The rest are the two holes that rewrite cannot close, and both are real:
+#
+# - `startDate` is the Temporal FACET's own canonical predicate, and appointment.yaml
+#   includes Temporal — so it is a CORRECT spelling for an Event which can never be
+#   aliased onto scheduledTime (two canonicals cannot claim one name; the loader
+#   refuses). Without it here, a perfectly schema-conformant appointment never projects.
+# - a spelling the registry has never seen commits RAW, with no review card, BY DESIGN
+#   (ENTITY_GRAPH_REFOCUS_PLAN.md's two-tier model). So "every stored predicate is
+#   canonical" is an assumption this projection may not make — nor could it make it
+#   about rows written before a `renamed_from` entry existed. MEASURED: the ingest agent
+#   wrote `startsAt`, the row fell outside a `== _SCHEDULED_TIME` gate, and
+#   `read_appointments` answered "No appointments in scope" for the owner's only
+#   appointment — which is what sent the chat agent off to ask him his own question.
+#
+# Reading a few unambiguous synonyms HERE rather than as more global renames is what
+# keeps them safe: nothing but an appointment/event entity ever reaches this code.
+_TIME_PREDICATES = (_SCHEDULED_TIME, "startDate", "startsAt", "startTime")
 _RECURRENCE = "recurrence"
 _STATUS = "status"
 _DEFAULT_STATUS = "confirmed"
@@ -51,6 +78,11 @@ _ATTENDANCE_MODE = "attendanceMode"
 _ONLINE_URL = "onlineUrl"
 _DESCRIPTION = "description"
 _APPOINTMENT_TYPE = "appointmentType"
+# The bare `type` the ingest agent reaches for. It is NOT a global rename — a
+# medication, a document and a vehicle each mean something different by "type" — but by
+# the time this module reads it the entity is already known to be an appointment, which
+# is exactly the scoping a normalization entry could not have given it.
+_TYPE = "type"
 # The venue: a `location` ref (→ a place entity) is preferred; a structured
 # `address` on the appointment itself is the fallback. Both floor to the location
 # domain, so both route to the sidecar.
@@ -61,6 +93,15 @@ _ATTENDEE_PARAMS = ("role", "status", "required")
 # A day/month/year-precision schedule is an all-day event (no meaningful clock
 # time); only an instant precision is a timed slot.
 _ALL_DAY_PRECISIONS = frozenset({"day", "month", "year"})
+
+# `_TIME_PREDICATES`' order, as something the database can sort on, so picking BETWEEN
+# spellings stays one query. Supersession already leaves at most one active fact per
+# predicate; this decides which predicate wins when a note used two.
+_TIME_RANK = case(
+    {pred: rank for rank, pred in enumerate(_TIME_PREDICATES)},
+    value=Fact.predicate,
+    else_=len(_TIME_PREDICATES),
+)
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -177,18 +218,19 @@ async def project_appointments(session: AsyncSession, entity_ids: set[uuid.UUID]
 async def _project_one(session: AsyncSession, ent: Entity) -> None:
     eid = ent.id
 
-    # The current scheduled time is the single ACTIVE scheduledTime state fact —
-    # functional, so supersession (validity-newest-wins) already left exactly one.
+    # The current scheduled time is the single ACTIVE time-carrying state fact —
+    # functional, so supersession (validity-newest-wins) already left exactly one per
+    # predicate, and `_TIME_RANK` picks between spellings when a note used more than one.
     sched = (
         await session.execute(
             select(Fact, TemporalToken.rrule)
             .join(TemporalToken, Fact.temporal_token_id == TemporalToken.id, isouter=True)
             .where(
                 Fact.entity_id == eid,
-                Fact.predicate == _SCHEDULED_TIME,
+                Fact.predicate.in_(_TIME_PREDICATES),
                 Fact.status == "active",
             )
-            .order_by(Fact.valid_from.desc())
+            .order_by(_TIME_RANK, Fact.valid_from.desc())
             .limit(1)
         )
     ).first()
@@ -210,6 +252,14 @@ async def _project_one(session: AsyncSession, ent: Entity) -> None:
         return
     fact, token_rrule = sched
     value = fact.value_json or {}
+    # `temporal_precision` stays the ONE carrier of "was a clock stated", here and in
+    # `all_day` below. A reader that second-guessed it from the fact's own value_json
+    # could not get the zone right anyway — the agent write path stores the model's raw
+    # object (`{"value": "2026-09-22T12:45"}`) and nothing on this row says which zone
+    # that 12:45 was spoken in, so recovering it here would pin a local appointment to
+    # 12:45Z and be wrong by the owner's offset forever. `graphwritetools._sharpened`
+    # resolves that at the one layer holding the note's offset, which is what keeps both
+    # `valid_from` and the precision true by the time a fact arrives here.
     starts_at = _parse_dt(value.get("start")) or fact.valid_from
     ends_at = _parse_dt(value.get("end")) or fact.valid_to
     if starts_at is None:
@@ -276,6 +326,7 @@ _FACET_PREDICATES = frozenset(
         _ONLINE_URL,
         _DESCRIPTION,
         _APPOINTMENT_TYPE,
+        _TYPE,
         _LOCATION,
         _ADDRESS,
     }
@@ -338,7 +389,9 @@ def _row_facets(facets: dict[str, list[Fact]], names: dict[uuid.UUID, str]) -> d
         "attendance_mode": _coerce_mode(_text_value(_first_value(facets, _ATTENDANCE_MODE))),
         "online_url": _text_value(_first_value(facets, _ONLINE_URL)),
         "description": _text_value(_first_value(facets, _DESCRIPTION)),
-        "appointment_type": _text_value(_first_value(facets, _APPOINTMENT_TYPE)),
+        "appointment_type": _text_value(
+            _first_value(facets, _APPOINTMENT_TYPE) or _first_value(facets, _TYPE)
+        ),
         "attendees": _attendees(facets.get(_ATTENDEE, []), names),
     }
 

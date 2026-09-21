@@ -201,39 +201,66 @@ async def _appointment_rows(maker, entity_id: uuid.UUID) -> int:  # noqa: F811
         ).scalar_one()
 
 
+async def _appointment_row(maker, entity_id: uuid.UUID) -> Any:  # noqa: F811
+    """The projected row itself — what the calendar, the ICS feed and
+    `read_appointments` each render, rather than merely that one exists."""
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT starts_at, all_day, appointment_type FROM app.appointments"
+                    " WHERE entity_id = CAST(:e AS uuid)"
+                ),
+                {"e": str(entity_id)},
+            )
+        ).one()
+
+
 async def _books_an_appointment(
     maker,  # noqa: F811
     tmp_path: Any,
+    *,
+    body: str = APPOINTMENT_BODY,
+    kind: str = "appointment",
+    title: str = "Dentist appointment",
+    tags: tuple[str, ...] = ("dentist",),
+    predicate: str = "scheduledTime",
+    obj: str = "2027-03-04T13:00:00",
+    when: str = "2027-03-04T13:00:00",
+    quote: str = "Dentist appointment on 2027-03-04 at 13:00",
+    tz_offset: int | None = None,
 ) -> tuple[str, uuid.UUID, NoteGraphWriter, list[ToolOutput]]:
     """A note whose CONVERSATION books an appointment — the real tool path, no
     hand-written rows: `resolve_entity` mints the appointment entity and `close_reading`
-    states the dated `scheduledTime` the projection keys on.
+    states the dated time the projection keys on.
 
     `close_reading` and not `assert_fact`, because since R3 that is the unattended pass's
     only fact verb (`agents.NOTE_INGEST_UNATTENDED_TOOLS`) — and because the reading it
-    leaves on the writer is what the settle then acts on."""
-    note_id = await make_note(maker, domain="general", body=APPOINTMENT_BODY)
+    leaves on the writer is what the settle then acts on.
+
+    Every part of the call the model chooses is a parameter, because the defaults here
+    are the CANONICAL shape and the live agent does not write it: see
+    `test_the_agents_own_spelling_and_placement_of_the_time_reach_the_calendar`."""
+    note_id = await make_note(maker, domain="general", body=body, tz_offset=tz_offset)
     await ingest(maker, note_id, tmp_path)
     writer = await _writer(maker, note_id)
     ctx = ToolContext(session=OWNER, scopes=("general",))
-    surface = f"dentist appointment {uuid.uuid4().hex[:8]}"
-    resolved = await writer.resolve_entity(
-        {"entities": [{"surface": surface, "kind": "appointment"}]}, ctx
-    )
+    surface = f"{kind} appointment {uuid.uuid4().hex[:8]}"
+    resolved = await writer.resolve_entity({"entities": [{"surface": surface, "kind": kind}]}, ctx)
     assert isinstance(resolved, ToolOutput)
     assert resolved.entities, str(resolved)
     read = await writer.close_reading(
         {
-            "title": "Dentist appointment",
-            "tags": ["dentist"],
+            "title": title,
+            "tags": list(tags),
             "facts": [
                 {
                     "subject": "e1",
-                    "predicate": "scheduledTime",
-                    "object": "2027-03-04T13:00:00",
-                    "statement": f"{surface} is scheduled for 2027-03-04 at 13:00.",
-                    "when": "2027-03-04T13:00:00",
-                    "quote": "Dentist appointment on 2027-03-04 at 13:00",
+                    "predicate": predicate,
+                    "object": obj,
+                    "statement": f"{surface} is scheduled for {obj}.",
+                    "when": when,
+                    "quote": quote,
                 }
             ],
         },
@@ -270,6 +297,63 @@ async def test_a_conversation_written_appointment_finally_projects(
     assert await _settle(maker, owner, session_id, reading=_reading(writer, note_id))
 
     assert await _appointment_rows(maker, entity_id) == 1
+
+
+# The owner's note, verbatim, from the box on 2026-09-21.
+CARDIOLOGY_BODY = (
+    "My cardiology appointment for tomorrow is actually at 12:45 for a 1300 appointment"
+)
+
+
+async def test_the_agents_own_spelling_and_placement_of_the_time_reach_the_calendar(
+    maker,  # noqa: F811
+    owner: SessionContext,
+    tmp_path,
+) -> None:
+    """The live failure, argument for argument, from the owner's own box.
+
+    The sibling test above books the CANONICAL shape — `scheduledTime`, with the full
+    instant in `when`. The ingest agent writes neither. Handed "my cardiology appointment
+    for tomorrow is actually at 12:45", it called `close_reading` with
+    `predicate: "startsAt"`, `when: "2026-09-22"` (a DAY) and the instant as the OBJECT,
+    and both halves of that were silently lossy:
+
+    - `startsAt` is not `scheduledTime`, and under the two-tier predicate model an
+      unknown predicate commits RAW with no review card — so the fact was `active` and
+      citable while falling outside the projection's gate. Nothing projected at all.
+    - the clock lived only in `value_json`, so a projection reading `valid_from` would
+      have put a 12:45 appointment on the calendar as an all-day Tuesday.
+
+    `read_appointments` therefore answered "No appointments in scope" for the owner's
+    only appointment, and the chat agent — finding nothing where an appointment should
+    be — asked him when his cardiology appointment was. He had just asked it that.
+
+    This test is the whole chain the answer depends on: the agent's own spelling, the
+    agent's own placement of the clock, the note's own zone, and a row a reader can
+    answer from.
+    """
+    note_id, entity_id, writer, outs = await _books_an_appointment(
+        maker,
+        tmp_path,
+        body=CARDIOLOGY_BODY,
+        kind="event",  # what the model resolved it as; schema.org leans Event
+        title="Cardiology appointment time change",
+        tags=("cardiology", "appointment", "time"),
+        predicate="startsAt",
+        obj="2026-09-22T12:45",
+        when="2026-09-22",
+        quote="cardiology appointment for tomorrow is actually at 12:45",
+        tz_offset=-240,  # the owner's zone, where 12:45 was spoken
+    )
+    session_id = await _conversation(maker, owner, note_id)
+    await _ledger(maker, owner, session_id, outs, names=["resolve_entity", "close_reading"])
+    assert await _settle(maker, owner, session_id, reading=_reading(writer, note_id))
+
+    row = await _appointment_row(maker, entity_id)
+    # 12:45 in the note's own zone — never 12:45Z, which is the failure a reader
+    # recovering the clock without an offset would have shipped instead.
+    assert row.starts_at == datetime(2026, 9, 22, 16, 45, tzinfo=UTC)
+    assert row.all_day is False
 
 
 async def test_the_settle_stamps_the_reading_and_never_blanks_a_title(
