@@ -1466,6 +1466,62 @@ The general point is the one §10.4ad opened: caution is priced per mistake. Rep
 counts rather than a derived orientation is what made this a one-line answer instead of a
 guess about a guess.
 
+#### 10.4af A reading is worthless without a named orientation (2026-09-21)
+
+0.2.19 moved the flip from `ay` to `ax` on the strength of one telemetry line,
+`[-7637, 381, 530]`, and shipped the sign backwards. The axis was right; the sign was read off
+a pose nobody had named. The panel was lying on its charger and that reading was, it turns out,
+the panel INVERTED.
+
+The owner then held it in a stated orientation — charging port right, robot's head up — and
+asked for a reading at that moment. `[8446, 78, -563]`. Two things fell out at once: `ay` and
+`az` are both near zero in a known-upright pose, which confirms X as the vertical axis beyond
+the earlier inference, and **right way up is positive `ax`**, which is the opposite of what
+0.2.19 assumed.
+
+**The lesson is not "measure twice".** 0.2.18 reported raw counts precisely so the axis could
+be settled by data, and it was. The gap was that a *magnitude* identifies an axis from any pose,
+while a *sign* means nothing until someone says which way the thing was facing. The first
+reading could settle the first question and not the second, and 0.2.19 used it for both.
+
+The fix was one comparison, as §10.4ae predicted the cost would be — but it was the second
+one-line fix for the same feature, and the first was avoidable by asking "in what orientation?"
+before reading a sign off a number.
+
+Getting the answer also took a round trip that did not need to exist: telemetry is on a
+fifteen-minute cycle, so the live question "what does it read right now" was answered by having
+the owner hold the panel for five seconds to force a reboot and an immediate report. That works,
+and it is a sign that a panel should be able to answer a question sooner than its next
+scheduled one.
+
+#### 10.4ag He leans before he flips (2026-09-21)
+
+The owner asked for the robot to fall left or right, proportionally, as the panel is tilted —
+"until we are flipping". It makes the flip feel like the end of something rather than a jump
+cut, and it turns a binary into a continuous readout of the same sensor.
+
+The figure slides horizontally in proportion to the sideways component of gravity: full lean at
+a little over a quarter of a gravity, because tilting a panel that far is a deliberate act and
+anything gentler should stay proportional rather than pinned. Smoothed, because the
+accelerometer is noisy at rest and a figure twitching while the panel sits still reads as
+broken rather than alive.
+
+**±60 px is what the composition allows, and it was measured rather than estimated.** The head
+is 216 px on a 368 px panel, so the arithmetic says 76 px of slack each side. The host harness
+was asked instead: at full lean the figure spans 16..231 and 136..351, clearing both edges by
+16 px and stopping just short of the microphone meter at x 4..15. Worth recording that the
+rendered image *looked* clipped to me and the measurement said otherwise — the eye is not a
+measuring instrument, which is the whole reason that harness exists (§10.4p).
+
+**The sign needs no special case when inverted**, which is worth knowing before someone adds
+one. Rotating the panel 180° negates `ay` for the same physical tilt, and `flip_frame` negates
+the drawn offset again; the two cancel and the robot slides towards the viewer's downhill side
+either way.
+
+Tilting now redraws at the poll rate rather than waiting out the idle floor, but only once the
+lean has moved more than two pixels — otherwise every frame would be a full 322 KB blit for a
+pixel of accelerometer noise.
+
 #### 10.4ad The meter was showing one frame in five, and the robot flips (2026-09-21)
 
 **The sluggish meter was a bug, not a limit.** The microphone is sampled 25 times a second and
