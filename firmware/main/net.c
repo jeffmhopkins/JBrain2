@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -52,23 +53,43 @@ esp_err_t net_connect(const cfg_t *cfg, int timeout_ms)
     s_events = xEventGroupCreate();
     if (s_events == NULL) return ESP_ERR_NO_MEM;
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    /* NOT `ESP_ERROR_CHECK`, AND THAT DISTINCTION COST A BOOT LOOP. 0.2.37 shipped with
+       ESP-SR holding the internal RAM the Wi-Fi driver needs for its DMA descriptors, so
+       `esp_wifi_init` returned ESP_ERR_NO_MEM — and an `ESP_ERROR_CHECK` around it turned a
+       resource shortage into `abort()`, three seconds after boot, forever. The panel is
+       still a robot without a radio (§0.2.32 established exactly that for a failed JOIN);
+       a failed INIT is the same fact arriving one call earlier, and the one thing it must
+       not do is cost a cable. */
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK) return err;
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK) return err;
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event,
-                                                        NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event,
-                                                        NULL, NULL));
+    err = esp_wifi_init(&init);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi init failed (%s) — free internal heap %u B. Carrying on without a "
+                      "radio; the panel still draws and still answers taps.",
+                 esp_err_to_name(err), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        return err;
+    }
+    err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL,
+                                              NULL);
+    if (err != ESP_OK) return err;
+    err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event, NULL,
+                                              NULL);
+    if (err != ESP_OK) return err;
 
     wifi_config_t wc = {0};
     strlcpy((char *)wc.sta.ssid, cfg->ssid, sizeof(wc.sta.ssid));
     strlcpy((char *)wc.sta.password, cfg->pass, sizeof(wc.sta.password));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) return err;
+    err = esp_wifi_set_config(WIFI_IF_STA, &wc);
+    if (err != ESP_OK) return err;
+    err = esp_wifi_start();
+    if (err != ESP_OK) return err;
 
     ESP_LOGI(TAG, "joining '%s' (2.4 GHz only — this radio has no 5 GHz)", cfg->ssid);
     EventBits_t bits = xEventGroupWaitBits(s_events, GOT_IP | FAILED, pdFALSE, pdFALSE,

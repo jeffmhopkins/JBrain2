@@ -110,7 +110,7 @@ the only question that decides whether the rest is worth building.
 ## Open questions, deliberately unanswered
 
 - **What counts as an interaction?** Taps only, or does talking to it count? The panel can now
-  hear 23 phrases (0.2.37) and "wake up" to an egg is a lovely thing for a child to try.
+  hear 22 phrases (0.2.37) and "wake up" to an egg is a lovely thing for a child to try.
 - **Does the egg know which twin?** Two panels, two eggs, one box. If the pets are distinct,
   are they aware of each other — and is that a feature or a rivalry?
 - **Does the form survive the hatch, or does the egg decide it?** An egg that could hatch into

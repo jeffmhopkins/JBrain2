@@ -2131,7 +2131,7 @@ answers immediately. A failing image comparison should be read at 0x20 first.
 > recognizes it"*
 
 Built, with the limit stated rather than papered over. **MultiNet resolves a list; it does not
-transcribe.** `firmware/main/vocab.c` holds 23 phrases and the model answers with *which one*
+transcribe.** `firmware/main/vocab.c` holds 22 phrases and the model answers with *which one*
 it heard, offline, in under half a second. The open-vocabulary alternative is Whisper tiny int8
 at ~75 MB against 8 MB of PSRAM (§10.4ar) — two orders of magnitude, not a tuning problem. So
 the ticker shows the phrase the model resolved and shows **nothing** when it resolved nothing:
@@ -2193,6 +2193,63 @@ The general shape, and it is worth carrying: **a path filter encodes where the c
 test's subject is not always where the test lives.** The same file also asserts the recovery
 offsets in `partitions.csv` against the api's constants — the exact thing this section changed,
 in a job that a firmware-only PR would not have run.
+
+#### 10.4aw 0.2.37 listened perfectly and then could not start a radio (2026-09-21)
+
+The owner flashed 0.2.37 and the panel went into a **boot loop, every 3.2 seconds**. The flash
+itself was flawless — new partition table, `otadata` reset, booting from `factory`, models
+found — and so was the feature:
+
+```
+I (1573) MODEL_LOADER: Successfully load srmodels
+I (1593) AFE: AFE Pipeline: [input] -> |VAD(WebRTC)| -> [output]
+I (2833) speech: vocabulary: 22 accepted, 0 refused
+I (2833) speech: listening: mn7_en, 512 samples per feed
+W (3013) wifi:malloc buffer fail
+E (3023) wifi:Expected to init 10 rx buffer, actual is 4
+ESP_ERROR_CHECK failed: esp_err_t 0x101 (ESP_ERR_NO_MEM) at ./main/net.c line 60
+abort() was called
+```
+
+**This board has 8 MB of PSRAM and 140 KB of internal RAM**, and the boot log says so plainly
+(`87 KiB` + `21 KiB` + `32 KiB`). The Wi-Fi driver's DMA descriptors can live nowhere but
+internal. ESP-SR's front end **defaults to allocating internal**, started 1.5 s into boot, and
+took it — so `esp_wifi_init` got ESP_ERR_NO_MEM at 3.0 s.
+
+Three separate mistakes, and only the first is about memory.
+
+**1. The front end was never told to use PSRAM.** `afe_config_init` defaults to internal, and
+nothing in this firmware overrode it. It is a compute pipeline reading a ring buffer; PSRAM at
+80 MHz feeds it fine. One line: `memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM`.
+
+**2. The ordering was a race nobody chose.** `speech_start()` ran inside the render task at
+~1.5 s while `net_connect` ran from `app_main` at ~3.0 s, so the recogniser always won. It now
+starts from `main.c` **after** the radio, after the manifest fetch over TLS, and after any
+pending update has rebooted the panel. Listening is the last thing the panel earns, because
+being updatable is the first — and the repo already said so in those words.
+
+**3. `ESP_ERROR_CHECK(esp_wifi_init(...))` turned a shortage into a brick.** This is the one
+that actually cost a cable. §10.4 and 0.2.32 established that *a panel with no Wi-Fi is still a
+robot* — but only for a failed JOIN. A failed INIT is the same fact arriving one call earlier,
+and it aborted. It now returns, logs the free internal heap, and the panel carries on drawing
+and answering taps while the OTA loop retries.
+
+Plus the guard that makes the class of bug impossible rather than fixed: **`speech_start()`
+refuses to start below 48 KB of free internal heap**, saying why. The recogniser is never
+allowed to cost the panel its radio, because a panel that cannot be reached is the one state
+this design calls unrecoverable.
+
+**What this cost and what it did not.** It cost one USB flash. It did not cost the recovery
+ladder: the panel was reachable over USB throughout, and `panel-console` read the fault in one
+call without the owner describing anything. Worth noting against §10.4av's own reasoning —
+which correctly said an OTA would have been the *safer* first exposure, because rollback
+catches exactly this and a flash to `factory` does not. That was the right analysis and the
+flash happened anyway; the lesson is to say "then don't flash yet" rather than only explain why
+flashing is riskier.
+
+**And a miscount, corrected.** `vocab.c` has **22** phrases; the plan, the README and the PR
+all said 23. The panel's own boot line is what caught it — `22 accepted, 0 refused` — which is
+the argument for logging a count rather than restating one.
 
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 

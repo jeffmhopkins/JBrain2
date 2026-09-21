@@ -305,7 +305,7 @@ rather than over Wi-Fi, and **put the text on the screen as it recognises it**. 
 and the honest account of what that means is the important half.
 
 **MultiNet resolves a list, it does not transcribe.** `vocab.c` holds every phrase the panel can
-be told — 23 of them — and MultiNet7 answers with *which one* it heard, offline, in under half a
+be told — 22 of them, and the panel logs that count at boot — and MultiNet7 answers with *which one* it heard, offline, in under half a
 second. The smallest genuinely open-vocabulary model anyone runs is Whisper tiny int8 at ~75 MB
 against 8 MB of PSRAM. That is two orders of magnitude, not a tuning problem (§10.4ar), so
 dictation is not a thing this board can be persuaded into.

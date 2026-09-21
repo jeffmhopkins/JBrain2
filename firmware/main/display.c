@@ -740,10 +740,11 @@ static void face_task(void *arg)
        that was never registered, and only the first of those is visible from here. */
     const bool sound = audio_start();
     if (!sound) ESP_LOGW(TAG, "no codec — taps will be silent");
-    /* AFTER the codec, because there is nothing to feed it otherwise, and non-fatal for the
-       same reason everything else here is: a panel that cannot hear is still a robot. */
-    const bool ears = sound && speech_start();
-    if (!ears) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+    /* THE RECOGNISER IS NOT STARTED HERE, and that is deliberate rather than tidy. This
+       task runs ~1.5 s into boot and `net_connect` runs at ~3.0 s, so starting ESP-SR here
+       meant it won the race for internal RAM and the radio never came up (0.2.37). `main.c`
+       starts it once the panel is settled and updatable; this loop just asks whether it is
+       live, which is false until then and false forever if it could not have the memory. */
     caption_t cap;
     caption_reset(&cap);
     int colour = 0;
@@ -809,7 +810,7 @@ static void face_task(void *arg)
            another way to ask, never a second animation path. */
         char said[64];
         int said_id = -1;
-        if (ears && speech_take(said, sizeof(said), &said_id)) {
+        if (speech_live() && speech_take(said, sizeof(said), &said_id)) {
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
@@ -831,7 +832,7 @@ static void face_task(void *arg)
                 dirty = true;
             }
         }
-        if (ears && !caption_idle(&cap)) dirty = true;
+        if (speech_live() && !caption_idle(&cap)) dirty = true;
         caption_tick(&cap, now, FACE_W, speech_live(), speech_hearing());
 
         /* THE CALIBRATION ROUTINE OWNS THE FRAME while it runs. It deliberately bypasses the
