@@ -229,6 +229,31 @@ wake word, a missing model or a truncated file (§10.4as).
 Cost: esp-sr is 308 MB and a clean build goes from ~50 s to ~2 min. That buys a `srmodels.bin`
 CI verifies instead of a committed blob nobody checks.
 
+## No Wi-Fi is not a reason to stop being a robot
+
+Until 0.2.32 a failed join ended `app_main` outright:
+
+```c
+if (net_connect(&cfg, WIFI_TIMEOUT_MS) != ESP_OK) { ota_confirm_health(false); return; }
+...
+imu_start();   // never reached
+```
+
+Two consequences, both found the hard way on a panel flashed with wrong credentials. The
+**accelerometer never started**, because `imu_start()` sat after that return — so the panel drew,
+beeped and answered taps while refusing to lean or flip, which looks nothing like a network
+fault. And **the OTA loop ended with it**, so a panel that booted while the router was down
+stayed unreachable until someone power-cycled it, on a device whose whole premise is that
+nobody has to touch it.
+
+Now `imu_start()` runs before the network (it is on I2C and owes the radio nothing), and a
+failed join falls through to the loop, retrying every 60 s via `net_retry()` rather than the
+15-minute update cycle. `net_connect` cannot be called twice — its one-time init is wrapped in
+`ESP_ERROR_CHECK` and returns `ESP_ERR_INVALID_STATE` the second time, so calling it again does
+not fail, it *aborts* — hence the separate entry point.
+
+Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls back.
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.

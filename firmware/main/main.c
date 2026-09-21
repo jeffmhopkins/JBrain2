@@ -39,6 +39,10 @@ static const char *TAG = "endpoint";
 /* How often a settled image looks for a newer one. Slow on purpose: a pushed update is not
    urgent, and an endpoint hammering the box is a worse failure than a late rollout. */
 #define CHECK_PERIOD_MS (15 * 60 * 1000)
+/* How often a panel with no network tries again. Much shorter than the update cycle: a
+   settled panel asking sooner is noise, but an unreachable one is the failure this whole
+   design exists to prevent, and every minute of it is a minute nobody can fix remotely. */
+#define OFFLINE_RETRY_MS (60 * 1000)
 
 /* Tries the manifest repeatedly, and reports both whether the box was reachable at all and
    what it offered. Reachability is the rollback criterion; the manifest is the payload. */
@@ -167,26 +171,36 @@ void app_main(void)
         return;
     }
 
-    if (net_connect(&cfg, WIFI_TIMEOUT_MS) != ESP_OK) {
-        /* No Wi-Fi means no possible update, which is the one thing this image exists to
-           prevent, so a pending image gives up its probation here rather than persisting as
-           an unreachable unit. */
-        ESP_LOGE(TAG, "no network");
+    /* NO WI-FI IS NOT A REASON TO STOP BEING A ROBOT, and until 0.2.32 it was. This call
+       used to sit AFTER the network block's early `return`, so a panel that missed its
+       network at boot never started the accelerometer — it drew, it beeped, it answered
+       taps, and it would not lean or flip, because `imu_read` was failing silently forever.
+       Two symptoms, one cause, and the cause was an ordering nobody chose deliberately.
+       The IMU is on I2C and owes the radio nothing, so it goes first. */
+    imu_start();
+
+    /* A FAILED JOIN IS A RETRY, NOT AN EXIT. This used to `return` out of `app_main`, which
+       ended the OTA loop with it: a panel that booted while the router was down stayed
+       unreachable until someone power-cycled it, on a device whose whole premise is that
+       nobody has to touch it. Thirty seconds of bad timing is not a reason to need hands. */
+    bool joined = net_connect(&cfg, WIFI_TIMEOUT_MS) == ESP_OK;
+    if (!joined) {
+        /* Still gives up probation: no Wi-Fi means no possible update, which is the one
+           thing a pending image must not persist through. On a settled image this is a
+           no-op, so the loop below keeps its chance to recover. */
+        ESP_LOGE(TAG, "no network — will retry every %d s", OFFLINE_RETRY_MS / 1000);
         ota_confirm_health(false);
-        cfg_free(&cfg);
-        return;
     }
 
     ota_manifest_t manifest;
-    bool reachable = reach_box(&cfg, &manifest);
-    ota_confirm_health(reachable);
-    if (!reachable) {
-        ESP_LOGE(TAG, "on Wi-Fi but the box did not answer; retrying on the next cycle");
+    bool reachable = false;
+    if (joined) {
+        reachable = reach_box(&cfg, &manifest);
+        ota_confirm_health(reachable);
+        if (!reachable) {
+            ESP_LOGE(TAG, "on Wi-Fi but the box did not answer; retrying on the next cycle");
+        }
     }
-
-    /* Before the loop and before anything else touches the ring: this call carries whatever
-       survived the last restart, and one more sample would dilute it. */
-    imu_start();
 
     if (reachable) {
         apply_settings(&cfg);
@@ -203,8 +217,14 @@ void app_main(void)
                 ESP_LOGI(TAG, "up to date at %s", running);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(CHECK_PERIOD_MS));
-        reachable = ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
+        /* Offline panels come back faster than settled ones check for updates: a router
+           reboot should cost a minute, not a quarter of an hour. */
+        vTaskDelay(pdMS_TO_TICKS(joined ? CHECK_PERIOD_MS : OFFLINE_RETRY_MS));
+        if (!joined) {
+            joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
+            if (joined) ESP_LOGI(TAG, "network recovered");
+        }
+        reachable = joined && ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
         if (reachable) {
             apply_settings(&cfg);
             report(&cfg);
