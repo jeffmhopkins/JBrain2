@@ -49,9 +49,29 @@ static const char *TAG = "audio";
    front end's WebRTC AGC (`speech.c`) makes up the rest without pinning the PGA at its
    limit, where the noise floor comes up with the signal. The peak is logged every three
    seconds, so the next move after this one is a reading rather than another guess. */
+/* STAYS AT 36, AND THE VERSION THAT ALMOST DROPPED IT TO 27 IS THE REASON THIS SAYS SO.
+   The first successful decode arrived with peak 32768 at -2.0 dBFS, which looked like an
+   obvious argument for backing the gain off. It was not, for two reasons the same capture
+   contains:
+
+     - the panel was being HELD AT THE OWNER'S FACE for a photograph. Ambient in the same
+       room reads -46 to -54 dBFS, so a voice at the distance this thing is actually used
+       from lands near -20 dBFS, which is about where MultiNet wants it. Nine dB down would
+       have put room-distance speech at -29 to fix a case that only happens at arm's length;
+     - and BOTH successful decodes happened while it was clipping. "pick a new color"
+       changed the colour and "jump up" fired, at -2.0 dBFS. The premise that clipping was
+       preventing recognition is contradicted by the only evidence there is for it.
+
+   The real shape of this is dynamic range — close talk and across the room want different
+   gains — and a single fixed number only chooses which end to fail at. That is what AGC is
+   for, and §10.4bf records why it is not affordable yet and what changed that might make it
+   so. `clipped` in the 3 s report is here to measure the trade rather than argue about it. */
 #define MIC_GAIN_DB 36.0f
-/* Where to go if the part refuses the number above. 30 is the value that produced the
-   highest measured peaks of any build so far, which makes it the safest floor. */
+/* Where to go if the part refuses the number above, and it has to stay BELOW it — briefly it
+   did not, when the primary came down to 27 and this was left at 30. A fallback louder than
+   the value it backs up turns "the part refused your setting" into "the part is now
+   clipping". 30 is correct again only because the primary is 36 again; the two move together
+   or not at all. */
 #define MIC_GAIN_FALLBACK_DB 30.0f
 
 /* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
