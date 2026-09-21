@@ -1402,6 +1402,85 @@ so it doubles as *apply this now* — tuning is seconds instead of a release.
 The re-assert in §10.4w now re-sends the *current* brightness rather than the constant, or a
 setting would be quietly undone thirty seconds after it was made.
 
+#### 10.4ac The IMU, reported before it is acted on (2026-09-21)
+
+The owner suggested using the board's gyroscope, with keeping the robot facing up as the easy
+test. It is a good test and a real feature — a panel can be mounted, hung or knocked into any
+orientation — with one correction worth making explicit.
+
+**It wants the accelerometer, not the gyroscope.** Gravity is a constant 1 g pointing down, and
+which way that lands on the chip's axes is the entire answer. A gyroscope measures rotation
+*rate*: it says the panel is turning, never which way is up, and integrating it drifts. So the
+QMI8658's gyro half stays powered down — it costs current and answers a question nothing here
+is asking.
+
+**The axes are not assumed, and that is why this release does not flip anything.** Neither the
+vendor BSP nor the sample repo mentions this part at all, so nothing on this box knows how the
+chip is glued down relative to the screen. Guessing the sign gives a robot that is upside down
+permanently, which looks exactly like a bug and would be indistinguishable from one — and this
+session has already spent four releases on a fault whose instruments were lying. So 0.2.17
+brings the part up, checks `WHO_AM_I` before writing a single control register, and reports raw
+counts in telemetry. The flip lands once the numbers say which way is down.
+
+Reporting **raw** counts rather than a derived orientation is the same discipline: a firmware
+that reported "upright" would be asserting the very thing being measured. All zeros means the
+part did not answer, which is its own reading.
+
+`WHO_AM_I` is checked first because something acknowledging at 0x6b is not the same as it being
+the part this code knows how to configure, and writing control registers into whatever else
+might be there is how a working I2C bus stops working — with the display, the touch controller
+and the codec all sharing it.
+
+Configured for ±4 g at about 59 Hz. The range matters, since 1 g must sit well inside it with
+headroom for the knock of being put down; the rate does not, because this is sampled roughly
+once a second alongside the rest of the telemetry.
+
+**The flip itself will be a 180° reversal of the framebuffer**, not a driver mirror: a 180°
+rotation of a row-major buffer is exactly reversing it, which costs one pass over 165k pixels,
+cannot interact with the V2 panel's 16-pixel column gap, and flips the version label and the
+microphone meter along with the robot — which is what "facing up" has to mean. Ninety degrees
+is not available: the panel is 368×448 and a quarter turn does not fit it.
+
+#### 10.4ad The meter was showing one frame in five, and the robot flips (2026-09-21)
+
+**The sluggish meter was a bug, not a limit.** The microphone is sampled 25 times a second and
+`level` was recomputed every one of them — but the bar was only drawn when the WHOLE face was,
+which is five times a second. Four readings in five were captured, folded into the reported
+peak, and never shown. The meter was not lagging the room; it was showing one frame in five of
+it.
+
+The fix is that the meter gets its own blit. A strip 12 px wide is **8.8 KB against 322 KB for
+the frame**, so it can be pushed on every capture while the face keeps its slower cadence.
+Partial updates were always available; nothing needed to get faster, one thing needed to stop
+being coupled to everything else.
+
+**Fast attack, slow decay** on top of that. A raw per-chunk peak pushed 25 times a second is
+honest and looks like noise; rising instantly and falling over about a second is what makes it
+read as a meter. Only the fall is smoothed, so a loud moment still registers on the frame it
+happened in.
+
+**The flip ships without the reporting round §10.4ac argued for**, on the owner's call:
+*"if it is upside down we can fix that — that's the whole point."* That is the right trade and
+the reasoning is worth keeping. §10.4ac's caution was borrowed from the display fault, where a
+wrong guess cost hours because the instruments lied and the symptom was ambiguous. Here the
+symptom is a robot standing on its head: unmistakable, visible in a second, and one sign flip
+to correct. Caution is priced per-mistake, and this mistake is cheap.
+
+So `ay` is the assumption, with hysteresis at about half a gravity because a panel lying near
+flat has almost nothing on that axis and a bare sign test would flip back and forth on noise.
+Telemetry still carries the raw counts, so if it arrives upside down the fix is one comparison
+and nothing else.
+
+**The flip is a reversal of the framebuffer**, which is exactly what a 180° rotation of a
+row-major buffer is — one pass, no resampling, and it takes the version label and the meter
+with it, which is what "facing up" has to mean. The meter's own partial blit mirrors both its
+content and its window, so the bar stays on the viewer's left rather than travelling to the
+other side of the screen. The two agree to the pixel: the full frame's x ∈ [4,16) maps to
+[352,364), which is exactly the window the strip blit uses.
+
+Ninety degrees remains unavailable — 368×448 does not fit a quarter turn — so this is upright
+or inverted, which is what a panel that has been hung, mounted or knocked over actually needs.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

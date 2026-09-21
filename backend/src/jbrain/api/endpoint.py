@@ -403,6 +403,11 @@ class TelemetryIn(BaseModel):
     # meter drawn on the panel shows to whoever is standing there, and this shows to whoever
     # is not.
     mic_peak: int = 0
+    # Raw accelerometer counts [x, y, z] at +/-4 g, so 1 g is about 8192. Deliberately raw:
+    # which axis points where on this board is not documented anywhere, and a number the
+    # firmware has already interpreted cannot answer that. All zeros means the part did not
+    # answer, which is its own reading.
+    accel: list[int] = []
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
@@ -437,6 +442,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         free_heap=body.free_heap,
         free_psram=body.free_psram,
         mic_peak=body.mic_peak,
+        accel=body.accel,
         pmu_history=body.pmu_history,
         note=body.note,
     )

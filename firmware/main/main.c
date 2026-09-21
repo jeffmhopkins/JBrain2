@@ -19,6 +19,7 @@
 #include "net.h"
 #include "audio.h"
 #include "display.h"
+#include "imu.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
@@ -78,6 +79,12 @@ static void report(const cfg_t *cfg)
                              ? REASONS[r]
                              : "other";
 
+    /* Raw counts, not a derived orientation: which axis points where on this board is
+       exactly what is unknown, and a number this firmware has already interpreted cannot
+       answer that. Zeros mean the part did not answer, which is its own reading. */
+    int16_t ax = 0, ay = 0, az = 0;
+    const bool have_imu = imu_read(&ax, &ay, &az);
+
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
 
@@ -85,12 +92,13 @@ static void report(const cfg_t *cfg)
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
-                     "\"pmu_history\":[",
+                     "\"accel\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-                     display_mic_peak());
+                     display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
+                     have_imu ? az : 0);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
@@ -169,6 +177,8 @@ void app_main(void)
 
     /* Before the loop and before anything else touches the ring: this call carries whatever
        survived the last restart, and one more sample would dilute it. */
+    imu_start();
+
     if (reachable) {
         apply_settings(&cfg);
         report(&cfg);

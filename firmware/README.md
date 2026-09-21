@@ -101,6 +101,13 @@ in this firmware — so a panel can live on any charger. The cost is that **OTA 
 then the only recovery path**, which is what the frozen factory app and the reach-the-box
 rollback gate were built for.
 
+## The robot stays upright, and the meter keeps up
+
+The accelerometer (not the gyroscope — gravity says which way is down, rotation rate does not)
+flips the frame 180° when the panel is inverted. A 180° rotation of a row-major buffer is
+exactly its reversal, so it is one pass and it takes the version label and the meter with it.
+Ninety degrees does not fit a 368×448 panel.
+
 ## The microphone is always on, and the meter is down the left edge
 
 A green bar at x 4..16 tracks the loudest sample in each frame. Always running, no gesture: a
