@@ -54,6 +54,43 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
     return esp_http_client_set_header(client, "Authorization", (const char *)value);
 }
 
+esp_err_t ota_report(const cfg_t *cfg, const char *body)
+{
+    char url[256];
+    snprintf(url, sizeof(url), "%s/endpoint/telemetry", cfg->api);
+
+    char *auth = bearer(cfg);
+    if (auth == NULL) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t hc = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+    };
+    trust(&hc, cfg);
+    esp_http_client_handle_t client = esp_http_client_init(&hc);
+    if (client == NULL) {
+        free(auth);
+        return ESP_FAIL;
+    }
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, (int)strlen(body));
+
+    const esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        const int status = esp_http_client_get_status_code(client);
+        /* Logged at debug volume on purpose: a panel that cannot reach the box has a louder
+           problem than this, and it is already reported by the manifest poll. */
+        if (status != 204) ESP_LOGW(TAG, "telemetry returned HTTP %d", status);
+    } else {
+        ESP_LOGW(TAG, "telemetry unreachable: %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+    free(auth);
+    return err;
+}
+
 esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 {
     char url[256];

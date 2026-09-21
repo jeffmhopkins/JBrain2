@@ -736,3 +736,78 @@ class TestFlash:
         # No LAN certificate on this box, so the key is omitted rather than sent empty:
         # an empty PEM in NVS would fail inside mbedTLS with an unhelpful error.
         assert "ca" not in nvs
+
+
+class TestAPanelCanReportItsOwnState:
+    """Telemetry, and why the route exists at all.
+
+    The display fault took six firmware releases partly because a panel could only be
+    questioned two ways and both were broken: the controller's registers read back zeros that
+    look exactly like a diagnosis, and opening the USB console resets the chip, so every log
+    captured was of a freshly-rebooted panel rather than of the fault. This is the channel
+    that does neither — and it is what lets a panel move to a plain USB charger without
+    becoming undiagnosable, which is the whole premise (CLAUDE.md #10).
+    """
+
+    def test_a_panel_reports_with_its_own_device_key(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()  # a panel has no owner session; only its own key
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.14", "uptime_ms": 61000},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+
+    def test_an_unauthenticated_panel_cannot_report(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """The route takes whatever it is handed and writes it to the owner's log, so an
+        open one would be a way for anything on the LAN to put text there."""
+        c, _fw, _sent = client
+        c.cookies.clear()
+
+        resp = c.post("/api/endpoint/telemetry", json={"version": "x", "uptime_ms": 1})
+        assert resp.status_code == 401
+
+    def test_the_pmu_history_survives_the_round_trip(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """The samples are the evidence. Anything that reshapes them on the way through is a
+        second thing to be wrong about while chasing the first."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        history = ["00 01 4a 03 bf 00", "00 01 4a 03 bd 00"]
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={
+                "version": "0.2.14",
+                "uptime_ms": 1,
+                "reset_reason": "sw",
+                "pmu_history": history,
+            },
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+
+    def test_a_cold_boot_reports_an_empty_history_rather_than_failing(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Nothing survives a power cycle, and "we were not looking" has to be reportable —
+        it is a different fact from "the PMU was fine"."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.14", "uptime_ms": 900, "reset_reason": "power"},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text

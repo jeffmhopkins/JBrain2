@@ -20,7 +20,11 @@
 #include "display.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "esp_system.h"
 #include "ota.h"
+#include "pmu.h"
 
 static const char *TAG = "endpoint";
 
@@ -36,6 +40,44 @@ static const char *TAG = "endpoint";
 
 /* Tries the manifest repeatedly, and reports both whether the box was reachable at all and
    what it offered. Reachability is the rollback criterion; the manifest is the payload. */
+
+/* What this panel looks like from the inside, as JSON.
+
+   THE HISTORY IS THE POINT, and it is why this is sent from here rather than logged. The
+   samples in `pmu.c` survive a soft reset, so the five-second hold is a shutter: the owner
+   sees a dark screen, holds, and the panel comes back and posts the two minutes that preceded
+   the fault. Reading that off the console was never going to work — opening the port restarts
+   the chip — and once the panel moves to a plain USB charger there is no console at all.
+
+   Built on the stack and deliberately bounded: a panel with something to say must not be able
+   to spend the heap saying it. */
+static void report(const cfg_t *cfg)
+{
+    static const char *REASONS[] = {"unknown", "power", "ext",  "sw",   "panic",  "int_wdt",
+                                    "task_wdt", "wdt",  "sleep", "brownout", "sdio"};
+    const int r = (int)esp_reset_reason();
+    const char *reason = (r >= 0 && r < (int)(sizeof(REASONS) / sizeof(REASONS[0])))
+                             ? REASONS[r]
+                             : "other";
+
+    char hist[8][PMU_SAMPLE_CHARS];
+    const int n = pmu_history_hex(hist, 8);
+
+    char body[768];
+    int w = snprintf(body, sizeof(body),
+                     "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
+                     "\"free_heap\":%u,\"free_psram\":%u,\"pmu_history\":[",
+                     ota_running_version(),
+                     (unsigned long long)(esp_timer_get_time() / 1000), reason,
+                     (unsigned)esp_get_free_heap_size(),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
+        w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
+    }
+    if (w > 0 && w < (int)sizeof(body) - 4) snprintf(body + w, sizeof(body) - (size_t)w, "]}");
+    ota_report(cfg, body);
+}
+
 static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)
 {
     for (int i = 1; i <= HEALTH_ATTEMPTS; i++) {
@@ -105,6 +147,10 @@ void app_main(void)
         ESP_LOGE(TAG, "on Wi-Fi but the box did not answer; retrying on the next cycle");
     }
 
+    /* Before the loop and before anything else touches the ring: this call carries whatever
+       survived the last restart, and one more sample would dilute it. */
+    if (reachable) report(&cfg);
+
     while (true) {
         if (reachable) {
             const char *running = ota_running_version();
@@ -117,5 +163,6 @@ void app_main(void)
         }
         vTaskDelay(pdMS_TO_TICKS(CHECK_PERIOD_MS));
         reachable = ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
+        if (reachable) report(&cfg);
     }
 }

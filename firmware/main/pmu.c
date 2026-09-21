@@ -1,5 +1,6 @@
 #include "pmu.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_attr.h"
@@ -53,6 +54,21 @@ static bool read_regs(uint8_t *out)
         }
     }
     return true;
+}
+
+int pmu_history_hex(char (*out)[PMU_SAMPLE_CHARS], int max)
+{
+    if (s_magic != RING_MAGIC) return 0;
+    const uint32_t have = s_count < RING ? s_count : RING;
+    int n = 0;
+    for (uint32_t i = 0; i < have && n < max; i++) {
+        const uint32_t idx = (s_count - have + i) % RING;
+        const uint8_t *r = s_ring[idx];
+        snprintf(out[n], PMU_SAMPLE_CHARS, "%02x %02x %02x %02x %02x %02x", r[0], r[1], r[2],
+                 r[3], r[4], r[5]);
+        n++;
+    }
+    return n;
 }
 
 void pmu_report_history(void)
