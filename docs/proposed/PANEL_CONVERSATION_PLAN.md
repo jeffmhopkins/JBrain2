@@ -1,0 +1,184 @@
+# Talking to the panel — press, hold, ask, be answered
+
+> **Status:** Proposed · **Last verified:** 2026-09-21
+
+The owner, while a display fix was deploying: *"how do we put it in a mode where we can have
+bidirectional conversation with the AI box via tts stt?"* — and then, unprompted, the exact
+interaction: *"press and hold, it records and sends, and then we get a thinking bubble until
+the reply?"*
+
+That gesture is already what `ROOM_ENDPOINT_PLAN.md` settled on for the voice path, and this
+document exists because the research question behind it has a surprising answer.
+
+## The surprise: both hard halves already ship
+
+Speech-to-text and text-to-speech are **not** new work. They are in production on this box
+today, in one always-on container, `tts-stt`:
+
+| | what it is | where it runs | cost per call |
+|---|---|---|---|
+| **STT** | whisper.cpp server, GGML `large-v3-turbo` | iGPU, Vulkan | **~9.8 s, flat** |
+| **TTS** | Kokoro-82M ONNX, held warm | **CPU only** | **~0.1 s** |
+
+`WhisperCppClient.transcribe(audio, ...)` (`backend/src/jbrain/transcribe.py:85`) is fully
+general — four unrelated consumers already share it (SDR captions, the SDR recorder, the
+agent's `transcribe` tool, video analysis). Kokoro already has an authenticated proxy for the
+PWA at `GET /brain/tts` (`backend/src/jbrain/api/brain.py:96`), with the owner's respelling
+lexicon applied on the way through.
+
+**And a complete voice loop already works** — just not on the panel. The wall kiosk runs
+browser speech recognition with the wake word "robot" → `POST /internal/pet/say`
+(`backend/src/jbrain/api/pet.py:379`) → a keyword classifier with an LLM fallback → Kokoro.
+That endpoint is the shape to copy, including its guards: rate-limited, memory-free, and
+restricted to non-sensitive domains.
+
+So this feature is **not "build STT and TTS"**. It is "get audio off the panel and audio back
+onto it", plus one latency problem that has to be solved or the whole thing is unusable.
+
+## The latency problem, which is the actual work
+
+**Whisper takes ~9.8 seconds per call on this box** with the model resident — measured, and
+recorded at `backend/src/jbrain/api/sdr.py:1412-1416`. It is flat regardless of clip length,
+because whisper.cpp pads every clip to a 30-second window. A four-year-old will not wait nine
+seconds, and no amount of thinking-bubble covers it.
+
+Everything else in the chain is cheap. A 3-second utterance is 96 KB of 16 kHz mono s16 —
+about 50 ms over the LAN. Kokoro is a tenth of a second and doesn't touch the GPU.
+
+Three things to try, cheapest first:
+
+1. **A smaller model on the voice path.** `scripts/whisper-setup.sh:5` already makes the model
+   operator-selectable and `base.en` is one of the options. `base.en` is roughly an order of
+   magnitude smaller than `large-v3-turbo`; the 30 s padding still applies, so the win is the
+   model, not the clip. **This number has to be measured on the box before anything else is
+   designed around it.**
+2. **A second whisper instance**, so the voice path gets `base.en` while SDR captions keep
+   `large-v3-turbo`. They are already separate llama-swap instances from the chat LLM, so
+   this is configuration rather than architecture.
+3. **The keyword classifier first**, exactly as `_say_router` does for the wall
+   (`api/pet.py:~285-352`). A large share of what a four-year-old says to a pet — "jump",
+   "what's your name", "are you hungry" — never needs the LLM at all. This is a latency win
+   *and* a robustness win when the box is busy.
+
+**Contention is real and partly unaccounted.** Whisper shares the iGPU and the unified memory
+pool with the chat model, and `llm/ledger.py:153-157` says plainly that the ledger cannot see
+it — whisper is a second llama-swap, and "Kokoro holds a model with no accounting in
+`backend/src` at all". A voice turn that runs whisper and the chat model back to back is
+exactly the pattern that accounting does not cover. Kokoro being CPU-only is the one piece of
+good luck here.
+
+## What the panel cannot do, and therefore where the work is
+
+On-panel open-vocabulary speech is **off the table**, permanently. MultiNet7 resolves a fixed
+list of pre-registered phrases and does not transcribe; Whisper-tiny-int8 is ~75 MB and does
+not fit in 8 MB of PSRAM (`firmware/main/speech.h:15-17`). The panel's entire job is capture,
+send, receive, play.
+
+Three firmware gaps, and the second is the awkward one:
+
+**1. There is no audio transport.** The panel speaks to exactly three routes today —
+`/endpoint/settings`, `/endpoint/telemetry`, `/endpoint/firmware` (`firmware/main/ota.c`) —
+all plain HTTPS with a bearer device key. `PanelDep` (`api/deps.py:129-162`) already
+authenticates it. There is no audio upload endpoint and no WebSocket.
+
+**2. The panel cannot play arbitrary PCM, and playback blocks capture.** `audio_beep()` is the
+only playback that exists: a single pre-computed 880 Hz tone written with
+`esp_codec_dev_write` (`audio.c:250`). The generic call is one line away, but there is no ring
+buffer and no streaming source — and worse, **the blocking `esp_codec_dev_read` is the render
+loop's clock** (`audio.c:254-257`). A 90 ms beep already stalls capture for 90 ms; a
+multi-second reply would starve the microphone and the ESP-SR feed outright.
+
+This is survivable *because* the interaction is press-to-talk. The panel listens or it speaks,
+never both, so the audio task can legitimately stop feeding the recogniser while a reply
+plays. It is a restructure of `audio_task`, not a new subsystem.
+
+**And it must stay one task.** `audio.h:16-29` is emphatic: `esp_codec_dev` has no lock of any
+kind, and a control write from the main task racing the audio task's capture **panicked a live
+panel on 2026-09-21** (§10.4al). Everything else stays a request flag.
+
+**3. Sample rates do not match.** The panel is 16 kHz mono s16, chosen for ESP-SR rather than
+the vendor's 22050 (`audio.h:6-9`). Kokoro's WAV is not.
+
+**The box should do every format conversion.** It has CPU to spare and the panel has 31 KB of
+contiguous internal RAM on a good day. The reply should arrive as raw 16 kHz mono s16 that the
+panel writes straight to the codec — no decoder, no resampler, no WAV parser in firmware. This
+is the single decision that keeps the firmware side small.
+
+## The interaction
+
+Press and hold anywhere on the screen. Release to send.
+
+**`gesture.h` says why the gesture needs care**: 4–5 year olds were measured producing ordinary
+presses lasting **up to 4.2 seconds**. That measurement is why the maintenance gestures stopped
+being a bare hold — the old one fired 1,937 times per 20,000 simulated child presses, the
+rhythm-guarded one fires 12. A bare press-and-hold to talk *will* trigger during ordinary play.
+
+Two mitigations, both shipped from the start:
+
+- **A VAD gate on the upload.** No speech in the clip, nothing sent. An accidental lean costs a
+  listening face and zero bytes — which disposes of the privacy problem for the common case,
+  and the annoyance with it.
+- **A listening state that is never ambiguous.** The mic meter already exists and already
+  works; while held it is the honest indicator that it is hearing you.
+
+If accidental triggering still proves annoying in the twins' room, the fallback is cheap:
+`gesture.h` already implements "N short taps in rhythm, then hold", and **slot 2 is unused**
+(3 = reboot, 4 = swap body, 5 = calibrate). "Tap tap and hold" reuses a mechanism that is
+already measured and tested, with recording beginning as the hold begins rather than after the
+5 s maintenance timeout.
+
+**No wake word.** WakeNet is disabled because it does not fit, and re-enabling it costs
+internal RAM this panel has spent four versions fighting over. Press-to-talk also bounds the
+privacy question by construction, which is the better reason.
+
+**No barge-in.** There is one microphone and no ES7210 reference channel, so there is no AEC
+input; `ROOM_ENDPOINT_PLAN.md:58-62` already doubts barge-in on this board. Half-duplex is not
+a limitation to apologise for here — it is what makes the audio task tractable.
+
+### The state machine
+
+| state | what the panel shows | what it is doing |
+|---|---|---|
+| held | listening face, mic meter live | capturing to a PSRAM buffer |
+| released, no speech | back to idle immediately | discards; sends nothing |
+| released, speech | **thinking bubble**, dots cycling | POST, awaiting reply |
+| reply arriving | pet speaks — a nod or neck bob per phrase | writing PCM to the codec |
+| no reply in N seconds | **a visible failure face** | gives up, says so |
+
+The thinking bubble is not decoration — it is the latency budget. The moment the child lets
+go, the pet is visibly thinking, and that buys a second or more of real round-trip for free.
+It is cheap to draw with primitives `face.c` already has (a rounded rect and three dots).
+
+The last row matters most. On a box its owner cannot get a terminal to, a hang that looks
+identical to "it didn't hear you" is the failure mode this entire feature sequence has been
+made of (§10.4bc: *the nothing in the log was the symptom*). It must say it failed.
+
+## Suggested shape
+
+1. **Measure `base.en` on the box first.** If the voice path cannot get under ~2 s of
+   transcription, none of the rest of this is worth building as designed, and the answer is a
+   different STT rather than a cleverer panel. This is one configuration change and one timing
+   run — it should happen before any firmware is written.
+2. **`POST /endpoint/converse`**, `PanelDep` auth, raw 16 kHz mono s16 in, raw 16 kHz mono s16
+   out, streamed so playback can start on the first sentence. Guards copied from
+   `/internal/pet/say`: rate limit, non-sensitive domains only, no memory writes. RLS scoping
+   per `CLAUDE.md` #3 — the panel is a principal and the twins are not the owner.
+3. **Restructure `audio_task`** for a playback mode that stops feeding ESP-SR while writing,
+   with a PSRAM ring buffer. One task still owns the codec.
+4. **The gesture, the capture buffer and the VAD gate** in firmware.
+5. **The thinking bubble, the speaking animation and the failure face** in `face.c` — the
+   cheapest part, and the part that decides whether it feels alive.
+
+A PWA switch for the whole mode, per `CLAUDE.md` #10, since the owner cannot edit a config
+file on the box.
+
+## Open questions
+
+- **Does `base.en` get under 2 s?** Everything above depends on it. Unmeasured.
+- **Which model answers?** `agent.turn` routing is per-task; a child's turn probably wants a
+  small fast model, not the 120B. The keyword classifier may answer most turns without one.
+- **What does it say?** A pet talking to a four-year-old needs a persona and bounds, and that
+  is a content decision, not a plumbing one. `agent_for_owner_reply(...)` is not the right
+  profile for this.
+- **Does the whisper call need accounting?** The ledger cannot see it today. A voice feature
+  that fires whisper on every utterance makes that blind spot much easier to hit.
