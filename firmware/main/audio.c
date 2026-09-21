@@ -180,3 +180,13 @@ int audio_peak(const int16_t *buf, int samples)
     }
     return peak;
 }
+
+void audio_set_levels(int volume, int mic_gain_db)
+{
+    if (s_codec == NULL) return;
+    if (volume >= 0 && volume <= 100) esp_codec_dev_set_out_vol(s_codec, volume);
+    if (mic_gain_db >= 0 && mic_gain_db <= 42) {
+        esp_codec_dev_set_in_gain(s_codec, (float)mic_gain_db);
+    }
+    ESP_LOGI(TAG, "levels: out %d/100, in %d dB", volume, mic_gain_db);
+}

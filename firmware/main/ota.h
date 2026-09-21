@@ -32,6 +32,20 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url);
    is not a panel that should stop working. */
 esp_err_t ota_report(const cfg_t *cfg, const char *body);
 
+/* The panel knobs the box is holding for this unit.
+
+   Microphone gain, speaker volume and display brightness were compile-time constants, so
+   changing any of them cost a build, a CI run, a deploy and an OTA — which is why the volume
+   took two rounds to settle and the other two were never tuned at all. Fetched at boot and on
+   every cycle; the five-second hold reboots, so it is also how a change is applied at once. */
+typedef struct {
+    int volume;      /* 0..100 as esp_codec_dev takes it; the box clamps the ceiling */
+    int mic_gain_db; /* 0..42; the ES8311's PGA quantises to 6 dB steps */
+    int brightness;  /* 0..255, written to the panel's 0x51 */
+} ota_settings_t;
+
+esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);
+
 /* The rollback gate, and the reason this firmware exists.
  *
  * A freshly OTA'd image boots in PENDING_VERIFY and is reverted by the bootloader on the next

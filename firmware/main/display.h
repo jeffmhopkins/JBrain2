@@ -20,3 +20,7 @@ void display_run_face(void);
    Reported in telemetry so the microphone can be confirmed from the box rather than by
    asking someone to describe a sound. */
 int display_mic_peak(void);
+
+/* The panel's 0x51 brightness, 0..255. Also becomes what the periodic re-assert re-sends, so
+   a setting cannot be quietly undone thirty seconds later by the recovery write. */
+void display_set_brightness(int level);

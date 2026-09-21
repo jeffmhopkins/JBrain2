@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "audio.h"
 #include "display.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
@@ -51,6 +52,23 @@ static const char *TAG = "endpoint";
 
    Built on the stack and deliberately bounded: a panel with something to say must not be able
    to spend the heap saying it. */
+/* Ask the box what this panel should sound and look like, and apply it.
+
+   Every one of these was a compile-time constant until now, which is why the volume took two
+   OTA cycles to settle on 70 and the microphone gain and the brightness were never tuned at
+   all — the loop was too slow to bother with. Fetched here rather than in the render task so
+   a slow or unreachable box can never stall a frame.
+
+   Defaults are the firmware's own, so a box that has never had them set, or one running older
+   code that does not serve the route, leaves the panel exactly as it shipped. */
+static void apply_settings(const cfg_t *cfg)
+{
+    ota_settings_t st = {.volume = -1, .mic_gain_db = -1, .brightness = -1};
+    if (ota_fetch_settings(cfg, &st) != ESP_OK) return;
+    if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
+    if (st.brightness >= 0) display_set_brightness(st.brightness);
+}
+
 static void report(const cfg_t *cfg)
 {
     static const char *REASONS[] = {"unknown", "power", "ext",  "sw",   "panic",  "int_wdt",
@@ -151,7 +169,10 @@ void app_main(void)
 
     /* Before the loop and before anything else touches the ring: this call carries whatever
        survived the last restart, and one more sample would dilute it. */
-    if (reachable) report(&cfg);
+    if (reachable) {
+        apply_settings(&cfg);
+        report(&cfg);
+    }
 
     while (true) {
         if (reachable) {
@@ -165,6 +186,9 @@ void app_main(void)
         }
         vTaskDelay(pdMS_TO_TICKS(CHECK_PERIOD_MS));
         reachable = ota_fetch_manifest(&cfg, &manifest) == ESP_OK;
-        if (reachable) report(&cfg);
+        if (reachable) {
+            apply_settings(&cfg);
+            report(&cfg);
+        }
     }
 }

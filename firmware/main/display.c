@@ -246,9 +246,17 @@ bool display_start(void)
 /* Twelve samples at ten seconds is two minutes of history in the RTC ring — long enough to
    cover a screen going dark and the owner noticing, short enough to read in a boot log. */
 #define PMU_SAMPLE_MS 10000
-/* Matches the init sequence exactly. It is full brightness and still wrong for a bedroom —
-   see the plan — but changing it here would add a variable to the one thing being tested. */
-#define BRIGHTNESS 0xFF
+/* The init sequence's value, and the starting point until the box says otherwise. Full
+   brightness is still wrong for a bedroom; it is now a setting rather than a rebuild. */
+#define BRIGHTNESS_DEFAULT 0xFF
+static uint8_t s_brightness = BRIGHTNESS_DEFAULT;
+
+void display_set_brightness(int level)
+{
+    if (level < 0 || level > 255) return;
+    s_brightness = (uint8_t)level;
+    if (s_io != NULL) esp_lcd_panel_io_tx_param(s_io, 0x51, &s_brightness, 1);
+}
 
 /* THE VERSION, ON THE GLASS. The only other ways to know what a panel is running are to ask
    the box what it last SERVED — a different question — or to cable it up and read its
@@ -336,9 +344,8 @@ static void draw_meter(uint16_t *fb, int level)
 static void reassert_panel(void)
 {
     if (s_io == NULL) return;
-    const uint8_t level = BRIGHTNESS;
     const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
-    const esp_err_t br = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
+    const esp_err_t br = esp_lcd_panel_io_tx_param(s_io, 0x51, &s_brightness, 1);
     if (on != ESP_OK || br != ESP_OK) {
         ESP_LOGW(TAG, "re-assert failed (0x29 %s, 0x51 %s)", esp_err_to_name(on),
                  esp_err_to_name(br));

@@ -1354,6 +1354,54 @@ rather than full scale, because a child at arm's length lands nowhere near 32767
 first guesses, and now both are measurable: the reported peaks are what will move them,
 exactly as the owner's ear moved the volume.
 
+#### 10.4ab The knobs become settings, and why not in `app.settings` (2026-09-21)
+
+Microphone gain, speaker volume and display brightness were compile-time constants. Every one
+of them cost a build, a CI run, a deploy and an OTA to change — which is why the volume took
+two full rounds to settle on 70, and why the gain and the brightness have never been tuned at
+all. Brightness is still `0xFF` and still wrong for a bedroom, and quiet hours needs to change
+it at runtime by design rather than by release.
+
+**The obvious implementation is wrong, and this repo already contains the argument.**
+`app.settings` is where the remembered Wi-Fi lives and would have been the natural home. It is
+gated on a bare `app.is_owner()` and it holds the Gmail client secret, the Moltbook bearer key,
+the autonomy switch and the global kill. A panel authenticates as a `device_key`, and
+`device_context()` refuses *on purpose* to launder a device into owner scope so a stolen panel
+key cannot read everything. Using that table would have meant either laundering the scope or
+resting on "the route only returns three fields" — and `0178_settings_deny_jmolt` exists
+precisely to say that a route's shape is a code-review convention, not a mechanism.
+
+So `app.endpoint_settings`: one row, owner-writable, `device_key`-readable, holding three
+numbers that are worth nothing to a thief.
+
+**The panel policy is `FOR SELECT`**, which makes read-only structural rather than a matter of
+which routes happen to exist. A panel that could write its own volume would be a device on a
+child's wall able to raise the level in its own ear, which is the one thing §10.4q's 65 dB(A)
+reasoning exists to prevent.
+
+**The isolation test found something the design did not predict.** A panel's `UPDATE` is not
+*rejected* — the row is simply invisible to it, so Postgres matches nothing and reports success
+with zero rows. The first version of the test expected an exception and therefore passed a
+write that had in fact been denied, proving nothing either way. It now asserts the effect: zero
+rows touched, and the owner's value still there afterwards. The denial is silent, and that is
+worth knowing before someone reads a clean log as a clean attempt.
+
+**The ceilings live in the API, not in a CHECK constraint.** A rejected write gives a 500 and
+no guidance; a clamp turns a typo into a safe value and logs what it did next to what was
+asked. `VOLUME_MAX` is 85 — above the confirmed-good 70, below the vendor's 90 — so a slipped
+digit cannot put 100 into a speaker held to a four-year-old's ear, while going louder stays a
+deliberate commit against a measurement. `MIC_GAIN_MAX` is 42 because the ES8311's PGA
+truncates above it. `BRIGHTNESS_MIN` is 10 because a panel at zero is indistinguishable from
+the fault §10.4u is still chasing.
+
+**Applied at boot and on every cycle, from the OTA task rather than the render loop**, so a
+slow or unreachable box can never stall a frame. Each field is read independently, so a box
+running older code that omits one still delivers the others. And the five-second hold reboots,
+so it doubles as *apply this now* — tuning is seconds instead of a release.
+
+The re-assert in §10.4w now re-sends the *current* brightness rather than the constant, or a
+setting would be quietly undone thirty seconds after it was made.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

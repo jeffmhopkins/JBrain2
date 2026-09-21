@@ -39,12 +39,13 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
-from jbrain.db.session import SessionContext
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as devices
 from jbrain.settings_store import SqlSettingsStore
 
@@ -440,6 +441,103 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         note=body.note,
     )
     return Response(status_code=204)
+
+
+# Ceilings, and why each one is where it is.
+#
+# These clamp rather than reject. A rejected write gives a 500 and no guidance; a clamp turns
+# a typo into a safe value and reports what it did, which is the difference between an owner
+# with no terminal being stuck and being informed (CLAUDE.md #10).
+#
+# VOLUME_MAX is the only one that is a safety limit rather than a range. The vendor ships 90;
+# 70 is the level the owner confirmed as good; 85 leaves room to go louder deliberately while
+# making it impossible for a slipped digit to put 100 into a speaker held against a
+# four-year-old's ear. Raising this ceiling should take a measurement and a commit, which is
+# exactly the friction §10.4q asked for.
+VOLUME_MAX = 85
+# The ES8311's PGA quantises to 6 dB steps and stops at 42; anything above is silently
+# truncated by the part, so accepting it would be a number that reads back wrong.
+MIC_GAIN_MAX = 42
+# Zero brightness is a panel indistinguishable from the fault §10.4u is chasing, so the floor
+# is "clearly dim" rather than "off". Quiet hours dims to this end of the range; it must never
+# be able to reach a screen that looks broken.
+BRIGHTNESS_MIN = 10
+
+
+class EndpointSettings(BaseModel):
+    volume: int = 70
+    mic_gain_db: int = 30
+    brightness: int = 255
+
+
+def _clamp(v: EndpointSettings) -> EndpointSettings:
+    return EndpointSettings(
+        volume=max(0, min(v.volume, VOLUME_MAX)),
+        mic_gain_db=max(0, min(v.mic_gain_db, MIC_GAIN_MAX)),
+        brightness=max(BRIGHTNESS_MIN, min(v.brightness, 255)),
+    )
+
+
+async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSettings:
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT volume, mic_gain_db, brightness FROM app.endpoint_settings WHERE id = 1"
+                )
+            )
+        ).first()
+    if row is None:
+        return EndpointSettings()
+    return EndpointSettings(volume=row[0], mic_gain_db=row[1], brightness=row[2])
+
+
+@router.get("/settings")
+async def panel_settings(principal: PanelDep, request: Request) -> EndpointSettings:
+    """The knobs a panel applies to itself, fetched with its own key.
+
+    `PanelDep`, so a panel reads this the same way it reads the manifest. The table is
+    deliberately not `app.settings` — that one is gated on `app.is_owner()` and holds the
+    Gmail client secret, the Moltbook key and the global kill, and a panel is a `device_key`
+    precisely so a stolen one cannot reach them. See `0206_endpoint_settings.py`.
+
+    Read under the caller's own context rather than an owner one: the `FOR SELECT` policy is
+    what permits it, so nothing here depends on this route choosing to return only three
+    fields.
+    """
+    return await _read_settings(request, ctx_for(principal))
+
+
+@router.put("/settings")
+async def set_panel_settings(
+    owner: OwnerDep, request: Request, body: EndpointSettings
+) -> EndpointSettings:
+    """Set the knobs. Owner only, and the values are clamped rather than rejected.
+
+    A panel picks these up at its next cycle, and the five-second hold on the glass forces a
+    reboot — which re-fetches immediately. So tuning is seconds rather than the build, CI,
+    deploy and OTA cycle every one of these numbers used to cost.
+    """
+    clamped = _clamp(body)
+    ctx = ctx_for(owner)
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
+        await session.execute(
+            text(
+                "UPDATE app.endpoint_settings SET volume = :v, mic_gain_db = :g,"
+                " brightness = :b, updated_at = now() WHERE id = 1"
+            ),
+            {"v": clamped.volume, "g": clamped.mic_gain_db, "b": clamped.brightness},
+        )
+        await session.commit()
+    log.info(
+        "endpoint.settings_set",
+        volume=clamped.volume,
+        mic_gain_db=clamped.mic_gain_db,
+        brightness=clamped.brightness,
+        # So a clamped write is visible as a clamp rather than as the owner's own number.
+        asked=body.model_dump(),
+    )
+    return clamped
 
 
 @router.get("/monitor")
