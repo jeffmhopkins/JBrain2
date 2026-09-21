@@ -119,6 +119,14 @@ It speaks only the APIs the hardware will speak: `GET /api/pet`, `GET /api/pet/s
 | **P4 ✅** | **The anti-boredom engine.** Weighted-random variant pools, per-variant cooldowns, repetition penalty. **Boundary:** the *action* stays server-authoritative; only the *variant* is chosen client-side, because it is presentation. Recency is suppressed **within** a gag, never the gag itself — preschoolers love repetition. | The tenth rapid poke differs from the first, and the log shows why. |
 | **P5** | **Live trial + safety.** Put it in front of the child. Count wake-word hits and misses, ASR accuracy, and what he actually does for a week. Ship the safety controls with it: volume cap, quiet hours cutting **luminance** not just volume, and an unmistakable recording indicator. | We have a number for the thing nobody has published, and a parent-facing control that enforces it. |
 
+**P0 carries one decision it would be expensive to defer: how many pets are there?**
+`pet_state` is keyed by `principal_id` + `domain_code`, so one principal means one pet — right
+for a wall display, wrong the moment two children each want their own. P0 mints the
+`pet_endpoint` principal, and **a principal per endpoint gives a pet row per endpoint with no
+schema reshape**, while a single shared principal makes that a migration later. Nothing
+downstream needs it today; `../proposed/PET_LIFECYCLE_PLAN.md` (eggs that hatch, per twin)
+does, and it is the cheapest possible moment to choose.
+
 P5 is a **gate on the hardware plan**, not a postscript: if the wake word cannot hear him on a
 phone's microphone, it will not hear him on the panel, and `ROOM_ENDPOINT_PLAN` W6 needs to be
 press-to-talk-first before a line of firmware is written.

@@ -2301,6 +2301,15 @@ the flasher.
 
 ### 10.6 Still open after this section
 
+- **The panels will eventually present as EGGS** (owner, 2026-09-21): interact with one enough
+  times over enough minutes and it hatches into a baby that grows up over ~2 days. Iceboxed as
+  `../proposed/PET_LIFECYCLE_PLAN.md` rather than scoped here, because the firmware is the
+  cheap half — a baby is a `growth` float through `face.c`'s existing per-form constants, plus
+  one extra silhouette for the ostrich (whose neck and legs ARE its silhouette, so scaling them
+  down gives a small ostrich rather than a chick). The expensive half is `jpet/`: there is no
+  age or stage in `pet_state` today, and it holds one pet per principal where two twins need
+  two eggs.
+
 - ~~**Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged
   `/dev/ttyACM*`?**~~ **ANSWERED YES on the box, 2026-09-19.** A panel plugged into the box
   while the containers were already running appeared in the PWA as
