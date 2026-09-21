@@ -1237,6 +1237,47 @@ and set while it is lit, the PMU is cutting a rail and §10.4n's second candidat
 four releases. If the registers are identical in both states, the PMU is innocent, and the
 remaining suspects are the TCA9554 at `0x20` and the OLED supply itself.
 
+#### 10.4y Telemetry, because the cable was the diagnosis (2026-09-21)
+
+The owner asked to move the panel off the box's USB port onto a plain charger, and wanted to
+know first whether updates were really over the air. They are, and it is worth having the
+evidence rather than the assurance: the firmware's only update path is `esp_https_ota` against
+`cfg->api`, there is no USB update code in it at all, the panel's boot log shows
+`net: got 192.168.1.40` then `update offered: 0.2.11 -> 0.2.12`, and the box logs the image as
+an HTTP GET. `deploy/endpoint/ports.py` only *lists* `/sys/class/tty` names and never opens a
+port, so enumeration was never resetting anything either.
+
+**But unplugging would have cost the diagnosis.** §10.4x's PMU capture is read out of a boot
+log, and a boot log needs the console, and the console needs the cable. The capture would have
+survived the move and become unreadable — the worst of both.
+
+So 0.2.14 gives the panel a voice: `POST /api/endpoint/telemetry`, authenticated with the same
+`device_key` the manifest poll uses, carrying version, uptime, reset reason, free heap and
+PSRAM, and **the PMU history that survived the last restart**. Sent once at boot before
+anything else touches the ring, and again on every fifteen-minute cycle.
+
+**This is the third channel, and the first one that works.** Register reads over QSPI return
+zeros that read exactly like a diagnosis (§10.4w). Opening the console resets the chip, so
+every log captured in this investigation was of a freshly-booted panel rather than of the
+fault. Telemetry neither lies nor disturbs: it is the panel's own account, arriving over the
+network it already uses, landing in a log the owner can already read.
+
+Nothing is stored. These are a panel's claims about itself, read by a human looking at a log,
+and a table would be a schema to migrate every time the question changes — which is the point,
+because what a panel needs to report changes with whatever is being chased that week.
+
+**The five-second hold now closes the loop without a cable.** See a dark screen, hold five
+seconds, and the panel reboots, reconnects and posts the two minutes of PMU state that preceded
+the fault to the box. That is the whole diagnostic path with no terminal and no USB host, which
+is what CLAUDE.md #10 has been asking for since the beginning — and it took the display bug to
+force it, because a panel that can only be diagnosed with a cable is a bench unit, not a room
+endpoint.
+
+One consequence to state plainly: with USB gone, **OTA plus rollback is the only recovery
+path.** That is exactly what the first image was built around — a frozen factory app, and a
+rollback gated on reaching the box — so it should hold. It does mean a bad image is recovered
+by the bootloader rather than by the owner.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

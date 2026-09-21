@@ -24,3 +24,9 @@ void pmu_sample(void);
 /* Log the samples that survived the last restart, newest last, then reset the ring. Call once
    at boot, BEFORE the first sample, or the history is diluted by the present. */
 void pmu_report_history(void);
+
+/* The surviving samples as hex, oldest first, for sending somewhere that is not a console.
+   Writes at most `max` entries of `PMU_SAMPLE_CHARS` bytes into `out` and returns how many.
+   Valid only until `pmu_report_history()` clears the ring, so take the copy first. */
+#define PMU_SAMPLE_CHARS 24
+int pmu_history_hex(char (*out)[PMU_SAMPLE_CHARS], int max);

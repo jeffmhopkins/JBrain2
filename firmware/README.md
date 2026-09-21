@@ -81,6 +81,26 @@ gesture announces itself; five seconds is the first threshold outside a child's 
 press, and only by 0.8 s (§10.4p measured ordinary taps up to 4.2 s), which is why the cue is
 not optional.
 
+## The panel reports to the box, so the cable is optional
+
+`POST /api/endpoint/telemetry`, authenticated with the same `device_key` as the manifest poll:
+version, uptime, reset reason, free heap and PSRAM, and the PMU history that survived the last
+restart. Once at boot, then every cycle.
+
+This is the third diagnostic channel and the first that works. Register reads over QSPI return
+zeros that look exactly like a diagnosis; opening the console resets the chip, so every console
+log in the display investigation was of a freshly-booted panel rather than of the fault.
+Telemetry neither lies nor disturbs.
+
+**So the capture works with no cable at all:** see a dark screen, hold the panel for five
+seconds, and it reboots, reconnects and posts the two minutes that preceded the fault
+(ROOM_ENDPOINT_PLAN.md §10.4y).
+
+Updates were always over the air — `esp_https_ota` against the box, no USB update path exists
+in this firmware — so a panel can live on any charger. The cost is that **OTA plus rollback is
+then the only recovery path**, which is what the frozen factory app and the reach-the-box
+rollback gate were built for.
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.

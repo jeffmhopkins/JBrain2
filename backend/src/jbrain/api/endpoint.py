@@ -384,6 +384,58 @@ def _panel_base(request: Request, settings: Settings) -> tuple[str, str]:
 MONITOR_TIMEOUT_S = 960.0
 
 
+class TelemetryIn(BaseModel):
+    """What a panel says about itself, unprompted.
+
+    Deliberately a flat bag of short strings and ints rather than a schema per diagnostic.
+    What a panel needs to report changes with whatever is being chased that week, and a
+    migration per question would mean the question does not get asked.
+    """
+
+    version: str
+    uptime_ms: int
+    reset_reason: str = ""
+    free_heap: int = 0
+    free_psram: int = 0
+    # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
+    # answer to "did anything survive the restart".
+    pmu_history: list[str] = []
+    note: str = ""
+
+
+@router.post("/telemetry", status_code=204)
+async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
+    """A panel reporting its own state, because every other channel either lies or resets it.
+
+    THIS EXISTS BECAUSE THE INSTRUMENTS WERE THE PROBLEM. The display fault took six firmware
+    releases partly because the panel could only be questioned two ways, and both were
+    broken: reading the controller's registers over QSPI returns zeros that look exactly like
+    a diagnosis, and opening the USB console resets the chip before the fault can be seen, so
+    every console log was of a freshly-rebooted panel rather than of the thing being chased.
+
+    It is also what CLAUDE.md #10 requires. A panel that can only be diagnosed with a cable
+    is not a room endpoint, it is a bench unit — and the owner moving one to a plain USB
+    charger, which is the whole premise, must not cost the ability to see what it is doing.
+
+    Nothing is stored. These are a panel's own claims about itself, they are only ever read
+    by a human looking at a log, and a table would be a schema to migrate every time the
+    question changes. `pmu_history` is passed through as the panel spelled it, because the
+    point is to see exactly what the registers held.
+    """
+    log.info(
+        "endpoint.telemetry",
+        principal=principal.kind,
+        version=body.version,
+        uptime_s=body.uptime_ms // 1000,
+        reset_reason=body.reset_reason,
+        free_heap=body.free_heap,
+        free_psram=body.free_psram,
+        pmu_history=body.pmu_history,
+        note=body.note,
+    )
+    return Response(status_code=204)
+
+
 @router.get("/monitor")
 async def monitor_panel(
     _owner: OwnerDep, settings: SettingsDep, port: str, seconds: int = 120, reset: bool = False

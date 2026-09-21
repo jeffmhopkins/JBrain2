@@ -23,6 +23,15 @@ const char *ota_running_version(void);
    on success. The new image is on probation until it, in turn, reaches the manifest. */
 esp_err_t ota_apply(const cfg_t *cfg, const char *url);
 
+/* Tell the box what this panel looks like from the inside.
+
+   The channel that neither lies nor resets what it measures. Register reads over QSPI return
+   zeros that read like a diagnosis, and opening the USB console restarts the chip before the
+   fault can be seen — so with a cable this was hard, and on a plain USB charger it was
+   impossible. `body` is the JSON, built by the caller. Best-effort: a panel that cannot report
+   is not a panel that should stop working. */
+esp_err_t ota_report(const cfg_t *cfg, const char *body);
+
 /* The rollback gate, and the reason this firmware exists.
  *
  * A freshly OTA'd image boots in PENDING_VERIFY and is reverted by the bootloader on the next
