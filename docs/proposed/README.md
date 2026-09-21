@@ -15,6 +15,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
+  owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
+  Kokoro TTS are in production in the `tts-stt` container, and a full voice loop already runs
+  on the wall kiosk. The real work is getting audio off the panel and back onto it — and one
+  measured number that decides the whole design: **whisper takes ~9.8 s per call**, flat,
+  because whisper.cpp pads every clip to 30 s.
+
 - `PET_LIFECYCLE_PLAN.md` — the pet arrives as an **egg**, hatches after enough interaction
   over enough minutes, and grows up over ~2 days. The owner's idea, recorded with the question
   it came with — do we need a baby form per creature? Answer: mostly no (a single `growth`

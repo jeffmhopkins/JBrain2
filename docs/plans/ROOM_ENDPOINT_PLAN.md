@@ -2842,6 +2842,143 @@ The whole table is now 38 phrases and **84 command words against MultiNet's limi
 measured from the compiled table rather than counted by eye, after a text scan of `face.c`
 miscounted the palette by reading hex values out of a comment.
 
+#### 10.4bh The panel was crash-looping, and the field that would have said so said "other" (0.2.49, 2026-09-21)
+
+The owner, on 0.2.48: *"The screen is black but on power cycling it now."* 0.2.48 carries
+0.2.47's buffer fix, so this was never the tearing bug — it is a separate fault, and it had
+been reported as "sporadic crashing" for three versions while every investigation went to the
+display.
+
+**The console could not see it and structurally never could.** `panel-console` is a live serial
+attach: it shows what the panel says from the moment it attaches, so a fault that has already
+happened is gone. Worse, attaching resets the chip — which `POST /endpoint/telemetry`'s own
+docstring already said in as many words. Every console capture in this sequence was of a
+freshly-rebooted panel.
+
+**The telemetry route answered it in one query**, because it logs to the box's API log and the
+box was running the whole time:
+
+```
+reset_reason "other"  crash_phase  6   uptime 6s
+reset_reason "power"  crash_phase -1   uptime 7s    <- the owner's power cycle
+reset_reason "other"  crash_phase  6   uptime 6s
+reset_reason "other"  crash_phase  9   uptime 7s
+reset_reason "other"  crash_phase 10   uptime 6s
+```
+
+Uptime never exceeds seven seconds. **The panel is not hanging, it is crash-looping** — dying
+and restarting roughly every ninety seconds, and the owner sees the black gap. That is the
+whole of "it keeps sporadically crashing", and it was visible on the box for hours.
+
+##### The field whose only job is to name the cause was falling off the end of its own table
+
+```c
+static const char *REASONS[] = {"unknown", "power", "ext", "sw", "panic", "int_wdt",
+                                "task_wdt", "wdt", "sleep", "brownout", "sdio"};
+```
+
+Eleven entries, 0–10. **ESP-IDF's enum runs to 15.** Everything above `sdio` printed `other`,
+and `other` is what a crash loop reported for hours. The five missing are `usb`, `jtag`,
+`efuse`, `pwr_glitch` and `cpu_lockup` — and `usb` is the prime suspect, because
+**ESP_RST_USB is what attaching a serial console to this panel does**: the exact hazard the
+telemetry route was built to route around, landing in the one bucket that could not name it.
+
+A diagnosis channel that cannot tell "the firmware crashed" from "someone plugged in a cable"
+is worse than no channel, because it invites the wrong fix. It ships now with all sixteen
+names **and the raw number beside the name**, so an enum that grows again says so rather than
+silently rejoining the bucket that cost a day.
+
+The restart line is also written to the console at boot, not only sent as telemetry. Telemetry
+needs the box, the network and the device key; the console needs a cable. Neither is reliable
+enough to be the only place a restart is recorded.
+
+##### Where it dies
+
+`crash_phase` is an `RTC_NOINIT_ATTR` breadcrumb, so it survives a reset (though not a power
+cycle — hence `-1` on the owner's two). Phases 6, 9 and 10 are `face_draw`, `blit_frame` and
+the idle `vTaskDelay`: three unrelated points in the loop, which is the signature of
+corruption or an external reset rather than one bad call.
+
+**The obvious suspect is the investigator.** Console attaches were frequent during this
+period and each one resets the panel. That is testable for free and without firmware: leave
+the panel completely alone and read only the box-side log. Recorded here because the answer
+changes what 0.2.50 should be, and because "my own instrument caused the fault I was chasing"
+is the fourth distinct instrumentation failure in this sequence, after the memory mode, the
+chunk sizes, the AGC mode and the mic gain (§10.4bb).
+
+#### 10.4bi It was the console all along, and the meter becomes a switch (0.2.50, 2026-09-21)
+
+**A large share of the "sporadic crashing" was the investigator.** §10.4bh named `ESP_RST_USB`
+as the suspect — attaching a serial console resets this chip — and the test needed no
+firmware at all: stop attaching, and read only the box-side log. Telemetry posts once at boot
+and then every `CHECK_PERIOD_MS` (15 minutes), so a report at 6–7 s of uptime **is** a boot.
+
+| window | boots |
+|---|---|
+| 20:55–21:00, console attached repeatedly | **4** |
+| 21:01–21:06, panel left completely alone | **0** |
+
+Four reboots in four and a half minutes while being watched, none in five minutes when left
+alone. The panel was being reset by the instrument used to investigate why it kept resetting,
+and the field that would have said so was printing `other` (§10.4bh). It does not follow that
+every black screen the owner saw was this — they reported some with nothing attached — but the
+rate was inflated, and 0.2.49 will print `usb(11)` next time so the two can be told apart.
+
+##### The meter becomes a switch rather than furniture
+
+The owner: *"turn the audio meter on the left side to only be rendered if we enable a debug
+mode. It's not needed all the time."*
+
+The meter earned its place — `display.c`'s header argues it well, a microphone has no symptom
+and a bar that is always running answers "is it hearing anything" at a glance — and it is how
+the first successful decode was confirmed to be a voice rather than a number. But bring-up is
+over, and what it buys now is a green bar down the edge of a pet in a four-year-old's bedroom.
+The right end state for a diagnostic is a switch, not deletion, because the next time the
+microphone goes quiet the meter is the fastest answer in the building.
+
+`endpoint_settings.debug_overlay`, off by default: a debug overlay that defaults on is one
+nobody turns off. The absent case in the firmware's parser means OFF rather than "unchanged",
+or a panel that once had it on keeps it forever and the switch works in one direction only.
+
+**AND THE KNOBS HAD NO HANDLE.** `0206_endpoint_settings` moved volume, mic gain and
+brightness out of firmware constants specifically so the owner could change them without a
+build — and then nothing was ever built to change them *with*. No PWA screen, no command in
+`debug-connect.sh`, nothing. They have been settable in principle and unreachable in practice
+since the day they shipped, which is exactly the terminal dependency `CLAUDE.md` #10 exists to
+design out rather than an inconvenience to note. `scripts/debug-connect.sh panel-settings`
+closes it for all four; a PWA control is still owed.
+
+##### The one setting on this chip nobody had ever read
+
+The owner: *"I don't know if Gain is automatic but it seems like when it beeps that it kind of
+rails the audio gain meter for 4 to 5 seconds after it beeps."*
+
+Two candidates, and this firmware could answer for neither:
+
+- **The ES8311 has its own ALC** — an automatic gain control in the codec, ahead of anything
+  the firmware can see. `es8311.c` writes REG1B and REG1C (automute, HPF) and **never writes
+  REG18, the register that enables it.** So ALC has been at the chip's reset default since the
+  first bring-up, and seconds of gain ramp after a loud sound is exactly what an ALC release
+  does. The front end's own AGC was already off (§10.4bb) — a different knob entirely, and
+  checking it proved nothing about this one.
+- **`es8311.c` also sets REG44 = 0x58**, which the driver's own comment calls the "internal
+  reference signal (ADCL + DACR)": the DAC deliberately routed into the ADC. **The panel is
+  wired to hear its own speaker.**
+
+`alc_settle()` reads REG18, logs what it actually was, clears the enable bit while preserving
+the window size, and **reads it back** — `0xXX -> 0xXX (off)` or `STILL ON`. It runs from the
+audio task, because that task owns the codec and a register poke from anywhere else is the
+race that panicked a panel (§10.4al).
+
+The memory mode, the chunk sizes, the AGC mode and the mic gain were each a value this
+firmware set and never read back, and every wrong diagnosis in this sequence traced to that
+(§10.4bb). This is the fifth, and it was never set at all — which is worse, because a default
+nobody chose is indistinguishable from a decision until someone reads the register.
+
+Separately and regardless of which it is: **the panel now stops listening to itself.** Six
+chunks of deafness after the speaker runs, covering the 90 ms beep and a tail. Feeding our own
+tone to the recogniser is not merely noise, it is a false trigger with a loudspeaker behind it.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

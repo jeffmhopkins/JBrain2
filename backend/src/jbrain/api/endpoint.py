@@ -503,6 +503,12 @@ class EndpointSettings(BaseModel):
     volume: int = 70
     mic_gain_db: int = 30
     brightness: int = 255
+    # The microphone meter down the panel's left edge. It earned its place during bring-up —
+    # a microphone has no symptom, so a bar that is always running answers "is it hearing
+    # anything" at a glance — but bring-up is over and what it buys now is a green bar on a
+    # pet in a child's bedroom. Off by default; a debug overlay that defaults on is one
+    # nobody turns off. See `0207_endpoint_debug_overlay.py`.
+    debug_overlay: bool = False
 
 
 def _clamp(v: EndpointSettings) -> EndpointSettings:
@@ -510,6 +516,8 @@ def _clamp(v: EndpointSettings) -> EndpointSettings:
         volume=max(0, min(v.volume, VOLUME_MAX)),
         mic_gain_db=max(0, min(v.mic_gain_db, MIC_GAIN_MAX)),
         brightness=max(BRIGHTNESS_MIN, min(v.brightness, 255)),
+        # Nothing to clamp: a bool is already its own range.
+        debug_overlay=v.debug_overlay,
     )
 
 
@@ -518,13 +526,16 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
         row = (
             await session.execute(
                 text(
-                    "SELECT volume, mic_gain_db, brightness FROM app.endpoint_settings WHERE id = 1"
+                    "SELECT volume, mic_gain_db, brightness, debug_overlay"
+                    " FROM app.endpoint_settings WHERE id = 1"
                 )
             )
         ).first()
     if row is None:
         return EndpointSettings()
-    return EndpointSettings(volume=row[0], mic_gain_db=row[1], brightness=row[2])
+    return EndpointSettings(
+        volume=row[0], mic_gain_db=row[1], brightness=row[2], debug_overlay=row[3]
+    )
 
 
 @router.get("/settings")
@@ -559,15 +570,21 @@ async def set_panel_settings(
         await session.execute(
             text(
                 "UPDATE app.endpoint_settings SET volume = :v, mic_gain_db = :g,"
-                " brightness = :b, updated_at = now() WHERE id = 1"
+                " brightness = :b, debug_overlay = :d, updated_at = now() WHERE id = 1"
             ),
-            {"v": clamped.volume, "g": clamped.mic_gain_db, "b": clamped.brightness},
+            {
+                "v": clamped.volume,
+                "g": clamped.mic_gain_db,
+                "b": clamped.brightness,
+                "d": clamped.debug_overlay,
+            },
         )
         await session.commit()
     log.info(
         "endpoint.settings_set",
         volume=clamped.volume,
         mic_gain_db=clamped.mic_gain_db,
+        debug_overlay=clamped.debug_overlay,
         brightness=clamped.brightness,
         # So a clamped write is visible as a clamp rather than as the owner's own number.
         asked=body.model_dump(),

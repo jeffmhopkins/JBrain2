@@ -84,6 +84,8 @@ static const char *TAG = "audio";
    direction — two objects writing the same chip's registers over the same I2C bus. A single
    IN_OUT device is the same hardware with one owner. */
 static esp_codec_dev_handle_t s_codec;
+/* Kept so the ALC can be read back from the audio task — see `alc_settle()`. */
+static const audio_codec_ctrl_if_t *s_ctrl;
 
 /* The one task that touches `s_codec`. Defined below, beside the requests it services. */
 static void audio_task(void *arg);
@@ -150,6 +152,7 @@ bool audio_start(void)
     audio_codec_i2c_cfg_t i2c_cfg = {
         .port = I2C_NUM_0, .addr = ES8311_CODEC_DEFAULT_ADDR, .bus_handle = bus};
     const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    s_ctrl = ctrl_if;
     const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
     if (data_if == NULL || ctrl_if == NULL || gpio_if == NULL) {
         ESP_LOGE(TAG, "codec interfaces");
@@ -240,14 +243,79 @@ int audio_level(void)
 /* Internal RAM, not PSRAM: this is an I2S DMA destination on every chunk. */
 static int16_t s_chunk[AUDIO_CHUNK];
 
+/* ADC register 0x18: ALC enable in bit 7, window size in the rest. */
+#define ES8311_REG_ALC 0x18
+#define ES8311_ALC_ENABLE 0x80
+
+/* THE ONE SETTING ON THIS CHIP NOBODY HAD EVER READ.
+ *
+ * The owner: "it seems like when it beeps that it kind of rails the audio gain meter for 4 to
+ * 5 seconds after it beeps. Maybe we need to disable the auto gain control if it's on."
+ *
+ * There are two candidates and this firmware could answer for neither:
+ *
+ *   - The ES8311 has its own ALC — an automatic gain control in the codec, ahead of
+ *     everything this firmware can see. `es8311.c` writes REG1B and REG1C (automute, HPF)
+ *     and NEVER WRITES REG18, the register that enables it. So ALC has been at whatever the
+ *     chip's reset default is since the first bring-up, and seconds of gain ramp after a loud
+ *     sound is exactly what an ALC release does.
+ *   - `es8311.c` also sets REG44 = 0x58, which the driver's own comment calls the "internal
+ *     reference signal (ADCL + DACR)" — the DAC deliberately routed into the ADC. The panel
+ *     is wired to hear its own speaker.
+ *
+ * So: read it, log what it actually was, clear the enable bit while preserving the window
+ * size, and READ IT BACK. Four values in this sequence were set and never read back — the
+ * memory mode, the chunk sizes, the AGC mode and the mic gain — and every wrong diagnosis
+ * traced to exactly that. This one is not joining them. */
+static void alc_settle(void)
+{
+    if (s_ctrl == NULL || s_ctrl->read_reg == NULL || s_ctrl->write_reg == NULL) {
+        ESP_LOGW(TAG, "alc: no control interface; state unknown");
+        return;
+    }
+    uint8_t v = 0;
+    if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
+        ESP_LOGW(TAG, "alc: register unreadable; state unknown");
+        return;
+    }
+    const uint8_t before = v;
+    if ((v & ES8311_ALC_ENABLE) == 0) {
+        ESP_LOGI(TAG, "alc: already off (reg18 0x%02x)", before);
+        return;
+    }
+    v = (uint8_t)(before & (uint8_t)~ES8311_ALC_ENABLE);
+    if (s_ctrl->write_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
+        ESP_LOGW(TAG, "alc: write REFUSED (reg18 still 0x%02x)", before);
+        return;
+    }
+    uint8_t after = 0;
+    if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &after, 1) != 0) {
+        ESP_LOGW(TAG, "alc: wrote 0x%02x but cannot read back", v);
+        return;
+    }
+    ESP_LOGI(TAG, "alc: 0x%02x -> 0x%02x (%s)", before, after,
+             (after & ES8311_ALC_ENABLE) ? "STILL ON" : "off");
+}
+
+/* Chunks to ignore after the speaker runs. The codec routes the DAC into the ADC by design
+   (REG44), so the microphone hears every beep — and feeding our own tone to the recogniser is
+   worse than useless, because it is a false trigger with a loudspeaker behind it. The beep is
+   90 ms and a chunk is 40; this covers it and a tail. */
+#define DEAF_CHUNKS 6
+static int s_deaf;
+
 static void audio_task(void *arg)
 {
     (void)arg;
+    /* From THIS task, before the loop. esp_codec_dev has no lock of any kind, so a register
+       poke from anywhere else is the race that panicked a panel on 2026-09-21. */
+    alc_settle();
     while (true) {
         /* Before the read, so a tap is answered within one chunk rather than after it. */
         if (s_beep_want) {
             s_beep_want = false;
             esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+            s_deaf = DEAF_CHUNKS;
         }
         apply_levels();
 
@@ -255,6 +323,14 @@ static void audio_task(void *arg)
            rate it fills, so this task needs no delay of its own and cannot fall behind the
            room. On failure it would spin, so that path delays instead. */
         if (esp_codec_dev_read(s_codec, s_chunk, sizeof(s_chunk)) == 0) {
+            if (s_deaf > 0) {
+                /* THE PANEL DOES NOT LISTEN TO ITSELF. Reported as the meter railing for
+                   seconds after a beep; the chunk is still read, because this read is the
+                   task's clock and skipping it would stall everything. */
+                s_deaf--;
+                s_level = 0;
+                continue;
+            }
             s_level = audio_peak(s_chunk, AUDIO_CHUNK);
             /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one
                owner, and esp-sr's usual arrangement — its own task reading I2S directly —

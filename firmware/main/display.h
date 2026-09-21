@@ -29,6 +29,15 @@ int display_stack_free(void);
    9 full blit, 10 mic read, 11 meter blit, 12 panel re-assert, 13 PMU sample. */
 int display_crash_phase(void);
 
+/* THE MICROPHONE METER IS A DEBUG TOOL NOW, not furniture. It earned its place during
+   bring-up — a microphone has no symptom, so a bar that is always running answers "is it
+   hearing anything" at a glance, and it is how the first real decode was confirmed to be a
+   voice rather than a number. Bring-up is over, and what it buys now is a green bar down the
+   edge of a pet in a four-year-old's bedroom. Switched from the box, so the next time the
+   microphone goes quiet the fastest answer in the building is one setting away rather than a
+   rebuild. */
+void display_set_debug_overlay(bool on);
+
 /* Where the last tap landed and which zone it was classified as. Reported so the touch
    controller's orientation is a measurement rather than an assumption — see display.c. */
 void display_last_tap(int *x, int *y, int *zone);

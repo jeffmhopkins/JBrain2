@@ -11,6 +11,8 @@
 #
 #   scripts/debug-connect.sh whoami
 #   scripts/debug-connect.sh version                   # git rev the running server was built from
+  scripts/debug-connect.sh panel-settings            # the panel's knobs; no args prints them
+  scripts/debug-connect.sh panel-settings --debug-overlay on   # draw the mic meter
 #   scripts/debug-connect.sh version-history           # timeline of deployed versions
 #   scripts/debug-connect.sh complete --strength high --system "Be terse" "ping"
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn
@@ -244,6 +246,33 @@ case "$cmd" in
   whoami) _call GET /api/debug/whoami | _pp ;;
 
   version) _call GET /api/debug/version | _pp ;;  # git rev the running server was built from
+
+  panel-settings) # [--volume N] [--mic-gain-db N] [--brightness N] [--debug-overlay on|off]
+    # THE KNOBS THAT HAD NO HANDLE. `0206_endpoint_settings` moved volume, mic gain and
+    # brightness out of firmware constants so the owner could change them without a build —
+    # and then nothing was ever built to change them with. No PWA screen, no command here.
+    # They have been settable in principle and unreachable in practice ever since, which is
+    # the terminal dependency CLAUDE.md #10 exists to stop rather than an inconvenience.
+    # With no arguments this prints the current settings; any argument writes.
+    cur="$(_call GET /api/endpoint/settings)" || exit 1
+    if [ "$#" -eq 0 ]; then printf '%s' "$cur" | _pp; exit 0; fi
+    body="$(printf '%s' "$cur" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+a = sys.argv[1:]
+i = 0
+while i < len(a):
+    k, v = a[i], a[i + 1] if i + 1 < len(a) else ""
+    if k == "--volume": d["volume"] = int(v)
+    elif k == "--mic-gain-db": d["mic_gain_db"] = int(v)
+    elif k == "--brightness": d["brightness"] = int(v)
+    elif k == "--debug-overlay": d["debug_overlay"] = v.lower() in ("on", "true", "1", "yes")
+    else: sys.exit(f"unknown option {k}")
+    i += 2
+json.dump(d, sys.stdout)
+' "$@")" || exit 1
+    _call PUT /api/endpoint/settings "$body" | _pp
+    ;;
 
   version-history) # [--limit N] — recorded history of deployed versions, newest first
     lim=50
