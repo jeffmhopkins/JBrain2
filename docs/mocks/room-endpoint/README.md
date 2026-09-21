@@ -6,6 +6,26 @@ Plan: `../../plans/ROOM_ENDPOINT_PLAN.md` · Design system: `../../reference/DES
 |---|---|---|---|
 | 1 | `device.html` | What is the panel *for*? Four shapes. | **Answered by research, not by review** — see below |
 | 2 | `pet-face.html` | How does a robot pet read to a **four-year-old** on 29 mm? | **Open** — one question left, three face variants |
+| 3 | `ostrich-mock.py` | Can a SECOND body form be drawn with the primitives the firmware already has? | **Answered — yes.** Approved by the owner; the C port is a transcription |
+
+## Round 3 is a script, not a page
+
+`ostrich-mock.py` renders at true geometry like the others, but it is Python rather than
+canvas for a reason: **every helper in it mirrors a primitive `firmware/main/face.c` already
+has.** Nothing in the drawing needs something the firmware lacks, which is what makes the C
+port a transcription rather than a redesign — change the mock, look at it, move the numbers
+across.
+
+It is **our bird**. One of the twins asked for an ostrich after a Disney robot of that name;
+the design is our own, in the robot's visual language, and no reference artwork is copied or
+vendored into this repo.
+
+Two constraints it exists to prove, both of which hold:
+
+- **The eyes are the robot's eyes, unchanged**, so the six emotions already implemented as lid
+  geometry come across for free. A form that moved or redrew them would have to re-implement
+  all six.
+- **One hue, shaded**, so the tap-to-recolour cycle works on this form too.
 
 ## The measurement that governs both rounds
 
