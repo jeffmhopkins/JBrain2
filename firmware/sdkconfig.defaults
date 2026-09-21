@@ -59,3 +59,13 @@ CONFIG_APP_PROJECT_VER_FROM_CONFIG=n
 # bytes. Without this, ESP-IDF stamps __DATE__/__TIME__ and absolute build paths into the
 # app descriptor and every build differs, making the check unwritable.
 CONFIG_APP_REPRODUCIBLE_BUILD=y
+
+# THE SPEECH MODELS. MultiNet7 is the only English command model that fits the 3.5 MB `model`
+# partition — MultiNet6 is 3.7 MB on its own. The packed set is 2.91 MB, leaving 17% spare,
+# and esp-sr's own packer recommends 2982K against the 3584K reserved.
+#
+# THE COMMAND LIST IS NOT IN HERE. MultiNet phrases are supplied at runtime as phoneme strings
+# (`esp_mn_commands_update()`), so changing what he answers to is an ordinary OTA. This file
+# only decides the wake word and the model generation, which is why one USB flash is enough.
+CONFIG_SR_WN_WN9_HIESP=y
+CONFIG_SR_MN_EN_MULTINET7_QUANT=y

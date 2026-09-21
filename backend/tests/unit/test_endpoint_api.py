@@ -12,6 +12,7 @@ of files, and stubbing the reads away would pin nothing.
 """
 
 import asyncio
+import base64
 import hashlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -32,8 +33,14 @@ from tests.unit.fakes import FakeAuthRepo, FakeDeviceRepo
 
 SIDECAR = "http://endpoint:8000"
 
-ARTIFACT_NAMES = ("bootloader.bin", "partition-table.bin", "jbrain-endpoint.bin")
+ARTIFACT_NAMES = (
+    "bootloader.bin",
+    "partition-table.bin",
+    "jbrain-endpoint.bin",
+    "srmodels.bin",
+)
 APP_IMAGE = "jbrain-endpoint.bin"
+MODEL_IMAGE = "srmodels.bin"
 VERSION = "9.9.9"
 
 
@@ -501,7 +508,41 @@ class TestFirmwareFromTheCheckout:
 
         offsets = [int(img["offset"], 16) for img in sent[-1]["images"]]
         assert offsets == sorted(offsets)
-        assert offsets == [0x0, 0x8000, 0x20000]
+        assert offsets == [0x0, 0x8000, 0x20000, 0xAA0000]
+
+    def test_the_speech_models_are_written_because_ota_can_never_deliver_them(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`esp_https_ota` writes app slots. The models live in the `model` data partition,
+        so this USB flash is their ONLY route onto a panel — and the panels are in the
+        twins' rooms, which makes a missed image a physical trip rather than a re-run."""
+        c, fw, sent = client
+        _stub_flash(c, monkeypatch, sent, lan_addr="")
+
+        by_offset = {img["offset"]: img["b64"] for img in sent[-1]["images"]}
+        assert "0xaa0000" in by_offset, "the model partition was not written"
+        assert base64.b64decode(by_offset["0xaa0000"]) == (fw / "dist" / MODEL_IMAGE).read_bytes()
+
+    def test_missing_models_refuse_rather_than_flashing_a_panel_that_cannot_listen(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Half a flash is the failure this whole set exists to avoid: a panel written
+        without its models needs the cable again to get them, and the cable is the thing
+        the design spends everything to avoid."""
+        c, fw, sent = client
+        (fw / "dist" / MODEL_IMAGE).unlink()
+        _fake_sidecar(monkeypatch, sent)
+
+        resp = c.post(
+            "/api/endpoint/flash",
+            json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw"},
+        )
+        assert resp.status_code == 503
+        assert not sent, "nothing may reach the board once an image is missing"
 
     def test_a_missing_image_refuses_and_names_a_fix_the_owner_can_run(
         self,

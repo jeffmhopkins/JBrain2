@@ -15,8 +15,13 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/firmware/build"
 dist="$root/firmware/dist"
 
+# `srmodels.bin` is the odd one out and is here on purpose. It is not built FROM this source
+# — it is what esp-sr packs for the wake word and command model selected in
+# `sdkconfig.defaults` — and it is the only image OTA can never deliver, because
+# `esp_https_ota` writes app slots and the models live in a data partition. So it ships in
+# `dist/` and reaches a panel through the one USB flash each unit gets.
 for f in "$build/jbrain-endpoint.bin" "$build/bootloader/bootloader.bin" \
-         "$build/partition_table/partition-table.bin"; do
+         "$build/partition_table/partition-table.bin" "$build/srmodels/srmodels.bin"; do
   if [ ! -f "$f" ]; then
     echo "missing $f — build the firmware first (see the header of this script)" >&2
     exit 1
@@ -25,7 +30,7 @@ done
 
 mkdir -p "$dist"
 cp "$build/jbrain-endpoint.bin" "$build/bootloader/bootloader.bin" \
-   "$build/partition_table/partition-table.bin" "$dist/"
+   "$build/partition_table/partition-table.bin" "$build/srmodels/srmodels.bin" "$dist/"
 
 # Byte-for-byte the form the workflow regenerates and diffs against, so a mismatch there
 # is always a real image difference rather than a formatting one.

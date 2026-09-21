@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -1227,7 +1227,8 @@ by a power cycle, and a magic word distinguishes "survived a restart" from "powe
 whatever was in the SRAM". At boot the ring is logged oldest-first and then cleared.
 
 **Which makes the five-second hold the capture trigger.** It was built as a maintenance
-gesture; it turns out to be the shutter. The owner sees a dark screen, holds for five seconds,
+gesture; it turns out to be the shutter. (From 0.2.30 it is three short taps and then the hold
+— §10.4ap.) The owner sees a dark screen, performs it,
 and the next boot log contains the two minutes of PMU state leading up to the fault. **That is
 the first instrument in this investigation that does not destroy what it measures**, and it
 exists only because the hold happened to be a soft reset rather than a power cycle.
@@ -1862,6 +1863,233 @@ screen goes, that is the answer. If all eighteen bytes are identical lit and dar
 on this bus is doing it, and the search moves to the panel controller's own state or the OLED
 supply beyond these two parts — which is worth knowing too, and is the first time that would be
 a measurement rather than an inference.
+
+#### 10.4an W4 and W4b land, as a transcription (2026-09-21)
+
+The owner asked for the animations the PWA already plays on a poke. That was not a design task,
+because `frontend/src/pet/` was written to be ported: `face.ts` says outright that "the ESP32-S3
+panel will run the same model in C, so this file is the reference implementation", and `rig.ts`
+that it is "in the same figure-space the panel will use, so the firmware port is a transcription
+rather than a redesign". Three files crossed over, keeping their numbers:
+
+| web | panel | what it carries |
+| --- | --- | --- |
+| `face.ts` | `emotion.c` | the six emotions plus `bewildered`, as lid geometry |
+| `rig.ts` | `rig.c` | seventeen actions, limb poses, the figure transform, the gag skeleton |
+| `variants.ts` | `variants.c` | weighted pools, per-variant cooldowns, the repetition penalty |
+
+A poke now picks from a pool rather than doing one thing: wiggle and giggle at weight 3, boing
+at 2, blush at 1, sneeze at 1, and hiccup at 0.4 with a 45-second cooldown — rare on purpose,
+because a child who sees something once in three weeks talks about it for a month. Hammering it
+softens the magnitude toward the 0.35 floor and never to zero, since a motionless response is
+indistinguishable from a broken one.
+
+**What did not cross over, and why.** The web rig rotates the whole figure. Rotating a 368x448
+framebuffer 25 times a second is a per-pixel resample this panel should not spend, and rotating
+in source space tears holes in filled shapes — so `ang` becomes a **head tilt**, the head and
+eyes offset against the torso, which is the cue curious and silly actually need. `spin` is left
+out of the pools rather than faked badly. Everything else — squash, offset, the breathing that
+runs under even the idle pose — is coordinate arithmetic the renderer was already doing.
+
+**The eye needed real work.** The web version clips the pupil to the eye and fills a quadratic
+cheek-arc; both have closed forms. The upper lid is a half-plane in a frame rotated about the
+eye's top centre, so a point test is two multiplies. The lower lid's Bezier has
+`x(t) = bw(2t - 1)`, which is **linear in t** — so `t` comes straight from `x` and the curve is
+`y = ly - 2t(1-t)·bend` with no root-finding. The lids cost one pass over two 60x70 boxes.
+
+#### 10.4ao The firmware gets its first tests, and they immediately paid (2026-09-21)
+
+`face.c` and `font.c` have been "pure C, no ESP dependencies, host-renderable" since they were
+written, and **nothing ever compiled them on a host.** `firmware/host/` now does, in CI, before
+the toolchain pull, in two seconds. It found three defects in code that had already built clean
+for the ESP32:
+
+1. **Missing includes.** `rig.c` used `uint32_t` and `variants.c` used `NULL` without including
+   the headers that define them. ESP-IDF supplied both transitively; a different include order
+   would have broken the build with no change to this code.
+2. **A transcription bug the reference could not have.** `variants.ts` gets "never played" free
+   from `lastPlayed[key] ?? -Infinity`. Zero-initialised C does not: a variant that had never
+   been chosen looked like one chosen at boot, so early on the WHOLE pool read as still cooling,
+   the picker fell through to its "everything is cooling" branch — which is allowed to
+   repeat — and the first pokes of the day would repeat themselves. That is precisely the
+   boredom the file exists to prevent, and it would have been invisible on the bench and
+   obvious to a four-year-old in week two.
+3. **The wrong language.** The harness was first written `-std=c11`, under which `M_PI` does not
+   exist and every trig call fails. ESP-IDF builds this code as `-std=gnu17`, so a stricter host
+   dialect was testing a language the device never compiles. It is `-std=gnu11` now.
+
+**And one wrong test, twice, which is its own lesson.** The blink case first asserted that a shut
+eye lights fewer pixels. It lights MORE: lids are drawn black inside the eye — as the web
+renderer's `#000` fills are — and black is the field colour, so a happy face's cheek-raise
+punches "unlit" pixels into the head and a shut eye covers them. Counting lit pixels says a blink
+makes the robot bigger. The bounding box says what was actually meant: the figure's extent must
+not move. Four instruments in this investigation have now failed by measuring something adjacent
+to the question (§10.4am), and this is the first one that failed loudly.
+
+#### 10.4ap The reboot gesture gets a prefix (2026-09-21)
+
+The owner asked for three short taps, each within half a second of the last, followed by a hold
+— "this will help prevent the twins from accidentally restarting it".
+
+The hold alone was the whole gesture, and its guard was its LENGTH: §10.4p set five seconds
+because 4-5 year olds were measured producing ordinary taps lasting up to 4.2 s, so five was
+the first threshold outside a child's accidental press. That margin is 0.8 s, against two
+children who will own these panels and have all afternoon.
+
+**So the guard becomes a rhythm rather than a duration.** Three short taps in time, then the
+hold. Mashing produces taps and it produces leans; it does not produce that sequence. Measured
+against 20 000 simulated presses including leans of 3-9 s — the case a stream of short presses
+could never reach, and the one the old gesture was defenceless against:
+
+| | fires |
+| --- | --- |
+| hold alone (0.2.29 and earlier) | 1937 |
+| three taps then hold (0.2.30) | 12 |
+
+**Twelve and not zero, on purpose.** Three short taps in rhythm followed by a long press is a
+reachable pattern, and a gesture that could never occur by accident could not be performed on
+purpose either. The test asserts the ratio rather than a magic threshold, so it keeps meaning
+something if the constants move.
+
+`gesture.c` is pure and host-tested, because **both** failure directions cost something and
+they pull in opposite directions: a false positive reboots a toy in a child's hands, and a
+false negative strands an owner who has no terminal (CLAUDE.md #10) with no way to force a
+firmware re-check. The tests state the properties the file has to have — a hold alone never
+fires, slow taps never arm it, long presses do not count as taps, letting go mid-hold abandons
+the whole sequence rather than leaving the panel one press from rebooting, and a completed hold
+fires exactly once while the finger is still down.
+
+**One pip per counted tap** now appears along the top edge. Without it the three taps are
+invisible until the hold succeeds, and a gesture with no feedback until it works is one an
+owner cannot tell from a broken panel — which is the exact failure mode this whole section of
+the plan has spent six releases on.
+
+The hold stays at five seconds. It no longer has to carry the anti-accident argument by itself,
+so it could be shortened; that is a separate decision and the owner's.
+
+#### 10.4aq Where you poke him is half the point (2026-09-21)
+
+The owner asked for different reactions from the head, the body, the sides and the feet. That
+is what the body was FOR — `rig.h` says the emotions never needed one and the gags did — and a
+belly poke that does the same thing as a tap on the foot wastes it.
+
+`face_zone()` classifies a panel coordinate against the rest silhouette, and each zone gets its
+own pool:
+
+| zone | what it answers with |
+| --- | --- |
+| head (and the antenna) | blush, giggle, nod, wiggle, and rarely sleep |
+| body | wiggle, giggle, boing — and **fart** and **burp**, because a poke in the stomach producing a fart is the joke a four-year-old is actually asking for |
+| arms / sides | wiggle, wave, shimmy, giggle, and rarely peekaboo |
+| legs / feet | jump, boing, dance, bop, and rarely hiccup |
+| background | the original poke pool, because a tap that misses must still answer |
+
+Two deliberate details. **The zones follow the flip**: a tap on his head is his head whichever
+way up the panel is held, which matters precisely because a child holds it any which way.
+**Transient action offsets are not applied** — a hitbox that leaps during a jump is one nobody
+can learn, so the rest silhouette is always the target.
+
+**THE TOUCH CONTROLLER'S ORIENTATION IS UNMEASURED, AND THIS TIME THAT IS SAID OUT LOUD.**
+Nothing in this firmware has ever read a coordinate from the CST820; it reported a finger
+count and nothing else. Whether its axes match the display's is exactly the question §10.4ae
+and §10.4af burned three releases on for the accelerometer, by reasoning about it instead of
+measuring. So 0.2.31 does not reason:
+
+- a marker ring is drawn where the firmware believes the finger was, riding the flinch so it
+  fades with the recoil. **If the dot is not under the finger, the mapping is wrong.**
+- `tap: [x, y, zone]` goes out in telemetry, so the box can say how wrong.
+
+One tap answers it. That is the whole difference from the accelerometer episode, and it cost
+about fifteen lines.
+
+#### 10.4ar The speech models fit, and they ship before the code (2026-09-21)
+
+The owner asked whether the board does speech recognition on its own. It does, and **the
+partition for it was reserved at the start** — `model, data, spiffs, 0xAA0000, 0x380000`,
+3.5 MB, commented "reserved for ESP-SR wake-word models (W6); nothing uses it yet". That
+decision, taken when reserving was free, is the reason this is a build rather than a reflash.
+
+**Measured rather than estimated**, by adding esp-sr 2.5.4 and reading what its packer emits:
+
+```
+ESP-SR Models Report
+  - fst          (9.42 KB)
+  - mn7_en       (2686.65 KB)
+  - wn9_hiesp    (284.16 KB)
+  Recommended Partition Size: 2982K
+```
+
+`srmodels.bin` is **2.91 MB against 3.50 MB reserved — 17% spare**, and the build resolved the
+flash offset to `0xaa0000` on its own. MultiNet**6** English is 3.7 MB and would not fit, so
+MultiNet7 is not merely the better choice, it is the only English one that works.
+
+**What it is, precisely.** Command-word recognition, not dictation: up to 200 phrases, English,
+recognition inside 500 ms, entirely offline. It cannot transcribe a sentence. It can be told
+"jump", and say so on the glass.
+
+**The obstacle was never flash, it was the delivery path.** `esp_https_ota` writes app slots
+and nothing else, so a data partition is unreachable over the air — and both panels are in the
+twins' rooms. The first answer drafted here was a model-fetch-over-HTTP in the firmware, about
+eighty lines plus a box route, to preserve the no-cable rule.
+
+**That was over-engineering, and one fact killed it: the command vocabulary is not in the model
+file.** MultiNet phrases are supplied at runtime as phoneme strings (`esp_mn_commands_update()`),
+so adding a phrase, dropping one, or retuning a word a four-year-old cannot say is an ordinary
+OTA. `srmodels.bin` changes only if the wake word or the model generation does — close to
+never. One USB write per unit is therefore enough, and "USB" here means carrying the panel to
+the box and pressing a button in the PWA, not a terminal. Rule #10 survives.
+
+So the models ship FIRST, before any code that uses them:
+
+- `sdkconfig.defaults` selects `wn9_hiesp` and `mn7_en`. The app does not call esp-sr, the
+  linker drops it, and the app image is **byte-identical** — verified against the committed
+  hash. What the dependency produces is `srmodels.bin` and nothing else.
+- `firmware/dist/` carries it, `scripts/firmware-dist.sh` copies it, and the `firmware` CI job
+  checks it — **by content, not by bytes**, for the reason below. It is the one image in that
+  set not built *from* this source, which is exactly why it needs a check: nothing else would
+  notice it going stale.
+- `ARTIFACT_IMAGES` gains `srmodels.bin -> 0xaa0000`, so it rides the flash path that already
+  exists, last in offset order.
+
+**Cost recorded honestly.** The esp-sr component is 308 MB and the clean firmware build goes
+from about 50 s to 1 m 55 s locally; CI will also pay the download. That is the price of the
+models being verifiable rather than a committed blob nobody checks.
+
+#### 10.4as `srmodels.bin` is not reproducible, and the check had to change (2026-09-21)
+
+The first CI run on the models failed: `MISMATCH: firmware/dist/srmodels.bin`. The blob CI
+built was **exactly the same size** as the committed one — 3,052,231 bytes — and differed in
+2.9 million of them.
+
+Not a stale commit, and not a different esp-sr: the lock pins 2.5.4 on both sides. Downloading
+CI's own artifact and diffing the headers showed it immediately — CI wrote `mn7_en` first, this
+machine wrote `fst` first. `model/pack_model.py` collects models with `os.walk` and never
+sorts, so **the order is whatever the filesystem hands back**, and one reordered model shifts
+every offset after it.
+
+`CONFIG_APP_REPRODUCIBLE_BUILD=y` is what makes the byte-for-byte check possible for the other
+three images, and it cannot help here: this is not our build. Three builds on this machine give
+the same hash; a build on a different machine does not.
+
+**So the check compares contents instead of layout.** `scripts/srmodels-inventory.py` parses
+the header — the format is four bytes of model count, then a 32-byte name and file count per
+model, then a 32-byte name plus offset and length per file — and prints every file as
+`model/file sha256 length`, sorted. CI diffs that inventory against the committed blob's.
+
+That is byte-for-byte equality modulo an ordering nobody chose, and it still catches everything
+the original check was for: a wrong wake word, a missing model, a truncated file, a stale
+commit. Verified both ways before pushing — the real CI blob passes, and flipping a single byte
+inside `mn7_data` fails with the offending file named.
+
+`SHA256SUMS` keeps its `srmodels.bin` line, because the api verifies images against it at flash
+time and that guarantee (this committed file is not truncated or corrupt) is real and separate.
+CI just checks that line against the committed blob rather than against its own build.
+
+**The general lesson, and it is the session's fourth:** "the same source must produce the same
+bytes" was a property of images we build with a flag that guarantees it. Extending the rule to
+a vendor artifact assumed the guarantee came with it. The failure was loud and cost one CI
+round, which is the cheap way to find out — but the assumption was the same shape as every
+other one this investigation has had to unwind.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 

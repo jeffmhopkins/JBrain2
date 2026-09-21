@@ -62,8 +62,16 @@ OTA_DATA_OFFSET = "0xf000"
 APP_OFFSET = "0x20000"
 NVS_OFFSET = "0x9000"
 NVS_SIZE = "0x6000"
+# The `model` partition in firmware/partitions.csv. THE ONE IMAGE OTA CANNOT DELIVER:
+# `esp_https_ota` writes app slots, and the speech models live in a data partition — so the
+# only way they reach a panel is the USB flash each unit gets once. That is affordable
+# because the command vocabulary is NOT in here: MultiNet phrases are supplied at runtime as
+# phoneme strings, so changing what the robot answers to stays an ordinary OTA. This image
+# changes only if the wake word or the model generation does.
+MODEL_OFFSET = "0xaa0000"
 
 APP_IMAGE = "jbrain-endpoint.bin"
+MODEL_IMAGE = "srmodels.bin"
 
 # Which built image goes where. A set missing any of them is refused rather than
 # half-written to a board.
@@ -71,6 +79,7 @@ ARTIFACT_IMAGES = {
     "bootloader.bin": BOOTLOADER_OFFSET,
     "partition-table.bin": PARTITION_TABLE_OFFSET,
     APP_IMAGE: APP_OFFSET,
+    MODEL_IMAGE: MODEL_OFFSET,
 }
 
 SIDECAR_TIMEOUT_S = 600.0

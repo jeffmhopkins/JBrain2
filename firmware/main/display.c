@@ -34,8 +34,12 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "face.h"
 #include "font.h"
+#include "gesture.h"
+#include "rig.h"
+#include "variants.h"
 #include "ota.h"
 #include "pmu.h"
 #include "freertos/FreeRTOS.h"
@@ -289,14 +293,39 @@ static void apply_brightness(void)
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
 
-/* A HOLD LONG ENOUGH TO MEAN IT. Five seconds is not arbitrary: 4-5 year olds were measured
-   producing ORDINARY taps lasting up to 4.2 s, so five is the first threshold outside a
-   child's accidental press at all. The margin is 0.8 s, which is exactly why the hold is not
-   silent — from 1.5 s an amber bar grows across the top edge, full width at the moment it
-   reboots, in time to let go. A reboot IS the firmware re-check, because the OTA loop asks
-   the box before its first sleep (main.c). */
-#define HOLD_REBOOT_MS 5000
-#define HOLD_CUE_MS 1500
+/* The gesture itself lives in `gesture.h`, pure and host-tested: three short taps in rhythm,
+   then a hold. A reboot IS the firmware re-check, because the OTA loop asks the box before
+   its first sleep (main.c), which is why a gesture exists at all on a device with no buttons.
+   Drawn here: an amber bar growing across the top during the hold, and one pip per counted
+   tap so the sequence is visible while it is being entered rather than only when it works. */
+#define PIP_W 28
+#define PIP_GAP 8
+
+/* Which pool each part of him answers with. Indexed by `face_zone_t`. */
+static const pool_t ZONE_POOL[] = {
+    [ZONE_NONE] = POOL_POKE,
+    [ZONE_HEAD] = POOL_HEAD,
+    [ZONE_BODY] = POOL_BODY,
+    [ZONE_ARM] = POOL_ARM,
+    [ZONE_LEG] = POOL_LEG,
+};
+
+/* THE TOUCH CONTROLLER'S ORIENTATION IS NOT ASSUMED, IT IS SHOWN. The CST820 reports in its
+   own frame and nothing here has ever read a coordinate from it, so whether its axes match
+   the display's is unmeasured. §10.4af spent three releases getting the accelerometer's
+   orientation wrong by reasoning about it. So: a marker is drawn where the firmware believes
+   the finger was, and these go out in telemetry. If the dot is not under the finger, the
+   mapping is wrong and the numbers say exactly how. */
+static int s_tap_x = -1;
+static int s_tap_y = -1;
+static int s_tap_zone = 0;
+
+void display_last_tap(int *x, int *y, int *zone)
+{
+    if (x != NULL) *x = s_tap_x;
+    if (y != NULL) *y = s_tap_y;
+    if (zone != NULL) *zone = s_tap_zone;
+}
 
 /* THE MICROPHONE, ALWAYS ON, DRAWN DOWN THE LEFT EDGE.
  *
@@ -614,6 +643,18 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    /* The rig's running state. `st` persists between frames because the emotion TWEENS: a
+       pose system that snaps is a slide show, and the halving approach in `emotion.c` is what
+       turns one into an animation system. */
+    face_state_t st;
+    face_rest(&st);
+    action_t action = ACT_NONE;
+    uint32_t action_start = 0;
+    float action_mag = 1.0f;
+    gesture_t gest;
+    gesture_reset(&gest);
+    pool_memory_t mem[POOL_COUNT];
+    for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
     int since_reassert = 0;
@@ -622,16 +663,34 @@ static void face_task(void *arg)
     /* Internal RAM, not PSRAM: this is an I2S DMA destination on every frame. */
     int16_t *mic = malloc(MIC_CHUNK * sizeof(int16_t));
     if (mic == NULL) ESP_LOGW(TAG, "no mic buffer — the meter will stay empty");
-    int held = 0;
 
     while (true) {
         PHASE(1);
         bool dirty = false;
+        /* One clock read per frame, shared by the rig, the pools and the cooldowns, so every
+           part of a frame agrees about when it is. */
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         PHASE(2);
-        if (touch && touch_tapped()) {
+        /* Read the edge ONCE. `touch_tapped()` is what refreshes the cached level that
+           `touch_is_down()` returns, so calling it twice in a frame would consume the edge
+           for whichever caller ran first. */
+        const bool tapped = touch && touch_tapped();
+        const bool down = touch && touch_is_down();
+        if (tapped) {
             colour = (colour + 1) % face_colour_count();
-            ESP_LOGI(TAG, "tap -> colour %d", colour);
             s_flinch = 1.0f;
+            /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
+               pool; the pool picks the reaction, weighted, cooled-down, and softened if you
+               are hammering it (`variants.c`). The colour cycle stays, because it is the one
+               thing a child can steer deliberately. */
+            touch_point(&s_tap_x, &s_tap_y);
+            s_tap_zone = (int)face_zone(s_tap_x, s_tap_y, s_upside_down, s_lean);
+            const pool_t pool = ZONE_POOL[s_tap_zone];
+            action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
+            action_mag = variants_penalty(pool, &mem[pool], now);
+            action_start = now;
+            ESP_LOGI(TAG, "tap (%d,%d) zone %d -> colour %d, action %d, mag %.2f", s_tap_x,
+                     s_tap_y, s_tap_zone, colour, (int)action, (double)action_mag);
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
@@ -648,32 +707,55 @@ static void face_task(void *arg)
         /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
            frame long and read as a glitch; the floor is for a face that is holding still. */
         if (s_flinch > 0.0f || s_open < 1.0f) dirty = true;
+        /* A running action animates at the poll rate; the idle floor is for a face holding
+           still, and a wave drawn five times a second is a twitch. */
+        if (action != ACT_NONE) dirty = true;
         /* A moved figure is a new frame, so tilting redraws at the poll rate rather than
            waiting out the idle floor — but only once it has moved enough to see, or every
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
 
-        if (touch && touch_is_down()) {
-            held += TOUCH_POLL_MS;
-            if (held >= HOLD_CUE_MS) dirty = true; /* keep the cue growing under the finger */
-        } else if (held != 0) {
-            held = 0;
-            dirty = true; /* and clear it the frame after it lifts */
-        }
+        const int prev_taps = gest.taps;
+        const float prev_cue = gesture_cue(&gest);
         /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
-        const bool rebooting = held >= HOLD_REBOOT_MS;
+        const bool rebooting = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+        const float cue = gesture_cue(&gest);
+        if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
         if (dirty || since_draw >= FACE_FLOOR_MS) {
             s_drawn_lean = s_lean;
-            const face_state_t st = {
-                .bob = bob_step(frame++),
-                .lean = s_lean,
-                .dip = (int)(FLINCH_DIP * s_flinch),
-                .open = s_open,
-                .startle = s_flinch,
-            };
+            /* Where we are in the running action, and what face it wears. An action that has
+               run out returns to ACT_NONE, whose face is happy — so the robot always settles
+               rather than holding the last frame of a sneeze forever. */
+            float p = 0.0f;
+            if (action != ACT_NONE) {
+                const int dur = rig_spec(action)->dur_ms;
+                const uint32_t el = now - action_start;
+                if (dur <= 0 || (int)el >= dur) {
+                    action = ACT_NONE;
+                } else {
+                    p = (float)el / (float)dur;
+                }
+            }
+            face_params_t target;
+            emotion_resolve(rig_spec(action)->face, &target);
+            /* TWICE PER FRAME, ON PURPOSE. `emotion_approach` halves per FRAME, and it was
+               written against a 50 fps surface; this panel renders at 25. Applying it once
+               here would make every emotion arrive at half its intended speed, and speed is
+               part of the emotion — sleepy and excited differ by `rate` alone. Two steps of a
+               20 ms tween is exactly one 40 ms frame. */
+            emotion_approach_face(&st.eyes, &target, target.rate);
+            emotion_approach_face(&st.eyes, &target, target.rate);
+            rig_for(action, p, action_mag, now, &st.rig);
+            rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
+            st.bob = bob_step(frame++);
+            st.lean = s_lean;
+            st.open = s_open;
+            st.startle = s_flinch;
+            /* The poke recoil rides on top of whatever the action is already doing. */
+            st.fig.oy += FLINCH_DIP * s_flinch;
             PHASE(6);
             face_draw(fb, colour, &st);
             PHASE(7);
@@ -682,14 +764,41 @@ static void face_task(void *arg)
             draw_meter(fb, level);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
-            if (held >= HOLD_CUE_MS) {
+            /* After the flip, because the finger is in PANEL coordinates and the flip has
+               already turned the figure the other way up. Rides the flinch, so it fades with
+               the recoil instead of leaving a dot on the glass. */
+            if (s_flinch > 0.25f && s_tap_x >= 0) {
+                for (int dy = -9; dy <= 9; dy++) {
+                    for (int dx = -9; dx <= 9; dx++) {
+                        const int d = dx * dx + dy * dy;
+                        if (d > 81 || d < 36) continue;
+                        const int px2 = s_tap_x + dx, py2 = s_tap_y + dy;
+                        if (px2 < 0 || px2 >= FACE_W || py2 < 0 || py2 >= FACE_H) continue;
+                        fb[py2 * FACE_W + px2] = CUE_COLOUR;
+                    }
+                }
+            }
+            if (cue > 0.0f) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot
                    outlive the finger. */
-                int w = FACE_W * held / HOLD_REBOOT_MS;
+                int w = (int)(FACE_W * cue);
                 if (w > FACE_W) w = FACE_W;
                 for (int y = 0; y < 4; y++) {
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
+                }
+            } else if (gest.taps > 0) {
+                /* One pip per counted tap. Without it the three taps are invisible until the
+                   hold succeeds, and a gesture with no feedback until it works is one an
+                   owner cannot tell from a broken panel. They clear themselves half a second
+                   after the rhythm lapses, so ordinary play leaves nothing on screen. */
+                for (int i = 0; i < gest.taps && i < GESTURE_TAPS; i++) {
+                    const int x0 = i * (PIP_W + PIP_GAP);
+                    for (int y = 0; y < 4; y++) {
+                        for (int x = x0; x < x0 + PIP_W && x < FACE_W; x++) {
+                            fb[y * FACE_W + x] = CUE_COLOUR;
+                        }
+                    }
                 }
             }
             /* One call for the whole frame: the panel takes a full-window write happily and
@@ -701,7 +810,7 @@ static void face_task(void *arg)
             since_draw = 0;
         }
         if (rebooting) {
-            ESP_LOGW(TAG, "held %d ms — rebooting to re-check firmware", held);
+            ESP_LOGW(TAG, "reboot gesture completed — re-checking firmware");
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }

@@ -43,6 +43,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+
+      # The pure-C half, on the host, BEFORE the toolchain pull — it takes two seconds and it
+      # is the only place this firmware has assertions at all. There is no hardware in CI, so
+      # anything testable off-device should be: the rig's selection logic (weights, cooldowns,
+      # the repetition penalty) and the renderer's invariants are exactly that. It also
+      # enforces the standing claim that `face.c`, `font.c`, `emotion.c`, `rig.c` and
+      # `variants.c` have no ESP dependencies — include `esp_log.h` in one of them and this
+      # link fails here rather than on a panel in a bedroom.
+      - name: Host tests for the pure-C modules
+        run: make -C firmware/host test
+
       # Pinned to the version Waveshare's own examples for this board target, so the vendor
       # drivers we port from in later waves compile against the same headers.
       - uses: espressif/esp-idf-ci-action@v1
@@ -63,6 +74,7 @@ jobs:
           cp firmware/build/jbrain-endpoint.bin out/
           cp firmware/build/bootloader/bootloader.bin out/
           cp firmware/build/partition_table/partition-table.bin out/
+          cp firmware/build/srmodels/srmodels.bin out/
           ( cd out && sha256sum ./*.bin | sed 's| \./| |' > SHA256SUMS )
           echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
           for f in bootloader.bin partition-table.bin jbrain-endpoint.bin; do
@@ -81,9 +93,37 @@ jobs:
               exit 1
             fi
           done
+          # THE MODELS ARE CHECKED BY CONTENT, NOT BY BYTES, AND THAT IS NOT A WEAKER CHECK.
+          # esp-sr's packer (`model/pack_model.py`) collects models with `os.walk` and never
+          # sorts, so the order they land in is filesystem-dependent: two correct builds of
+          # the identical models differ in nearly every byte while being exactly the same
+          # size. `CONFIG_APP_REPRODUCIBLE_BUILD` cannot help — it is not our build. So the
+          # comparison is every model, every file in it, and the SHA-256 of each file's
+          # bytes: byte-for-byte equality modulo an ordering nobody chose. It still catches
+          # a wrong wake word, a missing model, a truncated file or a stale commit.
+          if ! diff -u <(python3 scripts/srmodels-inventory.py firmware/dist/srmodels.bin) \
+                       <(python3 scripts/srmodels-inventory.py out/srmodels.bin); then
+            {
+              echo "### firmware/dist/srmodels.bin does not hold the models this source selects"
+              echo
+              echo 'Rebuild and commit it:'
+              echo '```'
+              echo '. ~/esp-idf/export.sh && (cd firmware && idf.py build)'
+              echo 'scripts/firmware-dist.sh'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "MISMATCH: firmware/dist/srmodels.bin (contents)" >&2
+            exit 1
+          fi
           # The checksum file the api verifies against at flash time, so it cannot drift
-          # away from the images sitting beside it either.
-          diff -u firmware/dist/SHA256SUMS out/SHA256SUMS
+          # away from the images sitting beside it either. `srmodels.bin` is excluded from
+          # the diff for the ordering reason above and checked against the COMMITTED blob
+          # instead — which is exactly what the api verifies at flash time, so the guarantee
+          # the sum file actually provides (this file is not truncated or corrupt) is intact.
+          grep -v ' srmodels.bin$' firmware/dist/SHA256SUMS > dist.sums
+          grep -v ' srmodels.bin$' out/SHA256SUMS > out.sums
+          diff -u dist.sums out.sums
+          ( cd firmware/dist && grep ' srmodels.bin$' SHA256SUMS | sha256sum -c - )
           echo "firmware/dist/ matches this build" >> "$GITHUB_STEP_SUMMARY"
 
       # Kept so a mismatch can be inspected rather than only asserted.

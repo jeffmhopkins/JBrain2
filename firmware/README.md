@@ -92,6 +92,56 @@ panic (ROOM_ENDPOINT_PLAN.md §10.4ai).
 Do not debug this from the display side. Check `reset_reason` and `stack_free` in telemetry
 first — the console cannot help, because opening it resets the panel.
 
+## The robot is a rig, and a poke picks from a pool
+
+Three modules ported from `frontend/src/pet/`, which was written to be ported — `face.ts` says
+so in its own header. They keep the reference's numbers:
+
+| web | panel | what it carries |
+| --- | --- | --- |
+| `face.ts` | `emotion.c` | six emotions plus `bewildered`, as lid geometry |
+| `rig.ts` | `rig.c` | seventeen actions, limb poses, the figure transform, the gag skeleton |
+| `variants.ts` | `variants.c` | weighted pools, per-variant cooldowns, the repetition penalty |
+
+A tap picks a reaction rather than doing one thing, and hammering it softens the magnitude
+toward a 0.35 floor — never to zero, because a motionless response is indistinguishable from a
+broken one. Emotion is carried by lid geometry, whole-face motion and timing, **never colour**
+(`docs/reference/DESIGN.md`); the colour cycle stays orthogonal, as the one thing a child steers.
+
+Two deliberate omissions: whole-figure **rotation** (a per-pixel resample 25 times a second;
+`ang` becomes a head tilt instead) and therefore `spin`, which is left out of the pools rather
+than faked badly. See ROOM_ENDPOINT_PLAN.md §10.4an.
+
+## Where you poke him changes what he does
+
+`face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
+arms, legs, or background — and each has its own pool. The head gets the warm ones, the belly
+gets the gags, the sides get tickling, the feet get everything that leaves the ground. A tap
+that misses him still answers, because "nothing happened" reads as broken.
+
+Zones follow the 180° flip, so his head is his head whichever way up the panel is held.
+Transient action offsets are deliberately *not* applied: a hitbox that leaps during a jump is
+one nobody can learn.
+
+**The CST820's orientation is unmeasured.** Nothing here had ever read a coordinate from it. So
+a marker ring is drawn where the firmware thinks the finger was, and `tap: [x, y, zone]` goes
+out in telemetry — if the dot isn't under the finger, the mapping is wrong and the numbers say
+how. One tap settles it (ROOM_ENDPOINT_PLAN.md §10.4aq).
+
+## Host tests: `make -C firmware/host test`
+
+`face.c`, `font.c`, `emotion.c`, `rig.c` and `variants.c` have **no ESP dependencies** — a
+standing claim that nothing checked until now. The host build is the check, and it runs in CI
+before the toolchain pull because it takes two seconds. It is also the only place this firmware
+has assertions at all, since there is no hardware in CI.
+
+It is `-std=gnu11`, not `-std=c11`, deliberately: ESP-IDF builds this code as `-std=gnu17`, and
+a host build in a *stricter* dialect tests a language the device never compiles.
+
+Run it before every firmware push. It found three real defects the ESP build had compiled
+cleanly — two missing includes that IDF supplied transitively, and a zero-init bug that made the
+variant pool repeat itself on the first pokes after boot (§10.4ao).
+
 ## The robot stays upright, and the meter keeps up
 
 The accelerometer (not the gyroscope — gravity says which way is down, rotation rate does not)
@@ -128,6 +178,56 @@ Ceilings are clamped at the API and say so in the log: volume 85 (above the conf
 below the vendor's 90, so a slipped digit cannot reach a child's ear), mic gain 42 (the
 ES8311's PGA truncates above it), brightness floor 10 (zero looks exactly like the blanking
 fault).
+
+## The reboot gesture: three short taps, then hold
+
+The hold alone used to be the whole gesture, guarded by its length — five seconds, because
+4-5 year olds were measured producing *ordinary* taps lasting up to 4.2 s. A 0.8 s margin
+against a determined four-year-old is not much, and both units are going to the twins.
+
+So the length is no longer doing the work; a **rhythm** is. Three short taps, each beginning
+within 500 ms of the previous release, then a sustained press. Children mashing a panel produce
+plenty of taps and plenty of leans; what they do not produce is that sequence. Against a
+simulated 20 000 presses including leans of 3-9 s, the old gesture fires 1937 times and this
+one fires 12 — and not zero on purpose, because a gesture that can never happen by accident
+cannot be performed on purpose either.
+
+One amber pip appears per counted tap, and the bar grows during the hold as before. Letting go
+mid-hold abandons the whole sequence, so a half-finished gesture never leaves the panel one
+press from rebooting.
+
+It lives in `gesture.c`, pure and host-tested (`firmware/host`), because **both** failure
+directions cost something: a false positive reboots a toy in a child's hands, and a false
+negative strands an owner who has no terminal with no way to force a firmware re-check.
+
+## The speech models ship before the code that uses them
+
+`firmware/dist/srmodels.bin` (2.91 MB) holds WakeNet9 `hiesp` and MultiNet7 English, selected in
+`sdkconfig.defaults`. The app does not call esp-sr yet — the linker drops it, and the app image
+is byte-identical with the dependency present — so what it produces is the model blob and
+nothing else.
+
+**They ship first because OTA can never deliver them.** `esp_https_ota` writes app slots; the
+models live in the `model` data partition (`0xaa0000`, 3.5 MB, reserved at the very first
+bring-up for exactly this). So they reach a panel through the one USB flash each unit gets,
+which is why `ARTIFACT_IMAGES` carries `srmodels.bin -> 0xaa0000` and why a missing model blob
+refuses the whole flash rather than writing a panel that cannot listen.
+
+**That is affordable because the command list is not in the blob.** MultiNet phrases are
+supplied at runtime as phoneme strings, so adding or retuning a command is an ordinary OTA.
+This image changes only if the wake word or the model generation does.
+
+It is command-word recognition — up to 200 phrases, under 500 ms, offline — **not dictation**.
+
+**It is checked by content, not by bytes.** esp-sr's packer collects models with `os.walk` and
+never sorts, so two correct builds of the identical models differ in nearly every byte while
+being exactly the same size — CI wrote `mn7_en` first, this machine wrote `fst` first.
+`scripts/srmodels-inventory.py` prints every file as `model/file sha256 length`, sorted, and CI
+diffs that. Byte-for-byte equality modulo an ordering nobody chose, and it still catches a wrong
+wake word, a missing model or a truncated file (§10.4as).
+
+Cost: esp-sr is 308 MB and a clean build goes from ~50 s to ~2 min. That buys a `srmodels.bin`
+CI verifies instead of a committed blob nobody checks.
 
 ## The two things that make "cable once" true
 
