@@ -2002,6 +2002,58 @@ measuring. So 0.2.31 does not reason:
 One tap answers it. That is the whole difference from the accelerometer episode, and it cost
 about fifteen lines.
 
+#### 10.4ar The speech models fit, and they ship before the code (2026-09-21)
+
+The owner asked whether the board does speech recognition on its own. It does, and **the
+partition for it was reserved at the start** — `model, data, spiffs, 0xAA0000, 0x380000`,
+3.5 MB, commented "reserved for ESP-SR wake-word models (W6); nothing uses it yet". That
+decision, taken when reserving was free, is the reason this is a build rather than a reflash.
+
+**Measured rather than estimated**, by adding esp-sr 2.5.4 and reading what its packer emits:
+
+```
+ESP-SR Models Report
+  - fst          (9.42 KB)
+  - mn7_en       (2686.65 KB)
+  - wn9_hiesp    (284.16 KB)
+  Recommended Partition Size: 2982K
+```
+
+`srmodels.bin` is **2.91 MB against 3.50 MB reserved — 17% spare**, and the build resolved the
+flash offset to `0xaa0000` on its own. MultiNet**6** English is 3.7 MB and would not fit, so
+MultiNet7 is not merely the better choice, it is the only English one that works.
+
+**What it is, precisely.** Command-word recognition, not dictation: up to 200 phrases, English,
+recognition inside 500 ms, entirely offline. It cannot transcribe a sentence. It can be told
+"jump", and say so on the glass.
+
+**The obstacle was never flash, it was the delivery path.** `esp_https_ota` writes app slots
+and nothing else, so a data partition is unreachable over the air — and both panels are in the
+twins' rooms. The first answer drafted here was a model-fetch-over-HTTP in the firmware, about
+eighty lines plus a box route, to preserve the no-cable rule.
+
+**That was over-engineering, and one fact killed it: the command vocabulary is not in the model
+file.** MultiNet phrases are supplied at runtime as phoneme strings (`esp_mn_commands_update()`),
+so adding a phrase, dropping one, or retuning a word a four-year-old cannot say is an ordinary
+OTA. `srmodels.bin` changes only if the wake word or the model generation does — close to
+never. One USB write per unit is therefore enough, and "USB" here means carrying the panel to
+the box and pressing a button in the PWA, not a terminal. Rule #10 survives.
+
+So the models ship FIRST, before any code that uses them:
+
+- `sdkconfig.defaults` selects `wn9_hiesp` and `mn7_en`. The app does not call esp-sr, the
+  linker drops it, and the app image is **byte-identical** — verified against the committed
+  hash. What the dependency produces is `srmodels.bin` and nothing else.
+- `firmware/dist/` carries it, `scripts/firmware-dist.sh` copies it, and the `firmware` CI job
+  diffs it byte-for-byte like the rest. It is the one image in that set not built *from* this
+  source, which is exactly why it needs the check: nothing else would notice it going stale.
+- `ARTIFACT_IMAGES` gains `srmodels.bin -> 0xaa0000`, so it rides the flash path that already
+  exists, last in offset order.
+
+**Cost recorded honestly.** The esp-sr component is 308 MB and the clean firmware build goes
+from about 50 s to 1 m 55 s locally; CI will also pay the download. That is the price of the
+models being verifiable rather than a committed blob nobody checks.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

@@ -74,9 +74,14 @@ jobs:
           cp firmware/build/jbrain-endpoint.bin out/
           cp firmware/build/bootloader/bootloader.bin out/
           cp firmware/build/partition_table/partition-table.bin out/
+          # The speech models. Not built from this source — esp-sr packs them for the wake
+          # word and command model `sdkconfig.defaults` selects — but committed for the same
+          # reason as the rest: they are what a panel gets flashed, and OTA can never deliver
+          # them, so a stale `srmodels.bin` is a model partition nobody would notice was wrong.
+          cp firmware/build/srmodels/srmodels.bin out/
           ( cd out && sha256sum ./*.bin | sed 's| \./| |' > SHA256SUMS )
           echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
-          for f in bootloader.bin partition-table.bin jbrain-endpoint.bin; do
+          for f in bootloader.bin partition-table.bin jbrain-endpoint.bin srmodels.bin; do
             if ! cmp -s "out/$f" "firmware/dist/$f"; then
               {
                 echo "### firmware/dist/$f is not what this source builds"

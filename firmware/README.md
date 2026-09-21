@@ -200,6 +200,28 @@ It lives in `gesture.c`, pure and host-tested (`firmware/host`), because **both*
 directions cost something: a false positive reboots a toy in a child's hands, and a false
 negative strands an owner who has no terminal with no way to force a firmware re-check.
 
+## The speech models ship before the code that uses them
+
+`firmware/dist/srmodels.bin` (2.91 MB) holds WakeNet9 `hiesp` and MultiNet7 English, selected in
+`sdkconfig.defaults`. The app does not call esp-sr yet — the linker drops it, and the app image
+is byte-identical with the dependency present — so what it produces is the model blob and
+nothing else.
+
+**They ship first because OTA can never deliver them.** `esp_https_ota` writes app slots; the
+models live in the `model` data partition (`0xaa0000`, 3.5 MB, reserved at the very first
+bring-up for exactly this). So they reach a panel through the one USB flash each unit gets,
+which is why `ARTIFACT_IMAGES` carries `srmodels.bin -> 0xaa0000` and why a missing model blob
+refuses the whole flash rather than writing a panel that cannot listen.
+
+**That is affordable because the command list is not in the blob.** MultiNet phrases are
+supplied at runtime as phoneme strings, so adding or retuning a command is an ordinary OTA.
+This image changes only if the wake word or the model generation does.
+
+It is command-word recognition — up to 200 phrases, under 500 ms, offline — **not dictation**.
+
+Cost: esp-sr is 308 MB and a clean build goes from ~50 s to ~2 min. That buys a `srmodels.bin`
+CI verifies byte-for-byte instead of a committed blob nobody checks.
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.
