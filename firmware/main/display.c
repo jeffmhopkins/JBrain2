@@ -146,8 +146,12 @@ bool display_repaint(void)
     return ok;
 }
 
+/* Defined with the rest of the breadcrumb machinery, below the render loop it instruments. */
+static void phase_init(void);
+
 bool display_start(void)
 {
+    phase_init();
     i2c_bus_scan();
     /* Before the first sample, so the history is what preceded the restart rather than a
        mixture of then and now. */
@@ -490,6 +494,49 @@ static volatile int s_mic_peak;
    one afterwards. */
 static volatile int s_stack_free;
 
+/* WHERE IT DIED. A breadcrumb, because a backtrace is unreachable.
+ *
+ * The panel panics (`reset_reason: "panic"`), and neither suspect survived measurement: the
+ * render task's stack peaked at ~2.7 KB of 8 KB, and eight PMU samples across a blackout were
+ * byte-identical with every rail up. The panic handler prints a backtrace to the USB console —
+ * which this panel does not have, being on a charger in another room, and which resets the
+ * chip the moment it is opened anyway.
+ *
+ * So the loop writes where it is into RTC memory, which survives the reset a panic performs.
+ * The next boot reports the last phase reached. That is not a line number, but it is the
+ * difference between "somewhere in the firmware" and "in the I2S read" — and it costs one
+ * store per stage. */
+#define PHASE_MAGIC 0x50484131u
+static RTC_NOINIT_ATTR uint32_t s_phase_magic;
+static RTC_NOINIT_ATTR uint32_t s_phase;
+static RTC_NOINIT_ATTR uint32_t s_phase_prev;
+
+/* Read once at boot, before the loop overwrites it. */
+static int s_phase_at_crash = -1;
+
+#define PHASE(n)      \
+    do {              \
+        s_phase = (n); \
+    } while (0)
+
+int display_crash_phase(void)
+{
+    return s_phase_at_crash;
+}
+
+static void phase_init(void)
+{
+    if (s_phase_magic == PHASE_MAGIC) {
+        s_phase_at_crash = (int)s_phase;
+        s_phase_prev = s_phase;
+    } else {
+        /* Cold boot: nothing survived, and -1 says so rather than claiming phase 0. */
+        s_phase_at_crash = -1;
+        s_phase_magic = PHASE_MAGIC;
+    }
+    s_phase = 0;
+}
+
 int display_stack_free(void)
 {
     return s_stack_free;
@@ -557,17 +604,22 @@ static void face_task(void *arg)
     int held = 0;
 
     while (true) {
+        PHASE(1);
         bool dirty = false;
+        PHASE(2);
         if (touch && touch_tapped()) {
             colour = (colour + 1) % face_colour_count();
             ESP_LOGI(TAG, "tap -> colour %d", colour);
             s_flinch = 1.0f;
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
+            PHASE(3);
             if (sound) audio_beep();
             dirty = true;
         }
+        PHASE(4);
         s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
+        PHASE(5);
         update_orientation();
         s_open = blink_open(TOUCH_POLL_MS);
         s_flinch *= FLINCH_DECAY;
@@ -601,10 +653,13 @@ static void face_task(void *arg)
                 .open = s_open,
                 .startle = s_flinch,
             };
+            PHASE(6);
             face_draw(fb, colour, &st);
+            PHASE(7);
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
+            PHASE(8);
             if (s_upside_down) flip_frame(fb);
             if (held >= HOLD_CUE_MS) {
                 /* Grows left to right across the top edge, full width at the moment it
@@ -618,6 +673,7 @@ static void face_task(void *arg)
             }
             /* One call for the whole frame: the panel takes a full-window write happily and
                it is simpler to be right about than a stripe loop. */
+            PHASE(9);
             const esp_err_t err =
                 esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
             if (err != ESP_OK) ESP_LOGE(TAG, "blit: %s", esp_err_to_name(err));
@@ -630,20 +686,24 @@ static void face_task(void *arg)
         }
 
         if (since_reassert >= REASSERT_MS) {
+            PHASE(12);
             reassert_panel();
             since_reassert = 0;
         }
         if (since_sample >= PMU_SAMPLE_MS) {
+            PHASE(13);
             pmu_sample();
             since_sample = 0;
         }
         /* The capture is the clock when it is available: one frame's worth, which blocks for
            about TOUCH_POLL_MS and drains the DMA at exactly the rate it fills. */
+        PHASE(10);
         if (sound && mic != NULL && audio_record(mic, MIC_CHUNK)) {
             level = audio_peak(mic, MIC_CHUNK);
             if (level > s_mic_peak) s_mic_peak = level;
             /* Every capture, not every face: 8.8 KB against 322 KB is what makes 25 fps
                affordable for the one part of the screen that has something new to say. */
+            PHASE(11);
             blit_meter(level);
         } else {
             vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));

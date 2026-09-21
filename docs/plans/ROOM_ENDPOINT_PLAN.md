@@ -1653,6 +1653,45 @@ in another room and reading its console resets it.
 If `stack_free` stays comfortable and the panics continue, the stack is exonerated and the next
 candidate is the memory the new work allocates rather than the stack it runs on.
 
+#### 10.4aj Both suspects dead, and a breadcrumb instead of a backtrace (2026-09-21)
+
+The capture from §10.4ai worked on its first real panic, and killed both hypotheses at once.
+
+```
+reset_reason: "panic"   stack_free: 5532
+pmu_history: 8 × "20 15 4a 0f ff 01"
+```
+
+**The PMU is exonerated.** Eight samples spanning the blackout, byte-identical: `DCDC_EN=0x0f`,
+`LDO_EN=0xff/0x01`, every rail up and unchanging. `chip_id = 0x4a` confirms it really is an
+AXP2101. §10.4n's second candidate is closed by measurement rather than by watching colour bars,
+which is what should have happened at 0.2.4.
+
+**The stack is exonerated too, and the number that proves it is the one added to test the
+guess.** 5532 bytes of headroom out of 8192 means the render task's deepest use was about 2.7 KB
+— it was never close, even at the original 4096. §10.4ai called an overflowing stack "the
+candidate that fits a fault which arrived as the work grew"; that reasoning was plausible and
+wrong, and it took one instrumented release to find out instead of a chain of inference.
+
+So: a panic, reproducible within about a minute of boot, with memory and power both healthy.
+
+**The backtrace is unreachable and that is not fixable.** The panic handler prints it to the USB
+console, which this panel does not have — it is on a charger in another room, which is the state
+the whole design has been driving toward — and opening that console resets the chip anyway
+(§10.4w). No partition exists for a core dump either: the table is permanent and has no
+`coredump` entry, so adding one means a USB reflash of both units.
+
+**0.2.25 writes breadcrumbs instead.** The render loop stores its current stage in
+`RTC_NOINIT_ATTR` memory, which survives the reset a panic performs, and the next boot reports
+the last stage reached. Thirteen stages: loop top, touch, beep, stack probe, IMU, `face_draw`,
+label, flip, full blit, microphone read, meter blit, panel re-assert, PMU sample.
+
+That is not a line number. It is the difference between "somewhere in the firmware" and "in the
+I2S read", and it costs one store per stage. A cold boot reports −1 rather than claiming stage
+0, because "nothing survived" and "it died at the top of the loop" are different facts — the
+same distinction §10.4x drew for the PMU ring, and the same one §10.4ai found had been
+accidentally erased.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

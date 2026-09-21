@@ -34,7 +34,18 @@ The panel's own telemetry carried `reset_reason: "panic"`. It crashes, and a pan
 reset** — which leaves the screen dark where a power cycle does not. Crash, reboot, black until
 someone pulls the plug. Every symptom chased from 0.2.4 onward follows from that.
 
-Prime suspect: the render task's stack, created at 4096 bytes when it drew a static pattern and
+**Both first suspects are dead, by measurement.** `stack_free: 5532` of 8192 means the render
+task's deepest use was ~2.7 KB — never close, even at the original 4096. And eight PMU samples
+spanning a blackout were byte-identical with every rail up, so the AXP2101 is not cutting
+anything either.
+
+0.2.25 writes **breadcrumbs**: the render loop stores its stage in `RTC_NOINIT` memory, which
+survives the reset a panic performs, and the next boot reports the last stage reached as
+`crash_phase`. Not a line number, but it localises the crash — the backtrace is unreachable
+because it prints to a console this panel does not have and which resets it on open, and there
+is no coredump partition to add without a USB reflash.
+
+Superseded suspect: the render task's stack, created at 4096 bytes when it drew a static pattern and
 now running an I2S capture, an accelerometer read, font rendering, PMU sampling, float tweening
 and two LCD blits per frame. 0.2.24 raises it to 8192 and reports
 `uxTaskGetStackHighWaterMark` as `stack_free`, so a near-overflow is visible **before** it is a

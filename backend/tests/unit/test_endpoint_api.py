@@ -877,3 +877,17 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+    def test_the_crash_phase_is_reported(self, client: tuple[TestClient, Path, list[Any]]) -> None:
+        """A panic's backtrace goes to a console the panel does not have and which resets it
+        on open. The breadcrumb is what reaches the box instead."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.25", "uptime_ms": 1, "crash_phase": 10},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text

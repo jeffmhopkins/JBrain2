@@ -28,3 +28,8 @@ void display_set_brightness(int level);
 /* The face task's smallest observed stack headroom, in words. Reported in telemetry so a
    near-overflow shows up as a shrinking number rather than as a panic. */
 int display_stack_free(void);
+
+/* The render loop stage reached just before the last restart, or -1 on a cold boot.
+   1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip,
+   9 full blit, 10 mic read, 11 meter blit, 12 panel re-assert, 13 PMU sample. */
+int display_crash_phase(void);
