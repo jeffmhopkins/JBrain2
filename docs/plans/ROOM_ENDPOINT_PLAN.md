@@ -2091,6 +2091,39 @@ a vendor artifact assumed the guarantee came with it. The failure was loud and c
 round, which is the cheap way to find out — but the assumption was the same shape as every
 other one this investigation has had to unwind.
 
+#### 10.4au The version is IN the image, and twice it was not (2026-09-21)
+
+`firmware` CI failed on 0.2.35 and again on 0.2.36 with `MISMATCH:
+firmware/dist/jbrain-endpoint.bin`. Not the `srmodels.bin` ordering problem of §10.4as — this
+is the app image, built with `CONFIG_APP_REPRODUCIBLE_BUILD=y`, which is exactly the check
+that is supposed to be exact.
+
+A clean-room rebuild (`rm -rf build sdkconfig`, since `sdkconfig` is generated and gitignored)
+gave a binary of **identical length** and a different hash. 66 bytes differed. Reading the
+app descriptor at 0x20 said it in one line:
+
+```
+dist   version: 0.2.35   elf_sha256: 3183764972...
+fresh  version: 0.2.36   elf_sha256: 7617657390...
+```
+
+**ESP-IDF compiles `firmware/version.txt` into the image**, so bumping it *after* `idf.py
+build` stamps the previous number into the bytes that ship. The 66 bytes are the version
+string and the ELF hash that covers it. Both failures were the same slip in the same order,
+and on the way to finding it I had written in this session that the file was "metadata only,
+not compiled in" — wrong, and wrong in the direction that makes the mistake invisible.
+
+So it is a check rather than a thing to remember: `scripts/firmware-dist.sh` now reads the
+built image's descriptor and **refuses to copy an image whose embedded version does not match
+`version.txt`**, with the fix in the message. Confirmed to fail on a mismatch and pass on a
+match before being kept.
+
+Worth noting what CI got right here. The byte-exact comparison was doing its job perfectly —
+it caught a real defect (a panel would have reported the wrong version to the box, which is
+the one number the owner uses to tell whether an update landed) and it named the file. What it
+could not do is say *why*, and two rounds went into a difference that the app descriptor
+answers immediately. A failing image comparison should be read at 0x20 first.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
