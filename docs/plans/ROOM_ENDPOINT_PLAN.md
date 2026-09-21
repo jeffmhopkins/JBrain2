@@ -2091,6 +2091,50 @@ a vendor artifact assumed the guarantee came with it. The failure was loud and c
 round, which is the cheap way to find out — but the assumption was the same shape as every
 other one this investigation has had to unwind.
 
+#### 10.4at Four actions that posed but never performed (2026-09-21)
+
+A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
+I built a harness that **renders frames and counts changed pixels**, and checked each claim
+against it. Two of the report's headline numbers were wrong in my favour and one in the other
+direction; the measurement is what this section records, not the report.
+
+| Action | Measured before | What was wrong |
+|---|---|---|
+| `blush` | **0 px on the robot**, 1525 on the ostrich | drawn before the body and head, which then painted over it. On the ostrich the anchor was the head's y and a fixed ±78 in x — a head 128 wide, not 216 — so both cheeks landed in **empty space beside the bird**. |
+| `wave` | **0 px on the ostrich**, 3499 on the robot | the ostrich's tail flap was driven from `arm_l`; `wave` only moves `arm_r`. On the robot the arm posed at −150° put the hand at x+103 against a head reaching x+108 — **hidden behind the face**. |
+| `hide` | robot −35%, ostrich **−13%** of eye white | the robot's hand knob is 17 px against a 41×48 eye; the ostrich's wing was 74 px wide, parked at the eye line, and **drawn before the head**. |
+| eye scale | 0.98 | transcribed literally from the mock, whose eye base is 46×54 where `draw_eye`'s is 40.6×48.4. The approved eyes shipped **a ninth too small**; 1.10 reproduces them to within half a pixel. |
+
+**Every one of these passed the whole test suite,** including a test named
+`test_every_action_moves`. That test compares `rig_pose_t` and `figure_pose_t` — and all four
+defects pose correctly. `wave` moves a float. `blush` sets `fig.extra`. `hide` drives
+`hands_up` to 1.0. The pose is right in every case and **nothing reaches the glass**.
+
+So the suite now renders. `test_every_action_changes_the_picture` requires ≥900 changed pixels
+for every action on every form; `test_peekaboo_covers_the_eyes` requires **zero** eye-white
+mid-hide on both forms; `test_the_blush_lands_on_the_face` requires the pink to survive the
+frame *and* to sit within the eyes' band; `test_the_gag_puff_shows_on_both_forms` counts the
+cloud's unique colour. Each was confirmed to fail against the pre-fix renderer before being
+kept — the delta test and the peekaboo test name the exact symptom.
+
+The fixes are mostly **ordering**, which is the tell: the puff belongs behind the figure and
+the blush on the face, so they became `draw_puff()` and `draw_blush()` called at per-form
+anchors rather than one function called before everything. The ostrich's wing is drawn behind
+the body at rest and **over the head** once it is hiding, and grows 74→144 px as it rises. The
+robot's peekaboo hand grows 18→32 px so it can actually cover the eye it is aimed at, and an
+arm posed above the shoulder is **redrawn over the head** — the shoulder sits at ox+66 inside
+a head 216 wide, so a raised arm has 42 px of head to clear and otherwise disappears. `wave`
+swings −106°…−154° to stay wholly past that threshold, so the arm cannot flick in front and
+behind between frames.
+
+**Clipping was measured and deliberately left alone.** Across 425 sampled frames per form, 62
+(15%) on the ostrich and 43 on the robot lose pixels off a panel edge — crest tips and toes
+during the biggest squash-and-stretch. A sweep of base scale × origin says it only reaches zero
+at **k=0.83** for the ostrich. Shrinking the approved bird by a sixth to save an average of
+four pixels a frame, on a figure already 428 px tall in a 448 px panel, is the wrong trade on a
+29 mm screen; a cropped toe at the peak of a gag reads as energy. Recorded here so the next
+reader knows it was measured, not missed.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

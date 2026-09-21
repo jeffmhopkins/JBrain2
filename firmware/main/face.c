@@ -210,26 +210,34 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_para
     }
 }
 
-/* The cheek blush and the gag puff: two extras the whole-figure transform cannot express, and
-   the only artwork in the rig that is not the robot itself. */
-static void draw_extra(uint16_t *fb, int ox, int hy, extra_t extra, float scale)
+/* The gag puff, BEHIND the figure, and the cheek blush, ON the face.
+ *
+ * These were one function called before anything else, which meant the body and the head were
+ * then painted straight over both. Measured: `ACT_BLUSH` changed ZERO pixels on the robot and
+ * 1525 on the ostrich — a shipped action that did nothing, invisible to every test in the
+ * suite because they all compare pose structs rather than rendered frames.
+ *
+ * The ostrich's BLUSH is the sharper case: the old anchor was the head's y plus a fixed
+ * `+-78` in x, which on a head 128 wide instead of 216 put both cheeks in empty space
+ * BESIDE the bird's head. So anchors come from the form, because they must — the shared
+ * one cannot be right for two silhouettes this different. */
+static void draw_puff(uint16_t *fb, int ax, int ay, float scale)
 {
-    if (extra == EXTRA_BLUSH) {
-        const uint16_t pink = rgb(0xFF, 0x7A, 0x9C);
-        const int dx = (int)(78.0f * scale), r = (int)(16.0f * scale);
-        fill_circle(fb, ox - dx, hy + (int)(26.0f * scale), r, pink);
-        fill_circle(fb, ox + dx, hy + (int)(26.0f * scale), r, pink);
-    } else if (extra == EXTRA_PUFF) {
-        /* Deliberately a cloud and not a colour: the gag has to read on a dark panel from
-           across a room, and a tinted robot reads as a new robot. */
-        const uint16_t puff = rgb(0x8C, 0x9A, 0x8C);
-        const int r = (int)(18.0f * scale);
-        fill_circle(fb, ox - (int)(96.0f * scale), hy + (int)(200.0f * scale), r, puff);
-        fill_circle(fb, ox - (int)(124.0f * scale), hy + (int)(186.0f * scale),
-                    (int)(r * 0.7f), puff);
-        fill_circle(fb, ox - (int)(120.0f * scale), hy + (int)(216.0f * scale),
-                    (int)(r * 0.6f), puff);
-    }
+    /* Deliberately a cloud and not a colour: the gag has to read on a dark panel from across
+       a room, and a tinted robot reads as a new robot. */
+    const uint16_t puff = rgb(0x8C, 0x9A, 0x8C);
+    const int r = (int)(18.0f * scale);
+    fill_circle(fb, ax, ay, r, puff);
+    fill_circle(fb, ax - (int)(28.0f * scale), ay - (int)(14.0f * scale), (int)(r * 0.7f), puff);
+    fill_circle(fb, ax - (int)(24.0f * scale), ay + (int)(16.0f * scale), (int)(r * 0.6f), puff);
+}
+
+static void draw_blush(uint16_t *fb, int cx, int cy, int dx, float scale)
+{
+    const uint16_t pink = rgb(0xFF, 0x7A, 0x9C);
+    const int r = (int)(16.0f * scale);
+    fill_circle(fb, cx - dx, cy, r, pink);
+    fill_circle(fb, cx + dx, cy, r, pink);
 }
 
 /* THE OSTRICH. Every number is transcribed from `docs/mocks/room-endpoint/ostrich-mock.py`,
@@ -252,6 +260,20 @@ static void draw_extra(uint16_t *fb, int ox, int hy, extra_t extra, float scale)
 #define OS_LEG_Y 74
 #define OS_LEG_L 92
 #define OS_HEAD_DX 7 /* the head sits slightly forward of the body, as a bird's does */
+
+/* The ostrich's wing, drawn wherever the peekaboo lerp has put it. Separated out because it
+ * has to be drawn in two different PLACES in the order: behind the body at rest, and over the
+ * head once it is covering the eyes. */
+static void draw_wing(uint16_t *fb, int x, int y, int w, int h, float s, uint16_t wing,
+                      uint16_t col)
+{
+    fill_round_rect(fb, x, y, w, h, (int)(30.0f * s), wing);
+    /* Scalloped line-work: the detail that says "this bird" rather than "a bird". */
+    for (int r = 20; r <= 48; r += 14) {
+        arc_stroke(fb, x + (int)(2.0f * s), y + (int)(8.0f * s), (int)((float)r * s),
+                   (float)M_PI * 0.06f, (float)M_PI * 0.44f, (int)(3.0f * s), col);
+    }
+}
 
 static face_zone_t zone_robot(int dx, int dy)
 {
@@ -313,6 +335,7 @@ face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean
    here beyond the multiply. */
 #define SX(v) ((int)lrintf((float)(v) * sx))
 #define SY(v) ((int)lrintf((float)(v) * sy))
+#define LERPI(a, b, t) ((int)lrintf((float)(a) + ((float)(b) - (float)(a)) * (t)))
 
 static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
                        float sx, float sy, float s, int tilt)
@@ -324,7 +347,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     const uint16_t limb = shade(hex, 0.78f);
 
     const int hy = oy + SY(HEAD_Y);
-    draw_extra(fb, ox, hy, st->fig.extra, s);
+    if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(96), oy + SY(104), s);
 
     /* Drawing order is the mock's: legs behind everything, arms behind the torso. */
     draw_limb(fb, ox - SX(34), oy + SY(HIP_Y), st->rig.leg_l, SY(LEG_L), SX(30), limb);
@@ -342,6 +365,10 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     fill_round_rect(fb, ox + tilt - SX(HW), hy - SY(HH), SX(HW * 2), SY(HH * 2),
                     (int)(40 * s), col);
 
+    /* ON the face, after it, or the head paints over it — which is exactly what used to
+       happen. Cheeks: outboard of the eyes and level with the smile. */
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), s);
+
     const int ex = SX((int)(HW * 0.43f)), ey = hy - SY((int)(HH * 0.17f));
     draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
     draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
@@ -349,6 +376,18 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
     arc_stroke(fb, ox + tilt, hy + SY((int)(HH * 0.52f)) - SY(16), (int)(30 * s),
                (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s), dark);
+
+    /* A RAISED ARM IS REDRAWN OVER THE HEAD. The head is 216 px wide and the shoulder sits
+       INSIDE it at ox+66, so an arm posed above the shoulder has only 42 px of head to clear
+       and disappears behind the face — which is why `wave` changed a third as many pixels as
+       any other action on this form. Redrawing the same limb is idempotent, so the arm simply
+       stops being occluded by the head it is waving beside. */
+    if (fabsf(st->rig.arm_l) > 95.0f) {
+        draw_limb(fb, ox - SX(66), oy + SY(SHOULDER_Y), st->rig.arm_l, SY(ARM_L), SX(28), limb);
+    }
+    if (fabsf(st->rig.arm_r) > 95.0f) {
+        draw_limb(fb, ox + SX(66), oy + SY(SHOULDER_Y), st->rig.arm_r, SY(ARM_L), SX(28), limb);
+    }
 
     /* PEEKABOO LAST, over the eyes it is hiding. Posing the arms by angle cannot do this —
        the hands have to AIM at the eyes, which is the difference between hiding and squatting
@@ -358,7 +397,10 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         const int rest_x = SX(66), rest_y = oy + SY(SHOULDER_Y) + SY(ARM_L);
         const int hx = (int)lrintf((float)rest_x + ((float)(ex) - (float)rest_x) * u);
         const int hyy = (int)lrintf((float)rest_y + ((float)ey - (float)rest_y) * u);
-        const int hr = (int)(28 * 0.62f * s);
+        /* The hand GROWS into a paw as it rises. A 17 px knob against a 41x48 eye is what
+           made the shipped `hide` read as "arms up beside the head": measured, hands-up hid
+           only 35% of the eye white. Covering it needs a radius past the eye's corner. */
+        const int hr = (int)((18.0f + 14.0f * u) * s);
         fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
     }
@@ -378,11 +420,16 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
 
     const int hx = ox + tilt + SX(OS_HEAD_DX);
     const int hy = oy + SY(OS_HEAD_Y);
-    draw_extra(fb, ox, hy, st->fig.extra, s);
+    /* Behind the bird and BELOW the plumes: the robot's anchor hung off the HEAD, so the
+       offset that put its cloud by the hips put the ostrich's up at its midriff. */
+    if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(100), oy + SY(52), s);
 
     /* Tail plumes first, behind the body. They FLAP with the arm pose — a bird has no arms,
-       so the rig's arm angle drives the one thing on a bird that answers to it. */
-    const float flap = (st->rig.arm_l - 12.0f) * 0.25f;
+       so the rig's arm angle drives the one thing on a bird that answers to it.
+       BOTH arms, because several actions (wave, burp) move only the right one: driving the
+       flap off `arm_l` alone made ACT_WAVE change exactly zero pixels on this form. */
+    const float dev = ((st->rig.arm_l - 12.0f) + (-st->rig.arm_r - 12.0f)) * 0.5f;
+    const float flap = dev * 0.35f;
     static const struct {
         float deg;
         int len;
@@ -408,17 +455,19 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     fill_round_rect(fb, ox - SX(OS_BODY_W / 2), oy + SY(OS_BODY_Y), SX(OS_BODY_W),
                     SY(OS_BODY_H), (int)(54 * s), body);
 
-    /* Wing, with scalloped line-work — the detail that says "this bird" rather than "a bird".
-       PEEKABOO RIDES IT: a bird tucks its head under a wing, which is a better answer than the
-       robot's hands over the eyes and costs nothing but this offset. */
+    /* PEEKABOO RIDES THE WING: a bird tucks its head under a wing, which is a better answer
+       than the robot's hands over the eyes. Two things the first cut got wrong, both found by
+       counting eye-white pixels rather than by looking:
+         - a 74-wide wing parked at the eye line covers ONE eye and half the other, so it
+           GROWS as it rises;
+         - it was drawn before the head, which then painted straight over it — so once it is
+           actually hiding, it is drawn LAST instead. */
     const float u = st->rig.hands_up > 1.0f ? 1.0f : st->rig.hands_up;
-    const int wy = oy + SY(0) - (int)lrintf((float)(oy + SY(0) - (oy + SY(OS_EYE_Y))) * u);
-    const int wx = ox + SX(2) - (int)lrintf((float)SX(2) * u);
-    fill_round_rect(fb, wx, wy, SX(74), SY(66), (int)(30 * s), wing);
-    for (int r = 20; r <= 48; r += 14) {
-        arc_stroke(fb, wx + SX(2), wy + SY(8), (int)(r * s), (float)M_PI * 0.06f,
-                   (float)M_PI * 0.44f, (int)(3 * s), col);
-    }
+    const int wx = LERPI(ox + SX(2), hx - SX(72), u);
+    const int wy = LERPI(oy, oy + SY(OS_EYE_Y - 34), u);
+    const int ww = LERPI(SX(74), SX(144), u);
+    const int wh = LERPI(SY(66), SY(88), u);
+    if (u <= 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
 
     /* Neck: segments narrowing toward the head, leaning forward for life. */
     for (int i = 0; i < 7; i++) {
@@ -450,11 +499,21 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     }
     fill_rect(fb, hx - SX(16), oy + SY(-97), SX(32), SY(2), shade(hex, 0.28f));
 
+    /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
+       head's edge, which on a 128-wide head leaves exactly this much room. */
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, hx, oy + SY(-110), SX(50), s);
+
     /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
-       redrew them would have to re-implement all six. */
+       redrew them would have to re-implement all six.
+       1.10, not the mock's 0.98: that number is a multiplier on a DIFFERENT base. The mock
+       draws 46x54 and `draw_eye` draws 52*0.78 x 62*0.78 = 40.6x48.4, so transcribing the
+       scalar literally shrank the approved eyes by a ninth. 1.10 reproduces 45.1x52.9 to
+       within half a pixel. */
     const int ey = oy + SY(OS_EYE_Y);
-    draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle, s * 0.98f);
-    draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle, s * 0.98f);
+    draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle, s * 1.10f);
+    draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle, s * 1.10f);
+
+    if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
 }
 
 void face_rest(face_state_t *st)
@@ -497,3 +556,4 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 }
 #undef SX
 #undef SY
+#undef LERPI

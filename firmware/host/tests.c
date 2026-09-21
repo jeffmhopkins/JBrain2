@@ -348,6 +348,147 @@ static long count_colour(uint16_t want)
     return n;
 }
 
+/* ---- what is actually ON THE GLASS -------------------------------------------------
+ *
+ * Everything above this line compares POSE STRUCTS, and that is how four shipped actions
+ * came to draw nothing at all. `wave` moved one float, so `test_every_action_moves` passed
+ * while the arm it posed was hidden behind a head 216 px wide. `blush` set `fig.extra`, so
+ * the same test passed while the cheeks were painted over by the head drawn after them —
+ * ZERO pixels changed on the robot. `hide` drove `hands_up` to 1.0 while the hands it aimed
+ * at the eyes were too small to cover them and the ostrich's wing was drawn behind the head
+ * it was meant to be hiding.
+ *
+ * So these tests render frames and compare PIXELS. That is the only probe that can see the
+ * difference between posing an action and performing one. */
+
+static long frame_delta(const uint16_t *a, const uint16_t *b)
+{
+    long n = 0;
+    for (long i = 0; i < (long)FACE_W * FACE_H; i++)
+        if (a[i] != b[i]) n++;
+    return n;
+}
+
+static void test_every_action_changes_the_picture(void)
+{
+    /* The floor is deliberately low — `blush` is two 16 px discs and can never reach what a
+       whole-figure squash reaches — but it is far above nothing, and the three broken
+       actions scored 0, 0 and 1525 against it. */
+    const long FLOOR = 900;
+    uint16_t *idle = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(idle != NULL, "scratch frame allocated");
+
+    for (int f = 0; f < FORM_COUNT; f++) {
+        for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+            long best = 0;
+            for (int step = 0; step <= 20; step++) {
+                const float q = (float)step / 20.0f;
+                face_state_t st;
+                face_rest(&st);
+                st.form = (face_form_t)f;
+                rig_for(ACT_NONE, q, 1.0f, 0, &st.rig);
+                rig_figure(ACT_NONE, q, 1.0f, 0, 0.0f, &st.fig);
+                face_draw(fb, 0, &st);
+                memcpy(idle, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+                rig_for((action_t)a, q, 1.0f, 0, &st.rig);
+                rig_figure((action_t)a, q, 1.0f, 0, 0.0f, &st.fig);
+                face_draw(fb, 0, &st);
+                const long d = frame_delta(idle, fb);
+                if (d > best) best = d;
+            }
+            CHECK(best >= FLOOR, "every action changes real pixels on both forms");
+        }
+    }
+    free(idle);
+}
+
+static void test_peekaboo_covers_the_eyes(void)
+{
+    /* `hide` is peekaboo, and peekaboo that does not hide the eyes is the shipped dud this
+       replaces — "arms up beside the head". Measured before the fix: the robot's hands hid
+       35% of the eye white and the ostrich's wing 13%. The only acceptable number is all of
+       it, on BOTH forms. */
+    const uint16_t white = rgb565(0xF6, 0xF9, 0xFC);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(white) > 500, "the form shows its eye whites at rest");
+
+        rig_for(ACT_HIDE, 0.45f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_HIDE, 0.45f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(white) == 0, "mid-hide, no eye white is left showing");
+    }
+}
+
+static void test_the_blush_lands_on_the_face(void)
+{
+    /* Drawn in the wrong ORDER it vanishes; drawn at the wrong ANCHOR it lands on the chest.
+       Both happened. So: the pink must survive the frame, and it must sit inside the head. */
+    const uint16_t pink = rgb565(0xFF, 0x7A, 0x9C);
+    const uint16_t white = rgb565(0xF6, 0xF9, 0xFC);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(pink) == 0, "nothing is pink at rest");
+
+        /* Where the eyes are, so "on the face" can be asserted without hardcoding geometry
+           that belongs to the renderer. */
+        int eye_lo = FACE_H, eye_hi = -1;
+        for (int y = 0; y < FACE_H; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != white) continue;
+                if (y < eye_lo) eye_lo = y;
+                if (y > eye_hi) eye_hi = y;
+            }
+        }
+
+        rig_for(ACT_BLUSH, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_BLUSH, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_BLUSH, "blush asks for the cheeks");
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(pink) > 900, "the cheeks are actually on the glass");
+
+        int lo = FACE_H, hi = -1;
+        for (int y = 0; y < FACE_H; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != pink) continue;
+                if (y < lo) lo = y;
+                if (y > hi) hi = y;
+            }
+        }
+        /* Cheeks: below the top of the eyes and not far below their bottom. The robot's old
+           anchor put the ostrich's gag puff 90 px adrift on the chest; this is the check that
+           would have said so. */
+        CHECK(lo > eye_lo && hi < eye_hi + 70, "the cheeks are on the face, not the body");
+    }
+}
+
+static void test_the_gag_puff_shows_on_both_forms(void)
+{
+    /* The puff is the whole fart gag; `EXTRA_PUFF` anchored off the HEAD put it in the middle
+       of the ostrich's chest. Its colour is unique to it, so it can simply be counted. */
+    const uint16_t puff = rgb565(0x8C, 0x9A, 0x8C);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(puff) == 0, "no cloud at rest");
+
+        rig_for(ACT_FART, 0.4f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_FART, 0.4f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_PUFF, "the gag's hold carries the puff");
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(puff) > 900, "the cloud clears the figure drawn over it");
+    }
+}
+
 static void test_blink_is_a_line_not_a_hole(void)
 {
     /* "A blink drawn as nothing reads as the face breaking for a frame; a line reads as a
@@ -1094,6 +1235,10 @@ int main(void)
     test_both_forms_draw_and_differ();
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
+    test_every_action_changes_the_picture();
+    test_peekaboo_covers_the_eyes();
+    test_the_blush_lands_on_the_face();
+    test_the_gag_puff_shows_on_both_forms();
     test_blink_is_a_line_not_a_hole();
     test_samples_need_agreement_not_just_count();
     test_samples_use_the_median_not_the_mean();
