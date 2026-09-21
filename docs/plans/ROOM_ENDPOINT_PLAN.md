@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-20 · **Waves:** W1🟢 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4◻ W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -1683,14 +1683,58 @@ the whole design has been driving toward — and opening that console resets the
 
 **0.2.25 writes breadcrumbs instead.** The render loop stores its current stage in
 `RTC_NOINIT_ATTR` memory, which survives the reset a panic performs, and the next boot reports
-the last stage reached. Thirteen stages: loop top, touch, beep, stack probe, IMU, `face_draw`,
-label, flip, full blit, microphone read, meter blit, panel re-assert, PMU sample.
+the last stage reached. The stages, in order: 1 loop top, 2 touch, 3 beep, 4 stack probe,
+5 IMU, 6 `face_draw`, 7 label, 8 flip, 9 full blit, 10 microphone read, 11 meter blit,
+12 panel re-assert, 13 PMU sample — and 14, brightness, added by §10.4ak. The same list lives
+next to `PHASE()` in `display.c`; a number whose stage nobody can name is worth nothing.
 
 That is not a line number. It is the difference between "somewhere in the firmware" and "in the
 I2S read", and it costs one store per stage. A cold boot reports −1 rather than claiming stage
 0, because "nothing survived" and "it died at the top of the loop" are different facts — the
 same distinction §10.4x drew for the PMU ring, and the same one §10.4ai found had been
 accidentally erased.
+
+#### 10.4ak Two tasks, one SPI panel handle (2026-09-21)
+
+**The panic has a mechanism, and it is a race this firmware wrote itself.**
+
+`esp_lcd_panel_io_spi` is not thread-safe, and not in the mild sense that phrase usually
+carries. Read `panel_io_spi_tx_param` in IDF v5.5.5: it acquires the SPI bus, reads
+`num_trans_inflight`, drains every queued transfer with
+`spi_device_get_trans_result(..., portMAX_DELAY)`, decrements the count once per drain, and
+then `memset`s `trans_pool[0]` — the very slot `tx_color` fills from the other side. Two tasks
+on one io handle can therefore
+
+- drain each other's transfers, so one of them decrements `num_trans_inflight` past zero.
+  It is a `size_t`, so that wraps to `SIZE_MAX` and the next drain loop waits on
+  `portMAX_DELAY` for transactions that will never be queued — **holding the bus**; or
+- `memset` a descriptor while DMA is still reading it.
+
+**And there was exactly one cross-task caller.** `display_set_brightness()` wrote `0x51`
+straight to the io handle, and `apply_settings()` calls it **from the main task**, at boot and
+on every fifteen-minute cycle — while the face task drives the same handle at about 25 fps.
+The box serves a brightness unconditionally (`endpoint_settings` ships `255`), so this fired on
+every boot of every panel, with no setting ever having been changed. §10.4aj's "reproducible
+within about a minute of boot" is the shape that produces: `reach_box` plus `apply_settings`
+lands right there.
+
+**0.2.26 gives the panel one owner.** `display_set_brightness()` now only records the value and
+raises a flag; the render loop applies it, next to the re-assert that was already the only
+other command writer. It is phase 14 in the breadcrumb map. `display_repaint()` went with it —
+dead since §10.4u replaced probing with re-asserting, and a second cross-task entry point into
+the same handle for anyone who called it.
+
+**What this does not claim.** It is a mechanism, not yet a verdict. The black screens run back
+to 0.2.4 and `apply_settings` only arrived at 0.2.23, so either the early ones have a different
+cause or the panic was simply unobservable before telemetry (§10.4y) — and this session has
+already spent two releases on a symptom with two true bugs competing for it. `crash_phase` is
+what settles it: a face task dying in a blit (9, 11) or a command write (12, 14) fits this race;
+a death in the I2S read (10) or the IMU (5) does not, and sends the search elsewhere.
+
+**Cost of the diagnosis: reading the driver.** Nothing about it needed the panel, a console or
+the owner — the race is visible in sixty lines of `esp_lcd_panel_io_spi.c` and in `grep` for
+who calls the panel from which task. It was available at 0.2.23 and went unlooked-for through
+three releases of instrumenting the hardware instead.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
