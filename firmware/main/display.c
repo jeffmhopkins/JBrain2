@@ -34,6 +34,7 @@
 #include "face.h"
 #include "font.h"
 #include "ota.h"
+#include "pmu.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
@@ -144,6 +145,9 @@ bool display_repaint(void)
 bool display_start(void)
 {
     i2c_bus_scan();
+    /* Before the first sample, so the history is what preceded the restart rather than a
+       mixture of then and now. */
+    if (pmu_start()) pmu_report_history();
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 
@@ -237,6 +241,9 @@ bool display_start(void)
  * bus already carrying five full frames a second.
  */
 #define REASSERT_MS 30000
+/* Twelve samples at ten seconds is two minutes of history in the RTC ring — long enough to
+   cover a screen going dark and the owner noticing, short enough to read in a boot log. */
+#define PMU_SAMPLE_MS 10000
 /* Matches the init sequence exactly. It is full brightness and still wrong for a bedroom —
    see the plan — but changing it here would add a variable to the one thing being tested. */
 #define BRIGHTNESS 0xFF
@@ -313,6 +320,7 @@ static void face_task(void *arg)
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
     int since_reassert = 0;
+    int since_sample = 0;
     int held = 0;
 
     while (true) {
@@ -367,9 +375,14 @@ static void face_task(void *arg)
             reassert_panel();
             since_reassert = 0;
         }
+        if (since_sample >= PMU_SAMPLE_MS) {
+            pmu_sample();
+            since_sample = 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
         since_draw += TOUCH_POLL_MS;
         since_reassert += TOUCH_POLL_MS;
+        since_sample += TOUCH_POLL_MS;
     }
 }
 

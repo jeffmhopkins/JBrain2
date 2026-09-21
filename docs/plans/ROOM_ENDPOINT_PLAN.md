@@ -1197,6 +1197,46 @@ telemetry.** The panel should report its own state to the box over HTTP on a cad
 every other channel either resets it or lies, and a panel that can only be diagnosed with a
 cable is the thing this whole design exists to avoid (CLAUDE.md #10).
 
+#### 10.4x The bus scan: the AXP2101 is real (2026-09-21)
+
+```
+I (955) i2c: i2c devices: 0x15 0x18 0x20 0x34 0x51 0x6b
+```
+
+`0x15` CST820 touch, `0x18` ES8311 codec, `0x51` RTC, `0x6b` IMU — and the two that matter:
+**`0x20`, the TCA9554 IO expander, and `0x34`, the AXP2101 PMU.** Both real, neither ever
+spoken to by this firmware.
+
+§10.4n named the AXP2101 as one of exactly two candidates at 0.2.4, said plainly that the two
+**need opposite fixes**, and then ruled it out by watching colour bars flip. It exists. It is
+the last candidate standing, and it is precisely the class of part that holds state across
+`esp_restart()` and is cleared by removing power — which is the signature the owner produced
+with the five-second hold: reboot leaves the screen black, pulling the plug does not.
+
+The same log carried 0.2.11's last probe before it updated — `0x0A=0x00`, still zeros —
+confirming §10.4w's reading that the register path is dead rather than the display being off.
+
+**The remaining problem was that the dark state cannot be observed.** Reads over QSPI return
+zeros; opening the console resets the chip before anything can be seen. Every instrument so far
+has either lied or destroyed what it measured.
+
+**0.2.13 records instead of reading.** Six AXP2101 registers — two status bytes, the chip id,
+and the three enable registers that decide which rails are actually up — sampled every ten
+seconds into `RTC_NOINIT_ATTR` memory. That memory survives `esp_restart()` and is cleared only
+by a power cycle, and a magic word distinguishes "survived a restart" from "powered up with
+whatever was in the SRAM". At boot the ring is logged oldest-first and then cleared.
+
+**Which makes the five-second hold the capture trigger.** It was built as a maintenance
+gesture; it turns out to be the shutter. The owner sees a dark screen, holds for five seconds,
+and the next boot log contains the two minutes of PMU state leading up to the fault. **That is
+the first instrument in this investigation that does not destroy what it measures**, and it
+exists only because the hold happened to be a soft reset rather than a power cycle.
+
+What the reading will settle: if `dcdc_en` or an `ldo_en` bit is clear while the screen is dark
+and set while it is lit, the PMU is cutting a rail and §10.4n's second candidate wins after
+four releases. If the registers are identical in both states, the PMU is innocent, and the
+remaining suspects are the TCA9554 at `0x20` and the OLED supply itself.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
