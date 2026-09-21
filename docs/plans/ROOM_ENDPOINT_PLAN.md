@@ -3315,6 +3315,43 @@ that build, which is why the renderer's own `face.c` is tested to the pixel and 
 Recorded rather than papered over — the check lives in two places now and the comment at each
 says why there are two.
 
+#### 10.4bq The panel starts recording (0.2.57, 2026-09-21)
+
+The first half of the panel's side of a conversation: a hold now **captures audio**, into a
+buffer claimed once at start-up out of PSRAM.
+
+**Claimed once, never during a recording.** 6 s of 16 kHz mono s16 is 192 KB, out of the
+7.8 MB of PSRAM nothing else wants — and a heap request in the middle of a four-year-old
+talking is a failure with no good outcome. Allocation failure is not fatal either: the panel
+keeps its voice commands and its meter and simply cannot record, which is a smaller loss than
+refusing to start.
+
+**It stops at the cap rather than wrapping.** A ring buffer would hand the box the END of a
+long hold, and what a child said is at the start.
+
+**The recording opens AFTER the beep, deliberately.** `audio.c` goes deaf for six chunks once
+the speaker runs (§10.4bi), so opening it here keeps the panel's own tone out of the front of
+every message — the same fault that would otherwise have the recogniser transcribing a beep.
+
+**And it reads the chunk the recogniser already gets.** One microphone, one owner, one read.
+A second reader would be the two-owners fault that panicked a panel earlier today (§10.4al),
+and the capture is a `memcpy` inside the task that already owns the codec.
+
+##### Held and captured are different numbers
+
+```
+talk: held 1840 ms, captured 1640 ms (52480 bytes)
+```
+
+Printing only the first is how a dead microphone looks like a working one. They diverge when
+the buffer failed to allocate, when the six-second cap bites, and when the deaf window after
+the beep eats the start — three different bugs that a single number cannot tell apart. This is
+the same lesson as §10.4bb, applied before it costs anything rather than after.
+
+**Still to come: the upload and the playback.** The box has answered `/endpoint/converse`
+since §10.4bo; nothing calls it yet. The upload must not run on the render task — a network
+round trip there is a frozen pet — so it wants its own task, which is the next piece.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

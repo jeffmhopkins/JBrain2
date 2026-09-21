@@ -17,11 +17,14 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "driver/i2s_std.h"
 #include "es8311_codec.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -86,6 +89,39 @@ static const char *TAG = "audio";
 static esp_codec_dev_handle_t s_codec;
 /* Kept so the ALC can be read back from the audio task — see `alc_settle()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
+
+/* THE RECORDING. Six seconds is the cap the box enforces too, and both ends need it: the
+   panel must not fill PSRAM because a screen is face-down in a bag, and the box must not
+   transcribe a minute of a room because the panel forgot to stop. 6 s of 16 kHz mono s16 is
+   192 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM nothing else wants.
+   Never allocated while recording: a heap request in the middle of a four-year-old talking
+   is a failure with no good outcome. */
+#define CAPTURE_MAX_MS 6000
+#define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
+static int16_t *s_cap;          /* PSRAM, claimed at start-up */
+static volatile int s_cap_used; /* samples written this recording */
+static volatile bool s_cap_on;
+
+void audio_capture_open(void)
+{
+    if (s_cap == NULL) return;
+    s_cap_used = 0;
+    s_cap_on = true;
+}
+
+const int16_t *audio_capture_close(size_t *len_bytes)
+{
+    s_cap_on = false;
+    const int used = s_cap_used;
+    if (len_bytes != NULL) *len_bytes = (size_t)used * sizeof(int16_t);
+    return (s_cap != NULL && used > 0) ? s_cap : NULL;
+}
+
+int audio_capture_ms(void)
+{
+    return s_cap_used * 1000 / AUDIO_RATE;
+}
+
 
 /* The one task that touches `s_codec`. Defined below, beside the requests it services. */
 static void audio_task(void *arg);
@@ -213,6 +249,13 @@ bool audio_start(void)
     /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
        capture is a dropped chunk and a meter that lags the room. The stack is small because
        this task calls into the codec and computes a peak, and nothing else. */
+    /* PSRAM, claimed once, before anything else wants it. Failure is not fatal: the panel
+       keeps its voice commands and its meter and simply cannot record a message, which is a
+       smaller loss than refusing to start. */
+    s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "capture buffer: %s (%d ms max)", s_cap != NULL ? "ready" : "UNAVAILABLE",
+             CAPTURE_MAX_MS);
+
     if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "audio task");
         return false;
@@ -322,6 +365,7 @@ static void alc_settle(void)
 #define DEAF_CHUNKS 6
 static int s_deaf;
 
+
 static void audio_task(void *arg)
 {
     (void)arg;
@@ -350,6 +394,19 @@ static void audio_task(void *arg)
                 continue;
             }
             s_level = audio_peak(s_chunk, AUDIO_CHUNK);
+            if (s_cap_on && s_cap != NULL) {
+                /* Straight off the same chunk the recogniser gets. One microphone, one
+                   owner, one read — a second reader would be the two-owners fault this
+                   file's header is about. Stops at the cap rather than wrapping: a ring
+                   buffer would hand the box the END of a long hold, and what a child said
+                   is at the start. */
+                const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
+                const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
+                if (take > 0) {
+                    memcpy(&s_cap[s_cap_used], s_chunk, (size_t)take * sizeof(int16_t));
+                    s_cap_used += take;
+                }
+            }
             /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one
                owner, and esp-sr's usual arrangement — its own task reading I2S directly —
                would be a second one. `speech_feed` is a memcpy and a hand-off; the model

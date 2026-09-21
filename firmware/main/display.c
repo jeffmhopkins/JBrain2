@@ -1261,11 +1261,23 @@ static void face_task(void *arg)
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
                that the thing is now listening rather than merely being held. */
             if (sound) audio_beep();
+            /* AFTER the beep, deliberately: `audio.c` goes deaf for six chunks once the
+               speaker runs (§10.4bi), so opening the recording here keeps our own tone out
+               of the front of every message. */
+            audio_capture_open();
             ESP_LOGI(TAG, "talk: listening");
         } else if (s_talk == TALK_LISTENING && !down) {
-            /* The length BEFORE the timestamp is reused, or it reads zero every time. */
-            ESP_LOGI(TAG, "talk: thinking after %u ms of audio",
-                     (unsigned)(now - s_talk_since));
+            size_t got = 0;
+            const int16_t *pcm = audio_capture_close(&got);
+            /* HELD LENGTH AND CAPTURED LENGTH ARE DIFFERENT NUMBERS, and printing only the
+               first is how a dead microphone looks like a working one. They diverge when the
+               capture buffer failed to allocate, when the six-second cap bites, or when the
+               deaf window after the beep ate the start — and each of those is a different
+               bug. The length BEFORE the timestamp is reused, or the hold reads as zero. */
+            ESP_LOGI(TAG, "talk: held %u ms, captured %u ms (%u bytes)",
+                     (unsigned)(now - s_talk_since), (unsigned)audio_capture_ms(),
+                     (unsigned)got);
+            (void)pcm; /* the upload is the next piece; see PANEL_CONVERSATION_PLAN.md */
             s_talk = TALK_THINKING;
             s_talk_since = now;
         } else if (s_talk == TALK_THINKING && now - s_talk_since > TALK_TIMEOUT_MS) {
