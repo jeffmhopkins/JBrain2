@@ -131,3 +131,76 @@ bool calib_load(const uint8_t *buf, int len, calib_t *out)
     *out = c;
     return true;
 }
+
+void calib_sample_reset(cal_samples_t *s)
+{
+    if (s != NULL) s->n = 0;
+}
+
+void calib_sample_add(cal_samples_t *s, int x, int y)
+{
+    if (s == NULL) return;
+    if (s->n < CAL_SAMPLES_MAX) {
+        s->x[s->n] = (int16_t)x;
+        s->y[s->n] = (int16_t)y;
+        s->n++;
+        return;
+    }
+    /* Full: drop the oldest. A target the owner kept tapping until it felt right should be
+       judged on the taps that felt right. */
+    for (int i = 1; i < CAL_SAMPLES_MAX; i++) {
+        s->x[i - 1] = s->x[i];
+        s->y[i - 1] = s->y[i];
+    }
+    s->x[CAL_SAMPLES_MAX - 1] = (int16_t)x;
+    s->y[CAL_SAMPLES_MAX - 1] = (int16_t)y;
+}
+
+static int spread_of(const int16_t *v, int n)
+{
+    int lo = v[0], hi = v[0];
+    for (int i = 1; i < n; i++) {
+        if (v[i] < lo) lo = v[i];
+        if (v[i] > hi) hi = v[i];
+    }
+    return hi - lo;
+}
+
+int calib_sample_spread(const cal_samples_t *s)
+{
+    if (s == NULL || s->n < 2) return 0;
+    const int sx = spread_of(s->x, s->n), sy = spread_of(s->y, s->n);
+    return sx > sy ? sx : sy;
+}
+
+bool calib_sample_settled(const cal_samples_t *s)
+{
+    if (s == NULL || s->n < CAL_SAMPLES_MIN) return false;
+    return calib_sample_spread(s) <= CAL_SPREAD_MAX;
+}
+
+static int16_t median_of(const int16_t *v, int n)
+{
+    /* Insertion sort of a copy: n is at most CAL_SAMPLES_MAX, and a sort nobody can get
+       wrong is worth more here than one nobody can measure the speed of. */
+    int16_t t[CAL_SAMPLES_MAX];
+    for (int i = 0; i < n; i++) t[i] = v[i];
+    for (int i = 1; i < n; i++) {
+        const int16_t k = t[i];
+        int j = i - 1;
+        while (j >= 0 && t[j] > k) {
+            t[j + 1] = t[j];
+            j--;
+        }
+        t[j + 1] = k;
+    }
+    if (n % 2 == 1) return t[n / 2];
+    return (int16_t)(((int)t[n / 2 - 1] + (int)t[n / 2]) / 2);
+}
+
+void calib_sample_result(const cal_samples_t *s, int16_t *x, int16_t *y)
+{
+    if (s == NULL || s->n <= 0) return;
+    if (x != NULL) *x = median_of(s->x, s->n);
+    if (y != NULL) *y = median_of(s->y, s->n);
+}

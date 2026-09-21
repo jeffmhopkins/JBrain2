@@ -45,6 +45,44 @@
    the outer segment then has to bend too far. */
 extern const float CAL_FRAC[CAL_KNOTS];
 
+/* REPEATED SAMPLES PER TARGET, because one tap is not a measurement.
+ *
+ * The owner's observation: where a tap lands moves with how much fingertip goes down. On a
+ * 1.8" panel a millimetre of contact-patch drift is about eleven pixels, so a single reading
+ * carries more noise than the edge error the whole routine exists to remove. Taking several
+ * and requiring them to AGREE is what turns a tap into a measurement.
+ *
+ * The median, not the mean: one slip with the side of a finger would drag a mean several
+ * pixels and cannot move a median at all.
+ *
+ * Adaptive rather than fixed: a target that settles in three taps costs three, and only a
+ * wobbly one costs more. That is the owner's "keep on pressing it until we have conformance"
+ * — with a cap, because a target that will not settle must not trap them on it forever. */
+#define CAL_SAMPLES_MIN 3
+#define CAL_SAMPLES_MAX 6
+/* Raw units of disagreement tolerated across the samples for a target. Roughly a millimetre
+   on this panel: tight enough that it is really the same spot, loose enough that an adult
+   tapping normally reaches it. */
+#define CAL_SPREAD_MAX 14
+
+typedef struct {
+    int16_t x[CAL_SAMPLES_MAX];
+    int16_t y[CAL_SAMPLES_MAX];
+    int n;
+} cal_samples_t;
+
+void calib_sample_reset(cal_samples_t *s);
+/* Keeps the most recent CAL_SAMPLES_MAX — a run that starts badly and settles should be
+   judged on where it settled, not on where it began. */
+void calib_sample_add(cal_samples_t *s, int x, int y);
+/* Enough samples, and they agree. */
+bool calib_sample_settled(const cal_samples_t *s);
+/* The widest disagreement on either axis, for showing the owner how the target is going. */
+int calib_sample_spread(const cal_samples_t *s);
+/* The median of what has been collected. Defined for any n > 0, so a capped-out target still
+   yields its best estimate rather than nothing. */
+void calib_sample_result(const cal_samples_t *s, int16_t *x, int16_t *y);
+
 typedef struct {
     bool valid;
     /* The raw controller reading observed at each knot, ascending. */

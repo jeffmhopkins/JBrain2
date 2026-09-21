@@ -224,11 +224,30 @@ The middle of the panel reads true and the outer 20% is skewed — the ordinary 
 these controllers, and exactly what a fixed scale cannot fix, because the error is zero in the
 centre and grows outward.
 
-Sixteen targets (4 knots per axis), one tap each, then a piecewise-linear correction per axis.
+Sixteen targets (4 knots per axis), **three or more taps each**, then a piecewise-linear
+correction per axis.
 **Four knots is a measurement**: against a simulated edge compression whose worst error is
 29 px, three knots leave 12.3, four leave 7.1 and five leave 4.6 — and four holds that ratio
 across distortion strengths, which matters because the real curve is unknown and over-fitting a
 model we invented would be its own mistake.
+
+**One tap is not a measurement.** Where a tap lands moves with how much fingertip goes down,
+and on a 1.8" panel a millimetre of contact-patch drift is about eleven pixels — more noise
+than the edge error the routine exists to remove. So each target takes taps until they
+*agree* (three minimum, six cap) and contributes their **median**: one slip with the side of a
+finger drags a mean and cannot move a median. The crosshair is amber while it wants more and
+turns green when they agree, with a dot per tap recorded.
+
+Modelled against occasional gross misses — one tap in six landing up to 40 px off, which is
+what the owner actually described — the difference is in the tail rather than the mean:
+
+| | mean worst | worst case | runs over 15 px |
+| --- | --- | --- | --- |
+| one tap per target | 12.5 px | 38 px | 80 / 400 |
+| adaptive, requiring agreement | 7.5 px | 12 px | **0 / 400** |
+
+Against *uniform* jitter the extra taps barely help at all, because the residual is dominated
+by the model's own error. The tail is the whole story, and the test asserts the tail.
 
 The outer 6% is extrapolated from the outer segment rather than clamped, because clamping would
 flatten precisely the band that is wrong. A non-monotone result is **refused** and the previous

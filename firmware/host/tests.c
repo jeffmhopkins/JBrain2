@@ -468,6 +468,195 @@ static void fill_grid(int16_t mx[CAL_KNOTS][CAL_KNOTS], int16_t my[CAL_KNOTS][CA
     }
 }
 
+static void test_samples_need_agreement_not_just_count(void)
+{
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 200);
+    CHECK(!calib_sample_settled(&s), "one tap is never a measurement");
+    calib_sample_add(&s, 102, 201);
+    CHECK(!calib_sample_settled(&s), "nor are two");
+    calib_sample_add(&s, 101, 199);
+    CHECK(calib_sample_settled(&s), "three that agree settle");
+
+    /* The owner's actual complaint: the contact patch moves the reading. A run that is
+       merely NUMEROUS but scattered must not be accepted. */
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 200);
+    calib_sample_add(&s, 100 + CAL_SPREAD_MAX + 6, 200);
+    calib_sample_add(&s, 100, 200);
+    CHECK(!calib_sample_settled(&s), "three that disagree do not settle");
+}
+
+static void test_samples_use_the_median_not_the_mean(void)
+{
+    /* One slip with the side of a finger drags a mean and cannot move a median. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    calib_sample_add(&s, 100, 300);
+    calib_sample_add(&s, 104, 302);
+    calib_sample_add(&s, 102, 301);
+    calib_sample_add(&s, 260, 40); /* the slip */
+    int16_t x = 0, y = 0;
+    calib_sample_result(&s, &x, &y);
+    CHECK(x >= 100 && x <= 104, "a wild sample does not move the x result");
+    CHECK(y >= 300 && y <= 302, "nor the y result");
+    CHECK(!calib_sample_settled(&s), "and it keeps the target unsettled");
+}
+
+static void test_samples_recover_from_a_bad_start(void)
+{
+    /* A target the owner kept tapping until it felt right is judged on the taps that felt
+       right: the buffer keeps the most recent CAL_SAMPLES_MAX. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    for (int i = 0; i < 4; i++) calib_sample_add(&s, 40 + i * 30, 40 + i * 30);
+    CHECK(!calib_sample_settled(&s), "a scattered start does not settle");
+    for (int i = 0; i < CAL_SAMPLES_MAX; i++) calib_sample_add(&s, 200 + (i % 2), 300);
+    CHECK(calib_sample_settled(&s), "a run that settles, settles");
+    int16_t x = 0;
+    calib_sample_result(&s, &x, NULL);
+    CHECK(x >= 200 && x <= 201, "and reports where it settled");
+}
+
+static void test_samples_always_yield_something(void)
+{
+    /* A target that will not settle must not trap the owner on it. Past the cap the routine
+       accepts the median anyway, so the result has to be defined for any n. */
+    cal_samples_t s;
+    calib_sample_reset(&s);
+    for (int i = 0; i < CAL_SAMPLES_MAX + 4; i++) calib_sample_add(&s, 10 + i * 40, 500 - i * 30);
+    CHECK(s.n == CAL_SAMPLES_MAX, "the buffer is bounded");
+    int16_t x = -1, y = -1;
+    calib_sample_result(&s, &x, &y);
+    CHECK(x >= 0 && y >= 0, "a capped-out target still yields its best estimate");
+    CHECK(calib_sample_spread(&s) > CAL_SPREAD_MAX, "and is honest that it never agreed");
+}
+
+/* One trial: build a grid either from single taps or from medians of agreeing taps, on a
+   panel with both edge skew and per-tap contact noise, and return the total residual. */
+static long noisy_trial(uint32_t *rnd, float k, int samples)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    for (int j = 0; j < CAL_KNOTS; j++) {
+        for (int i = 0; i < CAL_KNOTS; i++) {
+            const int tx = calib_target_x(i), ty = calib_target_y(j);
+            cal_samples_t s;
+            calib_sample_reset(&s);
+            for (int t = 0; t < samples; t++) {
+                *rnd = *rnd * 1103515245u + 12345u;
+                const int nx = (int)((*rnd >> 16) % 19u) - 9;
+                *rnd = *rnd * 1103515245u + 12345u;
+                const int ny = (int)((*rnd >> 16) % 19u) - 9;
+                calib_sample_add(&s, squash(tx, FACE_W, k) + nx, squash(ty, FACE_H, k) + ny);
+            }
+            calib_sample_result(&s, &mx[j][i], &my[j][i]);
+        }
+    }
+    calib_t c;
+    if (!calib_build(mx, my, &c)) return -1;
+    long err = 0;
+    for (int tx = 8; tx < FACE_W - 8; tx++) {
+        const int raw = squash(tx, FACE_W, k);
+        int a = 0;
+        calib_apply(&c, raw, 0, &a, NULL);
+        err += a > tx ? a - tx : tx - a;
+    }
+    return err;
+}
+
+static void test_samples_beat_single_taps_on_a_noisy_panel(void)
+{
+    /* THE WHOLE POINT, end to end — and stated as a claim about MANY runs, because it is one.
+       The median of three taps has roughly 70% of the noise of one, so a single seeded trial
+       can go either way and asserting on one would be measuring the seed. */
+    const float k = 0.18f;
+    uint32_t r1 = 12345u, r3 = 12345u;
+    long tot1 = 0, tot3 = 0;
+    int wins = 0, trials = 0;
+    for (int t = 0; t < 200; t++) {
+        const long e1 = noisy_trial(&r1, k, 1);
+        const long e3 = noisy_trial(&r3, k, CAL_SAMPLES_MIN);
+        if (e1 < 0 || e3 < 0) continue; /* a noisy single-tap grid can fold; that is its own cost */
+        tot1 += e1;
+        tot3 += e3;
+        if (e3 < e1) wins++;
+        trials++;
+    }
+    CHECK(trials > 150, "most trials produced usable grids");
+    CHECK(tot3 < tot1, "medians of agreeing taps beat single taps overall");
+    CHECK(wins * 2 > trials, "and win the majority of individual runs");
+}
+
+/* Occasional gross misses, which is what the owner actually described: most taps tight, and
+   one in six landing well off because of how much fingertip went down. Uniform jitter is the
+   wrong model — against THAT, extra samples barely help, because the residual is dominated by
+   the piecewise-linear model's own error rather than by noise. The tail is the whole story. */
+static int slip_noise(uint32_t *r)
+{
+    *r = *r * 1103515245u + 12345u;
+    if (((*r >> 16) % 6u) == 0) {
+        *r = *r * 1103515245u + 12345u;
+        return (int)((*r >> 16) % 81u) - 40;
+    }
+    *r = *r * 1103515245u + 12345u;
+    return (int)((*r >> 16) % 7u) - 3;
+}
+
+static long slip_trial(uint32_t *r, float k, bool adaptive)
+{
+    int16_t mx[CAL_KNOTS][CAL_KNOTS], my[CAL_KNOTS][CAL_KNOTS];
+    for (int j = 0; j < CAL_KNOTS; j++) {
+        for (int i = 0; i < CAL_KNOTS; i++) {
+            const int tx = calib_target_x(i), ty = calib_target_y(j);
+            cal_samples_t s;
+            calib_sample_reset(&s);
+            int guard = 0;
+            do {
+                calib_sample_add(&s, squash(tx, FACE_W, k) + slip_noise(r),
+                                 squash(ty, FACE_H, k) + slip_noise(r));
+                guard++;
+            } while (adaptive && !calib_sample_settled(&s) && guard < CAL_SAMPLES_MAX);
+            calib_sample_result(&s, &mx[j][i], &my[j][i]);
+        }
+    }
+    calib_t c;
+    if (!calib_build(mx, my, &c)) return -1;
+    long worst = 0;
+    for (int tx = 8; tx < FACE_W - 8; tx++) {
+        const int raw = squash(tx, FACE_W, k);
+        int a = 0;
+        calib_apply(&c, raw, 0, &a, NULL);
+        const long d = a > tx ? a - tx : tx - a;
+        if (d > worst) worst = d;
+    }
+    return worst;
+}
+
+static void test_agreement_removes_the_bad_tail(void)
+{
+    /* THE CLAIM THAT JUSTIFIES THE EXTRA TAPS, and it is about the tail, not the mean: a
+       single tap per target leaves a real chance of a calibration that is WORSE than none in
+       places, and requiring agreement removes it. */
+    uint32_t r1 = 777u, r2 = 777u;
+    int bad_single = 0, bad_adaptive = 0, runs = 0;
+    long worst_single = 0, worst_adaptive = 0;
+    for (int t = 0; t < 300; t++) {
+        const long a = slip_trial(&r1, 0.18f, false);
+        const long b = slip_trial(&r2, 0.18f, true);
+        if (a < 0 || b < 0) continue;
+        if (a > 15) bad_single++;
+        if (b > 15) bad_adaptive++;
+        if (a > worst_single) worst_single = a;
+        if (b > worst_adaptive) worst_adaptive = b;
+        runs++;
+    }
+    CHECK(runs > 250, "most trials produced usable grids");
+    CHECK(bad_single > runs / 10, "single taps really do go badly wrong sometimes");
+    CHECK(bad_adaptive == 0, "requiring agreement removes the bad tail entirely");
+    CHECK(worst_adaptive * 2 < worst_single, "and halves the worst case");
+}
+
 static void test_calib_identity_until_built(void)
 {
     /* An uncalibrated panel must behave EXACTLY as it did before this file existed. */
@@ -844,6 +1033,12 @@ int main(void)
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
     test_blink_is_a_line_not_a_hole();
+    test_samples_need_agreement_not_just_count();
+    test_samples_use_the_median_not_the_mean();
+    test_samples_recover_from_a_bad_start();
+    test_samples_always_yield_something();
+    test_samples_beat_single_taps_on_a_noisy_panel();
+    test_agreement_removes_the_bad_tail();
     test_calib_identity_until_built();
     test_calib_exact_at_the_knots();
     test_calib_corrects_the_edges();

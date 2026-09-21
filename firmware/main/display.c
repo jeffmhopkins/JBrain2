@@ -331,6 +331,7 @@ static int s_tap_zone = 0;
 static calib_t s_cal;
 static bool s_cal_active;
 static int s_cal_i; /* which target, 0 .. CAL_KNOTS*CAL_KNOTS-1 */
+static cal_samples_t s_cal_s; /* repeated taps at the current target */
 static int16_t s_cal_mx[CAL_KNOTS][CAL_KNOTS];
 static int16_t s_cal_my[CAL_KNOTS][CAL_KNOTS];
 /* Held after a run so the glass says what happened rather than just returning to the robot. */
@@ -344,21 +345,35 @@ static void cal_begin(void)
 {
     s_cal_active = true;
     s_cal_i = 0;
-    ESP_LOGI(TAG, "calibration: %d targets", CAL_TARGETS);
+    calib_sample_reset(&s_cal_s);
+    ESP_LOGI(TAG, "calibration: %d targets, %d-%d taps each", CAL_TARGETS, CAL_SAMPLES_MIN,
+             CAL_SAMPLES_MAX);
 }
 
 /* A crosshair, drawn into a cleared frame. Deliberately thin and long: a fat blob invites a
    tap at its edge, and the whole routine is only as good as where the finger actually lands. */
-static void cal_draw(uint16_t *fb, int cx, int cy, int done, int total)
+static void cal_draw(uint16_t *fb, int cx, int cy, int done, int total, int taps, bool agree)
 {
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    /* Amber while it still wants taps, green the moment they agree — so the owner can see
+       the difference between "keep going" and "that one is measured", which is the whole
+       reason this target takes more than one press. */
+    const uint16_t c = agree ? SWAP16(0x07E0) : CUE_COLOUR;
     for (int d = -22; d <= 22; d++) {
         for (int w = -1; w <= 1; w++) {
             const int x = cx + d, y = cy + w;
-            if (x >= 0 && x < FACE_W && y >= 0 && y < FACE_H) fb[y * FACE_W + x] = CUE_COLOUR;
+            if (x >= 0 && x < FACE_W && y >= 0 && y < FACE_H) fb[y * FACE_W + x] = c;
             const int x2 = cx + w, y2 = cy + d;
-            if (x2 >= 0 && x2 < FACE_W && y2 >= 0 && y2 < FACE_H) {
-                fb[y2 * FACE_W + x2] = CUE_COLOUR;
+            if (x2 >= 0 && x2 < FACE_W && y2 >= 0 && y2 < FACE_H) fb[y2 * FACE_W + x2] = c;
+        }
+    }
+    /* One dot below the crosshair per tap recorded here. A target that is taking five tells
+       the owner it is taking five, rather than feeling broken. */
+    for (int k = 0; k < taps && k < CAL_SAMPLES_MAX; k++) {
+        const int dx = cx - (CAL_SAMPLES_MAX * 12) / 2 + k * 12 + 4;
+        for (int y = cy + 32; y < cy + 38; y++) {
+            for (int x = dx; x < dx + 6; x++) {
+                if (x >= 0 && x < FACE_W && y >= 0 && y < FACE_H) fb[y * FACE_W + x] = c;
             }
         }
     }
@@ -787,9 +802,23 @@ static void face_task(void *arg)
                 if (tapped) {
                     int rx = -1, ry = -1;
                     touch_point(&rx, &ry);
-                    s_cal_mx[j][i] = (int16_t)rx;
-                    s_cal_my[j][i] = (int16_t)ry;
+                    /* RAW, not corrected: a calibration measured through the previous
+                       calibration would fit the correction on top of itself. */
+                    calib_sample_add(&s_cal_s, rx, ry);
                     if (sound) audio_beep();
+                }
+                /* Advance when the taps AGREE, or when this target has had its cap — a
+                   target that will not settle must not trap the owner on it, so past the cap
+                   it contributes its median and the run continues. */
+                const bool settled = calib_sample_settled(&s_cal_s);
+                const bool capped = s_cal_s.n >= CAL_SAMPLES_MAX;
+                if (settled || capped) {
+                    calib_sample_result(&s_cal_s, &s_cal_mx[j][i], &s_cal_my[j][i]);
+                    if (!settled) {
+                        ESP_LOGW(TAG, "target %d never settled (spread %d) — using the median",
+                                 s_cal_i, calib_sample_spread(&s_cal_s));
+                    }
+                    calib_sample_reset(&s_cal_s);
                     s_cal_i++;
                     if (s_cal_i >= CAL_TARGETS) {
                         s_cal_active = false;
@@ -812,7 +841,8 @@ static void face_task(void *arg)
                     }
                 }
                 cal_draw(fb, calib_target_x(s_cal_i % CAL_KNOTS),
-                         calib_target_y(s_cal_i / CAL_KNOTS), s_cal_i, CAL_TARGETS);
+                         calib_target_y(s_cal_i / CAL_KNOTS), s_cal_i, CAL_TARGETS, s_cal_s.n,
+                         calib_sample_settled(&s_cal_s));
             }
             PHASE(9);
             const esp_err_t cerr = esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
