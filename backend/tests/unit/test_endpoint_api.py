@@ -844,3 +844,19 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+    def test_the_accelerometer_is_reported_raw(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Raw counts, because which axis points where on this board is undocumented. A
+        firmware that reported "upright" would be asserting the very thing being measured."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.17", "uptime_ms": 1, "accel": [120, -8180, 240]},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
