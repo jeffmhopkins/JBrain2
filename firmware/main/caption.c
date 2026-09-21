@@ -97,19 +97,33 @@ void caption_draw(const caption_t *c, uint16_t *fb, int fbw, int fbh, uint16_t t
     const int y = fbh - MARGIN - ROW_H;
 
     if (c->len > 0) {
-        /* A BLACK STRIP FIRST. The figure's feet reach y=435 on a 448 px panel and the
-           ticker runs at 432 — measured, "PLAY PEEKABOO" ran straight through the ostrich's
-           toes. On an AMOLED an unlit pixel is OFF, so clearing the row costs nothing, reads
-           as a deliberate subtitle bar rather than as a box, and is the only thing that makes
-           the line legible whatever the robot is doing underneath it. */
-        for (int row = y - 3; row < y + ROW_H + 3; row++) {
-            if (row < 0 || row >= fbh) continue;
-            for (int col = 0; col < fbw; col++) fb[row * fbw + col] = 0;
+        /* OUTLINED, NOT BOXED. This used to clear a full-width black strip before drawing,
+           and the reason was real: the figure's feet reach y=435 on a 448 px panel while the
+           ticker runs at 432, and "PLAY PEEKABOO" measurably ran straight through the
+           ostrich's toes. The bar made it legible over anything.
+           
+           But the owner watches this thing: "the text scrolling on the bottom ... the black
+           in. It should be transparent." A band of dead black across a pet's feet is a
+           subtitle bar on a toy, and on an AMOLED it is not even subtle — those pixels are
+           OFF, so it is a hard-edged hole in the picture rather than a tint.
+           
+           So the legibility comes from the glyphs instead, the way subtitles have always
+           done it: the text is drawn four times in unlit black, offset by two pixels each
+           way, and then once in its own colour on top. That carves a dark halo around each
+           letter and leaves every pixel between the letters untouched, so the pet shows
+           through and the words stay readable over legs, wings or nothing at all.
+           
+           Five draws rather than one, on a string this short, at the five frames a second
+           the face actually redraws. */
+        const int x = fbw - (int)c->scrolled;
+        static const int HALO[4][2] = {{-2, 0}, {2, 0}, {0, -2}, {0, 2}};
+        for (unsigned i = 0; i < sizeof(HALO) / sizeof(HALO[0]); i++) {
+            font_draw(fb, fbw, fbh, x + HALO[i][0], y + HALO[i][1], SCALE, c->buf, 0);
         }
         /* Enters from the right edge and travels left, so the newest word is the one
            arriving. `font_draw` clips, which is the whole reason the ticker can be drawn as
            one string however long the backlog is. */
-        font_draw(fb, fbw, fbh, fbw - (int)c->scrolled, y, SCALE, c->buf, text);
+        font_draw(fb, fbw, fbh, x, y, SCALE, c->buf, text);
     }
 
     /* THE INDICATOR IS DRAWN WHENEVER THE MICROPHONE IS OPEN, with or without a caption, and

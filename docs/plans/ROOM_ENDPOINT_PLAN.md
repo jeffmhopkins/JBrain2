@@ -2979,6 +2979,214 @@ Separately and regardless of which it is: **the panel now stops listening to its
 chunks of deafness after the speaker runs, covering the 90 ms beep and a tail. Feeding our own
 tone to the recogniser is not merely noise, it is a false trigger with a loudspeaker behind it.
 
+#### 10.4bj A quarter turn is not a rotation (0.2.51, 2026-09-21)
+
+The owner: *"Can we also have the capability of having it 90 degrees out so if it came from
+the cable and it's 90 the bottom is lower? You'd have to scale the bird and all of this but I
+think it would be beneficial to the usability for the twins."*
+
+**`rig.h` refuses to rotate the figure, and that reasoning still holds — but it does not apply
+here.** What it rejects is an *arbitrary* angle: a per-pixel resample this panel cannot spend
+25 times a second, and which in source space tears holes in filled shapes. A quarter turn is
+neither. It is an **index permutation** — every destination pixel is exactly one source pixel,
+no interpolation, no gaps — the same class of operation as the 180° flip this panel has done
+since 0.2.19.
+
+##### The square is what makes it free
+
+A quarter turn maps a **square** onto itself. So the figure renders into a 368x368 region of
+the 368x448 frame and the rotated blit is source-square to destination-square: no second
+framebuffer, no reallocation, the same two 11,776-byte stripe buffers. The 40 px above and
+below are never written, and on an AMOLED an unwritten pixel is an unlit one, so the bars are
+invisible rather than grey.
+
+**And the direction of the scan is the whole performance story.** The obvious loop reads the
+source across a row and writes down a column, which on a framebuffer in PSRAM is 368 cache
+misses per stripe. Blitting **column** stripes instead — `esp_lcd_panel_draw_bitmap` takes any
+rectangle, not only full-width bands — inverts it: for a fixed destination column the source
+addresses are consecutive, so PSRAM is read sequentially and the scattered writes land in
+internal SRAM where a stride costs nothing.
+
+##### Four ways up, from the two axes the flip already used
+
+Gravity on X is portrait and its sign says which way up; gravity on Y is landscape — mounted
+with the cable out the side — and its sign says which. Whichever axis is larger wins, with the
+same half-a-gravity hysteresis the two-way version needed, because a panel lying near flat has
+almost nothing on either axis and a bare comparison would flip back and forth on noise.
+
+##### The scale, which the owner called before it was measured
+
+The figure is composed for 448 of height and is 428 px of it. On its side it has 368, so
+everything scales by 368/448 through one scalar (`face_set_fit`) rather than a second
+hand-tuned layout — every number in `face.c` was measured against the mock, and a second set
+would be a second thing to keep true.
+
+**The first version of the test demanded no clipping at all, and failed.** Measured:
+
+| scale | poses clipped (of 646) |
+|---|---|
+| portrait, 1.00 | **0** |
+| square, 0.82 | 76 (11.8%) |
+| square, 0.78 | 56 (8.7%) |
+| square, 0.66 | 0 |
+
+Reaching zero needs **0.66 — a third smaller than portrait**, and §10.4at already rejected
+that trade for the portrait figure in almost the same words: *"shrinking the approved bird by
+a sixth to save an average of four pixels a frame, on a figure already 428 px tall in a 448 px
+panel, is the wrong trade on a 29 mm screen; a cropped toe at the peak of a gag reads as
+energy."* Shrinking by a third to save a crest tip during a boing is the same trade and worse.
+
+So the test asks two different questions instead of one: **nothing clips at rest** — a pet
+cropped while standing still is simply drawn wrong — and clipping across all poses stays
+inside the 15% §10.4at accepted for portrait. It lands at 11.8%.
+
+##### What a quarter turn would have silently eaten
+
+Both overlays sat outside the square: the version label at y=6 is above it, and the caption is
+anchored to the bottom of the frame and is below it. The rotation would simply not have
+carried them, so the first thing lost on a side-mounted panel would have been **the caption —
+the one piece of feedback that says a command was heard**. Both take the square's bounds now
+instead of the frame's.
+
+The permutation is checked on the host rather than reasoned about: turning one way then the
+other is the identity across every pixel of the square, and a named corner is asserted by hand,
+because "it round-trips" is also true of doing nothing. An off-by-one in a permutation is a
+mirrored pet, which looks deliberate.
+
+#### 10.4bk Press, hold, and a box that thinks (0.2.52, 2026-09-21)
+
+The owner, specifying the conversation gesture: *"when we long press ... it should make a
+[sound] when it activates the listening and then when we release it should show the thinking
+box."*
+
+This ships **the interaction and nothing behind it yet**, deliberately. The gesture, the
+sound, the listening state, the thinking box and the failure state are all panel-side and cost
+nothing to get right first; the round trip is gated on a measurement nobody has taken (below).
+
+##### The hold threshold is the whole design problem
+
+`gesture.h` records that 4–5 year olds produce ordinary presses lasting **up to 4.2 s**, which
+is exactly why the maintenance gestures stopped being a bare hold. A talk gesture cannot wait
+4.2 s — nobody holds a button that long before speaking — so it fires at **700 ms**, past the
+600 ms that still counts as a tap, and accepts that ordinary play will sometimes start a
+listen.
+
+**That is survivable here in a way it was not for "reboot the panel".** The cost of a false
+listen is a beep and a discarded recording; the cost of a false reboot is a toy restarting in
+a child's hands. Same measurement, opposite conclusion, because the consequences are not
+comparable.
+
+It never fires mid-maintenance-gesture: those are taps *then* a hold, so a hold beginning
+while a tap run is live belongs to them (`gest.taps == 0` is checked after `gesture_poll`).
+
+##### Four states, and the fourth is the one that matters
+
+| state | what shows |
+|---|---|
+| listening | **a beep**, a pulsing red dot, and the pet wears `FACE_CURIOUS` |
+| thinking | the bubble, three dots filling in turn |
+| failed | the bubble in grey with a flat red dash, and `FACE_BEWILDERED` |
+| idle | the pet, as before |
+
+**The beep is the affordance.** Nothing else tells a child holding a 29 mm screen that the
+thing is now listening rather than merely being held.
+
+**And the failure state is not optional.** After 12 s with no reply the panel says so rather
+than returning quietly to idle, because on a device whose owner has no terminal *"it didn't
+hear you"* and *"it is broken"* must not look identical — which is the exact failure mode
+§10.4bc was written about. The dash is a different SHAPE from the dots, not merely a different
+colour, so the two read apart at a glance on a screen this small.
+
+The face follows the conversation: attentive while listening, bewildered on failure. A pet
+that keeps grinning through a failure is a pet that looks like it did not notice.
+
+##### What is not here, and why
+
+The capture buffer, the upload and the reply. `../proposed/PANEL_CONVERSATION_PLAN.md` records
+the reason: **whisper takes ~9.8 s per call on this box**, flat, because whisper.cpp pads
+every clip to a 30-second window (`api/sdr.py:1412-1416`). No thinking box covers nine
+seconds. `scripts/whisper-setup.sh:5` already makes the model operator-selectable and
+`base.en` is an option — **that measurement is the next step, and it decides whether the round
+trip is a week of firmware or a different STT entirely.** Building the transport first would be
+building on a number nobody has.
+
+#### 10.4bl The help text was executable (2026-09-21)
+
+0.2.50 added two usage examples to `scripts/debug-connect.sh`. **Without `#` prefixes.**
+
+`usage()` prints the script's leading comment block —
+`awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"` — a nice trick with a
+sharp edge: a help line that is not a comment is not documentation, it is **executable bash at
+the top of the script**. Both offending lines read `scripts/debug-connect.sh panel-settings
+...`, so every invocation immediately re-ran the script:
+
+```
++ scripts/debug-connect.sh panel-settings
+bash: warning: shell level (1000) too high, resetting to 1   (x1000)
+```
+
+Infinite recursion, and a hang with no output — `bash -x` produced nothing because the trace
+died with the pipe. It also silently truncated the help at the first bad line.
+
+**It broke a deploy before anyone noticed.** The 0.2.50 rollout was attributed to a container
+restart killing the watcher; the box was still on 0.2.48 long afterwards because every
+`debug-connect.sh update` had been hanging on this. That script is how the owner updates a box
+they cannot open a terminal on (`CLAUDE.md` #10), so this broke **the recovery path as well as
+the thing being recovered** — the worst shape a bug can have on this product.
+
+##### The first guard passed with the bug put back
+
+```python
+if not line.startswith("#"):
+    assert i > 10, ...      # "the help block is long enough"
+    break
+```
+
+The offending line is line 14, so `i > 10` held and the test broke out happily. It asserted
+the block was long enough rather than that nothing in it runs — a test that passes for the
+wrong reason, which is the same failure this feature has produced four times now (§10.4at's
+`test_every_action_moves`, and the two neck-shear tests in §10.4bd).
+
+The one that ships **runs the script** and requires it to terminate, because a recursion is
+perfectly valid bash and only behaviour catches it, with a lexical check beside it so the
+failure names the cause instead of just timing out. Confirmed to fail on the real defect and
+pass once fixed, in that order.
+
+#### 10.4bm The subtitle bar was a hole in the picture (0.2.53, 2026-09-21)
+
+The owner: *"the text scrolling on the bottom going from right to left, the black in. It
+should be transparent."*
+
+The ticker cleared a full-width black strip before drawing, and **the reason was real and
+measured**: the ostrich's feet reach y=435 on a 448 px panel while the ticker runs at 432, so
+"PLAY PEEKABOO" ran straight through its toes. The bar is what made the words legible over
+whatever the pet was doing.
+
+But on an AMOLED a cleared row is **off**. That was not a tint over the pet, it was a
+hard-edged hole punched through its feet, on a toy — and the owner looks at this thing all
+day.
+
+So the legibility moves from the background to the glyphs, the way subtitles have always done
+it: the text is drawn four times in unlit black, offset two pixels each way, then once in its
+own colour on top. Every pixel *between* the letters is untouched, so the pet shows through
+and the words stay readable over legs, wings or nothing. Five draws rather than one, on a
+short string, at the five frames a second the face actually redraws.
+
+**Measured, because "it looks transparent" is not a property a test can hold:** the figure's
+own lit pixels inside the ticker's band, with and without a caption drawn over them.
+
+| | lit pixels in the band |
+|---|---|
+| figure alone | 330 |
+| figure + caption (halo) | **359** — the feet survive, the letters add |
+| figure + caption (old strip) | the letters alone; all 330 erased |
+
+The test asserts the figure keeps at least nine tenths of its pixels through a caption, which
+allows the halo to erode a few where a letter sits on a toe — that erosion is the point of it
+— and forbids wholesale erasure. **Confirmed to fail with the black strip put back**, then
+pass with it gone, in that order; four tests in this feature have now passed for the wrong
+reason, and checking the direction costs one minute.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

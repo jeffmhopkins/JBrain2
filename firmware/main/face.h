@@ -74,6 +74,10 @@ typedef enum {
 
 face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean);
 
+/* Scale the whole figure and move its vertical origin, for a panel mounted on its side —
+   see the comment on `s_fit` in `face.c`. `origin_y` below zero keeps the portrait default. */
+void face_set_fit(float scale, int origin_y);
+
 /* A rest state: happy, open-eyed, idle limbs, no figure transform. The caller starts here and
    tweens away from it, so nothing has to enumerate seventeen floats to get a first frame. */
 void face_rest(face_state_t *st);

@@ -508,6 +508,111 @@ static DMA_ATTR uint16_t s_strip[2][METER_W * METER_SPAN];
 /* Off until the box says otherwise — see `display_set_debug_overlay`. */
 static volatile bool s_debug_overlay;
 
+/* PRESS AND HOLD TO TALK — the owner's interaction, in four states.
+ *
+ *   "when we long press ... it should make a [sound] when it activates the listening and
+ *    then when we release it should show the thinking box"
+ *
+ * THE HOLD THRESHOLD IS THE WHOLE DESIGN PROBLEM. `gesture.h` records that 4-5 year olds
+ * produce ordinary presses lasting up to 4.2 s, which is why the maintenance gestures stopped
+ * being a bare hold. A talk gesture cannot wait 4.2 s — nobody holds a button that long
+ * before speaking — so it fires at 700 ms, comfortably past the 600 ms that still counts as a
+ * tap, and accepts that ordinary play will sometimes start a listen. That is survivable here
+ * in a way it was not for "reboot the panel": the cost of a false listen is a beep and a
+ * discarded recording, not a toy restarting in a child's hands.
+ *
+ * It never fires mid-maintenance-gesture: those are taps THEN a hold, so a hold that begins
+ * while a tap run is live belongs to them. */
+#define HOLD_TALK_MS 700
+/* Long enough that a slow answer is not mistaken for a broken one, short enough that a child
+   is not staring at a bubble. Beyond it the panel says it failed rather than returning to
+   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc). */
+#define TALK_TIMEOUT_MS 12000
+#define TALK_FAILED_MS 2500
+
+typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
+static talk_t s_talk;
+static uint32_t s_talk_since;
+static int s_down_ms;
+
+/* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
+   is one rectangle and four corners, and the corners are the difference between a speech
+   bubble and a dialog from 1994. */
+static void bubble(uint16_t *fb, int x0, int y0, int w, int h, int r, uint16_t c)
+{
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const int dx = x < r ? r - x : (x >= w - r ? x - (w - r - 1) : 0);
+            const int dy = y < r ? r - y : (y >= h - r ? y - (h - r - 1) : 0);
+            if (dx * dx + dy * dy > r * r) continue;
+            const int px = x0 + x, py = y0 + y;
+            if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) fb[py * FACE_W + px] = c;
+        }
+    }
+}
+
+/* THE THINKING BOX, AND IT IS NOT DECORATION — IT IS THE LATENCY BUDGET.
+ *
+ * The round trip is capture, upload, transcribe, a language model and speech synthesis, and
+ * the transcription alone is the slowest part (see `../proposed/PANEL_CONVERSATION_PLAN.md`).
+ * A pet that is visibly thinking the instant the finger lifts buys a second or more of that
+ * for nothing, because a wait you can see someone working through is not the same wait.
+ *
+ * Three dots filling in turn, which is the one idiom a four-year-old already reads. */
+static void draw_thinking(uint16_t *fb, int y0, int h, uint32_t now, bool failed)
+{
+    const int bw = 118, bh = 54;
+    const int bx = FACE_W - bw - 12;
+    const int by = y0 + 14;
+    bubble(fb, bx, by, bw, bh, 16, failed ? SWAP16(0x4208) : SWAP16(0x2965));
+    (void)h;
+    const int cy = by + bh / 2;
+    if (failed) {
+        /* A single flat dash: it tried and has nothing. Deliberately not a third dot — the
+           shape has to differ from thinking at a glance, not merely in colour. */
+        for (int y = cy - 2; y <= cy + 2; y++) {
+            for (int x = bx + 34; x < bx + bw - 34; x++) fb[y * FACE_W + x] = SWAP16(0xF800);
+        }
+        return;
+    }
+    const int lit = (int)((now / 320) % 4); /* 0..3, so all three are briefly up */
+    for (int i = 0; i < 3; i++) {
+        const int cx = bx + 30 + i * 29;
+        const int r = (i < lit) ? 9 : 5;
+        const uint16_t c = (i < lit) ? SWAP16(0xFFFF) : SWAP16(0x6B4D);
+        for (int dy = -r; dy <= r; dy++) {
+            for (int dx = -r; dx <= r; dx++) {
+                if (dx * dx + dy * dy > r * r) continue;
+                const int px = cx + dx, py = cy + dy;
+                if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) {
+                    fb[py * FACE_W + px] = c;
+                }
+            }
+        }
+    }
+}
+
+/* LISTENING: a red dot, the one symbol for "recording" that needs no explaining, pulsing so
+   it cannot be mistaken for a dead pixel or a bit of the pet. */
+static void draw_listening(uint16_t *fb, int y0, uint32_t now)
+{
+    const int r = 13 + (int)((now / 140) % 4);
+    const int cx = FACE_W - 34, cy = y0 + 34;
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy > r * r) continue;
+            const int px = cx + dx, py = cy + dy;
+            if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) {
+                fb[py * FACE_W + px] = SWAP16(0xF800);
+            }
+        }
+    }
+}
+
+/* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
+static int s_quarter;
+static bool s_quarter_changed = true;
+
 void display_set_debug_overlay(bool on)
 {
     s_debug_overlay = on;
@@ -577,9 +682,68 @@ static int s_blit_ok;
  *
  * The cost is 28 memcpys of 11,776 bytes per frame, which at the face's 5 fps is 1.6 MB/s
  * against a core doing nothing else with those cycles. That is the cheap half of the trade. */
+/* LANDSCAPE: THE PANEL MOUNTED WITH ITS CABLE OUT THE SIDE.
+ *
+ * `rig.h` refuses to rotate the figure, and that reasoning still holds — an arbitrary angle
+ * is a per-pixel resample this panel cannot afford 25 times a second, and in source space it
+ * tears holes in filled shapes. **A quarter turn is neither.** It is an index permutation:
+ * every destination pixel is exactly one source pixel, no interpolation, no gaps. The same
+ * class of operation as the 180 flip this panel has always done.
+ *
+ * The square is what makes it cheap. The figure renders scaled into a 368x368 region of the
+ * frame (`face_set_fit`), and a quarter turn maps that square onto itself — so the source and
+ * destination are the same shape and no second framebuffer is needed. The 40 px above and
+ * below are never written; on an AMOLED an unwritten black pixel is an unlit one, so the bars
+ * are invisible rather than grey.
+ *
+ * AND THE DIRECTION OF THE SCAN IS THE WHOLE PERFORMANCE STORY. The obvious loop reads the
+ * source across a row and writes down a column, which on a framebuffer in PSRAM is 368 cache
+ * misses per stripe. Blitting COLUMN stripes instead — `draw_bitmap` takes any rectangle —
+ * inverts it: for a fixed destination column the source addresses are consecutive, so PSRAM
+ * is read sequentially and the scattered writes land in internal SRAM, where a stride costs
+ * nothing. Same buffers, same 11,776 bytes, no second frame. */
+#define SQ 368                        /* the side of the square a quarter turn preserves */
+#define SQ_Y0 ((FACE_H - SQ) / 2)     /* 40: where it sits in the portrait frame */
+#define COL_STRIPE 16                 /* columns per transfer; 368 / 16 = 23 exactly */
+
+static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
+{
+    if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    bool odd = false;
+    for (int x0 = 0; x0 < FACE_W; x0 += COL_STRIPE) {
+        uint16_t *dst = odd ? stripe_b : stripe;
+        odd = !odd;
+        for (int c = 0; c < COL_STRIPE; c++) {
+            const int x = x0 + c;
+            /* Both directions walk the source consecutively; only the sign differs. */
+            const uint16_t *src = clockwise ? &fb[(size_t)(SQ_Y0 + x) * FACE_W + (SQ - 1)]
+                                            : &fb[(size_t)(SQ_Y0 + SQ - 1 - x) * FACE_W];
+            const int step = clockwise ? -1 : 1;
+            for (int r = 0; r < SQ; r++) dst[r * COL_STRIPE + c] = src[r * step];
+        }
+        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, SQ_Y0, x0 + COL_STRIPE,
+                                                        SQ_Y0 + SQ, dst);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t blit_frame(const uint16_t *fb)
 {
     if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_quarter == 1 || s_quarter == 3) {
+        if (s_quarter_changed) {
+            /* The bars beside the square are never written again, so whatever the portrait
+               frame last left there would stay forever. Once, on the turn, not per frame. */
+            s_quarter_changed = false;
+            memset(stripe, 0, sizeof(stripe));
+            for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
+                esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + STRIPE_ROWS, stripe);
+            }
+        }
+        return blit_frame_rotated(fb, s_quarter == 1);
+    }
+    s_quarter_changed = false;
     bool odd = false;
     for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
         int rows = FACE_H - y;
@@ -643,12 +807,31 @@ static void update_orientation(void)
     if (target < -LEAN_MAX) target = -LEAN_MAX;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
 
-    const bool was = s_upside_down;
-    if (ax < -FLIP_THRESHOLD) s_upside_down = true;
-    else if (ax > FLIP_THRESHOLD) s_upside_down = false;
-    if (was != s_upside_down) {
-        ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)",
-                 s_upside_down ? "upside down" : "upright", ax, ay, az);
+    /* FOUR WAYS UP, FROM THE TWO AXES THE FLIP ALREADY USED. Gravity on X is portrait and
+       its sign says which way; gravity on Y is landscape, mounted with the cable out the
+       side, and its sign says which. Whichever axis is larger wins, with the same half-a-
+       gravity hysteresis the two-way version needed — a panel lying near flat has almost
+       nothing on either axis, and a bare comparison would flip it back and forth on noise. */
+    const int mag_x = ax < 0 ? -ax : ax;
+    const int mag_y = ay < 0 ? -ay : ay;
+    const int was = s_quarter;
+    if (mag_x > mag_y) {
+        if (ax < -FLIP_THRESHOLD) s_quarter = 2;
+        else if (ax > FLIP_THRESHOLD) s_quarter = 0;
+    } else {
+        if (ay < -FLIP_THRESHOLD) s_quarter = 1;
+        else if (ay > FLIP_THRESHOLD) s_quarter = 3;
+    }
+    s_upside_down = (s_quarter == 2);
+    if (was != s_quarter) {
+        static const char *NAMES[] = {"upright", "clockwise", "upside down", "anticlockwise"};
+        s_quarter_changed = true;
+        /* The figure is composed for 448 of height and gets 368 on its side, so the whole
+           thing scales by 368/448 into the square a quarter turn preserves. */
+        const bool side = (s_quarter == 1 || s_quarter == 3);
+        face_set_fit(side ? (float)SQ / (float)FACE_H : 1.0f,
+                     side ? SQ_Y0 + (int)(SQ * 0.545f) : -1);
+        ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)", NAMES[s_quarter], ax, ay, az);
     }
 }
 
@@ -1048,6 +1231,34 @@ static void face_task(void *arg)
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
         const gesture_action_t act = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+
+        /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
+           the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
+           run is live belongs to them and must not also start a listen. */
+        s_down_ms = down ? s_down_ms + TOUCH_POLL_MS : 0;
+        if (s_talk == TALK_IDLE && down && gest.taps == 0 && s_down_ms >= HOLD_TALK_MS) {
+            s_talk = TALK_LISTENING;
+            s_talk_since = now;
+            /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
+               that the thing is now listening rather than merely being held. */
+            if (sound) audio_beep();
+            ESP_LOGI(TAG, "talk: listening");
+        } else if (s_talk == TALK_LISTENING && !down) {
+            /* The length BEFORE the timestamp is reused, or it reads zero every time. */
+            ESP_LOGI(TAG, "talk: thinking after %u ms of audio",
+                     (unsigned)(now - s_talk_since));
+            s_talk = TALK_THINKING;
+            s_talk_since = now;
+        } else if (s_talk == TALK_THINKING && now - s_talk_since > TALK_TIMEOUT_MS) {
+            /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
+               not hear you" and "it is broken" must not look identical (§10.4bc). */
+            s_talk = TALK_FAILED;
+            s_talk_since = now;
+            ESP_LOGW(TAG, "talk: no reply in %d ms", TALK_TIMEOUT_MS);
+        } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
+            s_talk = TALK_IDLE;
+        }
+        if (s_talk != TALK_IDLE) dirty = true; /* the dot pulses and the dots cycle */
         const bool rebooting = act == GESTURE_REBOOT;
         if (act == GESTURE_CALIBRATE) cal_begin();
         if (act == GESTURE_FORM) {
@@ -1075,8 +1286,14 @@ static void face_task(void *arg)
                     p = (float)el / (float)dur;
                 }
             }
+            /* The face follows the conversation when there is one: attentive while it is
+               listening, bewildered when it has nothing to say. A pet that keeps grinning
+               through a failure is a pet that looks like it did not notice. */
             face_params_t target;
-            emotion_resolve(rig_spec(action)->face, &target);
+            emotion_resolve(s_talk == TALK_LISTENING  ? FACE_CURIOUS
+                            : s_talk == TALK_FAILED   ? FACE_BEWILDERED
+                                                      : rig_spec(action)->face,
+                            &target);
             /* TWICE PER FRAME, ON PURPOSE. `emotion_approach` halves per FRAME, and it was
                written against a 50 fps surface; this panel renders at 25. Applying it once
                here would make every emotion arrive at half its intended speed, and speed is
@@ -1095,10 +1312,23 @@ static void face_task(void *arg)
             PHASE(6);
             face_draw(fb, colour, &st);
             PHASE(7);
-            font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
+            const bool side = (s_quarter == 1 || s_quarter == 3);
+            /* EVERYTHING OVERLAID HAS TO LAND IN THE SQUARE TOO, and both of these sat
+               outside it: the version label at y=6 is above the square, the caption is
+               anchored to the bottom of the frame and is below it. A quarter turn simply
+               would not carry them, so the first thing lost on a side-mounted panel would
+               have been the caption — the one piece of feedback that says a command was
+               heard. Both take the square's bounds instead of the frame's. */
+            const int over_y0 = side ? SQ_Y0 : 0;
+            const int over_h = side ? SQ_Y0 + SQ : FACE_H;
+            font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
-            caption_draw(&cap, fb, FACE_W, FACE_H, CAPTION_COLOUR, MIC_COLOUR);
+            caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR, MIC_COLOUR);
+            if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);
+            else if (s_talk != TALK_IDLE) {
+                draw_thinking(fb, over_y0, over_h - over_y0, now, s_talk == TALK_FAILED);
+            }
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
             /* After the flip, because the finger is in PANEL coordinates and the flip has
