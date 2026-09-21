@@ -62,3 +62,8 @@ bool touch_tapped(void)
     s_down = down;
     return edge;
 }
+
+bool touch_is_down(void)
+{
+    return s_down;
+}

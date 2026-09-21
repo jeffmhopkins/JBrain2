@@ -30,7 +30,10 @@
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "face.h"
+#include "font.h"
+#include "ota.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
@@ -229,6 +232,28 @@ bool display_start(void)
 #define PROBE_MS 10000
 #define PROBE_GIVE_UP 3
 
+/* THE VERSION, ON THE GLASS. Until now the only way to know what a panel was running was to
+   ask the box what it last served, or to cable it up and read its console — and both have
+   been wrong at least once tonight. Top-left: the head spans x 76..292 and starts at y 60, so
+   this corner is the one piece of the panel the robot never occupies. Dim on purpose; it
+   shares a bedroom. */
+#define LABEL_X 8
+#define LABEL_Y 6
+#define LABEL_SCALE 2
+#define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
+#define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
+#define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
+
+/* A HOLD LONG ENOUGH TO MEAN IT. The owner asked for five seconds, and the number is not
+   arbitrary: §10.4p measured 4-5 year olds producing ORDINARY taps lasting up to 4.2 s, so
+   five is the first threshold that sits outside a child's accidental press at all. It is a
+   thin margin — 0.8 s — which is exactly why the cue below exists rather than a silent
+   count: a hold that is about to reboot the panel says so, in time to let go.
+   A reboot IS the firmware re-check, because the OTA loop asks the box before its first
+   sleep (main.c), so this doubles as "go and get the update now". */
+#define HOLD_REBOOT_MS 5000
+#define HOLD_CUE_MS 1500
+
 #define BOB_PX 5
 #define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
@@ -289,6 +314,7 @@ static void face_task(void *arg)
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
     int since_probe = 0;
+    int held = 0;
 
     while (true) {
         bool dirty = false;
@@ -300,14 +326,43 @@ static void face_task(void *arg)
             if (sound) audio_beep();
             dirty = true;
         }
+        if (touch && touch_is_down()) {
+            held += TOUCH_POLL_MS;
+            if (held >= HOLD_CUE_MS) dirty = true; /* keep the cue growing under the finger */
+        } else if (held != 0) {
+            held = 0;
+            dirty = true; /* and clear it the frame after it lifts */
+        }
+        /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
+           to reach the glass first, or a reboot is indistinguishable from the fault we are
+           chasing. */
+        const bool rebooting = held >= HOLD_REBOOT_MS;
+
         if (dirty || since_draw >= FACE_FLOOR_MS) {
             face_draw(fb, colour, bob_step(frame++));
+            font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
+                      ota_running_version(), LABEL_COLOUR);
+            if (held >= HOLD_CUE_MS) {
+                /* Grows left to right across the top edge, full width at the moment it
+                   reboots. Drawn into the frame rather than flashed separately so it cannot
+                   outlive the finger. */
+                int w = FACE_W * held / HOLD_REBOOT_MS;
+                if (w > FACE_W) w = FACE_W;
+                for (int y = 0; y < 4; y++) {
+                    for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
+                }
+            }
             /* One call for the whole frame: the panel takes a full-window write happily and
                it is simpler to be right about than a stripe loop. */
             const esp_err_t err =
                 esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
             if (err != ESP_OK) ESP_LOGE(TAG, "blit: %s", esp_err_to_name(err));
             since_draw = 0;
+        }
+        if (rebooting) {
+            ESP_LOGW(TAG, "held %d ms — rebooting to re-check firmware", held);
+            vTaskDelay(pdMS_TO_TICKS(150));
+            esp_restart();
         }
         if (since_probe >= PROBE_MS) {
             probe_panel();
