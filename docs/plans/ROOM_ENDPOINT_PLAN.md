@@ -3460,6 +3460,47 @@ and it is the reason for the rule those keep pointing at: **an operation whose f
 be distinguished from a different failure is not finished.** `snprintf` returning a number
 nobody looks at is exactly that, in one line.
 
+#### 10.4bu The lean was pinned, not dead (0.2.61, 2026-09-21)
+
+The owner, on the side-mounted panel: *"went in the horizontal position. It doesn't tilt
+inside to side as expected."*
+
+`update_orientation` read the lean off `-ay` unconditionally. That was right for the only two
+orientations that existed when it was written, and **wrong the instant the panel is on its
+side**: in landscape `ay` is the axis carrying GRAVITY — about 8,000 against a `LEAN_FULL` of
+2,400 — so the target clamps to `LEAN_MAX` and the figure sits at full lean, permanently.
+
+Not a dead sensor. A saturated one. Those look identical from across a room and have opposite
+fixes, which is the whole reason this is worth a section.
+
+##### The mapping is derivable, not guessed
+
+Upright, gravity is on +X (§10.4 established that from a reading taken in a *known* pose,
+after the first attempt guessed from an unknown one and shipped backwards), and the lean was
+`-ay` — so the viewer's right is board −Y. Turn the panel a quarter clockwise and what pointed
+right now points down, so viewer-right becomes board −X. Each further quarter walks the same
+circle:
+
+| | viewer's right | lean from |
+|---|---|---|
+| upright | −Y | `-ay` |
+| clockwise | −X | `-ax` |
+| upside down | +Y | `+ay` |
+| anticlockwise | +X | `+ax` |
+
+Which is also why the magnitudes come out right: **whichever axis is not carrying gravity is
+the small signal a tilt moves**, in every orientation. The saturation was the symptom of
+reading the wrong one, and the table fixes both at once.
+
+##### Two reports in the same photo that were not new bugs
+
+The owner also saw the microphone meter still drawn, and a column of banded artefacts down the
+left edge. The panel was on 0.2.53; the meter's second draw site was fixed in 0.2.56
+(§10.4bp), which had not reached it. And the banding **is** that same fault: `draw_meter`
+paints the bar into the frame at 5 fps while `blit_meter` pushes its own strip at 25, so
+between repaints the two show different levels and the column bands. One fix, already in
+flight, for what looked like two problems and a tearing bug.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
