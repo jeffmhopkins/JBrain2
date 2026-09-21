@@ -1494,6 +1494,34 @@ the owner hold the panel for five seconds to force a reboot and an immediate rep
 and it is a sign that a panel should be able to answer a question sooner than its next
 scheduled one.
 
+#### 10.4ag He leans before he flips (2026-09-21)
+
+The owner asked for the robot to fall left or right, proportionally, as the panel is tilted —
+"until we are flipping". It makes the flip feel like the end of something rather than a jump
+cut, and it turns a binary into a continuous readout of the same sensor.
+
+The figure slides horizontally in proportion to the sideways component of gravity: full lean at
+a little over a quarter of a gravity, because tilting a panel that far is a deliberate act and
+anything gentler should stay proportional rather than pinned. Smoothed, because the
+accelerometer is noisy at rest and a figure twitching while the panel sits still reads as
+broken rather than alive.
+
+**±60 px is what the composition allows, and it was measured rather than estimated.** The head
+is 216 px on a 368 px panel, so the arithmetic says 76 px of slack each side. The host harness
+was asked instead: at full lean the figure spans 16..231 and 136..351, clearing both edges by
+16 px and stopping just short of the microphone meter at x 4..15. Worth recording that the
+rendered image *looked* clipped to me and the measurement said otherwise — the eye is not a
+measuring instrument, which is the whole reason that harness exists (§10.4p).
+
+**The sign needs no special case when inverted**, which is worth knowing before someone adds
+one. Rotating the panel 180° negates `ay` for the same physical tilt, and `flip_frame` negates
+the drawn offset again; the two cancel and the robot slides towards the viewer's downhill side
+either way.
+
+Tilting now redraws at the poll rate rather than waiting out the idle floor, but only once the
+lean has moved more than two pixels — otherwise every frame would be a full 322 KB blit for a
+pixel of accelerometer noise.
+
 #### 10.4ad The meter was showing one frame in five, and the robot flips (2026-09-21)
 
 **The sluggish meter was a bug, not a limit.** The microphone is sampled 25 times a second and

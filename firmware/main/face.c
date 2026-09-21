@@ -131,11 +131,13 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark)
                 rgb(0xFF, 0xFF, 0xFF));
 }
 
-void face_draw(uint16_t *fb, int colour, int bob)
+void face_draw(uint16_t *fb, int colour, int bob, int lean)
 {
     /* Everything hangs off this, so one offset moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
     const int oy = OY + bob;
+    /* Everything hangs off these two, so one pair of offsets moves the whole figure. */
+    const int ox = OX + lean;
     const uint32_t hex = PALETTE[colour % face_colour_count()];
     const uint16_t col = shade(hex, 1.0f);
     const uint16_t dark = shade(hex, 0.22f);
@@ -149,26 +151,26 @@ void face_draw(uint16_t *fb, int colour, int bob)
     /* Rest pose from the mock's `rig()`: arms +/-12 degrees, legs +/-4. Drawing order is the
        mock's too — legs behind everything, arms behind the torso while they hang. */
     const uint16_t limb = shade(hex, 0.78f);
-    draw_limb(fb, OX - 34, oy + HIP_Y, 4.0f, LEG_L, 30, limb);
-    draw_limb(fb, OX + 34, oy + HIP_Y, -4.0f, LEG_L, 30, limb);
-    draw_limb(fb, OX - 66, oy + SHOULDER_Y, 12.0f, ARM_L, 28, limb);
-    draw_limb(fb, OX + 66, oy + SHOULDER_Y, -12.0f, ARM_L, 28, limb);
+    draw_limb(fb, ox - 34, oy + HIP_Y, 4.0f, LEG_L, 30, limb);
+    draw_limb(fb, ox + 34, oy + HIP_Y, -4.0f, LEG_L, 30, limb);
+    draw_limb(fb, ox - 66, oy + SHOULDER_Y, 12.0f, ARM_L, 28, limb);
+    draw_limb(fb, ox + 66, oy + SHOULDER_Y, -12.0f, ARM_L, 28, limb);
 
-    fill_round_rect(fb, OX - 72, oy - 26, 144, 132, 40, torso);
-    fill_round_rect(fb, OX - 26, oy + 10, 52, 40, 12, plate);
+    fill_round_rect(fb, ox - 72, oy - 26, 144, 132, 40, torso);
+    fill_round_rect(fb, ox - 26, oy + 10, 52, 40, 12, plate);
 
     const int hy = oy + HEAD_Y;
     /* Antenna first: it sits behind the head, as the mock's silhouette pass does. */
-    fill_rect(fb, OX - 4, hy - HH - 30, 8, 30, col);
-    fill_circle(fb, OX, hy - HH - 36, 11, col);
+    fill_rect(fb, ox - 4, hy - HH - 30, 8, 30, col);
+    fill_circle(fb, ox, hy - HH - 36, 11, col);
 
-    fill_round_rect(fb, OX - HW, hy - HH, HW * 2, HH * 2, 40, col);
+    fill_round_rect(fb, ox - HW, hy - HH, HW * 2, HH * 2, 40, col);
 
     const int ex = (int)(HW * 0.43f), ey = hy - (int)(HH * 0.17f);
-    draw_eye(fb, OX - ex, ey, dark);
-    draw_eye(fb, OX + ex, ey, dark);
+    draw_eye(fb, ox - ex, ey, dark);
+    draw_eye(fb, ox + ex, ey, dark);
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
-    arc_stroke(fb, OX, hy + (int)(HH * 0.52f) - 16, 30, (float)M_PI * 0.15f,
+    arc_stroke(fb, ox, hy + (int)(HH * 0.52f) - 16, 30, (float)M_PI * 0.15f,
                (float)M_PI * 0.85f, 9, dark);
 }

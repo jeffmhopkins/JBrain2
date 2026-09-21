@@ -331,10 +331,35 @@ static DMA_ATTR uint16_t s_strip[METER_W * METER_SPAN];
 #define FLIP_THRESHOLD 4000
 static bool s_upside_down;
 
+/* THE LEAN. The robot slides downhill in proportion to the sideways component of gravity, so
+   the flip at the end of a rotation has something leading up to it instead of being a jump
+   cut. Tilt a little, he leans a little; tilt past the threshold and he comes all the way
+   round.
+
+   ±60 px is what the composition allows: the head is 216 px on a 368 px panel, so there is
+   76 px of slack each side and this keeps a margin rather than pressing him against the edge.
+
+   The sign needs no special case when inverted. Rotating the panel 180° negates `ay` for the
+   same physical tilt, and `flip_frame` negates the drawn offset again — the two cancel, and
+   the robot slides towards the viewer's downhill side either way. */
+#define LEAN_MAX 60
+/* A little over a quarter of a gravity reaches full lean: tilting a panel that far is a
+   deliberate act, and anything gentler stays proportional rather than pinned. */
+#define LEAN_FULL 2400
+/* Smoothed, because the accelerometer is noisy at rest and a figure that twitches while the
+   panel sits still reads as broken rather than alive. */
+#define LEAN_SMOOTH 4
+static int s_lean;
+
 static void update_orientation(void)
 {
     int16_t ax = 0, ay = 0, az = 0;
     if (!imu_read(&ax, &ay, &az)) return;
+    int target = ay * LEAN_MAX / LEAN_FULL;
+    if (target > LEAN_MAX) target = LEAN_MAX;
+    if (target < -LEAN_MAX) target = -LEAN_MAX;
+    s_lean += (target - s_lean) / LEAN_SMOOTH;
+
     const bool was = s_upside_down;
     if (ax < -FLIP_THRESHOLD) s_upside_down = true;
     else if (ax > FLIP_THRESHOLD) s_upside_down = false;
@@ -465,6 +490,7 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    int s_drawn_lean = 0;
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
@@ -483,6 +509,12 @@ static void face_task(void *arg)
             if (sound) audio_beep();
             dirty = true;
         }
+        update_orientation();
+        /* A moved figure is a new frame, so tilting redraws at the poll rate rather than
+           waiting out the idle floor — but only once it has moved enough to see, or every
+           frame would be a full 322 KB blit for a pixel of accelerometer noise. */
+        if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
+
         if (touch && touch_is_down()) {
             held += TOUCH_POLL_MS;
             if (held >= HOLD_CUE_MS) dirty = true; /* keep the cue growing under the finger */
@@ -496,7 +528,8 @@ static void face_task(void *arg)
         const bool rebooting = held >= HOLD_REBOOT_MS;
 
         if (dirty || since_draw >= FACE_FLOOR_MS) {
-            face_draw(fb, colour, bob_step(frame++));
+            s_drawn_lean = s_lean;
+            face_draw(fb, colour, bob_step(frame++), s_lean);
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
@@ -523,7 +556,7 @@ static void face_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }
-        if (since_draw == 0) update_orientation();
+
         if (since_reassert >= REASSERT_MS) {
             reassert_panel();
             since_reassert = 0;
