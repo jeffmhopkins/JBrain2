@@ -43,7 +43,13 @@ static const char *TAG = "audio";
 /* The microphone is ANALOGUE into the ES8311's own ADC (`digital_mic = false` in the vendor
    BSP), so it needs the codec's PGA. The part quantises to 6 dB steps up to 42; 30 is the
    middle and a first guess — the peak this firmware reports is what moves it, not a listen. */
-#define MIC_GAIN_DB 30.0f
+/* 30 was a first guess with nothing able to measure it. The panel can now: at 30 dB, speech
+   reached the recogniser at -33 to -20 dBFS and MultiNet decoded nothing at all (0.2.40).
+   The part quantises to 6 dB steps to a maximum of 42; 36 is one step below that, and the
+   front end's WebRTC AGC (`speech.c`) makes up the rest without pinning the PGA at its
+   limit, where the noise floor comes up with the signal. The peak is logged every three
+   seconds, so the next move after this one is a reading rather than another guess. */
+#define MIC_GAIN_DB 36.0f
 
 /* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
