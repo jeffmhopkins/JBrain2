@@ -811,3 +811,36 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+    def test_the_microphone_level_is_reported(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """A microphone has no symptom, and the panel is across the house. The meter drawn on
+        the glass answers "is it working" for whoever is standing there; this answers it for
+        whoever is not."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.15", "uptime_ms": 1000, "mic_peak": 9123},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+
+    def test_a_panel_that_omits_the_microphone_level_still_reports(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Older firmware must keep reporting. A telemetry route that 422s on a field a
+        deployed panel does not send would silence exactly the panel needing attention."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.14", "uptime_ms": 1000},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text

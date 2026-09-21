@@ -1315,6 +1315,45 @@ owner seeing a stale `v0.2.11` label while 0.2.12 was running. And the microphon
 parked at §10.4r's design, waiting on a screen that reliably stays lit, because its whole test
 is a level meter drawn on that screen.
 
+#### 10.4aa The microphone, always on, down the left edge (2026-09-21)
+
+The design parked at §10.4r was press-and-hold to record, release to play back. The owner
+asked for the simpler thing — *microphone active all the time with a meter on the left side* —
+and it is the better test, not merely the cheaper one.
+
+**Why always-on beats record-then-play.** Playback confounds two devices: silence at the end
+could be the ADC, the PGA, the I2S receive direction, the speaker or the volume, and the test
+cannot say which. A live meter isolates the capture path on its own, needs no gesture to
+operate, and is legible to a four-year-old as well as to whoever is debugging it. §10.4r's
+level indicator was always the diagnostic half; the playback was the part that added
+ambiguity.
+
+**The read is the clock.** One chunk per frame, sized to the frame period, so capture drains
+exactly as fast as the I2S DMA fills it. Consuming any slower shows a meter falling further
+behind the room every second — a fault that looks like bad calibration and is actually a
+backlog. It also means the mic, not `vTaskDelay`, paces the render loop whenever the codec is
+up, and the loop falls back to the timer when it is not.
+
+**The left edge is free by construction**, not by luck: the head spans x 76..292 and the arms
+reach x 104 at their widest, so a bar at x 4..16 never touches the robot. Checked by
+compositing it over the real `face_draw` on the host before flashing anything, which is the
+same harness that caught the missing limbs in §10.4p.
+
+**The peak also goes out in telemetry**, which is the first real use of the channel built in
+§10.4y. The meter answers *is the microphone working* for whoever is standing in front of the
+panel; `mic_peak` answers it for whoever is not — and the panel is now on a charger in another
+room, so that is most of the time. Zero across several reports while someone is talking near
+it means the capture path is dead.
+
+`mic_peak` defaults to 0 on the API rather than being required, because a telemetry route that
+422s on a field older firmware does not send would silence exactly the panel that needs
+attention.
+
+Gain stays at 30 dB — the ES8311 quantises to 6 dB steps up to 42 — and `METER_FULL` is 12000
+rather than full scale, because a child at arm's length lands nowhere near 32767. Both are
+first guesses, and now both are measurable: the reported peaks are what will move them,
+exactly as the owner's ear moved the volume.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
