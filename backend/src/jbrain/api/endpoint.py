@@ -28,11 +28,15 @@ the Caddy root below).
 
 from __future__ import annotations
 
+import array
 import base64
 import hashlib
+import random
+import struct
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -47,7 +51,9 @@ from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as devices
+from jbrain.llm.router import LlmRouter
 from jbrain.settings_store import SqlSettingsStore
+from jbrain.transcribe import WhisperCppClient
 
 log = structlog.get_logger()
 
@@ -754,3 +760,196 @@ async def flash_panel(
         media_type="text/plain; charset=utf-8",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+# ---- the panel's conversation turn -------------------------------------------------------
+
+# 16 kHz mono signed 16-bit, which is what the panel captures and what it can play. The rate
+# was chosen for ESP-SR rather than for fidelity (firmware/main/audio.h), and everything on
+# this route stays in it so the panel needs no decoder, no resampler and no WAV parser — see
+# `docs/proposed/PANEL_CONVERSATION_PLAN.md`. The box has CPU to spare; the panel has 31 KB of
+# contiguous internal RAM on a good day.
+PANEL_RATE = 16000
+# Six seconds. Long enough for anything a four-year-old says in one breath, short enough that
+# a pocketed panel holding the screen down cannot upload a minute of a room.
+PANEL_AUDIO_MAX = PANEL_RATE * 2 * 6
+
+# DELIBERATELY PLAIN, AND DELIBERATELY SHORT. The jpet's prompt is built around wall objects,
+# scene effects and an action script schema; none of that exists on a panel, and inheriting it
+# would have the pet narrating furniture a child cannot see. The owner asked to "start off very
+# easy, just a generic conversation prompt", so this is the smallest thing that behaves: who it
+# is, who it is talking to, and the one constraint that actually matters — every word here is
+# SPOKEN ALOUD through a small speaker, so length is not a style preference, it is latency the
+# child waits through.
+PANEL_CONVERSATION_PROMPT = """You are a small friendly robot pet who lives on a little screen \
+in a child's bedroom. You are talking with a four-year-old.
+
+Reply with ONE or TWO short spoken sentences. Never more.
+Be warm, playful and curious. Ask a small question back sometimes.
+Use simple words a four-year-old knows.
+Your reply is read aloud, so write only what should be said — no emoji, no asterisks, no \
+stage directions, no lists.
+If you did not understand, say so cheerfully and ask them to say it again."""
+
+
+# When the model is slow, missing or broken. Never the same line twice in a row by luck, and
+# never an error: a toy that goes quiet when a container restarts reads as a broken toy.
+PANEL_BABBLE = (
+    "Ooh, my thinking went all fuzzy. Say that again?",
+    "Beep! I lost that one. What did you say?",
+    "Hmm! My brain did a wobble. Tell me again?",
+    "Whoops, I was daydreaming. One more time?",
+)
+
+
+def _wav(pcm: bytes, rate: int = PANEL_RATE) -> bytes:
+    """Wrap raw mono s16 in a WAV header. Whisper takes a file, the panel sends a stream."""
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(pcm))
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+
+
+def _pcm_from_wav(data: bytes) -> tuple[bytes, int]:
+    """The samples and the rate out of a WAV, without a dependency.
+
+    Kokoro's output is not the panel's rate and the chunk layout is not guaranteed, so the
+    header is walked rather than assumed — a fixed 44-byte skip is the bug that ships as a
+    burst of noise at the start of every reply.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise ValueError("not a WAV")
+    rate, pos = PANEL_RATE, 12
+    pcm = b""
+    while pos + 8 <= len(data):
+        cid = data[pos : pos + 4]
+        size = struct.unpack("<I", data[pos + 4 : pos + 8])[0]
+        body = data[pos + 8 : pos + 8 + size]
+        if cid == b"fmt " and len(body) >= 16:
+            rate = struct.unpack("<I", body[4:8])[0]
+        elif cid == b"data":
+            pcm = body
+        pos += 8 + size + (size & 1)  # chunks are word-aligned
+    if not pcm:
+        raise ValueError("WAV had no data chunk")
+    return pcm, rate
+
+
+def _to_panel_rate(pcm: bytes, rate: int) -> bytes:
+    """Linear resample to the panel's 16 kHz. Speech at this rate through a 29 mm speaker does
+    not reward anything cleverer, and a polyphase filter would be a dependency for nothing."""
+    if rate == PANEL_RATE or not pcm:
+        return pcm
+    src = array.array("h")
+    src.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    out = array.array("h")
+    step = rate / PANEL_RATE
+    pos = 0.0
+    while pos < len(src) - 1:
+        i = int(pos)
+        frac = pos - i
+        out.append(int(src[i] + (src[i + 1] - src[i]) * frac))
+        pos += step
+    return out.tobytes()
+
+
+@router.post("/converse")
+async def converse(principal: PanelDep, request: Request) -> Response:
+    """A child holds the panel, talks, and the panel answers out loud.
+
+    THE SAME SHAPE AS THE WALL'S `/internal/pet/say`, which is the owner's instruction and
+    also the right call: that route already solved the hard part, which is not the model but
+    the failure behaviour. A slow, unconfigured or broken LLM there degrades to a canned line
+    rather than a 500, so the toy always says something. A pet in a child's bedroom that goes
+    silent when a container is restarting is indistinguishable from a broken pet.
+
+    In, raw 16 kHz mono s16 — no container, no codec, because the panel has neither. Out, the
+    same. Every conversion happens here (see `_to_panel_rate`): the box has CPU to spare and
+    the panel has 31 KB of contiguous internal RAM.
+
+    `PanelDep`, so a panel talks with the device key it already uses for its manifest and
+    telemetry. Nothing is stored — this holds no memories and touches no domain, which keeps
+    a stolen panel key worth exactly one conversation.
+    """
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=400, detail="no audio")
+    if len(audio) > PANEL_AUDIO_MAX:
+        audio = audio[:PANEL_AUDIO_MAX]
+
+    settings = cast(Settings, request.app.state.settings)
+    if not settings.whisper_url:
+        raise HTTPException(status_code=503, detail="speech recognition not configured")
+
+    started = time.monotonic()
+    client = WhisperCppClient(
+        base_url=settings.whisper_url,
+        model=settings.whisper_model,
+        timeout=min(settings.whisper_timeout, 60.0),
+    )
+    try:
+        transcript = await client.transcribe(
+            _wav(audio), filename="panel.wav", media_type="audio/wav"
+        )
+    except Exception as exc:  # noqa: BLE001 — the panel gets an answer or a reason, never a hang
+        log.warning("endpoint.converse_stt_error", error=repr(exc))
+        raise HTTPException(status_code=503, detail="could not hear") from exc
+    heard = (transcript.text or "").strip()
+    stt_ms = int((time.monotonic() - started) * 1000)
+
+    if not heard:
+        # Silence is not an error. The panel shows "say that again" rather than a failure face.
+        log.info("endpoint.converse", heard="", stt_ms=stt_ms, reply="")
+        return Response(status_code=204)
+
+    # THE LLM MUST NOT BREAK THE TOY — the jpet's rule, and the reason its `_say` is wrapped.
+    reply = ""
+    llm_started = time.monotonic()
+    try:
+        result = await cast(LlmRouter, request.app.state.llm_router).complete(
+            "pet.turn",
+            system=PANEL_CONVERSATION_PROMPT,
+            user_text=heard[:500],
+            max_tokens=256,
+        )
+        reply = (result.text or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("endpoint.converse_llm_error", error=repr(exc))
+    if not reply:
+        reply = random.choice(PANEL_BABBLE)
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
+
+    tts_started = time.monotonic()
+    base = (settings.brain_tts_url or "").rstrip("/")
+    if not base:
+        raise HTTPException(status_code=503, detail="speech synthesis not configured")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.get(f"{base}/tts", params={"text": reply[:600]})
+        resp.raise_for_status()
+        wav_pcm, wav_rate = _pcm_from_wav(resp.content)
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("endpoint.converse_tts_error", error=repr(exc))
+        raise HTTPException(status_code=503, detail="could not speak") from exc
+    out = _to_panel_rate(wav_pcm, wav_rate)
+    tts_ms = int((time.monotonic() - tts_started) * 1000)
+
+    # THE THREE NUMBERS THAT DECIDE WHETHER THIS IS USABLE, on every turn. Whisper was
+    # measured at ~9.8 s with the large model (api/sdr.py) and no thinking animation covers
+    # that; this is how the owner finds out what it costs in the room rather than on a bench.
+    log.info(
+        "endpoint.converse",
+        heard=heard[:120],
+        reply=reply[:120],
+        stt_ms=stt_ms,
+        llm_ms=llm_ms,
+        tts_ms=tts_ms,
+        total_ms=int((time.monotonic() - started) * 1000),
+        reply_bytes=len(out),
+    )
+    return Response(content=out, media_type="application/octet-stream")

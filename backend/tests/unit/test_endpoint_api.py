@@ -938,3 +938,182 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+
+class _FakeLlm:
+    """An LLM adapter that answers, or explodes on demand."""
+
+    def __init__(self, text: str = "Hello! What are you playing?", boom: bool = False) -> None:
+        self.text = text
+        self.boom = boom
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(self, task: str, **kw: Any) -> Any:
+        self.calls.append({"task": task, **kw})
+        if self.boom:
+            raise RuntimeError("no model loaded")
+        return type("R", (), {"text": self.text, "parsed": None})()
+
+
+def _wav_bytes(pcm: bytes, rate: int) -> bytes:
+    import struct
+
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(pcm))
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
+
+
+class TestConverse:
+    """Press-and-hold conversation: audio in, audio out, and never a silent toy.
+
+    The failure modes are the point. A pet in a child's bedroom that returns a 500 when a
+    container is restarting is indistinguishable from a pet that is broken, so the one thing
+    this route must never do is go quiet because a model was slow.
+    """
+
+    def _wire(
+        self,
+        c: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        heard: str = "what is your name",
+        llm: "_FakeLlm | None" = None,
+        tts_rate: int = 24000,
+    ) -> _FakeLlm:
+        app = cast(FastAPI, c.app)
+        app.state.settings.whisper_url = "http://tts-stt:8080/v1"
+        app.state.settings.brain_tts_url = "http://tts-stt:8801"
+        model = llm or _FakeLlm()
+        app.state.llm_router = model
+
+        async def fake_transcribe(self: Any, audio: bytes, **kw: Any) -> Any:
+            return type("T", (), {"text": heard})()
+
+        monkeypatch.setattr(endpoint_api.WhisperCppClient, "transcribe", fake_transcribe)
+
+        class FakeHttp:
+            async def __aenter__(self) -> "FakeHttp":
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+            async def get(self, url: str, **kw: Any) -> Any:
+                pcm = b"\x10\x00" * 480  # a fifth of a second of something
+                # `request=` because `raise_for_status` refuses to judge a response that was
+                # never sent — a detached Response raises RuntimeError, not HTTPStatusError.
+                return httpx.Response(
+                    200,
+                    content=_wav_bytes(pcm, tts_rate),
+                    request=httpx.Request("GET", url),
+                )
+
+        monkeypatch.setattr(endpoint_api.httpx, "AsyncClient", lambda **kw: FakeHttp())
+        return model
+
+    def test_a_turn_returns_playable_audio(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = self._wire(c, monkeypatch)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+        # Resampled 24 kHz -> 16 kHz, so two thirds of the samples, and an even byte count
+        # because a half sample is a click.
+        assert len(r.content) % 2 == 0
+        assert 0 < len(r.content) < 480 * 2
+        assert model.calls and model.calls[0]["task"] == "pet.turn"
+
+    def test_a_dead_model_still_speaks(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole reason this mirrors the wall's `/internal/pet/say`."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        self._wire(c, monkeypatch, llm=_FakeLlm(boom=True))
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+        assert len(r.content) > 0
+
+    def test_silence_is_not_an_error(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An accidental hold uploads a room with nobody in it; that is not a failure face."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        self._wire(c, monkeypatch, heard="   ")
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 204
+
+    def test_a_credential_is_required(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """THE COOKIE HAS TO GO FIRST, and the first version of this test did not do it.
+
+        `PanelDep` accepts the owner's session cookie OR a panel's device key — deliberately,
+        so the owner can drive a panel route from the PWA. The fixture logs in as the owner,
+        so asserting a bogus bearer is rejected proved nothing: the cookie was answering.
+        """
+        c, _fw, _sent = client
+        _provision_panel(c)
+        self._wire(c, monkeypatch)
+        c.cookies.clear()
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 16,
+            headers={"Authorization": "Bearer not-a-real-key"},
+        )
+        assert r.status_code == 401
+
+    def test_a_long_hold_is_truncated_not_refused(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A panel held face-down in a bag must not be able to upload a minute of a room."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        self._wire(c, monkeypatch)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * (endpoint_api.PANEL_AUDIO_MAX),
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+
+    def test_the_wav_walk_finds_the_data_chunk(self) -> None:
+        """A fixed 44-byte skip is the bug that ships as a burst of noise before every reply:
+        a WAV may carry LIST/INFO chunks before `data`, and Kokoro's layout is not promised."""
+        import struct
+
+        pcm = b"\x11\x22" * 100
+        junk = b"LIST" + struct.pack("<I", 4) + b"INFO"
+        wav = _wav_bytes(pcm, 24000)
+        spliced = wav[:36] + junk + wav[36:]
+        got, rate = endpoint_api._pcm_from_wav(spliced)
+        assert got == pcm
+        assert rate == 24000
+
+    def test_resampling_keeps_the_rate_it_is_given(self) -> None:
+        pcm = b"\x10\x00" * 300
+        assert endpoint_api._to_panel_rate(pcm, endpoint_api.PANEL_RATE) == pcm
+        out = endpoint_api._to_panel_rate(pcm, 48000)
+        assert 0 < len(out) < len(pcm)
+        assert len(out) % 2 == 0

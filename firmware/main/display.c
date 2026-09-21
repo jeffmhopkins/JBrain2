@@ -533,7 +533,11 @@ static volatile bool s_debug_overlay;
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
-static int s_down_ms;
+/* WHEN the finger landed, not HOW MANY passes ago. The first cut counted `+= TOUCH_POLL_MS`
+   per iteration, which silently assumes this loop runs every 40 ms — it does not. The delay
+   is 40 ms and then the frame's work happens, so a tally of nominal ticks always lags the
+   wall clock and the hold felt longer than the 700 ms it claimed. A timestamp cannot drift. */
+static uint32_t s_down_since;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -1241,8 +1245,10 @@ static void face_task(void *arg)
         /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
            the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
            run is live belongs to them and must not also start a listen. */
-        s_down_ms = down ? s_down_ms + TOUCH_POLL_MS : 0;
-        if (s_talk == TALK_IDLE && down && gest.taps == 0 && s_down_ms >= HOLD_TALK_MS) {
+        if (!down) s_down_since = 0;
+        else if (s_down_since == 0) s_down_since = now;
+        const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
+        if (s_talk == TALK_IDLE && down && gest.taps == 0 && held >= HOLD_TALK_MS) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen

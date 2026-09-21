@@ -3223,6 +3223,75 @@ channel can carry. Five values were set and never read back (§10.4bb, §10.4bi)
 were trusted past what they could see (§10.4bh, here). Every wrong turn in this feature has
 been one of those two shapes.
 
+#### 10.4bo The box half of the conversation (0.2.55, 2026-09-21)
+
+The owner: *"let's go ahead and wire things in same flow as the jpet"* — and, on the prompt,
+*"probably want a different prompt though. Started off very easy. Just a generic conversation
+prompt."*
+
+##### Why the jpet's flow is the right one to copy
+
+`api/pet.py:_say` already solved the part that is not the model. A fast keyword classifier
+runs FIRST, so colours and actions never reach an LLM at all; only open-ended input does, and
+that leg is wrapped so that a slow, unconfigured or broken model **degrades to a canned line
+rather than a 500**. That is the property a pet in a child's bedroom needs: a toy that goes
+quiet while a container restarts is indistinguishable from a toy that is broken.
+
+`POST /endpoint/converse` takes the same shape. `PanelDep`, so a panel talks with the device
+key it already uses for its manifest and telemetry. Nothing is stored — no memories, no
+domain — which keeps a stolen panel key worth exactly one conversation.
+
+##### But not the jpet's prompt
+
+`jpet/brain.py:_system_prompt` is built around wall objects, scene effects and an action
+script schema. None of that exists on a panel, and inheriting it would have the pet narrating
+furniture a child cannot see. So the panel gets the smallest thing that behaves: who it is,
+who it is talking to, and the one constraint that is not a style preference —
+
+> *Your reply is read aloud, so write only what should be said.*
+
+Length is latency here. Every extra sentence is a second the child stands there holding a
+29 mm screen.
+
+##### Raw PCM in, raw PCM out
+
+16 kHz mono s16 both ways, which is what the panel captures and what it can play. **Every
+conversion happens on the box**: it has CPU to spare and the panel has 31 KB of contiguous
+internal RAM. No decoder, no resampler, no WAV parser in firmware — the single decision that
+keeps the firmware side small.
+
+The WAV coming back from Kokoro is **walked, not skipped**. A fixed 44-byte offset is the bug
+that ships as a burst of noise before every reply, because a WAV may carry LIST/INFO chunks
+before `data` and Kokoro's layout is not promised. There is a test with a spliced LIST chunk
+for exactly that.
+
+##### And every turn logs the three numbers that decide whether this is usable
+
+`stt_ms`, `llm_ms`, `tts_ms`. Whisper was measured at ~9.8 s with the large model
+(§10.4bf) and no thinking animation covers that. Wiring the route up is how the real number
+arrives — from the room, on real speech, rather than from a bench.
+
+##### Two tests that were asserting nothing
+
+- The auth test passed a bogus bearer token and expected 401, and got 200. `PanelDep` accepts
+  the owner's session cookie **or** a panel key, deliberately, and the fixture logs in as the
+  owner — so the cookie was answering and the bearer was never consulted. It clears the cookie
+  now.
+- The TTS fake returned a detached `httpx.Response`, and `raise_for_status()` refuses to judge
+  a response that was never sent — it raises `RuntimeError`, not `HTTPStatusError`, so the
+  route's own error handling was never exercised.
+
+##### The hold threshold was already 700 ms, and drifted anyway
+
+The owner asked for "one second, maybe even 3/4" and `HOLD_TALK_MS` was already 700. But the
+firmware counted `s_down_ms += TOUCH_POLL_MS` once per loop pass, which silently assumes the
+loop runs every 40 ms — it does not. The delay is 40 ms and *then* the frame's work happens,
+so a tally of nominal ticks always lags the wall clock and the hold took longer than the
+700 ms it claimed. It is a timestamp now, which cannot drift.
+
+**Still not wired: the panel end.** Capture, upload and playback. The box will answer a
+`/endpoint/converse` today; nothing on the panel calls it yet.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
