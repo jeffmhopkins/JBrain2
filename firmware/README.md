@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-20
+> **Status:** Living · **Last verified:** 2026-09-21
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -43,7 +43,18 @@ anything either.
 survives the reset a panic performs, and the next boot reports the last stage reached as
 `crash_phase`. Not a line number, but it localises the crash — the backtrace is unreachable
 because it prints to a console this panel does not have and which resets it on open, and there
-is no coredump partition to add without a USB reflash.
+is no coredump partition to add without a USB reflash. The stage list is next to `PHASE()` in
+`display.c` and in ROOM_ENDPOINT_PLAN.md §10.4aj; keep the two together.
+
+**One task owns the panel, and that rule is load-bearing.** `esp_lcd_panel_io_spi` is not
+thread-safe: `tx_param` drains the queue `tx_color` fills and reuses the same descriptor slot,
+so two tasks on one io handle can wait forever on each other's transfers or `memset` a
+descriptor under DMA. Until 0.2.26 there was exactly one such caller —
+`display_set_brightness()` wrote `0x51` from the **main** task, on every boot and every
+fifteen-minute settings fetch, against a handle the face task drives at ~25 fps. It now records
+the value and the render loop applies it (phase 14). Nothing outside `face_task` may touch
+`s_panel` or `s_io`; see ROOM_ENDPOINT_PLAN.md §10.4ak, including what that fix does **not**
+yet claim.
 
 Superseded suspect: the render task's stack, created at 4096 bytes when it drew a static pattern and
 now running an I2S capture, an accelerometer read, font rendering, PMU sampling, float tweening

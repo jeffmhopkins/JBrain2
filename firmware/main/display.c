@@ -97,7 +97,7 @@ static bool is_v2_board(void)
     return i2c_master_probe(bus, CST816_ADDR, 50) == ESP_OK;
 }
 
-static void fill_stripe(bool reversed)
+static void fill_stripe(void)
 {
     static const uint16_t bars[8] = {
         0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000,
@@ -105,22 +105,20 @@ static void fill_stripe(bool reversed)
     for (int y = 0; y < STRIPE_ROWS; y++) {
         for (int x = 0; x < LCD_H_RES; x++) {
             const int i = (x * 8) / LCD_H_RES;
-            stripe[y * LCD_H_RES + x] =
-                SPI_SWAP_DATA_TX(bars[reversed ? 7 - i : i], LCD_BPP);
+            stripe[y * LCD_H_RES + x] = SPI_SWAP_DATA_TX(bars[i], LCD_BPP);
         }
     }
 }
 
-/* Kept so a repaint needs no second bring-up. */
+/* Kept so the render loop needs no second bring-up. */
 static esp_lcd_panel_handle_t s_panel;
-/* Kept so the controller can be ASKED what it thinks its state is — see probe_panel(). */
+/* Kept so display-on and brightness can be re-asserted from the render loop. */
 static esp_lcd_panel_io_handle_t s_io;
-static bool s_swap;
 
 static bool paint(void)
 {
     if (s_panel == NULL) return false;
-    fill_stripe(s_swap);
+    fill_stripe();
     for (int y = 0; y < LCD_V_RES; y += STRIPE_ROWS) {
         const esp_err_t err =
             esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_H_RES, y + STRIPE_ROWS, stripe);
@@ -130,20 +128,6 @@ static bool paint(void)
         }
     }
     return true;
-}
-
-bool display_repaint(void)
-{
-    s_swap = !s_swap;
-    const bool ok = paint();
-    /* SAYS ONLY THAT THE BUS ACCEPTED IT. The panel went dark once while the firmware kept
-       running and polling on schedule, and the two candidates need opposite fixes: the
-       controller dropping display-on (a repaint revives it) versus the AXP2101 cutting the
-       display rail (a repaint writes happily into the dark). This line distinguishes them
-       only in combination with someone looking at the screen — which is the honest state of
-       this question until the PMU is read. */
-    ESP_LOGI(TAG, "repaint %s (%s)", ok ? "ok" : "FAILED", s_swap ? "inverted" : "normal");
-    return ok;
 }
 
 /* Defined with the rest of the breadcrumb machinery, below the render loop it instruments. */
@@ -255,13 +239,42 @@ bool display_start(void)
 /* The init sequence's value, and the starting point until the box says otherwise. Full
    brightness is still wrong for a bedroom; it is now a setting rather than a rebuild. */
 #define BRIGHTNESS_DEFAULT 0xFF
-static uint8_t s_brightness = BRIGHTNESS_DEFAULT;
+static volatile uint8_t s_brightness = BRIGHTNESS_DEFAULT;
+static volatile bool s_brightness_pending;
 
+/* ONE TASK OWNS THE PANEL IO, AND IT IS THE RENDER TASK.
+ *
+ * `esp_lcd_panel_io_spi` is not thread-safe, and not in the mild way that phrase usually
+ * means. `panel_io_spi_tx_param` reads `num_trans_inflight`, drains every queued transfer
+ * with `spi_device_get_trans_result(..., portMAX_DELAY)`, decrements the count, and then
+ * `memset`s `trans_pool[0]` — the same slot `tx_color` is filling from the other task. Two
+ * tasks on one io handle can therefore drain each other's transfers (the count is a `size_t`,
+ * so one decrement too many wraps it and the drain loop waits forever holding the bus) or
+ * clear a descriptor that DMA is still reading.
+ *
+ * This was a live cross-task call until 0.2.26: `apply_settings()` runs on the main task, at
+ * boot and every fifteen minutes, and the box serves a brightness unconditionally — so every
+ * boot issued an 0x51 from the main task into an io handle the face task was driving at
+ * ~25 fps. A panic within a minute of boot is exactly the shape that produces.
+ *
+ * So setting the brightness now only records it. The face task applies it, next to the
+ * re-assert that was already the only other command writer. Anything else that wants to talk
+ * to this panel belongs on that task too. */
 void display_set_brightness(int level)
 {
     if (level < 0 || level > 255) return;
     s_brightness = (uint8_t)level;
-    if (s_io != NULL) esp_lcd_panel_io_tx_param(s_io, 0x51, &s_brightness, 1);
+    s_brightness_pending = true;
+}
+
+/* The local copy is not a style choice: `esp_lcd_panel_io_tx_param` takes a plain `const
+   void *`, and handing it a pointer into volatile storage discards the qualifier. */
+static void apply_brightness(void)
+{
+    if (s_io == NULL) return;
+    const uint8_t level = s_brightness;
+    const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
+    if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }
 
 /* THE VERSION, ON THE GLASS. The only other ways to know what a panel is running are to ask
@@ -505,7 +518,12 @@ static volatile int s_stack_free;
  * So the loop writes where it is into RTC memory, which survives the reset a panic performs.
  * The next boot reports the last phase reached. That is not a line number, but it is the
  * difference between "somewhere in the firmware" and "in the I2S read" — and it costs one
- * store per stage. */
+ * store per stage.
+ *
+ * 1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip, 9 full
+ * blit, 10 microphone read, 11 meter blit, 12 panel re-assert, 13 PMU sample, 14 brightness.
+ * Keep this list and the one in ROOM_ENDPOINT_PLAN.md §10.4aj together; a number whose stage
+ * nobody can name is worth nothing. */
 #define PHASE_MAGIC 0x50484131u
 static RTC_NOINIT_ATTR uint32_t s_phase_magic;
 static RTC_NOINIT_ATTR uint32_t s_phase;
@@ -564,11 +582,8 @@ static void reassert_panel(void)
 {
     if (s_io == NULL) return;
     const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
-    const esp_err_t br = esp_lcd_panel_io_tx_param(s_io, 0x51, &s_brightness, 1);
-    if (on != ESP_OK || br != ESP_OK) {
-        ESP_LOGW(TAG, "re-assert failed (0x29 %s, 0x51 %s)", esp_err_to_name(on),
-                 esp_err_to_name(br));
-    }
+    if (on != ESP_OK) ESP_LOGW(TAG, "re-assert failed (0x29 %s)", esp_err_to_name(on));
+    apply_brightness();
 }
 
 static void face_task(void *arg)
@@ -685,6 +700,11 @@ static void face_task(void *arg)
             esp_restart();
         }
 
+        if (s_brightness_pending) {
+            s_brightness_pending = false;
+            PHASE(14);
+            apply_brightness();
+        }
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);
             reassert_panel();
@@ -722,11 +742,10 @@ void display_run_face(void)
     }
     /* Its own task so a frame rate can never delay an OTA check — the update path outranks
        the picture, always. */
-    /* 8192, raised from 4096. That number was chosen when this task drew a static colour
-       pattern and nothing else; it now runs audio capture, an IMU read, font rendering, PMU
-       sampling, float tweening and two LCD blits per frame. A panic was observed in the field
-       (`reset_reason: "panic"`), and an overflowing task stack is the candidate that fits a
-       fault which arrived as the work grew. `display_stack_free()` reports the headroom so
-       this stops being a guess. */
+    /* 8192, raised from 4096 on the theory that the field panic was an overflowing stack.
+       It was not: `stack_free` came back 5532, so the deepest use was ~2.7 KB and it was never
+       close even at 4096. The size stays — this task runs audio capture, an IMU read, font
+       rendering, PMU sampling, float tweening and two LCD blits per frame, and the headroom is
+       cheap — but the number that matters is the one it reports, not the one it was given. */
     xTaskCreate(face_task, "face", 8192, NULL, 4, NULL);
 }
