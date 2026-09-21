@@ -50,8 +50,16 @@ already sends `SWRESET` (there is no reset GPIO, so `panel_co5300_reset` takes t
 path) and the whole init sequence re-runs — so whatever holds the display off lives **outside
 the ESP32**, in a part a power cycle clears and `esp_restart()` does not.
 
-Which part is unknown, because nobody has ever confirmed what is on the I2C bus. 0.2.12 logs a
-scan at startup to find out.
+The scan answered it: `0x15` touch, `0x18` codec, `0x20` **TCA9554 IO expander**, `0x34`
+**AXP2101 PMU**, `0x51` RTC, `0x6b` IMU. The PMU is real — named as a suspect at 0.2.4 and
+ruled out by inference — and it is exactly the class of part that survives `esp_restart()` and
+is cleared by pulling the plug.
+
+**To see the dark state, hold the screen for five seconds.** Reads return zeros and opening the
+console resets the panel, so 0.2.13 records instead: six AXP2101 registers every ten seconds
+into `RTC_NOINIT_ATTR` memory, which survives a soft reset. The hold reboots the panel, and the
+next boot log carries the two minutes of PMU state leading up to the fault
+(ROOM_ENDPOINT_PLAN.md §10.4x). The maintenance gesture turns out to be the shutter.
 
 0.2.12 therefore re-asserts rather than interrogates — `0x29` and `0x51` every thirty seconds
 — and the result is read off the glass (ROOM_ENDPOINT_PLAN.md §10.4w). If it still blanks, the
