@@ -2324,6 +2324,48 @@ what the decoder actually heard before the command graph rejected it. With those
 hear me" splits into four distinguishable faults: no audio, quiet audio, audio that does not
 trigger VAD, and a decode that misses the vocabulary.
 
+#### 10.4az The chunk theory was wrong, and the logging said so in one boot (2026-09-21)
+
+0.2.40 shipped a buffer between the front end and MultiNet on the theory that
+`get_fetch_chunksize()` and `get_samp_chunksize()` differ. The panel's first boot answered it:
+
+```
+I (21707) speech: chunks: feed 512, fetch 512, multinet 512 (equal)
+```
+
+**They were never mismatched.** The buffer is harmless and stays — it removes an assumption
+that Espressif's own examples only `assert` — but it was not the bug, and one line of logging
+retired the hypothesis in the time it took to read it.
+
+What the same boot *did* establish, which no amount of reasoning had:
+
+```
+peak  3407 | vad SPEECH  | -19.7 dBFS     <- the microphone works, VAD agrees
+speech: timeout, raw decode: ''           <- the model decodes NOTHING
+```
+
+Audio arrives, the front end calls it speech, and MultiNet returns an **empty** raw decode —
+not a wrong word, nothing at all. That is the signature of audio below the level the model can
+work with, and the cause is a default nobody looked at:
+
+**`afe_config_init` defaults `agc_mode` to `AFE_AGC_MODE_WAKENET`, whose own header says the
+gain is "calculated by wakenet model IF WAKENET IS ACTIVATED".** This firmware disables
+wakenet — that was the owner's request, "just try and listen" — so the default applies **no
+gain at all**. Every other part of the pipeline was correct and the audio simply arrived too
+quiet to decode.
+
+Fixed by naming what had been left to a default: `agc_init = true`,
+`agc_mode = AFE_AGC_MODE_WEBRTC` (the mode that needs no wake word), a -3 dBFS peak target,
+and the whole front-end configuration logged at start-up so the next reader sees it rather
+than inheriting it. The ES8311's own PGA goes 30 → 36 dB alongside it; 42 is the part's
+maximum and pinning it there raises the noise floor with the signal, so the remaining headroom
+is left to the AGC and to a measurement.
+
+**Three versions, three wrong first guesses, and the pattern is the same each time:** every one
+was a value this firmware never set and never printed. The memory mode (§10.4ax), the chunk
+sizes (above), and now the gain mode. A default you did not choose is not a decision, and a
+default you do not log is not visible. The front end now prints its own configuration.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

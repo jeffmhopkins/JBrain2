@@ -292,7 +292,23 @@ bool speech_start(void)
        ESP_ERR_NO_MEM three seconds into every boot. The recogniser has no such constraint;
        it is a compute pipeline reading a ring buffer, and PSRAM at 80 MHz feeds it fine. */
     cfg->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
+    /* AGC, AND WITHOUT THIS THE MODEL IS HANDED AUDIO TOO QUIET TO DECODE.
+       The default mode is AFE_AGC_MODE_WAKENET, whose own header says the gain is
+       "calculated by wakenet model IF WAKENET IS ACTIVATED" — and this firmware disables
+       wakenet, because the owner asked it to just listen. So the default silently applies no
+       gain at all. Measured on 0.2.40: speech reached the model at -33 to -20 dBFS, VAD
+       agreed someone was talking, and MultiNet's raw decode came back an EMPTY STRING every
+       time. WebRTC's AGC needs no wake word and is the only mode that works in this
+       configuration. */
+    cfg->agc_init = true;
+    cfg->agc_mode = AFE_AGC_MODE_WEBRTC;
+    cfg->agc_target_level_dbfs = 3;      /* peak target -3 dBFS, the component's own default */
+    cfg->agc_compression_gain_db = 9;
     afe_config_check(cfg);
+    ESP_LOGI(TAG, "front end: agc %s mode %d target -%d dBFS, ns %s, vad %s, wakenet %s",
+             cfg->agc_init ? "on" : "off", (int)cfg->agc_mode, cfg->agc_target_level_dbfs,
+             cfg->ns_init ? "on" : "off", cfg->vad_init ? "on" : "off",
+             cfg->wakenet_init ? "on" : "off");
 
     s_afe = esp_afe_handle_from_config(cfg);
     s_afe_data = s_afe->create_from_config(cfg);
