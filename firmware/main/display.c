@@ -1009,6 +1009,13 @@ int display_mic_peak(void)
 
 static void draw_meter(uint16_t *fb, int level)
 {
+    /* THE SAME GATE AS `blit_meter`, AND MISSING IT IS WHY THE OWNER STILL SAW THE BAR.
+       The meter is drawn twice by design — once into the frame here, so it survives a full
+       repaint, and once as its own narrow blit so it can update at 25 fps while the face
+       redraws at 5 (see `blit_meter`). 0.2.50 put the debug switch on one of them. A feature
+       with two draw sites needs the condition at both, and "I changed the meter" read as done
+       because the code that came to mind was the one that had the interesting comment. */
+    if (!s_debug_overlay) return;
     const int span = METER_BOTTOM - METER_TOP;
     int h = level * span / METER_FULL;
     if (h > span) h = span;

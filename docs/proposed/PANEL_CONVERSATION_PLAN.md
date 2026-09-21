@@ -172,6 +172,56 @@ made of (§10.4bc: *the nothing in the log was the symptom*). It must say it fai
 A PWA switch for the whole mode, per `CLAUDE.md` #10, since the owner cannot edit a config
 file on the box.
 
+## Voice notes between the twins
+
+The owner: *"since we're sending audio I think we should be able to say a command like
+'send to Elora helloooo' and her audio play on Elora when they click on a bubble that shows.
+Essentially, a bubble shows up as a notification that a message came in and then when it's
+touched it'll play the audio message."*
+
+**The best part of this is free, and it decides the design.** `WhisperCppClient` already
+returns **word-level timings** — `Word.start_ms` / `Word.end_ms`
+(`backend/src/jbrain/transcribe.py:34`). So the box transcribes *"send to Elora helloooo"*,
+finds where the addressee's name ends, and **cuts the original recording at that offset**.
+
+That means the message that arrives is **the sibling's own voice**, not a text-to-speech
+rendition of it — and without the "send to Elora" preamble attached. For twins this is the
+whole feature: a four-year-old wants to hear their sister, not a robot quoting her. Synthesis
+would have been the obvious implementation and much the worse one.
+
+### The shape
+
+1. A child holds the panel and says *"send to Elora, …"*. It uploads as any other turn.
+2. The box transcribes. A classifier — the jpet's `classify()` shape — matches
+   `send to <name>` against the known panel names before anything reaches an LLM.
+3. The audio is trimmed at the end of the name using the word timings, stored, and queued for
+   the named panel.
+4. That panel shows a **bubble**, and a tap plays it.
+
+### What it needs that does not exist
+
+- **Panels have to be named, and reliably.** `cfg->name` exists ("which twin's endpoint this
+  is") and the unit on the bench is provisioned as `''`. A `send to` router matching against
+  an empty string is a message that silently goes nowhere.
+- **A message store.** Audio blobs through the storage abstraction (`CLAUDE.md` #2), never a
+  raw path, with a per-panel queue and a retention rule — a voice note is a recording of a
+  child's bedroom and should not accumulate forever.
+- **Delivery inside a child's attention span.** The panel polls settings and the manifest
+  every fifteen minutes. That is fine for firmware and useless for a message; this needs a
+  short poll or an SSE channel, and the plan already recommends one WebSocket per endpoint.
+- **Playback, which the conversation path needs anyway.** The same PCM sink, so this costs
+  nothing extra once press-and-hold works.
+- **The bubble, which is mostly drawn.** `display.c` already has `bubble()` and a tap already
+  resolves to a zone; a notification bubble is that plus a queue count.
+
+### The part worth arguing about before it is built
+
+**A voice note is a recording of one child's room that surfaces in another child's room.** It
+is the right feature and it is also the first thing here that moves audio between people
+rather than to a model and back. Retention, a way for the owner to see what has been sent, and
+a cap on queued messages belong in the first version rather than a later one — the same
+reasoning that put a VAD gate on the upload so an accidental hold sends nothing.
+
 ## Open questions
 
 - **Does `base.en` get under 2 s?** Everything above depends on it. Unmeasured.

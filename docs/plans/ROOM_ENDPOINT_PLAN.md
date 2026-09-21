@@ -3292,6 +3292,29 @@ so a tally of nominal ticks always lags the wall clock and the hold took longer 
 **Still not wired: the panel end.** Capture, upload and playback. The box will answer a
 `/endpoint/converse` today; nothing on the panel calls it yet.
 
+#### 10.4bp The meter was drawn twice and switched once (0.2.56, 2026-09-21)
+
+The owner, on 0.2.53: *"I'm on 5'3 but the mic meter is still here. Maybe it's the old version
+there?"*
+
+Not the old version. **The meter is drawn twice, and 0.2.50 gated one of them.**
+
+Both exist on purpose. `draw_meter()` paints it into the frame, so it survives a full repaint;
+`blit_meter()` pushes it as its own narrow strip, so it can update at 25 fps while the face
+redraws at 5 — that second path is §10.4's fix for a bar that lagged the room. The debug
+switch went on `blit_meter` alone, so the bar kept being painted into every face frame and the
+setting appeared to do nothing.
+
+The tell in how this happened is worth keeping: `blit_meter` is the one with the interesting
+comment attached — the one that comes to mind when someone thinks "the meter". The other is
+four lines in the middle of the draw list. **A feature with two draw sites needs the condition
+at both**, and "I changed the meter" read as done because only one of them was in view.
+
+It cannot be caught by the host suite either: `display.c` is full of ESP headers and is not in
+that build, which is why the renderer's own `face.c` is tested to the pixel and this is not.
+Recorded rather than papered over — the check lives in two places now and the comment at each
+says why there are two.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
