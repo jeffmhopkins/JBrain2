@@ -1441,6 +1441,31 @@ cannot interact with the V2 panel's 16-pixel column gap, and flips the version l
 microphone meter along with the robot — which is what "facing up" has to mean. Ninety degrees
 is not available: the panel is 368×448 and a quarter turn does not fit it.
 
+#### 10.4ae Gravity is on X (2026-09-21)
+
+0.2.18 shipped the flip on an assumed axis, at the owner's call, with the raw counts going out
+in telemetry. The first report answered it in one cycle:
+
+```
+accel: [-7637, 381, 530]
+```
+
+Upright, gravity is **-0.93 g on X**. `ay` — the axis 0.2.18 guessed — reads 381, which sits
+deep inside the ±4000 hysteresis band, so the flip would never have triggered at all. Not
+inverted: inert.
+
+0.2.19 is `ay` → `ax` and nothing else.
+
+**Shipping the guess was the right call and this is why.** The alternative was a reporting
+release followed by an acting release: two cycles either way, except the guess had a chance of
+being right and left the mechanism already deployed and exercised. The cost of being wrong was
+one line, exactly as predicted — and the failure mode was even cheaper than the one anticipated,
+because an axis reading near zero does nothing rather than doing the wrong thing.
+
+The general point is the one §10.4ad opened: caution is priced per mistake. Reporting raw
+counts rather than a derived orientation is what made this a one-line answer instead of a
+guess about a guess.
+
 #### 10.4ad The meter was showing one frame in five, and the robot flips (2026-09-21)
 
 **The sluggish meter was a bug, not a limit.** The microphone is sampled 25 times a second and
