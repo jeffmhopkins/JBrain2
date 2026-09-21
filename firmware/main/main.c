@@ -92,13 +92,13 @@ static void report(const cfg_t *cfg)
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
-                     "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"pmu_history\":[",
+                     "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
-                     have_imu ? az : 0, display_stack_free());
+                     have_imu ? az : 0, display_stack_free(), display_crash_phase());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }

@@ -407,6 +407,11 @@ class TelemetryIn(BaseModel):
     # shrinking number is a panic that has not happened yet; zero means the field is from
     # firmware too old to report it.
     stack_free: int = 0
+    # The render loop stage reached just before the last restart, or -1 on a cold boot. A
+    # panic prints its backtrace to a console this panel does not have, so this is the
+    # substitute: not a line number, but the difference between "somewhere in the firmware"
+    # and "in the I2S read".
+    crash_phase: int = 0
     # Raw accelerometer counts [x, y, z] at +/-4 g, so 1 g is about 8192. Deliberately raw:
     # which axis points where on this board is not documented anywhere, and a number the
     # firmware has already interpreted cannot answer that. All zeros means the part did not
@@ -448,6 +453,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         mic_peak=body.mic_peak,
         accel=body.accel,
         stack_free=body.stack_free,
+        crash_phase=body.crash_phase,
         pmu_history=body.pmu_history,
         note=body.note,
     )
