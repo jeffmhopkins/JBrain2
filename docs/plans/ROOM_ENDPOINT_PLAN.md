@@ -3187,6 +3187,279 @@ allows the halo to erode a few where a letter sits on a toe — that erosion is 
 pass with it gone, in that order; four tests in this feature have now passed for the wrong
 reason, and checking the direction costs one minute.
 
+#### 10.4bn Off the cable, and every diagnostic went with it (0.2.54, 2026-09-21)
+
+The owner: *"I moved to not be on USB."*
+
+That is the product working as designed — §10 has always said the box's USB port is for the
+first flash only and every update after it arrives over Wi-Fi — and it removes two fault
+sources at a stroke: the `ESP_RST_USB` resets a console attach causes (§10.4bh), and the
+power cycles a box update inflicts on a panel drawing power from it.
+
+**And it silently invalidated every instrument added today.** The ALC register reading, the
+render heartbeat, the restart line: all `ESP_LOG`, and an `ESP_LOG` exists only on a serial
+console. The panel no longer has one, and never will again in its real place. The single
+question the owner actually asked — is the codec's automatic gain railing the microphone
+after a beep — was being written to a wire that is not connected.
+
+This is the same mistake as §10.4bh in a new costume. There the console could not see a fault
+that had already happened; here it cannot see anything at all. Both times the channel that
+worked was `POST /endpoint/telemetry`, whose docstring said so in advance: *"the owner moving
+one to a plain USB charger, which is the whole premise, must not cost the ability to see what
+it is doing."*
+
+So the answers move to the channel that survives:
+
+| field | what it settles |
+|---|---|
+| `alc` | `"f8-78 off"`, `"78 already-off"`, `"REFUSED"` — the ES8311's gain register before and after, read back |
+| `blit_ok` / `blit_fail` | frames that reached the glass and frames that did not |
+
+`TelemetryIn` is deliberately a flat bag of short strings and ints — *"a migration per question
+would mean the question does not get asked"* — so this costs two fields and no schema change.
+
+**The general rule this sequence keeps re-teaching:** a diagnostic is only worth what its
+channel can carry. Five values were set and never read back (§10.4bb, §10.4bi); two channels
+were trusted past what they could see (§10.4bh, here). Every wrong turn in this feature has
+been one of those two shapes.
+
+#### 10.4bo The box half of the conversation (0.2.55, 2026-09-21)
+
+The owner: *"let's go ahead and wire things in same flow as the jpet"* — and, on the prompt,
+*"probably want a different prompt though. Started off very easy. Just a generic conversation
+prompt."*
+
+##### Why the jpet's flow is the right one to copy
+
+`api/pet.py:_say` already solved the part that is not the model. A fast keyword classifier
+runs FIRST, so colours and actions never reach an LLM at all; only open-ended input does, and
+that leg is wrapped so that a slow, unconfigured or broken model **degrades to a canned line
+rather than a 500**. That is the property a pet in a child's bedroom needs: a toy that goes
+quiet while a container restarts is indistinguishable from a toy that is broken.
+
+`POST /endpoint/converse` takes the same shape. `PanelDep`, so a panel talks with the device
+key it already uses for its manifest and telemetry. Nothing is stored — no memories, no
+domain — which keeps a stolen panel key worth exactly one conversation.
+
+##### But not the jpet's prompt
+
+`jpet/brain.py:_system_prompt` is built around wall objects, scene effects and an action
+script schema. None of that exists on a panel, and inheriting it would have the pet narrating
+furniture a child cannot see. So the panel gets the smallest thing that behaves: who it is,
+who it is talking to, and the one constraint that is not a style preference —
+
+> *Your reply is read aloud, so write only what should be said.*
+
+Length is latency here. Every extra sentence is a second the child stands there holding a
+29 mm screen.
+
+##### Raw PCM in, raw PCM out
+
+16 kHz mono s16 both ways, which is what the panel captures and what it can play. **Every
+conversion happens on the box**: it has CPU to spare and the panel has 31 KB of contiguous
+internal RAM. No decoder, no resampler, no WAV parser in firmware — the single decision that
+keeps the firmware side small.
+
+The WAV coming back from Kokoro is **walked, not skipped**. A fixed 44-byte offset is the bug
+that ships as a burst of noise before every reply, because a WAV may carry LIST/INFO chunks
+before `data` and Kokoro's layout is not promised. There is a test with a spliced LIST chunk
+for exactly that.
+
+##### And every turn logs the three numbers that decide whether this is usable
+
+`stt_ms`, `llm_ms`, `tts_ms`. Whisper was measured at ~9.8 s with the large model
+(§10.4bf) and no thinking animation covers that. Wiring the route up is how the real number
+arrives — from the room, on real speech, rather than from a bench.
+
+##### Two tests that were asserting nothing
+
+- The auth test passed a bogus bearer token and expected 401, and got 200. `PanelDep` accepts
+  the owner's session cookie **or** a panel key, deliberately, and the fixture logs in as the
+  owner — so the cookie was answering and the bearer was never consulted. It clears the cookie
+  now.
+- The TTS fake returned a detached `httpx.Response`, and `raise_for_status()` refuses to judge
+  a response that was never sent — it raises `RuntimeError`, not `HTTPStatusError`, so the
+  route's own error handling was never exercised.
+
+##### The hold threshold was already 700 ms, and drifted anyway
+
+The owner asked for "one second, maybe even 3/4" and `HOLD_TALK_MS` was already 700. But the
+firmware counted `s_down_ms += TOUCH_POLL_MS` once per loop pass, which silently assumes the
+loop runs every 40 ms — it does not. The delay is 40 ms and *then* the frame's work happens,
+so a tally of nominal ticks always lags the wall clock and the hold took longer than the
+700 ms it claimed. It is a timestamp now, which cannot drift.
+
+**Still not wired: the panel end.** Capture, upload and playback. The box will answer a
+`/endpoint/converse` today; nothing on the panel calls it yet.
+
+#### 10.4bp The meter was drawn twice and switched once (0.2.56, 2026-09-21)
+
+The owner, on 0.2.53: *"I'm on 5'3 but the mic meter is still here. Maybe it's the old version
+there?"*
+
+Not the old version. **The meter is drawn twice, and 0.2.50 gated one of them.**
+
+Both exist on purpose. `draw_meter()` paints it into the frame, so it survives a full repaint;
+`blit_meter()` pushes it as its own narrow strip, so it can update at 25 fps while the face
+redraws at 5 — that second path is §10.4's fix for a bar that lagged the room. The debug
+switch went on `blit_meter` alone, so the bar kept being painted into every face frame and the
+setting appeared to do nothing.
+
+The tell in how this happened is worth keeping: `blit_meter` is the one with the interesting
+comment attached — the one that comes to mind when someone thinks "the meter". The other is
+four lines in the middle of the draw list. **A feature with two draw sites needs the condition
+at both**, and "I changed the meter" read as done because only one of them was in view.
+
+It cannot be caught by the host suite either: `display.c` is full of ESP headers and is not in
+that build, which is why the renderer's own `face.c` is tested to the pixel and this is not.
+Recorded rather than papered over — the check lives in two places now and the comment at each
+says why there are two.
+
+#### 10.4bq The panel starts recording (0.2.57, 2026-09-21)
+
+The first half of the panel's side of a conversation: a hold now **captures audio**, into a
+buffer claimed once at start-up out of PSRAM.
+
+**Claimed once, never during a recording.** 6 s of 16 kHz mono s16 is 192 KB, out of the
+7.8 MB of PSRAM nothing else wants — and a heap request in the middle of a four-year-old
+talking is a failure with no good outcome. Allocation failure is not fatal either: the panel
+keeps its voice commands and its meter and simply cannot record, which is a smaller loss than
+refusing to start.
+
+**It stops at the cap rather than wrapping.** A ring buffer would hand the box the END of a
+long hold, and what a child said is at the start.
+
+**The recording opens AFTER the beep, deliberately.** `audio.c` goes deaf for six chunks once
+the speaker runs (§10.4bi), so opening it here keeps the panel's own tone out of the front of
+every message — the same fault that would otherwise have the recogniser transcribing a beep.
+
+**And it reads the chunk the recogniser already gets.** One microphone, one owner, one read.
+A second reader would be the two-owners fault that panicked a panel earlier today (§10.4al),
+and the capture is a `memcpy` inside the task that already owns the codec.
+
+##### Held and captured are different numbers
+
+```
+talk: held 1840 ms, captured 1640 ms (52480 bytes)
+```
+
+Printing only the first is how a dead microphone looks like a working one. They diverge when
+the buffer failed to allocate, when the six-second cap bites, and when the deaf window after
+the beep eats the start — three different bugs that a single number cannot tell apart. This is
+the same lesson as §10.4bb, applied before it costs anything rather than after.
+
+**Still to come: the upload and the playback.** The box has answered `/endpoint/converse`
+since §10.4bo; nothing calls it yet. The upload must not run on the render task — a network
+round trip there is a frozen pet — so it wants its own task, which is the next piece.
+
+#### 10.4br The loop closes (0.2.58, 2026-09-21)
+
+Hold, talk, let go, and the panel uploads the recording, waits, and **speaks the reply out
+loud**. The last piece of the owner's press-and-hold.
+
+##### Its own task, and that is the whole reason `talk.c` exists
+
+A turn is an HTTPS round trip that can take seconds — whisper alone was measured at ~9.8 s
+with the large model (§10.4bf). Doing it on the render task would freeze the pet for the
+entire wait, which is precisely what the thinking bubble is there to prevent: **an animation
+that stops animating is worse than no animation, because it reads as a crash.** So the
+renderer hands over a recording and asks a question every frame (`talk_state()`), and never
+blocks.
+
+Pinned off the render core, because it sits on a socket for seconds at a time.
+
+##### One chunk per pass, not the whole reply
+
+`esp_codec_dev_write` blocks. Handing it two seconds of audio would stop the audio task — and
+that task's read is the clock for the level meter, the recogniser *and* the capture. A chunk
+at a time keeps the loop turning, and lets a reboot or an OTA interrupt a reply rather than
+wedging the panel until it finishes talking.
+
+The panel also goes deaf while it speaks. The codec routes the DAC into the ADC by design
+(§10.4bi), so **everything the pet says, it also hears** — and feeding that to the recogniser
+would have it answering itself.
+
+##### Three states the renderer can leave THINKING through, and only one is a failure
+
+| the box said | what happens |
+|---|---|
+| 200 with audio | the pet nods and speaks; state held on `audio_playing()`, not a timer, so a long reply cannot end on screen mid-sentence |
+| 204, heard nothing | straight back to idle — an accidental hold on a quiet room is the most common recording this will ever make, and it is not an error |
+| anything else, or 12 s | the failure face |
+
+A recording that never started, or a hold while a turn is already in flight, goes back to idle
+**without** showing a bubble. A thinking box with nothing behind it is exactly the silent hang
+this state machine exists to avoid.
+
+##### The compiler found a real one
+
+```
+talk.c:113: error: 'sent' may be used uninitialized [-Werror=maybe-uninitialized]
+```
+
+Every `goto done` on an early failure jumps past that assignment, and the log at the bottom
+reads it regardless — so a failed connect would have printed an upload time made of stack
+garbage, in the one line added to diagnose slow turns. `-Werror=maybe-uninitialized` earned
+its place.
+
+##### And the timing splits at the right seam
+
+`turn:` logs bytes sent, **upload ms** and **total ms** separately, because the upload is the
+network and the rest is the box. "It took nine seconds" says nothing about which end to fix.
+The box's own `endpoint.converse` line carries the other half — `stt_ms`, `llm_ms`, `tts_ms` —
+and the two together account for the whole wait with nothing unexplained between them.
+
+**This is how the whisper question finally gets answered**: from a child's bedroom, on real
+speech, rather than from a bench.
+
+#### 10.4bs A five-second window on the angriest path (0.2.59, 2026-09-21)
+
+Found by re-reading 0.2.58 rather than by running it, which is the only way this one was ever
+going to be found.
+
+`talk.c` uploads **straight out of the capture buffer** — no copy, deliberately, because a
+second 192 KB buffer to hold a copy of the first is 192 KB spent on nothing. The lifetime rule
+that makes that safe is "the buffer is not reused until the next `audio_capture_open()`".
+
+**Two timeouts broke it.** The renderer gives up at 12 s and shows the failure face, holds it
+for 2.5 s, then returns to idle. `talk.c`'s HTTP timeout is 20 s. So for about five seconds
+the socket is still reading the buffer while the state machine is perfectly willing to start a
+new recording into it.
+
+And it is not an exotic path. It is what happens when the box is slow and **a four-year-old
+holds the panel again because nothing happened** — the single most likely human response to a
+failure face, arriving in exactly the window where the bytes are still in use.
+
+The fix is one condition: a hold cannot start listening while `talk_state()` is BUSY. The
+alternative — copying the recording for the upload — buys nothing and costs a fifth of a
+megabyte.
+
+Worth recording because of *how* it was found. The build was clean, the host suite was green,
+and the panel would have worked every time anyone tested it deliberately; the failure needs a
+slow box and an impatient child, together. Reading one's own diff for lifetimes is not a
+substitute for tests, but it is the only thing that catches a race whose trigger is someone
+being annoyed.
+
+#### 10.4bt A truncated credential is a sentence that sends you to the wrong end (0.2.60, 2026-09-21)
+
+`talk.c` built its bearer header into a fixed 192-byte buffer. The token comes out of NVS with
+no length bound, and `snprintf` **truncates silently** — so a long enough token would produce a
+valid-looking header carrying half a credential, the box would answer 401, and the panel would
+show a failure face.
+
+`ota.c` had already got this right, with `malloc(strlen(token) + 8)`.
+
+The size is not really the point. The point is what the failure would have *said*: "the box
+rejected me" sends the next person to the server to look at authentication, and the fault is
+two files away on the device. Both lengths are checked now and a truncation names itself
+before anything is sent.
+
+This is the same shape as every other fault in this sequence — five values set and never read
+back (§10.4bb, §10.4bi), two channels trusted past what they could see (§10.4bh, §10.4bn) —
+and it is the reason for the rule those keep pointing at: **an operation whose failure cannot
+be distinguished from a different failure is not finished.** `snprintf` returning a number
+nobody looks at is exactly that, in one line.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

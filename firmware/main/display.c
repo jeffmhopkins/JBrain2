@@ -32,6 +32,7 @@
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
+#include "talk.h"
 #include "calib.h"
 #include "caption.h"
 #include "cfg.h"
@@ -533,7 +534,11 @@ static volatile bool s_debug_overlay;
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
-static int s_down_ms;
+/* WHEN the finger landed, not HOW MANY passes ago. The first cut counted `+= TOUCH_POLL_MS`
+   per iteration, which silently assumes this loop runs every 40 ms — it does not. The delay
+   is 40 ms and then the frame's work happens, so a tally of nominal ticks always lags the
+   wall clock and the hold felt longer than the 700 ms it claimed. A timestamp cannot drift. */
+static uint32_t s_down_since;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -660,6 +665,12 @@ static int s_lean;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
 static int s_blit_ok;
+
+void display_blit_counts(int *ok, int *fail)
+{
+    if (ok != NULL) *ok = s_blit_ok;
+    if (fail != NULL) *fail = s_blit_fails;
+}
 
 /* THE WHOLE FRAME, THROUGH ONE STATIC INTERNAL BUFFER, A STRIPE AT A TIME.
  *
@@ -999,6 +1010,13 @@ int display_mic_peak(void)
 
 static void draw_meter(uint16_t *fb, int level)
 {
+    /* THE SAME GATE AS `blit_meter`, AND MISSING IT IS WHY THE OWNER STILL SAW THE BAR.
+       The meter is drawn twice by design — once into the frame here, so it survives a full
+       repaint, and once as its own narrow blit so it can update at 25 fps while the face
+       redraws at 5 (see `blit_meter`). 0.2.50 put the debug switch on one of them. A feature
+       with two draw sites needs the condition at both, and "I changed the meter" read as done
+       because the code that came to mind was the one that had the interesting comment. */
+    if (!s_debug_overlay) return;
     const int span = METER_BOTTOM - METER_TOP;
     int h = level * span / METER_FULL;
     if (h > span) h = span;
@@ -1235,26 +1253,68 @@ static void face_task(void *arg)
         /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
            the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
            run is live belongs to them and must not also start a listen. */
-        s_down_ms = down ? s_down_ms + TOUCH_POLL_MS : 0;
-        if (s_talk == TALK_IDLE && down && gest.taps == 0 && s_down_ms >= HOLD_TALK_MS) {
+        if (!down) s_down_since = 0;
+        else if (s_down_since == 0) s_down_since = now;
+        const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
+        /* NOT WHILE A TURN IS STILL IN FLIGHT, and this is a lifetime rule rather than a
+           politeness one. `talk.c` uploads straight out of the capture buffer, and this
+           renderer gives up at 12 s while the HTTP timeout is 20 — so without this guard a
+           child who holds again after a failure face would call `audio_capture_open()` and
+           overwrite the bytes still being read by the socket. A five-second window, on the
+           one path a frustrated four-year-old is most likely to take. */
+        if (s_talk == TALK_IDLE && down && gest.taps == 0 && held >= HOLD_TALK_MS &&
+            talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
                that the thing is now listening rather than merely being held. */
             if (sound) audio_beep();
+            /* AFTER the beep, deliberately: `audio.c` goes deaf for six chunks once the
+               speaker runs (§10.4bi), so opening the recording here keeps our own tone out
+               of the front of every message. */
+            audio_capture_open();
             ESP_LOGI(TAG, "talk: listening");
         } else if (s_talk == TALK_LISTENING && !down) {
-            /* The length BEFORE the timestamp is reused, or it reads zero every time. */
-            ESP_LOGI(TAG, "talk: thinking after %u ms of audio",
-                     (unsigned)(now - s_talk_since));
-            s_talk = TALK_THINKING;
-            s_talk_since = now;
-        } else if (s_talk == TALK_THINKING && now - s_talk_since > TALK_TIMEOUT_MS) {
+            size_t got = 0;
+            const int16_t *pcm = audio_capture_close(&got);
+            /* HELD LENGTH AND CAPTURED LENGTH ARE DIFFERENT NUMBERS, and printing only the
+               first is how a dead microphone looks like a working one. They diverge when the
+               capture buffer failed to allocate, when the six-second cap bites, or when the
+               deaf window after the beep ate the start — and each of those is a different
+               bug. The length BEFORE the timestamp is reused, or the hold reads as zero. */
+            ESP_LOGI(TAG, "talk: held %u ms, captured %u ms (%u bytes)",
+                     (unsigned)(now - s_talk_since), (unsigned)audio_capture_ms(),
+                     (unsigned)got);
+            if (pcm == NULL || !talk_send(pcm, got)) {
+                /* Nothing recorded, or a turn already in flight. Either way the pet goes
+                   straight back to being a pet rather than showing a bubble that cannot
+                   resolve — a thinking box with nothing behind it is the silent hang this
+                   whole state machine exists to avoid. */
+                s_talk = TALK_IDLE;
+            } else {
+                s_talk = TALK_THINKING;
+                s_talk_since = now;
+            }
+        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_SPOKE) {
+            /* Speaking. The bubble goes and the pet reacts, and the state is held on
+               `audio_playing()` rather than a timer so a long reply cannot end on screen
+               mid-sentence. */
+            s_talk = TALK_IDLE;
+            talk_clear();
+            action = ACT_NOD;
+            action_mag = 1.0f;
+            action_start = now;
+        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_IDLE) {
+            s_talk = TALK_IDLE; /* the box heard silence; nothing to say about it */
+            talk_clear();
+        } else if (s_talk == TALK_THINKING &&
+                   (talk_state() == TALK_NET_FAILED || now - s_talk_since > TALK_TIMEOUT_MS)) {
+            talk_clear();
             /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
                not hear you" and "it is broken" must not look identical (§10.4bc). */
             s_talk = TALK_FAILED;
             s_talk_since = now;
-            ESP_LOGW(TAG, "talk: no reply in %d ms", TALK_TIMEOUT_MS);
+            ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
         }

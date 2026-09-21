@@ -28,6 +28,7 @@
 #include "mem.h"
 #include "ota.h"
 #include "speech.h"
+#include "talk.h"
 #include "pmu.h"
 
 static const char *TAG = "endpoint";
@@ -126,18 +127,29 @@ static void report(const cfg_t *cfg)
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
 
-    char body[768];
+    /* TWO ANSWERS THAT ONLY EXISTED ON A CABLE. Both of these are ESP_LOG lines as well, and
+       an ESP_LOG only reaches a serial console — which this panel no longer has, because the
+       owner moved it onto a plain charger, which was always the plan. The ALC reading is the
+       answer to a question the owner actually asked, and the blit counts are how a screen
+       that has stopped drawing says so; neither is worth having if it can only be read by
+       someone holding a USB cable. */
+    int blit_ok = 0, blit_fail = 0;
+    display_blit_counts(&blit_ok, &blit_fail);
+
+    char body[832];
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
+                     "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,"
                      "\"tap\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
-                     have_imu ? az : 0, display_stack_free(), display_crash_phase(), tap_x,
+                     have_imu ? az : 0, display_stack_free(), display_crash_phase(),
+                     audio_alc_state(), blit_ok, blit_fail, tap_x,
                      tap_y, tap_zone);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
@@ -264,6 +276,11 @@ void app_main(void)
             ears_tried = true;
             mem_log("pre-speech");
             if (!speech_start()) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+            /* Alongside the recogniser, and after the first successful box contact for the
+               same reason: this needs the API base, the token and the CA out of `cfg`, and
+               starting it before the network is up would only mean a task blocked on a
+               socket that cannot open yet. */
+            if (!talk_start(&cfg)) ESP_LOGW(TAG, "no conversation — holds will not upload");
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router

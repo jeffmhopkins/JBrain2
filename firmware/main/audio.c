@@ -17,11 +17,14 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "driver/i2s_std.h"
 #include "es8311_codec.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -86,6 +89,62 @@ static const char *TAG = "audio";
 static esp_codec_dev_handle_t s_codec;
 /* Kept so the ALC can be read back from the audio task — see `alc_settle()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
+
+/* THE RECORDING. Six seconds is the cap the box enforces too, and both ends need it: the
+   panel must not fill PSRAM because a screen is face-down in a bag, and the box must not
+   transcribe a minute of a room because the panel forgot to stop. 6 s of 16 kHz mono s16 is
+   192 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM nothing else wants.
+   Never allocated while recording: a heap request in the middle of a four-year-old talking
+   is a failure with no good outcome. */
+#define CAPTURE_MAX_MS 6000
+#define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
+static int16_t *s_cap;          /* PSRAM, claimed at start-up */
+static volatile int s_cap_used; /* samples written this recording */
+static volatile bool s_cap_on;
+
+/* THE REPLY. Its own buffer, the same six-second ceiling: a reply longer than the question
+   is not a conversation with a four-year-old, and the box caps its own text anyway. */
+static int16_t *s_play;
+static volatile int s_play_len;  /* samples still to write */
+static volatile int s_play_pos;
+
+bool audio_play(const int16_t *pcm, size_t bytes)
+{
+    if (s_play == NULL || pcm == NULL || bytes < 2) return false;
+    if (s_play_pos < s_play_len) return false; /* still speaking */
+    int n = (int)(bytes / sizeof(int16_t));
+    if (n > CAPTURE_MAX_SAMPLES) n = CAPTURE_MAX_SAMPLES;
+    memcpy(s_play, pcm, (size_t)n * sizeof(int16_t));
+    s_play_pos = 0;
+    s_play_len = n;
+    return true;
+}
+
+bool audio_playing(void)
+{
+    return s_play_pos < s_play_len;
+}
+
+void audio_capture_open(void)
+{
+    if (s_cap == NULL) return;
+    s_cap_used = 0;
+    s_cap_on = true;
+}
+
+const int16_t *audio_capture_close(size_t *len_bytes)
+{
+    s_cap_on = false;
+    const int used = s_cap_used;
+    if (len_bytes != NULL) *len_bytes = (size_t)used * sizeof(int16_t);
+    return (s_cap != NULL && used > 0) ? s_cap : NULL;
+}
+
+int audio_capture_ms(void)
+{
+    return s_cap_used * 1000 / AUDIO_RATE;
+}
+
 
 /* The one task that touches `s_codec`. Defined below, beside the requests it services. */
 static void audio_task(void *arg);
@@ -213,6 +272,15 @@ bool audio_start(void)
     /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
        capture is a dropped chunk and a meter that lags the room. The stack is small because
        this task calls into the codec and computes a peak, and nothing else. */
+    /* PSRAM, claimed once, before anything else wants it. Failure is not fatal: the panel
+       keeps its voice commands and its meter and simply cannot record a message, which is a
+       smaller loss than refusing to start. */
+    s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    s_play = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "capture %s, playback %s (%d ms each)",
+             s_cap != NULL ? "ready" : "UNAVAILABLE",
+             s_play != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS);
+
     if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "audio task");
         return false;
@@ -267,34 +335,52 @@ static int16_t s_chunk[AUDIO_CHUNK];
  * size, and READ IT BACK. Four values in this sequence were set and never read back — the
  * memory mode, the chunk sizes, the AGC mode and the mic gain — and every wrong diagnosis
  * traced to exactly that. This one is not joining them. */
+/* WRITTEN DOWN WHERE SOMEONE CAN READ IT. Every line below is also an ESP_LOG, and an
+   ESP_LOG only exists on a serial console — which this panel no longer has, because the owner
+   moved it to a plain charger, which was always the point (§10.4ab). A diagnosis that only
+   reaches a cable is not a diagnosis on this product, so the answer rides telemetry too. */
+static char s_alc[24] = "unread";
+
+const char *audio_alc_state(void)
+{
+    return s_alc;
+}
+
 static void alc_settle(void)
 {
     if (s_ctrl == NULL || s_ctrl->read_reg == NULL || s_ctrl->write_reg == NULL) {
         ESP_LOGW(TAG, "alc: no control interface; state unknown");
+        snprintf(s_alc, sizeof(s_alc), "no-ctrl");
         return;
     }
     uint8_t v = 0;
     if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
         ESP_LOGW(TAG, "alc: register unreadable; state unknown");
+        snprintf(s_alc, sizeof(s_alc), "unreadable");
         return;
     }
     const uint8_t before = v;
     if ((v & ES8311_ALC_ENABLE) == 0) {
         ESP_LOGI(TAG, "alc: already off (reg18 0x%02x)", before);
+        snprintf(s_alc, sizeof(s_alc), "%02x already-off", before);
         return;
     }
     v = (uint8_t)(before & (uint8_t)~ES8311_ALC_ENABLE);
     if (s_ctrl->write_reg(s_ctrl, ES8311_REG_ALC, 1, &v, 1) != 0) {
         ESP_LOGW(TAG, "alc: write REFUSED (reg18 still 0x%02x)", before);
+        snprintf(s_alc, sizeof(s_alc), "%02x REFUSED", before);
         return;
     }
     uint8_t after = 0;
     if (s_ctrl->read_reg(s_ctrl, ES8311_REG_ALC, 1, &after, 1) != 0) {
         ESP_LOGW(TAG, "alc: wrote 0x%02x but cannot read back", v);
+        snprintf(s_alc, sizeof(s_alc), "%02x no-readback", before);
         return;
     }
     ESP_LOGI(TAG, "alc: 0x%02x -> 0x%02x (%s)", before, after,
              (after & ES8311_ALC_ENABLE) ? "STILL ON" : "off");
+    snprintf(s_alc, sizeof(s_alc), "%02x-%02x %s", before, after,
+             (after & ES8311_ALC_ENABLE) ? "STILL-ON" : "off");
 }
 
 /* Chunks to ignore after the speaker runs. The codec routes the DAC into the ADC by design
@@ -303,6 +389,7 @@ static void alc_settle(void)
    90 ms and a chunk is 40; this covers it and a tail. */
 #define DEAF_CHUNKS 6
 static int s_deaf;
+
 
 static void audio_task(void *arg)
 {
@@ -315,6 +402,21 @@ static void audio_task(void *arg)
         if (s_beep_want) {
             s_beep_want = false;
             esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+            s_deaf = DEAF_CHUNKS;
+        }
+        if (s_play_pos < s_play_len) {
+            /* ONE CHUNK PER PASS, NOT THE WHOLE REPLY. `esp_codec_dev_write` blocks, so
+               handing it two seconds of audio would stop this task — and this task's read is
+               the clock for the level meter, the recogniser and the capture. A chunk at a
+               time keeps the loop turning and lets a reply be interrupted by a reboot or an
+               OTA rather than wedging the panel until it finishes talking. */
+            const int left = s_play_len - s_play_pos;
+            const int take = left < AUDIO_CHUNK ? left : AUDIO_CHUNK;
+            esp_codec_dev_write(s_codec, &s_play[s_play_pos], (int)(take * sizeof(int16_t)));
+            s_play_pos += take;
+            /* The codec routes the DAC into the ADC by design, so everything we say is also
+               heard. Feeding our own reply to the recogniser would have the pet answering
+               itself. */
             s_deaf = DEAF_CHUNKS;
         }
         apply_levels();
@@ -332,6 +434,19 @@ static void audio_task(void *arg)
                 continue;
             }
             s_level = audio_peak(s_chunk, AUDIO_CHUNK);
+            if (s_cap_on && s_cap != NULL) {
+                /* Straight off the same chunk the recogniser gets. One microphone, one
+                   owner, one read — a second reader would be the two-owners fault this
+                   file's header is about. Stops at the cap rather than wrapping: a ring
+                   buffer would hand the box the END of a long hold, and what a child said
+                   is at the start. */
+                const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
+                const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
+                if (take > 0) {
+                    memcpy(&s_cap[s_cap_used], s_chunk, (size_t)take * sizeof(int16_t));
+                    s_cap_used += take;
+                }
+            }
             /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one
                owner, and esp-sr's usual arrangement — its own task reading I2S directly —
                would be a second one. `speech_feed` is a memcpy and a hand-off; the model

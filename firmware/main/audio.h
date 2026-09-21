@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* Capture and playback share one rate: the ES8311 is one part, opened once.
@@ -49,4 +50,43 @@ void audio_beep(void);
 int audio_level(void);
 
 /* Largest absolute sample of a buffer. Pure, and exposed for the host tests. */
+/* What the ES8311's ALC register actually held and what it holds now, as a short string for
+   telemetry — "f8-78 off", "78 already-off", "REFUSED". The console line this mirrors cannot
+   be read on a panel that is no longer on a cable, which is every panel in its real place. */
+const char *audio_alc_state(void);
+
+/* PRESS AND HOLD: THE RECORDING.
+ *
+ * `audio_capture_open()` starts filling a PSRAM buffer from the same chunks the recogniser
+ * already sees — one microphone, one owner, one read (see the task rule above). It never
+ * blocks the audio task and it never allocates while recording: the buffer is claimed once,
+ * at start-up, because a heap request in the middle of a four-year-old talking is a failure
+ * with no good outcome.
+ *
+ * `audio_capture_close()` stops and hands back what was captured. NULL with `*len` zero means
+ * nothing was recorded, which is a normal answer — an accidental hold on a silent room is the
+ * most common recording this thing will ever make, and it must cost nothing to discard.
+ *
+ * The buffer stays valid until the next `audio_capture_open()`, so the caller uploads it
+ * before starting another turn. */
+void audio_capture_open(void);
+const int16_t *audio_capture_close(size_t *len_bytes);
+
+/* PLAY A REPLY. The bytes are COPIED into a buffer this file owns, because the caller's
+   buffer is the HTTP response and that is freed the moment the request is. Returns false when
+   playback is already running or the clip does not fit — a reply arriving on top of one still
+   speaking is a request to interrupt, and this panel has no reference channel to do that
+   safely (see `PANEL_CONVERSATION_PLAN.md` on barge-in).
+
+   16 kHz mono s16, which is what the box sends BECAUSE the panel cannot convert anything. */
+bool audio_play(const int16_t *pcm, size_t bytes);
+
+/* True while a reply is still coming out of the speaker. The renderer holds its "speaking"
+   state on this rather than on a timer, or a long reply ends on screen mid-sentence. */
+bool audio_playing(void);
+
+/* How long the current recording is, in milliseconds — for the cap, and for the log line that
+   says how much audio a hold actually produced. */
+int audio_capture_ms(void);
+
 int audio_peak(const int16_t *buf, int samples);
