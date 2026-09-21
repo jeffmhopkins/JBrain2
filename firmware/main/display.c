@@ -339,9 +339,14 @@ static bool s_upside_down;
    ±60 px is what the composition allows: the head is 216 px on a 368 px panel, so there is
    76 px of slack each side and this keeps a margin rather than pressing him against the edge.
 
-   The sign needs no special case when inverted. Rotating the panel 180° negates `ay` for the
-   same physical tilt, and `flip_frame` negates the drawn offset again — the two cancel, and
-   the robot slides towards the viewer's downhill side either way. */
+   THE SIGN DOES NEED A CASE WHEN INVERTED, and the argument that it does not was wrong in a
+   way worth keeping. It claimed two negations cancel: the panel's rotation negates `ay`, and
+   `flip_frame` negates the drawn offset. The second one is not a negation the VIEWER sees.
+   `flip_frame` reverses the framebuffer and the panel is then physically rotated 180° in the
+   viewer's hands — those two cancel each other, so the viewer reads framebuffer coordinates
+   directly in both orientations. Only the accelerometer's sign actually flips, leaving the
+   lean correct in one orientation and backwards in the other, which is exactly what the owner
+   saw. So the tilt is taken in viewer terms explicitly. */
 #define LEAN_MAX 60
 /* A little over a quarter of a gravity reaches full lean: tilting a panel that far is a
    deliberate act, and anything gentler stays proportional rather than pinned. */
@@ -355,7 +360,9 @@ static void update_orientation(void)
 {
     int16_t ax = 0, ay = 0, az = 0;
     if (!imu_read(&ax, &ay, &az)) return;
-    int target = ay * LEAN_MAX / LEAN_FULL;
+    /* Viewer-relative: the chip turns over with the panel, the rendered image does not. */
+    const int tilt = s_upside_down ? ay : -ay;
+    int target = tilt * LEAN_MAX / LEAN_FULL;
     if (target > LEAN_MAX) target = LEAN_MAX;
     if (target < -LEAN_MAX) target = -LEAN_MAX;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
