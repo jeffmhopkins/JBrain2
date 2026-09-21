@@ -3053,6 +3053,63 @@ other is the identity across every pixel of the square, and a named corner is as
 because "it round-trips" is also true of doing nothing. An off-by-one in a permutation is a
 mirrored pet, which looks deliberate.
 
+#### 10.4bk Press, hold, and a box that thinks (0.2.52, 2026-09-21)
+
+The owner, specifying the conversation gesture: *"when we long press ... it should make a
+[sound] when it activates the listening and then when we release it should show the thinking
+box."*
+
+This ships **the interaction and nothing behind it yet**, deliberately. The gesture, the
+sound, the listening state, the thinking box and the failure state are all panel-side and cost
+nothing to get right first; the round trip is gated on a measurement nobody has taken (below).
+
+##### The hold threshold is the whole design problem
+
+`gesture.h` records that 4–5 year olds produce ordinary presses lasting **up to 4.2 s**, which
+is exactly why the maintenance gestures stopped being a bare hold. A talk gesture cannot wait
+4.2 s — nobody holds a button that long before speaking — so it fires at **700 ms**, past the
+600 ms that still counts as a tap, and accepts that ordinary play will sometimes start a
+listen.
+
+**That is survivable here in a way it was not for "reboot the panel".** The cost of a false
+listen is a beep and a discarded recording; the cost of a false reboot is a toy restarting in
+a child's hands. Same measurement, opposite conclusion, because the consequences are not
+comparable.
+
+It never fires mid-maintenance-gesture: those are taps *then* a hold, so a hold beginning
+while a tap run is live belongs to them (`gest.taps == 0` is checked after `gesture_poll`).
+
+##### Four states, and the fourth is the one that matters
+
+| state | what shows |
+|---|---|
+| listening | **a beep**, a pulsing red dot, and the pet wears `FACE_CURIOUS` |
+| thinking | the bubble, three dots filling in turn |
+| failed | the bubble in grey with a flat red dash, and `FACE_BEWILDERED` |
+| idle | the pet, as before |
+
+**The beep is the affordance.** Nothing else tells a child holding a 29 mm screen that the
+thing is now listening rather than merely being held.
+
+**And the failure state is not optional.** After 12 s with no reply the panel says so rather
+than returning quietly to idle, because on a device whose owner has no terminal *"it didn't
+hear you"* and *"it is broken"* must not look identical — which is the exact failure mode
+§10.4bc was written about. The dash is a different SHAPE from the dots, not merely a different
+colour, so the two read apart at a glance on a screen this small.
+
+The face follows the conversation: attentive while listening, bewildered on failure. A pet
+that keeps grinning through a failure is a pet that looks like it did not notice.
+
+##### What is not here, and why
+
+The capture buffer, the upload and the reply. `../proposed/PANEL_CONVERSATION_PLAN.md` records
+the reason: **whisper takes ~9.8 s per call on this box**, flat, because whisper.cpp pads
+every clip to a 30-second window (`api/sdr.py:1412-1416`). No thinking box covers nine
+seconds. `scripts/whisper-setup.sh:5` already makes the model operator-selectable and
+`base.en` is an option — **that measurement is the next step, and it decides whether the round
+trip is a week of firmware or a different STT entirely.** Building the transport first would be
+building on a number nobody has.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
