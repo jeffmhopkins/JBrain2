@@ -20,6 +20,9 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_HIDE] = {2400, FACE_SILLY, 0},
     [ACT_FART] = {1500, FACE_BEWILDERED, 1},
     [ACT_BURP] = {1400, FACE_BEWILDERED, 1},
+    [ACT_EAT] = {1600, FACE_HAPPY, 0},
+    [ACT_KICK] = {900, FACE_EXCITED, 0},
+    [ACT_SPIN] = {1200, FACE_EXCITED, 0},
 };
 
 const action_spec_t *rig_spec(action_t a)
@@ -141,6 +144,26 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
     case ACT_BURP:
         if (p > 0.12f && p < 0.6f) out->neck += 30.0f * mag;
         break;
+    case ACT_EAT: {
+        /* A BIRD EATS BY PECKING THE GROUND, which is the single most recognisable thing an
+           ostrich does and costs nothing this rig did not already have: the neck goes down
+           and forward, three times, and the head follows it. */
+        const float q = fabsf(sinf(p * (float)M_PI * 3.0f)) * mag;
+        out->bob += q * 78.0f;
+        out->neck += q * 30.0f;
+        out->tail -= q * 14.0f; /* the tail comes up as the head goes down */
+        break;
+    }
+    case ACT_KICK: {
+        const float q = fabsf(sinf(p * (float)M_PI * 2.0f)) * mag;
+        out->step -= q * 34.0f; /* the RIGHT leg, matching the limb pose */
+        out->neck -= q * 14.0f; /* head back for balance */
+        out->tail += q * 20.0f;
+        break;
+    }
+    case ACT_SPIN:
+        out->neck += sinf(p * (float)M_PI * 4.0f) * 10.0f * mag;
+        break;
     default:
         break;
     }
@@ -218,6 +241,32 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
     case ACT_BURP:
         if (p > 0.12f && p < 0.6f) out->arm_r = -160.0f; /* hand to the mouth */
         break;
+    case ACT_EAT: {
+        /* THE ROBOT EATS WITH A HAND; THE BIRD PECKS (`bird_channels`). Same action, two
+           anatomies, which is the whole reason the bird has channels of its own. Three trips
+           to the mouth: one reads as a mistake, three read as a meal. */
+        const float q = sinf(p * (float)M_PI * 6.0f);
+        out->arm_r = -120.0f - 45.0f * fabsf(q) * mag;
+        out->arm_l = 20.0f;
+        break;
+    }
+    case ACT_KICK: {
+        /* One leg, twice, and hard. Negative `leg_r` swings the foot out to the right — the
+           limb's x offset is -sin(deg) — so this is a kick rather than a squat. The other
+           leg stiffens to plant, or the whole figure reads as falling over. */
+        const float q = fabsf(sinf(p * (float)M_PI * 2.0f)) * mag;
+        out->leg_r = -4.0f - 66.0f * q;
+        out->leg_l = 10.0f;
+        out->arm_l = 30.0f + 40.0f * q; /* arms counterbalance, as a kicking child's do */
+        out->arm_r = -30.0f - 20.0f * q;
+        break;
+    }
+    case ACT_SPIN:
+        /* The limbs stay near rest: the spin is carried entirely by the figure transform, and
+           a limb swinging through a squash that is already near zero width just flickers. */
+        out->arm_l = 30.0f;
+        out->arm_r = -30.0f;
+        break;
     case ACT_SNEEZE:
     case ACT_HICCUP:
         if (p > 0.35f && p < 0.6f) {
@@ -250,6 +299,7 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
     out->sx = 1.0f;
     out->sy = 1.0f;
     out->tilt = face_tilt;
+    out->facing = 1.0f;
     out->extra = EXTRA_NONE;
 
     if (a != ACT_NONE && (unsigned)a < (unsigned)ACT_COUNT) {
@@ -285,6 +335,28 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_NOD:
             out->oy += sinf(p * (float)M_PI * 5.0f) * 12.0f * mag;
             break;
+        case ACT_EAT:
+            /* Down to the food and back, under the pecking. */
+            out->oy += fabsf(sinf(p * (float)M_PI * 3.0f)) * 14.0f * mag;
+            break;
+        case ACT_KICK: {
+            const float q = fabsf(sinf(p * (float)M_PI * 2.0f)) * mag;
+            out->ox -= q * 14.0f; /* the body shifts away from the kicking leg */
+            out->tilt -= q * 9.0f;
+            break;
+        }
+        case ACT_SPIN: {
+            /* TWO TURNS, AS A HORIZONTAL SQUASH — see `facing` in rig.h for why this rig does
+               not rotate. Never all the way to zero: a figure one pixel wide is a gap in the
+               middle of the screen, not a character edge-on. */
+            const float a = p * (float)M_PI * 4.0f;
+            const float c = cosf(a);
+            float w = fabsf(c);
+            if (w < 0.08f) w = 0.08f;
+            out->sx *= 1.0f - (1.0f - w) * mag;
+            out->facing = c >= 0.0f ? 1.0f : -1.0f;
+            break;
+        }
         case ACT_SNEEZE:
         case ACT_HICCUP:
             if (p < 0.35f) {

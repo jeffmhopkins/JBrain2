@@ -930,7 +930,9 @@ static void face_task(void *arg)
                     st.form = (face_form_t)v->arg;
                     break;
                 case VOCAB_COLOUR:
-                    colour = (colour + 1) % face_colour_count();
+                    /* A named colour lands on its index; "pick a new color" still steps. */
+                    colour = v->arg < 0 ? (colour + 1) % face_colour_count()
+                                        : v->arg % face_colour_count();
                     break;
                 case VOCAB_ACTION:
                 default:

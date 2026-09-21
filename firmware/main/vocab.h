@@ -16,9 +16,17 @@
  *  1. **Lowercase a-z and spaces only.** MultiNet's English grapheme-to-phoneme pass takes
  *     words; a digit or an apostrophe is silently refused and the panel is then deaf to
  *     exactly that one thing, with nothing on screen to say so.
- *  2. **Two words minimum.** WakeNet is DISABLED — the owner asked it to just listen — so
- *     every phrase here is always live. A one-word always-on vocabulary fires at the
- *     television, and a robot that reacts to the room reads as broken rather than as clever.
+ *  2. **Two words minimum, EXCEPT for four the owner asked for by name.** WakeNet is
+ *     DISABLED — the owner asked it to just listen — so every phrase here is always live, and
+ *     a one-word always-on vocabulary fires at the television. That rule still holds for
+ *     everything a phrase might be added for in future. It is relaxed for exactly `burp`,
+ *     `fart`, `dance`, `jump`, `wave`, `shake`, `laugh`, `eat`, `kick` and `spin`, which the
+ *     owner asked for in those words because they are what a four-year-old actually says; the
+ *     allowance is a NAMED LIST in the host suite rather than a loosened check, so the next
+ *     single word has to be argued for too. The list has already grown once, which is the
+ *     argument for it being a list.
+ *     The cost is real and is paid in false triggers, which makes the confidence floor in
+ *     `speech.c` more urgent rather than less.
  *  3. **No phrase is a prefix of another.** Two commands where one contains the other make
  *     the shorter one unreachable and the longer one unreliable.
  *
@@ -28,13 +36,13 @@
 typedef enum {
     VOCAB_ACTION = 0, /* play an action */
     VOCAB_FORM,       /* become a body */
-    VOCAB_COLOUR,     /* next colour in the palette */
+    VOCAB_COLOUR,     /* `arg` < 0: next colour in the palette; otherwise that palette index */
 } vocab_kind_t;
 
 typedef struct {
     const char *phrase;  /* what is said, and what the ticker shows */
     vocab_kind_t kind;
-    int arg;             /* action_t, face_form_t, or unused */
+    int arg;             /* action_t, face_form_t, or a palette index (see VOCAB_COLOUR) */
 } vocab_t;
 
 /* The table and its length. */

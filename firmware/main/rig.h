@@ -38,6 +38,9 @@ typedef enum {
     ACT_HIDE,
     ACT_FART,
     ACT_BURP,
+    ACT_EAT,
+    ACT_KICK,
+    ACT_SPIN,
     ACT_COUNT,
 } action_t;
 
@@ -80,6 +83,14 @@ typedef struct {
     float sx;
     float sy;
     float tilt; /* degrees, drawn as a head offset — see the file header */
+    /* WHICH WAY THE FIGURE IS FACING: 1 front, -1 turned away. The file header explains why
+       this rig has no rotation — resampling 165,000 pixels 25 times a second is not a thing
+       this panel can afford, and source-space rotation tears holes in filled shapes. So a
+       SPIN is the 2D trick instead: squash the figure horizontally to nearly nothing and back
+       while flipping this, and the renderer drops the eyes and the mouth for the half-turn
+       the figure is facing away. A silhouette with no face on it reads as a back, and it
+       costs one multiply on a scale the renderer already applies. */
+    float facing;
     extra_t extra;
 } figure_pose_t;
 

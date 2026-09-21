@@ -30,6 +30,14 @@ static const uint32_t PALETTE[] = {
     0x7FA7C9, /* default — the robot's own steel, first so a tap LEAVES it rather than arriving */
     0x3BF0FF, 0xFF4FD8, 0xFFD23F, 0xFFB03A, 0x6A7BFF,
     0xFF477E, 0x49F08A, 0xFF8AD0, 0xB06AFF, 0xFFFFFF,
+    /* NAMED RED AND BLUE, APPENDED, and appended is the point: every index above is a colour
+       the tap cycle already visits in an approved order, and inserting would renumber them.
+       These two exist because the owner asked for "turn red" and "turn blue" and this palette
+       had neither. Its nearest to red was 0xFF477E, which a four-year-old calls pink, and its
+       nearest to blue was 0x6A7BFF, a periwinkle. A named colour command that produces a
+       colour the child would give a different name to is worse than no command. */
+    0xFF3B30, /* red */
+    0x3B82F6, /* blue */
 };
 
 int face_colour_count(void)
@@ -369,13 +377,22 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
        happen. Cheeks: outboard of the eyes and level with the smile. */
     if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), s);
 
+    /* NO FACE ON THE BACK OF A HEAD. `facing` goes negative for the half of a spin the
+       figure is turned away (rig.h), and the squash alone does not read as a turn — a face
+       that stays put while the body narrows reads as the body being crushed. Dropping the
+       eyes and the smile for that half is what makes it a spin. */
+    const bool front = st->fig.facing >= 0.0f;
     const int ex = SX((int)(HW * 0.43f)), ey = hy - SY((int)(HH * 0.17f));
-    draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
-    draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
+    if (front) {
+        draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
+        draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
+    }
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
-    arc_stroke(fb, ox + tilt, hy + SY((int)(HH * 0.52f)) - SY(16), (int)(30 * s),
-               (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s), dark);
+    if (front) {
+        arc_stroke(fb, ox + tilt, hy + SY((int)(HH * 0.52f)) - SY(16), (int)(30 * s),
+                   (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s), dark);
+    }
 
     /* A RAISED ARM IS REDRAWN OVER THE HEAD. The head is 216 px wide and the shoulder sits
        INSIDE it at ox+66, so an arm posed above the shoulder has only 42 px of head to clear
@@ -512,15 +529,20 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     fill_round_rect(fb, hx - SX(OS_HEAD_W / 2), hy, SX(OS_HEAD_W), SY(OS_HEAD_H),
                     (int)(44 * s), head);
 
-    /* Beak: a wedge that PROTRUDES below the head, or it reads as a chin. */
-    static const struct {
-        int w, h, y;
-    } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
-    for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
-        fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob, SX(BEAK[i].w),
-                        SY(BEAK[i].h), (int)(5 * s), beak);
+    /* Beak: a wedge that PROTRUDES below the head, or it reads as a chin. It comes off with
+       the eyes when the figure is turned away — a beak is the most front-facing thing on a
+       bird, and leaving it on a back view is what would give the trick away. */
+    const bool front = st->fig.facing >= 0.0f;
+    if (front) {
+        static const struct {
+            int w, h, y;
+        } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
+        for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
+            fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob,
+                            SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
+        }
+        fill_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), shade(hex, 0.28f));
     }
-    fill_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), shade(hex, 0.28f));
 
     /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
        head's edge, which on a 128-wide head leaves exactly this much room. */
@@ -533,8 +555,12 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
        scalar literally shrank the approved eyes by a ninth. 1.10 reproduces 45.1x52.9 to
        within half a pixel. */
     const int ey = oy + SY(OS_EYE_Y) + bob;
-    draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle, s * 1.10f);
-    draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle, s * 1.10f);
+    if (front) {
+        draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle,
+                 s * 1.10f);
+        draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle,
+                 s * 1.10f);
+    }
 
     if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
 }
