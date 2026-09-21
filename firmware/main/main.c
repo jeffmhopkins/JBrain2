@@ -85,6 +85,11 @@ static void report(const cfg_t *cfg)
     int16_t ax = 0, ay = 0, az = 0;
     const bool have_imu = imu_read(&ax, &ay, &az);
 
+    /* Where the last tap landed and what the firmware made of it. The touch controller's
+       orientation has never been measured; this is how it gets measured. */
+    int tap_x = -1, tap_y = -1, tap_zone = 0;
+    display_last_tap(&tap_x, &tap_y, &tap_zone);
+
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
 
@@ -92,13 +97,15 @@ static void report(const cfg_t *cfg)
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
-                     "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,\"pmu_history\":[",
+                     "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
+                     "\"tap\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
-                     have_imu ? az : 0, display_stack_free(), display_crash_phase());
+                     have_imu ? az : 0, display_stack_free(), display_crash_phase(), tap_x,
+                     tap_y, tap_zone);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }

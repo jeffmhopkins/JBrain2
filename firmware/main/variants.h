@@ -18,8 +18,17 @@
  * Pure C: no ESP headers, no clock of its own. The caller passes `now_ms`.
  */
 
+/* One pool per place you can poke him. Which part you touch is the whole point of having a
+   body — the emotions never needed one (`rig.h`) — and a belly poke that does the same thing
+   as a tap on the foot wastes it. `POOL_POKE` stays for a tap that misses him entirely: a
+   child who hits the background must still get an answer, because "nothing happened" reads as
+   broken (`variants.ts` on why nothing here may ever refuse). */
 typedef enum {
     POOL_POKE = 0,
+    POOL_HEAD,
+    POOL_BODY,
+    POOL_ARM,
+    POOL_LEG,
     POOL_COUNT,
 } pool_t;
 

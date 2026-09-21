@@ -112,6 +112,22 @@ Two deliberate omissions: whole-figure **rotation** (a per-pixel resample 25 tim
 `ang` becomes a head tilt instead) and therefore `spin`, which is left out of the pools rather
 than faked badly. See ROOM_ENDPOINT_PLAN.md §10.4an.
 
+## Where you poke him changes what he does
+
+`face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
+arms, legs, or background — and each has its own pool. The head gets the warm ones, the belly
+gets the gags, the sides get tickling, the feet get everything that leaves the ground. A tap
+that misses him still answers, because "nothing happened" reads as broken.
+
+Zones follow the 180° flip, so his head is his head whichever way up the panel is held.
+Transient action offsets are deliberately *not* applied: a hitbox that leaps during a jump is
+one nobody can learn.
+
+**The CST820's orientation is unmeasured.** Nothing here had ever read a coordinate from it. So
+a marker ring is drawn where the firmware thinks the finger was, and `tap: [x, y, zone]` goes
+out in telemetry — if the dot isn't under the finger, the mapping is wrong and the numbers say
+how. One tap settles it (ROOM_ENDPOINT_PLAN.md §10.4aq).
+
 ## Host tests: `make -C firmware/host test`
 
 `face.c`, `font.c`, `emotion.c`, `rig.c` and `variants.c` have **no ESP dependencies** — a

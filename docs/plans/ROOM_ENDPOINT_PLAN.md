@@ -1967,6 +1967,41 @@ the plan has spent six releases on.
 The hold stays at five seconds. It no longer has to carry the anti-accident argument by itself,
 so it could be shortened; that is a separate decision and the owner's.
 
+#### 10.4aq Where you poke him is half the point (2026-09-21)
+
+The owner asked for different reactions from the head, the body, the sides and the feet. That
+is what the body was FOR — `rig.h` says the emotions never needed one and the gags did — and a
+belly poke that does the same thing as a tap on the foot wastes it.
+
+`face_zone()` classifies a panel coordinate against the rest silhouette, and each zone gets its
+own pool:
+
+| zone | what it answers with |
+| --- | --- |
+| head (and the antenna) | blush, giggle, nod, wiggle, and rarely sleep |
+| body | wiggle, giggle, boing — and **fart** and **burp**, because a poke in the stomach producing a fart is the joke a four-year-old is actually asking for |
+| arms / sides | wiggle, wave, shimmy, giggle, and rarely peekaboo |
+| legs / feet | jump, boing, dance, bop, and rarely hiccup |
+| background | the original poke pool, because a tap that misses must still answer |
+
+Two deliberate details. **The zones follow the flip**: a tap on his head is his head whichever
+way up the panel is held, which matters precisely because a child holds it any which way.
+**Transient action offsets are not applied** — a hitbox that leaps during a jump is one nobody
+can learn, so the rest silhouette is always the target.
+
+**THE TOUCH CONTROLLER'S ORIENTATION IS UNMEASURED, AND THIS TIME THAT IS SAID OUT LOUD.**
+Nothing in this firmware has ever read a coordinate from the CST820; it reported a finger
+count and nothing else. Whether its axes match the display's is exactly the question §10.4ae
+and §10.4af burned three releases on for the accelerometer, by reasoning about it instead of
+measuring. So 0.2.31 does not reason:
+
+- a marker ring is drawn where the firmware believes the finger was, riding the flinch so it
+  fades with the recoil. **If the dot is not under the finger, the mapping is wrong.**
+- `tap: [x, y, zone]` goes out in telemetry, so the box can say how wrong.
+
+One tap answers it. That is the whole difference from the accelerometer episode, and it cost
+about fifteen lines.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

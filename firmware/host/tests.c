@@ -364,6 +364,82 @@ static void test_blink_is_a_line_not_a_hole(void)
     free(shut);
 }
 
+/* ---- zones ------------------------------------------------------------------------ */
+
+/* The figure's geometry, as face.c lays it out: origin at (W/2, H*0.545). Written out rather
+   than imported because a test that shares the constant under test only proves the constant
+   equals itself; these are the coordinates a finger actually lands on. */
+#define FIG_X (FACE_W / 2)
+#define FIG_Y 244
+
+static void test_zones_hit_the_right_parts(void)
+{
+    CHECK(face_zone(FIG_X, FIG_Y - 96, false, 0) == ZONE_HEAD, "the head is the head");
+    CHECK(face_zone(FIG_X, FIG_Y - 96 - 110, false, 0) == ZONE_HEAD, "the antenna is his too");
+    CHECK(face_zone(FIG_X, FIG_Y + 36, false, 0) == ZONE_BODY, "the belly is the body");
+    CHECK(face_zone(FIG_X + 86, FIG_Y + 36, false, 0) == ZONE_ARM, "out to the side is an arm");
+    CHECK(face_zone(FIG_X - 86, FIG_Y + 36, false, 0) == ZONE_ARM, "both arms");
+    CHECK(face_zone(FIG_X, FIG_Y + 146, false, 0) == ZONE_LEG, "below the hips is a leg");
+    CHECK(face_zone(4, 4, false, 0) == ZONE_NONE, "the corner is background");
+    CHECK(face_zone(FACE_W - 4, FACE_H - 4, false, 0) == ZONE_NONE, "so is the far corner");
+}
+
+static void test_zones_follow_the_flip(void)
+{
+    /* A tap on his head is his head whichever way up the panel is. Getting this wrong makes
+       the zones feel random exactly when a child is holding the thing any which way. */
+    for (int y = 0; y < FACE_H; y += 7) {
+        for (int x = 0; x < FACE_W; x += 7) {
+            const face_zone_t up = face_zone(x, y, false, 0);
+            const face_zone_t flipped = face_zone(FACE_W - 1 - x, FACE_H - 1 - y, true, 0);
+            CHECK(up == flipped, "zones follow the 180 degree flip");
+        }
+    }
+}
+
+static void test_zones_follow_the_lean(void)
+{
+    /* He slides downhill as the panel tilts; his hitboxes go with him. */
+    const int lean = 40;
+    CHECK(face_zone(FIG_X + lean, FIG_Y + 36, false, lean) == ZONE_BODY,
+          "the belly moves with the lean");
+    CHECK(face_zone(FIG_X, FIG_Y + 36, false, lean) == ZONE_BODY,
+          "and is still wide enough to hit at centre");
+}
+
+static void test_every_zone_is_reachable(void)
+{
+    /* A zone nothing can hit is a pool that never plays. */
+    int seen[8];
+    memset(seen, 0, sizeof(seen));
+    for (int y = 0; y < FACE_H; y++)
+        for (int x = 0; x < FACE_W; x++) seen[face_zone(x, y, false, 0)] = 1;
+    CHECK(seen[ZONE_HEAD] && seen[ZONE_BODY] && seen[ZONE_ARM] && seen[ZONE_LEG],
+          "every part of him can be tapped");
+    CHECK(seen[ZONE_NONE], "and so can the background");
+}
+
+static void test_every_pool_answers(void)
+{
+    /* Same contract as the poke pool, for all of them: never silent, and never a pool of one.
+       A belly poke that always farts stops being funny on the third try. */
+    for (int p = 0; p < POOL_COUNT; p++) {
+        pool_memory_t mem;
+        variants_reset(&mem);
+        int seen[ACT_COUNT];
+        memset(seen, 0, sizeof(seen));
+        for (int i = 0; i < 300; i++) {
+            const int a = variants_pick((pool_t)p, &mem, (uint32_t)(i * 60000),
+                                        (uint32_t)(i * 1103515245u + 12345u));
+            CHECK(a > ACT_NONE && a < ACT_COUNT, "every pool returns a real action");
+            seen[a] = 1;
+        }
+        int n = 0;
+        for (int i = 0; i < ACT_COUNT; i++) n += seen[i];
+        CHECK(n >= 4, "every pool spreads over several variants");
+    }
+}
+
 /* ---- gesture ---------------------------------------------------------------------- */
 
 #define DT 40 /* the render loop's poll interval */
@@ -541,6 +617,11 @@ int main(void)
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
     test_blink_is_a_line_not_a_hole();
+    test_zones_hit_the_right_parts();
+    test_zones_follow_the_flip();
+    test_zones_follow_the_lean();
+    test_every_zone_is_reachable();
+    test_every_pool_answers();
     test_gesture_happy_path();
     test_gesture_hold_alone_does_nothing();
     test_gesture_slow_taps_do_not_count();

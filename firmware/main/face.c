@@ -232,6 +232,34 @@ static void draw_extra(uint16_t *fb, int ox, int hy, extra_t extra, float scale)
     }
 }
 
+face_zone_t face_zone(int x, int y, bool upside_down, int lean)
+{
+    /* The frame the child sees is the framebuffer rotated 180 degrees when inverted, so undo
+       that before asking where on the FIGURE the finger landed. */
+    if (upside_down) {
+        x = FACE_W - 1 - x;
+        y = FACE_H - 1 - y;
+    }
+    const int dx = x - (OX + lean);
+    const int dy = y - OY;
+
+    /* Head: the rounded box the head is drawn in, plus the antenna above it, which is part of
+       him and is the most obvious thing to poke. */
+    if (dy <= HEAD_Y + HH && dy >= HEAD_Y - HH - 48) {
+        if (dx >= -HW && dx <= HW) return ZONE_HEAD;
+    }
+    /* Torso: the body box. */
+    if (dy >= -26 && dy <= 106 && dx >= -72 && dx <= 72) return ZONE_BODY;
+    /* Arms hang either side of the torso from the shoulder, so anything outside the torso's
+       width but within the arm's reach is an arm. */
+    if (dy >= SHOULDER_Y - 20 && dy <= SHOULDER_Y + ARM_L + 20) {
+        if ((dx < -50 && dx >= -110) || (dx > 50 && dx <= 110)) return ZONE_ARM;
+    }
+    /* Legs and feet, below the hips. */
+    if (dy > 106 && dy <= HIP_Y + LEG_L + 24 && dx >= -80 && dx <= 80) return ZONE_LEG;
+    return ZONE_NONE;
+}
+
 void face_rest(face_state_t *st)
 {
     if (st == NULL) return;

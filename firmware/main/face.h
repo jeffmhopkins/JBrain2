@@ -37,6 +37,25 @@ typedef struct {
    being a jump cut. */
 void face_draw(uint16_t *fb, int colour, const face_state_t *st);
 
+/* Which part of the robot a panel coordinate lands on.
+ *
+ * The zones are the figure's own geometry, so they move with him: `lean` slides everything
+ * downhill as the panel tilts, and `upside_down` is the 180 degree flip `flip_frame` performs
+ * — a tap on his head while he is inverted is still his head, and getting that wrong would
+ * make the zones feel random exactly when a child is holding the panel any which way.
+ *
+ * Transient action offsets are deliberately NOT applied: a hitbox that jumps with him during
+ * a jump is one a child cannot learn. The rest silhouette is the target. */
+typedef enum {
+    ZONE_NONE = 0, /* off the figure entirely — the background */
+    ZONE_HEAD,
+    ZONE_BODY,
+    ZONE_ARM,
+    ZONE_LEG,
+} face_zone_t;
+
+face_zone_t face_zone(int x, int y, bool upside_down, int lean);
+
 /* A rest state: happy, open-eyed, idle limbs, no figure transform. The caller starts here and
    tweens away from it, so nothing has to enumerate seventeen floats to get a first frame. */
 void face_rest(face_state_t *st);

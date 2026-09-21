@@ -28,3 +28,7 @@ int display_stack_free(void);
    1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip,
    9 full blit, 10 mic read, 11 meter blit, 12 panel re-assert, 13 PMU sample. */
 int display_crash_phase(void);
+
+/* Where the last tap landed and which zone it was classified as. Reported so the touch
+   controller's orientation is a measurement rather than an assumption — see display.c. */
+void display_last_tap(int *x, int *y, int *zone);

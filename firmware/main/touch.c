@@ -28,6 +28,8 @@ static const char *TAG = "touch";
 
 static i2c_master_dev_handle_t s_dev;
 static bool s_down;
+static int s_x = -1;
+static int s_y = -1;
 
 bool touch_start(void)
 {
@@ -50,20 +52,34 @@ bool touch_start(void)
 bool touch_tapped(void)
 {
     if (s_dev == NULL) return false;
+    /* Five bytes in one transaction: the finger count at 0x02 and the coordinate that
+       follows it. The count alone was all the whole-screen target needed; zones need where.
+       Both high bytes carry flags in their top nibble, so only the low four bits are
+       position. */
     const uint8_t reg = REG_FINGERS;
-    uint8_t fingers = 0;
-    if (i2c_master_transmit_receive(s_dev, &reg, 1, &fingers, 1, 50) != ESP_OK) {
+    uint8_t buf[5] = {0};
+    if (i2c_master_transmit_receive(s_dev, &reg, 1, buf, sizeof(buf), 50) != ESP_OK) {
         /* A read that fails is not a tap. Saying so out loud every poll would bury the log,
            so this is silent by design — `touch_start` already reported whether it opened. */
         return false;
     }
-    const bool down = fingers > 0;
+    const bool down = buf[0] > 0;
     const bool edge = down && !s_down;
     s_down = down;
+    if (edge) {
+        s_x = ((buf[1] & 0x0F) << 8) | buf[2];
+        s_y = ((buf[3] & 0x0F) << 8) | buf[4];
+    }
     return edge;
 }
 
 bool touch_is_down(void)
 {
     return s_down;
+}
+
+void touch_point(int *x, int *y)
+{
+    if (x != NULL) *x = s_x;
+    if (y != NULL) *y = s_y;
 }

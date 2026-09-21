@@ -301,6 +301,32 @@ static void apply_brightness(void)
 #define PIP_W 28
 #define PIP_GAP 8
 
+/* Which pool each part of him answers with. Indexed by `face_zone_t`. */
+static const pool_t ZONE_POOL[] = {
+    [ZONE_NONE] = POOL_POKE,
+    [ZONE_HEAD] = POOL_HEAD,
+    [ZONE_BODY] = POOL_BODY,
+    [ZONE_ARM] = POOL_ARM,
+    [ZONE_LEG] = POOL_LEG,
+};
+
+/* THE TOUCH CONTROLLER'S ORIENTATION IS NOT ASSUMED, IT IS SHOWN. The CST820 reports in its
+   own frame and nothing here has ever read a coordinate from it, so whether its axes match
+   the display's is unmeasured. §10.4af spent three releases getting the accelerometer's
+   orientation wrong by reasoning about it. So: a marker is drawn where the firmware believes
+   the finger was, and these go out in telemetry. If the dot is not under the finger, the
+   mapping is wrong and the numbers say exactly how. */
+static int s_tap_x = -1;
+static int s_tap_y = -1;
+static int s_tap_zone = 0;
+
+void display_last_tap(int *x, int *y, int *zone)
+{
+    if (x != NULL) *x = s_tap_x;
+    if (y != NULL) *y = s_tap_y;
+    if (zone != NULL) *zone = s_tap_zone;
+}
+
 /* THE MICROPHONE, ALWAYS ON, DRAWN DOWN THE LEFT EDGE.
  *
  * A microphone has no symptom: silence could be the ADC, the PGA, the I2S receive direction,
@@ -622,13 +648,13 @@ static void face_task(void *arg)
        turns one into an animation system. */
     face_state_t st;
     face_rest(&st);
-    pool_memory_t poke_mem;
-    variants_reset(&poke_mem);
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
     float action_mag = 1.0f;
     gesture_t gest;
     gesture_reset(&gest);
+    pool_memory_t mem[POOL_COUNT];
+    for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
     int since_reassert = 0;
@@ -653,14 +679,18 @@ static void face_task(void *arg)
         if (tapped) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
-            /* THE POKE IS THE PRODUCT. Which reaction you get is chosen here — weighted,
-               cooled-down, and softened if you are hammering it (`variants.c`). The colour
-               cycle stays, because it is the one thing a child can steer. */
-            action = (action_t)variants_pick(POOL_POKE, &poke_mem, now, esp_random());
-            action_mag = variants_penalty(POOL_POKE, &poke_mem, now);
+            /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
+               pool; the pool picks the reaction, weighted, cooled-down, and softened if you
+               are hammering it (`variants.c`). The colour cycle stays, because it is the one
+               thing a child can steer deliberately. */
+            touch_point(&s_tap_x, &s_tap_y);
+            s_tap_zone = (int)face_zone(s_tap_x, s_tap_y, s_upside_down, s_lean);
+            const pool_t pool = ZONE_POOL[s_tap_zone];
+            action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
+            action_mag = variants_penalty(pool, &mem[pool], now);
             action_start = now;
-            ESP_LOGI(TAG, "tap -> colour %d, action %d, mag %.2f", colour, (int)action,
-                     (double)action_mag);
+            ESP_LOGI(TAG, "tap (%d,%d) zone %d -> colour %d, action %d, mag %.2f", s_tap_x,
+                     s_tap_y, s_tap_zone, colour, (int)action, (double)action_mag);
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
@@ -734,6 +764,20 @@ static void face_task(void *arg)
             draw_meter(fb, level);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
+            /* After the flip, because the finger is in PANEL coordinates and the flip has
+               already turned the figure the other way up. Rides the flinch, so it fades with
+               the recoil instead of leaving a dot on the glass. */
+            if (s_flinch > 0.25f && s_tap_x >= 0) {
+                for (int dy = -9; dy <= 9; dy++) {
+                    for (int dx = -9; dx <= 9; dx++) {
+                        const int d = dx * dx + dy * dy;
+                        if (d > 81 || d < 36) continue;
+                        const int px2 = s_tap_x + dx, py2 = s_tap_y + dy;
+                        if (px2 < 0 || px2 >= FACE_W || py2 < 0 || py2 >= FACE_H) continue;
+                        fb[py2 * FACE_W + px2] = CUE_COLOUR;
+                    }
+                }
+            }
             if (cue > 0.0f) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot

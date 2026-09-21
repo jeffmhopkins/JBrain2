@@ -26,8 +26,50 @@ typedef struct {
     int n;
 } pool_def_t;
 
+/* Pat him on the head: the warm ones. */
+static const variant_t HEAD[] = {
+    {ACT_BLUSH, 30, 6000},
+    {ACT_GIGGLE, 25, 2500},
+    {ACT_NOD, 25, 2000},
+    {ACT_WIGGLE, 15, 2500},
+    {ACT_SLEEP, 5, 30000},
+};
+
+/* The belly. A poke in the stomach producing a fart is the joke a four-year-old is actually
+   asking for, and the gag structure in `rig.c` is what makes it land rather than twitch. */
+static const variant_t BODY[] = {
+    {ACT_WIGGLE, 25, 2500},
+    {ACT_GIGGLE, 25, 2500},
+    {ACT_BOING, 20, 4000},
+    {ACT_FART, 15, 8000},
+    {ACT_BURP, 10, 12000},
+    {ACT_SNEEZE, 5, 20000},
+};
+
+/* Ribs and arms: tickling, and the one place waving back makes sense. */
+static const variant_t ARM[] = {
+    {ACT_WIGGLE, 30, 2000},
+    {ACT_WAVE, 25, 3000},
+    {ACT_SHIMMY, 20, 4000},
+    {ACT_GIGGLE, 20, 2500},
+    {ACT_HIDE, 5, 25000},
+};
+
+/* Feet: everything that leaves the ground. */
+static const variant_t LEG[] = {
+    {ACT_JUMP, 30, 2000},
+    {ACT_BOING, 25, 2500},
+    {ACT_DANCE, 20, 5000},
+    {ACT_BOP, 20, 4000},
+    {ACT_HICCUP, 5, 45000},
+};
+
 static const pool_def_t POOLS[POOL_COUNT] = {
     [POOL_POKE] = {POKE, (int)(sizeof(POKE) / sizeof(POKE[0]))},
+    [POOL_HEAD] = {HEAD, (int)(sizeof(HEAD) / sizeof(HEAD[0]))},
+    [POOL_BODY] = {BODY, (int)(sizeof(BODY) / sizeof(BODY[0]))},
+    [POOL_ARM] = {ARM, (int)(sizeof(ARM) / sizeof(ARM[0]))},
+    [POOL_LEG] = {LEG, (int)(sizeof(LEG) / sizeof(LEG[0]))},
 };
 
 /* A variant that has never played is never cooling, however early it is. */
