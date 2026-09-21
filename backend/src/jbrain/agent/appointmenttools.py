@@ -57,7 +57,20 @@ def _tags(appt: AppointmentInfo) -> str:
 def format_appointments(appts: list[AppointmentInfo], tz: str | None = None) -> str:
     """The model-facing index — title, when, domain, status/recurrence, and id."""
     if not appts:
-        return "No appointments in scope."
+        # NEVER a bare negative. This table is a PROJECTION of the owner's notes, so an
+        # empty one means "nothing was projected", which is not the same fact as
+        # "nothing is in the brain" — and a model that reads it as the second one stops
+        # retrieving. It did: asked "when is my cardiology appointment tomorrow", the
+        # agent read a bare "No appointments in scope.", never searched the note that
+        # said 12:45, and asked the owner his own question back. The line has to carry
+        # its own next step, because the model has already decided by the time the
+        # system prompt's version of this rule would be re-read.
+        return (
+            "No appointments projected from the owner's notes. This table is a"
+            " projection, not the source of truth: a note can say plainly when something"
+            " is without an appointment ever being projected from it. SEARCH THE NOTES"
+            " before you answer that there is none — and never ask the owner instead."
+        )
     return "\n".join(
         f"- {a.title} — {_when(a, tz)} [{a.domain}]{_tags(a)} id={a.id}" for a in appts
     )

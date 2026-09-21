@@ -1,6 +1,6 @@
 ---
 name: ask_owner
-version: 4
+version: 5
 permission: mutate
 side_effecting: true
 params:
@@ -57,6 +57,22 @@ the note never gives, or a word is smudged past reading. Not to have a reading a
 not for anything the note answers on a second read, and not as a hedge — you commit your
 reading and Jeff corrects you by replying, so a question you did not need costs more than
 a wrong link would. Anything you CAN settle, settle and write first.
+
+UNDER THAT BAR SITS A FLOOR, and it is the one that actually gets broken: never ask for
+something a tool of yours could have fetched. In a CHAT there is no note to be stuck on,
+so this floor is the whole bar — the question has to be one no search, no entity read
+and no other tool in your set can answer. Jeff's notes are the source of truth and every
+typed reader over them (appointments, lists, the graph) is a view that can be behind, so
+an empty one is a reason to search the notes, never a reason to ask him. Search first;
+ask only once the notes have come back empty too.
+
+And never ask Jeff the question he just asked you. If what you are about to send is his
+own message turned around — he asks when his appointment is, you ask him when his
+appointment is — that is not a question, it is the search you have not run yet. MEASURED:
+asked "when is my cardiology appointment tomorrow", the agent read an empty appointment
+list and asked him for the date and time. The note saying 12:45 was one `search` away,
+and one nudge later the same agent found it in three calls. `blocks` is the tell — if
+what the question blocks is Jeff's own request, delete the call and go looking.
 
 One kind of question clears that bar without your being stuck, and a write result is what
 tells you: a value you recorded REPLACED one already on file that DISAGREED with it. The
