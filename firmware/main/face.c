@@ -232,7 +232,70 @@ static void draw_extra(uint16_t *fb, int ox, int hy, extra_t extra, float scale)
     }
 }
 
-face_zone_t face_zone(int x, int y, bool upside_down, int lean)
+/* THE OSTRICH. Every number is transcribed from `docs/mocks/room-endpoint/ostrich-mock.py`,
+ * whose helpers mirror the primitives above — so this is a port, not a redesign, in exactly
+ * the way `face.c`'s robot was a port of the canvas mock.
+ *
+ * Two traps the mock records, because this code would hit both:
+ *   * `draw_limb` takes 0 as straight DOWN and POSITIVE as swinging LEFT. Negative angles put
+ *     the tail plumes behind the body, invisible.
+ *   * the legs must be LONG. Leg length is the ostrich silhouette; short reads as a duck.
+ */
+#define OS_HEAD_Y (-186) /* everything below is relative to `oy`, as the robot's numbers are */
+#define OS_HEAD_W 128
+#define OS_HEAD_H 98
+#define OS_EYE_Y (-144)
+#define OS_EYE_X 31
+#define OS_BODY_Y (-22)
+#define OS_BODY_W 144
+#define OS_BODY_H 112
+#define OS_LEG_Y 74
+#define OS_LEG_L 92
+#define OS_HEAD_DX 7 /* the head sits slightly forward of the body, as a bird's does */
+
+static face_zone_t zone_robot(int dx, int dy)
+{
+    /* Head: the rounded box the head is drawn in, plus the antenna above it, which is part of
+       him and is the most obvious thing to poke. */
+    if (dy <= HEAD_Y + HH && dy >= HEAD_Y - HH - 48) {
+        if (dx >= -HW && dx <= HW) return ZONE_HEAD;
+    }
+    if (dy >= -26 && dy <= 106 && dx >= -72 && dx <= 72) return ZONE_BODY;
+    /* Arms hang either side of the torso from the shoulder, so anything outside the torso's
+       width but within the arm's reach is an arm. */
+    if (dy >= SHOULDER_Y - 20 && dy <= SHOULDER_Y + ARM_L + 20) {
+        if ((dx < -50 && dx >= -110) || (dx > 50 && dx <= 110)) return ZONE_ARM;
+    }
+    if (dy > 106 && dy <= HIP_Y + LEG_L + 24 && dx >= -80 && dx <= 80) return ZONE_LEG;
+    return ZONE_NONE;
+}
+
+static face_zone_t zone_ostrich(int dx, int dy)
+{
+    /* Head first, and it owns the crest above it and the NECK below it. A neck is the most
+       inviting thing on a bird to touch and it belongs with the head, not the body. */
+    if (dy >= OS_HEAD_Y - 52 && dy <= OS_HEAD_Y + OS_HEAD_H && dx >= -60 && dx <= 74) {
+        return ZONE_HEAD;
+    }
+    if (dy > OS_HEAD_Y + OS_HEAD_H && dy < OS_BODY_Y && dx >= -34 && dx <= 40) {
+        return ZONE_HEAD; /* the neck */
+    }
+    /* Wing and tail BEFORE the body, because both sit inside the body's box and a poke that
+       lands on the wing should answer as a wing. */
+    if (dy >= -4 && dy <= 70 && dx >= 0 && dx <= 80) return ZONE_ARM;       /* the wing */
+    if (dy >= -58 && dy <= 18 && dx <= -44 && dx >= -148) return ZONE_ARM;  /* the tail */
+    if (dy >= OS_BODY_Y && dy <= OS_BODY_Y + OS_BODY_H && dx >= -OS_BODY_W / 2 &&
+        dx <= OS_BODY_W / 2) {
+        return ZONE_BODY;
+    }
+    if (dy > OS_BODY_Y + OS_BODY_H && dy <= OS_LEG_Y + OS_LEG_L + 26 && dx >= -56 &&
+        dx <= 56) {
+        return ZONE_LEG;
+    }
+    return ZONE_NONE;
+}
+
+face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean)
 {
     /* The frame the child sees is the framebuffer rotated 180 degrees when inverted, so undo
        that before asking where on the FIGURE the finger landed. */
@@ -242,63 +305,23 @@ face_zone_t face_zone(int x, int y, bool upside_down, int lean)
     }
     const int dx = x - (OX + lean);
     const int dy = y - OY;
-
-    /* Head: the rounded box the head is drawn in, plus the antenna above it, which is part of
-       him and is the most obvious thing to poke. */
-    if (dy <= HEAD_Y + HH && dy >= HEAD_Y - HH - 48) {
-        if (dx >= -HW && dx <= HW) return ZONE_HEAD;
-    }
-    /* Torso: the body box. */
-    if (dy >= -26 && dy <= 106 && dx >= -72 && dx <= 72) return ZONE_BODY;
-    /* Arms hang either side of the torso from the shoulder, so anything outside the torso's
-       width but within the arm's reach is an arm. */
-    if (dy >= SHOULDER_Y - 20 && dy <= SHOULDER_Y + ARM_L + 20) {
-        if ((dx < -50 && dx >= -110) || (dx > 50 && dx <= 110)) return ZONE_ARM;
-    }
-    /* Legs and feet, below the hips. */
-    if (dy > 106 && dy <= HIP_Y + LEG_L + 24 && dx >= -80 && dx <= 80) return ZONE_LEG;
-    return ZONE_NONE;
+    return form == FORM_ROBOT ? zone_robot(dx, dy) : zone_ostrich(dx, dy);
 }
 
-void face_rest(face_state_t *st)
-{
-    if (st == NULL) return;
-    st->bob = 0;
-    st->lean = 0;
-    st->open = 1.0f;
-    st->startle = 0.0f;
-    emotion_resolve(FACE_HAPPY, &st->eyes);
-    rig_for(ACT_NONE, 0.0f, 1.0f, 0, &st->rig);
-    rig_figure(ACT_NONE, 0.0f, 1.0f, 0, 0.0f, &st->fig);
-}
-
-void face_draw(uint16_t *fb, int colour, const face_state_t *st)
-{
-    /* Everything hangs off these, so one pair of offsets moves the whole figure. See
-       ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int ox = OX + st->lean + (int)lrintf(st->fig.ox);
-    const int oy = OY + st->bob + (int)lrintf(st->fig.oy);
-    const float sx = st->fig.sx, sy = st->fig.sy;
-    /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
-       the head against the torso is the cue curious and silly actually need, and it costs two
-       adds instead of resampling 165 000 pixels. */
-    const int tilt = (int)lrintf(st->fig.tilt * 1.6f);
-    /* One scalar for radii and stroke widths, which cannot take independent x and y. */
-    const float s = (sx + sy) * 0.5f;
-
+/* THE FIGURE TRANSFORM, shared by every form. Scaling is applied to coordinates as they are
+   computed rather than to a finished bitmap, which is why squash and stretch cost nothing
+   here beyond the multiply. */
 #define SX(v) ((int)lrintf((float)(v) * sx))
 #define SY(v) ((int)lrintf((float)(v) * sy))
 
-    const uint32_t hex = PALETTE[colour % face_colour_count()];
+static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
+                       float sx, float sy, float s, int tilt)
+{
     const uint16_t col = shade(hex, 1.0f);
     const uint16_t dark = shade(hex, 0.22f);
     const uint16_t torso = shade(hex, 0.88f);
     const uint16_t plate = shade(hex, 0.55f);
     const uint16_t limb = shade(hex, 0.78f);
-
-    /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's
-       field is #000 and why the robot reads as emitting rather than as a picture. */
-    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
 
     const int hy = oy + SY(HEAD_Y);
     draw_extra(fb, ox, hy, st->fig.extra, s);
@@ -339,6 +362,138 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
         fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
     }
+}
+
+static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
+                         float sx, float sy, float s, int tilt)
+{
+    const uint16_t col = shade(hex, 1.00f);  /* crest and tail: the brightest accents */
+    const uint16_t head = shade(hex, 0.94f);
+    const uint16_t body = shade(hex, 0.86f);
+    const uint16_t neck = shade(hex, 0.76f);
+    const uint16_t leg = shade(hex, 0.70f);
+    const uint16_t beak = shade(hex, 0.52f);
+    const uint16_t wing = shade(hex, 0.64f);
+    const uint16_t dark = shade(hex, 0.22f);
+
+    const int hx = ox + tilt + SX(OS_HEAD_DX);
+    const int hy = oy + SY(OS_HEAD_Y);
+    draw_extra(fb, ox, hy, st->fig.extra, s);
+
+    /* Tail plumes first, behind the body. They FLAP with the arm pose — a bird has no arms,
+       so the rig's arm angle drives the one thing on a bird that answers to it. */
+    const float flap = (st->rig.arm_l - 12.0f) * 0.25f;
+    static const struct {
+        float deg;
+        int len;
+    } TAIL[] = {{108.0f, 76}, {126.0f, 88}, {144.0f, 72}};
+    for (unsigned i = 0; i < sizeof(TAIL) / sizeof(TAIL[0]); i++) {
+        draw_limb(fb, ox - SX(56), oy + SY(6), TAIL[i].deg + flap, SY(TAIL[i].len), SX(16), col);
+    }
+
+    /* Legs and three-toed feet. The toes are what make it a bird rather than a stand. */
+    for (int side = -1; side <= 1; side += 2) {
+        const int lx = ox + SX(side * 30);
+        const float deg = side < 0 ? st->rig.leg_l : st->rig.leg_r;
+        draw_limb(fb, lx, oy + SY(OS_LEG_Y), deg, SY(OS_LEG_L), SX(20), leg);
+        const float a = deg * (float)M_PI / 180.0f;
+        const int ex = lx + (int)lrintf(-sinf(a) * (float)SY(OS_LEG_L));
+        const int ey = oy + SY(OS_LEG_Y) + (int)lrintf(cosf(a) * (float)SY(OS_LEG_L));
+        for (int t = -1; t <= 1; t++) {
+            draw_limb(fb, ex, ey, deg + (float)t * 62.0f, SY(19), SX(11), leg);
+        }
+    }
+
+    /* Body: an egg, wider than tall. */
+    fill_round_rect(fb, ox - SX(OS_BODY_W / 2), oy + SY(OS_BODY_Y), SX(OS_BODY_W),
+                    SY(OS_BODY_H), (int)(54 * s), body);
+
+    /* Wing, with scalloped line-work — the detail that says "this bird" rather than "a bird".
+       PEEKABOO RIDES IT: a bird tucks its head under a wing, which is a better answer than the
+       robot's hands over the eyes and costs nothing but this offset. */
+    const float u = st->rig.hands_up > 1.0f ? 1.0f : st->rig.hands_up;
+    const int wy = oy + SY(0) - (int)lrintf((float)(oy + SY(0) - (oy + SY(OS_EYE_Y))) * u);
+    const int wx = ox + SX(2) - (int)lrintf((float)SX(2) * u);
+    fill_round_rect(fb, wx, wy, SX(74), SY(66), (int)(30 * s), wing);
+    for (int r = 20; r <= 48; r += 14) {
+        arc_stroke(fb, wx + SX(2), wy + SY(8), (int)(r * s), (float)M_PI * 0.06f,
+                   (float)M_PI * 0.44f, (int)(3 * s), col);
+    }
+
+    /* Neck: segments narrowing toward the head, leaning forward for life. */
+    for (int i = 0; i < 7; i++) {
+        const float t = (float)i / 6.0f;
+        const int seg_w = (int)(50.0f - 16.0f * t);
+        fill_round_rect(fb, ox - SX(seg_w / 2) + SX((int)(7.0f * t)), oy + SY(-26 - i * 14),
+                        SX(seg_w), SY(11), (int)(5 * s), neck);
+    }
+
+    /* Crest: three thin plumes, the signature of the silhouette. 180 turns them upward. */
+    static const struct {
+        float deg;
+        int len;
+    } CREST[] = {{-18.0f, 42}, {0.0f, 50}, {18.0f, 42}};
+    for (unsigned i = 0; i < sizeof(CREST) / sizeof(CREST[0]); i++) {
+        draw_limb(fb, hx, oy + SY(-182), CREST[i].deg + 180.0f, SY(CREST[i].len), SX(9), col);
+    }
+
+    fill_round_rect(fb, hx - SX(OS_HEAD_W / 2), hy, SX(OS_HEAD_W), SY(OS_HEAD_H),
+                    (int)(44 * s), head);
+
+    /* Beak: a wedge that PROTRUDES below the head, or it reads as a chin. */
+    static const struct {
+        int w, h, y;
+    } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
+    for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
+        fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y), SX(BEAK[i].w),
+                        SY(BEAK[i].h), (int)(5 * s), beak);
+    }
+    fill_rect(fb, hx - SX(16), oy + SY(-97), SX(32), SY(2), shade(hex, 0.28f));
+
+    /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
+       redrew them would have to re-implement all six. */
+    const int ey = oy + SY(OS_EYE_Y);
+    draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle, s * 0.98f);
+    draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle, s * 0.98f);
+}
+
+void face_rest(face_state_t *st)
+{
+    if (st == NULL) return;
+    st->form = FORM_OSTRICH;
+    st->bob = 0;
+    st->lean = 0;
+    st->open = 1.0f;
+    st->startle = 0.0f;
+    emotion_resolve(FACE_HAPPY, &st->eyes);
+    rig_for(ACT_NONE, 0.0f, 1.0f, 0, &st->rig);
+    rig_figure(ACT_NONE, 0.0f, 1.0f, 0, 0.0f, &st->fig);
+}
+
+void face_draw(uint16_t *fb, int colour, const face_state_t *st)
+{
+    /* Everything hangs off these, so one pair of offsets moves the whole figure. See
+       ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
+    const int ox = OX + st->lean + (int)lrintf(st->fig.ox);
+    const int oy = OY + st->bob + (int)lrintf(st->fig.oy);
+    const float sx = st->fig.sx, sy = st->fig.sy;
+    /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
+       the head against the torso is the cue curious and silly actually need, and it costs two
+       adds instead of resampling 165 000 pixels. */
+    const int tilt = (int)lrintf(st->fig.tilt * 1.6f);
+    /* One scalar for radii and stroke widths, which cannot take independent x and y. */
+    const float s = (sx + sy) * 0.5f;
+    const uint32_t hex = PALETTE[colour % face_colour_count()];
+
+    /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's
+       field is #000 and why the figure reads as emitting rather than as a picture. */
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    if (st->form == FORM_ROBOT) {
+        draw_robot(fb, hex, st, ox, oy, sx, sy, s, tilt);
+    } else {
+        draw_ostrich(fb, hex, st, ox, oy, sx, sy, s, tilt);
+    }
+}
 #undef SX
 #undef SY
-}

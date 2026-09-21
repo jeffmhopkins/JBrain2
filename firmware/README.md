@@ -112,6 +112,29 @@ Two deliberate omissions: whole-figure **rotation** (a per-pixel resample 25 tim
 `ang` becomes a head tilt instead) and therefore `spin`, which is left out of the pools rather
 than faked badly. See ROOM_ENDPOINT_PLAN.md §10.4an.
 
+## Two bodies: the ostrich is the default
+
+`face_state_t.form` selects which body is drawn. **The rig, the emotions and the tweening are
+shared** — a form decides the shapes, never the behaviour, which is what stops a second body
+from becoming a second animation system. The eyes in particular are byte-for-byte the same
+call in both, so the six emotions come across for free.
+
+The ostrich is what a panel shows out of the box, because that is what the twins asked for.
+`docs/mocks/room-endpoint/ostrich-mock.py` is its spec at true geometry, drawn with these same
+primitives, so `draw_ostrich()` is a transcription of it.
+
+**Four taps then hold swaps the body** until `"change into merc"` exists — that is a MultiNet
+command and ESP-SR is not wired up yet. Three taps reboots, five calibrates; four was a dead
+count and is now the form toggle.
+
+A bird tucks its head under a wing, so **peekaboo rides the wing** rather than the robot's
+hands-over-eyes. The arm pose drives the tail flap, because a bird has no arms and the tail is
+the one thing on it that answers to that channel.
+
+`face_zone()` is per form. An ostrich's head is high and small and its legs are most of its
+height, so the robot's hitboxes would put "head" over empty space — a form whose zones were
+not updated would answer every poke from the wrong pool.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,

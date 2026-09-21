@@ -244,10 +244,41 @@ static long non_black(void)
     return n;
 }
 
+static void test_the_default_form_is_the_ostrich(void)
+{
+    /* The twins asked for it, so it is what a panel shows out of the box. A regression here
+       is silent — the robot draws perfectly well — which is exactly why it is asserted. */
+    face_state_t st;
+    face_rest(&st);
+    CHECK(st.form == FORM_OSTRICH, "rest is the ostrich");
+}
+
+static void test_both_forms_draw_and_differ(void)
+{
+    /* Two forms that render identically would mean the switch does nothing, and nothing in
+       the rest of the suite would notice. */
+    face_state_t st;
+    face_rest(&st);
+    uint16_t *other = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(other != NULL, "scratch frame allocated");
+    st.form = FORM_OSTRICH;
+    face_draw(fb, 0, &st);
+    const long ostrich_lit = non_black();
+    memcpy(other, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    st.form = FORM_ROBOT;
+    face_draw(fb, 0, &st);
+    CHECK(ostrich_lit > 8000, "the ostrich covers a real part of the panel");
+    CHECK(non_black() > 8000, "and so does the robot");
+    CHECK(memcmp(other, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t)) != 0,
+          "the two forms are not the same picture");
+    free(other);
+}
+
 static void test_draw_produces_a_robot(void)
 {
     face_state_t st;
     face_rest(&st);
+    st.form = FORM_ROBOT;
     memset(fb, 0xAB, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
     face_draw(fb, 0, &st);
     const long lit = non_black();
@@ -271,8 +302,12 @@ static void test_every_face_and_action_draws(void)
                            &st.fig);
                 st.open = step == 2 ? 0.0f : 1.0f;
                 st.startle = step == 1 ? 1.0f : 0.0f;
-                face_draw(fb, k % face_colour_count(), &st);
-                CHECK(non_black() > 2000, "every face/action combination draws something");
+                for (int f = 0; f < FORM_COUNT; f++) {
+                    st.form = (face_form_t)f;
+                    face_draw(fb, k % face_colour_count(), &st);
+                    CHECK(non_black() > 2000,
+                          "every face/action/form combination draws something");
+                }
             }
         }
     }
@@ -375,25 +410,29 @@ static void test_blink_is_a_line_not_a_hole(void)
 
 static void test_zones_hit_the_right_parts(void)
 {
-    CHECK(face_zone(FIG_X, FIG_Y - 96, false, 0) == ZONE_HEAD, "the head is the head");
-    CHECK(face_zone(FIG_X, FIG_Y - 96 - 110, false, 0) == ZONE_HEAD, "the antenna is his too");
-    CHECK(face_zone(FIG_X, FIG_Y + 36, false, 0) == ZONE_BODY, "the belly is the body");
-    CHECK(face_zone(FIG_X + 86, FIG_Y + 36, false, 0) == ZONE_ARM, "out to the side is an arm");
-    CHECK(face_zone(FIG_X - 86, FIG_Y + 36, false, 0) == ZONE_ARM, "both arms");
-    CHECK(face_zone(FIG_X, FIG_Y + 146, false, 0) == ZONE_LEG, "below the hips is a leg");
-    CHECK(face_zone(4, 4, false, 0) == ZONE_NONE, "the corner is background");
-    CHECK(face_zone(FACE_W - 4, FACE_H - 4, false, 0) == ZONE_NONE, "so is the far corner");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y - 96, false, 0) == ZONE_HEAD, "the head is the head");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y - 96 - 110, false, 0) == ZONE_HEAD, "the antenna is his too");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 36, false, 0) == ZONE_BODY, "the belly is the body");
+    CHECK(face_zone(FORM_ROBOT, FIG_X + 86, FIG_Y + 36, false, 0) == ZONE_ARM, "out to the side is an arm");
+    CHECK(face_zone(FORM_ROBOT, FIG_X - 86, FIG_Y + 36, false, 0) == ZONE_ARM, "both arms");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 146, false, 0) == ZONE_LEG, "below the hips is a leg");
+    CHECK(face_zone(FORM_ROBOT, 4, 4, false, 0) == ZONE_NONE, "the corner is background");
+    CHECK(face_zone(FORM_ROBOT, FACE_W - 4, FACE_H - 4, false, 0) == ZONE_NONE, "so is the far corner");
 }
 
 static void test_zones_follow_the_flip(void)
 {
     /* A tap on his head is his head whichever way up the panel is. Getting this wrong makes
        the zones feel random exactly when a child is holding the thing any which way. */
-    for (int y = 0; y < FACE_H; y += 7) {
-        for (int x = 0; x < FACE_W; x += 7) {
-            const face_zone_t up = face_zone(x, y, false, 0);
-            const face_zone_t flipped = face_zone(FACE_W - 1 - x, FACE_H - 1 - y, true, 0);
-            CHECK(up == flipped, "zones follow the 180 degree flip");
+    for (int f = 0; f < FORM_COUNT; f++) {
+        const face_form_t form = (face_form_t)f;
+        for (int y = 0; y < FACE_H; y += 7) {
+            for (int x = 0; x < FACE_W; x += 7) {
+                const face_zone_t up = face_zone(form, x, y, false, 0);
+                const face_zone_t flipped =
+                    face_zone(form, FACE_W - 1 - x, FACE_H - 1 - y, true, 0);
+                CHECK(up == flipped, "zones follow the 180 degree flip, in every form");
+            }
         }
     }
 }
@@ -402,22 +441,25 @@ static void test_zones_follow_the_lean(void)
 {
     /* He slides downhill as the panel tilts; his hitboxes go with him. */
     const int lean = 40;
-    CHECK(face_zone(FIG_X + lean, FIG_Y + 36, false, lean) == ZONE_BODY,
+    CHECK(face_zone(FORM_ROBOT, FIG_X + lean, FIG_Y + 36, false, lean) == ZONE_BODY,
           "the belly moves with the lean");
-    CHECK(face_zone(FIG_X, FIG_Y + 36, false, lean) == ZONE_BODY,
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 36, false, lean) == ZONE_BODY,
           "and is still wide enough to hit at centre");
 }
 
 static void test_every_zone_is_reachable(void)
 {
     /* A zone nothing can hit is a pool that never plays. */
-    int seen[8];
-    memset(seen, 0, sizeof(seen));
-    for (int y = 0; y < FACE_H; y++)
-        for (int x = 0; x < FACE_W; x++) seen[face_zone(x, y, false, 0)] = 1;
-    CHECK(seen[ZONE_HEAD] && seen[ZONE_BODY] && seen[ZONE_ARM] && seen[ZONE_LEG],
-          "every part of him can be tapped");
-    CHECK(seen[ZONE_NONE], "and so can the background");
+    for (int f = 0; f < FORM_COUNT; f++) {
+        const face_form_t form = (face_form_t)f;
+        int seen[8];
+        memset(seen, 0, sizeof(seen));
+        for (int y = 0; y < FACE_H; y++)
+            for (int x = 0; x < FACE_W; x++) seen[face_zone(form, x, y, false, 0)] = 1;
+        CHECK(seen[ZONE_HEAD] && seen[ZONE_BODY] && seen[ZONE_ARM] && seen[ZONE_LEG],
+              "every part of every form can be tapped");
+        CHECK(seen[ZONE_NONE], "and so can the background");
+    }
 }
 
 static void test_every_pool_answers(void)
@@ -958,15 +1000,25 @@ static void test_gesture_selects_by_tap_count(void)
     CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
           "three taps then hold reboots");
     gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_FORM, 200, GESTURE_HOLD_MS + 200) == GESTURE_FORM,
+          "four taps then hold swaps the body");
+    gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_CALIBRATE, 200, GESTURE_HOLD_MS + 200) ==
               GESTURE_CALIBRATE,
           "five taps then hold calibrates");
+    /* Every count maps to at most one action, and an unassigned count does nothing at all. */
     for (int n = 1; n <= GESTURE_TAPS_MAX; n++) {
-        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_CALIBRATE) continue;
+        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_FORM || n == GESTURE_TAPS_CALIBRATE) {
+            continue;
+        }
         gesture_reset(&g);
         CHECK(do_sequence_n(&g, n, 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
               "a count that selects nothing does nothing");
     }
+    CHECK(GESTURE_TAPS_REBOOT != GESTURE_TAPS_FORM &&
+              GESTURE_TAPS_FORM != GESTURE_TAPS_CALIBRATE &&
+              GESTURE_TAPS_REBOOT != GESTURE_TAPS_CALIBRATE,
+          "no two actions share a tap count");
 }
 
 static void test_gesture_five_taps_survive_the_reboot_threshold(void)
@@ -988,13 +1040,21 @@ static void test_gesture_no_cue_for_a_count_that_does_nothing(void)
     /* Growing a bar promises an action. Four taps then a hold has none, so it must not. */
     gesture_t g;
     gesture_reset(&g);
-    for (int i = 0; i < 4; i++) {
-        press_for(&g, 120);
-        idle_for(&g, 200);
+    /* Every count from one to the maximum that is NOT assigned an action. Hard-coding a
+       number here was wrong the moment four stopped being dead. */
+    for (int n = 1; n <= GESTURE_TAPS_MAX; n++) {
+        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_FORM || n == GESTURE_TAPS_CALIBRATE) {
+            continue;
+        }
+        gesture_reset(&g);
+        for (int i = 0; i < n; i++) {
+            press_for(&g, 120);
+            idle_for(&g, 200);
+        }
+        gesture_poll(&g, true, true, DT);
+        for (int t = DT; t < GESTURE_CUE_MS + 500; t += DT) gesture_poll(&g, false, true, DT);
+        CHECK(gesture_cue(&g) == 0.0f, "no cue for a hold that will do nothing");
     }
-    gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < GESTURE_CUE_MS + 500; t += DT) gesture_poll(&g, false, true, DT);
-    CHECK(gesture_cue(&g) == 0.0f, "no cue for a hold that will do nothing");
 }
 
 static void test_gesture_cue(void)
@@ -1030,6 +1090,8 @@ int main(void)
     test_cooldown_suppresses_recency();
     test_pool_spreads();
     test_penalty();
+    test_the_default_form_is_the_ostrich();
+    test_both_forms_draw_and_differ();
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
     test_blink_is_a_line_not_a_hole();

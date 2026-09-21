@@ -6,6 +6,7 @@
 static gesture_action_t action_for(int taps)
 {
     if (taps == GESTURE_TAPS_REBOOT) return GESTURE_REBOOT;
+    if (taps == GESTURE_TAPS_FORM) return GESTURE_FORM;
     if (taps == GESTURE_TAPS_CALIBRATE) return GESTURE_CALIBRATE;
     return GESTURE_NONE;
 }

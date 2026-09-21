@@ -777,7 +777,7 @@ static void face_task(void *arg)
             /* Corrected before anything reads it, so the zones, the marker and the telemetry
                all speak the same coordinates. The identity until a calibration exists. */
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
-            s_tap_zone = (int)face_zone(s_tap_x, s_tap_y, s_upside_down, s_lean);
+            s_tap_zone = (int)face_zone(st.form, s_tap_x, s_tap_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
             action_mag = variants_penalty(pool, &mem[pool], now);
@@ -878,6 +878,13 @@ static void face_task(void *arg)
         const gesture_action_t act = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
         const bool rebooting = act == GESTURE_REBOOT;
         if (act == GESTURE_CALIBRATE) cal_begin();
+        if (act == GESTURE_FORM) {
+            /* Until "change into merc" exists — the command list needs ESP-SR, which is not
+               wired up yet — four taps and a hold is how the twins get the other body. */
+            st.form = st.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
+            dirty = true;
+            ESP_LOGI(TAG, "form -> %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
+        }
         const float cue = gesture_cue(&gest);
         if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 

@@ -12,11 +12,25 @@
 /* How many colours the tap cycles through (the shipped palette plus the robot default). */
 int face_colour_count(void);
 
+/* Which body is drawn. The rig, the emotions and the tweening are shared: a form decides
+   the SHAPES, never the behaviour, which is what stops a second body from becoming a second
+   animation system.
+
+   The ostrich is the default because that is what the twins asked for. `docs/mocks/
+   room-endpoint/ostrich-mock.py` is its spec, at true geometry, drawn with these same
+   primitives so the port is a transcription. */
+typedef enum {
+    FORM_OSTRICH = 0,
+    FORM_ROBOT,
+    FORM_COUNT,
+} face_form_t;
+
 /* Everything the rig can move, in one struct rather than a growing argument list.
  *
  * The caller owns the tweening and the clock; this file only knows how to draw ONE INSTANT of
  * it. That is what keeps `face.c` free of ESP dependencies and renderable on a host. */
 typedef struct {
+    face_form_t form; /* which body; the rest of this struct means the same thing for both */
     int bob;        /* vertical offset, px — see the note below; never constant */
     int lean;       /* horizontal offset, px: he slides downhill as the panel tilts */
     float open;     /* eyelids: 1 fully open, 0 shut. Blink, not emotion. */
@@ -45,7 +59,11 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st);
  * make the zones feel random exactly when a child is holding the panel any which way.
  *
  * Transient action offsets are deliberately NOT applied: a hitbox that jumps with him during
- * a jump is one a child cannot learn. The rest silhouette is the target. */
+ * a jump is one a child cannot learn. The rest silhouette is the target.
+ *
+ * PER FORM, because the shapes are: an ostrich's head is high and small and its legs are most
+ * of its height, so the robot's boxes would put "head" over empty space and "leg" over a
+ * body. A form whose zones were not updated would answer every poke from the wrong pool. */
 typedef enum {
     ZONE_NONE = 0, /* off the figure entirely — the background */
     ZONE_HEAD,
@@ -54,7 +72,7 @@ typedef enum {
     ZONE_LEG,
 } face_zone_t;
 
-face_zone_t face_zone(int x, int y, bool upside_down, int lean);
+face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean);
 
 /* A rest state: happy, open-eyed, idle limbs, no figure transform. The caller starts here and
    tweens away from it, so nothing has to enumerate seventeen floats to get a first frame. */
