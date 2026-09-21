@@ -1685,7 +1685,8 @@ the whole design has been driving toward — and opening that console resets the
 `RTC_NOINIT_ATTR` memory, which survives the reset a panic performs, and the next boot reports
 the last stage reached. The stages, in order: 1 loop top, 2 touch, 3 beep, 4 stack probe,
 5 IMU, 6 `face_draw`, 7 label, 8 flip, 9 full blit, 10 microphone read, 11 meter blit,
-12 panel re-assert, 13 PMU sample — and 14, brightness, added by §10.4ak. The same list lives
+12 panel re-assert, 13 PMU sample — 14, brightness, added by §10.4ak, and 15, codec levels,
+by §10.4al. The same list lives
 next to `PHASE()` in `display.c`; a number whose stage nobody can name is worth nothing.
 
 That is not a line number. It is the difference between "somewhere in the firmware" and "in the
@@ -1731,10 +1732,64 @@ already spent two releases on a symptom with two true bugs competing for it. `cr
 what settles it: a face task dying in a blit (9, 11) or a command write (12, 14) fits this race;
 a death in the I2S read (10) or the IMU (5) does not, and sends the search elsewhere.
 
+> **Wrong, and §10.4al says why.** The breadcrumb records where the RENDER task is. A fault in
+> the MAIN task — which is where both cross-task calls live — reports whatever stage the render
+> loop was parked in, and it parks in stage 10. The first reading that came back was 10, and by
+> this paragraph's rule that would have sent the search elsewhere. It should not have.
+
 **Cost of the diagnosis: reading the driver.** Nothing about it needed the panel, a console or
 the owner — the race is visible in sixty lines of `esp_lcd_panel_io_spi.c` and in `grep` for
 who calls the panel from which task. It was available at 0.2.23 and went unlooked-for through
 three releases of instrumenting the hardware instead.
+
+#### 10.4al The first breadcrumb, and what it actually says (2026-09-21)
+
+The panel was unplugged overnight and came back at 12:00. At 12:16 it panicked, and the box's
+log is the clearest thing this investigation has produced:
+
+```
+12:15:31  endpoint.manifest_served                 GET /api/endpoint/firmware   200
+12:15:31                                           GET /api/endpoint/settings   200
+          ——— nothing ———
+12:17:00  (reboot) manifest + settings again
+12:17:07  telemetry  version 0.2.25  reset_reason "panic"  crash_phase 10
+```
+
+**The fifteen-minute cycle fetched its settings and then never posted its telemetry.** In
+`app_main` those are adjacent:
+
+```c
+apply_settings(&cfg);   /* GET /settings, then audio_set_levels + display_set_brightness */
+report(&cfg);           /* IMU read, JSON, POST /telemetry */
+```
+
+So the fault is bounded to the handful of lines between a `200` on `/settings` and a POST that
+never came — and both of the calls in that window are the main task reaching into hardware the
+render task owns. That is a far tighter bound than six releases of probing the display
+produced, and it came out of an HTTP access log.
+
+**`crash_phase: 10` is not the contradiction §10.4ak called it.** The breadcrumb records where
+the RENDER task is, and the render task was not the one crashing. It parks in stage 10: the
+capture blocks for a full 40 ms of every 40 ms frame, so stage 10 is most of the loop's wall
+clock and is what any main-task fault will report. §10.4ak wrote the discriminator backwards —
+it read the number as a crash site rather than as one task's position — and had the panel been
+left to that rule, the first real reading would have been filed as exculpatory. The lesson is
+the one §10.4w and §10.4x kept teaching: **an instrument that answers a different question than
+the one asked is worse than one that stays silent.** The comment beside `PHASE()` now says what
+the number means.
+
+**0.2.26 fixed one of the two calls in that window; 0.2.27 fixes the other.**
+`esp_codec_dev.c` has no lock of any kind — read, write, `set_out_vol` and `set_in_gain` all
+walk straight into the device struct and the codec's I2C registers. The component's only mutex
+is in `audio_codec_data_i2s.c` and guards the data path, which does nothing for a control write
+arriving from another task mid-capture. So `audio_set_levels()` now records and the render loop
+applies it, as stage 15 — the same shape as brightness, for the same reason, on the other chip.
+
+**What is still not proven.** Which of the two calls actually panicked is unknown and may stay
+unknown: they sat in the same window, on the same cadence, and after 0.2.27 neither runs
+cross-task. If a `panic` returns on 0.2.27 the window bound is gone and the search starts again
+with the phase number read correctly this time; if it does not, the honest statement is "both
+races closed and the panic stopped", not "it was the codec".
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
