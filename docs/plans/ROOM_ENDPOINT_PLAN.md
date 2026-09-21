@@ -2091,6 +2091,153 @@ a vendor artifact assumed the guarantee came with it. The failure was loud and c
 round, which is the cheap way to find out — but the assumption was the same shape as every
 other one this investigation has had to unwind.
 
+#### 10.4au The version is IN the image, and twice it was not (2026-09-21)
+
+`firmware` CI failed on 0.2.35 and again on 0.2.36 with `MISMATCH:
+firmware/dist/jbrain-endpoint.bin`. Not the `srmodels.bin` ordering problem of §10.4as — this
+is the app image, built with `CONFIG_APP_REPRODUCIBLE_BUILD=y`, which is exactly the check
+that is supposed to be exact.
+
+A clean-room rebuild (`rm -rf build sdkconfig`, since `sdkconfig` is generated and gitignored)
+gave a binary of **identical length** and a different hash. 66 bytes differed. Reading the
+app descriptor at 0x20 said it in one line:
+
+```
+dist   version: 0.2.35   elf_sha256: 3183764972...
+fresh  version: 0.2.36   elf_sha256: 7617657390...
+```
+
+**ESP-IDF compiles `firmware/version.txt` into the image**, so bumping it *after* `idf.py
+build` stamps the previous number into the bytes that ship. The 66 bytes are the version
+string and the ELF hash that covers it. Both failures were the same slip in the same order,
+and on the way to finding it I had written in this session that the file was "metadata only,
+not compiled in" — wrong, and wrong in the direction that makes the mistake invisible.
+
+So it is a check rather than a thing to remember: `scripts/firmware-dist.sh` now reads the
+built image's descriptor and **refuses to copy an image whose embedded version does not match
+`version.txt`**, with the fix in the message. Confirmed to fail on a mismatch and pass on a
+match before being kept.
+
+Worth noting what CI got right here. The byte-exact comparison was doing its job perfectly —
+it caught a real defect (a panel would have reported the wrong version to the box, which is
+the one number the owner uses to tell whether an update landed) and it named the file. What it
+could not do is say *why*, and two rounds went into a difference that the app descriptor
+answers immediately. A failing image comparison should be read at 0x20 first.
+
+#### 10.4av The panel listens, and the repartition that cost (2026-09-21)
+
+> *"where we at now with the voice to text recognition I would still prefer to have it so that
+> it'll just try and listen to the microphone and put text scrolling on the bottom as it
+> recognizes it"*
+
+Built, with the limit stated rather than papered over. **MultiNet resolves a list; it does not
+transcribe.** `firmware/main/vocab.c` holds 23 phrases and the model answers with *which one*
+it heard, offline, in under half a second. The open-vocabulary alternative is Whisper tiny int8
+at ~75 MB against 8 MB of PSRAM (§10.4ar) — two orders of magnitude, not a tuning problem. So
+the ticker shows the phrase the model resolved and shows **nothing** when it resolved nothing:
+a four-year-old can read a miss and cannot read an invention, and a hallucinated command the
+robot then acts on reads as the toy being broken.
+
+**No wake word**, because "just try and listen" was the request. That single decision shapes
+everything else. Every phrase is always live, so each is two words minimum — a one-word
+always-on vocabulary fires at the television — lowercase a-z only (the grapheme-to-phoneme
+pass silently refuses anything else, leaving the panel deaf to exactly one thing with nothing
+on screen to say so), and no phrase a prefix of another. The host suite enforces all three,
+plus that every letter in the vocabulary has a glyph and that no two glyphs draw the same
+shape: the alphabet was hand-entered this session, and a copy-pasted bitmap is invisible until
+someone reads a word on the glass.
+
+The one-owner rule extends unchanged: `audio.c` already owns the codec, so it is the only
+caller of `speech_feed`, which accumulates to the front end's chunk size (not the capture's
+40 ms) and hands off. MultiNet runs pinned to **core 1**; core 0 carries Wi-Fi. There is no
+AEC, and not by choice — one ES8311 and no ES7210 means no reference channel (§10.5 A), so the
+front end is told `"M"` rather than handed a fake channel to cancel against silence.
+
+The red dot beside the ticker is the **ICO Children's Code recording indicator**, asserted by
+three tests against the real state: present whenever the microphone is open, brighter while
+someone is talking, absent when it is not. "Muted is a promise" now has something keeping it.
+
+##### And then it did not fit
+
+Linking esp-sr took the app from 1.16 MB to **3.05 MB**. `factory` was 1.5 MB — and `factory`
+is exactly where a USB flash writes. `idf.py build` reports this as a **warning** and exits
+zero, so a build that could not be flashed onto a panel at all still looked successful.
+
+The app slots are now 3.5 MB each, equal by construction. The 3 MB came from the OTA slots
+(4.5 → 3.5), which means **`model` and `storage` keep their exact offsets** — worth arranging
+deliberately, because every constant that moves is another place a panel can be bricked from
+and the box's flasher hardcodes `MODEL_OFFSET`. Headroom is 12.9% per slot.
+
+**A resize makes `otadata` mandatory on every USB flash, and it was not being written.** A
+panel that has ever been OTA'd has `otadata` naming an OTA slot; a USB flash writes `factory`,
+so the panel would ignore the image just written. That was survivable while the layout was
+fixed and is not survivable across a resize, because the stale pointer now names a slot at a
+*new* offset holding the middle of an old image — the cable this design exists to avoid.
+`ota_data_initial.bin` now ships in `dist/` and the flasher writes it at `0xf000`.
+
+`test_two_full_size_ota_slots_survive` asserted `>= 4 MiB` and had to change, which is the
+right moment to notice that a size constant was standing in for something else. What has to be
+true is that **every app slot is bigger than the image that actually ships**, so that is now
+asserted against the committed bytes, alongside no-gaps-or-overlaps and all three slots equal.
+Each was confirmed to fail against a deliberately broken table before being kept.
+
+##### A path filter hid a stale test for six versions
+
+`supervisor/tests/test_deploy_scripts.py` asserts that `firmware/dist/SHA256SUMS` names exactly
+the images the box flashes — and it still named three when `srmodels.bin` had been there since
+0.2.31. It never failed, because the `supervisor` job is gated on a path filter that lists
+`supervisor/**` and `deploy/sdr/**` and says nothing about `firmware/`. A firmware-only PR
+skipped the whole job. The filter now includes `firmware/dist/**` and `firmware/partitions.csv`.
+
+The general shape, and it is worth carrying: **a path filter encodes where the code is, and a
+test's subject is not always where the test lives.** The same file also asserts the recovery
+offsets in `partitions.csv` against the api's constants — the exact thing this section changed,
+in a job that a firmware-only PR would not have run.
+
+#### 10.4at Four actions that posed but never performed (2026-09-21)
+
+A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
+I built a harness that **renders frames and counts changed pixels**, and checked each claim
+against it. Two of the report's headline numbers were wrong in my favour and one in the other
+direction; the measurement is what this section records, not the report.
+
+| Action | Measured before | What was wrong |
+|---|---|---|
+| `blush` | **0 px on the robot**, 1525 on the ostrich | drawn before the body and head, which then painted over it. On the ostrich the anchor was the head's y and a fixed ±78 in x — a head 128 wide, not 216 — so both cheeks landed in **empty space beside the bird**. |
+| `wave` | **0 px on the ostrich**, 3499 on the robot | the ostrich's tail flap was driven from `arm_l`; `wave` only moves `arm_r`. On the robot the arm posed at −150° put the hand at x+103 against a head reaching x+108 — **hidden behind the face**. |
+| `hide` | robot −35%, ostrich **−13%** of eye white | the robot's hand knob is 17 px against a 41×48 eye; the ostrich's wing was 74 px wide, parked at the eye line, and **drawn before the head**. |
+| eye scale | 0.98 | transcribed literally from the mock, whose eye base is 46×54 where `draw_eye`'s is 40.6×48.4. The approved eyes shipped **a ninth too small**; 1.10 reproduces them to within half a pixel. |
+
+**Every one of these passed the whole test suite,** including a test named
+`test_every_action_moves`. That test compares `rig_pose_t` and `figure_pose_t` — and all four
+defects pose correctly. `wave` moves a float. `blush` sets `fig.extra`. `hide` drives
+`hands_up` to 1.0. The pose is right in every case and **nothing reaches the glass**.
+
+So the suite now renders. `test_every_action_changes_the_picture` requires ≥900 changed pixels
+for every action on every form; `test_peekaboo_covers_the_eyes` requires **zero** eye-white
+mid-hide on both forms; `test_the_blush_lands_on_the_face` requires the pink to survive the
+frame *and* to sit within the eyes' band; `test_the_gag_puff_shows_on_both_forms` counts the
+cloud's unique colour. Each was confirmed to fail against the pre-fix renderer before being
+kept — the delta test and the peekaboo test name the exact symptom.
+
+The fixes are mostly **ordering**, which is the tell: the puff belongs behind the figure and
+the blush on the face, so they became `draw_puff()` and `draw_blush()` called at per-form
+anchors rather than one function called before everything. The ostrich's wing is drawn behind
+the body at rest and **over the head** once it is hiding, and grows 74→144 px as it rises. The
+robot's peekaboo hand grows 18→32 px so it can actually cover the eye it is aimed at, and an
+arm posed above the shoulder is **redrawn over the head** — the shoulder sits at ox+66 inside
+a head 216 wide, so a raised arm has 42 px of head to clear and otherwise disappears. `wave`
+swings −106°…−154° to stay wholly past that threshold, so the arm cannot flick in front and
+behind between frames.
+
+**Clipping was measured and deliberately left alone.** Across 425 sampled frames per form, 62
+(15%) on the ostrich and 43 on the robot lose pixels off a panel edge — crest tips and toes
+during the biggest squash-and-stretch. A sweep of base scale × origin says it only reaches zero
+at **k=0.83** for the ostrich. Shrinking the approved bird by a sixth to save an average of
+four pixels a frame, on a figure already 428 px tall in a 448 px panel, is the wrong trade on a
+29 mm screen; a cropped toe at the peak of a gag reads as energy. Recorded here so the next
+reader knows it was measured, not missed.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
@@ -2153,6 +2300,15 @@ a bench, **never on the unit that goes in a child's room** (§3 of `PET_ENDPOINT
 the flasher.
 
 ### 10.6 Still open after this section
+
+- **The panels will eventually present as EGGS** (owner, 2026-09-21): interact with one enough
+  times over enough minutes and it hatches into a baby that grows up over ~2 days. Iceboxed as
+  `../proposed/PET_LIFECYCLE_PLAN.md` rather than scoped here, because the firmware is the
+  cheap half — a baby is a `growth` float through `face.c`'s existing per-form constants, plus
+  one extra silhouette for the ostrich (whose neck and legs ARE its silhouette, so scaling them
+  down gives a small ostrich rather than a chick). The expensive half is `jpet/`: there is no
+  age or stage in `pet_state` today, and it holds one pet per principal where two twins need
+  two eggs.
 
 - ~~**Does `/dev` + `device_cgroup_rules` actually give the sidecar a hotplugged
   `/dev/ttyACM*`?**~~ **ANSWERED YES on the box, 2026-09-19.** A panel plugged into the box

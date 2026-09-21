@@ -32,6 +32,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
 #include "calib.h"
+#include "caption.h"
 #include "cfg.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -41,6 +42,8 @@
 #include "font.h"
 #include "gesture.h"
 #include "rig.h"
+#include "speech.h"
+#include "vocab.h"
 #include "variants.h"
 #include "ota.h"
 #include "pmu.h"
@@ -294,6 +297,11 @@ static void apply_brightness(void)
 #define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
+/* The heard-speech ticker along the bottom, and the recording indicator beside it. The dot is
+   red because it is the one thing on this panel that is a promise to a room rather than a
+   decoration — the ICO Children's Code requires it whenever the microphone is open. */
+#define CAPTION_COLOUR SWAP16(0xCE79) /* pale grey: readable, never louder than the robot */
+#define MIC_COLOUR SWAP16(0xF800)
 
 /* The gesture itself lives in `gesture.h`, pure and host-tested: three short taps in rhythm,
    then a hold. A reboot IS the firmware re-check, because the OTA loop asks the box before
@@ -732,6 +740,12 @@ static void face_task(void *arg)
        that was never registered, and only the first of those is visible from here. */
     const bool sound = audio_start();
     if (!sound) ESP_LOGW(TAG, "no codec — taps will be silent");
+    /* AFTER the codec, because there is nothing to feed it otherwise, and non-fatal for the
+       same reason everything else here is: a panel that cannot hear is still a robot. */
+    const bool ears = sound && speech_start();
+    if (!ears) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+    caption_t cap;
+    caption_reset(&cap);
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
@@ -777,7 +791,7 @@ static void face_task(void *arg)
             /* Corrected before anything reads it, so the zones, the marker and the telemetry
                all speak the same coordinates. The identity until a calibration exists. */
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
-            s_tap_zone = (int)face_zone(s_tap_x, s_tap_y, s_upside_down, s_lean);
+            s_tap_zone = (int)face_zone(st.form, s_tap_x, s_tap_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
             action_mag = variants_penalty(pool, &mem[pool], now);
@@ -790,6 +804,36 @@ static void face_task(void *arg)
             if (sound) audio_beep();
             dirty = true;
         }
+        /* WHAT THE PANEL HEARD. Popped once a frame, so a phrase cannot arrive between two
+           frames and be lost, and acted on in exactly the way a tap is — the voice is
+           another way to ask, never a second animation path. */
+        char said[64];
+        int said_id = -1;
+        if (ears && speech_take(said, sizeof(said), &said_id)) {
+            caption_say(&cap, said);
+            const vocab_t *v = vocab_get(said_id);
+            if (v != NULL) {
+                switch (v->kind) {
+                case VOCAB_FORM:
+                    st.form = (face_form_t)v->arg;
+                    break;
+                case VOCAB_COLOUR:
+                    colour = (colour + 1) % face_colour_count();
+                    break;
+                case VOCAB_ACTION:
+                default:
+                    action = (action_t)v->arg;
+                    action_mag = 1.0f;
+                    action_start = now;
+                    break;
+                }
+                if (sound) audio_beep();
+                dirty = true;
+            }
+        }
+        if (ears && !caption_idle(&cap)) dirty = true;
+        caption_tick(&cap, now, FACE_W, speech_live(), speech_hearing());
+
         /* THE CALIBRATION ROUTINE OWNS THE FRAME while it runs. It deliberately bypasses the
            rig rather than drawing over it: a robot reacting to the taps being measured would
            move the thing the owner is aiming at. */
@@ -878,6 +922,13 @@ static void face_task(void *arg)
         const gesture_action_t act = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
         const bool rebooting = act == GESTURE_REBOOT;
         if (act == GESTURE_CALIBRATE) cal_begin();
+        if (act == GESTURE_FORM) {
+            /* Until "change into merc" exists — the command list needs ESP-SR, which is not
+               wired up yet — four taps and a hold is how the twins get the other body. */
+            st.form = st.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
+            dirty = true;
+            ESP_LOGI(TAG, "form -> %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
+        }
         const float cue = gesture_cue(&gest);
         if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
@@ -919,6 +970,7 @@ static void face_task(void *arg)
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
+            caption_draw(&cap, fb, FACE_W, FACE_H, CAPTION_COLOUR, MIC_COLOUR);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
             /* After the flip, because the finger is in PANEL coordinates and the flip has

@@ -74,10 +74,11 @@ jobs:
           cp firmware/build/jbrain-endpoint.bin out/
           cp firmware/build/bootloader/bootloader.bin out/
           cp firmware/build/partition_table/partition-table.bin out/
+          cp firmware/build/ota_data_initial.bin out/
           cp firmware/build/srmodels/srmodels.bin out/
           ( cd out && sha256sum ./*.bin | sed 's| \./| |' > SHA256SUMS )
           echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
-          for f in bootloader.bin partition-table.bin jbrain-endpoint.bin; do
+          for f in bootloader.bin partition-table.bin ota_data_initial.bin jbrain-endpoint.bin; do
             if ! cmp -s "out/$f" "firmware/dist/$f"; then
               {
                 echo "### firmware/dist/$f is not what this source builds"

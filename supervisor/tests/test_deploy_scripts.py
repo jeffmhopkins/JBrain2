@@ -1373,10 +1373,17 @@ def test_the_committed_firmware_images_are_what_the_box_would_flash() -> None:
     digests = {
         line.split()[1]: line.split()[0] for line in sums if len(line.split()) == 2
     }
+    # Spelled out rather than globbed, because the failure this catches is an image
+    # QUIETLY MISSING from the set the api refuses to flash without. It went stale once:
+    # `srmodels.bin` joined `dist/` in 0.2.31 and this list did not, and the job never
+    # ran to say so — a firmware-only PR did not match the `supervisor` path filter,
+    # which now includes `firmware/dist/**` for exactly that reason.
     assert set(digests) == {
         "bootloader.bin",
         "partition-table.bin",
+        "ota_data_initial.bin",
         "jbrain-endpoint.bin",
+        "srmodels.bin",
     }
     for name, want in digests.items():
         assert hashlib.sha256((dist / name).read_bytes()).hexdigest() == want, name

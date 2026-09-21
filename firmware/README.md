@@ -112,6 +112,29 @@ Two deliberate omissions: whole-figure **rotation** (a per-pixel resample 25 tim
 `ang` becomes a head tilt instead) and therefore `spin`, which is left out of the pools rather
 than faked badly. See ROOM_ENDPOINT_PLAN.md §10.4an.
 
+## Two bodies: the ostrich is the default
+
+`face_state_t.form` selects which body is drawn. **The rig, the emotions and the tweening are
+shared** — a form decides the shapes, never the behaviour, which is what stops a second body
+from becoming a second animation system. The eyes in particular are byte-for-byte the same
+call in both, so the six emotions come across for free.
+
+The ostrich is what a panel shows out of the box, because that is what the twins asked for.
+`docs/mocks/room-endpoint/ostrich-mock.py` is its spec at true geometry, drawn with these same
+primitives, so `draw_ostrich()` is a transcription of it.
+
+**Four taps then hold swaps the body**, and `"change into merc"` now does it too — that phrase
+was the twin's original ask and it is the first entry in `vocab.c`. Three taps reboots, five
+calibrates; four was a dead count and is now the form toggle.
+
+A bird tucks its head under a wing, so **peekaboo rides the wing** rather than the robot's
+hands-over-eyes. The arm pose drives the tail flap, because a bird has no arms and the tail is
+the one thing on it that answers to that channel.
+
+`face_zone()` is per form. An ostrich's head is high and small and its legs are most of its
+height, so the robot's hitboxes would put "head" over empty space — a form whose zones were
+not updated would answer every poke from the wrong pool.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
@@ -275,12 +298,55 @@ It lives in `gesture.c`, pure and host-tested (`firmware/host`), because **both*
 directions cost something: a false positive reboots a toy in a child's hands, and a false
 negative strands an owner who has no terminal with no way to force a firmware re-check.
 
+## It listens, and what it hears scrolls along the bottom
+
+The owner asked for two things in one sentence: understand the microphone **on the panel**
+rather than over Wi-Fi, and **put the text on the screen as it recognises it**. Both are built,
+and the honest account of what that means is the important half.
+
+**MultiNet resolves a list, it does not transcribe.** `vocab.c` holds every phrase the panel can
+be told — 23 of them — and MultiNet7 answers with *which one* it heard, offline, in under half a
+second. The smallest genuinely open-vocabulary model anyone runs is Whisper tiny int8 at ~75 MB
+against 8 MB of PSRAM. That is two orders of magnitude, not a tuning problem (§10.4ar), so
+dictation is not a thing this board can be persuaded into.
+
+**So the ticker shows the phrase the model resolved, and shows nothing when it resolved
+nothing.** A toy that prints a guess is worse than one that misses: a four-year-old can read the
+miss and cannot read the invention, and a hallucinated command the robot then *acts on* reads as
+the toy being broken.
+
+**No wake word.** "Just try and listen" was the request, so WakeNet is disabled and MultiNet sees
+every frame the front end calls speech. That decision is what shapes `vocab.c`: every phrase is
+always live, so each is **two words minimum** — a one-word always-on vocabulary fires at the
+television — and the host suite enforces that, plus lowercase-only (the grapheme-to-phoneme pass
+silently refuses anything else, leaving the panel deaf to exactly one thing with nothing on
+screen to say so) and no phrase being a prefix of another.
+
+**No AEC, and not by choice:** one ES8311 and no ES7210 means no playback reference channel to
+cancel against (§10.5 A). The front end is told the truth about its input — `"M"`, one
+microphone — rather than handed a fake channel to cancel against silence.
+
+**The one-owner rule holds.** esp-sr's usual arrangement is its own task reading I2S; here
+`audio.c` already owns the codec, so it is the only caller of `speech_feed`, which accumulates to
+the front end's chunk size (not the capture's 40 ms) and hands off. MultiNet runs on its own
+task pinned to **core 1**, because core 0 carries Wi-Fi and a 200 ms recognition pass beside the
+radio makes both stutter.
+
+**The red dot is a compliance requirement, not decoration.** The ICO Children's Code requires a
+recording indicator, so `caption.c` draws one whenever the microphone is open, brightens it while
+someone is talking, and draws nothing at all when it is not — "muted is a promise", and this is
+the only thing on the glass that keeps it. Three host tests assert it against the real state.
+
+The ticker itself clears a black strip behind the text before drawing. The figure's feet reach
+y=435 on a 448 px panel and the line runs at 432; measured, "PLAY PEEKABOO" ran straight through
+the ostrich's toes. On an AMOLED an unlit pixel is off, so the strip costs nothing and reads as a
+subtitle bar.
+
 ## The speech models ship before the code that uses them
 
 `firmware/dist/srmodels.bin` (2.91 MB) holds WakeNet9 `hiesp` and MultiNet7 English, selected in
-`sdkconfig.defaults`. The app does not call esp-sr yet — the linker drops it, and the app image
-is byte-identical with the dependency present — so what it produces is the model blob and
-nothing else.
+`sdkconfig.defaults`. They shipped in 0.2.31, three versions before the code above called
+them — which is the point of this section.
 
 **They ship first because OTA can never deliver them.** `esp_https_ota` writes app slots; the
 models live in the `model` data partition (`0xaa0000`, 3.5 MB, reserved at the very first
@@ -343,12 +409,36 @@ Neither can be added later. The image that lacks them is precisely the one that 
 
 2. **A frozen factory app.** `factory` is never OTA'd, and invalid OTA data falls back to it.
 
-## The partition table is permanent
+## The partition table changed once, and it cost a USB flash
 
 OTA rewrites an app slot and nothing else, so changing `partitions.csv` means a USB reflash.
-It is therefore laid out for what the endpoint will eventually be — including a 3.5 MB `model`
-partition reserved for ESP-SR wake-word models that nothing uses yet — and the space is
-reserved now, while reserving it is free. Ends exactly at 16 MB.
+The original layout reserved a 3.5 MB `model` partition for models nothing used yet, because
+reserving it was free — and that call paid for itself: the models went on in 0.2.31 and the
+recogniser in 0.2.37 without ever touching the table for them.
+
+What did move was the **app slots**. Linking ESP-SR took the image from 1.16 MB to 3.05 MB and
+`factory` was 1.5 MB — and `factory` is precisely where a USB flash writes, so the image would
+not have gone on at all. `idf.py build` says this as a *warning*, which is how a build that
+cannot be flashed still exits zero.
+
+So the three app slots are now **3.5 MB each**, equal by construction: the recovery app and the
+two OTA slots all hold the same image, and a slot smaller than its siblings is one that cannot
+take an update they can. The 3 MB came from the OTA slots (4.5 → 3.5 each), which means
+**`model` and `storage` keep their exact offsets** — that was worth engineering for, because
+every constant that moves is another place a panel can be bricked from and the box's flasher
+hardcodes `MODEL_OFFSET`.
+
+**A resize makes `otadata` mandatory on every USB flash**, and it was not being written. A
+panel updated into `ota_0` has `otadata` naming that slot; a USB flash writes `factory`, so the
+panel would ignore the image just written. That was survivable while the layout was fixed and
+is not survivable across a resize, because the stale pointer now names a slot at a *new* offset
+holding the middle of an old image. `ota_data_initial.bin` ships in `dist/` and the flasher
+writes it at `0xf000`.
+
+Four supervisor tests hold the layout: no gaps or overlaps and it ends exactly at 16 MB, the
+three app slots are equal, **every app slot is bigger than the committed image** (the invariant
+the old "≥ 4 MB" constant was standing in for, now checked against the bytes that ship), and
+`otadata` is in the flash set.
 
 ## Generic image, personalised at flash time
 

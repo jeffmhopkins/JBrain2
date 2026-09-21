@@ -41,7 +41,12 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
 
     switch (a) {
     case ACT_WAVE:
-        out->arm_r = -150.0f + sinf(p * (float)M_PI * 6.0f) * 26.0f * mag;
+        /* Arms are drawn BEHIND the head, whose 216 px width swallows a shoulder sitting at
+           ox+66 — so the old -150 put the hand at x+103 against a head reaching x+108 and the
+           wave was invisible, a third the rendered delta of any other action on either form.
+           `face.c` now redraws an arm posed above the shoulder over the head; this swing is
+           kept wholly past that threshold so the arm cannot flick in front and behind. */
+        out->arm_r = -130.0f + sinf(p * (float)M_PI * 6.0f) * 24.0f * mag;
         break;
     case ACT_DANCE:
     case ACT_BOP:

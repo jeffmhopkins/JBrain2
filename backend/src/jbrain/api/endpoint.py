@@ -72,12 +72,21 @@ MODEL_OFFSET = "0xaa0000"
 
 APP_IMAGE = "jbrain-endpoint.bin"
 MODEL_IMAGE = "srmodels.bin"
+# RESET WHICH SLOT BOOTS, ON EVERY USB FLASH. Without it `otadata` keeps pointing at
+# whichever OTA slot the panel was last updated into, and a USB flash writes `factory` — so
+# the panel would ignore the image just written and boot the old one. That was survivable
+# while the layout was fixed; it stopped being survivable when the app partitions were
+# RESIZED (2026-09-21, firmware/partitions.csv), because the stale pointer then names a slot
+# at a NEW offset holding the middle of the previous image. Recovering from that costs the
+# cable this whole design exists to avoid.
+OTA_DATA_IMAGE = "ota_data_initial.bin"
 
 # Which built image goes where. A set missing any of them is refused rather than
 # half-written to a board.
 ARTIFACT_IMAGES = {
     "bootloader.bin": BOOTLOADER_OFFSET,
     "partition-table.bin": PARTITION_TABLE_OFFSET,
+    OTA_DATA_IMAGE: OTA_DATA_OFFSET,
     APP_IMAGE: APP_OFFSET,
     MODEL_IMAGE: MODEL_OFFSET,
 }

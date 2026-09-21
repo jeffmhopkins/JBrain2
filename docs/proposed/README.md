@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-09-19
+> **Status:** Living · **Last verified:** 2026-09-21
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -14,6 +14,18 @@ non-negotiables (LLM adapter, storage abstraction, RLS + isolation tests, etc.),
 given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
+
+- `PET_LIFECYCLE_PLAN.md` — the pet arrives as an **egg**, hatches after enough interaction
+  over enough minutes, and grows up over ~2 days. The owner's idea, recorded with the question
+  it came with — do we need a baby form per creature? Answer: mostly no (a single `growth`
+  float through `face.c`'s existing per-form constants buys a baby of every form), and
+  specifically yes for the ostrich, whose silhouette **is** its neck and legs. The cost is not
+  the drawing: this is net-new durable state in `jpet/` (no age or stage exists today), and
+  `pet_state` is one row per principal where two twins need two eggs. Names the four rules
+  this repo already learned that bite here — "nothing happened" reads as broken, preschoolers
+  love repetition so a one-way ladder fights them, the hatch must wait for the child rather
+  than fire on a timer, and quiet hours cut luminance. Cheapest first slice: the egg alone,
+  no hatching.
 
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
   (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the

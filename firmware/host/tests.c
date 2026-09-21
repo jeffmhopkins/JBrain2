@@ -8,17 +8,21 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "calib.h"
+#include "caption.h"
 #include "emotion.h"
 #include "face.h"
-#include "calib.h"
+#include "font.h"
 #include "gesture.h"
 #include "rig.h"
 #include "variants.h"
+#include "vocab.h"
 
 static int checks;
 #define CHECK(c, msg)                                            \
@@ -244,10 +248,41 @@ static long non_black(void)
     return n;
 }
 
+static void test_the_default_form_is_the_ostrich(void)
+{
+    /* The twins asked for it, so it is what a panel shows out of the box. A regression here
+       is silent — the robot draws perfectly well — which is exactly why it is asserted. */
+    face_state_t st;
+    face_rest(&st);
+    CHECK(st.form == FORM_OSTRICH, "rest is the ostrich");
+}
+
+static void test_both_forms_draw_and_differ(void)
+{
+    /* Two forms that render identically would mean the switch does nothing, and nothing in
+       the rest of the suite would notice. */
+    face_state_t st;
+    face_rest(&st);
+    uint16_t *other = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(other != NULL, "scratch frame allocated");
+    st.form = FORM_OSTRICH;
+    face_draw(fb, 0, &st);
+    const long ostrich_lit = non_black();
+    memcpy(other, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    st.form = FORM_ROBOT;
+    face_draw(fb, 0, &st);
+    CHECK(ostrich_lit > 8000, "the ostrich covers a real part of the panel");
+    CHECK(non_black() > 8000, "and so does the robot");
+    CHECK(memcmp(other, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t)) != 0,
+          "the two forms are not the same picture");
+    free(other);
+}
+
 static void test_draw_produces_a_robot(void)
 {
     face_state_t st;
     face_rest(&st);
+    st.form = FORM_ROBOT;
     memset(fb, 0xAB, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
     face_draw(fb, 0, &st);
     const long lit = non_black();
@@ -271,8 +306,12 @@ static void test_every_face_and_action_draws(void)
                            &st.fig);
                 st.open = step == 2 ? 0.0f : 1.0f;
                 st.startle = step == 1 ? 1.0f : 0.0f;
-                face_draw(fb, k % face_colour_count(), &st);
-                CHECK(non_black() > 2000, "every face/action combination draws something");
+                for (int f = 0; f < FORM_COUNT; f++) {
+                    st.form = (face_form_t)f;
+                    face_draw(fb, k % face_colour_count(), &st);
+                    CHECK(non_black() > 2000,
+                          "every face/action/form combination draws something");
+                }
             }
         }
     }
@@ -311,6 +350,147 @@ static long count_colour(uint16_t want)
     for (long i = 0; i < (long)FACE_W * FACE_H; i++)
         if (fb[i] == want) n++;
     return n;
+}
+
+/* ---- what is actually ON THE GLASS -------------------------------------------------
+ *
+ * Everything above this line compares POSE STRUCTS, and that is how four shipped actions
+ * came to draw nothing at all. `wave` moved one float, so `test_every_action_moves` passed
+ * while the arm it posed was hidden behind a head 216 px wide. `blush` set `fig.extra`, so
+ * the same test passed while the cheeks were painted over by the head drawn after them —
+ * ZERO pixels changed on the robot. `hide` drove `hands_up` to 1.0 while the hands it aimed
+ * at the eyes were too small to cover them and the ostrich's wing was drawn behind the head
+ * it was meant to be hiding.
+ *
+ * So these tests render frames and compare PIXELS. That is the only probe that can see the
+ * difference between posing an action and performing one. */
+
+static long frame_delta(const uint16_t *a, const uint16_t *b)
+{
+    long n = 0;
+    for (long i = 0; i < (long)FACE_W * FACE_H; i++)
+        if (a[i] != b[i]) n++;
+    return n;
+}
+
+static void test_every_action_changes_the_picture(void)
+{
+    /* The floor is deliberately low — `blush` is two 16 px discs and can never reach what a
+       whole-figure squash reaches — but it is far above nothing, and the three broken
+       actions scored 0, 0 and 1525 against it. */
+    const long FLOOR = 900;
+    uint16_t *idle = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(idle != NULL, "scratch frame allocated");
+
+    for (int f = 0; f < FORM_COUNT; f++) {
+        for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+            long best = 0;
+            for (int step = 0; step <= 20; step++) {
+                const float q = (float)step / 20.0f;
+                face_state_t st;
+                face_rest(&st);
+                st.form = (face_form_t)f;
+                rig_for(ACT_NONE, q, 1.0f, 0, &st.rig);
+                rig_figure(ACT_NONE, q, 1.0f, 0, 0.0f, &st.fig);
+                face_draw(fb, 0, &st);
+                memcpy(idle, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+                rig_for((action_t)a, q, 1.0f, 0, &st.rig);
+                rig_figure((action_t)a, q, 1.0f, 0, 0.0f, &st.fig);
+                face_draw(fb, 0, &st);
+                const long d = frame_delta(idle, fb);
+                if (d > best) best = d;
+            }
+            CHECK(best >= FLOOR, "every action changes real pixels on both forms");
+        }
+    }
+    free(idle);
+}
+
+static void test_peekaboo_covers_the_eyes(void)
+{
+    /* `hide` is peekaboo, and peekaboo that does not hide the eyes is the shipped dud this
+       replaces — "arms up beside the head". Measured before the fix: the robot's hands hid
+       35% of the eye white and the ostrich's wing 13%. The only acceptable number is all of
+       it, on BOTH forms. */
+    const uint16_t white = rgb565(0xF6, 0xF9, 0xFC);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(white) > 500, "the form shows its eye whites at rest");
+
+        rig_for(ACT_HIDE, 0.45f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_HIDE, 0.45f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(white) == 0, "mid-hide, no eye white is left showing");
+    }
+}
+
+static void test_the_blush_lands_on_the_face(void)
+{
+    /* Drawn in the wrong ORDER it vanishes; drawn at the wrong ANCHOR it lands on the chest.
+       Both happened. So: the pink must survive the frame, and it must sit inside the head. */
+    const uint16_t pink = rgb565(0xFF, 0x7A, 0x9C);
+    const uint16_t white = rgb565(0xF6, 0xF9, 0xFC);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(pink) == 0, "nothing is pink at rest");
+
+        /* Where the eyes are, so "on the face" can be asserted without hardcoding geometry
+           that belongs to the renderer. */
+        int eye_lo = FACE_H, eye_hi = -1;
+        for (int y = 0; y < FACE_H; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != white) continue;
+                if (y < eye_lo) eye_lo = y;
+                if (y > eye_hi) eye_hi = y;
+            }
+        }
+
+        rig_for(ACT_BLUSH, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_BLUSH, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_BLUSH, "blush asks for the cheeks");
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(pink) > 900, "the cheeks are actually on the glass");
+
+        int lo = FACE_H, hi = -1;
+        for (int y = 0; y < FACE_H; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != pink) continue;
+                if (y < lo) lo = y;
+                if (y > hi) hi = y;
+            }
+        }
+        /* Cheeks: below the top of the eyes and not far below their bottom. The robot's old
+           anchor put the ostrich's gag puff 90 px adrift on the chest; this is the check that
+           would have said so. */
+        CHECK(lo > eye_lo && hi < eye_hi + 70, "the cheeks are on the face, not the body");
+    }
+}
+
+static void test_the_gag_puff_shows_on_both_forms(void)
+{
+    /* The puff is the whole fart gag; `EXTRA_PUFF` anchored off the HEAD put it in the middle
+       of the ostrich's chest. Its colour is unique to it, so it can simply be counted. */
+    const uint16_t puff = rgb565(0x8C, 0x9A, 0x8C);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(puff) == 0, "no cloud at rest");
+
+        rig_for(ACT_FART, 0.4f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_FART, 0.4f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_PUFF, "the gag's hold carries the puff");
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(puff) > 900, "the cloud clears the figure drawn over it");
+    }
 }
 
 static void test_blink_is_a_line_not_a_hole(void)
@@ -375,25 +555,29 @@ static void test_blink_is_a_line_not_a_hole(void)
 
 static void test_zones_hit_the_right_parts(void)
 {
-    CHECK(face_zone(FIG_X, FIG_Y - 96, false, 0) == ZONE_HEAD, "the head is the head");
-    CHECK(face_zone(FIG_X, FIG_Y - 96 - 110, false, 0) == ZONE_HEAD, "the antenna is his too");
-    CHECK(face_zone(FIG_X, FIG_Y + 36, false, 0) == ZONE_BODY, "the belly is the body");
-    CHECK(face_zone(FIG_X + 86, FIG_Y + 36, false, 0) == ZONE_ARM, "out to the side is an arm");
-    CHECK(face_zone(FIG_X - 86, FIG_Y + 36, false, 0) == ZONE_ARM, "both arms");
-    CHECK(face_zone(FIG_X, FIG_Y + 146, false, 0) == ZONE_LEG, "below the hips is a leg");
-    CHECK(face_zone(4, 4, false, 0) == ZONE_NONE, "the corner is background");
-    CHECK(face_zone(FACE_W - 4, FACE_H - 4, false, 0) == ZONE_NONE, "so is the far corner");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y - 96, false, 0) == ZONE_HEAD, "the head is the head");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y - 96 - 110, false, 0) == ZONE_HEAD, "the antenna is his too");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 36, false, 0) == ZONE_BODY, "the belly is the body");
+    CHECK(face_zone(FORM_ROBOT, FIG_X + 86, FIG_Y + 36, false, 0) == ZONE_ARM, "out to the side is an arm");
+    CHECK(face_zone(FORM_ROBOT, FIG_X - 86, FIG_Y + 36, false, 0) == ZONE_ARM, "both arms");
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 146, false, 0) == ZONE_LEG, "below the hips is a leg");
+    CHECK(face_zone(FORM_ROBOT, 4, 4, false, 0) == ZONE_NONE, "the corner is background");
+    CHECK(face_zone(FORM_ROBOT, FACE_W - 4, FACE_H - 4, false, 0) == ZONE_NONE, "so is the far corner");
 }
 
 static void test_zones_follow_the_flip(void)
 {
     /* A tap on his head is his head whichever way up the panel is. Getting this wrong makes
        the zones feel random exactly when a child is holding the thing any which way. */
-    for (int y = 0; y < FACE_H; y += 7) {
-        for (int x = 0; x < FACE_W; x += 7) {
-            const face_zone_t up = face_zone(x, y, false, 0);
-            const face_zone_t flipped = face_zone(FACE_W - 1 - x, FACE_H - 1 - y, true, 0);
-            CHECK(up == flipped, "zones follow the 180 degree flip");
+    for (int f = 0; f < FORM_COUNT; f++) {
+        const face_form_t form = (face_form_t)f;
+        for (int y = 0; y < FACE_H; y += 7) {
+            for (int x = 0; x < FACE_W; x += 7) {
+                const face_zone_t up = face_zone(form, x, y, false, 0);
+                const face_zone_t flipped =
+                    face_zone(form, FACE_W - 1 - x, FACE_H - 1 - y, true, 0);
+                CHECK(up == flipped, "zones follow the 180 degree flip, in every form");
+            }
         }
     }
 }
@@ -402,22 +586,25 @@ static void test_zones_follow_the_lean(void)
 {
     /* He slides downhill as the panel tilts; his hitboxes go with him. */
     const int lean = 40;
-    CHECK(face_zone(FIG_X + lean, FIG_Y + 36, false, lean) == ZONE_BODY,
+    CHECK(face_zone(FORM_ROBOT, FIG_X + lean, FIG_Y + 36, false, lean) == ZONE_BODY,
           "the belly moves with the lean");
-    CHECK(face_zone(FIG_X, FIG_Y + 36, false, lean) == ZONE_BODY,
+    CHECK(face_zone(FORM_ROBOT, FIG_X, FIG_Y + 36, false, lean) == ZONE_BODY,
           "and is still wide enough to hit at centre");
 }
 
 static void test_every_zone_is_reachable(void)
 {
     /* A zone nothing can hit is a pool that never plays. */
-    int seen[8];
-    memset(seen, 0, sizeof(seen));
-    for (int y = 0; y < FACE_H; y++)
-        for (int x = 0; x < FACE_W; x++) seen[face_zone(x, y, false, 0)] = 1;
-    CHECK(seen[ZONE_HEAD] && seen[ZONE_BODY] && seen[ZONE_ARM] && seen[ZONE_LEG],
-          "every part of him can be tapped");
-    CHECK(seen[ZONE_NONE], "and so can the background");
+    for (int f = 0; f < FORM_COUNT; f++) {
+        const face_form_t form = (face_form_t)f;
+        int seen[8];
+        memset(seen, 0, sizeof(seen));
+        for (int y = 0; y < FACE_H; y++)
+            for (int x = 0; x < FACE_W; x++) seen[face_zone(form, x, y, false, 0)] = 1;
+        CHECK(seen[ZONE_HEAD] && seen[ZONE_BODY] && seen[ZONE_ARM] && seen[ZONE_LEG],
+              "every part of every form can be tapped");
+        CHECK(seen[ZONE_NONE], "and so can the background");
+    }
 }
 
 static void test_every_pool_answers(void)
@@ -958,15 +1145,25 @@ static void test_gesture_selects_by_tap_count(void)
     CHECK(do_sequence_n(&g, GESTURE_TAPS_REBOOT, 200, GESTURE_HOLD_MS + 200) == GESTURE_REBOOT,
           "three taps then hold reboots");
     gesture_reset(&g);
+    CHECK(do_sequence_n(&g, GESTURE_TAPS_FORM, 200, GESTURE_HOLD_MS + 200) == GESTURE_FORM,
+          "four taps then hold swaps the body");
+    gesture_reset(&g);
     CHECK(do_sequence_n(&g, GESTURE_TAPS_CALIBRATE, 200, GESTURE_HOLD_MS + 200) ==
               GESTURE_CALIBRATE,
           "five taps then hold calibrates");
+    /* Every count maps to at most one action, and an unassigned count does nothing at all. */
     for (int n = 1; n <= GESTURE_TAPS_MAX; n++) {
-        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_CALIBRATE) continue;
+        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_FORM || n == GESTURE_TAPS_CALIBRATE) {
+            continue;
+        }
         gesture_reset(&g);
         CHECK(do_sequence_n(&g, n, 200, GESTURE_HOLD_MS + 200) == GESTURE_NONE,
               "a count that selects nothing does nothing");
     }
+    CHECK(GESTURE_TAPS_REBOOT != GESTURE_TAPS_FORM &&
+              GESTURE_TAPS_FORM != GESTURE_TAPS_CALIBRATE &&
+              GESTURE_TAPS_REBOOT != GESTURE_TAPS_CALIBRATE,
+          "no two actions share a tap count");
 }
 
 static void test_gesture_five_taps_survive_the_reboot_threshold(void)
@@ -988,13 +1185,21 @@ static void test_gesture_no_cue_for_a_count_that_does_nothing(void)
     /* Growing a bar promises an action. Four taps then a hold has none, so it must not. */
     gesture_t g;
     gesture_reset(&g);
-    for (int i = 0; i < 4; i++) {
-        press_for(&g, 120);
-        idle_for(&g, 200);
+    /* Every count from one to the maximum that is NOT assigned an action. Hard-coding a
+       number here was wrong the moment four stopped being dead. */
+    for (int n = 1; n <= GESTURE_TAPS_MAX; n++) {
+        if (n == GESTURE_TAPS_REBOOT || n == GESTURE_TAPS_FORM || n == GESTURE_TAPS_CALIBRATE) {
+            continue;
+        }
+        gesture_reset(&g);
+        for (int i = 0; i < n; i++) {
+            press_for(&g, 120);
+            idle_for(&g, 200);
+        }
+        gesture_poll(&g, true, true, DT);
+        for (int t = DT; t < GESTURE_CUE_MS + 500; t += DT) gesture_poll(&g, false, true, DT);
+        CHECK(gesture_cue(&g) == 0.0f, "no cue for a hold that will do nothing");
     }
-    gesture_poll(&g, true, true, DT);
-    for (int t = DT; t < GESTURE_CUE_MS + 500; t += DT) gesture_poll(&g, false, true, DT);
-    CHECK(gesture_cue(&g) == 0.0f, "no cue for a hold that will do nothing");
 }
 
 static void test_gesture_cue(void)
@@ -1010,6 +1215,236 @@ static void test_gesture_cue(void)
     for (int t = DT; t < GESTURE_CUE_MS + 200; t += DT) gesture_poll(&g, false, true, DT);
     const float c = gesture_cue(&g);
     CHECK(c > 0.0f && c < 1.0f, "the cue grows during the hold");
+}
+
+/* ---- the vocabulary -----------------------------------------------------------------
+ *
+ * `vocab.c` states three rules its phrases obey and this is where they are enforced, because
+ * NOTHING ELSE CAN NOTICE. A phrase MultiNet refuses is dropped at boot with a log line
+ * nobody is reading; from the room the panel is simply deaf to that one thing, which looks
+ * exactly like a broken microphone. */
+
+static void test_vocab_phrases_are_sayable(void)
+{
+    const vocab_t *v = vocab_all();
+    CHECK(vocab_count() > 0, "there is a vocabulary");
+    /* MultiNet7 English takes ~200 phrases; with no wake word every one of them is live, so
+       the practical limit is much lower than the model's. */
+    CHECK(vocab_count() <= 60, "the always-on vocabulary stays small enough to not misfire");
+    for (int i = 0; i < vocab_count(); i++) {
+        const char *p = v[i].phrase;
+        int words = 1;
+        CHECK(p != NULL && p[0] != '\0', "every entry has a phrase");
+        CHECK(p[0] != ' ', "no phrase starts with a space");
+        for (const char *c = p; *c; c++) {
+            /* Lowercase a-z and spaces ONLY: the grapheme-to-phoneme pass takes words, and a
+               digit, apostrophe or capital is refused silently. */
+            CHECK((*c >= 'a' && *c <= 'z') || *c == ' ', "phrases are lowercase letters and spaces");
+            if (*c == ' ') {
+                CHECK(c[1] != ' ' && c[1] != '\0', "no double or trailing spaces");
+                words++;
+            }
+        }
+        /* Two words minimum: WakeNet is disabled, so a one-word phrase is always live and
+           fires at the television. */
+        CHECK(words >= 2, "every phrase is at least two words");
+    }
+}
+
+static void test_vocab_has_no_ambiguity(void)
+{
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        for (int j = 0; j < vocab_count(); j++) {
+            if (i == j) continue;
+            CHECK(strcmp(v[i].phrase, v[j].phrase) != 0, "no phrase is listed twice");
+            /* Nor a prefix of another: the shorter becomes unreachable and the longer
+               unreliable, and neither failure says which one it is. */
+            const size_t n = strlen(v[i].phrase);
+            CHECK(!(strlen(v[j].phrase) > n && strncmp(v[i].phrase, v[j].phrase, n) == 0 &&
+                    v[j].phrase[n] == ' '),
+                  "no phrase is a prefix of another");
+        }
+    }
+}
+
+static void test_vocab_arguments_are_real(void)
+{
+    const vocab_t *v = vocab_all();
+    int forms = 0, actions = 0, colours = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        switch (v[i].kind) {
+        case VOCAB_ACTION:
+            CHECK(v[i].arg > ACT_NONE && v[i].arg < ACT_COUNT, "an action command names a real action");
+            CHECK(rig_spec((action_t)v[i].arg)->dur_ms > 0, "and one with a duration");
+            actions++;
+            break;
+        case VOCAB_FORM:
+            CHECK(v[i].arg >= 0 && v[i].arg < FORM_COUNT, "a form command names a real form");
+            forms++;
+            break;
+        case VOCAB_COLOUR:
+            colours++;
+            break;
+        }
+        CHECK(vocab_get(i) == &v[i], "ids are indices, which is what MultiNet hands back");
+    }
+    CHECK(vocab_get(-1) == NULL && vocab_get(vocab_count()) == NULL, "a bad id is NULL, not a read off the end");
+    /* Both forms must be reachable BY VOICE, which is the request that started this: the
+       ostrich is the default, so "change into robot" is the only way back without five taps. */
+    CHECK(forms >= 2, "both bodies can be asked for");
+    CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
+}
+
+/* ---- the caption ticker -------------------------------------------------------------- */
+
+static void test_caption_starts_empty_and_silent(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(caption_idle(&c), "nothing to show at boot");
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() == 0, "and nothing drawn — no indicator until the microphone is open");
+}
+
+static void test_caption_indicator_tracks_the_microphone(void)
+{
+    /* This is the ICO requirement, so it is asserted against the REAL state: the dot exists
+       when the microphone is open and cannot exist when it is not. */
+    caption_t c;
+    caption_reset(&c);
+    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, false);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    const long idle_dot = non_black();
+    CHECK(idle_dot > 0, "an open microphone is always indicated");
+
+    for (int i = 20; i < 60; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, true);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() > idle_dot, "and brightens while someone is talking");
+
+    caption_reset(&c);
+    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, false, false);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() == 0, "a closed microphone shows nothing — muted is a promise");
+}
+
+static void test_caption_scrolls_and_drains(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(caption_say(&c, "PLAY PEEKABOO"), "a phrase is accepted");
+    CHECK(!caption_idle(&c), "and is now pending");
+
+    /* It must ARRIVE, travel, and LEAVE. A ticker that never empties leaves a word parked
+       across the bottom sixth of a 29 mm panel forever. */
+    uint32_t t = 0;
+    int seen = 0;
+    for (int i = 0; i < 1000 && !caption_idle(&c); i++) {
+        t += 40;
+        caption_tick(&c, t, FACE_W, true, false);
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x0000);
+        if (non_black() > 0) seen++;
+    }
+    CHECK(caption_idle(&c), "the ticker drains");
+    CHECK(seen > 25, "and the text was on the glass long enough to read");
+    CHECK(t < 40000u, "without taking the better part of a minute");
+}
+
+static void test_caption_is_bounded_by_a_talkative_room(void)
+{
+    /* Nothing here may grow without limit, and nothing may corrupt: this is fed by whatever
+       a room says for as long as it says it. */
+    caption_t c;
+    caption_reset(&c);
+    int taken = 0;
+    for (int i = 0; i < 200; i++) {
+        if (caption_say(&c, "MAKE A RUDE NOISE")) taken++;
+        CHECK(c.len <= CAPTION_MAX, "the buffer never overruns");
+        CHECK(c.buf[c.len] == '\0', "and stays a string");
+    }
+    CHECK(taken > 0 && taken < 200, "a full ticker refuses rather than dropping what is on screen");
+
+    /* And it CATCHES UP: a backlog scrolls faster than a single phrase, or the last thing
+       said arrives after the child has stopped looking. */
+    caption_t one;
+    caption_reset(&one);
+    caption_say(&one, "WAVE HELLO");
+    CHECK(caption_speed(&c, FACE_W) > caption_speed(&one, FACE_W),
+          "a long backlog drains faster than a short one");
+}
+
+static void test_caption_survives_a_stalled_clock(void)
+{
+    /* `now_ms` comes from the render loop, which the OTA path and the calibration routine can
+       both hold for seconds. A resumed clock must not teleport the text. */
+    caption_t c;
+    caption_reset(&c);
+    caption_say(&c, "DO A DANCE");
+    caption_tick(&c, 1000, FACE_W, true, false);
+    const float before = c.scrolled;
+    caption_tick(&c, 31000, FACE_W, true, false); /* thirty seconds later */
+    CHECK(c.scrolled == before, "a long stall advances nothing");
+    caption_tick(&c, 31040, FACE_W, true, false);
+    CHECK(c.scrolled > before, "and the next ordinary frame resumes");
+}
+
+static void test_caption_ignores_nonsense(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(!caption_say(&c, ""), "an empty phrase is not a phrase");
+    CHECK(!caption_say(&c, NULL), "nor is nothing at all");
+    CHECK(caption_idle(&c), "and neither put anything in the ticker");
+    caption_reset(NULL);
+    caption_tick(NULL, 0, FACE_W, true, true);
+    caption_draw(NULL, fb, FACE_W, FACE_H, 0, 0);
+    CHECK(caption_idle(NULL), "a null ticker is an empty one, not a crash");
+}
+
+static void test_the_font_can_spell_the_vocabulary(void)
+{
+    /* THE TICKER IS THE FEATURE. A glyph the font lacks renders as a blank of the right
+       width, so a missing letter would show as a gap in the middle of a word — legible as
+       "broken", never as the word. Every character the panel can be told to say must have
+       one, uppercased as `speech.c` publishes it. */
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        for (const char *p = v[i].phrase; *p; p++) {
+            char up[2] = {(char)toupper((unsigned char)*p), '\0'};
+            if (up[0] == ' ') continue;
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 2, up, 0xFFFF);
+            CHECK(non_black() > 0, "every letter in the vocabulary has a glyph");
+        }
+    }
+}
+
+static void test_the_font_glyphs_are_distinct(void)
+{
+    /* Copy-paste is the failure mode of a hand-entered bitmap table, and two letters sharing
+       a shape is invisible until someone reads a word on the glass. */
+    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    uint16_t *seen = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(seen != NULL, "scratch frame allocated");
+    for (const char *a = SET; *a; a++) {
+        char sa[2] = {*a, '\0'};
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        font_draw(fb, FACE_W, FACE_H, 10, 10, 1, sa, 0xFFFF);
+        memcpy(seen, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        for (const char *b = a + 1; *b; b++) {
+            char sb[2] = {*b, '\0'};
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 1, sb, 0xFFFF);
+            CHECK(memcmp(seen, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t)) != 0,
+                  "no two glyphs draw the same shape");
+        }
+    }
+    free(seen);
 }
 
 int main(void)
@@ -1030,8 +1465,14 @@ int main(void)
     test_cooldown_suppresses_recency();
     test_pool_spreads();
     test_penalty();
+    test_the_default_form_is_the_ostrich();
+    test_both_forms_draw_and_differ();
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
+    test_every_action_changes_the_picture();
+    test_peekaboo_covers_the_eyes();
+    test_the_blush_lands_on_the_face();
+    test_the_gag_puff_shows_on_both_forms();
     test_blink_is_a_line_not_a_hole();
     test_samples_need_agreement_not_just_count();
     test_samples_use_the_median_not_the_mean();
@@ -1062,6 +1503,17 @@ int main(void)
     test_gesture_five_taps_survive_the_reboot_threshold();
     test_gesture_no_cue_for_a_count_that_does_nothing();
     test_gesture_cue();
+    test_vocab_phrases_are_sayable();
+    test_vocab_has_no_ambiguity();
+    test_vocab_arguments_are_real();
+    test_caption_starts_empty_and_silent();
+    test_caption_indicator_tracks_the_microphone();
+    test_caption_scrolls_and_drains();
+    test_caption_is_bounded_by_a_talkative_room();
+    test_caption_survives_a_stalled_clock();
+    test_caption_ignores_nonsense();
+    test_the_font_can_spell_the_vocabulary();
+    test_the_font_glyphs_are_distinct();
 
     free(fb);
     printf("ok — %d checks\n", checks);

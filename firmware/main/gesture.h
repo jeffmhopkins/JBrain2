@@ -9,7 +9,8 @@
  * against a determined four-year-old is not much, and both units are going to the twins.
  *
  * So the guard is a RHYTHM rather than a duration, and the tap count then selects WHICH
- * maintenance action follows — three to reboot, five to calibrate the touchscreen. Children
+ * maintenance action follows — three to reboot, four to swap
+ * the body, five to calibrate the touchscreen. Children
  * mashing a panel produce plenty of taps and plenty of leans; what they do not produce is a
  * run of short taps in time followed by a sustained press. Measured against 20 000 simulated
  * presses including 3-9 s leans, the old gesture fires 1937 times and this one fires 12.
@@ -24,6 +25,7 @@
 
 /* Taps that select each action. Anything else that reaches a hold does nothing. */
 #define GESTURE_TAPS_REBOOT 3
+#define GESTURE_TAPS_FORM 4
 #define GESTURE_TAPS_CALIBRATE 5
 #define GESTURE_TAPS_MAX GESTURE_TAPS_CALIBRATE
 
@@ -43,6 +45,7 @@
 typedef enum {
     GESTURE_NONE = 0,
     GESTURE_REBOOT,
+    GESTURE_FORM, /* swap the body. Voice will do this too, once ESP-SR is wired up. */
     GESTURE_CALIBRATE,
 } gesture_action_t;
 

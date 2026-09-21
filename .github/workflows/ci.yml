@@ -97,6 +97,16 @@ jobs:
               # Dockerfile is the owner's Ops -> Update, on a box with no terminal.
               - 'deploy/Dockerfile.sdr'
               - 'deploy/docker-compose.yml'
+              # THE PANEL'S SHIPPED STATE, for the same reason again — and this one had
+              # already gone wrong before it was added. `test_deploy_scripts.py` asserts
+              # that `firmware/dist/SHA256SUMS` names exactly the images the box flashes,
+              # and `test_endpoint_sidecar.py` asserts the recovery offsets in
+              # `partitions.csv` against the constants the api writes them to. Neither is
+              # under `supervisor/`, so a firmware-only PR skipped this whole job: adding
+              # `srmodels.bin` to `dist/` in 0.2.31 left that first assertion stale and
+              # nothing said so until an unrelated PR happened to touch `supervisor/`.
+              - 'firmware/dist/**'
+              - 'firmware/partitions.csv'
               - '.github/workflows/ci.yml'
             jcode:
               - 'jcode/**'

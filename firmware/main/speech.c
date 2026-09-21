@@ -1,0 +1,235 @@
+/* ESP-SR, wired for ALWAYS LISTENING. The design and its limits are in `speech.h`; this file
+ * is the wiring, and three things in it are not obvious.
+ *
+ * NO WAKENET. The owner asked the panel to just listen, so the front end runs with the wake
+ * word disabled and MultiNet sees every frame the VAD calls speech. That is a supported AFE
+ * configuration and it is why `vocab.c` is short and its phrases are two words or more.
+ *
+ * NO AEC EITHER, and not by choice: this board has one ES8311 and no ES7210, so there is no
+ * playback reference channel to cancel against (ROOM_ENDPOINT_PLAN.md §10.5 A). The front end
+ * is told the truth about its input — one microphone, no reference — rather than being handed
+ * a fake channel, which would make it cancel against silence.
+ *
+ * THE FEED SIZE IS NOT THE CAPTURE SIZE. `audio.c` reads 40 ms chunks because that is a good
+ * period for a task that also has to service a beep; the AFE asks for its own chunk, which is
+ * neither 40 ms nor guaranteed to be any particular number. So this file accumulates. Feeding
+ * a short buffer is not a soft failure in esp-sr — it reads `get_feed_chunksize` samples from
+ * the pointer regardless.
+ */
+
+#include "speech.h"
+
+#include <ctype.h>
+#include <string.h>
+
+#include "esp_afe_config.h"
+#include "esp_afe_sr_iface.h"
+#include "esp_afe_sr_models.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_mn_iface.h"
+#include "esp_mn_models.h"
+#include "esp_mn_speech_commands.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "model_path.h"
+#include "vocab.h"
+
+static const char *TAG = "speech";
+
+/* The partition the one USB flash writes, and the only one OTA cannot reach — which is why
+   the models went onto the board before this code existed (firmware/README.md). */
+#define MODEL_PARTITION "model"
+
+/* How long MultiNet will chase a phrase before giving up on it. Espressif's own default for
+   an always-on command mode; long enough for "make a rude noise" said by a four-year-old. */
+#define MN_TIMEOUT_MS 5760
+
+/* Core 1. Core 0 carries Wi-Fi, and a MultiNet pass that lands on the same core as the radio
+   is the classic way to make both stutter. */
+#define SR_CORE 1
+#define SR_STACK 6144
+#define SR_PRIO 5
+
+static const esp_afe_sr_iface_t *s_afe;
+static esp_afe_sr_data_t *s_afe_data;
+static const esp_mn_iface_t *s_mn;
+static model_iface_data_t *s_mn_data;
+
+static int s_feed_chunk;      /* samples per feed call, per channel */
+static int16_t *s_fill;       /* accumulator, s_feed_chunk samples */
+static int s_filled;
+
+static volatile bool s_live;
+static volatile bool s_hearing;
+static int s_accepted, s_rejected;
+
+/* One-deep mailbox: the render task reads it once a frame, so a second phrase inside 40 ms is
+   a phrase nobody could have read anyway. A queue here would only buffer the panel's own
+   latency. */
+static char s_heard[64];
+static volatile int s_heard_id = -1;
+static volatile bool s_have;
+
+bool speech_live(void)
+{
+    return s_live;
+}
+
+bool speech_hearing(void)
+{
+    return s_hearing;
+}
+
+void speech_vocab(int *accepted, int *rejected)
+{
+    if (accepted) *accepted = s_accepted;
+    if (rejected) *rejected = s_rejected;
+}
+
+bool speech_take(char *out, int cap, int *id)
+{
+    if (out == NULL || cap <= 0 || !s_have) return false;
+    strncpy(out, s_heard, (size_t)cap - 1);
+    out[cap - 1] = '\0';
+    if (id != NULL) *id = s_heard_id;
+    s_have = false;
+    return true;
+}
+
+static void publish(int id, const char *phrase)
+{
+    /* Uppercased here rather than in `caption.c`, because the 5x7 font is uppercase-only and
+       the ticker should not have to know why. */
+    size_t i = 0;
+    for (; phrase[i] != '\0' && i < sizeof(s_heard) - 1; i++) {
+        s_heard[i] = (char)toupper((unsigned char)phrase[i]);
+    }
+    s_heard[i] = '\0';
+    s_heard_id = id;
+    s_have = true;
+}
+
+/* NO LOCK, and that is the one-owner rule rather than an omission: `audio.c`'s task is the
+   only reader of the microphone and therefore the only caller here, exactly as the render
+   task is the only caller into the panel. A mutex would document a second caller that must
+   not exist. */
+void speech_feed(const int16_t *pcm, int samples)
+{
+    if (s_afe_data == NULL || pcm == NULL || samples <= 0) return;
+    while (samples > 0) {
+        const int want = s_feed_chunk - s_filled;
+        const int take = samples < want ? samples : want;
+        memcpy(s_fill + s_filled, pcm, (size_t)take * sizeof(int16_t));
+        s_filled += take;
+        pcm += take;
+        samples -= take;
+        if (s_filled == s_feed_chunk) {
+            s_afe->feed(s_afe_data, s_fill);
+            s_filled = 0;
+        }
+    }
+}
+
+static void detect_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        afe_fetch_result_t *res = s_afe->fetch(s_afe_data);
+        if (res == NULL || res->ret_value == ESP_FAIL) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        s_hearing = res->vad_state == VAD_SPEECH;
+
+        const esp_mn_state_t st = s_mn->detect(s_mn_data, res->data);
+        if (st == ESP_MN_STATE_DETECTED) {
+            esp_mn_results_t *r = s_mn->get_results(s_mn_data);
+            const vocab_t *v = r->num > 0 ? vocab_get(r->command_id[0]) : NULL;
+            if (v != NULL) {
+                ESP_LOGI(TAG, "heard '%s' p=%.2f", v->phrase, (double)r->prob[0]);
+                publish(r->command_id[0], v->phrase);
+            }
+            /* MUST be cleaned after a detection or the next phrase decodes against this
+               one's state. Timeout is the same: the model has to be told the phrase is over
+               whether it resolved or not. */
+            s_mn->clean(s_mn_data);
+        } else if (st == ESP_MN_STATE_TIMEOUT) {
+            s_mn->clean(s_mn_data);
+        }
+    }
+}
+
+static void load_vocabulary(void)
+{
+    esp_mn_commands_alloc(s_mn, s_mn_data);
+    const vocab_t *all = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) esp_mn_commands_add(i, all[i].phrase);
+
+    /* THE REFUSALS ARE THE INTERESTING PART. A phrase MultiNet cannot tokenise is dropped
+       silently and the panel is then deaf to that one thing with nothing on the glass to say
+       so — which is indistinguishable, from the room, from a broken microphone. */
+    esp_mn_error_t *err = esp_mn_commands_update();
+    s_rejected = err != NULL ? err->num : 0;
+    s_accepted = vocab_count() - s_rejected;
+    for (int i = 0; err != NULL && i < err->num; i++) {
+        ESP_LOGE(TAG, "phrase refused by the model: '%s'", err->phrases[i]->string);
+    }
+    ESP_LOGI(TAG, "vocabulary: %d accepted, %d refused", s_accepted, s_rejected);
+}
+
+bool speech_start(void)
+{
+    srmodel_list_t *models = esp_srmodel_init(MODEL_PARTITION);
+    if (models == NULL || models->num <= 0) {
+        ESP_LOGW(TAG, "no models in the '%s' partition — no ticker", MODEL_PARTITION);
+        return false;
+    }
+    char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_ENGLISH);
+    if (mn_name == NULL) {
+        ESP_LOGW(TAG, "no english command model on the board");
+        return false;
+    }
+
+    /* "M": one microphone channel, no playback reference and no unused channels. See the
+       file header — this board has no ES7210, so there is nothing to cancel against. */
+    afe_config_t *cfg = afe_config_init("M", models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
+    if (cfg == NULL) return false;
+    cfg->wakenet_init = false; /* always listening, by request */
+    cfg->aec_init = false;     /* no reference channel exists on this board */
+    cfg->vad_init = true;      /* gates MultiNet, and drives the recording indicator */
+    cfg->afe_perferred_core = SR_CORE;
+    afe_config_check(cfg);
+
+    s_afe = esp_afe_handle_from_config(cfg);
+    s_afe_data = s_afe->create_from_config(cfg);
+    afe_config_free(cfg);
+    if (s_afe_data == NULL) {
+        ESP_LOGE(TAG, "the front end would not start");
+        return false;
+    }
+
+    s_feed_chunk = s_afe->get_feed_chunksize(s_afe_data) * s_afe->get_feed_channel_num(s_afe_data);
+    s_fill = heap_caps_malloc((size_t)s_feed_chunk * sizeof(int16_t), MALLOC_CAP_INTERNAL);
+    if (s_fill == NULL) {
+        ESP_LOGE(TAG, "no room for a %d sample feed buffer", s_feed_chunk);
+        return false;
+    }
+
+    s_mn = esp_mn_handle_from_name(mn_name);
+    s_mn_data = s_mn->create(mn_name, MN_TIMEOUT_MS);
+    if (s_mn_data == NULL) {
+        ESP_LOGE(TAG, "the command model would not load");
+        return false;
+    }
+    load_vocabulary();
+
+    if (xTaskCreatePinnedToCore(detect_task, "sr", SR_STACK, NULL, SR_PRIO, NULL, SR_CORE) !=
+        pdPASS) {
+        ESP_LOGE(TAG, "no room for the recogniser task");
+        return false;
+    }
+    s_live = true;
+    ESP_LOGI(TAG, "listening: %s, %d samples per feed", mn_name, s_feed_chunk);
+    return true;
+}

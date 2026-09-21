@@ -209,11 +209,55 @@ class TestRecoveryNet:
 
     def test_two_full_size_ota_slots_survive(self) -> None:
         """Rung 1 is rollback, and rollback needs somewhere to roll back TO. Trading a
-        slot
-        away for a bigger asset partition would quietly remove it."""
+        slot away for a bigger asset partition would quietly remove it.
+
+        The floor was a flat 4 MiB until the app partitions were resized on 2026-09-21
+        to fit an image that links ESP-SR. A constant is the wrong shape for this
+        anyway: what has to be true is that every app slot holds the image that
+        actually ships, which the next test asserts against the committed bytes.
+        """
         table = self._table()
         assert table["ota_0"][1] == table["ota_1"][1]
-        assert table["ota_0"][1] >= 4 * 1024 * 1024
+        assert table["factory"][1] == table["ota_0"][1], (
+            "the recovery app and the OTA slots hold the same image, so a slot that is "
+            "smaller than the others is one that cannot take an update the others can"
+        )
+        assert table["ota_0"][1] >= 3 * 1024 * 1024
+
+    def test_every_app_slot_holds_the_image_that_ships(self) -> None:
+        """THE INVARIANT A SIZE CONSTANT WAS STANDING IN FOR, checked against the bytes.
+
+        `firmware/dist/` is the product — the box flashes it straight out of its own
+        checkout — so the question is never "is 3.5 MiB enough" in the abstract, it is
+        whether the committed image fits the slot it will be written to. `idf.py build`
+        only WARNS about this; the day it stops fitting, a USB flash writes an image
+        that runs off the end of `factory` and into `ota_0`.
+        """
+        image = (DEPLOY.parent / "firmware/dist/jbrain-endpoint.bin").stat().st_size
+        table = self._table()
+        for slot in ("factory", "ota_0", "ota_1"):
+            assert table[slot][1] > image, (
+                f"{slot} is {table[slot][1]} bytes and the shipped image is {image}"
+            )
+
+    def test_the_layout_has_no_gaps_or_overlaps(self) -> None:
+        """Resizing three partitions by hand is exactly the edit that silently overlaps
+        two, and an overlap here is a panel whose models sit inside its application."""
+        rows = sorted(self._table().items(), key=lambda kv: kv[1][0])
+        end = 0
+        for name, (offset, size) in rows:
+            assert offset >= end, f"{name} at {offset:#x} overlaps what precedes it"
+            end = offset + size
+        assert end == 16 * 1024 * 1024, "the layout must end at the end of the flash"
+
+    def test_otadata_is_written_on_every_usb_flash(self) -> None:
+        """Without it a USB flash writes `factory` while `otadata` still names an OTA
+        slot, so the panel boots the image it was told to replace. Survivable while the
+        layout was fixed; not survivable across the 2026-09-21 resize, because the stale
+        pointer then names a slot at a NEW offset holding the middle of an old image."""
+        api = (DEPLOY.parent / "backend/src/jbrain/api/endpoint.py").read_text()
+        assert "OTA_DATA_IMAGE: OTA_DATA_OFFSET" in api
+        assert (DEPLOY.parent / "firmware/dist/ota_data_initial.bin").is_file()
 
 
 class TestConsoleDecoding:
