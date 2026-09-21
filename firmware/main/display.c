@@ -40,6 +40,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
+#include "imu.h"
 #include "touch.h"
 
 static const char *TAG = "display";
@@ -303,6 +304,91 @@ void display_set_brightness(int level)
 #define METER_FULL 12000
 #define METER_COLOUR SWAP16(0x07E0) /* green: unmistakably not the robot's blue */
 
+/* THE METER GETS ITS OWN BLIT, and that is the whole fix for a sluggish bar.
+ *
+ * The microphone is sampled 25 times a second and the meter was only redrawn when the WHOLE
+ * face was, which is five times a second — so four readings in five were captured, used for
+ * the peak, and never shown. The bar was not lagging the room, it was showing one frame in
+ * five of it.
+ *
+ * A strip 12 px wide is 8.8 KB against 322 KB for the frame, so it can be pushed on every
+ * capture while the face keeps its slower cadence. Internal RAM because it is a DMA source. */
+#define METER_SPAN (METER_BOTTOM - METER_TOP)
+static DMA_ATTR uint16_t s_strip[METER_W * METER_SPAN];
+
+/* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
+   getting the sign wrong costs one release and is obvious on sight, which is cheaper than
+   waiting. `ay` is the assumption; telemetry carries the raw counts, so if the robot arrives
+   upside down the fix is this comparison's sign and nothing else.
+
+   Hysteresis at about half a gravity, because a panel lying near flat has almost nothing on
+   this axis and a bare sign test would flip it back and forth on noise. */
+#define FLIP_THRESHOLD 4000
+static bool s_upside_down;
+
+static void update_orientation(void)
+{
+    int16_t ax = 0, ay = 0, az = 0;
+    if (!imu_read(&ax, &ay, &az)) return;
+    const bool was = s_upside_down;
+    if (ay > FLIP_THRESHOLD) s_upside_down = true;
+    else if (ay < -FLIP_THRESHOLD) s_upside_down = false;
+    if (was != s_upside_down) {
+        ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)",
+                 s_upside_down ? "upside down" : "upright", ax, ay, az);
+    }
+}
+
+/* A 180 degree rotation of a row-major buffer is exactly its reversal, which is why this is
+   one pass and not a resampling — and why it takes the version label and the meter with it.
+   Ninety degrees is not available: the panel is 368x448 and a quarter turn does not fit. */
+static void flip_frame(uint16_t *fb)
+{
+    for (int i = 0, j = FACE_W * FACE_H - 1; i < j; i++, j--) {
+        const uint16_t t = fb[i];
+        fb[i] = fb[j];
+        fb[j] = t;
+    }
+}
+
+/* Fast attack, slow decay. A raw per-chunk peak pushed 25 times a second is honest and looks
+   like noise; rising instantly and falling over about a second is what makes it read as a
+   meter. The fall is what is smoothed — a loud moment still registers on the frame it
+   happened. */
+#define METER_DECAY (METER_FULL / 25)
+static int s_shown;
+
+static void blit_meter(int level)
+{
+    if (s_panel == NULL) return;
+    if (level >= s_shown) {
+        s_shown = level;
+    } else {
+        s_shown -= METER_DECAY;
+        if (s_shown < level) s_shown = level;
+    }
+    int h = s_shown * METER_SPAN / METER_FULL;
+    if (h > METER_SPAN) h = METER_SPAN;
+    if (h < 0) h = 0;
+    for (int row = 0; row < METER_SPAN; row++) {
+        const uint16_t c = (row >= METER_SPAN - h) ? METER_COLOUR : 0;
+        for (int col = 0; col < METER_W; col++) s_strip[row * METER_W + col] = c;
+    }
+    int x0 = METER_X, y0 = METER_TOP;
+    if (s_upside_down) {
+        /* The strip reverses and the window moves to the opposite corner, so the bar stays on
+           the viewer's left rather than travelling to the other side of the screen. */
+        for (int i = 0, j = METER_W * METER_SPAN - 1; i < j; i++, j--) {
+            const uint16_t t = s_strip[i];
+            s_strip[i] = s_strip[j];
+            s_strip[j] = t;
+        }
+        x0 = FACE_W - METER_X - METER_W;
+        y0 = FACE_H - METER_BOTTOM;
+    }
+    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x0 + METER_W, y0 + METER_SPAN, s_strip);
+}
+
 #define BOB_PX 5
 #define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
@@ -409,6 +495,7 @@ static void face_task(void *arg)
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
+            if (s_upside_down) flip_frame(fb);
             if (held >= HOLD_CUE_MS) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot
@@ -431,6 +518,7 @@ static void face_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }
+        if (since_draw == 0) update_orientation();
         if (since_reassert >= REASSERT_MS) {
             reassert_panel();
             since_reassert = 0;
@@ -444,6 +532,9 @@ static void face_task(void *arg)
         if (sound && mic != NULL && audio_record(mic, MIC_CHUNK)) {
             level = audio_peak(mic, MIC_CHUNK);
             if (level > s_mic_peak) s_mic_peak = level;
+            /* Every capture, not every face: 8.8 KB against 322 KB is what makes 25 fps
+               affordable for the one part of the screen that has something new to say. */
+            blit_meter(level);
         } else {
             vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
         }

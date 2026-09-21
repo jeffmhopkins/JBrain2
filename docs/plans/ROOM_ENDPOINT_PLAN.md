@@ -1441,6 +1441,46 @@ cannot interact with the V2 panel's 16-pixel column gap, and flips the version l
 microphone meter along with the robot — which is what "facing up" has to mean. Ninety degrees
 is not available: the panel is 368×448 and a quarter turn does not fit it.
 
+#### 10.4ad The meter was showing one frame in five, and the robot flips (2026-09-21)
+
+**The sluggish meter was a bug, not a limit.** The microphone is sampled 25 times a second and
+`level` was recomputed every one of them — but the bar was only drawn when the WHOLE face was,
+which is five times a second. Four readings in five were captured, folded into the reported
+peak, and never shown. The meter was not lagging the room; it was showing one frame in five of
+it.
+
+The fix is that the meter gets its own blit. A strip 12 px wide is **8.8 KB against 322 KB for
+the frame**, so it can be pushed on every capture while the face keeps its slower cadence.
+Partial updates were always available; nothing needed to get faster, one thing needed to stop
+being coupled to everything else.
+
+**Fast attack, slow decay** on top of that. A raw per-chunk peak pushed 25 times a second is
+honest and looks like noise; rising instantly and falling over about a second is what makes it
+read as a meter. Only the fall is smoothed, so a loud moment still registers on the frame it
+happened in.
+
+**The flip ships without the reporting round §10.4ac argued for**, on the owner's call:
+*"if it is upside down we can fix that — that's the whole point."* That is the right trade and
+the reasoning is worth keeping. §10.4ac's caution was borrowed from the display fault, where a
+wrong guess cost hours because the instruments lied and the symptom was ambiguous. Here the
+symptom is a robot standing on its head: unmistakable, visible in a second, and one sign flip
+to correct. Caution is priced per-mistake, and this mistake is cheap.
+
+So `ay` is the assumption, with hysteresis at about half a gravity because a panel lying near
+flat has almost nothing on that axis and a bare sign test would flip back and forth on noise.
+Telemetry still carries the raw counts, so if it arrives upside down the fix is one comparison
+and nothing else.
+
+**The flip is a reversal of the framebuffer**, which is exactly what a 180° rotation of a
+row-major buffer is — one pass, no resampling, and it takes the version label and the meter
+with it, which is what "facing up" has to mean. The meter's own partial blit mirrors both its
+content and its window, so the bar stays on the viewer's left rather than travelling to the
+other side of the screen. The two agree to the pixel: the full frame's x ∈ [4,16) maps to
+[352,364), which is exactly the window the strip blit uses.
+
+Ninety degrees remains unavailable — 368×448 does not fit a quarter turn — so this is upright
+or inverted, which is what a panel that has been hung, mounted or knocked over actually needs.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to
