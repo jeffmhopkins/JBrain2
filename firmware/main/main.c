@@ -28,6 +28,7 @@
 #include "mem.h"
 #include "ota.h"
 #include "speech.h"
+#include "talk.h"
 #include "pmu.h"
 
 static const char *TAG = "endpoint";
@@ -275,6 +276,11 @@ void app_main(void)
             ears_tried = true;
             mem_log("pre-speech");
             if (!speech_start()) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+            /* Alongside the recogniser, and after the first successful box contact for the
+               same reason: this needs the API base, the token and the CA out of `cfg`, and
+               starting it before the network is up would only mean a task blocked on a
+               socket that cannot open yet. */
+            if (!talk_start(&cfg)) ESP_LOGW(TAG, "no conversation — holds will not upload");
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router

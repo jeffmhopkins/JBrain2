@@ -102,6 +102,29 @@ static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */
 static volatile bool s_cap_on;
 
+/* THE REPLY. Its own buffer, the same six-second ceiling: a reply longer than the question
+   is not a conversation with a four-year-old, and the box caps its own text anyway. */
+static int16_t *s_play;
+static volatile int s_play_len;  /* samples still to write */
+static volatile int s_play_pos;
+
+bool audio_play(const int16_t *pcm, size_t bytes)
+{
+    if (s_play == NULL || pcm == NULL || bytes < 2) return false;
+    if (s_play_pos < s_play_len) return false; /* still speaking */
+    int n = (int)(bytes / sizeof(int16_t));
+    if (n > CAPTURE_MAX_SAMPLES) n = CAPTURE_MAX_SAMPLES;
+    memcpy(s_play, pcm, (size_t)n * sizeof(int16_t));
+    s_play_pos = 0;
+    s_play_len = n;
+    return true;
+}
+
+bool audio_playing(void)
+{
+    return s_play_pos < s_play_len;
+}
+
 void audio_capture_open(void)
 {
     if (s_cap == NULL) return;
@@ -253,8 +276,10 @@ bool audio_start(void)
        keeps its voice commands and its meter and simply cannot record a message, which is a
        smaller loss than refusing to start. */
     s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "capture buffer: %s (%d ms max)", s_cap != NULL ? "ready" : "UNAVAILABLE",
-             CAPTURE_MAX_MS);
+    s_play = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "capture %s, playback %s (%d ms each)",
+             s_cap != NULL ? "ready" : "UNAVAILABLE",
+             s_play != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS);
 
     if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "audio task");
@@ -377,6 +402,21 @@ static void audio_task(void *arg)
         if (s_beep_want) {
             s_beep_want = false;
             esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
+            s_deaf = DEAF_CHUNKS;
+        }
+        if (s_play_pos < s_play_len) {
+            /* ONE CHUNK PER PASS, NOT THE WHOLE REPLY. `esp_codec_dev_write` blocks, so
+               handing it two seconds of audio would stop this task — and this task's read is
+               the clock for the level meter, the recogniser and the capture. A chunk at a
+               time keeps the loop turning and lets a reply be interrupted by a reboot or an
+               OTA rather than wedging the panel until it finishes talking. */
+            const int left = s_play_len - s_play_pos;
+            const int take = left < AUDIO_CHUNK ? left : AUDIO_CHUNK;
+            esp_codec_dev_write(s_codec, &s_play[s_play_pos], (int)(take * sizeof(int16_t)));
+            s_play_pos += take;
+            /* The codec routes the DAC into the ADC by design, so everything we say is also
+               heard. Feeding our own reply to the recogniser would have the pet answering
+               itself. */
             s_deaf = DEAF_CHUNKS;
         }
         apply_levels();

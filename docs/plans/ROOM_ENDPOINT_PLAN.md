@@ -3352,6 +3352,66 @@ the same lesson as §10.4bb, applied before it costs anything rather than after.
 since §10.4bo; nothing calls it yet. The upload must not run on the render task — a network
 round trip there is a frozen pet — so it wants its own task, which is the next piece.
 
+#### 10.4br The loop closes (0.2.58, 2026-09-21)
+
+Hold, talk, let go, and the panel uploads the recording, waits, and **speaks the reply out
+loud**. The last piece of the owner's press-and-hold.
+
+##### Its own task, and that is the whole reason `talk.c` exists
+
+A turn is an HTTPS round trip that can take seconds — whisper alone was measured at ~9.8 s
+with the large model (§10.4bf). Doing it on the render task would freeze the pet for the
+entire wait, which is precisely what the thinking bubble is there to prevent: **an animation
+that stops animating is worse than no animation, because it reads as a crash.** So the
+renderer hands over a recording and asks a question every frame (`talk_state()`), and never
+blocks.
+
+Pinned off the render core, because it sits on a socket for seconds at a time.
+
+##### One chunk per pass, not the whole reply
+
+`esp_codec_dev_write` blocks. Handing it two seconds of audio would stop the audio task — and
+that task's read is the clock for the level meter, the recogniser *and* the capture. A chunk
+at a time keeps the loop turning, and lets a reboot or an OTA interrupt a reply rather than
+wedging the panel until it finishes talking.
+
+The panel also goes deaf while it speaks. The codec routes the DAC into the ADC by design
+(§10.4bi), so **everything the pet says, it also hears** — and feeding that to the recogniser
+would have it answering itself.
+
+##### Three states the renderer can leave THINKING through, and only one is a failure
+
+| the box said | what happens |
+|---|---|
+| 200 with audio | the pet nods and speaks; state held on `audio_playing()`, not a timer, so a long reply cannot end on screen mid-sentence |
+| 204, heard nothing | straight back to idle — an accidental hold on a quiet room is the most common recording this will ever make, and it is not an error |
+| anything else, or 12 s | the failure face |
+
+A recording that never started, or a hold while a turn is already in flight, goes back to idle
+**without** showing a bubble. A thinking box with nothing behind it is exactly the silent hang
+this state machine exists to avoid.
+
+##### The compiler found a real one
+
+```
+talk.c:113: error: 'sent' may be used uninitialized [-Werror=maybe-uninitialized]
+```
+
+Every `goto done` on an early failure jumps past that assignment, and the log at the bottom
+reads it regardless — so a failed connect would have printed an upload time made of stack
+garbage, in the one line added to diagnose slow turns. `-Werror=maybe-uninitialized` earned
+its place.
+
+##### And the timing splits at the right seam
+
+`turn:` logs bytes sent, **upload ms** and **total ms** separately, because the upload is the
+network and the rest is the box. "It took nine seconds" says nothing about which end to fix.
+The box's own `endpoint.converse` line carries the other half — `stt_ms`, `llm_ms`, `tts_ms` —
+and the two together account for the whole wait with nothing unexplained between them.
+
+**This is how the whisper question finally gets answered**: from a child's bedroom, on real
+speech, rather than from a bench.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

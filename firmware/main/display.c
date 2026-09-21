@@ -32,6 +32,7 @@
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
+#include "talk.h"
 #include "calib.h"
 #include "caption.h"
 #include "cfg.h"
@@ -1277,15 +1278,36 @@ static void face_task(void *arg)
             ESP_LOGI(TAG, "talk: held %u ms, captured %u ms (%u bytes)",
                      (unsigned)(now - s_talk_since), (unsigned)audio_capture_ms(),
                      (unsigned)got);
-            (void)pcm; /* the upload is the next piece; see PANEL_CONVERSATION_PLAN.md */
-            s_talk = TALK_THINKING;
-            s_talk_since = now;
-        } else if (s_talk == TALK_THINKING && now - s_talk_since > TALK_TIMEOUT_MS) {
+            if (pcm == NULL || !talk_send(pcm, got)) {
+                /* Nothing recorded, or a turn already in flight. Either way the pet goes
+                   straight back to being a pet rather than showing a bubble that cannot
+                   resolve — a thinking box with nothing behind it is the silent hang this
+                   whole state machine exists to avoid. */
+                s_talk = TALK_IDLE;
+            } else {
+                s_talk = TALK_THINKING;
+                s_talk_since = now;
+            }
+        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_SPOKE) {
+            /* Speaking. The bubble goes and the pet reacts, and the state is held on
+               `audio_playing()` rather than a timer so a long reply cannot end on screen
+               mid-sentence. */
+            s_talk = TALK_IDLE;
+            talk_clear();
+            action = ACT_NOD;
+            action_mag = 1.0f;
+            action_start = now;
+        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_IDLE) {
+            s_talk = TALK_IDLE; /* the box heard silence; nothing to say about it */
+            talk_clear();
+        } else if (s_talk == TALK_THINKING &&
+                   (talk_state() == TALK_NET_FAILED || now - s_talk_since > TALK_TIMEOUT_MS)) {
+            talk_clear();
             /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
                not hear you" and "it is broken" must not look identical (§10.4bc). */
             s_talk = TALK_FAILED;
             s_talk_since = now;
-            ESP_LOGW(TAG, "talk: no reply in %d ms", TALK_TIMEOUT_MS);
+            ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
         }
