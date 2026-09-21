@@ -3152,6 +3152,41 @@ perfectly valid bash and only behaviour catches it, with a lexical check beside 
 failure names the cause instead of just timing out. Confirmed to fail on the real defect and
 pass once fixed, in that order.
 
+#### 10.4bm The subtitle bar was a hole in the picture (0.2.53, 2026-09-21)
+
+The owner: *"the text scrolling on the bottom going from right to left, the black in. It
+should be transparent."*
+
+The ticker cleared a full-width black strip before drawing, and **the reason was real and
+measured**: the ostrich's feet reach y=435 on a 448 px panel while the ticker runs at 432, so
+"PLAY PEEKABOO" ran straight through its toes. The bar is what made the words legible over
+whatever the pet was doing.
+
+But on an AMOLED a cleared row is **off**. That was not a tint over the pet, it was a
+hard-edged hole punched through its feet, on a toy — and the owner looks at this thing all
+day.
+
+So the legibility moves from the background to the glyphs, the way subtitles have always done
+it: the text is drawn four times in unlit black, offset two pixels each way, then once in its
+own colour on top. Every pixel *between* the letters is untouched, so the pet shows through
+and the words stay readable over legs, wings or nothing. Five draws rather than one, on a
+short string, at the five frames a second the face actually redraws.
+
+**Measured, because "it looks transparent" is not a property a test can hold:** the figure's
+own lit pixels inside the ticker's band, with and without a caption drawn over them.
+
+| | lit pixels in the band |
+|---|---|
+| figure alone | 330 |
+| figure + caption (halo) | **359** — the feet survive, the letters add |
+| figure + caption (old strip) | the letters alone; all 330 erased |
+
+The test asserts the figure keeps at least nine tenths of its pixels through a caption, which
+allows the halo to erode a few where a letter sits on a toe — that erosion is the point of it
+— and forbids wholesale erasure. **Confirmed to fail with the black strip put back**, then
+pass with it gone, in that order; four tests in this feature have now passed for the wrong
+reason, and checking the direction costs one minute.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

@@ -652,6 +652,52 @@ static void test_a_quarter_turn_is_a_permutation(void)
     free(src);
 }
 
+static void test_the_caption_does_not_black_out_the_pet(void)
+{
+    /* THE TICKER USED TO CLEAR A FULL-WIDTH BLACK STRIP before drawing, and the reason was
+       real — the ostrich's feet reach y=435 while the ticker runs at 432, so "PLAY PEEKABOO"
+       ran straight through its toes and the bar was what made the words legible.
+
+       The owner: "the text scrolling on the bottom ... the black in. It should be
+       transparent." On an AMOLED a cleared row is OFF, so that bar was not a tint over the
+       pet, it was a hard-edged hole punched through it.
+
+       The legibility now comes from a halo on the glyphs instead. What that has to mean,
+       measurably, is: the figure's pixels in the ticker's band SURVIVE the caption being
+       drawn over them. Measured at 330 lit without a caption and 359 with one — the feet
+       still there, the letters added. Under the old strip it was the letters alone. */
+    const int SCALE = 2, MARGIN = 8, ROW_H = 7 * SCALE;
+    const int y = FACE_H - MARGIN - ROW_H;
+
+    face_state_t st;
+    face_rest(&st);
+    st.form = FORM_OSTRICH;
+    face_draw(fb, 0, &st);
+    long bare = 0;
+    for (int r = y - 3; r < y + ROW_H + 3 && r < FACE_H; r++) {
+        for (int c = 0; c < FACE_W; c++) {
+            if (r >= 0 && fb[r * FACE_W + c]) bare++;
+        }
+    }
+    CHECK(bare > 100, "the figure really is in the ticker's band, or this proves nothing");
+
+    caption_t cap;
+    caption_reset(&cap);
+    caption_say(&cap, "play peekaboo");
+    for (int i = 0; i < 30; i++) caption_tick(&cap, (uint32_t)(i * 40), FACE_W, true, false);
+    face_draw(fb, 0, &st);
+    caption_draw(&cap, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    long over = 0;
+    for (int r = y - 3; r < y + ROW_H + 3 && r < FACE_H; r++) {
+        for (int c = 0; c < FACE_W; c++) {
+            if (r >= 0 && fb[r * FACE_W + c]) over++;
+        }
+    }
+    /* The halo erodes a few of the figure's own pixels where a letter sits on a toe, which
+       is the point of it; wholesale erasure is what this forbids. */
+    CHECK(over * 10 >= bare * 9, "the pet survives the caption drawn over it");
+}
+
 static void test_peekaboo_covers_the_eyes(void)
 {
     /* `hide` is peekaboo, and peekaboo that does not hide the eyes is the shipped dud this
@@ -1735,6 +1781,7 @@ int main(void)
     test_every_face_and_action_draws();
     test_every_action_changes_the_picture();
     test_peekaboo_covers_the_eyes();
+    test_the_caption_does_not_black_out_the_pet();
     test_the_side_mounted_fit_stays_in_the_square();
     test_a_quarter_turn_is_a_permutation();
     test_the_bird_moves_between_frames();
