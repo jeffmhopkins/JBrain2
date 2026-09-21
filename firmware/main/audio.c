@@ -49,7 +49,7 @@ static const char *TAG = "audio";
    front end's WebRTC AGC (`speech.c`) makes up the rest without pinning the PGA at its
    limit, where the noise floor comes up with the signal. The peak is logged every three
    seconds, so the next move after this one is a reading rather than another guess. */
-#define MIC_GAIN_DB 36.0f
+#define MIC_GAIN_DB 42.0f
 
 /* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
