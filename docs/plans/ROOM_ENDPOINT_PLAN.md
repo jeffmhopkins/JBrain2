@@ -1573,6 +1573,86 @@ other side of the screen. The two agree to the pixel: the full frame's x ∈ [4,
 Ninety degrees remains unavailable — 368×448 does not fit a quarter turn — so this is upright
 or inverted, which is what a panel that has been hung, mounted or knocked over actually needs.
 
+#### 10.4ah The rig starts: a blink and a flinch (2026-09-21)
+
+W4's ~17 tweened floats begin with two, and the parameters move into a `face_state_t` struct
+rather than a fifth positional argument. The caller owns the tweening; `face.c` knows only how
+to draw one instant of it, which is what keeps it ESP-free and renderable on a host.
+
+**Blink is the cheapest of the seventeen and does the most.** One number, no new geometry, and
+it is the difference between a face and a picture of a face. **Jittered**, because a blink
+exactly every four seconds is a metronome — the regularity is what gives away a machine, and
+the irregularity is most of the effect.
+
+Two details the harness caught before the panel did:
+
+- **A shut eye is a lid LINE, not an absent eye.** Drawing nothing for the closed frames reads
+  as the face breaking for a moment rather than as a blink.
+- **The pupil is clamped to the lid height.** Without it a half-closed eye shows a bar of pupil
+  spilling past the white, which reads as damage. That only appears in the middle of the
+  transition, which is exactly the frame nobody renders when checking by eye.
+
+**The flinch is the interaction the design settled** (§"Interaction, settled"): touch means *"I
+am paying attention to you"*, expressed as a sub-100 ms movement toward the finger. Here it is a
+dip of 18 px with wide eyes and shrunken pupils, decaying over about half a second — startled,
+then recovering, which is what makes a poke feel answered rather than merely registered. Both
+extremes were rendered and their bounds measured: rest spans y 13..414, poked 31..432, so the
+dip does not push the legs off a 448-px panel.
+
+**Animating means every poll is a frame.** A blink at the 200 ms idle floor would be one frame
+long and read as a glitch, so any frame with a flinch or a part-closed eye marks itself dirty
+and the loop draws at its poll rate instead. The floor is for a face that is holding still.
+
+One consequence to watch: the microphone read paces that loop, so a burst of animation slows
+consumption slightly and the meter can lag by a fraction of a second during a poke. The I2S DMA
+ring bounds it and it catches up at rest. If that becomes visible, the fix is the same one the
+meter already uses — draw less than the whole frame — not a faster loop.
+
+Still to come from the design: the six emotions as lid geometry, asymmetry for curious and
+silly, the gag structure (the hold on a **bewildered** face is the joke), and W4b's
+weighted-random variant pools with per-variant cooldowns.
+
+#### 10.4ai It was never the display. The panel panics. (2026-09-21)
+
+The owner reported a black screen and held for five seconds, and the boot report carried the
+answer that six releases of display theories had not:
+
+```
+reset_reason: "panic"   03:21:46
+```
+
+**The panel crashed.** Not a controller dropping display-on, not a rail being cut, not frames
+failing to land — a firmware panic. And it closes the loop on the one observation that never
+fitted a display fault: **a panic is a soft reset**, and §10.4x established that a soft reset
+leaves the screen dark where a power cycle does not. Crash, reboot, black until someone pulls
+the plug. Every symptom follows from that, including "it came back by itself" (a later crash or
+reset that happened to re-init cleanly).
+
+Everything from §10.4n onward was looking at the wrong subsystem. The display evidence was real
+and the reasoning was mostly sound; it was all downstream of a crash nobody could see, because
+the only channel that would have shown `reset_reason` was telemetry, and telemetry did not exist
+until §10.4y — which was itself built because the owner wanted the cable gone.
+
+**A second finding, and it is a bug I wrote.** `pmu_history` has been empty in every report, and
+it is not because nothing survived: `display_start()` calls `pmu_report_history()`, which
+*cleared the ring*, long before the first telemetry POST could read it. The capture built in
+§10.4x to survive a soft reset was being thrown away at boot, and the empty array looked exactly
+like the honest "cold boot, nothing survived" case it was designed to report. Clearing now
+happens after the history has left the box.
+
+**The suspect for the panic is the render task's stack.** It was created with 4096 bytes when it
+drew a static colour pattern and nothing else. It now runs, every frame: an I2S capture, an
+accelerometer read, font rendering, PMU sampling, float tweening, a full-frame composition and
+two LCD blits. A fault that arrives as the work grows is the signature of a stack running out.
+
+0.2.24 raises it to 8192 **and stops guessing**: `uxTaskGetStackHighWaterMark` is sampled every
+frame and the smallest headroom seen goes out in telemetry as `stack_free`. A shrinking number is
+a panic that has not happened yet — which is the whole point, because the panel is on a charger
+in another room and reading its console resets it.
+
+If `stack_free` stays comfortable and the panics continue, the stack is exonerated and the next
+candidate is the memory the new work allocates rather than the stack it runs on.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

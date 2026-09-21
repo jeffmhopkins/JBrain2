@@ -28,78 +28,20 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel goes dark and both instruments are broken
+## The black screen is a PANIC, not a display fault
 
-Drawn once it goes dark within minutes. **Three fixes have been tried and none worked:**
-redrawing an identical frame every 500 ms (0.2.7), bobbing so every frame differs (0.2.9), and
-asking the controller what it thinks (0.2.10 — it answers zeros).
+The panel's own telemetry carried `reset_reason: "panic"`. It crashes, and a panic is a **soft
+reset** — which leaves the screen dark where a power cycle does not. Crash, reboot, black until
+someone pulls the plug. Every symptom chased from 0.2.4 onward follows from that.
 
-Two things to know before adding a fourth idea:
+Prime suspect: the render task's stack, created at 4096 bytes when it drew a static pattern and
+now running an I2S capture, an accelerometer read, font rendering, PMU sampling, float tweening
+and two LCD blits per frame. 0.2.24 raises it to 8192 and reports
+`uxTaskGetStackHighWaterMark` as `stack_free`, so a near-overflow is visible **before** it is a
+panic (ROOM_ENDPOINT_PLAN.md §10.4ai).
 
-- **The CO5300 does not answer reads over QSPI.** `esp_lcd_panel_io_rx_param` returns `ESP_OK`
-  with a zeroed buffer, which reads exactly like "display off". The tell is `0x52`, the
-  brightness readback: init writes `0x51 = 0xFF`, so a working read says `0xFF`. It says
-  `0x00`. Do not trust a register read here without a known-value control.
-- **Reading the console resets the panel**, whatever `--no-reset` says: the kernel asserts DTR
-  on open, before pyserial's settings apply. Every console log in this investigation is of a
-  fresh boot, never of the dark state.
-
-**A soft reset does not fix it; a power cycle does.** The five-second hold reboots the panel
-and it comes back black, while pulling the plug brings the robot straight back. The driver
-already sends `SWRESET` (there is no reset GPIO, so `panel_co5300_reset` takes the software
-path) and the whole init sequence re-runs — so whatever holds the display off lives **outside
-the ESP32**, in a part a power cycle clears and `esp_restart()` does not.
-
-The scan answered it: `0x15` touch, `0x18` codec, `0x20` **TCA9554 IO expander**, `0x34`
-**AXP2101 PMU**, `0x51` RTC, `0x6b` IMU. The PMU is real — named as a suspect at 0.2.4 and
-ruled out by inference — and it is exactly the class of part that survives `esp_restart()` and
-is cleared by pulling the plug.
-
-**To see the dark state, hold the screen for five seconds.** Reads return zeros and opening the
-console resets the panel, so 0.2.13 records instead: six AXP2101 registers every ten seconds
-into `RTC_NOINIT_ATTR` memory, which survives a soft reset. The hold reboots the panel, and the
-next boot log carries the two minutes of PMU state leading up to the fault
-(ROOM_ENDPOINT_PLAN.md §10.4x). The maintenance gesture turns out to be the shutter.
-
-0.2.12 therefore re-asserts rather than interrogates — `0x29` and `0x51` every thirty seconds
-— and the result is read off the glass (ROOM_ENDPOINT_PLAN.md §10.4w). If it still blanks, the
-remaining candidate is the OLED rail and the AXP2101 this firmware has never spoken to, and
-the next step is telemetry over HTTP rather than another guess.
-
-The bob stays regardless — an animated pet wants it, and it costs nothing.
-
-## Reading a panel without a cable
-
-**The running version is on the glass, top-left.** Asking the box what it last *served* is a
-different question from what a panel is *running*, and confusing the two cost a wrong diagnosis
-(ROOM_ENDPOINT_PLAN.md §10.4t). Reading the console answers it properly but resets the panel.
-The label answers it from across the room.
-
-**Hold the screen for five seconds and it reboots**, which re-pulls firmware — the OTA check
-runs at boot, before the first sleep. An amber bar grows across the top from 1.5 s so the
-gesture announces itself; five seconds is the first threshold outside a child's accidental
-press, and only by 0.8 s (§10.4p measured ordinary taps up to 4.2 s), which is why the cue is
-not optional.
-
-## The panel reports to the box, so the cable is optional
-
-`POST /api/endpoint/telemetry`, authenticated with the same `device_key` as the manifest poll:
-version, uptime, reset reason, free heap and PSRAM, and the PMU history that survived the last
-restart. Once at boot, then every cycle.
-
-This is the third diagnostic channel and the first that works. Register reads over QSPI return
-zeros that look exactly like a diagnosis; opening the console resets the chip, so every console
-log in the display investigation was of a freshly-booted panel rather than of the fault.
-Telemetry neither lies nor disturbs.
-
-**So the capture works with no cable at all:** see a dark screen, hold the panel for five
-seconds, and it reboots, reconnects and posts the two minutes that preceded the fault
-(ROOM_ENDPOINT_PLAN.md §10.4y).
-
-Updates were always over the air — `esp_https_ota` against the box, no USB update path exists
-in this firmware — so a panel can live on any charger. The cost is that **OTA plus rollback is
-then the only recovery path**, which is what the frozen factory app and the reach-the-box
-rollback gate were built for.
+Do not debug this from the display side. Check `reset_reason` and `stack_free` in telemetry
+first — the console cannot help, because opening it resets the panel.
 
 ## The robot stays upright, and the meter keeps up
 

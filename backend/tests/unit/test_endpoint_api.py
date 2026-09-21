@@ -860,3 +860,20 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+    def test_the_render_task_stack_headroom_is_reported(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """A panel panicked in the field and the render task's stack was the suspect. A
+        shrinking headroom is a panic that has not happened yet; it has to be visible from the
+        box, because the panel is on a charger in another room and its console resets it."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.24", "uptime_ms": 1, "stack_free": 1180},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
