@@ -1612,6 +1612,47 @@ Still to come from the design: the six emotions as lid geometry, asymmetry for c
 silly, the gag structure (the hold on a **bewildered** face is the joke), and W4b's
 weighted-random variant pools with per-variant cooldowns.
 
+#### 10.4ai It was never the display. The panel panics. (2026-09-21)
+
+The owner reported a black screen and held for five seconds, and the boot report carried the
+answer that six releases of display theories had not:
+
+```
+reset_reason: "panic"   03:21:46
+```
+
+**The panel crashed.** Not a controller dropping display-on, not a rail being cut, not frames
+failing to land — a firmware panic. And it closes the loop on the one observation that never
+fitted a display fault: **a panic is a soft reset**, and §10.4x established that a soft reset
+leaves the screen dark where a power cycle does not. Crash, reboot, black until someone pulls
+the plug. Every symptom follows from that, including "it came back by itself" (a later crash or
+reset that happened to re-init cleanly).
+
+Everything from §10.4n onward was looking at the wrong subsystem. The display evidence was real
+and the reasoning was mostly sound; it was all downstream of a crash nobody could see, because
+the only channel that would have shown `reset_reason` was telemetry, and telemetry did not exist
+until §10.4y — which was itself built because the owner wanted the cable gone.
+
+**A second finding, and it is a bug I wrote.** `pmu_history` has been empty in every report, and
+it is not because nothing survived: `display_start()` calls `pmu_report_history()`, which
+*cleared the ring*, long before the first telemetry POST could read it. The capture built in
+§10.4x to survive a soft reset was being thrown away at boot, and the empty array looked exactly
+like the honest "cold boot, nothing survived" case it was designed to report. Clearing now
+happens after the history has left the box.
+
+**The suspect for the panic is the render task's stack.** It was created with 4096 bytes when it
+drew a static colour pattern and nothing else. It now runs, every frame: an I2S capture, an
+accelerometer read, font rendering, PMU sampling, float tweening, a full-frame composition and
+two LCD blits. A fault that arrives as the work grows is the signature of a stack running out.
+
+0.2.24 raises it to 8192 **and stops guessing**: `uxTaskGetStackHighWaterMark` is sampled every
+frame and the smallest headroom seen goes out in telemetry as `stack_free`. A shrinking number is
+a panic that has not happened yet — which is the whole point, because the panel is on a charger
+in another room and reading its console resets it.
+
+If `stack_free` stays comfortable and the panics continue, the stack is exonerated and the next
+candidate is the memory the new work allocates rather than the stack it runs on.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

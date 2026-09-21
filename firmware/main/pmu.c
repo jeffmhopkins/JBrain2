@@ -90,6 +90,10 @@ void pmu_report_history(void)
                      r[0], r[1], r[2], r[3], r[4], r[5]);
         }
     }
+}
+
+void pmu_history_clear(void)
+{
     s_magic = RING_MAGIC;
     s_count = 0;
     memset(s_ring, 0, sizeof(s_ring));

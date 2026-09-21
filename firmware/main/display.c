@@ -485,6 +485,16 @@ static int bob_step(int frame)
    working without anyone describing a noise into a chat window. Reading it clears it. */
 static volatile int s_mic_peak;
 
+/* Words of stack the face task has never touched — the smallest headroom seen since boot.
+   Reported so a near-overflow is visible BEFORE it becomes a panic, rather than inferred from
+   one afterwards. */
+static volatile int s_stack_free;
+
+int display_stack_free(void)
+{
+    return s_stack_free;
+}
+
 int display_mic_peak(void)
 {
     const int p = s_mic_peak;
@@ -557,6 +567,7 @@ static void face_task(void *arg)
             if (sound) audio_beep();
             dirty = true;
         }
+        s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
         update_orientation();
         s_open = blink_open(TOUCH_POLL_MS);
         s_flinch *= FLINCH_DECAY;
@@ -651,5 +662,11 @@ void display_run_face(void)
     }
     /* Its own task so a frame rate can never delay an OTA check — the update path outranks
        the picture, always. */
-    xTaskCreate(face_task, "face", 4096, NULL, 4, NULL);
+    /* 8192, raised from 4096. That number was chosen when this task drew a static colour
+       pattern and nothing else; it now runs audio capture, an IMU read, font rendering, PMU
+       sampling, float tweening and two LCD blits per frame. A panic was observed in the field
+       (`reset_reason: "panic"`), and an overflowing task stack is the candidate that fits a
+       fault which arrived as the work grew. `display_stack_free()` reports the headroom so
+       this stops being a guess. */
+    xTaskCreate(face_task, "face", 8192, NULL, 4, NULL);
 }

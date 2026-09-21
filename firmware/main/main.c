@@ -92,18 +92,20 @@ static void report(const cfg_t *cfg)
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
-                     "\"accel\":[%d,%d,%d],\"pmu_history\":[",
+                     "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
-                     have_imu ? az : 0);
+                     have_imu ? az : 0, display_stack_free());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
     if (w > 0 && w < (int)sizeof(body) - 4) snprintf(body + w, sizeof(body) - (size_t)w, "]}");
-    ota_report(cfg, body);
+    /* Cleared only once it has left the box. Clearing at boot is what made every report say
+       `pmu_history: []` while the ring had in fact survived. */
+    if (ota_report(cfg, body) == ESP_OK && n > 0) pmu_history_clear();
 }
 
 static bool reach_box(const cfg_t *cfg, ota_manifest_t *manifest)

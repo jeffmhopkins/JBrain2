@@ -24,3 +24,7 @@ int display_mic_peak(void);
 /* The panel's 0x51 brightness, 0..255. Also becomes what the periodic re-assert re-sends, so
    a setting cannot be quietly undone thirty seconds later by the recovery write. */
 void display_set_brightness(int level);
+
+/* The face task's smallest observed stack headroom, in words. Reported in telemetry so a
+   near-overflow shows up as a shrinking number rather than as a panic. */
+int display_stack_free(void);

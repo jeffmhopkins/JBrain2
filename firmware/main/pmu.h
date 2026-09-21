@@ -21,9 +21,19 @@ bool pmu_start(void);
 /* Take one sample into the RTC ring. Cheap: six one-byte register reads. */
 void pmu_sample(void);
 
-/* Log the samples that survived the last restart, newest last, then reset the ring. Call once
-   at boot, BEFORE the first sample, or the history is diluted by the present. */
+/* Log the samples that survived the last restart, oldest first. Call once at boot, BEFORE the
+   first sample, or the history is diluted by the present.
+
+   DOES NOT CLEAR. It used to, and that silently broke the whole capture: `display_start()`
+   calls this long before the first telemetry POST, so by the time `pmu_history_hex()` ran the
+   ring was already empty and every report carried `pmu_history: []`. The evidence looked like
+   "nothing survived the restart" and was actually "we threw it away before sending it".
+   Clearing is now the caller's, after the history has left the box. */
 void pmu_report_history(void);
+
+/* Drop the surviving samples so the ring holds only what happens from here. Call after the
+   history has been reported somewhere that outlives this boot. */
+void pmu_history_clear(void);
 
 /* The surviving samples as hex, oldest first, for sending somewhere that is not a console.
    Writes at most `max` entries of `PMU_SAMPLE_CHARS` bytes into `out` and returns how many.

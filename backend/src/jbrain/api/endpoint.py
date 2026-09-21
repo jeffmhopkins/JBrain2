@@ -403,6 +403,10 @@ class TelemetryIn(BaseModel):
     # meter drawn on the panel shows to whoever is standing there, and this shows to whoever
     # is not.
     mic_peak: int = 0
+    # Words of stack the panel's render task has never touched, smallest seen since boot. A
+    # shrinking number is a panic that has not happened yet; zero means the field is from
+    # firmware too old to report it.
+    stack_free: int = 0
     # Raw accelerometer counts [x, y, z] at +/-4 g, so 1 g is about 8192. Deliberately raw:
     # which axis points where on this board is not documented anywhere, and a number the
     # firmware has already interpreted cannot answer that. All zeros means the part did not
@@ -443,6 +447,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         free_psram=body.free_psram,
         mic_peak=body.mic_peak,
         accel=body.accel,
+        stack_free=body.stack_free,
         pmu_history=body.pmu_history,
         note=body.note,
     )
