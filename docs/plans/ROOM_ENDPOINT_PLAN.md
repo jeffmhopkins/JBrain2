@@ -2842,6 +2842,70 @@ The whole table is now 38 phrases and **84 command words against MultiNet's limi
 measured from the compiled table rather than counted by eye, after a text scan of `face.c`
 miscounted the palette by reading hex values out of a comment.
 
+#### 10.4bh The panel was crash-looping, and the field that would have said so said "other" (0.2.49, 2026-09-21)
+
+The owner, on 0.2.48: *"The screen is black but on power cycling it now."* 0.2.48 carries
+0.2.47's buffer fix, so this was never the tearing bug — it is a separate fault, and it had
+been reported as "sporadic crashing" for three versions while every investigation went to the
+display.
+
+**The console could not see it and structurally never could.** `panel-console` is a live serial
+attach: it shows what the panel says from the moment it attaches, so a fault that has already
+happened is gone. Worse, attaching resets the chip — which `POST /endpoint/telemetry`'s own
+docstring already said in as many words. Every console capture in this sequence was of a
+freshly-rebooted panel.
+
+**The telemetry route answered it in one query**, because it logs to the box's API log and the
+box was running the whole time:
+
+```
+reset_reason "other"  crash_phase  6   uptime 6s
+reset_reason "power"  crash_phase -1   uptime 7s    <- the owner's power cycle
+reset_reason "other"  crash_phase  6   uptime 6s
+reset_reason "other"  crash_phase  9   uptime 7s
+reset_reason "other"  crash_phase 10   uptime 6s
+```
+
+Uptime never exceeds seven seconds. **The panel is not hanging, it is crash-looping** — dying
+and restarting roughly every ninety seconds, and the owner sees the black gap. That is the
+whole of "it keeps sporadically crashing", and it was visible on the box for hours.
+
+##### The field whose only job is to name the cause was falling off the end of its own table
+
+```c
+static const char *REASONS[] = {"unknown", "power", "ext", "sw", "panic", "int_wdt",
+                                "task_wdt", "wdt", "sleep", "brownout", "sdio"};
+```
+
+Eleven entries, 0–10. **ESP-IDF's enum runs to 15.** Everything above `sdio` printed `other`,
+and `other` is what a crash loop reported for hours. The five missing are `usb`, `jtag`,
+`efuse`, `pwr_glitch` and `cpu_lockup` — and `usb` is the prime suspect, because
+**ESP_RST_USB is what attaching a serial console to this panel does**: the exact hazard the
+telemetry route was built to route around, landing in the one bucket that could not name it.
+
+A diagnosis channel that cannot tell "the firmware crashed" from "someone plugged in a cable"
+is worse than no channel, because it invites the wrong fix. It ships now with all sixteen
+names **and the raw number beside the name**, so an enum that grows again says so rather than
+silently rejoining the bucket that cost a day.
+
+The restart line is also written to the console at boot, not only sent as telemetry. Telemetry
+needs the box, the network and the device key; the console needs a cable. Neither is reliable
+enough to be the only place a restart is recorded.
+
+##### Where it dies
+
+`crash_phase` is an `RTC_NOINIT_ATTR` breadcrumb, so it survives a reset (though not a power
+cycle — hence `-1` on the owner's two). Phases 6, 9 and 10 are `face_draw`, `blit_frame` and
+the idle `vTaskDelay`: three unrelated points in the loop, which is the signature of
+corruption or an external reset rather than one bad call.
+
+**The obvious suspect is the investigator.** Console attaches were frequent during this
+period and each one resets the panel. That is testable for free and without firmware: leave
+the panel completely alone and read only the box-side log. Recorded here because the answer
+changes what 0.2.50 should be, and because "my own instrument caused the fault I was chasing"
+is the fourth distinct instrumentation failure in this sequence, after the memory mode, the
+chunk sizes, the AGC mode and the mic gain (§10.4bb).
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

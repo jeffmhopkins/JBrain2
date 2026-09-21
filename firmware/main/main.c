@@ -78,12 +78,38 @@ static void apply_settings(const cfg_t *cfg)
 
 static void report(const cfg_t *cfg)
 {
-    static const char *REASONS[] = {"unknown", "power", "ext",  "sw",   "panic",  "int_wdt",
-                                    "task_wdt", "wdt",  "sleep", "brownout", "sdio"};
+    /* ALL SIXTEEN, AND THE NUMBER TOO. This table stopped at `sdio` (10) while ESP-IDF's
+       enum runs to 15, so every reason above it printed "other" — and "other" is what the
+       panel reported for a crash loop that rebooted it roughly every ninety seconds. The one
+       field whose entire job is to name the cause was falling off the end of its own lookup
+       and saying nothing.
+       The five that were missing are not exotic, and one of them is the prime suspect:
+       ESP_RST_USB is a reset by the USB peripheral, which is what attaching a serial console
+       to this panel does — the very hazard the telemetry route exists to work around. A
+       diagnosis channel that cannot distinguish "the firmware crashed" from "someone plugged
+       in a cable" is worse than none, because it invites the wrong fix.
+       The raw number ships beside the name so that an enum which grows again says so, rather
+       than silently rejoining the "other" bucket this cost a day to find. */
+    static const char *REASONS[] = {"unknown", "power",    "ext",       "sw",
+                                    "panic",   "int_wdt",  "task_wdt",  "wdt",
+                                    "sleep",   "brownout", "sdio",      "usb",
+                                    "jtag",    "efuse",    "pwr_glitch", "cpu_lockup"};
     const int r = (int)esp_reset_reason();
-    const char *reason = (r >= 0 && r < (int)(sizeof(REASONS) / sizeof(REASONS[0])))
-                             ? REASONS[r]
-                             : "other";
+    char reason_buf[24];
+    if (r >= 0 && r < (int)(sizeof(REASONS) / sizeof(REASONS[0]))) {
+        snprintf(reason_buf, sizeof(reason_buf), "%s(%d)", REASONS[r], r);
+    } else {
+        snprintf(reason_buf, sizeof(reason_buf), "unmapped(%d)", r);
+    }
+    const char *reason = reason_buf;
+
+    /* SAID ON THE CONSOLE AS WELL AS SENT. Telemetry reaches a human through the box's API
+       log, which is the right channel and was the one that finally caught the crash loop —
+       but it needs the box, the network and the device key all working. The console needs a
+       cable. Neither is reliable enough to be the only place the two numbers that identify a
+       restart are written down. */
+    ESP_LOGW(TAG, "restart: reason %s, crash phase %d, uptime %llu ms", reason,
+             display_crash_phase(), (unsigned long long)(esp_timer_get_time() / 1000));
 
     /* Raw counts, not a derived orientation: which axis points where on this board is
        exactly what is unknown, and a number this firmware has already interpreted cannot
