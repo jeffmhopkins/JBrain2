@@ -1378,9 +1378,20 @@ static void test_vocab_phrases_are_sayable(void)
                 words++;
             }
         }
-        /* Two words minimum: WakeNet is disabled, so a one-word phrase is always live and
-           fires at the television. */
-        CHECK(words >= 2, "every phrase is at least two words");
+        /* Two words minimum, and the exceptions are a NAMED LIST rather than a loosened
+           check. WakeNet is disabled, so a one-word phrase is always live and fires at the
+           television; these ten are here because the owner asked for them in these words and
+           they are what a four-year-old actually says. Naming them means the next single word
+           has to be argued for rather than slipped in beside these — which is the whole value
+           of a list over a loosened check, and the list has already grown once. */
+        static const char *const SINGLES[] = {"burp", "fart",  "dance", "jump", "wave",
+                                              "shake", "laugh", "eat",   "kick", "spin"};
+        bool allowed_single = false;
+        for (unsigned k = 0; k < sizeof(SINGLES) / sizeof(SINGLES[0]); k++) {
+            if (strcmp(p, SINGLES[k]) == 0) allowed_single = true;
+        }
+        CHECK(words >= 2 || allowed_single,
+              "a one-word phrase is one of the four the owner named");
     }
 }
 
@@ -1404,7 +1415,7 @@ static void test_vocab_has_no_ambiguity(void)
 static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
-    int forms = 0, actions = 0, colours = 0;
+    int forms = 0, actions = 0, colours = 0, named_colours = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -1417,6 +1428,11 @@ static void test_vocab_arguments_are_real(void)
             forms++;
             break;
         case VOCAB_COLOUR:
+            /* A named colour must land on a colour that EXISTS. "turn red" resolving past the
+               end of the palette would wrap to some other colour and look like the recogniser
+               mishearing — a bug that would be chased in the microphone for hours. */
+            CHECK(v[i].arg < face_colour_count(), "a named colour is in the palette");
+            if (v[i].arg >= 0) named_colours++;
             colours++;
             break;
         }
@@ -1427,6 +1443,9 @@ static void test_vocab_arguments_are_real(void)
        ostrich is the default, so "change into robot" is the only way back without five taps. */
     CHECK(forms >= 2, "both bodies can be asked for");
     CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
+    /* The owner asked for "turn [color]" by name, so a palette command that only ever steps
+       to the next colour no longer satisfies the request. */
+    CHECK(named_colours >= 6, "colours can be asked for by name, not only cycled");
 }
 
 /* ---- the caption ticker -------------------------------------------------------------- */

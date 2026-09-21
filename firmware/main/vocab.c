@@ -14,12 +14,37 @@ static const vocab_t VOCAB[] = {
     {"change into robot", VOCAB_FORM, FORM_ROBOT},
     {"be a robot", VOCAB_FORM, FORM_ROBOT},
 
+    /* THE SHORT FORMS, asked for by name: "burp", "fart", "dance", "jump". They break the
+       two-word rule in `vocab.h` and the reason that rule exists has not gone away — these
+       four are live in a room with a television in it. They are here because they are what a
+       four-year-old actually says, which beats a vocabulary that is safe and unused.
+
+       Each one forces a collision, because rule 3 forbids a phrase being a PREFIX of another:
+       "jump" would have made "jump up" unreachable and "dance" would have done the same to
+       "dance with me". So the long forms that collide are gone or reworded, and the ones that
+       merely CONTAIN the word ("do a dance", "do a burp") are untouched — those start with
+       "do" and collide with nothing. */
+    {"dance", VOCAB_ACTION, ACT_DANCE},
+    {"jump", VOCAB_ACTION, ACT_JUMP},
+    {"burp", VOCAB_ACTION, ACT_BURP},
+    {"fart", VOCAB_ACTION, ACT_FART},
+    {"wave", VOCAB_ACTION, ACT_WAVE},
+    {"shake", VOCAB_ACTION, ACT_SHIMMY},
+    {"laugh", VOCAB_ACTION, ACT_GIGGLE},
+    {"eat", VOCAB_ACTION, ACT_EAT},
+    {"kick", VOCAB_ACTION, ACT_KICK},
+    {"spin", VOCAB_ACTION, ACT_SPIN},
+
     {"do a dance", VOCAB_ACTION, ACT_DANCE},
-    {"dance with me", VOCAB_ACTION, ACT_BOP},
-    {"shake your body", VOCAB_ACTION, ACT_SHIMMY},
-    {"wave hello", VOCAB_ACTION, ACT_WAVE},
+    /* Was "dance with me", which "dance" is now a prefix of. Reworded rather than dropped so
+       bop keeps a voice — since 0.2.45 dance, bop and shimmy are three different animations
+       on the bird, not three names for one. */
+    {"come and boogie", VOCAB_ACTION, ACT_BOP},
+    /* Was "shake your body" and "wave hello", both of which the new one-word forms are a
+       prefix of. Reworded rather than dropped: two ways to ask is the point of having long
+       forms at all, since a four-year-old will say the one you did not think of. */
+    {"wiggle your body", VOCAB_ACTION, ACT_SHIMMY},
     {"say hello", VOCAB_ACTION, ACT_WAVE},
-    {"jump up", VOCAB_ACTION, ACT_JUMP},
     {"bounce around", VOCAB_ACTION, ACT_BOING},
     {"nod your head", VOCAB_ACTION, ACT_NOD},
     {"be silly", VOCAB_ACTION, ACT_WIGGLE},
@@ -39,8 +64,25 @@ static const vocab_t VOCAB[] = {
        The phrase is not prose — it is fed to MultiNet's English grapheme-to-phoneme pass,
        whose lexicon is American. The two spellings are the same sound; only one is looked
        up rather than guessed at. */
-    {"change your color", VOCAB_COLOUR, 0},
-    {"pick a new color", VOCAB_COLOUR, 0},
+    {"change your color", VOCAB_COLOUR, -1},
+    {"pick a new color", VOCAB_COLOUR, -1},
+
+    /* NAMED COLOURS. `arg` is a palette index into `face.c`'s PALETTE, and the two at the end
+       (red, blue) exist because this palette had no colour a child would give those names to:
+       its nearest red was a rose and its nearest blue a periwinkle. The rest map onto entries
+       that were already there and already look like their name.
+
+       "turn X" rather than bare "X": two words, so these obey the rule the four short action
+       words break, and no colour word is left live on its own in a room where someone might
+       simply say "white" or "orange" in conversation. */
+    {"turn red", VOCAB_COLOUR, 11},
+    {"turn blue", VOCAB_COLOUR, 12},
+    {"turn green", VOCAB_COLOUR, 7},
+    {"turn yellow", VOCAB_COLOUR, 3},
+    {"turn orange", VOCAB_COLOUR, 4},
+    {"turn pink", VOCAB_COLOUR, 8},
+    {"turn purple", VOCAB_COLOUR, 9},
+    {"turn white", VOCAB_COLOUR, 10},
 };
 
 const vocab_t *vocab_all(void)

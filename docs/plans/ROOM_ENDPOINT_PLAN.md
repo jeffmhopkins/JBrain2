@@ -2735,6 +2735,113 @@ whole sequence has been made of. So this version logs `p`, the raw decode and th
 and the floor lands in the next one, from a capture of phrases that are actually in the
 vocabulary.
 
+#### 10.4bg The words a four-year-old actually says (0.2.48, 2026-09-21)
+
+The owner, once three commands were confirmed working: *"as far as commands, we need
+`turn [color]`, `burp`, `fart`, `dance`, `jump`"*.
+
+Then, immediately after: *"wave, shake, laugh, eat, kick, spin"*. Ten single words in total.
+
+**They break a rule this vocabulary was built on**, and the rule is not wrong.
+`vocab.h` rule 2 requires two words because WakeNet is DISABLED — every phrase is always live,
+so a one-word vocabulary fires at the television. That is still true. It is relaxed here for
+exactly `burp`, `fart`, `dance` and `jump`, because they are what a four-year-old actually
+says, and a vocabulary that is safe and unused is not safer.
+
+The allowance is a **named list in the host suite**, not a loosened check:
+
+```c
+static const char *const SINGLES[] = {"burp", "fart",  "dance", "jump", "wave",
+                                      "shake", "laugh", "eat",   "kick", "spin"};
+```
+
+so the next single word has to be argued for rather than slipped in beside these — and the
+list grew from four to ten within one version, which is the argument for it being a list. The cost is
+paid in false triggers, which makes the missing confidence floor (§10.4bf) more urgent, not
+less: a vocabulary that fires more often and cannot say how sure it is fires more often *and*
+cannot say how sure it is.
+
+##### Each short form forced a collision
+
+Rule 3 forbids a phrase being a PREFIX of another, because the shorter becomes unreachable and
+the longer unreliable. `jump` collides with `jump up`; `dance` collides with `dance with me`.
+So do `wave`/`wave hello` and `shake`/`shake your body`. The colliding long forms are reworded
+rather than dropped, because two ways to ask is the point of having long forms at all — a
+four-year-old says the one you did not think of:
+
+| new short form | long form it collided with | reworded to |
+|---|---|---|
+| `dance` | `dance with me` | `come and boogie` |
+| `wave` | `wave hello` | dropped; `say hello` already covers it |
+| `shake` | `shake your body` | `wiggle your body` |
+| `jump` | `jump up` | dropped; `bounce around` already covers boing |
+
+`come and boogie` matters more than it looks: bop keeps a voice, and since §10.4bd dance, bop
+and shimmy are three different animations on the bird rather than three names for one.
+Phrases that merely CONTAIN the word are untouched — `do a dance` and `do a burp` start with
+"do" and collide with nothing.
+
+##### Three of the ten did not exist as animations
+
+`wave`, `shake` and `laugh` are new words for actions that were already there. `eat`, `kick`
+and `spin` are not.
+
+**`eat` is the clearest case for the bird channels (§10.4bd).** The robot eats with a hand —
+three trips to the mouth, because one reads as a mistake and three read as a meal. The ostrich
+**pecks the ground**, which is the single most recognisable thing an ostrich does and costs
+nothing this rig did not already have: `bob` down 78 px, `neck` forward, `tail` up as the head
+goes down. One action, two anatomies, which is exactly what those channels are for.
+
+**`kick` swings one leg, twice, and hard.** Negative `leg_r` swings the foot out to the right
+because the limb's x offset is `-sin(deg)`; the other leg stiffens to plant or the figure
+reads as falling over, and the arms counterbalance the way a kicking child's do.
+
+**`spin` had to be invented, because `rig.h` deliberately has no rotation:** *"Rotating a
+368x448 framebuffer per frame is a per-pixel resample this panel should not spend 25 times a
+second, and source-space rotation tears holes in filled shapes... `spin` is left out of the
+pools rather than faked badly."* That constraint has not changed.
+
+So the spin is the 2D trick instead: squash the figure horizontally to near nothing and back,
+twice, while a new `facing` channel flips — and the renderer **drops the eyes, the smile and
+the beak** for the half-turn the figure is away. The squash alone does not read as a turn; a
+face that stays put while the body narrows reads as the body being crushed. A silhouette with
+no face on it reads as a back. It costs one multiply on a scale the renderer already applies,
+and it never squashes past 8% width, because a figure one pixel wide is a gap in the middle of
+the screen rather than a character seen edge-on.
+
+Measured, largest change against idle and between consecutive frames:
+
+| | ostrich vs idle | ostrich frame-to-frame | robot vs idle | robot frame-to-frame |
+|---|---|---|---|---|
+| `eat` | 28,173 | 16,157 | 20,507 | 6,290 |
+| `kick` | 30,099 | 9,558 | 32,434 | 6,806 |
+| `spin` | 31,817 | 14,224 | **55,515** | 22,303 |
+
+`spin` on the robot is the largest change against idle of any action in the set, which is what
+squashing a whole figure does.
+
+##### The palette had no red and no blue
+
+`turn [color]` needs colours that can be NAMED, and this palette was designed as a set of
+pleasant tints rather than a set of names. Its nearest to red was `0xFF477E`, which a
+four-year-old calls pink; its nearest to blue was `0x6A7BFF`, a periwinkle. **A named colour
+command that produces a colour the child would give a different name to is worse than no
+command** — and it would be debugged in the microphone, because it presents as mishearing.
+
+So `0xFF3B30` and `0x3B82F6` are **appended**, at indices 11 and 12. Appended is the point:
+every index above them is a colour the tap cycle already visits in an approved order, and
+inserting would renumber them. The other six map onto entries that were already there and
+already look like their name.
+
+`VOCAB_COLOUR` now reads `arg`: below zero steps to the next colour, as "pick a new color"
+always did; at or above zero it lands on that palette index. The host suite checks every named
+colour is inside the palette, because `turn red` resolving past the end would wrap to some
+other colour and look, again, exactly like the recogniser mishearing.
+
+The whole table is now 38 phrases and **84 command words against MultiNet's limit of 200** —
+measured from the compiled table rather than counted by eye, after a text scan of `face.c`
+miscounted the palette by reading hex values out of a comment.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
