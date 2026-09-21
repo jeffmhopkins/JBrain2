@@ -505,6 +505,14 @@ void display_last_tap(int *x, int *y, int *zone)
    why it would have survived testing and corrupted the bar in the owner's bedroom. */
 static DMA_ATTR uint16_t s_strip[2][METER_W * METER_SPAN];
 
+/* Off until the box says otherwise — see `display_set_debug_overlay`. */
+static volatile bool s_debug_overlay;
+
+void display_set_debug_overlay(bool on)
+{
+    s_debug_overlay = on;
+}
+
 /* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
    getting the sign wrong costs one release and is obvious on sight, which is cheaper than
    waiting. 0.2.18 guessed `ay` and the panel's own telemetry settled it in one cycle:
@@ -666,6 +674,12 @@ static int s_shown;
 static void blit_meter(int level)
 {
     if (s_panel == NULL) return;
+    if (!s_debug_overlay) {
+        /* Zeroed rather than merely skipped, so switching the overlay on shows the room as it
+           is now instead of a peak the bar was holding when it was switched off. */
+        s_shown = 0;
+        return;
+    }
     if (level >= s_shown) {
         s_shown = level;
     } else {

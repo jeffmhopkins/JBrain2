@@ -2906,6 +2906,79 @@ changes what 0.2.50 should be, and because "my own instrument caused the fault I
 is the fourth distinct instrumentation failure in this sequence, after the memory mode, the
 chunk sizes, the AGC mode and the mic gain (§10.4bb).
 
+#### 10.4bi It was the console all along, and the meter becomes a switch (0.2.50, 2026-09-21)
+
+**A large share of the "sporadic crashing" was the investigator.** §10.4bh named `ESP_RST_USB`
+as the suspect — attaching a serial console resets this chip — and the test needed no
+firmware at all: stop attaching, and read only the box-side log. Telemetry posts once at boot
+and then every `CHECK_PERIOD_MS` (15 minutes), so a report at 6–7 s of uptime **is** a boot.
+
+| window | boots |
+|---|---|
+| 20:55–21:00, console attached repeatedly | **4** |
+| 21:01–21:06, panel left completely alone | **0** |
+
+Four reboots in four and a half minutes while being watched, none in five minutes when left
+alone. The panel was being reset by the instrument used to investigate why it kept resetting,
+and the field that would have said so was printing `other` (§10.4bh). It does not follow that
+every black screen the owner saw was this — they reported some with nothing attached — but the
+rate was inflated, and 0.2.49 will print `usb(11)` next time so the two can be told apart.
+
+##### The meter becomes a switch rather than furniture
+
+The owner: *"turn the audio meter on the left side to only be rendered if we enable a debug
+mode. It's not needed all the time."*
+
+The meter earned its place — `display.c`'s header argues it well, a microphone has no symptom
+and a bar that is always running answers "is it hearing anything" at a glance — and it is how
+the first successful decode was confirmed to be a voice rather than a number. But bring-up is
+over, and what it buys now is a green bar down the edge of a pet in a four-year-old's bedroom.
+The right end state for a diagnostic is a switch, not deletion, because the next time the
+microphone goes quiet the meter is the fastest answer in the building.
+
+`endpoint_settings.debug_overlay`, off by default: a debug overlay that defaults on is one
+nobody turns off. The absent case in the firmware's parser means OFF rather than "unchanged",
+or a panel that once had it on keeps it forever and the switch works in one direction only.
+
+**AND THE KNOBS HAD NO HANDLE.** `0206_endpoint_settings` moved volume, mic gain and
+brightness out of firmware constants specifically so the owner could change them without a
+build — and then nothing was ever built to change them *with*. No PWA screen, no command in
+`debug-connect.sh`, nothing. They have been settable in principle and unreachable in practice
+since the day they shipped, which is exactly the terminal dependency `CLAUDE.md` #10 exists to
+design out rather than an inconvenience to note. `scripts/debug-connect.sh panel-settings`
+closes it for all four; a PWA control is still owed.
+
+##### The one setting on this chip nobody had ever read
+
+The owner: *"I don't know if Gain is automatic but it seems like when it beeps that it kind of
+rails the audio gain meter for 4 to 5 seconds after it beeps."*
+
+Two candidates, and this firmware could answer for neither:
+
+- **The ES8311 has its own ALC** — an automatic gain control in the codec, ahead of anything
+  the firmware can see. `es8311.c` writes REG1B and REG1C (automute, HPF) and **never writes
+  REG18, the register that enables it.** So ALC has been at the chip's reset default since the
+  first bring-up, and seconds of gain ramp after a loud sound is exactly what an ALC release
+  does. The front end's own AGC was already off (§10.4bb) — a different knob entirely, and
+  checking it proved nothing about this one.
+- **`es8311.c` also sets REG44 = 0x58**, which the driver's own comment calls the "internal
+  reference signal (ADCL + DACR)": the DAC deliberately routed into the ADC. **The panel is
+  wired to hear its own speaker.**
+
+`alc_settle()` reads REG18, logs what it actually was, clears the enable bit while preserving
+the window size, and **reads it back** — `0xXX -> 0xXX (off)` or `STILL ON`. It runs from the
+audio task, because that task owns the codec and a register poke from anywhere else is the
+race that panicked a panel (§10.4al).
+
+The memory mode, the chunk sizes, the AGC mode and the mic gain were each a value this
+firmware set and never read back, and every wrong diagnosis in this sequence traced to that
+(§10.4bb). This is the fifth, and it was never set at all — which is worse, because a default
+nobody chose is indistinguishable from a decision until someone reads the register.
+
+Separately and regardless of which it is: **the panel now stops listening to itself.** Six
+chunks of deafness after the speaker runs, covering the 90 ms beep and a tail. Feeding our own
+tone to the recogniser is not merely noise, it is a false trigger with a loudspeaker behind it.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

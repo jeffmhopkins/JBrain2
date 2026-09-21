@@ -74,6 +74,7 @@ static void apply_settings(const cfg_t *cfg)
     if (ota_fetch_settings(cfg, &st) != ESP_OK) return;
     if (st.volume >= 0 || st.mic_gain_db >= 0) audio_set_levels(st.volume, st.mic_gain_db);
     if (st.brightness >= 0) display_set_brightness(st.brightness);
+    display_set_debug_overlay(st.debug_overlay != 0);
 }
 
 static void report(const cfg_t *cfg)

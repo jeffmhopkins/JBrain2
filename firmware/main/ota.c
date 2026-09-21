@@ -97,9 +97,14 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(root, "volume");
     const cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "mic_gain_db");
     const cJSON *b = cJSON_GetObjectItemCaseSensitive(root, "brightness");
+    const cJSON *d = cJSON_GetObjectItemCaseSensitive(root, "debug_overlay");
     if (cJSON_IsNumber(v)) out->volume = v->valueint;
     if (cJSON_IsNumber(g)) out->mic_gain_db = g->valueint;
     if (cJSON_IsNumber(b)) out->brightness = b->valueint;
+    /* A box that predates the column sends no field at all, and the absent case has to mean
+       OFF rather than "leave it as it was" — otherwise a panel that once had the overlay on
+       keeps it forever and the switch only works in one direction. */
+    out->debug_overlay = cJSON_IsTrue(d) ? 1 : 0;
     cJSON_Delete(root);
 
 done:
