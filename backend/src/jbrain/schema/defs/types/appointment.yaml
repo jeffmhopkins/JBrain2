@@ -14,7 +14,19 @@ predicates:
     value_shape: date              # binds a point/range temporal token
     kind: state
     functional: true
-    renamed_from: [scheduled_time, appointmentTime]
+    # The drift spellings a model reaches for when it is writing the time of an
+    # appointment. They are here rather than tolerated downstream because the
+    # normalization map is what the DOMAIN FLOOR and supersession are keyed on, so a
+    # time filed under an un-normalized name is functional-against-nothing. MEASURED:
+    # the ingest agent wrote `startsAt` for "my cardiology appointment for tomorrow is
+    # actually at 12:45" and the appointment never reached the calendar.
+    # `startDate` is deliberately ABSENT: it is the Temporal facet's own canonical
+    # predicate (facets.yaml), which this type includes, so aliasing it here would have
+    # two canonicals claiming one name — the loader refuses that, and rightly. The
+    # projection reads it directly instead.
+    renamed_from:
+      [scheduled_time, appointmentTime, startsAt, startTime, startsOn, scheduledAt,
+       scheduledFor, appointmentDate]
     schema_org_ref: schema:startDate
   - canonical_name: attendee
     value_shape: ref

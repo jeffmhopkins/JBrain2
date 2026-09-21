@@ -370,6 +370,100 @@ def test_a_bare_clock_time_is_read_in_the_notes_zone_not_utc() -> None:
     assert gw._temporal("2026-03-14", anchor, -420).resolved_start.utcoffset() == gw.timedelta(0)  # type: ignore[union-attr]
 
 
+ANCHOR = gw.datetime(2026, 9, 21, tzinfo=gw.UTC)
+
+
+def _sharpen(when: str, obj: str, *, shape: str | None = "date", tz: int | None = -240):
+    """`_sharpened` over a `when` that parsed — the only state it acts on.
+
+    It never returns None here (it passes its input through when it declines, and the
+    input is a parsed `when`), so the asserts narrow for the reader as much as for the
+    type checker."""
+    out = gw._sharpened(
+        gw._temporal(when, ANCHOR, tz),
+        value_shape=shape,
+        literal=obj,
+        anchor=ANCHOR,
+        tz_offset_minutes=tz,
+    )
+    assert out is not None and out.resolved_start is not None
+    return out
+
+
+def _start(out) -> gw.datetime:  # noqa: ANN001
+    """`resolved_start`, narrowed — the assert inside `_sharpen` does not travel across
+    the return, so a caller reading a field off it needs its own."""
+    assert out.resolved_start is not None
+    return out.resolved_start
+
+
+def test_a_date_shaped_objects_clock_sharpens_the_day_the_phrase_resolved_to() -> None:
+    """The live bug. The ingest agent put the PHRASE in `when` ("tomorrow" → the day
+    2026-09-22) and the VALUE in `object` ("2026-09-22T12:45"), so the binding resolved
+    to midnight and a 12:45 appointment reached the calendar as an all-day Tuesday.
+
+    Resolved here rather than by a reader because only this layer holds the note's
+    offset: 12:45 spoken at UTC-04:00 is 16:45Z, and 12:45Z is a different appointment."""
+    out = _sharpen("2026-09-22", "2026-09-22T12:45")
+    assert out.precision == "instant"
+    assert out.resolved_start == gw.datetime(
+        2026, 9, 22, 12, 45, tzinfo=gw.timezone(gw.timedelta(minutes=-240))
+    )
+
+
+def test_an_object_never_dates_a_fact_the_model_left_undated() -> None:
+    """Only sharpens, never dates. An object that began setting `valid_from` would
+    re-key supersession — validity-newest-wins — for every date-shaped predicate, so a
+    `birthDate` would order by the birth date. That is a far larger change than the bug."""
+    assert (
+        gw._sharpened(
+            None,
+            value_shape="date",
+            literal="1980-05-12",
+            anchor=ANCHOR,
+            tz_offset_minutes=-240,
+        )
+        is None
+    )
+
+
+def test_a_when_that_already_carries_the_clock_is_never_second_guessed() -> None:
+    """Strictly finer only. `when` may carry an explicit offset the bare object lacks,
+    so an equally-precise object must not displace it."""
+    out = _sharpen("2026-09-22T13:00:00", "2026-09-22T12:45")
+    assert _start(out).hour == 13
+
+
+def test_an_object_naming_a_different_day_is_a_disagreement_not_a_refinement() -> None:
+    """ "1300" in "actually at 12:45 for a 1300 appointment" is the shape that makes this
+    matter: when the object is not a restatement of the period `when` named, the phrase
+    the note actually used wins."""
+    out = _sharpen("2026-09-22", "2026-09-29T12:45")
+    assert out.precision == "day"
+    assert _start(out).day == 22
+
+
+def test_an_evening_appointment_west_of_utc_still_counts_as_the_same_day() -> None:
+    """The period check compares each reading in its OWN zone. A day binding is anchored
+    at UTC midnight of the label; 20:00 at UTC-10:00 is the next day in UTC, and
+    comparing the two as UTC instants would reject a genuine refinement."""
+    out = _sharpen("2026-09-22", "2026-09-22T20:00", tz=-600)
+    assert out.precision == "instant"
+
+
+def test_only_a_date_shaped_predicate_has_its_object_read_as_a_time() -> None:
+    """A `text`/`quantity`/unknown predicate's object is a VALUE that may happen to look
+    like a date; reading it as the binding would re-date facts on the model's spelling."""
+    out = _sharpen("2026-09-22", "2026-09-22T12:45", shape="text")
+    assert out.precision == "day"
+    assert _sharpen("2026-09-22", "2026-09-22T12:45", shape=None).precision == "day"
+
+
+def test_an_unparseable_object_leaves_the_binding_alone() -> None:
+    out = _sharpen("2026-09-22", "sometime after lunch")
+    assert out.precision == "day"
+
+
 def test_a_date_that_is_not_a_date_raises_for_the_caller_to_report() -> None:
     """The caller records the fact UNDATED and says so in the result. A fact is not
     worth losing over its date."""

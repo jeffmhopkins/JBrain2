@@ -7,6 +7,7 @@ distinct appointments make two rows, a restatement stays one, a dropped time
 removes the row, and a purge reverts/cascades the projection.
 """
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -252,12 +253,49 @@ async def test_direct_projection_carries_rrule_and_explicit_status(
     assert rows[0]["starts_at"] == start
 
 
+_DEFAULT_START = datetime(2026, 7, 1, 16, 0, tzinfo=UTC)
+
+
+async def _seed_time_fact(
+    s,  # noqa: ANN001
+    eid: uuid.UUID,
+    note_id: uuid.UUID,
+    *,
+    predicate: str = "scheduledTime",
+    start: datetime = _DEFAULT_START,
+    precision: str = "instant",
+) -> None:
+    """One active time-carrying fact on an existing appointment entity. The predicate is
+    a parameter because which SPELLING a note's time arrives under is exactly what the
+    projection has to tolerate."""
+    await s.execute(
+        text(
+            "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+            " assertion, valid_from, reported_at, temporal_precision, note_id, extractor,"
+            " prompt_version, domain_code) VALUES (gen_random_uuid(), :e, :pred,"
+            " 'state', 'Visit', :v, 'expected', :t, :t, :p, :n, 'x', '1', 'general')"
+        ),
+        {
+            "e": str(eid),
+            "n": str(note_id),
+            "pred": predicate,
+            "t": start,
+            "p": precision,
+            "v": json.dumps({"start": start.isoformat()}),
+        },
+    )
+
+
 async def _seed_appointment(
-    s, *, precision: str = "instant", kind: str = "appointment"
+    s,
+    *,
+    precision: str = "instant",
+    kind: str = "appointment",
+    predicate: str = "scheduledTime",
+    start: datetime = _DEFAULT_START,
 ) -> tuple[uuid.UUID, uuid.UUID]:
-    """A note + appointment entity + one active scheduledTime fact. Returns
+    """A note + appointment entity + one active time fact. Returns
     (entity_id, note_id). Runs on an owner session `s`."""
-    start = datetime(2026, 7, 1, 16, 0, tzinfo=UTC)
     eid, note_id = uuid.uuid4(), uuid.uuid4()
     await s.execute(
         text(
@@ -273,21 +311,7 @@ async def _seed_appointment(
         ),
         {"i": str(eid), "k": kind},
     )
-    await s.execute(
-        text(
-            "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
-            " assertion, valid_from, reported_at, temporal_precision, note_id, extractor,"
-            " prompt_version, domain_code) VALUES (gen_random_uuid(), :e, 'scheduledTime',"
-            " 'state', 'Visit', :v, 'expected', :t, :t, :p, :n, 'x', '1', 'general')"
-        ),
-        {
-            "e": str(eid),
-            "n": str(note_id),
-            "t": start,
-            "p": precision,
-            "v": '{"start": "2026-07-01T16:00:00+00:00"}',
-        },
-    )
+    await _seed_time_fact(s, eid, note_id, predicate=predicate, start=start, precision=precision)
     return eid, note_id
 
 
@@ -375,6 +399,65 @@ async def test_event_kind_with_a_scheduled_time_also_projects(maker: async_sessi
         await project_appointments(s, {eid})
         await s.commit()
     assert len(await _appointments(maker)) == 1
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "startsAt",  # what the live ingest agent wrote for the owner's cardiology note
+        "startTime",
+        "startDate",  # the Temporal FACET's canonical — appointment.yaml includes Temporal
+    ],
+)
+async def test_a_time_under_another_spelling_still_projects(
+    maker: async_sessionmaker, predicate: str
+) -> None:
+    """The projection reads the notes, not one blessed spelling.
+
+    `renamed_from` rewrites the drift spellings at WRITE time, so a fact written today
+    arrives canonical — but that leaves two gaps this covers. Rows written BEFORE a
+    rename entry existed keep the old spelling (the owner's only appointment was one),
+    and `startDate` can never be renamed at all: it is the Temporal facet's own canonical
+    predicate, so aliasing it onto `scheduledTime` would have two canonicals claiming one
+    name. Both are correct statements of when an appointment is, and both used to project
+    nothing — which is what `read_appointments` reports as "No appointments in scope".
+    """
+    start = datetime(2026, 9, 22, 16, 45, tzinfo=UTC)
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, _ = await _seed_appointment(s, predicate=predicate, start=start)
+        await project_appointments(s, {eid})
+        await s.commit()
+    rows = await _appointments(maker)
+    assert len(rows) == 1
+    assert rows[0]["starts_at"] == start
+
+
+async def test_the_most_specific_spelling_wins_when_a_note_used_two(
+    maker: async_sessionmaker,
+) -> None:
+    """Supersession leaves at most one active fact PER PREDICATE, so two spellings on one
+    entity are two live rows and the projection has to choose. It prefers the type's own
+    `scheduledTime` over a facet or drift spelling — most specific first — rather than
+    letting validity order decide, which would make the calendar depend on which sentence
+    of a note the extractor read second."""
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        eid, note_id = await _seed_appointment(
+            s, predicate="startsAt", start=datetime(2026, 9, 22, 9, 0, tzinfo=UTC)
+        )
+        await _seed_time_fact(
+            s,
+            eid,
+            note_id,
+            predicate="scheduledTime",
+            start=datetime(2026, 9, 22, 16, 45, tzinfo=UTC),
+        )
+        await project_appointments(s, {eid})
+        await s.commit()
+    rows = await _appointments(maker)
+    assert len(rows) == 1
+    assert rows[0]["starts_at"] == datetime(2026, 9, 22, 16, 45, tzinfo=UTC)
 
 
 async def test_active_time_with_no_resolvable_start_removes_row(

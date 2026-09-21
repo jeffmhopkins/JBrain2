@@ -83,8 +83,15 @@ def test_format_appointments_shows_when_tags_and_id() -> None:
     assert "Eye exam — 2026-06-15 14:00 [general] id=A2" in out
 
 
-def test_format_appointments_empty() -> None:
-    assert format_appointments([]) == "No appointments in scope."
+def test_format_appointments_empty_sends_the_model_to_the_notes() -> None:
+    """An empty read is the moment the whole answer is decided, and a bare negative
+    decides it wrong: the agent read one, never searched, and asked the owner the
+    question he had just asked it. The line has to name the projection for what it is
+    and say what to do next, because nothing else is in front of the model here."""
+    out = format_appointments([])
+    assert "projection" in out
+    assert "SEARCH THE NOTES" in out
+    assert "never ask the owner" in out
 
 
 def test_format_appointments_all_day_shows_date_only() -> None:
@@ -177,7 +184,7 @@ async def test_read_appointments_include_past_and_cancelled_widen_the_window() -
     out = await handlers(fake)["read_appointments"](
         {"include_past": True, "include_cancelled": True}, CTX
     )
-    assert out == "No appointments in scope."
+    assert "SEARCH THE NOTES" in str(out)
     _kind, _session, since, _until, include_cancelled = fake.calls[0]
     assert since is None and include_cancelled is True
 

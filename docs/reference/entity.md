@@ -423,7 +423,11 @@ parentheses. 🔒 marks the firewall a category floors into.
 - **Appointment / Event** *(graph entity now; typed `appointments` P4;
   iCalendar VEVENT)* — facets: Named, Temporal, Recurrence, Located, Lifecycle,
   Related. Core: `name`, `scheduledTime` (token binding; schedule supersession
-  **[decided: ANALYSIS]**), `recurrence` token, `attendee` (refs), `status`
+  **[decided: ANALYSIS]**; `renamed_from` attracts the spellings a model reaches
+  for — `startsAt`, `startTime`, `scheduledFor`… — because the appointments
+  projection, the domain floor and supersession are all keyed on the normalized
+  name, and a time filed under a drift spelling reached none of them),
+  `recurrence` token, `attendee` (refs), `status`
   (`tentative|confirmed|cancelled` + occurred flag). Identity: the entity +
   `(uid, recurrenceId)` for an occurrence. Domain: general; clinical reason may
   ratchet to health.
