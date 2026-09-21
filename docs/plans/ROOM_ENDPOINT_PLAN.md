@@ -2045,14 +2045,51 @@ So the models ship FIRST, before any code that uses them:
   linker drops it, and the app image is **byte-identical** — verified against the committed
   hash. What the dependency produces is `srmodels.bin` and nothing else.
 - `firmware/dist/` carries it, `scripts/firmware-dist.sh` copies it, and the `firmware` CI job
-  diffs it byte-for-byte like the rest. It is the one image in that set not built *from* this
-  source, which is exactly why it needs the check: nothing else would notice it going stale.
+  checks it — **by content, not by bytes**, for the reason below. It is the one image in that
+  set not built *from* this source, which is exactly why it needs a check: nothing else would
+  notice it going stale.
 - `ARTIFACT_IMAGES` gains `srmodels.bin -> 0xaa0000`, so it rides the flash path that already
   exists, last in offset order.
 
 **Cost recorded honestly.** The esp-sr component is 308 MB and the clean firmware build goes
 from about 50 s to 1 m 55 s locally; CI will also pay the download. That is the price of the
 models being verifiable rather than a committed blob nobody checks.
+
+#### 10.4as `srmodels.bin` is not reproducible, and the check had to change (2026-09-21)
+
+The first CI run on the models failed: `MISMATCH: firmware/dist/srmodels.bin`. The blob CI
+built was **exactly the same size** as the committed one — 3,052,231 bytes — and differed in
+2.9 million of them.
+
+Not a stale commit, and not a different esp-sr: the lock pins 2.5.4 on both sides. Downloading
+CI's own artifact and diffing the headers showed it immediately — CI wrote `mn7_en` first, this
+machine wrote `fst` first. `model/pack_model.py` collects models with `os.walk` and never
+sorts, so **the order is whatever the filesystem hands back**, and one reordered model shifts
+every offset after it.
+
+`CONFIG_APP_REPRODUCIBLE_BUILD=y` is what makes the byte-for-byte check possible for the other
+three images, and it cannot help here: this is not our build. Three builds on this machine give
+the same hash; a build on a different machine does not.
+
+**So the check compares contents instead of layout.** `scripts/srmodels-inventory.py` parses
+the header — the format is four bytes of model count, then a 32-byte name and file count per
+model, then a 32-byte name plus offset and length per file — and prints every file as
+`model/file sha256 length`, sorted. CI diffs that inventory against the committed blob's.
+
+That is byte-for-byte equality modulo an ordering nobody chose, and it still catches everything
+the original check was for: a wrong wake word, a missing model, a truncated file, a stale
+commit. Verified both ways before pushing — the real CI blob passes, and flipping a single byte
+inside `mn7_data` fails with the offending file named.
+
+`SHA256SUMS` keeps its `srmodels.bin` line, because the api verifies images against it at flash
+time and that guarantee (this committed file is not truncated or corrupt) is real and separate.
+CI just checks that line against the committed blob rather than against its own build.
+
+**The general lesson, and it is the session's fourth:** "the same source must produce the same
+bytes" was a property of images we build with a flag that guarantees it. Extending the rule to
+a vendor artifact assumed the guarantee came with it. The failure was loud and cost one CI
+round, which is the cheap way to find out — but the assumption was the same shape as every
+other one this investigation has had to unwind.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 

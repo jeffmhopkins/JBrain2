@@ -219,8 +219,15 @@ This image changes only if the wake word or the model generation does.
 
 It is command-word recognition — up to 200 phrases, under 500 ms, offline — **not dictation**.
 
+**It is checked by content, not by bytes.** esp-sr's packer collects models with `os.walk` and
+never sorts, so two correct builds of the identical models differ in nearly every byte while
+being exactly the same size — CI wrote `mn7_en` first, this machine wrote `fst` first.
+`scripts/srmodels-inventory.py` prints every file as `model/file sha256 length`, sorted, and CI
+diffs that. Byte-for-byte equality modulo an ordering nobody chose, and it still catches a wrong
+wake word, a missing model or a truncated file (§10.4as).
+
 Cost: esp-sr is 308 MB and a clean build goes from ~50 s to ~2 min. That buys a `srmodels.bin`
-CI verifies byte-for-byte instead of a committed blob nobody checks.
+CI verifies instead of a committed blob nobody checks.
 
 ## The two things that make "cable once" true
 

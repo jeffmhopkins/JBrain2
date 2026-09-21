@@ -74,14 +74,10 @@ jobs:
           cp firmware/build/jbrain-endpoint.bin out/
           cp firmware/build/bootloader/bootloader.bin out/
           cp firmware/build/partition_table/partition-table.bin out/
-          # The speech models. Not built from this source — esp-sr packs them for the wake
-          # word and command model `sdkconfig.defaults` selects — but committed for the same
-          # reason as the rest: they are what a panel gets flashed, and OTA can never deliver
-          # them, so a stale `srmodels.bin` is a model partition nobody would notice was wrong.
           cp firmware/build/srmodels/srmodels.bin out/
           ( cd out && sha256sum ./*.bin | sed 's| \./| |' > SHA256SUMS )
           echo "version=$(cat firmware/version.txt)" >> "$GITHUB_STEP_SUMMARY"
-          for f in bootloader.bin partition-table.bin jbrain-endpoint.bin srmodels.bin; do
+          for f in bootloader.bin partition-table.bin jbrain-endpoint.bin; do
             if ! cmp -s "out/$f" "firmware/dist/$f"; then
               {
                 echo "### firmware/dist/$f is not what this source builds"
@@ -97,9 +93,37 @@ jobs:
               exit 1
             fi
           done
+          # THE MODELS ARE CHECKED BY CONTENT, NOT BY BYTES, AND THAT IS NOT A WEAKER CHECK.
+          # esp-sr's packer (`model/pack_model.py`) collects models with `os.walk` and never
+          # sorts, so the order they land in is filesystem-dependent: two correct builds of
+          # the identical models differ in nearly every byte while being exactly the same
+          # size. `CONFIG_APP_REPRODUCIBLE_BUILD` cannot help — it is not our build. So the
+          # comparison is every model, every file in it, and the SHA-256 of each file's
+          # bytes: byte-for-byte equality modulo an ordering nobody chose. It still catches
+          # a wrong wake word, a missing model, a truncated file or a stale commit.
+          if ! diff -u <(python3 scripts/srmodels-inventory.py firmware/dist/srmodels.bin) \
+                       <(python3 scripts/srmodels-inventory.py out/srmodels.bin); then
+            {
+              echo "### firmware/dist/srmodels.bin does not hold the models this source selects"
+              echo
+              echo 'Rebuild and commit it:'
+              echo '```'
+              echo '. ~/esp-idf/export.sh && (cd firmware && idf.py build)'
+              echo 'scripts/firmware-dist.sh'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "MISMATCH: firmware/dist/srmodels.bin (contents)" >&2
+            exit 1
+          fi
           # The checksum file the api verifies against at flash time, so it cannot drift
-          # away from the images sitting beside it either.
-          diff -u firmware/dist/SHA256SUMS out/SHA256SUMS
+          # away from the images sitting beside it either. `srmodels.bin` is excluded from
+          # the diff for the ordering reason above and checked against the COMMITTED blob
+          # instead — which is exactly what the api verifies at flash time, so the guarantee
+          # the sum file actually provides (this file is not truncated or corrupt) is intact.
+          grep -v ' srmodels.bin$' firmware/dist/SHA256SUMS > dist.sums
+          grep -v ' srmodels.bin$' out/SHA256SUMS > out.sums
+          diff -u dist.sums out.sums
+          ( cd firmware/dist && grep ' srmodels.bin$' SHA256SUMS | sha256sum -c - )
           echo "firmware/dist/ matches this build" >> "$GITHUB_STEP_SUMMARY"
 
       # Kept so a mismatch can be inspected rather than only asserted.
