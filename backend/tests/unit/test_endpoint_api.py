@@ -36,6 +36,7 @@ SIDECAR = "http://endpoint:8000"
 ARTIFACT_NAMES = (
     "bootloader.bin",
     "partition-table.bin",
+    "ota_data_initial.bin",
     "jbrain-endpoint.bin",
     "srmodels.bin",
 )
@@ -508,7 +509,12 @@ class TestFirmwareFromTheCheckout:
 
         offsets = [int(img["offset"], 16) for img in sent[-1]["images"]]
         assert offsets == sorted(offsets)
-        assert offsets == [0x0, 0x8000, 0x20000, 0xAA0000]
+        # 0xF000 is `otadata`, and it is in the set because a USB flash writes `factory`
+        # while a panel that has ever been OTA'd is pointed at an OTA slot — so without it
+        # the panel boots the image this flash was meant to replace. The app partitions
+        # were resized on 2026-09-21, which turned that from stale into a slot at the wrong
+        # offset entirely.
+        assert offsets == [0x0, 0x8000, 0xF000, 0x20000, 0xAA0000]
 
     def test_the_speech_models_are_written_because_ota_can_never_deliver_them(
         self,

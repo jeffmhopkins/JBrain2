@@ -2124,6 +2124,76 @@ the one number the owner uses to tell whether an update landed) and it named the
 could not do is say *why*, and two rounds went into a difference that the app descriptor
 answers immediately. A failing image comparison should be read at 0x20 first.
 
+#### 10.4av The panel listens, and the repartition that cost (2026-09-21)
+
+> *"where we at now with the voice to text recognition I would still prefer to have it so that
+> it'll just try and listen to the microphone and put text scrolling on the bottom as it
+> recognizes it"*
+
+Built, with the limit stated rather than papered over. **MultiNet resolves a list; it does not
+transcribe.** `firmware/main/vocab.c` holds 23 phrases and the model answers with *which one*
+it heard, offline, in under half a second. The open-vocabulary alternative is Whisper tiny int8
+at ~75 MB against 8 MB of PSRAM (§10.4ar) — two orders of magnitude, not a tuning problem. So
+the ticker shows the phrase the model resolved and shows **nothing** when it resolved nothing:
+a four-year-old can read a miss and cannot read an invention, and a hallucinated command the
+robot then acts on reads as the toy being broken.
+
+**No wake word**, because "just try and listen" was the request. That single decision shapes
+everything else. Every phrase is always live, so each is two words minimum — a one-word
+always-on vocabulary fires at the television — lowercase a-z only (the grapheme-to-phoneme
+pass silently refuses anything else, leaving the panel deaf to exactly one thing with nothing
+on screen to say so), and no phrase a prefix of another. The host suite enforces all three,
+plus that every letter in the vocabulary has a glyph and that no two glyphs draw the same
+shape: the alphabet was hand-entered this session, and a copy-pasted bitmap is invisible until
+someone reads a word on the glass.
+
+The one-owner rule extends unchanged: `audio.c` already owns the codec, so it is the only
+caller of `speech_feed`, which accumulates to the front end's chunk size (not the capture's
+40 ms) and hands off. MultiNet runs pinned to **core 1**; core 0 carries Wi-Fi. There is no
+AEC, and not by choice — one ES8311 and no ES7210 means no reference channel (§10.5 A), so the
+front end is told `"M"` rather than handed a fake channel to cancel against silence.
+
+The red dot beside the ticker is the **ICO Children's Code recording indicator**, asserted by
+three tests against the real state: present whenever the microphone is open, brighter while
+someone is talking, absent when it is not. "Muted is a promise" now has something keeping it.
+
+##### And then it did not fit
+
+Linking esp-sr took the app from 1.16 MB to **3.05 MB**. `factory` was 1.5 MB — and `factory`
+is exactly where a USB flash writes. `idf.py build` reports this as a **warning** and exits
+zero, so a build that could not be flashed onto a panel at all still looked successful.
+
+The app slots are now 3.5 MB each, equal by construction. The 3 MB came from the OTA slots
+(4.5 → 3.5), which means **`model` and `storage` keep their exact offsets** — worth arranging
+deliberately, because every constant that moves is another place a panel can be bricked from
+and the box's flasher hardcodes `MODEL_OFFSET`. Headroom is 12.9% per slot.
+
+**A resize makes `otadata` mandatory on every USB flash, and it was not being written.** A
+panel that has ever been OTA'd has `otadata` naming an OTA slot; a USB flash writes `factory`,
+so the panel would ignore the image just written. That was survivable while the layout was
+fixed and is not survivable across a resize, because the stale pointer now names a slot at a
+*new* offset holding the middle of an old image — the cable this design exists to avoid.
+`ota_data_initial.bin` now ships in `dist/` and the flasher writes it at `0xf000`.
+
+`test_two_full_size_ota_slots_survive` asserted `>= 4 MiB` and had to change, which is the
+right moment to notice that a size constant was standing in for something else. What has to be
+true is that **every app slot is bigger than the image that actually ships**, so that is now
+asserted against the committed bytes, alongside no-gaps-or-overlaps and all three slots equal.
+Each was confirmed to fail against a deliberately broken table before being kept.
+
+##### A path filter hid a stale test for six versions
+
+`supervisor/tests/test_deploy_scripts.py` asserts that `firmware/dist/SHA256SUMS` names exactly
+the images the box flashes — and it still named three when `srmodels.bin` had been there since
+0.2.31. It never failed, because the `supervisor` job is gated on a path filter that lists
+`supervisor/**` and `deploy/sdr/**` and says nothing about `firmware/`. A firmware-only PR
+skipped the whole job. The filter now includes `firmware/dist/**` and `firmware/partitions.csv`.
+
+The general shape, and it is worth carrying: **a path filter encodes where the code is, and a
+test's subject is not always where the test lives.** The same file also asserts the recovery
+offsets in `partitions.csv` against the api's constants — the exact thing this section changed,
+in a job that a firmware-only PR would not have run.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

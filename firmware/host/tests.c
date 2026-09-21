@@ -8,17 +8,21 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "calib.h"
+#include "caption.h"
 #include "emotion.h"
 #include "face.h"
-#include "calib.h"
+#include "font.h"
 #include "gesture.h"
 #include "rig.h"
 #include "variants.h"
+#include "vocab.h"
 
 static int checks;
 #define CHECK(c, msg)                                            \
@@ -1213,6 +1217,236 @@ static void test_gesture_cue(void)
     CHECK(c > 0.0f && c < 1.0f, "the cue grows during the hold");
 }
 
+/* ---- the vocabulary -----------------------------------------------------------------
+ *
+ * `vocab.c` states three rules its phrases obey and this is where they are enforced, because
+ * NOTHING ELSE CAN NOTICE. A phrase MultiNet refuses is dropped at boot with a log line
+ * nobody is reading; from the room the panel is simply deaf to that one thing, which looks
+ * exactly like a broken microphone. */
+
+static void test_vocab_phrases_are_sayable(void)
+{
+    const vocab_t *v = vocab_all();
+    CHECK(vocab_count() > 0, "there is a vocabulary");
+    /* MultiNet7 English takes ~200 phrases; with no wake word every one of them is live, so
+       the practical limit is much lower than the model's. */
+    CHECK(vocab_count() <= 60, "the always-on vocabulary stays small enough to not misfire");
+    for (int i = 0; i < vocab_count(); i++) {
+        const char *p = v[i].phrase;
+        int words = 1;
+        CHECK(p != NULL && p[0] != '\0', "every entry has a phrase");
+        CHECK(p[0] != ' ', "no phrase starts with a space");
+        for (const char *c = p; *c; c++) {
+            /* Lowercase a-z and spaces ONLY: the grapheme-to-phoneme pass takes words, and a
+               digit, apostrophe or capital is refused silently. */
+            CHECK((*c >= 'a' && *c <= 'z') || *c == ' ', "phrases are lowercase letters and spaces");
+            if (*c == ' ') {
+                CHECK(c[1] != ' ' && c[1] != '\0', "no double or trailing spaces");
+                words++;
+            }
+        }
+        /* Two words minimum: WakeNet is disabled, so a one-word phrase is always live and
+           fires at the television. */
+        CHECK(words >= 2, "every phrase is at least two words");
+    }
+}
+
+static void test_vocab_has_no_ambiguity(void)
+{
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        for (int j = 0; j < vocab_count(); j++) {
+            if (i == j) continue;
+            CHECK(strcmp(v[i].phrase, v[j].phrase) != 0, "no phrase is listed twice");
+            /* Nor a prefix of another: the shorter becomes unreachable and the longer
+               unreliable, and neither failure says which one it is. */
+            const size_t n = strlen(v[i].phrase);
+            CHECK(!(strlen(v[j].phrase) > n && strncmp(v[i].phrase, v[j].phrase, n) == 0 &&
+                    v[j].phrase[n] == ' '),
+                  "no phrase is a prefix of another");
+        }
+    }
+}
+
+static void test_vocab_arguments_are_real(void)
+{
+    const vocab_t *v = vocab_all();
+    int forms = 0, actions = 0, colours = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        switch (v[i].kind) {
+        case VOCAB_ACTION:
+            CHECK(v[i].arg > ACT_NONE && v[i].arg < ACT_COUNT, "an action command names a real action");
+            CHECK(rig_spec((action_t)v[i].arg)->dur_ms > 0, "and one with a duration");
+            actions++;
+            break;
+        case VOCAB_FORM:
+            CHECK(v[i].arg >= 0 && v[i].arg < FORM_COUNT, "a form command names a real form");
+            forms++;
+            break;
+        case VOCAB_COLOUR:
+            colours++;
+            break;
+        }
+        CHECK(vocab_get(i) == &v[i], "ids are indices, which is what MultiNet hands back");
+    }
+    CHECK(vocab_get(-1) == NULL && vocab_get(vocab_count()) == NULL, "a bad id is NULL, not a read off the end");
+    /* Both forms must be reachable BY VOICE, which is the request that started this: the
+       ostrich is the default, so "change into robot" is the only way back without five taps. */
+    CHECK(forms >= 2, "both bodies can be asked for");
+    CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
+}
+
+/* ---- the caption ticker -------------------------------------------------------------- */
+
+static void test_caption_starts_empty_and_silent(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(caption_idle(&c), "nothing to show at boot");
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() == 0, "and nothing drawn — no indicator until the microphone is open");
+}
+
+static void test_caption_indicator_tracks_the_microphone(void)
+{
+    /* This is the ICO requirement, so it is asserted against the REAL state: the dot exists
+       when the microphone is open and cannot exist when it is not. */
+    caption_t c;
+    caption_reset(&c);
+    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, false);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    const long idle_dot = non_black();
+    CHECK(idle_dot > 0, "an open microphone is always indicated");
+
+    for (int i = 20; i < 60; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, true);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() > idle_dot, "and brightens while someone is talking");
+
+    caption_reset(&c);
+    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, false, false);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    CHECK(non_black() == 0, "a closed microphone shows nothing — muted is a promise");
+}
+
+static void test_caption_scrolls_and_drains(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(caption_say(&c, "PLAY PEEKABOO"), "a phrase is accepted");
+    CHECK(!caption_idle(&c), "and is now pending");
+
+    /* It must ARRIVE, travel, and LEAVE. A ticker that never empties leaves a word parked
+       across the bottom sixth of a 29 mm panel forever. */
+    uint32_t t = 0;
+    int seen = 0;
+    for (int i = 0; i < 1000 && !caption_idle(&c); i++) {
+        t += 40;
+        caption_tick(&c, t, FACE_W, true, false);
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x0000);
+        if (non_black() > 0) seen++;
+    }
+    CHECK(caption_idle(&c), "the ticker drains");
+    CHECK(seen > 25, "and the text was on the glass long enough to read");
+    CHECK(t < 40000u, "without taking the better part of a minute");
+}
+
+static void test_caption_is_bounded_by_a_talkative_room(void)
+{
+    /* Nothing here may grow without limit, and nothing may corrupt: this is fed by whatever
+       a room says for as long as it says it. */
+    caption_t c;
+    caption_reset(&c);
+    int taken = 0;
+    for (int i = 0; i < 200; i++) {
+        if (caption_say(&c, "MAKE A RUDE NOISE")) taken++;
+        CHECK(c.len <= CAPTION_MAX, "the buffer never overruns");
+        CHECK(c.buf[c.len] == '\0', "and stays a string");
+    }
+    CHECK(taken > 0 && taken < 200, "a full ticker refuses rather than dropping what is on screen");
+
+    /* And it CATCHES UP: a backlog scrolls faster than a single phrase, or the last thing
+       said arrives after the child has stopped looking. */
+    caption_t one;
+    caption_reset(&one);
+    caption_say(&one, "WAVE HELLO");
+    CHECK(caption_speed(&c, FACE_W) > caption_speed(&one, FACE_W),
+          "a long backlog drains faster than a short one");
+}
+
+static void test_caption_survives_a_stalled_clock(void)
+{
+    /* `now_ms` comes from the render loop, which the OTA path and the calibration routine can
+       both hold for seconds. A resumed clock must not teleport the text. */
+    caption_t c;
+    caption_reset(&c);
+    caption_say(&c, "DO A DANCE");
+    caption_tick(&c, 1000, FACE_W, true, false);
+    const float before = c.scrolled;
+    caption_tick(&c, 31000, FACE_W, true, false); /* thirty seconds later */
+    CHECK(c.scrolled == before, "a long stall advances nothing");
+    caption_tick(&c, 31040, FACE_W, true, false);
+    CHECK(c.scrolled > before, "and the next ordinary frame resumes");
+}
+
+static void test_caption_ignores_nonsense(void)
+{
+    caption_t c;
+    caption_reset(&c);
+    CHECK(!caption_say(&c, ""), "an empty phrase is not a phrase");
+    CHECK(!caption_say(&c, NULL), "nor is nothing at all");
+    CHECK(caption_idle(&c), "and neither put anything in the ticker");
+    caption_reset(NULL);
+    caption_tick(NULL, 0, FACE_W, true, true);
+    caption_draw(NULL, fb, FACE_W, FACE_H, 0, 0);
+    CHECK(caption_idle(NULL), "a null ticker is an empty one, not a crash");
+}
+
+static void test_the_font_can_spell_the_vocabulary(void)
+{
+    /* THE TICKER IS THE FEATURE. A glyph the font lacks renders as a blank of the right
+       width, so a missing letter would show as a gap in the middle of a word — legible as
+       "broken", never as the word. Every character the panel can be told to say must have
+       one, uppercased as `speech.c` publishes it. */
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        for (const char *p = v[i].phrase; *p; p++) {
+            char up[2] = {(char)toupper((unsigned char)*p), '\0'};
+            if (up[0] == ' ') continue;
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 2, up, 0xFFFF);
+            CHECK(non_black() > 0, "every letter in the vocabulary has a glyph");
+        }
+    }
+}
+
+static void test_the_font_glyphs_are_distinct(void)
+{
+    /* Copy-paste is the failure mode of a hand-entered bitmap table, and two letters sharing
+       a shape is invisible until someone reads a word on the glass. */
+    static const char *SET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    uint16_t *seen = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(seen != NULL, "scratch frame allocated");
+    for (const char *a = SET; *a; a++) {
+        char sa[2] = {*a, '\0'};
+        memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        font_draw(fb, FACE_W, FACE_H, 10, 10, 1, sa, 0xFFFF);
+        memcpy(seen, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        for (const char *b = a + 1; *b; b++) {
+            char sb[2] = {*b, '\0'};
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            font_draw(fb, FACE_W, FACE_H, 10, 10, 1, sb, 0xFFFF);
+            CHECK(memcmp(seen, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t)) != 0,
+                  "no two glyphs draw the same shape");
+        }
+    }
+    free(seen);
+}
+
 int main(void)
 {
     fb = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
@@ -1269,6 +1503,17 @@ int main(void)
     test_gesture_five_taps_survive_the_reboot_threshold();
     test_gesture_no_cue_for_a_count_that_does_nothing();
     test_gesture_cue();
+    test_vocab_phrases_are_sayable();
+    test_vocab_has_no_ambiguity();
+    test_vocab_arguments_are_real();
+    test_caption_starts_empty_and_silent();
+    test_caption_indicator_tracks_the_microphone();
+    test_caption_scrolls_and_drains();
+    test_caption_is_bounded_by_a_talkative_room();
+    test_caption_survives_a_stalled_clock();
+    test_caption_ignores_nonsense();
+    test_the_font_can_spell_the_vocabulary();
+    test_the_font_glyphs_are_distinct();
 
     free(fb);
     printf("ok — %d checks\n", checks);

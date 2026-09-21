@@ -26,7 +26,8 @@ dist="$root/firmware/dist"
 # `esp_https_ota` writes app slots and the models live in a data partition. So it ships in
 # `dist/` and reaches a panel through the one USB flash each unit gets.
 for f in "$build/jbrain-endpoint.bin" "$build/bootloader/bootloader.bin" \
-         "$build/partition_table/partition-table.bin" "$build/srmodels/srmodels.bin"; do
+         "$build/partition_table/partition-table.bin" "$build/ota_data_initial.bin" \
+         "$build/srmodels/srmodels.bin"; do
   if [ ! -f "$f" ]; then
     echo "missing $f — build the firmware first (see the header of this script)" >&2
     exit 1
@@ -56,7 +57,8 @@ fi
 
 mkdir -p "$dist"
 cp "$build/jbrain-endpoint.bin" "$build/bootloader/bootloader.bin" \
-   "$build/partition_table/partition-table.bin" "$build/srmodels/srmodels.bin" "$dist/"
+   "$build/partition_table/partition-table.bin" "$build/ota_data_initial.bin" \
+   "$build/srmodels/srmodels.bin" "$dist/"
 
 # Byte-for-byte the form the workflow regenerates and diffs against, so a mismatch there
 # is always a real image difference rather than a formatting one.

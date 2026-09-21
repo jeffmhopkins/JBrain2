@@ -4,10 +4,11 @@
 
 /* A 5x7 bitmap font, deliberately tiny in both senses.
  *
- * DIGITS, '.', 'v', '-' AND SPACE ONLY. It exists to put a version string on the glass, and
- * hand-drawing twenty-six more glyphs for words nothing renders yet would be inventory rather
- * than work. `font_text_w` sizes what it can draw; an unknown character renders as a blank of
- * the right width, so a wrong string is visibly wrong instead of silently short.
+ * DIGITS, UPPERCASE A-Z, and `. - ' ? ! ,` plus space (and a lowercase 'v', for `v0.2.36`).
+ * It began as digits alone, because hand-drawing twenty-six glyphs for words nothing rendered
+ * would have been inventory rather than work; the caption line is what needed words, so the
+ * alphabet arrived with it. `font_text_w` sizes what it can draw; an unknown character renders
+ * as a blank of the right width, so a wrong string is visibly wrong instead of silently short.
  *
  * No ESP dependencies, so the host preview harness renders exactly what the panel does —
  * which is how the geometry in face.c was checked, and how this was.

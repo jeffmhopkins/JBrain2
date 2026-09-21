@@ -26,6 +26,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
+#include "speech.h"
 
 static const char *TAG = "audio";
 
@@ -210,6 +211,12 @@ static void audio_task(void *arg)
            room. On failure it would spin, so that path delays instead. */
         if (esp_codec_dev_read(s_codec, s_chunk, sizeof(s_chunk)) == 0) {
             s_level = audio_peak(s_chunk, AUDIO_CHUNK);
+            /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one
+               owner, and esp-sr's usual arrangement — its own task reading I2S directly —
+               would be a second one. `speech_feed` is a memcpy and a hand-off; the model
+               runs on its own core (`speech.c`), so nothing below this line can stall the
+               read that is also this task's clock. */
+            speech_feed(s_chunk, AUDIO_CHUNK);
         } else {
             vTaskDelay(pdMS_TO_TICKS(AUDIO_CHUNK_MS));
         }

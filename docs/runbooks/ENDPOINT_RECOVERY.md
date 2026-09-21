@@ -40,13 +40,22 @@ unrecoverable state is one an OTA cannot reach.
 If both OTA slots are unbootable, invalid otadata falls through to the `factory`
 partition, which **OTA never writes**. Whatever was last flashed over USB is still there.
 
-> **Caveat worth knowing (2026-09-19).** Today `factory` holds the *same* image as the
-> application, because the application is currently minimal — Wi-Fi and OTA and nothing
-> else. That is a coincidence of this moment, not a property. `deploy/endpoint` writes the
-> app to the factory partition on a USB flash, so the day a grown image (display, audio,
-> wake word) is flashed over USB, rung 2 stops being a safety net and becomes a second copy
-> of whatever is broken. Before that happens, the flasher must write the **recovery** image
-> to `factory` and the application to `ota_0` as two separate artifacts.
+> **Caveat worth knowing (2026-09-19, still true 2026-09-21).** `factory` holds the *same*
+> image as the application. `deploy/endpoint` writes the app to the factory partition on a USB
+> flash, so rung 2 is a second copy of whatever is broken rather than a safety net. Closing it
+> means the flasher writing a **recovery** image to `factory` and the application to `ota_0` as
+> two separate artifacts. Rung 3 is unaffected and always available.
+>
+> The day the caveat anticipated — "a grown image (display, audio, wake word) flashed over
+> USB" — arrived in 0.2.37, when linking ESP-SR took the app from 1.16 MB to 3.05 MB. That did
+> not erode rung 2 further, but it did not fit `factory` at all, so the app partitions were
+> resized to 3.5 MB each (`firmware/partitions.csv`).
+>
+> **A resize means every panel needs one more USB flash, and `otadata` is now part of it.**
+> Without writing `otadata` a panel keeps booting whichever OTA slot it was last updated into
+> — a slot that is at a *different offset* under the new table and holds the middle of an old
+> image. `ota_data_initial.bin` is in `firmware/dist/` and the flasher writes it at `0xf000`,
+> so a flash from the PWA resets a panel to boot `factory`. Nothing here needs a terminal.
 
 ### 3. ROM download mode — manual, and always available
 
