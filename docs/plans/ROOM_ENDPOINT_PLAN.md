@@ -2413,6 +2413,55 @@ all. The captures that motivated the AGC change were taken with **nobody talking
 panel** — an instrument built and then read against silence. The next reading is taken while
 someone is speaking, and no further gain change is made before that.
 
+#### 10.4bb The DMA reservation worked, and the gain was never checked (2026-09-21)
+
+0.2.42 on the panel, measured over 70 s:
+
+| | 0.2.41 | 0.2.42 |
+|---|---|---|
+| blit failures | 200+ | **3** |
+| largest free block after the recogniser starts | 9,728 | 16,384 |
+
+**The reservation works**, and the owner's photo of 0.2.41 had already confirmed the mechanism
+better than the logs did: the panel was drawing the top of the frame and leaving the bottom
+stale, with green garbage between. That is a **chunked transfer failing partway** — at 11,776
+bytes of `max_transfer_sz` a 329,728-byte frame is cut into ~28 pieces, the early ones
+allocate their descriptors and the later ones do not. Fully black was the same fault with the
+first chunk failing too.
+
+**It is not free.** Reserving a whole frame costs ~138 KB of internal RAM at bus init and takes
+the largest block from 163,840 to 31,744 before anything else starts. That is a real price and
+it is why the recogniser now begins with 87 KB rather than 154 KB. Recorded because the next
+person to add a feature needs to know the budget shrank, not discover it.
+
+##### And the gain was a claim, not a reading
+
+```c
+esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_DB);        /* return value discarded */
+ESP_LOGI(TAG, "es8311 ready: ... in %.0f dB", MIC_GAIN_DB);  /* prints what was ASKED FOR */
+```
+
+Raising the gain 30 → 42 dB made the measured level go **down** by about the same 12 dB:
+
+| build | asked | measured peak |
+|---|---|---|
+| 0.2.40 | 30 dB | 1,261–3,407 |
+| 0.2.41 | 36 dB | 322–3,493 |
+| 0.2.42 | **42 dB** | **194–757** |
+
+That is what an out-of-range value that wraps looks like, and an unchecked setter is what let
+it be believed. The call is now checked, falls back to 30 dB when refused, and the log prints
+`accepted` or `REFUSED` rather than restating the constant.
+
+**Four for four, and the pattern is now the whole lesson of this feature:** the memory mode
+(§10.4ax), the chunk sizes (§10.4az), the AGC mode (§10.4az) and the mic gain were each a
+value this firmware set and never read back. Every wrong diagnosis in this sequence traces to
+exactly that. "Set it and log the constant" is indistinguishable from "set it and have it
+refused" — and on a device with no terminal, indistinguishable means invisible.
+
+**Still not measured:** every audio capture so far was taken with nobody talking to the panel.
+No further gain or front-end change is made before a reading with a voice in the room.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

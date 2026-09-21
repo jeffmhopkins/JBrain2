@@ -49,7 +49,10 @@ static const char *TAG = "audio";
    front end's WebRTC AGC (`speech.c`) makes up the rest without pinning the PGA at its
    limit, where the noise floor comes up with the signal. The peak is logged every three
    seconds, so the next move after this one is a reading rather than another guess. */
-#define MIC_GAIN_DB 42.0f
+#define MIC_GAIN_DB 36.0f
+/* Where to go if the part refuses the number above. 30 is the value that produced the
+   highest measured peaks of any build so far, which makes it the safest floor. */
+#define MIC_GAIN_FALLBACK_DB 30.0f
 
 /* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
@@ -162,10 +165,26 @@ bool audio_start(void)
         s_codec = NULL;
         return false;
     }
-    esp_codec_dev_set_out_vol(s_codec, VOLUME);
-    esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_DB);
+    /* CHECKED, BECAUSE THE LOG LINE BELOW USED TO BE A CLAIM RATHER THAN A READING.
+       It printed MIC_GAIN_DB — the number ASKED FOR — while the return value went on the
+       floor. 0.2.42 raised the gain 30 -> 42 and the measured level went DOWN by about the
+       same 12 dB, which is what an out-of-range value that wraps looks like and what an
+       unchecked setter lets you believe never happened. Same defect as "listening" meaning
+       "a task started": a claim nothing could falsify. */
+    const int vol_err = esp_codec_dev_set_out_vol(s_codec, VOLUME);
+    const int gain_err = esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_DB);
+    if (vol_err != 0) ESP_LOGE(TAG, "set_out_vol(%d) refused: %d", VOLUME, vol_err);
+    if (gain_err != 0) {
+        ESP_LOGE(TAG, "set_in_gain(%.0f) refused: %d — falling back to %.0f dB", MIC_GAIN_DB,
+                 gain_err, (double)MIC_GAIN_FALLBACK_DB);
+        const int retry = esp_codec_dev_set_in_gain(s_codec, MIC_GAIN_FALLBACK_DB);
+        if (retry != 0) ESP_LOGE(TAG, "fallback gain refused too: %d — mic level is unknown",
+                                 retry);
+    }
     build_beep();
-    ESP_LOGI(TAG, "es8311 ready: out %d/100, in %.0f dB, %d Hz", VOLUME, MIC_GAIN_DB,
+    ESP_LOGI(TAG, "es8311 ready: out %d/100 (%s), in %.0f dB (%s), %d Hz", VOLUME,
+             vol_err ? "REFUSED" : "accepted", MIC_GAIN_DB,
+             gain_err ? "REFUSED" : "accepted",
              AUDIO_RATE);
 
     /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
