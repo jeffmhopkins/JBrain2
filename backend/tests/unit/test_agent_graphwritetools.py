@@ -373,15 +373,28 @@ def test_a_bare_clock_time_is_read_in_the_notes_zone_not_utc() -> None:
 ANCHOR = gw.datetime(2026, 9, 21, tzinfo=gw.UTC)
 
 
-def _sharpen(when: str, obj: str, *, shape: str = "date", tz: int | None = -240):
-    """`_sharpened` over a `when` that parsed — the only state it acts on."""
-    return gw._sharpened(
+def _sharpen(when: str, obj: str, *, shape: str | None = "date", tz: int | None = -240):
+    """`_sharpened` over a `when` that parsed — the only state it acts on.
+
+    It never returns None here (it passes its input through when it declines, and the
+    input is a parsed `when`), so the asserts narrow for the reader as much as for the
+    type checker."""
+    out = gw._sharpened(
         gw._temporal(when, ANCHOR, tz),
         value_shape=shape,
         literal=obj,
         anchor=ANCHOR,
         tz_offset_minutes=tz,
     )
+    assert out is not None and out.resolved_start is not None
+    return out
+
+
+def _start(out) -> gw.datetime:  # noqa: ANN001
+    """`resolved_start`, narrowed — the assert inside `_sharpen` does not travel across
+    the return, so a caller reading a field off it needs its own."""
+    assert out.resolved_start is not None
+    return out.resolved_start
 
 
 def test_a_date_shaped_objects_clock_sharpens_the_day_the_phrase_resolved_to() -> None:
@@ -418,7 +431,7 @@ def test_a_when_that_already_carries_the_clock_is_never_second_guessed() -> None
     """Strictly finer only. `when` may carry an explicit offset the bare object lacks,
     so an equally-precise object must not displace it."""
     out = _sharpen("2026-09-22T13:00:00", "2026-09-22T12:45")
-    assert out.resolved_start.hour == 13
+    assert _start(out).hour == 13
 
 
 def test_an_object_naming_a_different_day_is_a_disagreement_not_a_refinement() -> None:
@@ -427,7 +440,7 @@ def test_an_object_naming_a_different_day_is_a_disagreement_not_a_refinement() -
     the note actually used wins."""
     out = _sharpen("2026-09-22", "2026-09-29T12:45")
     assert out.precision == "day"
-    assert out.resolved_start.day == 22
+    assert _start(out).day == 22
 
 
 def test_an_evening_appointment_west_of_utc_still_counts_as_the_same_day() -> None:

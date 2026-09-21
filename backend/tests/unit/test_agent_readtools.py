@@ -1713,8 +1713,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # renders that line VERBATIM to the owner. The field is read by a person.
         "ask_owner.tool": (
             "ask_owner",
-            4,
-            "8592785e2e5b47bdb8811c8dd8ab8a0fe09dbd1cd1fb829349a9185a3209877b",
+            5,
+            "9c4f4d5fc993e5c31dd048c0c1cf03250fb8e03898d1a8b0d5fec69e5b582380",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
