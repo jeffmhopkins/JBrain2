@@ -28,7 +28,23 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The black screen is a PANIC, not a display fault
+## Two faults, not one: a panic (fixed) and a black screen (open)
+
+**A dark panel beeps when you tap it.** On 0.2.27, with no panic recorded, the render task was
+alive the whole time — polling touch, playing a tone, blitting a frame every 40 ms, re-asserting
+display-on and brightness every thirty seconds — into a screen that stayed off. So the panic and
+the black screen were never the same bug, and the section below (kept for the panic, which is
+real and fixed) is wrong where it says otherwise. See ROOM_ENDPOINT_PLAN.md §10.4am.
+
+**Do not trust `pmu_history: []`.** Until 0.2.28 it could not be anything else: the RTC ring's
+validity magic was written only by `pmu_history_clear()`, which `main.c` calls only when a
+report already carried samples — which needs the magic. A power cycle randomised it and the
+ring became permanently unreadable while still being written. `pmu_report_history()` now copies
+the survivors and arms the ring unconditionally at every boot, and samples the **TCA9554 at
+0x20** alongside the AXP2101, because the expander is the one chip on this bus nobody has ever
+read and the BSP brings the panel's reset and enable lines out on it.
+
+## The panic (fixed in 0.2.26 and 0.2.27)
 
 The panel's own telemetry carried `reset_reason: "panic"`. It crashes, and a panic is a **soft
 reset** — which leaves the screen dark where a power cycle does not. Crash, reboot, black until

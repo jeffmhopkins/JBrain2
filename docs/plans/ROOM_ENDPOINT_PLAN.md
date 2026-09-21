@@ -1614,6 +1614,11 @@ weighted-random variant pools with per-variant cooldowns.
 
 #### 10.4ai It was never the display. The panel panics. (2026-09-21)
 
+> **The title is wrong and §10.4am says how.** The panic was real and is fixed. The black
+> screen is a SEPARATE fault: on 0.2.27, with no panic recorded, a dark panel still beeped when
+> tapped — the render task alive, blitting, and re-asserting display-on into a screen that
+> stayed off. Everything below about the panic stands. "It was never the display" does not.
+
 The owner reported a black screen and held for five seconds, and the boot report carried the
 answer that six releases of display theories had not:
 
@@ -1790,6 +1795,73 @@ unknown: they sat in the same window, on the same cadence, and after 0.2.27 neit
 cross-task. If a `panic` returns on 0.2.27 the window bound is gone and the search starts again
 with the phase number read correctly this time; if it does not, the honest statement is "both
 races closed and the panic stopped", not "it was the codec".
+
+#### 10.4am It beeped. Two faults, and an instrument that could never fire. (2026-09-21)
+
+**The owner tapped a dark panel and it beeped.**
+
+That one bit ends the conflation §10.4ai built. The panel was on 0.2.27, no panic had been
+recorded since its 12:48 boot, and the five-second hold that followed reported
+`reset_reason: "sw"` — so nothing had crashed. The render task was alive the whole time:
+polling touch, playing a tone, drawing a frame every 40 ms, and re-asserting `0x29` and `0x51`
+every thirty seconds into a screen that stayed black.
+
+So there are **two faults**, and this session fixed the other one. The panic was real
+(§10.4ak, §10.4al) and its two cross-task races are closed. The black screen is its own
+problem and always was, and §10.4u's experiment has now answered itself by its own rule:
+
+> *it still blanks -> nothing the controller is told matters, which points at the OLED rail and
+> the AXP2101 this firmware has never spoken to.*
+
+It still blanks, while being told continuously. Nothing the controller is told matters.
+
+**And the instrument built to read that moment could never have fired.** `pmu_history` has
+come back `[]` on every single report, and the reason is not "nothing survived":
+
+```c
+int pmu_history_hex(...) { if (s_magic != RING_MAGIC) return 0; ... }   /* rejects */
+void pmu_history_clear(void) { s_magic = RING_MAGIC; ... }              /* the only writer */
+```
+
+and `main.c` calls the writer only when a report already carried samples:
+
+```c
+if (ota_report(cfg, body) == ESP_OK && n > 0) pmu_history_clear();
+```
+
+**The magic was only ever set by the function that only ran once the magic was already set.**
+`pmu_sample()` wrote the ring faithfully for hours and every reader threw the lot away. The
+loop was closed by §10.4ai's own fix: removing the clear from `pmu_report_history()` cured a
+real bug (the history was being erased before telemetry could send it) and silently removed
+the one unconditional call that armed the ring. It survived on inertia — the magic was already
+set from before — until the panel was power-cycled at 12:00 on 2026-09-21, which randomised
+RTC memory and made the ring permanently unreadable.
+
+**That is the fourth instrument in this investigation to fail by answering a different question
+than the one asked**, after the QSPI read path returning plausible zeros (§10.4w), the console
+that resets what it measures (§10.4w), and `crash_phase` read as a crash site rather than a
+task position (§10.4al). Every one of them failed the same way: *silently, in the direction of
+"nothing to see"*. A reading of `[]` is indistinguishable from an honest cold boot, which is
+precisely the ambiguity §10.4x invented the magic word to remove.
+
+**0.2.28.** `pmu_report_history()` now copies the surviving ring into plain RAM first and then
+arms and restarts it — unconditionally, on every boot, cold or not. Arming is that function's
+job and nothing else's, the copy makes arming safe, and telemetry reads the copy, so the render
+task can sample immediately without racing the reader. `pmu_history_clear()` drops the copy
+rather than the ring, so a failed POST costs no evidence.
+
+**It also samples the TCA9554 at 0x20** — input, output and configuration — alongside the six
+AXP2101 registers. The scan at §10.4x named exactly two chips that could hold state across a
+soft reset and be cleared by pulling the plug. One has been read for five releases and looks
+innocent. The other has never been spoken to, and the BSP brings the panel's reset and enable
+lines out on it. A sample is now nine bytes: `st0 st1 id dcdc_en ldo_en0 ldo_en1 | in out cfg`.
+
+**What the next dark screen will say.** Hold five seconds; the report carries two minutes of
+both chips at ten-second intervals. If an AXP2101 enable bit or a TCA9554 output drops as the
+screen goes, that is the answer. If all eighteen bytes are identical lit and dark, then nothing
+on this bus is doing it, and the search moves to the panel controller's own state or the OLED
+supply beyond these two parts — which is worth knowing too, and is the first time that would be
+a measurement rather than an inference.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
