@@ -1278,6 +1278,43 @@ path.** That is exactly what the first image was built around — a frozen facto
 rollback gated on reaching the box — so it should hold. It does mean a bad image is recovered
 by the bootloader rather than by the owner.
 
+#### 10.4z Off the cable, and the volume is settled (2026-09-21)
+
+Two things closed on the owner's word, both of which had been left explicitly open.
+
+**Volume: 70/100 is right.** §10.4q set 55 against the vendor's 90 because nothing in the
+session could measure decibels, and said plainly that it would move only against a
+measurement and never against "it seems quiet". The owner reported 0.2.7 as *a little bit
+quiet*, 0.2.8 raised it to 70, and 0.2.11's report is *audio is good*. That is the
+measurement, it is the only kind available here, and the number is no longer a guess. Still
+well under the vendor's default, and the raised-cosine envelope is unchanged — the envelope
+is what a dB(A) cap is really about, not the peak.
+
+**The panel now runs on a plain USB charger.** Moved off the box's port at ~01:40:31 — the
+`reset_reason: "power"` in its own telemetry — and it came back up, joined Wi-Fi, fetched the
+manifest at 01:40:33 and reported itself at 01:40:35. No USB host, no console, no cable to
+anything but power.
+
+That is §10's premise finally cashed rather than asserted: *the box's USB port is available
+for the first flash only.* Everything since has arrived over the air, and now everything
+**about** the panel leaves over the air too.
+
+`pmu_history: []` in that first report is correct rather than a failure. A power cycle clears
+the RTC ring, so nothing survived — and "we were not looking" is a different fact from "the
+PMU was fine", which is why the empty case is reportable rather than an error.
+
+**Which changes how the outstanding display fault gets caught.** The capture survives a soft
+reset and not a power cycle, so the gesture matters:
+
+> Find it dark → **hold five seconds** → it reboots, reconnects, and posts the two minutes
+> before the fault. Do not pull the plug; that erases exactly the evidence.
+
+Still open: the display fault itself, where the leading model is now that **the panel freezes
+— stops accepting frames — and the retained image fades to black**, on the strength of the
+owner seeing a stale `v0.2.11` label while 0.2.12 was running. And the microphone, written and
+parked at §10.4r's design, waiting on a screen that reliably stays lit, because its whole test
+is a level meter drawn on that screen.
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

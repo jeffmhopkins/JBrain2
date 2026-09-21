@@ -37,7 +37,10 @@ static const char *TAG = "audio";
 #define SAMPLE_RATE 22050
 #define BEEP_HZ 880
 #define BEEP_MS 90
-/* See the header note: this is a cap, not a taste. */
+/* See the header note: this is a cap, not a taste. 55 was the deliberate starting point with
+   nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
+   70 as good at the distance a child holds it. That is the measurement §10.4q said it was
+   waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
 #define VOLUME 70
 
 static esp_codec_dev_handle_t s_speaker;
