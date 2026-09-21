@@ -153,8 +153,26 @@ bool display_start(void)
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 
+    /* A WHOLE FRAME, NOT A STRIPE, AND THIS IS THE DISPLAY'S RESERVATION.
+     *
+     * `max_transfer_sz` is what `spi_bus_initialize` sizes its DMA descriptor chain for, ONCE,
+     * here at boot. It used to be `sizeof(stripe)` — 11,776 bytes, the colour-bar buffer —
+     * while the render loop pushes a full 368x448x2 = 329,728 byte frame, 28 times larger. A
+     * transfer past the reservation makes the SPI driver allocate descriptors AT TRANSFER
+     * TIME, out of internal RAM, twenty-five times a second, forever.
+     *
+     * That is why the panel went black in 0.2.41: turning the recogniser's AGC on left the
+     * largest free internal block at 9,728 bytes, the per-frame allocation started failing,
+     * and every blit returned ESP_ERR_NO_MEM. It is also the "one dropped frame per box
+     * check-in" waved through in 0.2.39 — the same bug at a smaller amplitude, during the
+     * TLS handshake. One symptom was dismissed and the other was a black screen.
+     *
+     * Reserved here, the display cannot be starved by anything that starts later, which it
+     * has no other defence against: this runs before Wi-Fi, before TLS and before ESP-SR,
+     * when 257 KB of internal RAM is free and the largest block is 163 KB. */
     const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(
-        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3, sizeof(stripe));
+        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3,
+        (int)((size_t)FACE_W * FACE_H * sizeof(uint16_t)));
     esp_err_t err = spi_bus_initialize(LCD_HOST, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "spi bus: %s", esp_err_to_name(err));

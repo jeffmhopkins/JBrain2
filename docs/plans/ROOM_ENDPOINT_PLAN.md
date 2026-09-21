@@ -2366,6 +2366,53 @@ was a value this firmware never set and never printed. The memory mode (§10.4ax
 sizes (above), and now the gain mode. A default you did not choose is not a decision, and a
 default you do not log is not visible. The front end now prints its own configuration.
 
+#### 10.4ba The AGC fix blacked out the panel (2026-09-21)
+
+0.2.41 turned the front end's AGC on to cure an empty decode. **The owner's screen went
+black.** The panel's own logging named the cause in two lines:
+
+```
+mem: pre-speech     internal 154435 free / 81920 largest
+mem: post-speech    internal  51631 free /  9728 largest
+E display: blit: ESP_ERR_NO_MEM (failure 201)
+```
+
+Switching AGC on cost ~103 KB of internal RAM and — the part that actually mattered —
+**collapsed the largest contiguous block from 81,920 bytes to 9,728**, which is smaller than
+the buffer the SPI driver needs to push a frame. Every blit after the recogniser started
+failed, so nothing reached the glass. This is exactly the free-versus-largest distinction
+§10.4ax added the logging for, and it is the second time that distinction has been the answer.
+
+`memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM` was already set and did not prevent it. A
+preference the component may decline is not a guarantee, so that field is now logged too.
+
+**Reverted, and the gain taken from the codec's own PGA instead** (36 → 42 dB, the part's
+maximum), which costs no RAM. The noise floor rises with the signal there, which is a real
+cost and the reason 36 was tried first — but a panel that draws is worth more than a clean
+noise floor, and the peak is logged so the next move is a reading.
+
+##### And the reason it could black out at all, fixed in the same version
+
+The AGC was the trigger; the fragility was ours. `spi_bus_initialize` sizes its DMA descriptor
+chain ONCE from `max_transfer_sz`, and that was set to `sizeof(stripe)` — **11,776 bytes**, the
+colour-bar buffer — while the render loop pushes a full **329,728 byte** frame, 28 times
+larger. Every transfer past the reservation makes the SPI driver allocate descriptors **at
+transfer time, out of internal RAM, twenty-five times a second, forever.**
+
+So the display was competing for memory with everything that starts after it, every frame, and
+had no defence. It is now reserved for a whole frame at bus init — before Wi-Fi, before TLS,
+before ESP-SR, when 257 KB of internal RAM is free and the largest block is 163 KB.
+
+This also retires a symptom that was **dismissed** in §10.4ax: the "one dropped frame per box
+check-in", waved through as acceptable because it coincided with the TLS handshake. Same bug,
+smaller amplitude. One instance of it was rationalised and the other was a black screen — which
+is the argument for chasing the small version of a fault while it is still small.
+
+**What this leaves open:** it was never confirmed that the empty decode was a level problem at
+all. The captures that motivated the AGC change were taken with **nobody talking to the
+panel** — an instrument built and then read against silence. The next reading is taken while
+someone is speaking, and no further gain change is made before that.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

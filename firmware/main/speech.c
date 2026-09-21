@@ -300,15 +300,21 @@ bool speech_start(void)
        agreed someone was talking, and MultiNet's raw decode came back an EMPTY STRING every
        time. WebRTC's AGC needs no wake word and is the only mode that works in this
        configuration. */
-    cfg->agc_init = true;
-    cfg->agc_mode = AFE_AGC_MODE_WEBRTC;
-    cfg->agc_target_level_dbfs = 3;      /* peak target -3 dBFS, the component's own default */
-    cfg->agc_compression_gain_db = 9;
+    /* AGC IS OFF, AND THE REASON IS THE DISPLAY. 0.2.41 turned it on and the panel went
+       BLACK: switching it on took internal RAM from 154 KB to 51 KB and collapsed the
+       largest contiguous block from 81,920 bytes to 9,728, which is smaller than the buffer
+       the SPI driver needs to push a frame. Every blit after the recogniser started returned
+       ESP_ERR_NO_MEM, so nothing reached the glass. `memory_alloc_mode = MORE_PSRAM` did not
+       save it, which is why that field is now logged too — a preference the component may
+       decline is not a guarantee.
+       The gain it was meant to provide is bought instead from the codec's own PGA, which
+       costs no RAM at all. If AGC is ever needed, the display must first stop competing for
+       a DMA buffer every frame — see ROOM_ENDPOINT_PLAN.md §10.4ba. */
     afe_config_check(cfg);
-    ESP_LOGI(TAG, "front end: agc %s mode %d target -%d dBFS, ns %s, vad %s, wakenet %s",
-             cfg->agc_init ? "on" : "off", (int)cfg->agc_mode, cfg->agc_target_level_dbfs,
-             cfg->ns_init ? "on" : "off", cfg->vad_init ? "on" : "off",
-             cfg->wakenet_init ? "on" : "off");
+    ESP_LOGI(TAG, "front end: agc %s, ns %s, vad %s, wakenet %s, mem mode %d",
+             cfg->agc_init ? "on" : "off", cfg->ns_init ? "on" : "off",
+             cfg->vad_init ? "on" : "off", cfg->wakenet_init ? "on" : "off",
+             (int)cfg->memory_alloc_mode);
 
     s_afe = esp_afe_handle_from_config(cfg);
     s_afe_data = s_afe->create_from_config(cfg);
