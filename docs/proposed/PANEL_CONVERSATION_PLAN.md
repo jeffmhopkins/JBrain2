@@ -214,13 +214,65 @@ would have been the obvious implementation and much the worse one.
 - **The bubble, which is mostly drawn.** `display.c` already has `bubble()` and a tap already
   resolves to a zone; a notification bubble is that plus a queue count.
 
+### Three recipients, not two
+
+The owner, extending it: *"Another route should be 'tell Dad' where my pwa can play them. And
+pwa gets 'tell Elora' and 'Lydian' buttons to send them messages."*
+
+So the directory is **Elora's panel, Lydian's panel, and Dad's PWA**, and messages move in
+every direction between them. That is a better feature than panel-to-panel and it is also a
+different one, because the third recipient is not a device.
+
+| | Elora / Lydian | Dad |
+|---|---|---|
+| what it is | a panel, a `device_key` principal | the owner, a session — and possibly no session at all when the message is sent |
+| how it arrives | a bubble on the glass, tapped to play | a list in the PWA |
+| how it is sent | *"tell Dad …"*, spoken | a **button**, because Dad is not going to hold a phone down and say "tell Elora" |
+
+**The asymmetry is the point.** A panel is always on and always the same person; a PWA is a
+session that may not exist when the message is sent, on a device that may be asleep. A message
+to Dad has to survive nobody being there, which a queue does anyway — but it means "delivered"
+and "played" are different states for Dad and effectively the same for a panel.
+
+### What the third recipient adds
+
+- **A format conversion the panels do not need.** The PWA records through the browser, which
+  means webm/opus, not 16 kHz mono s16. The box must transcode before a panel can play it —
+  and the `tts-stt` container already carries ffmpeg for Kokoro's effects pipeline, so this is
+  configuration rather than a new dependency.
+- **A route the owner can reach.** `/endpoint/*` is `PanelDep`; a PWA list and a send button
+  are `OwnerDep`. Same store, two doors.
+- **Names that are load-bearing.** Already flagged, and now worse: a directory of three makes
+  *"tell Dad"* vs *"tell Elora"* a routing decision taken from a transcript, and the bench
+  panel is still provisioned as `''`. A name that does not match is a message that silently
+  goes nowhere, which is the worst possible failure for a four-year-old who thinks they just
+  spoke to their sister.
+- **A recogniser question.** MultiNet resolves a fixed phrase list and cannot hear a name it
+  was not given; whisper can. So *"tell Dad"* is a transcript-side match on the box, not a
+  command on the panel — which is already how this design works, but it means the panel cannot
+  confirm the recipient before the audio leaves. The bubble that says "sent to Dad" has to come
+  back from the box.
+
 ### The part worth arguing about before it is built
 
-**A voice note is a recording of one child's room that surfaces in another child's room.** It
-is the right feature and it is also the first thing here that moves audio between people
-rather than to a model and back. Retention, a way for the owner to see what has been sent, and
-a cap on queued messages belong in the first version rather than a later one — the same
-reasoning that put a VAD gate on the upload so an accidental hold sends nothing.
+**A voice note is a recording of one child's room that surfaces in another child's room** —
+and now in the owner's pocket, and the owner's voice in a child's bedroom. It is the right
+feature and it is also the first thing here that moves audio between people rather than to a
+model and back. Retention, a way for the owner to see what has been sent, and a cap on queued
+messages belong in the first version rather than a later one — the same reasoning that put a
+VAD gate on the upload so an accidental hold sends nothing.
+
+The PWA side makes that easier rather than harder: the owner's list of received notes is also
+the audit surface, so "what has this thing recorded" has an answer that is a screen rather
+than a log grep. Building the Dad route first would arguably be the safer order.
+
+### The dependency, stated plainly
+
+None of this is buildable until **press-and-hold is confirmed working on hardware** —
+capture, upload, reply, playback, end to end, with the timings out of `turn:` and
+`endpoint.converse`. Voice notes reuse every one of those pieces. Building the routing on top
+of an unverified transport would repeat the mistake §10.4bk was written to avoid: committing
+to a design on a number nobody has yet.
 
 ## Open questions
 

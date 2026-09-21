@@ -811,13 +811,6 @@ static void update_orientation(void)
 {
     int16_t ax = 0, ay = 0, az = 0;
     if (!imu_read(&ax, &ay, &az)) return;
-    /* Viewer-relative: the chip turns over with the panel, the rendered image does not. */
-    const int tilt = s_upside_down ? ay : -ay;
-    int target = tilt * LEAN_MAX / LEAN_FULL;
-    if (target > LEAN_MAX) target = LEAN_MAX;
-    if (target < -LEAN_MAX) target = -LEAN_MAX;
-    s_lean += (target - s_lean) / LEAN_SMOOTH;
-
     /* FOUR WAYS UP, FROM THE TWO AXES THE FLIP ALREADY USED. Gravity on X is portrait and
        its sign says which way; gravity on Y is landscape, mounted with the cable out the
        side, and its sign says which. Whichever axis is larger wins, with the same half-a-
@@ -844,6 +837,38 @@ static void update_orientation(void)
                      side ? SQ_Y0 + (int)(SQ * 0.545f) : -1);
         ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)", NAMES[s_quarter], ax, ay, az);
     }
+
+    /* AND THE LEAN FOLLOWS THE VIEWER'S HORIZONTAL AXIS, WHICH A QUARTER TURN MOVES.
+     *
+     * This read `-ay` unconditionally, which was right for the only two orientations that
+     * existed when it was written and is wrong the moment the panel is on its side: in
+     * landscape `ay` carries GRAVITY, about 8000 against a LEAN_FULL of 2400, so the target
+     * clamps to LEAN_MAX and the figure sits pinned at full lean for ever. That is the
+     * owner's "it doesn't tilt side to side" — not a dead sensor, a saturated one.
+     *
+     * The mapping is derivable rather than guessed. Upright, gravity is on +X (§10.4 named
+     * that from a reading in a known pose) and the lean was `-ay`, so the viewer's right is
+     * board -Y. Turn the panel a quarter clockwise and what pointed right now points down —
+     * so viewer-right becomes board -X, and each further quarter turn walks the same circle:
+     *
+     *     upright        viewer right = -Y   ->  lean from -ay
+     *     clockwise      viewer right = -X   ->  lean from -ax
+     *     upside down    viewer right = +Y   ->  lean from +ay
+     *     anticlockwise  viewer right = +X   ->  lean from +ax
+     *
+     * Which is also why the magnitudes work: whichever axis is NOT carrying gravity is the
+     * small signal a tilt moves, in every orientation. */
+    int tilt;
+    switch (s_quarter) {
+    case 1: tilt = -ax; break;
+    case 2: tilt = ay; break;
+    case 3: tilt = ax; break;
+    default: tilt = -ay; break;
+    }
+    int target = tilt * LEAN_MAX / LEAN_FULL;
+    if (target > LEAN_MAX) target = LEAN_MAX;
+    if (target < -LEAN_MAX) target = -LEAN_MAX;
+    s_lean += (target - s_lean) / LEAN_SMOOTH;
 }
 
 /* A 180 degree rotation of a row-major buffer is exactly its reversal, which is why this is
