@@ -51,6 +51,7 @@
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "imu.h"
+#include "mem.h"
 #include "touch.h"
 
 static const char *TAG = "display";
@@ -484,6 +485,8 @@ static bool s_upside_down;
    panel sits still reads as broken rather than alive. */
 #define LEAN_SMOOTH 4
 static int s_lean;
+/* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
+static int s_blit_fails;
 
 /* THE RIG, first slice. W4's ~17 tweened floats start here with two: a blink and a flinch.
  *
@@ -1016,7 +1019,22 @@ static void face_task(void *arg)
             PHASE(9);
             const esp_err_t err =
                 esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
-            if (err != ESP_OK) ESP_LOGE(TAG, "blit: %s", esp_err_to_name(err));
+            if (err != ESP_OK) {
+                /* ONCE, THEN EVERY HUNDREDTH, AND ALWAYS WITH THE HEAP. A frame fails 25
+                   times a second, so logging each one buried the boot in 150 identical
+                   lines and said nothing about WHY — the failure is nearly always
+                   ESP_ERR_NO_MEM for a DMA buffer, and the number that explains it is the
+                   largest free INTERNAL block, which `mem_log` prints. Diagnosing 0.2.38
+                   needed a host toolchain because the panel would not say this itself. */
+                if (s_blit_fails++ % 100 == 0) {
+                    ESP_LOGE(TAG, "blit: %s (failure %d)", esp_err_to_name(err),
+                             s_blit_fails);
+                    mem_log("blit-fail");
+                }
+            } else if (s_blit_fails > 0) {
+                ESP_LOGI(TAG, "blit recovered after %d failures", s_blit_fails);
+                s_blit_fails = 0;
+            }
             since_draw = 0;
         }
         if (rebooting) {

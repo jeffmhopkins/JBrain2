@@ -2251,6 +2251,53 @@ flashing is riskier.
 all said 23. The panel's own boot line is what caught it — `22 accepted, 0 refused` — which is
 the argument for logging a count rather than restating one.
 
+#### 10.4ax 117 KB of scratch for a model that never runs (2026-09-21)
+
+0.2.38 stopped the boot loop — every guard fired, the panel drew, it said why:
+
+```
+E (1854) net: wifi init failed (ESP_ERR_NO_MEM) — free internal heap 18095 B.
+W (1874) speech: only 18095 B of internal heap free — not starting the recogniser
+```
+
+**But 18 KB was free BEFORE the recogniser tried anything**, so §10.4aw's diagnosis was
+incomplete. Runtime allocation was never the whole story. `idf.py size-components`:
+
+| | |
+|---|---|
+| `libnsnet3.a` | **117,272 bytes of `.bss`** |
+| static DIRAM | 308,895 / 341,760 — **90.38%** |
+
+That is the scratch buffer of **nsnet3, a deep noise-suppression model this firmware does not
+select and never runs**. `CONFIG_SR_NSN_WEBRTC=y`, and the pipeline the front end actually
+builds is `[input] -> |VAD(WebRTC)| -> [output]` — no NS in it. esp-sr links the archive
+unconditionally (its `CMakeLists.txt` adds it whenever it exists for the target, because
+`libnsnet.a` references `esp_nsnet3`), so the panel was paying 38% of all its static RAM for a
+model that is switched off.
+
+It cannot be dropped by patching the component — the next dependency fetch would undo it — but
+it does not need to be. It is **`.bss`**: zero-initialised scratch, no image cost, no start-up
+copy, and it does not care where it lives. `main/linker.lf` maps that one archive to
+`extram_bss` and `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y` allows it;
+`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` lets the radio take its non-DMA buffers from PSRAM too.
+
+| | before | after |
+|---|---|---|
+| static DIRAM | 308,895 (90.38%) | **177,947 (52.07%)** |
+| DIRAM remaining | 32,865 | **163,813** |
+
+**The lesson is about instruments, not memory.** Two versions in a row were misdiagnosed from
+the boot log, because the boot log did not carry the number that decides it. Finding the real
+cause took `size-components` on a host toolchain — which is precisely what nobody has when a
+panel is on a bedroom wall, and exactly the dependency CLAUDE.md #10 exists to remove.
+
+So the panel says it itself now. `mem.c` prints free **and largest-block** for internal RAM and
+PSRAM (they fail differently: a driver wanting one contiguous 32 KB buffer fails with 60 KB
+free and fragmented, and "free" alone makes that look impossible), at every boot stage that
+takes a big bite — `boot`, `display`, `imu`, `wifi`, `pre-speech`, `post-speech`. And the blit
+error that printed 150 identical lines during the 0.2.38 capture now logs once, then every
+hundredth, with the heap attached, and says when it recovered.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

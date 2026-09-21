@@ -1,0 +1,19 @@
+# WHERE A MODEL NOBODY ASKED FOR PUTS ITS SCRATCHPAD.
+#
+# esp-sr links `libnsnet3.a` unconditionally — its CMakeLists does it whenever the archive
+# exists for the target, because `libnsnet.a` references `esp_nsnet3` — and that archive
+# carries 117,272 bytes of `.bss`. On this board that is 38% of ALL static DIRAM, for a deep
+# noise-suppression model that is not even selected (`CONFIG_SR_NSN_WEBRTC=y`) and never
+# appears in the pipeline the front end builds: `[input] -> |VAD(WebRTC)| -> [output]`.
+#
+# It cost the panel its radio. Static DIRAM reached 90.4% and `esp_wifi_init` had 18 KB of
+# internal heap to work with, where it needs an order of magnitude more for DMA descriptors
+# that can live nowhere else (0.2.37, 0.2.38 — ROOM_ENDPOINT_PLAN.md §10.4aw and §10.4ax).
+#
+# `.bss` is zero-initialised, so it can live in PSRAM with no image cost and no start-up copy;
+# scratch for a model that never runs costs nothing wherever it sits. The archive cannot be
+# dropped without patching a managed component, which the next dependency fetch would undo.
+[mapping:nsnet3_scratch]
+archive: libnsnet3.a
+entries:
+    * (extram_bss)
