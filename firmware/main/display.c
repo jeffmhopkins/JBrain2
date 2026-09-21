@@ -319,9 +319,12 @@ static DMA_ATTR uint16_t s_strip[METER_W * METER_SPAN];
 /* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
    getting the sign wrong costs one release and is obvious on sight, which is cheaper than
    waiting. 0.2.18 guessed `ay` and the panel's own telemetry settled it in one cycle:
-   upright reads `[-7637, 381, 530]`, so gravity is on **X**, and `ay` sat well inside the
-   hysteresis band where nothing would ever have flipped. Reporting the raw counts is what
-   made that a one-line answer instead of a guess about a guess.
+   gravity is on **X** — `ay` sat well inside the hysteresis band, where nothing would ever
+   have flipped. The sign then came from a reading taken in a KNOWN orientation, which the
+   first one was not: charging port right and the robot's head up reads `[8446, 78, -563]`,
+   so right way up is POSITIVE ax. The earlier `[-7637, 381, 530]` was the panel lying
+   inverted on its charger, and reading a sign off an unknown pose is how 0.2.19 shipped
+   backwards. Two readings, two axes eliminated, one orientation named.
 
    Hysteresis at about half a gravity, because a panel lying near flat has almost nothing on
    this axis and a bare sign test would flip it back and forth on noise. */
@@ -333,8 +336,8 @@ static void update_orientation(void)
     int16_t ax = 0, ay = 0, az = 0;
     if (!imu_read(&ax, &ay, &az)) return;
     const bool was = s_upside_down;
-    if (ax > FLIP_THRESHOLD) s_upside_down = true;
-    else if (ax < -FLIP_THRESHOLD) s_upside_down = false;
+    if (ax < -FLIP_THRESHOLD) s_upside_down = true;
+    else if (ax > FLIP_THRESHOLD) s_upside_down = false;
     if (was != s_upside_down) {
         ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)",
                  s_upside_down ? "upside down" : "upright", ax, ay, az);
