@@ -418,8 +418,13 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     const uint16_t wing = shade(hex, 0.64f);
     const uint16_t dark = shade(hex, 0.22f);
 
-    const int hx = ox + tilt + SX(OS_HEAD_DX);
-    const int hy = oy + SY(OS_HEAD_Y);
+    /* The two channels that carry most of this form's motion. `neck` leans the neck and the
+       head together — applied in full at the head and pro-rata down the neck, so the head
+       leads and the neck follows instead of shearing off it. `bob` rides the head only. */
+    const int lean = SX(st->rig.neck * 0.55f);
+    const int bob = SY(st->rig.bob);
+    const int hx = ox + tilt + lean + SX(OS_HEAD_DX);
+    const int hy = oy + SY(OS_HEAD_Y) + bob;
     /* Behind the bird and BELOW the plumes: the robot's anchor hung off the HEAD, so the
        offset that put its cloud by the hips put the ostrich's up at its midriff. */
     if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(100), oy + SY(52), s);
@@ -427,9 +432,16 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     /* Tail plumes first, behind the body. They FLAP with the arm pose — a bird has no arms,
        so the rig's arm angle drives the one thing on a bird that answers to it.
        BOTH arms, because several actions (wave, burp) move only the right one: driving the
-       flap off `arm_l` alone made ACT_WAVE change exactly zero pixels on this form. */
-    const float dev = ((st->rig.arm_l - 12.0f) + (-st->rig.arm_r - 12.0f)) * 0.5f;
-    const float flap = dev * 0.35f;
+       flap off `arm_l` alone made ACT_WAVE change exactly zero pixels on this form.
+
+       AVERAGING the two was worse than the bug it fixed. Dance, bop, shimmy, wiggle and
+       giggle swing both arms the SAME way, so the mean of the two deviations is a constant
+       and the tail did not move for any of them — one action rescued, five broken. The
+       larger deviation, signed, tracks whichever arm is actually doing something. */
+    const float dl = st->rig.arm_l - 12.0f;
+    const float dr = -st->rig.arm_r - 12.0f;
+    const float dev = fabsf(dl) >= fabsf(dr) ? dl : dr;
+    const float flap = dev * 0.35f + st->rig.tail;
     static const struct {
         float deg;
         int len;
@@ -438,14 +450,20 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
         draw_limb(fb, ox - SX(56), oy + SY(6), TAIL[i].deg + flap, SY(TAIL[i].len), SX(16), col);
     }
 
-    /* Legs and three-toed feet. The toes are what make it a bird rather than a stand. */
+    /* Legs and three-toed feet. The toes are what make it a bird rather than a stand.
+       A bird drawn head-on cannot step fore-and-aft — there is no depth to step into — so
+       `step` reads as a LIFT: the raised leg shortens and swings out, alternating. */
+    const float lift = st->rig.step;
     for (int side = -1; side <= 1; side += 2) {
         const int lx = ox + SX(side * 30);
-        const float deg = side < 0 ? st->rig.leg_l : st->rig.leg_r;
-        draw_limb(fb, lx, oy + SY(OS_LEG_Y), deg, SY(OS_LEG_L), SX(20), leg);
+        const float up = side < 0 ? fmaxf(0.0f, lift) : fmaxf(0.0f, -lift);
+        const float deg =
+            (side < 0 ? st->rig.leg_l : st->rig.leg_r) + (side < 0 ? up : -up) * 0.5f;
+        const int len = SY(OS_LEG_L) - (int)((float)SY(OS_LEG_L) * fminf(0.45f, up / 60.0f));
+        draw_limb(fb, lx, oy + SY(OS_LEG_Y), deg, len, SX(20), leg);
         const float a = deg * (float)M_PI / 180.0f;
-        const int ex = lx + (int)lrintf(-sinf(a) * (float)SY(OS_LEG_L));
-        const int ey = oy + SY(OS_LEG_Y) + (int)lrintf(cosf(a) * (float)SY(OS_LEG_L));
+        const int ex = lx + (int)lrintf(-sinf(a) * (float)len);
+        const int ey = oy + SY(OS_LEG_Y) + (int)lrintf(cosf(a) * (float)len);
         for (int t = -1; t <= 1; t++) {
             draw_limb(fb, ex, ey, deg + (float)t * 62.0f, SY(19), SX(11), leg);
         }
@@ -464,17 +482,21 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
            actually hiding, it is drawn LAST instead. */
     const float u = st->rig.hands_up > 1.0f ? 1.0f : st->rig.hands_up;
     const int wx = LERPI(ox + SX(2), hx - SX(72), u);
-    const int wy = LERPI(oy, oy + SY(OS_EYE_Y - 34), u);
+    const int wy = LERPI(oy, oy + SY(OS_EYE_Y - 34) + bob, u);
     const int ww = LERPI(SX(74), SX(144), u);
     const int wh = LERPI(SY(66), SY(88), u);
     if (u <= 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
 
-    /* Neck: segments narrowing toward the head, leaning forward for life. */
+    /* Neck: segments narrowing toward the head, leaning forward for life. Each segment
+       carries its share of the head's total displacement — the segments used to be drawn at
+       a bare `ox`, so any tilt or lean tore the head clean off the top of the neck. */
     for (int i = 0; i < 7; i++) {
         const float t = (float)i / 6.0f;
         const int seg_w = (int)(50.0f - 16.0f * t);
-        fill_round_rect(fb, ox - SX(seg_w / 2) + SX((int)(7.0f * t)), oy + SY(-26 - i * 14),
-                        SX(seg_w), SY(11), (int)(5 * s), neck);
+        const int nx = ox + (int)lrintf((float)(tilt + lean) * t) + SX((int)(7.0f * t));
+        fill_round_rect(fb, nx - SX(seg_w / 2),
+                        oy + SY(-26 - i * 14) + (int)lrintf((float)bob * t), SX(seg_w),
+                        SY(11), (int)(5 * s), neck);
     }
 
     /* Crest: three thin plumes, the signature of the silhouette. 180 turns them upward. */
@@ -483,7 +505,8 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
         int len;
     } CREST[] = {{-18.0f, 42}, {0.0f, 50}, {18.0f, 42}};
     for (unsigned i = 0; i < sizeof(CREST) / sizeof(CREST[0]); i++) {
-        draw_limb(fb, hx, oy + SY(-182), CREST[i].deg + 180.0f, SY(CREST[i].len), SX(9), col);
+        draw_limb(fb, hx, oy + SY(-182) + bob, CREST[i].deg + 180.0f + st->rig.crest,
+                  SY(CREST[i].len), SX(9), col);
     }
 
     fill_round_rect(fb, hx - SX(OS_HEAD_W / 2), hy, SX(OS_HEAD_W), SY(OS_HEAD_H),
@@ -494,14 +517,14 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
         int w, h, y;
     } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
     for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
-        fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y), SX(BEAK[i].w),
+        fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob, SX(BEAK[i].w),
                         SY(BEAK[i].h), (int)(5 * s), beak);
     }
-    fill_rect(fb, hx - SX(16), oy + SY(-97), SX(32), SY(2), shade(hex, 0.28f));
+    fill_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), shade(hex, 0.28f));
 
     /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
        head's edge, which on a 128-wide head leaves exactly this much room. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, hx, oy + SY(-110), SX(50), s);
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, hx, oy + SY(-110) + bob, SX(50), s);
 
     /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
        redrew them would have to re-implement all six.
@@ -509,7 +532,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
        draws 46x54 and `draw_eye` draws 52*0.78 x 62*0.78 = 40.6x48.4, so transcribing the
        scalar literally shrank the approved eyes by a ninth. 1.10 reproduces 45.1x52.9 to
        within half a pixel. */
-    const int ey = oy + SY(OS_EYE_Y);
+    const int ey = oy + SY(OS_EYE_Y) + bob;
     draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle, s * 1.10f);
     draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle, s * 1.10f);
 
