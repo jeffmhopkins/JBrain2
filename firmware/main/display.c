@@ -210,33 +210,41 @@ bool display_start(void)
  * the figure ever stops moving, the screen goes black and the device reads as dead. W4's
  * rig replaces this with real animation; nothing may replace it with nothing.
  */
-/* ASK THE CONTROLLER, STOP GUESSING.
+/* THE READ PATH IS DEAD, SO STOP READING AND START RE-ASSERTING.
  *
- * Two hypotheses have now been built from the symptom alone and both were wrong: that the
- * panel needs continuous writes (0.2.7 wrote every 500 ms and went dark), and that it needs
- * consecutive frames to DIFFER (0.2.9 bobs every frame and went dark). A third guess is not
- * worth an OTA cycle. The CO5300 can be read, and RDDPM (0x0A) answers the question that has
- * been inferred past since §10.4n: does the controller still believe the display is on?
+ * 0.2.10 added a probe on the theory that the CO5300 could simply be asked. It answered
+ * 0x0A=0x00 [display OFF, sleep IN] — which reads like a diagnosis and is not one. The same
+ * call reports brightness 0x00 while `0x51` was explicitly written 0xFF at init, so the
+ * reads are returning zeros rather than data: this panel does not answer reads over QSPI.
+ * An instrument that fails by returning a plausible wrong answer is worse than one that
+ * errors, and this one nearly bought a fix for a diagnosis built on nothing.
  *
- *   display bit set, brightness high, screen dark -> not the controller. The rail to the
- *     OLED, or the AXP2101 this firmware has never spoken to.
- *   display bit CLEAR -> the controller dropped display-on, and re-issuing 0x29 is the fix.
- *   idle-mode bit SET -> the part has an idle mode nobody asked for, which would explain
- *     every observation including why a tap helps.
- *   the read itself fails -> the panel is not answering at all, which is its own answer.
+ * Reading is also the only way to observe the dark state, and it cannot be done: opening the
+ * USB CDC port resets the S3 whatever pyserial is told, because the kernel asserts DTR before
+ * those settings apply. Every console read has therefore been of a FRESH BOOT, never of the
+ * fault.
  *
- * Read-only, and it gives up after a few failures rather than logging every ten seconds
- * forever: this is an instrument, and an instrument that floods the console is one more
- * thing hiding the evidence.
+ * So: re-assert instead of interrogate. Display-on (0x29) and brightness (0x51) are re-sent
+ * on a slow cadence, and the experiment reads off the glass rather than the log —
+ *
+ *   it stays lit    -> the controller was dropping display-on or brightness, and this IS the
+ *                      fix, not just the diagnosis.
+ *   it still blanks -> nothing the controller is told matters, which points at the OLED rail
+ *                      and the AXP2101 this firmware has never spoken to.
+ *
+ * Cheap enough to be unconditional: two short command writes every thirty seconds against a
+ * bus already carrying five full frames a second.
  */
-#define PROBE_MS 10000
-#define PROBE_GIVE_UP 3
+#define REASSERT_MS 30000
+/* Matches the init sequence exactly. It is full brightness and still wrong for a bedroom —
+   see the plan — but changing it here would add a variable to the one thing being tested. */
+#define BRIGHTNESS 0xFF
 
-/* THE VERSION, ON THE GLASS. Until now the only way to know what a panel was running was to
-   ask the box what it last served, or to cable it up and read its console — and both have
-   been wrong at least once tonight. Top-left: the head spans x 76..292 and starts at y 60, so
-   this corner is the one piece of the panel the robot never occupies. Dim on purpose; it
-   shares a bedroom. */
+/* THE VERSION, ON THE GLASS. The only other ways to know what a panel is running are to ask
+   the box what it last SERVED — a different question — or to cable it up and read its
+   console, which resets it. Top-left: the head spans x 76..292 and starts at y 60, so this
+   corner is the one piece of the panel the robot never occupies. Dim on purpose; it shares a
+   bedroom. */
 #define LABEL_X 8
 #define LABEL_Y 6
 #define LABEL_SCALE 2
@@ -244,13 +252,12 @@ bool display_start(void)
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
 
-/* A HOLD LONG ENOUGH TO MEAN IT. The owner asked for five seconds, and the number is not
-   arbitrary: §10.4p measured 4-5 year olds producing ORDINARY taps lasting up to 4.2 s, so
-   five is the first threshold that sits outside a child's accidental press at all. It is a
-   thin margin — 0.8 s — which is exactly why the cue below exists rather than a silent
-   count: a hold that is about to reboot the panel says so, in time to let go.
-   A reboot IS the firmware re-check, because the OTA loop asks the box before its first
-   sleep (main.c), so this doubles as "go and get the update now". */
+/* A HOLD LONG ENOUGH TO MEAN IT. Five seconds is not arbitrary: 4-5 year olds were measured
+   producing ORDINARY taps lasting up to 4.2 s, so five is the first threshold outside a
+   child's accidental press at all. The margin is 0.8 s, which is exactly why the hold is not
+   silent — from 1.5 s an amber bar grows across the top edge, full width at the moment it
+   reboots, in time to let go. A reboot IS the firmware re-check, because the OTA loop asks
+   the box before its first sleep (main.c). */
 #define HOLD_REBOOT_MS 5000
 #define HOLD_CUE_MS 1500
 
@@ -270,25 +277,16 @@ static int bob_step(int frame)
     return k - 4 * BOB_PX;
 }
 
-static void probe_panel(void)
+static void reassert_panel(void)
 {
-    static int failures;
-    if (s_io == NULL || failures >= PROBE_GIVE_UP) return;
-
-    uint8_t pm = 0, bv = 0;
-    const esp_err_t e1 = esp_lcd_panel_io_rx_param(s_io, 0x0A, &pm, 1);
-    const esp_err_t e2 = esp_lcd_panel_io_rx_param(s_io, 0x52, &bv, 1);
-    if (e1 != ESP_OK || e2 != ESP_OK) {
-        failures++;
-        ESP_LOGW(TAG, "panel read failed (0x0A %s, 0x52 %s)%s", esp_err_to_name(e1),
-                 esp_err_to_name(e2), failures >= PROBE_GIVE_UP ? " — giving up" : "");
-        return;
+    if (s_io == NULL) return;
+    const uint8_t level = BRIGHTNESS;
+    const esp_err_t on = esp_lcd_panel_io_tx_param(s_io, 0x29, NULL, 0);
+    const esp_err_t br = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
+    if (on != ESP_OK || br != ESP_OK) {
+        ESP_LOGW(TAG, "re-assert failed (0x29 %s, 0x51 %s)", esp_err_to_name(on),
+                 esp_err_to_name(br));
     }
-    failures = 0;
-    /* MIPI DCS RDDPM: D7 booster, D6 idle, D5 partial, D4 sleep-out, D3 normal, D2 display. */
-    ESP_LOGI(TAG, "panel 0x0A=0x%02x [display %s, sleep %s, idle %s, booster %s] 0x52=0x%02x",
-             pm, (pm & 0x04) ? "ON" : "OFF", (pm & 0x10) ? "OUT" : "IN",
-             (pm & 0x40) ? "ON" : "off", (pm & 0x80) ? "on" : "OFF", bv);
 }
 
 static void face_task(void *arg)
@@ -313,7 +311,7 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
-    int since_probe = 0;
+    int since_reassert = 0;
     int held = 0;
 
     while (true) {
@@ -364,13 +362,13 @@ static void face_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }
-        if (since_probe >= PROBE_MS) {
-            probe_panel();
-            since_probe = 0;
+        if (since_reassert >= REASSERT_MS) {
+            reassert_panel();
+            since_reassert = 0;
         }
         vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
         since_draw += TOUCH_POLL_MS;
-        since_probe += TOUCH_POLL_MS;
+        since_reassert += TOUCH_POLL_MS;
     }
 }
 
