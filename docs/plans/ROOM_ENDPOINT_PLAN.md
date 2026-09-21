@@ -1130,6 +1130,73 @@ restart happens **after** the blit, so the full-width cue actually reaches the g
 the other way round, the `dirty` flag was a dead store cleared at the top of the next
 iteration, and a reboot with no warning is indistinguishable from the fault §10.4u is chasing.
 
+#### 10.4w The probe returned zeros, and the console cannot see the fault (2026-09-21)
+
+0.2.10's probe reported, while the panel was dark:
+
+```
+panel 0x0A=0x00 [display OFF, sleep IN, idle off, booster OFF] 0x52=0x00
+```
+
+Read literally that is a diagnosis — the controller dropped display-on — and it was very
+nearly taken as one. **It is not data.** `0x52` is the brightness readback and `0x51` is
+written `0xFF` in the init sequence; a working read would report `0xFF` there. Both registers
+returning `0x00` means the CO5300 is not answering reads over QSPI at all.
+
+**An instrument that fails by returning a plausible wrong answer is worse than one that
+errors**, and this one is worse still because the give-up logic never fired: the call returned
+`ESP_OK` with a zeroed buffer. The guard was written for the wrong failure mode. The check that
+caught it was having a register whose value was already known — which is the only reason this
+did not become the third fix built on nothing.
+
+**And the console cannot observe the fault at all.** That log came from a FRESH BOOT despite
+`--no-reset`: opening the USB CDC port resets the S3 whatever pyserial is told, because the
+kernel asserts DTR before those settings apply. §10.4s fixed the *exit* path so a watch cannot
+strand a panel; it did not make the *entry* path non-destructive, and it cannot. **Every
+console read in this investigation has been of a panel that had just restarted, never of the
+dark state.** That is worth stating plainly because it retroactively weakens every boot log
+quoted in §10.4n onwards.
+
+So both instruments are gone: reads return zeros, and looking resets. 0.2.12 stops trying to
+observe and re-asserts instead — `0x29` (display on) and `0x51` (brightness) every thirty
+seconds — with the experiment read off the glass rather than out of a log:
+
+- **stays lit** → the controller was dropping display-on or brightness, and this is the fix
+  rather than merely the diagnosis.
+- **still blanks** → nothing the controller is told matters, which points at the OLED rail and
+  the AXP2101 this firmware has never spoken to. That is then the last candidate standing from
+  §10.4n's original pair, and the next work is the PMU.
+
+Brightness is re-sent at `0xFF` to match the init sequence exactly. It is still wrong for a
+bedroom and still has to come down, but not in the release that is testing one thing.
+
+**A soft reset does not fix it; a power cycle does.** The owner found this by using the new
+five-second hold: the amber cue filled, the panel rebooted, and it came back **black**. The
+gesture works exactly as designed and the display does not come back with it.
+
+That is the most informative thing observed all night, because of what it excludes. The driver
+already issues `SWRESET` on this board — `reset_gpio_num` is `GPIO_NUM_NC`, and
+`panel_co5300_reset` takes the software path when there is no reset GPIO — and the whole init
+sequence re-runs on every boot. So the ESP32 does everything it does from cold, and the panel
+still stays dark. **Whatever holds the display off therefore lives outside the ESP32**, in a
+part that a power cycle clears and `esp_restart()` does not.
+
+The candidates are the chips on the I2C bus, and here is the embarrassing part: **nobody has
+ever confirmed which chips those are.** §10.4n named the AXP2101 and ruled it out by
+inference; the vendor BSP does not mention a PMU at all, and it *does* expose a TCA9554 IO
+expander that this firmware has never touched. Both `BSP_LCD_RST` and `BSP_LCD_BACKLIGHT` are
+`GPIO_NUM_NC`, so neither is a line we are failing to drive.
+
+0.2.12 therefore also logs an **I2C scan at startup** — twelve lines that answer what has been
+assumed twice. If 0x34 acknowledges there is an AXP2101 and §10.4n's second candidate is alive;
+if 0x20 acknowledges the expander is real and worth reading; if neither, the search moves off
+this bus entirely.
+
+**If 0.2.12 does not settle it, the next move is not another firmware guess — it is
+telemetry.** The panel should report its own state to the box over HTTP on a cadence, because
+every other channel either resets it or lies, and a panel that can only be diagnosed with a
+cable is the thing this whole design exists to avoid (CLAUDE.md #10).
+
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 
 Both surfaced from the owner asking a plain question — *does this firmware connect to

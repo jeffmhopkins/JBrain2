@@ -10,6 +10,8 @@
 
 #include "i2c_bus.h"
 
+#include <stdio.h>
+
 #include "esp_log.h"
 
 static const char *TAG = "i2c";
@@ -37,4 +39,20 @@ i2c_master_bus_handle_t i2c_bus_get(void)
         s_bus = NULL;
     }
     return s_bus;
+}
+
+void i2c_bus_scan(void)
+{
+    i2c_master_bus_handle_t bus = i2c_bus_get();
+    if (bus == NULL) return;
+    char found[96];
+    int n = 0;
+    /* 0x08..0x77 is the addressable range; the reserved ends answer for nobody. */
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        if (i2c_master_probe(bus, addr, 30) != ESP_OK) continue;
+        if (n < (int)sizeof(found) - 6) {
+            n += snprintf(found + n, sizeof(found) - (size_t)n, " 0x%02x", addr);
+        }
+    }
+    ESP_LOGI(TAG, "i2c devices:%s", n ? found : " none");
 }

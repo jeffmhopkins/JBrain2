@@ -28,22 +28,35 @@ PSRAM" instead of panicking in early boot. That second one is also why the boot 
 the size explicitly: the rollback gate cannot catch a panel that boots, reaches the box and
 marks itself good while being 8 MB short of what the display needs.
 
-## The panel goes dark and we do not yet know why
+## The panel goes dark and both instruments are broken
 
-Drawn once it goes dark within minutes. **Two fixes have been tried and neither worked:**
-redrawing an identical frame every 500 ms (0.2.7), and bobbing the figure so every frame
-differs from the last (0.2.9). Both went black. A tap or a reboot brings it back.
+Drawn once it goes dark within minutes. **Three fixes have been tried and none worked:**
+redrawing an identical frame every 500 ms (0.2.7), bobbing so every frame differs (0.2.9), and
+asking the controller what it thinks (0.2.10 — it answers zeros).
 
-It was briefly blamed on the debug console, which really could strand a panel in the ROM
-bootloader and really is fixed (ROOM_ENDPOINT_PLAN.md §10.4s) — but the panel blanks with
-nobody on its serial port, so that was a second bug on top of this one (§10.4t). Beware the
-reading trap: when a console read "brings the robot back", that is the reset it performs, not
-a cure.
+Two things to know before adding a fourth idea:
 
-**Do not add a third guess.** 0.2.10 reads the controller's own `RDDPM` (0x0A) and brightness
-(0x52) every ten seconds and logs them, which answers directly whether the chip still thinks
-the display is on, whether it has entered an idle mode, or whether it has stopped answering
-at all (§10.4u). Design around the reading, not around the symptom.
+- **The CO5300 does not answer reads over QSPI.** `esp_lcd_panel_io_rx_param` returns `ESP_OK`
+  with a zeroed buffer, which reads exactly like "display off". The tell is `0x52`, the
+  brightness readback: init writes `0x51 = 0xFF`, so a working read says `0xFF`. It says
+  `0x00`. Do not trust a register read here without a known-value control.
+- **Reading the console resets the panel**, whatever `--no-reset` says: the kernel asserts DTR
+  on open, before pyserial's settings apply. Every console log in this investigation is of a
+  fresh boot, never of the dark state.
+
+**A soft reset does not fix it; a power cycle does.** The five-second hold reboots the panel
+and it comes back black, while pulling the plug brings the robot straight back. The driver
+already sends `SWRESET` (there is no reset GPIO, so `panel_co5300_reset` takes the software
+path) and the whole init sequence re-runs — so whatever holds the display off lives **outside
+the ESP32**, in a part a power cycle clears and `esp_restart()` does not.
+
+Which part is unknown, because nobody has ever confirmed what is on the I2C bus. 0.2.12 logs a
+scan at startup to find out.
+
+0.2.12 therefore re-asserts rather than interrogates — `0x29` and `0x51` every thirty seconds
+— and the result is read off the glass (ROOM_ENDPOINT_PLAN.md §10.4w). If it still blanks, the
+remaining candidate is the OLED rail and the AXP2101 this firmware has never spoken to, and
+the next step is telemetry over HTTP rather than another guess.
 
 The bob stays regardless — an animated pet wants it, and it costs nothing.
 
