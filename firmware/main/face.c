@@ -119,25 +119,42 @@ static void draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uin
 #define ARM_L 74
 #define LEG_L 54
 
-static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark)
+static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, float open, float startle)
 {
     /* 52x62 in the mock, scaled 0.78 because the eyes shrink with the head on a body. */
-    const int w = (int)(52 * 0.78f), h = (int)(62 * 0.78f);
+    const float grow = 1.0f + 0.20f * startle;
+    const int w = (int)(52 * 0.78f * grow);
+    const int h = (int)(62 * 0.78f * grow * open);
+
+    /* Shut: a lid LINE, not an absent eye. A blink drawn as nothing reads as the face
+       breaking for a frame; a line reads as a blink. */
+    if (h < 5) {
+        fill_round_rect(fb, cx - w / 2, cy - 2, w, 5, 2, dark);
+        return;
+    }
+
     const int r = (int)((w < h ? w : h) * 0.38f);
     fill_round_rect(fb, cx - w / 2, cy - h / 2, w, h, r, rgb(0xF6, 0xF9, 0xFC));
-    fill_circle(fb, cx, cy, (int)(17 * 0.78f), dark);
+
+    /* The pupil is clamped to the lid: without this a half-closed eye shows a bar of pupil
+       spilling past the white, which reads as damage rather than as a blink. */
+    int pr = (int)(17 * 0.78f * (1.0f - 0.30f * startle));
+    if (pr > h / 2) pr = h / 2;
+    fill_circle(fb, cx, cy, pr, dark);
     /* The catchlight is what stops the eye reading as a hole. */
-    fill_circle(fb, cx - (int)(6 * 0.78f), cy - (int)(7 * 0.78f), (int)(5 * 0.78f),
-                rgb(0xFF, 0xFF, 0xFF));
+    if (pr > 5) {
+        fill_circle(fb, cx - (int)(6 * 0.78f), cy - (int)(7 * 0.78f), (int)(5 * 0.78f),
+                    rgb(0xFF, 0xFF, 0xFF));
+    }
 }
 
-void face_draw(uint16_t *fb, int colour, int bob, int lean)
+void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 {
     /* Everything hangs off this, so one offset moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int oy = OY + bob;
+    const int oy = OY + st->bob + st->dip;
     /* Everything hangs off these two, so one pair of offsets moves the whole figure. */
-    const int ox = OX + lean;
+    const int ox = OX + st->lean;
     const uint32_t hex = PALETTE[colour % face_colour_count()];
     const uint16_t col = shade(hex, 1.0f);
     const uint16_t dark = shade(hex, 0.22f);
@@ -167,8 +184,8 @@ void face_draw(uint16_t *fb, int colour, int bob, int lean)
     fill_round_rect(fb, ox - HW, hy - HH, HW * 2, HH * 2, 40, col);
 
     const int ex = (int)(HW * 0.43f), ey = hy - (int)(HH * 0.17f);
-    draw_eye(fb, ox - ex, ey, dark);
-    draw_eye(fb, ox + ex, ey, dark);
+    draw_eye(fb, ox - ex, ey, dark, st->open, st->startle);
+    draw_eye(fb, ox + ex, ey, dark, st->open, st->startle);
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
     arc_stroke(fb, ox, hy + (int)(HH * 0.52f) - 16, 30, (float)M_PI * 0.15f,

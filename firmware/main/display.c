@@ -32,6 +32,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "audio.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "face.h"
 #include "font.h"
@@ -356,6 +357,44 @@ static bool s_upside_down;
 #define LEAN_SMOOTH 4
 static int s_lean;
 
+/* THE RIG, first slice. W4's ~17 tweened floats start here with two: a blink and a flinch.
+ *
+ * Blink is what makes a face read as alive rather than as a picture of a face, and it is the
+ * cheapest of the seventeen — one number, no new geometry. JITTERED, because a blink exactly
+ * every four seconds is a metronome: the regularity is what gives away a machine, and the
+ * irregularity is most of the effect.
+ *
+ * Flinch is the interaction the design settled: touch means "I am paying attention to you",
+ * expressed as a sub-100 ms movement toward the finger. Here it is a dip and wide eyes that
+ * decay over about half a second — startled, then recovering, which is what makes a poke feel
+ * answered rather than merely registered. */
+#define BLINK_EVERY_MS 4000
+#define BLINK_JITTER_MS 1800
+#define BLINK_MS 240
+#define FLINCH_DIP 18
+/* ~0.86 per 40 ms frame reaches negligible in about half a second: fast enough to feel like a
+   reflex, slow enough to be seen. */
+#define FLINCH_DECAY 0.86f
+
+static int s_blink_t;
+static int s_blink_next = BLINK_EVERY_MS;
+static float s_flinch;
+
+static float blink_open(int dt)
+{
+    s_blink_t += dt;
+    if (s_blink_t < s_blink_next) return 1.0f;
+    const int into = s_blink_t - s_blink_next;
+    if (into >= BLINK_MS) {
+        s_blink_t = 0;
+        s_blink_next = BLINK_EVERY_MS - BLINK_JITTER_MS / 2 +
+                       (int)(esp_random() % (uint32_t)BLINK_JITTER_MS);
+        return 1.0f;
+    }
+    const float half = BLINK_MS / 2.0f;
+    return into < half ? 1.0f - (float)into / half : ((float)into - half) / half;
+}
+
 static void update_orientation(void)
 {
     int16_t ax = 0, ay = 0, az = 0;
@@ -497,6 +536,7 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    float s_open = 1.0f;
     int s_drawn_lean = 0;
     int since_reassert = 0;
     int since_sample = 0;
@@ -511,12 +551,19 @@ static void face_task(void *arg)
         if (touch && touch_tapped()) {
             colour = (colour + 1) % face_colour_count();
             ESP_LOGI(TAG, "tap -> colour %d", colour);
+            s_flinch = 1.0f;
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             if (sound) audio_beep();
             dirty = true;
         }
         update_orientation();
+        s_open = blink_open(TOUCH_POLL_MS);
+        s_flinch *= FLINCH_DECAY;
+        if (s_flinch < 0.02f) s_flinch = 0.0f;
+        /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
+           frame long and read as a glitch; the floor is for a face that is holding still. */
+        if (s_flinch > 0.0f || s_open < 1.0f) dirty = true;
         /* A moved figure is a new frame, so tilting redraws at the poll rate rather than
            waiting out the idle floor — but only once it has moved enough to see, or every
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
@@ -536,7 +583,14 @@ static void face_task(void *arg)
 
         if (dirty || since_draw >= FACE_FLOOR_MS) {
             s_drawn_lean = s_lean;
-            face_draw(fb, colour, bob_step(frame++), s_lean);
+            const face_state_t st = {
+                .bob = bob_step(frame++),
+                .lean = s_lean,
+                .dip = (int)(FLINCH_DIP * s_flinch),
+                .open = s_open,
+                .startle = s_flinch,
+            };
+            face_draw(fb, colour, &st);
             font_draw(fb, FACE_W, FACE_H, LABEL_X, LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
