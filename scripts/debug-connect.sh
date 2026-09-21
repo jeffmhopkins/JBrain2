@@ -11,8 +11,8 @@
 #
 #   scripts/debug-connect.sh whoami
 #   scripts/debug-connect.sh version                   # git rev the running server was built from
-  scripts/debug-connect.sh panel-settings            # the panel's knobs; no args prints them
-  scripts/debug-connect.sh panel-settings --debug-overlay on   # draw the mic meter
+#   scripts/debug-connect.sh panel-settings            # the panel's knobs; no args prints them
+#   scripts/debug-connect.sh panel-settings --debug-overlay on   # draw the mic meter
 #   scripts/debug-connect.sh version-history           # timeline of deployed versions
 #   scripts/debug-connect.sh complete --strength high --system "Be terse" "ping"
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn

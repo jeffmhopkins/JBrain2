@@ -10,6 +10,7 @@ POSIX shell. Host-only scripts (restore.sh, install.sh) may stay bash.
 """
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -1766,3 +1767,52 @@ def test_the_restricted_fetch_still_brings_tags(tmp_path: Path) -> None:
 
     described = _git(box / "src", "describe", "--tags", "--always", "--dirty")
     assert described.stdout.strip() == "v1.2.3", described.stdout + described.stderr
+
+
+def test_debug_connect_help_is_not_executable() -> None:
+    """The owner's one no-terminal lifeline must not execute its own help text.
+
+    `debug-connect.sh` prints its usage by dumping its leading comment block —
+    `awk 'NR > 1 && !/^#/ { exit }'` — which is a nice trick with a sharp edge:
+    a help line added WITHOUT a `#` is not documentation, it is executable bash
+    at the top of the script. Two such lines shipped in 0.2.50, each of them a
+    `scripts/debug-connect.sh panel-settings ...` example, so every invocation
+    re-ran the script: infinite recursion, "shell level (1000) too high", and a
+    hang. It also silently truncated the help at the first offending line, and
+    it broke a deploy before anyone noticed.
+
+    That script is how the owner updates a box they cannot open a terminal on
+    (CLAUDE.md #10), so breaking it breaks the recovery path as well as the
+    thing being recovered.
+
+    THE FIRST VERSION OF THIS TEST PASSED WITH THE BUG PUT BACK. It asserted
+    the help block was "long enough" rather than that nothing in it runs, which
+    the offending line satisfied. So this one runs the script and requires it to
+    terminate — a recursion is perfectly valid bash, and only behaviour catches
+    it — with a lexical check beside it to name the cause rather than just time
+    out.
+    """
+    script = Path(__file__).resolve().parents[2] / "scripts" / "debug-connect.sh"
+
+    for i, line in enumerate(script.read_text().splitlines(), start=1):
+        bare = line.lstrip()
+        assert not bare.startswith("scripts/debug-connect.sh"), (
+            f"{script.name} line {i} invokes the script from the script: {line!r}. "
+            "A usage example needs a leading '#', or it recurses forever."
+        )
+
+    subprocess.run(["bash", "-n", str(script)], check=True)
+
+    # No arguments prints usage and exits, before any token or network work. If
+    # anything above `usage()` runs the script again this never returns.
+    done = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        stdin=subprocess.DEVNULL,
+        env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")},
+    )
+    assert "debug-connect.sh" in done.stdout + done.stderr, (
+        "the script produced no usage at all"
+    )

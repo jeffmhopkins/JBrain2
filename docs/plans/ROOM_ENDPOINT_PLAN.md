@@ -3110,6 +3110,48 @@ seconds. `scripts/whisper-setup.sh:5` already makes the model operator-selectabl
 trip is a week of firmware or a different STT entirely.** Building the transport first would be
 building on a number nobody has.
 
+#### 10.4bl The help text was executable (2026-09-21)
+
+0.2.50 added two usage examples to `scripts/debug-connect.sh`. **Without `#` prefixes.**
+
+`usage()` prints the script's leading comment block —
+`awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"` — a nice trick with a
+sharp edge: a help line that is not a comment is not documentation, it is **executable bash at
+the top of the script**. Both offending lines read `scripts/debug-connect.sh panel-settings
+...`, so every invocation immediately re-ran the script:
+
+```
++ scripts/debug-connect.sh panel-settings
+bash: warning: shell level (1000) too high, resetting to 1   (x1000)
+```
+
+Infinite recursion, and a hang with no output — `bash -x` produced nothing because the trace
+died with the pipe. It also silently truncated the help at the first bad line.
+
+**It broke a deploy before anyone noticed.** The 0.2.50 rollout was attributed to a container
+restart killing the watcher; the box was still on 0.2.48 long afterwards because every
+`debug-connect.sh update` had been hanging on this. That script is how the owner updates a box
+they cannot open a terminal on (`CLAUDE.md` #10), so this broke **the recovery path as well as
+the thing being recovered** — the worst shape a bug can have on this product.
+
+##### The first guard passed with the bug put back
+
+```python
+if not line.startswith("#"):
+    assert i > 10, ...      # "the help block is long enough"
+    break
+```
+
+The offending line is line 14, so `i > 10` held and the test broke out happily. It asserted
+the block was long enough rather than that nothing in it runs — a test that passes for the
+wrong reason, which is the same failure this feature has produced four times now (§10.4at's
+`test_every_action_moves`, and the two neck-shear tests in §10.4bd).
+
+The one that ships **runs the script** and requires it to terminate, because a recursion is
+perfectly valid bash and only behaviour catches it, with a lexical check beside it so the
+failure names the cause instead of just timing out. Confirmed to fail on the real defect and
+pass once fixed, in that order.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
