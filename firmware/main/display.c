@@ -21,6 +21,7 @@
 #include "display.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
@@ -153,53 +154,51 @@ bool display_start(void)
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 
-    /* A WHOLE FRAME, NOT A STRIPE, AND THIS IS THE DISPLAY'S RESERVATION.
+    /* ONE STRIPE, BECAUSE NOTHING LARGER IS EVER SENT.
      *
-     * `max_transfer_sz` is what `spi_bus_initialize` sizes its DMA descriptor chain for, ONCE,
-     * here at boot. It used to be `sizeof(stripe)` — 11,776 bytes, the colour-bar buffer —
-     * while the render loop pushes a full 368x448x2 = 329,728 byte frame, 28 times larger. A
-     * transfer past the reservation makes the SPI driver allocate descriptors AT TRANSFER
-     * TIME, out of internal RAM, twenty-five times a second, forever.
+     * `max_transfer_sz` is what `spi_bus_initialize` sizes its DMA descriptor chain for,
+     * ONCE, here at boot; a transfer past it makes the driver allocate descriptors at
+     * transfer time, out of internal RAM. 0.2.42 raised this to a whole frame to stop that,
+     * which was aimed at the wrong thing — the allocation that mattered was the bounce
+     * BUFFER, not the descriptors, and asking for a frame-sized one made it unsatisfiable.
      *
-     * That is why the panel went black in 0.2.41: turning the recogniser's AGC on left the
-     * largest free internal block at 9,728 bytes, the per-frame allocation started failing,
-     * and every blit returned ESP_ERR_NO_MEM. It is also the "one dropped frame per box
-     * check-in" waved through in 0.2.39 — the same bug at a smaller amplitude, during the
-     * TLS handshake. One symptom was dismissed and the other was a black screen.
-     *
-     * Reserved here, the display cannot be starved by anything that starts later, which it
-     * has no other defence against: this runs before Wi-Fi, before TLS and before ESP-SR,
-     * when 257 KB of internal RAM is free and the largest block is 163 KB. */
+     * Every transfer this driver now makes is a stripe (`blit_frame()`), the colour bars
+     * (`stripe`) or the meter (`s_strip`), and all three are at most `sizeof(stripe)`. So
+     * the reservation says what is true rather than reserving for a transfer that no longer
+     * exists. */
     const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(
-        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3,
-        (int)((size_t)FACE_W * FACE_H * sizeof(uint16_t)));
+        LCD_PCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3, (int)sizeof(stripe));
     esp_err_t err = spi_bus_initialize(LCD_HOST, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "spi bus: %s", esp_err_to_name(err));
         return false;
     }
 
-    /* DMA STRAIGHT OUT OF PSRAM, AND THIS IS THE REAL FIX FOR THE BLACK SCREEN.
+    /* NO `psram_dma_direct`, AND THAT IS DELIBERATE — SEE `blit_frame()`.
      *
-     * `esp_lcd_panel_io_spi` only hands the SPI driver a PSRAM pointer when
-     * `psram_dma_direct` is set, and the vendor's config macro never sets it. Without it
-     * `setup_dma_priv_buffer()` in `spi_master.c` takes the `!use_psram` branch: it
-     * `heap_caps_aligned_alloc`s an INTERNAL copy of every chunk and memcpys the frame into
-     * it, per transfer, forever.
+     * 0.2.44 set it, on the reasoning that the S3's GDMA can read PSRAM directly so the
+     * driver's internal bounce buffer was pure waste. The first half was right and the
+     * second was not. The panel drew a full frame for the first time in four versions, and
+     * then died differently:
      *
-     * That is the whole display fault chain. At the old 11,776-byte chunk it meant 28 small
-     * internal allocations per frame, and one failing left the rest of the frame unwritten —
-     * the owner's photo of 0.2.41, top of the screen new and the bottom stale. Reserving a
-     * whole frame (below) made it ONE allocation of 329,728 bytes out of a 341 KB internal
-     * pool, which cannot succeed once anything else is running: that is 0.2.42's black
-     * screen, and it is why that change looked like an improvement in a quiet log while
-     * being worse whenever the panel actually redrew.
+     *   E spi_master: DMA TX underflow detected
+     *   E lcd_panel.io.spi: panel_io_spi_tx_param(222): recycle spi transactions failed
      *
-     * The S3's GDMA can read PSRAM directly, so the copy was never needed. With this set
-     * there is no bounce buffer at all and the frame is DMA'd where it already lives. */
+     * Reading the framebuffer out of PSRAM couples the SPI clock to PSRAM latency, and PSRAM
+     * here is contended — ESP-SR runs continuously on the other core and holds 3 MB of it.
+     * When the DMA cannot refill the SPI FIFO in time the transfer underflows and aborts,
+     * the driver is left holding transactions it never recycles, and every call after that
+     * returns ESP_ERR_INVALID_STATE. The render task stops; the screen goes black and stays
+     * black. So the bounce buffer was not only waste: it was also decoupling the bus from
+     * PSRAM, and 0.2.44 removed a function along with the bug.
+     *
+     * The answer is to bounce through internal RAM as the driver would, but through ONE
+     * STATIC buffer instead of a fresh allocation per transfer — which is `blit_frame()`.
+     * The pointer it hands the driver is already internal and DMA-capable, so
+     * `setup_dma_priv_buffer()` allocates nothing and reads no PSRAM. Both faults, gone,
+     * for a fixed 11,776 bytes. */
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
-    io_cfg.flags.psram_dma_direct = true;
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "panel io: %s", esp_err_to_name(err));
@@ -524,6 +523,42 @@ static bool s_upside_down;
 static int s_lean;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
+static int s_blit_ok;
+
+/* THE WHOLE FRAME, THROUGH ONE STATIC INTERNAL BUFFER, A STRIPE AT A TIME.
+ *
+ * Three versions argued about who should copy the frame out of PSRAM and where the copy
+ * should live, and every answer that let the DRIVER decide was wrong:
+ *
+ *   0.2.41  driver copies, allocating 11,776 B per chunk    28 allocations a frame; one
+ *                                                           fails and the rest of the frame
+ *                                                           is never written
+ *   0.2.42  driver copies, allocating 329,728 B per frame   cannot succeed at all once
+ *                                                           anything else is running
+ *   0.2.44  driver does not copy; DMA reads PSRAM           underflows under PSRAM
+ *                                                           contention and poisons the SPI
+ *                                                           driver for good
+ *
+ * The buffer wants to be internal (so the DMA never waits on PSRAM) and it wants to already
+ * exist (so a blit can never depend on the heap). `stripe` is both: static, DMA_ATTR, and
+ * idle after the boot colour bars. Handing the driver a pointer that is already internal and
+ * DMA-capable makes `setup_dma_priv_buffer()` a no-op — no allocation, no PSRAM read.
+ *
+ * The cost is 28 memcpys of 11,776 bytes per frame, which at the face's 5 fps is 1.6 MB/s
+ * against a core doing nothing else with those cycles. That is the cheap half of the trade. */
+static esp_err_t blit_frame(const uint16_t *fb)
+{
+    if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
+        int rows = FACE_H - y;
+        if (rows > STRIPE_ROWS) rows = STRIPE_ROWS;
+        memcpy(stripe, fb + (size_t)y * FACE_W, (size_t)rows * FACE_W * sizeof(uint16_t));
+        const esp_err_t err =
+            esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + rows, stripe);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_OK;
+}
 
 /* THE RIG, first slice. W4's ~17 tweened floats start here with two: a blink and a flinch.
  *
@@ -636,6 +671,12 @@ static void blit_meter(int level)
 #define BOB_PX 5
 #define FACE_FLOOR_MS 200
 #define TOUCH_POLL_MS 40
+/* Rare enough not to crowd the log, often enough that a frozen panel is named in seconds. */
+#define BEAT_MS 10000
+/* Ten seconds of a panel that cannot draw, and only once it has been up long enough that a
+   restart is a recovery rather than a loop. At 25 fps the loop attempts a blit every frame. */
+#define BLIT_HEAL_FAILS 250
+#define BLIT_HEAL_AFTER_MS 60000
 
 /* A triangle in whole pixels, one step per frame, so CONSECUTIVE FRAMES ARE NEVER EQUAL.
    A sine was the obvious shape and the wrong one: rounded to integers it repeats a value at
@@ -790,6 +831,7 @@ static void face_task(void *arg)
     int colour = 0;
     int frame = 0;
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
+    int since_beat = 0;
     /* The rig's running state. `st` persists between frames because the emotion TWEENS: a
        pose system that snaps is a slide show, and the halving approach in `emotion.c` is what
        turns one into an animation system. */
@@ -930,7 +972,7 @@ static void face_task(void *arg)
                          calib_sample_settled(&s_cal_s));
             }
             PHASE(9);
-            const esp_err_t cerr = esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
+            const esp_err_t cerr = blit_frame(fb);
             if (cerr != ESP_OK) ESP_LOGE(TAG, "cal blit: %s", esp_err_to_name(cerr));
             PHASE(10);
             vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
@@ -1051,11 +1093,10 @@ static void face_task(void *arg)
                     }
                 }
             }
-            /* One call for the whole frame: the panel takes a full-window write happily and
-               it is simpler to be right about than a stripe loop. */
+            /* A stripe loop, not one full-window write — see `blit_frame()` for which of
+               the three ways to get the frame out of PSRAM actually survives contention. */
             PHASE(9);
-            const esp_err_t err =
-                esp_lcd_panel_draw_bitmap(s_panel, 0, 0, FACE_W, FACE_H, fb);
+            const esp_err_t err = blit_frame(fb);
             if (err != ESP_OK) {
                 /* ONCE, THEN EVERY HUNDREDTH, AND ALWAYS WITH THE HEAP. A frame fails 25
                    times a second, so logging each one buried the boot in 150 identical
@@ -1068,9 +1109,33 @@ static void face_task(void *arg)
                              s_blit_fails);
                     mem_log("blit-fail");
                 }
-            } else if (s_blit_fails > 0) {
-                ESP_LOGI(TAG, "blit recovered after %d failures", s_blit_fails);
-                s_blit_fails = 0;
+                s_blit_ok = 0;
+                /* SELF-HEAL, BECAUSE THE OWNER CANNOT REACH THIS PANEL.
+                 *
+                 * A DMA underflow leaves the SPI driver holding transactions it never
+                 * recycles, and from then on EVERY call returns ESP_ERR_INVALID_STATE —
+                 * permanently, until someone power-cycles the unit. 0.2.46 removes the cause,
+                 * but "the display can enter a state only a human with hands on the hardware
+                 * can leave" is a property worth removing on its own: this panel lives in a
+                 * child's bedroom and its owner has no terminal.
+                 *
+                 * A reboot costs about four seconds of colour bars and is recoverable. A
+                 * black screen is not. The uptime guard is what keeps that trade honest — a
+                 * fault present from boot would otherwise cycle forever, and a reboot loop is
+                 * no better than a freeze. Past the guard, a panel that cannot draw for ten
+                 * seconds has nothing to lose by starting over. */
+                if (now > BLIT_HEAL_AFTER_MS && s_blit_fails >= BLIT_HEAL_FAILS) {
+                    ESP_LOGE(TAG, "%d consecutive blit failures — restarting", s_blit_fails);
+                    mem_log("blit-heal");
+                    vTaskDelay(pdMS_TO_TICKS(150)); /* let the log drain */
+                    esp_restart();
+                }
+            } else {
+                if (s_blit_fails > 0) {
+                    ESP_LOGI(TAG, "blit recovered after %d failures", s_blit_fails);
+                    s_blit_fails = 0;
+                }
+                s_blit_ok++;
             }
             since_draw = 0;
         }
@@ -1108,6 +1173,21 @@ static void face_task(void *arg)
                of the screen with something new to say affordable at this rate. */
             PHASE(11);
             blit_meter(level);
+        }
+        /* A RENDER HEARTBEAT, BECAUSE A STOPPED RENDER TASK LOOKED EXACTLY LIKE A QUIET ONE.
+           0.2.44 logged one blit failure and then nothing — and the nothing WAS the symptom:
+           the loop had stopped attempting blits, so the every-hundredth rate limit never
+           fired again and the panel sat frozen behind a clean-looking log. It took a photo
+           from the owner to find out. Anything that can stop has to say so on a timer, and
+           the largest free internal block comes along because it is the number that has
+           explained this fault twice. */
+        since_beat += TOUCH_POLL_MS;
+        if (since_beat >= BEAT_MS) {
+            since_beat = 0;
+            ESP_LOGI(TAG, "render: %d frames ok, %d failed | internal largest %u",
+                     s_blit_ok, s_blit_fails,
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                                MALLOC_CAP_DMA));
         }
         since_draw += TOUCH_POLL_MS;
         since_reassert += TOUCH_POLL_MS;

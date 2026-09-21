@@ -2563,6 +2563,76 @@ passed against a renderer with the defect still in it, which is the same failure
 §10.4at's `test_every_action_moves`: **a test that does not render cannot see a rendering bug,
 and a test that renders the wrong pixels is no better.**
 
+#### 10.4be Who copies the frame out of PSRAM (0.2.46, 2026-09-21)
+
+0.2.44 drew a full frame for the first time in four versions — the owner's photo showed the
+whole bird with no boot bars under it — and then the panel went black again, and the next
+photo after that showed the frame **torn into vertical bands**: fragments of the ostrich,
+stale content, garbage. The panel's own log named the new fault in two lines:
+
+```
+E spi_master: DMA TX underflow detected
+E lcd_panel.io.spi: panel_io_spi_tx_param(222): recycle spi transactions failed
+```
+
+**`psram_dma_direct` traded a memory fault for a bandwidth fault.** Reading the framebuffer
+straight out of PSRAM couples the SPI clock to PSRAM latency, and PSRAM here is contended:
+ESP-SR runs continuously on the other core and holds 3 MB of it. When the DMA cannot refill
+the SPI FIFO in time the transfer underflows — the bus keeps clocking and shifts out whatever
+is in the FIFO, which is the torn photo — the driver is left holding transactions it never
+recycles, and every call after that returns `ESP_ERR_INVALID_STATE`. The render task stops and
+the screen stays black.
+
+So the bounce buffer was not only waste. It was also **decoupling the bus from PSRAM**, and
+0.2.44 removed a function along with the bug. Four versions argued about who should copy the
+frame and where the copy should live, and every answer that let the *driver* decide was wrong:
+
+| | who copies, and where to | how it fails |
+|---|---|---|
+| 0.2.41 | driver, allocating 11,776 B per chunk | 28 allocations a frame; one fails and the rest of the frame is never written |
+| 0.2.42–43 | driver, allocating 329,728 B per frame | cannot succeed at all once anything else is running |
+| 0.2.44–45 | nobody; DMA reads PSRAM directly | underflows under PSRAM contention and poisons the SPI driver for good |
+| **0.2.46** | **us, into one static internal buffer** | — |
+
+`blit_frame()` memcpys each stripe into `stripe` — already static, already `DMA_ATTR`, and
+idle after the boot colour bars — and hands the driver a pointer that is *already* internal
+and DMA-capable, so `setup_dma_priv_buffer()` allocates nothing and reads no PSRAM. The buffer
+wants to be internal so the DMA never waits on PSRAM, and it wants to already exist so a blit
+can never depend on the heap. One object satisfies both. The cost is 28 memcpys of 11,776
+bytes per frame — 1.6 MB/s at the face's 5 fps — which is the cheap half of the trade.
+
+`max_transfer_sz` goes back to `sizeof(stripe)`, and the correction there is worth keeping:
+0.2.42 raised it to a whole frame to stop transfer-time allocation, but the allocation that
+mattered was the bounce **buffer**, not the descriptors. Asking for a frame-sized one made it
+unsatisfiable. **§10.4bc also claimed this revert shipped in 0.2.44 and it did not** — the
+0.2.44 commit set `psram_dma_direct` and left the reservation alone. It ships here.
+
+##### The nothing in the log was the symptom
+
+0.2.44 logged one blit failure at t=2.2 s and then **nothing at all**, and a clean-looking log
+is what made the black screen take an owner's photograph to find. The blit error is rate
+limited to every hundredth failure, so once the render task stopped attempting blits the
+limiter never fired again — no failures, no recovery line, no way to tell a frozen panel from
+a quiet one.
+
+`render: N frames ok, M failed | internal largest K` now prints every 10 s. Anything that can
+stop has to say so on a timer; the absence of an error is not evidence of health. The largest
+free internal block rides along because it is the number that has explained this fault twice.
+
+##### And the panel heals itself
+
+An underflow leaves the SPI driver holding transactions it never recycles, and from then on
+every call returns `ESP_ERR_INVALID_STATE` — **permanently, until someone power-cycles the
+unit**. This fix removes the cause, but "the display can enter a state only a human with hands
+on the hardware can leave" is a property worth removing on its own: this panel lives in a
+child's bedroom and its owner has no terminal (`CLAUDE.md` rule 10).
+
+250 consecutive failed blits — ten seconds at 25 fps — and the panel restarts itself. A reboot
+costs about four seconds of colour bars and is recoverable; a black screen is not. The 60 s
+uptime guard is what keeps that trade honest: a fault present from boot would otherwise cycle
+forever, and a reboot loop is no better than a freeze. Past the guard, a panel that cannot draw
+for ten seconds has nothing to lose by starting over.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,
