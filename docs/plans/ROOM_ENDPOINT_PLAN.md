@@ -3440,6 +3440,26 @@ slow box and an impatient child, together. Reading one's own diff for lifetimes 
 substitute for tests, but it is the only thing that catches a race whose trigger is someone
 being annoyed.
 
+#### 10.4bt A truncated credential is a sentence that sends you to the wrong end (0.2.60, 2026-09-21)
+
+`talk.c` built its bearer header into a fixed 192-byte buffer. The token comes out of NVS with
+no length bound, and `snprintf` **truncates silently** — so a long enough token would produce a
+valid-looking header carrying half a credential, the box would answer 401, and the panel would
+show a failure face.
+
+`ota.c` had already got this right, with `malloc(strlen(token) + 8)`.
+
+The size is not really the point. The point is what the failure would have *said*: "the box
+rejected me" sends the next person to the server to look at authentication, and the fault is
+two files away on the device. Both lengths are checked now and a truncation names itself
+before anything is sent.
+
+This is the same shape as every other fault in this sequence — five values set and never read
+back (§10.4bb, §10.4bi), two channels trusted past what they could see (§10.4bh, §10.4bn) —
+and it is the reason for the rule those keep pointing at: **an operation whose failure cannot
+be distinguished from a different failure is not finished.** `snprintf` returning a number
+nobody looks at is exactly that, in one line.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

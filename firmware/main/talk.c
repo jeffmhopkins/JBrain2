@@ -42,10 +42,20 @@ static void trust(esp_http_client_config_t *hc)
 /* One turn: POST the recording, read the reply, hand it to the speaker. */
 static void turn(void)
 {
+    /* CHECKED, BECAUSE snprintf TRUNCATES SILENTLY AND A TRUNCATED CREDENTIAL IS A 401.
+       Both of these come out of NVS with no length bound — `ota.c` sizes its bearer with
+       `malloc(strlen(token) + 8)` for exactly this reason. A fixed buffer is fine here, an
+       unreported overflow is not: it would present as "the box rejected me", which is a
+       sentence that sends the next person looking at the server. */
     char url[256];
-    snprintf(url, sizeof(url), "%s/endpoint/converse", s_cfg->api);
-    char auth[192];
-    snprintf(auth, sizeof(auth), "Bearer %s", s_cfg->token);
+    char auth[256];
+    const int un = snprintf(url, sizeof(url), "%s/endpoint/converse", s_cfg->api);
+    const int an = snprintf(auth, sizeof(auth), "Bearer %s", s_cfg->token);
+    if (un < 0 || un >= (int)sizeof(url) || an < 0 || an >= (int)sizeof(auth)) {
+        ESP_LOGE(TAG, "api url or token too long (%d, %d) — not sending", un, an);
+        s_state = TALK_NET_FAILED;
+        return;
+    }
 
     esp_http_client_config_t hc = {
         .url = url, .timeout_ms = TALK_HTTP_TIMEOUT_MS, .method = HTTP_METHOD_POST};
