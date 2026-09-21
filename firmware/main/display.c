@@ -37,6 +37,7 @@
 #include "esp_timer.h"
 #include "face.h"
 #include "font.h"
+#include "gesture.h"
 #include "rig.h"
 #include "variants.h"
 #include "ota.h"
@@ -292,14 +293,13 @@ static void apply_brightness(void)
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
 
-/* A HOLD LONG ENOUGH TO MEAN IT. Five seconds is not arbitrary: 4-5 year olds were measured
-   producing ORDINARY taps lasting up to 4.2 s, so five is the first threshold outside a
-   child's accidental press at all. The margin is 0.8 s, which is exactly why the hold is not
-   silent — from 1.5 s an amber bar grows across the top edge, full width at the moment it
-   reboots, in time to let go. A reboot IS the firmware re-check, because the OTA loop asks
-   the box before its first sleep (main.c). */
-#define HOLD_REBOOT_MS 5000
-#define HOLD_CUE_MS 1500
+/* The gesture itself lives in `gesture.h`, pure and host-tested: three short taps in rhythm,
+   then a hold. A reboot IS the firmware re-check, because the OTA loop asks the box before
+   its first sleep (main.c), which is why a gesture exists at all on a device with no buttons.
+   Drawn here: an amber bar growing across the top during the hold, and one pip per counted
+   tap so the sequence is visible while it is being entered rather than only when it works. */
+#define PIP_W 28
+#define PIP_GAP 8
 
 /* THE MICROPHONE, ALWAYS ON, DRAWN DOWN THE LEFT EDGE.
  *
@@ -627,6 +627,8 @@ static void face_task(void *arg)
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
     float action_mag = 1.0f;
+    gesture_t gest;
+    gesture_reset(&gest);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
     int since_reassert = 0;
@@ -635,7 +637,6 @@ static void face_task(void *arg)
     /* Internal RAM, not PSRAM: this is an I2S DMA destination on every frame. */
     int16_t *mic = malloc(MIC_CHUNK * sizeof(int16_t));
     if (mic == NULL) ESP_LOGW(TAG, "no mic buffer — the meter will stay empty");
-    int held = 0;
 
     while (true) {
         PHASE(1);
@@ -644,7 +645,12 @@ static void face_task(void *arg)
            part of a frame agrees about when it is. */
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         PHASE(2);
-        if (touch && touch_tapped()) {
+        /* Read the edge ONCE. `touch_tapped()` is what refreshes the cached level that
+           `touch_is_down()` returns, so calling it twice in a frame would consume the edge
+           for whichever caller ran first. */
+        const bool tapped = touch && touch_tapped();
+        const bool down = touch && touch_is_down();
+        if (tapped) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT. Which reaction you get is chosen here — weighted,
@@ -679,17 +685,14 @@ static void face_task(void *arg)
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
 
-        if (touch && touch_is_down()) {
-            held += TOUCH_POLL_MS;
-            if (held >= HOLD_CUE_MS) dirty = true; /* keep the cue growing under the finger */
-        } else if (held != 0) {
-            held = 0;
-            dirty = true; /* and clear it the frame after it lifts */
-        }
+        const int prev_taps = gest.taps;
+        const float prev_cue = gesture_cue(&gest);
         /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
-        const bool rebooting = held >= HOLD_REBOOT_MS;
+        const bool rebooting = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+        const float cue = gesture_cue(&gest);
+        if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
         if (dirty || since_draw >= FACE_FLOOR_MS) {
             s_drawn_lean = s_lean;
@@ -731,14 +734,27 @@ static void face_task(void *arg)
             draw_meter(fb, level);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
-            if (held >= HOLD_CUE_MS) {
+            if (cue > 0.0f) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot
                    outlive the finger. */
-                int w = FACE_W * held / HOLD_REBOOT_MS;
+                int w = (int)(FACE_W * cue);
                 if (w > FACE_W) w = FACE_W;
                 for (int y = 0; y < 4; y++) {
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
+                }
+            } else if (gest.taps > 0) {
+                /* One pip per counted tap. Without it the three taps are invisible until the
+                   hold succeeds, and a gesture with no feedback until it works is one an
+                   owner cannot tell from a broken panel. They clear themselves half a second
+                   after the rhythm lapses, so ordinary play leaves nothing on screen. */
+                for (int i = 0; i < gest.taps && i < GESTURE_TAPS; i++) {
+                    const int x0 = i * (PIP_W + PIP_GAP);
+                    for (int y = 0; y < 4; y++) {
+                        for (int x = x0; x < x0 + PIP_W && x < FACE_W; x++) {
+                            fb[y * FACE_W + x] = CUE_COLOUR;
+                        }
+                    }
                 }
             }
             /* One call for the whole frame: the panel takes a full-window write happily and
@@ -750,7 +766,7 @@ static void face_task(void *arg)
             since_draw = 0;
         }
         if (rebooting) {
-            ESP_LOGW(TAG, "held %d ms — rebooting to re-check firmware", held);
+            ESP_LOGW(TAG, "reboot gesture completed — re-checking firmware");
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }

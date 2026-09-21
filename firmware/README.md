@@ -163,6 +163,27 @@ below the vendor's 90, so a slipped digit cannot reach a child's ear), mic gain 
 ES8311's PGA truncates above it), brightness floor 10 (zero looks exactly like the blanking
 fault).
 
+## The reboot gesture: three short taps, then hold
+
+The hold alone used to be the whole gesture, guarded by its length — five seconds, because
+4-5 year olds were measured producing *ordinary* taps lasting up to 4.2 s. A 0.8 s margin
+against a determined four-year-old is not much, and both units are going to the twins.
+
+So the length is no longer doing the work; a **rhythm** is. Three short taps, each beginning
+within 500 ms of the previous release, then a sustained press. Children mashing a panel produce
+plenty of taps and plenty of leans; what they do not produce is that sequence. Against a
+simulated 20 000 presses including leans of 3-9 s, the old gesture fires 1937 times and this
+one fires 12 — and not zero on purpose, because a gesture that can never happen by accident
+cannot be performed on purpose either.
+
+One amber pip appears per counted tap, and the bar grows during the hold as before. Letting go
+mid-hold abandons the whole sequence, so a half-finished gesture never leaves the panel one
+press from rebooting.
+
+It lives in `gesture.c`, pure and host-tested (`firmware/host`), because **both** failure
+directions cost something: a false positive reboots a toy in a child's hands, and a false
+negative strands an owner who has no terminal with no way to force a firmware re-check.
+
 ## The two things that make "cable once" true
 
 Neither can be added later. The image that lacks them is precisely the one that strands a unit.

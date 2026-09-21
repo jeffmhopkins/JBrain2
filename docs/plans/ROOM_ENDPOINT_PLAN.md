@@ -1227,7 +1227,8 @@ by a power cycle, and a magic word distinguishes "survived a restart" from "powe
 whatever was in the SRAM". At boot the ring is logged oldest-first and then cleared.
 
 **Which makes the five-second hold the capture trigger.** It was built as a maintenance
-gesture; it turns out to be the shutter. The owner sees a dark screen, holds for five seconds,
+gesture; it turns out to be the shutter. (From 0.2.30 it is three short taps and then the hold
+— §10.4ap.) The owner sees a dark screen, performs it,
 and the next boot log contains the two minutes of PMU state leading up to the fault. **That is
 the first instrument in this investigation that does not destroy what it measures**, and it
 exists only because the hold happened to be a soft reset rather than a power cycle.
@@ -1924,6 +1925,47 @@ punches "unlit" pixels into the head and a shut eye covers them. Counting lit pi
 makes the robot bigger. The bounding box says what was actually meant: the figure's extent must
 not move. Four instruments in this investigation have now failed by measuring something adjacent
 to the question (§10.4am), and this is the first one that failed loudly.
+
+#### 10.4ap The reboot gesture gets a prefix (2026-09-21)
+
+The owner asked for three short taps, each within half a second of the last, followed by a hold
+— "this will help prevent the twins from accidentally restarting it".
+
+The hold alone was the whole gesture, and its guard was its LENGTH: §10.4p set five seconds
+because 4-5 year olds were measured producing ordinary taps lasting up to 4.2 s, so five was
+the first threshold outside a child's accidental press. That margin is 0.8 s, against two
+children who will own these panels and have all afternoon.
+
+**So the guard becomes a rhythm rather than a duration.** Three short taps in time, then the
+hold. Mashing produces taps and it produces leans; it does not produce that sequence. Measured
+against 20 000 simulated presses including leans of 3-9 s — the case a stream of short presses
+could never reach, and the one the old gesture was defenceless against:
+
+| | fires |
+| --- | --- |
+| hold alone (0.2.29 and earlier) | 1937 |
+| three taps then hold (0.2.30) | 12 |
+
+**Twelve and not zero, on purpose.** Three short taps in rhythm followed by a long press is a
+reachable pattern, and a gesture that could never occur by accident could not be performed on
+purpose either. The test asserts the ratio rather than a magic threshold, so it keeps meaning
+something if the constants move.
+
+`gesture.c` is pure and host-tested, because **both** failure directions cost something and
+they pull in opposite directions: a false positive reboots a toy in a child's hands, and a
+false negative strands an owner who has no terminal (CLAUDE.md #10) with no way to force a
+firmware re-check. The tests state the properties the file has to have — a hold alone never
+fires, slow taps never arm it, long presses do not count as taps, letting go mid-hold abandons
+the whole sequence rather than leaving the panel one press from rebooting, and a completed hold
+fires exactly once while the finger is still down.
+
+**One pip per counted tap** now appears along the top edge. Without it the three taps are
+invisible until the hold succeeds, and a gesture with no feedback until it works is one an
+owner cannot tell from a broken panel — which is the exact failure mode this whole section of
+the plan has spent six releases on.
+
+The hold stays at five seconds. It no longer has to carry the anti-accident argument by itself,
+so it could be shortened; that is a separate decision and the owner's.
 
 ### 10.4e Two bugs found before the first flash (2026-09-19)
 

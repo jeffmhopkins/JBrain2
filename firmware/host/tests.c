@@ -15,6 +15,7 @@
 
 #include "emotion.h"
 #include "face.h"
+#include "gesture.h"
 #include "rig.h"
 #include "variants.h"
 
@@ -363,6 +364,162 @@ static void test_blink_is_a_line_not_a_hole(void)
     free(shut);
 }
 
+/* ---- gesture ---------------------------------------------------------------------- */
+
+#define DT 40 /* the render loop's poll interval */
+
+/* Drive the gesture for `ms` with the finger up, returning true if it ever fired (it must
+   not). */
+static bool idle_for(gesture_t *g, int ms)
+{
+    bool fired = false;
+    for (int t = 0; t < ms; t += DT) fired |= gesture_poll(g, false, false, DT);
+    return fired;
+}
+
+/* One press of `ms`, edge on the first frame. */
+static bool press_for(gesture_t *g, int ms)
+{
+    bool fired = gesture_poll(g, true, true, DT);
+    for (int t = DT; t < ms; t += DT) fired |= gesture_poll(g, false, true, DT);
+    fired |= gesture_poll(g, false, false, DT); /* the release frame */
+    return fired;
+}
+
+static bool do_sequence(gesture_t *g, int gap_ms, int hold_ms)
+{
+    bool fired = false;
+    for (int i = 0; i < GESTURE_TAPS; i++) {
+        fired |= press_for(g, 120);
+        fired |= idle_for(g, gap_ms);
+    }
+    fired |= gesture_poll(g, true, true, DT);
+    for (int t = DT; t < hold_ms; t += DT) fired |= gesture_poll(g, false, true, DT);
+    return fired;
+}
+
+static void test_gesture_happy_path(void)
+{
+    gesture_t g;
+    gesture_reset(&g);
+    CHECK(do_sequence(&g, 200, GESTURE_HOLD_MS + 200), "three taps then a hold reboots");
+}
+
+static void test_gesture_hold_alone_does_nothing(void)
+{
+    /* The old gesture. It must no longer be enough on its own, or nothing has changed. */
+    gesture_t g;
+    gesture_reset(&g);
+    bool fired = gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < 20000; t += DT) fired |= gesture_poll(&g, false, true, DT);
+    CHECK(!fired, "a long hold with no taps never reboots");
+    CHECK(gesture_cue(&g) == 0.0f, "and it draws no cue");
+}
+
+static void test_gesture_slow_taps_do_not_count(void)
+{
+    /* "Within half a second of each other." A lazy rhythm is a new attempt, not a failure. */
+    gesture_t g;
+    gesture_reset(&g);
+    CHECK(!do_sequence(&g, GESTURE_GAP_MS + 200, GESTURE_HOLD_MS + 200),
+          "taps spaced too far apart never arm the hold");
+}
+
+static void test_gesture_long_taps_do_not_count(void)
+{
+    /* Mashing produces presses of every length; only SHORT ones are part of the sequence. */
+    gesture_t g;
+    gesture_reset(&g);
+    bool fired = false;
+    for (int i = 0; i < GESTURE_TAPS; i++) {
+        fired |= press_for(&g, GESTURE_TAP_MAX_MS + 200);
+        fired |= idle_for(&g, 200);
+    }
+    fired |= gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) fired |= gesture_poll(&g, false, true, DT);
+    CHECK(!fired, "slow presses do not count as taps");
+}
+
+static void test_gesture_release_abandons(void)
+{
+    /* Letting go mid-hold must abandon the WHOLE sequence. Leaving the panel one press from
+       rebooting, indefinitely, is exactly the accident this change exists to stop. */
+    gesture_t g;
+    gesture_reset(&g);
+    for (int i = 0; i < GESTURE_TAPS; i++) {
+        press_for(&g, 120);
+        idle_for(&g, 200);
+    }
+    bool fired = gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_HOLD_MS / 2; t += DT) fired |= gesture_poll(&g, false, true, DT);
+    fired |= gesture_poll(&g, false, false, DT); /* let go */
+    CHECK(!fired, "an abandoned hold does not reboot");
+    CHECK(g.taps == 0, "an abandoned hold clears the taps");
+    /* And a fresh press right afterwards is just a tap. */
+    fired = gesture_poll(&g, true, true, DT);
+    for (int t = DT; t < GESTURE_HOLD_MS + 200; t += DT) fired |= gesture_poll(&g, false, true, DT);
+    CHECK(!fired, "the next hold alone does not reboot either");
+}
+
+static void test_gesture_fires_once(void)
+{
+    /* The finger is still down after it fires. It must not fire again every frame. */
+    gesture_t g;
+    gesture_reset(&g);
+    int count = 0;
+    if (do_sequence(&g, 200, GESTURE_HOLD_MS + 200)) count++;
+    for (int t = 0; t < 10000; t += DT)
+        if (gesture_poll(&g, false, true, DT)) count++;
+    CHECK(count == 1, "a single hold reboots exactly once");
+}
+
+static void test_gesture_child_mashing(void)
+{
+    /* THE PROPERTY THE OWNER ASKED FOR, measured against the gesture it replaces.
+     *
+     * The model has to include LEANS — a child resting a hand on the panel for several
+     * seconds — or it proves nothing: a stream of short presses could never reach a five
+     * second hold under either scheme. So 15% of presses here are 3-9 s, which is what the
+     * old single-hold gesture was defenceless against.
+     *
+     * The assertion is a COMPARISON, not a magic number: the old gesture fired on every lean
+     * past five seconds, and the new one must be far below that. Not zero — three short taps
+     * in rhythm followed by a long press is a reachable pattern, and a gesture that could
+     * never occur by accident could not be performed on purpose either. */
+    gesture_t g;
+    gesture_reset(&g);
+    uint32_t r = 12345u;
+    int fired = 0, old_would_fire = 0;
+    for (int i = 0; i < 20000; i++) {
+        r = r * 1103515245u + 12345u;
+        const int lean = ((r >> 16) % 100u) < 15u;
+        r = r * 1103515245u + 12345u;
+        const int press = lean ? 3000 + (int)((r >> 16) % 6000u) : 40 + (int)((r >> 16) % 800u);
+        r = r * 1103515245u + 12345u;
+        const int gap = 40 + (int)((r >> 16) % 1200u);
+        if (press >= GESTURE_HOLD_MS) old_would_fire++;
+        if (press_for(&g, press)) fired++;
+        if (idle_for(&g, gap)) fired++;
+    }
+    CHECK(old_would_fire > 500, "the model actually contains long holds");
+    CHECK(fired * 50 < old_would_fire, "the tap prefix blocks the overwhelming majority");
+}
+
+static void test_gesture_cue(void)
+{
+    gesture_t g;
+    gesture_reset(&g);
+    for (int i = 0; i < GESTURE_TAPS; i++) {
+        press_for(&g, 120);
+        idle_for(&g, 200);
+    }
+    gesture_poll(&g, true, true, DT);
+    CHECK(gesture_cue(&g) == 0.0f, "no cue before the threshold");
+    for (int t = DT; t < GESTURE_CUE_MS + 200; t += DT) gesture_poll(&g, false, true, DT);
+    const float c = gesture_cue(&g);
+    CHECK(c > 0.0f && c < 1.0f, "the cue grows during the hold");
+}
+
 int main(void)
 {
     fb = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
@@ -384,6 +541,14 @@ int main(void)
     test_draw_produces_a_robot();
     test_every_face_and_action_draws();
     test_blink_is_a_line_not_a_hole();
+    test_gesture_happy_path();
+    test_gesture_hold_alone_does_nothing();
+    test_gesture_slow_taps_do_not_count();
+    test_gesture_long_taps_do_not_count();
+    test_gesture_release_abandons();
+    test_gesture_fires_once();
+    test_gesture_child_mashing();
+    test_gesture_cue();
 
     free(fb);
     printf("ok — %d checks\n", checks);
