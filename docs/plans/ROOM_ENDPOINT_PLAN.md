@@ -3412,6 +3412,34 @@ and the two together account for the whole wait with nothing unexplained between
 **This is how the whisper question finally gets answered**: from a child's bedroom, on real
 speech, rather than from a bench.
 
+#### 10.4bs A five-second window on the angriest path (0.2.59, 2026-09-21)
+
+Found by re-reading 0.2.58 rather than by running it, which is the only way this one was ever
+going to be found.
+
+`talk.c` uploads **straight out of the capture buffer** — no copy, deliberately, because a
+second 192 KB buffer to hold a copy of the first is 192 KB spent on nothing. The lifetime rule
+that makes that safe is "the buffer is not reused until the next `audio_capture_open()`".
+
+**Two timeouts broke it.** The renderer gives up at 12 s and shows the failure face, holds it
+for 2.5 s, then returns to idle. `talk.c`'s HTTP timeout is 20 s. So for about five seconds
+the socket is still reading the buffer while the state machine is perfectly willing to start a
+new recording into it.
+
+And it is not an exotic path. It is what happens when the box is slow and **a four-year-old
+holds the panel again because nothing happened** — the single most likely human response to a
+failure face, arriving in exactly the window where the bytes are still in use.
+
+The fix is one condition: a hold cannot start listening while `talk_state()` is BUSY. The
+alternative — copying the recording for the upload — buys nothing and costs a fifth of a
+megabyte.
+
+Worth recording because of *how* it was found. The build was clean, the host suite was green,
+and the panel would have worked every time anyone tested it deliberately; the failure needs a
+slow box and an impatient child, together. Reading one's own diff for lifetimes is not a
+substitute for tests, but it is the only thing that catches a race whose trigger is someone
+being annoyed.
+
 #### 10.4at Four actions that posed but never performed (2026-09-21)
 
 A code researcher was sent over `face.c` after the ostrich landed. Rather than take the report,

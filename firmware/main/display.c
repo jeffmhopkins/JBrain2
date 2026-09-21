@@ -1256,7 +1256,14 @@ static void face_task(void *arg)
         if (!down) s_down_since = 0;
         else if (s_down_since == 0) s_down_since = now;
         const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
-        if (s_talk == TALK_IDLE && down && gest.taps == 0 && held >= HOLD_TALK_MS) {
+        /* NOT WHILE A TURN IS STILL IN FLIGHT, and this is a lifetime rule rather than a
+           politeness one. `talk.c` uploads straight out of the capture buffer, and this
+           renderer gives up at 12 s while the HTTP timeout is 20 — so without this guard a
+           child who holds again after a failure face would call `audio_capture_open()` and
+           overwrite the bytes still being read by the socket. A five-second window, on the
+           one path a frustrated four-year-old is most likely to take. */
+        if (s_talk == TALK_IDLE && down && gest.taps == 0 && held >= HOLD_TALK_MS &&
+            talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
