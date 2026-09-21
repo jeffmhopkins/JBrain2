@@ -179,8 +179,27 @@ bool display_start(void)
         return false;
     }
 
+    /* DMA STRAIGHT OUT OF PSRAM, AND THIS IS THE REAL FIX FOR THE BLACK SCREEN.
+     *
+     * `esp_lcd_panel_io_spi` only hands the SPI driver a PSRAM pointer when
+     * `psram_dma_direct` is set, and the vendor's config macro never sets it. Without it
+     * `setup_dma_priv_buffer()` in `spi_master.c` takes the `!use_psram` branch: it
+     * `heap_caps_aligned_alloc`s an INTERNAL copy of every chunk and memcpys the frame into
+     * it, per transfer, forever.
+     *
+     * That is the whole display fault chain. At the old 11,776-byte chunk it meant 28 small
+     * internal allocations per frame, and one failing left the rest of the frame unwritten —
+     * the owner's photo of 0.2.41, top of the screen new and the bottom stale. Reserving a
+     * whole frame (below) made it ONE allocation of 329,728 bytes out of a 341 KB internal
+     * pool, which cannot succeed once anything else is running: that is 0.2.42's black
+     * screen, and it is why that change looked like an improvement in a quiet log while
+     * being worse whenever the panel actually redrew.
+     *
+     * The S3's GDMA can read PSRAM directly, so the copy was never needed. With this set
+     * there is no bounce buffer at all and the frame is DMA'd where it already lives. */
     esp_lcd_panel_io_handle_t io = NULL;
-    const esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+    esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(LCD_CS, NULL, NULL);
+    io_cfg.flags.psram_dma_direct = true;
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "panel io: %s", esp_err_to_name(err));
