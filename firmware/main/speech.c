@@ -47,6 +47,11 @@ static const char *TAG = "speech";
 
 /* Core 1. Core 0 carries Wi-Fi, and a MultiNet pass that lands on the same core as the radio
    is the classic way to make both stutter. */
+/* Below this much free INTERNAL heap the recogniser does not start at all. Internal RAM is
+   what Wi-Fi's DMA descriptors and mbedTLS's handshake buffers must come from, and there is
+   only 140 KB of it on this board. */
+#define SPEECH_MIN_INTERNAL (48 * 1024)
+
 #define SR_CORE 1
 #define SR_STACK 6144
 #define SR_PRIO 5
@@ -180,6 +185,22 @@ static void load_vocabulary(void)
 
 bool speech_start(void)
 {
+    /* THE RECOGNISER IS NEVER ALLOWED TO COST THE PANEL ITS RADIO. Everything else here is
+       an optimisation; this is the invariant. A panel that cannot reach the box is the one
+       state this whole design calls unrecoverable, because it is the one an OTA cannot fix
+       — so if starting would leave too little internal RAM for Wi-Fi and a TLS handshake,
+       the ticker simply does not exist and the panel says so. Measured on a working
+       0.2.38 boot: the radio is already up by the time this runs, and what it needs is
+       already spoken for. The floor is what a TLS handshake and an OTA still want on top. */
+    const size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (free_internal < SPEECH_MIN_INTERNAL) {
+        ESP_LOGW(TAG, "only %u B of internal heap free — not starting the recogniser, because "
+                      "a panel that cannot be updated is worse than one that cannot listen",
+                 (unsigned)free_internal);
+        return false;
+    }
+    ESP_LOGI(TAG, "starting with %u B internal heap free", (unsigned)free_internal);
+
     srmodel_list_t *models = esp_srmodel_init(MODEL_PARTITION);
     if (models == NULL || models->num <= 0) {
         ESP_LOGW(TAG, "no models in the '%s' partition — no ticker", MODEL_PARTITION);
@@ -199,6 +220,13 @@ bool speech_start(void)
     cfg->aec_init = false;     /* no reference channel exists on this board */
     cfg->vad_init = true;      /* gates MultiNet, and drives the recording indicator */
     cfg->afe_perferred_core = SR_CORE;
+    /* PSRAM, AND THIS IS THE LINE THAT COST A BOOT LOOP. The front end defaults to
+       allocating out of INTERNAL RAM, of which this board has 140 KB total against 8 MB of
+       PSRAM — and the Wi-Fi driver's DMA descriptors can live nowhere else. 0.2.37 came up
+       listening perfectly and then could not start a radio: `esp_wifi_init` returned
+       ESP_ERR_NO_MEM three seconds into every boot. The recogniser has no such constraint;
+       it is a compute pipeline reading a ring buffer, and PSRAM at 80 MHz feeds it fine. */
+    cfg->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
     afe_config_check(cfg);
 
     s_afe = esp_afe_handle_from_config(cfg);
@@ -210,7 +238,9 @@ bool speech_start(void)
     }
 
     s_feed_chunk = s_afe->get_feed_chunksize(s_afe_data) * s_afe->get_feed_channel_num(s_afe_data);
-    s_fill = heap_caps_malloc((size_t)s_feed_chunk * sizeof(int16_t), MALLOC_CAP_INTERNAL);
+    /* PSRAM too: this is a staging copy on its way into `feed`, never a DMA target, and
+       internal RAM here is the scarcest thing on the board. */
+    s_fill = heap_caps_malloc((size_t)s_feed_chunk * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (s_fill == NULL) {
         ESP_LOGE(TAG, "no room for a %d sample feed buffer", s_feed_chunk);
         return false;
@@ -230,6 +260,7 @@ bool speech_start(void)
         return false;
     }
     s_live = true;
-    ESP_LOGI(TAG, "listening: %s, %d samples per feed", mn_name, s_feed_chunk);
+    ESP_LOGI(TAG, "listening: %s, %d samples per feed, %u B internal heap left", mn_name,
+             s_feed_chunk, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     return true;
 }

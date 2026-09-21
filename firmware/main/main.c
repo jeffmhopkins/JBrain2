@@ -26,6 +26,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "ota.h"
+#include "speech.h"
 #include "pmu.h"
 
 static const char *TAG = "endpoint";
@@ -207,6 +208,7 @@ void app_main(void)
         report(&cfg);
     }
 
+    bool ears_tried = false;
     while (true) {
         if (reachable) {
             const char *running = ota_running_version();
@@ -216,6 +218,19 @@ void app_main(void)
             } else {
                 ESP_LOGI(TAG, "up to date at %s", running);
             }
+        }
+        /* THE RECOGNISER STARTS LAST, AND THAT ORDERING IS THE FIX FOR 0.2.37.
+           It used to start inside the render task, ~1.5 s into boot — which put it ahead of
+           `net_connect` at ~3.0 s, so ESP-SR took the internal RAM and the radio got
+           ESP_ERR_NO_MEM. Reaching this line means the radio has had its chance, the
+           manifest has been fetched over TLS (so mbedTLS has taken and released its
+           handshake buffers), and any pending update has already rebooted us. Whatever is
+           left is genuinely spare, and `speech_start` still refuses it if it is too little.
+           Listening is the LAST thing this panel earns, because being updatable is the
+           first. */
+        if (!ears_tried) {
+            ears_tried = true;
+            if (!speech_start()) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
         }
         /* Offline panels come back faster than settled ones check for updates: a router
            reboot should cost a minute, not a quarter of an hour. */
