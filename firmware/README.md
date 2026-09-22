@@ -1,9 +1,11 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-09-21
+> **Status:** Living · **Last verified:** 2026-09-22
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
+The printable deep back cover that makes room for a battery is
+`../hardware/amoled18-back-plate/`.
 
 ## What this first image is for
 
