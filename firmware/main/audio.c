@@ -602,6 +602,11 @@ void audio_set_levels(int volume, int mic_gain_db)
     if (any) s_levels_pending = true;
 }
 
+/* What the codec last ACCEPTED, "90/36" or "90!/36" when the volume was refused. Read by
+   telemetry, because a refused setting the owner cannot see is a setting they will keep
+   trying. */
+static char s_levels[16];
+
 /* Called only from the audio task, between two captures. */
 static void apply_levels(void)
 {
@@ -610,7 +615,20 @@ static void apply_levels(void)
     if (s_codec == NULL) return;
     const int vol = s_want_volume;
     const int gain = s_want_gain;
-    if (vol >= 0) esp_codec_dev_set_out_vol(s_codec, vol);
-    if (gain >= 0) esp_codec_dev_set_in_gain(s_codec, (float)gain);
-    ESP_LOGI(TAG, "levels: out %d/100, in %d dB", vol, gain);
+    /* BOTH RETURNS READ, because the line below used to be a CLAIM rather than a reading —
+       the exact defect this file's header documents catching at boot, reintroduced on the
+       runtime path. And it matters MORE here: this is the path the owner drives from the box.
+       They turn the volume down remotely, the part refuses the value, nothing changes, and
+       every channel they can see agrees it worked. A `!` marks a refusal. */
+    const int vr = (vol >= 0) ? esp_codec_dev_set_out_vol(s_codec, vol) : 0;
+    const int gr = (gain >= 0) ? esp_codec_dev_set_in_gain(s_codec, (float)gain) : 0;
+    snprintf(s_levels, sizeof(s_levels), "%d%s/%d%s", vol, vr == 0 ? "" : "!", gain,
+             gr == 0 ? "" : "!");
+    ESP_LOGI(TAG, "levels: out %d/100%s, in %d dB%s", vol, vr == 0 ? "" : " REFUSED", gain,
+             gr == 0 ? "" : " REFUSED");
+}
+
+const char *audio_levels_state(void)
+{
+    return s_levels;
 }

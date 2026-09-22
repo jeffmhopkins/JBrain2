@@ -20,6 +20,14 @@ static EventGroupHandle_t s_events;
    is not coming back. */
 #define MAX_RETRY 5
 static int s_retries;
+/* THE ONE NUMBER A FLAKY ENDPOINT PRODUCES THAT SAYS WHAT TO DO ABOUT IT. `wifi_err_reason_t`
+   201 (NO_AP_FOUND — out of range, or the SSID changed), 15 (4WAY_HANDSHAKE_TIMEOUT — the
+   password is wrong) and 8 (ASSOC_LEAVE — the router dropped it) are three different repairs,
+   and all three were going to a console. `s_retries` cannot carry this: it is reset to zero
+   the moment a connection succeeds, so a panel that reconnects before its next report looks
+   like one that never dropped. These two are monotonic and survive the reconnect. */
+static int s_last_reason;
+static int s_drops;
 
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -30,6 +38,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *e = data;
+        s_last_reason = (int)e->reason;
+        s_drops++;
         if (s_retries < MAX_RETRY) {
             s_retries++;
             ESP_LOGW(TAG, "disconnected (reason %d), retry %d/%d", e->reason, s_retries, MAX_RETRY);
@@ -114,4 +124,10 @@ esp_err_t net_retry(int timeout_ms)
     if (bits & GOT_IP) return ESP_OK;
     if (bits & FAILED) return ESP_FAIL;
     return ESP_ERR_TIMEOUT;
+}
+
+void net_link_faults(int *last_reason, int *drops)
+{
+    if (last_reason != NULL) *last_reason = s_last_reason;
+    if (drops != NULL) *drops = s_drops;
 }

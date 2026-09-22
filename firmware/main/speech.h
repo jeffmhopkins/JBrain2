@@ -62,3 +62,11 @@ void speech_vocab(int *accepted, int *rejected);
    act on and a name they can. Goes out in telemetry for the same reason the ALC reading and
    the blit counts do: an ESP_LOG only reaches a serial console this panel does not have. */
 const char *speech_vocab_refused(int i);
+
+/* The i-th most recent decode: what the recogniser resolved, how sure it was (0..100), and
+   whether it FIRED or timed out against the command graph. False past the end.
+   `speech.c` computes the probability on every detection, prints it and discards it, and the
+   comment there says a confidence floor cannot be chosen until a real decode's score is known
+   on this hardware — a measurement that needs a console this panel does not have. This is
+   that measurement, taken where it happens and sent where it can be read. */
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired);

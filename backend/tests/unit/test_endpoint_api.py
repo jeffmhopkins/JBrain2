@@ -15,6 +15,7 @@ import array
 import asyncio
 import base64
 import hashlib
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -822,6 +823,130 @@ class TestAPanelCanReportItsOwnState:
 
         resp = c.post("/api/endpoint/telemetry", json={"version": "x", "uptime_ms": 1})
         assert resp.status_code == 401
+
+    def test_everything_that_used_to_need_a_cable_gets_through(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A panel's worst-case report, with every diagnostic populated at once.
+
+        These readings were all computed on the device and written to an ESP_LOG, which on
+        this panel means written to nowhere — it has been on a plain charger in a bedroom
+        since the day it went in. Each one is here because it would have named a real fault
+        that was otherwise invisible: the largest free INTERNAL block (which `free_heap`
+        cannot distinguish from a fragmented one, and which has explained the blit fault
+        twice), a codec that REFUSED a level the owner set from the box, the Wi-Fi reason
+        code, an update that can never install, and which of the three callers of
+        `esp_restart` it was.
+
+        The whole body has to arrive, because a field the box rejects is a field that reads
+        as absent — and the panel cannot tell the difference.
+        """
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={
+                "version": "0.2.82",
+                "uptime_ms": 900000,
+                "int_largest": 9728,
+                "levels": "90!/36",
+                "blit_fail_total": 249,
+                "blit_recov": 3,
+                "meter_fail": 5100,
+                "wifi_reason": 201,
+                "wifi_drops": 7,
+                "ota_err": "ESP_ERR_OTA_VALIDATE_FAILED",
+                "ota_tries": 4,
+                "restart_why": "blit-heal",
+                "heard": [["jump up", 19, 1], ["burp", 0, 0]],
+            },
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+        out = capsys.readouterr().out
+        for evidence in (
+            '"int_largest": 9728',
+            '"levels": "90!/36"',
+            '"blit_fail_total": 249',
+            '"meter_fail": 5100',
+            '"wifi_reason": 201',
+            '"ota_err": "ESP_ERR_OTA_VALIDATE_FAILED"',
+            '"restart_why": "blit-heal"',
+            '"jump up"',
+        ):
+            assert evidence in out, f"{evidence} did not reach the log"
+
+    def test_a_healthy_panel_does_not_fill_the_log_with_empty_keys(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Fifteen minutes apart, forever. A key that is present and empty on every report
+        from a panel with nothing wrong is how a log stops being read, and the counters
+        already say when to go looking."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.82", "uptime_ms": 900000, "int_largest": 81920},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        out = capsys.readouterr().out
+        assert "ota_err" not in out
+        assert "heard" not in out
+        # The always-present ones stay present: a zero here is a reading, not an absence.
+        assert '"int_largest": 81920' in out
+        assert '"wifi_drops": 0' in out
+
+    def test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in(self) -> None:
+        """The firmware builds this body with snprintf into a fixed `char body[N]`, and an
+        overrun does not crash — it TRUNCATES, which until today produced JSON with no
+        closing brace, a 422 from this route, and (because `ota_report` returned ESP_OK for
+        any status it received) a panel that then cleared its crash ring on the strength of a
+        report the box had thrown away. So the buffer must fit the worst case with room, and
+        that worst case must be computed from the real declaration rather than assumed."""
+        main_c = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text()
+        m = re.search(r"char body\[(\d+)\];", main_c)
+        assert m is not None, "the telemetry buffer declaration moved"
+        cap = int(m.group(1))
+
+        worst = {
+            "version": "0.2.82",
+            "uptime_ms": 4294967295,
+            "reset_reason": "poweron_reset(1)",
+            "free_heap": 4294967295,
+            "free_psram": 4294967295,
+            "mic_peak": 32767,
+            "accel": [-32768, -32768, -32768],
+            "stack_free": 999999,
+            "crash_phase": -1,
+            "alc": "ff-ff no-readback",
+            "blit_ok": 999999999,
+            "blit_fail": 999999999,
+            "boot_btn": 999,
+            "vocab_ok": 999,
+            "vocab_bad": 999,
+            "int_largest": 4294967295,
+            "levels": "100!/100!",
+            "blit_fail_total": 999999999,
+            "blit_recov": 999999,
+            "meter_fail": 999999999,
+            "wifi_reason": 999,
+            "wifi_drops": 999999,
+            "ota_err": "ESP_ERR_OTA_VALIDATE_FAILED",
+            "ota_tries": 999999,
+            "restart_why": "blit-heal",
+            "tap": [999, 999, 9],
+            "pmu_history": ["0123456789abcdef0123456789a"] * 8,
+            "vocab_refused": ["make a rude noise"] * 6,
+            "heard": [["make a rude noise", 100, 1]] * 3,
+        }
+        wire = json.dumps(worst, separators=(",", ":"))
+        assert len(wire) < cap, f"worst case {len(wire)} B does not fit {cap} B"
+        # And every key really is one this route accepts — a field the panel spends bytes on
+        # and the box silently drops is worse than one it never sent.
+        assert set(worst) <= set(endpoint_api.TelemetryIn.model_fields)
 
     def test_the_pmu_history_survives_the_round_trip(
         self, client: tuple[TestClient, Path, list[Any]]

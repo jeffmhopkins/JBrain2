@@ -239,6 +239,36 @@ exchanges, in memory, expiring after four minutes, folded into the system prompt
 exactly one conversation" survives intact: this is that one conversation, in that one process,
 for as long as it is still going on, and nothing reaches the database.
 
+## Everything that only existed on a cable
+
+CLAUDE.md #10 says the owner has no terminal. The firmware knew that — `main.c` argues it
+outright about the ALC reading and the blit counts: *"an ESP_LOG only reaches a serial
+console, which this panel no longer has"*. It was still true of most of the instrument panel.
+A sweep of `firmware/main/` found the readings below, all computed on the device and written
+to nowhere. Ranked by what they would have caught:
+
+| reading | what it answers that nothing else could |
+|---|---|
+| `int_largest` | the largest free INTERNAL DMA block. `free_heap` is the total, and the total cannot tell 60 KB fragmented from 60 KB contiguous — which is the difference between a panel that draws and one where every blit fails. Has explained that fault twice, both times needing a host toolchain. |
+| `heard` | the decode and its confidence. `speech.c` computes this every time and its own comment says the floor that would stop "turn red" firing `jump up` at p=0.19 *"lands in the version after a capture of phrases that ARE in the vocabulary"* — a capture that needed a console, so the version after never came. |
+| `ota_err` / `ota_tries` | a panel that CANNOT install retries every fifteen minutes forever reporting the old version, which from the box is indistinguishable from one nobody offered an update to. The update channel was the one component whose failure it could not report. |
+| `levels` | a volume or gain the codec REFUSED. Both setters ran with their returns dropped under a log line asserting success — the exact defect `audio.c`'s header documents catching at boot, reintroduced on the path the owner drives remotely. |
+| `wifi_reason` / `wifi_drops` | 201 (out of range), 15 (wrong password) and 8 (the router kicked it) are three different repairs. A panel that reconnects before its next report looked perfectly healthy. |
+| `blit_fail_total` / `blit_recov` / `meter_fail` | the reported pair is reset on recovery, so 249 failures followed by a self-heal read as a panel that never faltered. `meter_fail` reached no counter at all — and the meter blits at 25 Hz against the face's 5, so it is the more frequent transfer by five to one. |
+| `restart_why` | three callers reach `esp_restart()` and all three arrive as `reset_reason: "sw(3)"`, two of them also sharing `crash_phase: 9`. A self-heal after 250 failed blits read exactly like a four-year-old doing the reboot gesture. Carried in an RTC word that was already there and already dead. |
+| `tap` | **the panel was already sending this and the box was dropping it.** `TelemetryIn` never declared the field, so pydantic discarded it on every report — the panel spending the bytes, the box binning them, neither able to notice. Found by a test asserting that every key the firmware sends is one the model accepts. |
+
+**Two defects in the reporting channel itself, both of which undermined everything above.**
+`ota_report` returned `esp_http_client_perform`'s status, which is `ESP_OK` for *any* HTTP
+response it managed to receive — so a 422 or a 401 counted as a delivered report, and what
+`report()` does on success is `pmu_history_clear()`. The crash ring, which exists precisely
+because a panel in a bedroom cannot be asked what happened, was being wiped on the strength of
+a report the box had thrown away. And the body's closing `}` was written inside the last
+optional block, so a payload that ran out of room was sent as unterminated JSON — producing
+exactly the 422 that then cleared the ring. Both fixed; the brace is now unconditional and the
+buffer is sized against a computed worst case (1,069 bytes of 1,536) that a test recomputes
+from the real declaration.
+
 ## What the panel cannot do, and therefore where the work is
 
 On-panel open-vocabulary speech is **off the table**, permanently. MultiNet7 resolves a fixed

@@ -144,13 +144,38 @@ static void report(const cfg_t *cfg)
     int vocab_ok = 0, vocab_bad = 0;
     speech_vocab(&vocab_ok, &vocab_bad);
 
-    char body[1024];
+    /* THE REST OF WHAT ONLY A CABLE COULD SEE. Each of these was computed, formatted into an
+       ESP_LOG and dropped, on a panel whose console has not existed since it went in a
+       bedroom. Ordered by what they would have caught:
+         `int_largest` — the largest free INTERNAL DMA block, which is what `free_heap` cannot
+           tell you: 60 KB free and fragmented and 60 KB free and contiguous read the same,
+           and the difference is every blit failing. This number has explained the fault twice.
+         `ota_err`     — an update that will never install, currently silent.
+         `levels`      — a volume or gain the codec REFUSED, currently indistinguishable from
+           one it accepted.
+         `wifi`        — the disconnect reason, the difference between out of range, wrong
+           password, and the router dropping it.
+         `blit_*`      — the totals, because the pair already reported is reset on recovery.
+         `restart_why` — which of the three callers of `esp_restart` it was. */
+    int blit_fail_total = 0, blit_recov = 0, meter_fail = 0;
+    display_blit_totals(&blit_fail_total, &blit_recov, &meter_fail);
+    int wifi_reason = 0, wifi_drops = 0;
+    net_link_faults(&wifi_reason, &wifi_drops);
+    const char *ota_err = "";
+    int ota_tries = 0;
+    ota_apply_faults(&ota_err, &ota_tries);
+
+    char body[1536];
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
                      "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,\"boot_btn\":%d,"
                      "\"vocab_ok\":%d,\"vocab_bad\":%d,"
+                     "\"int_largest\":%u,\"levels\":\"%s\","
+                     "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
+                     "\"wifi_reason\":%d,\"wifi_drops\":%d,"
+                     "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
                      "\"tap\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -159,7 +184,12 @@ static void report(const cfg_t *cfg)
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
                      have_imu ? az : 0, display_stack_free(), display_crash_phase(),
                      audio_alc_state(), blit_ok, blit_fail, display_boot_presses(),
-                     vocab_ok, vocab_bad, tap_x, tap_y, tap_zone);
+                     vocab_ok, vocab_bad,
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                               MALLOC_CAP_DMA),
+                     audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
+                     wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
+                     tap_x, tap_y, tap_zone);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
@@ -173,8 +203,33 @@ static void report(const cfg_t *cfg)
             if (bad == NULL) break;
             w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", bad);
         }
-        if (w > 0 && w < (int)sizeof(body) - 4) snprintf(body + w, sizeof(body) - (size_t)w, "]}");
+        if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
     }
+    /* WHAT IT ACTUALLY HEARD, and how sure it was. `speech.c` computes this on every decode
+       and its own comment says the confidence floor cannot be chosen until a correct decode's
+       score is known on this hardware — a measurement that has been waiting on a console. */
+    if (w > 0 && w < (int)sizeof(body) - 32) {
+        w += snprintf(body + w, sizeof(body) - (size_t)w, ",\"heard\":[");
+        for (int i = 0; i < 3 && w > 0 && w < (int)sizeof(body) - 48; i++) {
+            const char *phrase = NULL;
+            int prob = 0;
+            bool fired = false;
+            if (!speech_heard(i, &phrase, &prob, &fired)) break;
+            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s[\"%s\",%d,%d]", i ? "," : "",
+                          phrase, prob, fired ? 1 : 0);
+        }
+        if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
+    }
+    /* THE BRACE CLOSES UNCONDITIONALLY, which it did not when this was written. Every
+       optional block above is guarded on having room left, and the `}` used to live INSIDE
+       the last of them — so a body that ran out of room mid-way was sent as unterminated
+       JSON, the box answered 422, and (before the fix in `ota_report`) that 422 counted as a
+       successful report and cleared the crash ring. Each block above already reserves more
+       room than it can write, so no token is ever cut in half; what was missing was only the
+       terminator, and a terminator that depends on room being left is not a terminator. */
+    if (w < 0 || w > (int)sizeof(body) - 2) w = (int)sizeof(body) - 2;
+    body[w] = '}';
+    body[w + 1] = '\0';
     /* Cleared only once it has left the box. Clearing at boot is what made every report say
        `pmu_history: []` while the ring had in fact survived. */
     if (ota_report(cfg, body) == ESP_OK && n > 0) pmu_history_clear();

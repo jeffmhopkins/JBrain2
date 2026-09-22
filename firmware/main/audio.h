@@ -58,6 +58,12 @@ void audio_beep(void);
    panel is already speaking. Safe from any task. */
 void audio_rude(bool wet);
 
+/* The volume and mic gain the codec last ACCEPTED — "90/36", or "90!/36" when it refused the
+   volume. Both setters used to be called with their return values dropped and a log line
+   asserting success underneath, which is the one failure the owner cannot diagnose: they
+   change a level from the box, the part says no, and nothing anywhere disagrees with them. */
+const char *audio_levels_state(void);
+
 /* Largest absolute sample of the most recent chunk, 0..32767 — the one number that says
    whether anything reached the ADC at all, and what the meter draws. */
 int audio_level(void);

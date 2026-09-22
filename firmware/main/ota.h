@@ -23,6 +23,16 @@ const char *ota_running_version(void);
    on success. The new image is on probation until it, in turn, reaches the manifest. */
 esp_err_t ota_apply(const cfg_t *cfg, const char *url);
 
+/* Why the last update REFUSED to install, and how many have refused since boot — "" and 0
+   when none has.
+ *
+ * `main.c` calls `ota_apply` and discards its return, which is reasonable (there is nothing
+ * it can do about it) and was also the end of the story. A panel that cannot install retries
+ * every fifteen minutes forever, reporting the old version each time, and from the box that
+ * reads exactly like a panel nobody has offered an update to. An update channel that cannot
+ * say it is broken is the one component whose failure this firmware cannot route around. */
+void ota_apply_faults(const char **err, int *tries);
+
 /* Tell the box what this panel looks like from the inside.
 
    The channel that neither lies nor resets what it measures. Register reads over QSPI return

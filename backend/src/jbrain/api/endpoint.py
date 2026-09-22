@@ -444,6 +444,51 @@ class TelemetryIn(BaseModel):
     vocab_ok: int = 0
     vocab_bad: int = 0
     vocab_refused: list[str] = Field(default_factory=list)
+    # The last few things the recogniser resolved: [phrase, confidence 0-100, did it fire].
+    # `speech.c` has computed this on every decode since bring-up and printed it to a console
+    # the panel does not have — and its own comment says the confidence floor that would stop
+    # "turn red" firing `jump up` at p=0.19 cannot be chosen until a CORRECT decode's score is
+    # known on this hardware. This is that measurement, finally leaving the device.
+    heard: list[tuple[str, int, int]] = Field(default_factory=list)
+    # The largest free INTERNAL DMA block. `free_heap` above is the total, and the total is
+    # exactly the number that cannot tell 60 KB free-and-contiguous from 60 KB
+    # free-and-fragmented — which is the difference between a panel that draws and one where
+    # every blit fails. This reading has explained that fault twice and both times it took a
+    # host toolchain to read it.
+    int_largest: int = 0
+    # What the codec last ACCEPTED, "90/36" — or "90!/36" when it refused the volume. Both
+    # setters used to run with their returns dropped under a log line asserting success, on
+    # the one path the owner drives remotely.
+    levels: str = ""
+    # Monotonic, unlike `blit_ok`/`blit_fail`, which are reset on recovery and therefore
+    # report a panel that failed 249 blits and self-healed as one that never faltered.
+    # `meter_fail` is its own transfer and reached no counter at all: the meter redraws at
+    # 25 Hz against the face's 5, so it is the more frequent blit on this bus by five to one.
+    blit_fail_total: int = 0
+    blit_recov: int = 0
+    meter_fail: int = 0
+    # `wifi_err_reason_t` and how many times the link has dropped since boot. 201 (out of
+    # range / SSID gone), 15 (wrong password) and 8 (the router kicked it) are three different
+    # repairs; a panel that reconnects before its next report used to look perfectly healthy.
+    wifi_reason: int = 0
+    wifi_drops: int = 0
+    # Why an update would not install, and how many have failed. A panel that CANNOT install
+    # retries every fifteen minutes forever reporting the old version, which from here is
+    # indistinguishable from a panel nobody offered an update to.
+    ota_err: str = ""
+    ota_tries: int = 0
+    # Where the last touch landed and which zone it resolved to: [x, y, zone].
+    #
+    # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
+    # it on the floor of every report — the panel spending the bytes, the box discarding them,
+    # and no side of it able to notice. It is the reading that separates "the glass is dead"
+    # from "the glass works and the rotation maths puts the finger somewhere else", which is a
+    # fault this panel has actually had.
+    tap: list[int] = Field(default_factory=list)
+    # Which of the three callers of `esp_restart()` it was — "blit-heal" (a real fault),
+    # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
+    # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
+    restart_why: str = ""
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -508,6 +553,19 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         boot_btn=body.boot_btn,
         vocab_ok=body.vocab_ok,
         vocab_bad=body.vocab_bad,
+        int_largest=body.int_largest,
+        levels=body.levels,
+        blit_fail_total=body.blit_fail_total,
+        blit_recov=body.blit_recov,
+        meter_fail=body.meter_fail,
+        wifi_reason=body.wifi_reason,
+        wifi_drops=body.wifi_drops,
+        restart_why=body.restart_why,
+        tap=body.tap,
+        # Only when there is something to say. An empty key on every report for fifteen
+        # minutes of a healthy panel is how a log stops being read.
+        **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
+        **({"heard": body.heard} if body.heard else {}),
         # Only when there are any: an empty list on every report is noise in a log a human
         # reads, and the counts already say when to look.
         **({"vocab_refused": body.vocab_refused} if body.vocab_refused else {}),

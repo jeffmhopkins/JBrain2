@@ -155,12 +155,22 @@ esp_err_t ota_report(const cfg_t *cfg, const char *body)
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, body, (int)strlen(body));
 
-    const esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
         const int status = esp_http_client_get_status_code(client);
-        /* Logged at debug volume on purpose: a panel that cannot reach the box has a louder
-           problem than this, and it is already reported by the manifest poll. */
-        if (status != 204) ESP_LOGW(TAG, "telemetry returned HTTP %d", status);
+        /* A REJECTED REPORT IS A FAILED REPORT, and this used to call it success.
+           `esp_http_client_perform` returns ESP_OK for any status it managed to receive —
+           a 422 from a malformed body, a 401 from a rotated key, a 500 — so returning `err`
+           told the caller the telemetry had landed when the box had thrown it away. That
+           caller is `report()`, and what it does on success is `pmu_history_clear()`: the
+           crash ring, which exists precisely because a panel in a bedroom cannot be asked
+           what happened, was being wiped on the strength of a report nobody accepted.
+           Logged quietly still — a panel that cannot reach the box has a louder problem and
+           the manifest poll already reports it — but no longer called OK. */
+        if (status != 204) {
+            ESP_LOGW(TAG, "telemetry returned HTTP %d", status);
+            err = ESP_FAIL;
+        }
     } else {
         ESP_LOGW(TAG, "telemetry unreachable: %s", esp_err_to_name(err));
     }
@@ -243,6 +253,17 @@ const char *ota_running_version(void)
     return esp_app_get_description()->version;
 }
 
+/* What the last failed install said, and how many have failed since boot. Empty and zero
+   when none has. */
+static char s_apply_err[28];
+static int s_apply_tries;
+
+void ota_apply_faults(const char **err, int *tries)
+{
+    if (err != NULL) *err = s_apply_err;
+    if (tries != NULL) *tries = s_apply_tries;
+}
+
 esp_err_t ota_apply(const cfg_t *cfg, const char *url)
 {
     ESP_LOGI(TAG, "installing %s", url);
@@ -264,6 +285,15 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
     free(auth);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
+        /* REMEMBERED, because nobody reads the return. `main.c` calls this and discards the
+           result — reasonably, since there is nothing it can do — so a panel that CANNOT
+           install (a flash write that fails, an image the validator rejects, TLS that will
+           not complete on the binary URL, a truncated download) retries every fifteen
+           minutes forever while reporting the OLD version. From the box that is
+           indistinguishable from "no update was ever offered", which is the one failure this
+           entire firmware exists to prevent, and it was the only one with no symptom. */
+        snprintf(s_apply_err, sizeof(s_apply_err), "%s", esp_err_to_name(err));
+        s_apply_tries++;
         return err;
     }
     /* THROUGH THE RENDERER, NOT FROM HERE, and the black screen after every update is the

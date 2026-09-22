@@ -17,3 +17,13 @@ esp_err_t net_connect(const cfg_t *cfg, int timeout_ms);
    returns `ESP_ERR_INVALID_STATE` the second time. Calling it twice therefore does not fail,
    it ABORTS, which on a panel in a bedroom is a reboot loop. This is the retry path. */
 esp_err_t net_retry(int timeout_ms);
+
+/* The last Wi-Fi disconnect reason (`wifi_err_reason_t`) and how many times the link has
+   dropped since boot. 0/0 means it has never dropped.
+ *
+ * A panel that loses the network and comes back before its next report currently looks
+ * perfectly healthy, and the reason code — the difference between "out of range", "wrong
+ * password" and "the router kicked it", which are three different fixes — was going nowhere
+ * but a serial console. Monotonic, because the retry counter beside them is reset on every
+ * successful connect and therefore cannot answer this. */
+void net_link_faults(int *last_reason, int *drops);

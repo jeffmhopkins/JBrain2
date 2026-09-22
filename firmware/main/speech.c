@@ -89,6 +89,51 @@ static int s_accepted, s_rejected;
 static char s_refused[REFUSED_MAX][REFUSED_CHARS];
 static int s_refused_n;
 
+/* THE LAST FEW DECODES, WITH THE NUMBER THE FLOOR WILL BE CHOSEN FROM.
+ *
+ * The detection path below computes `r->prob[0]`, formats it into a log line and throws it
+ * away, and the comment beside it states the plan outright: a confidence floor "cannot be
+ * chosen honestly until it is known what a CORRECT decode scores on this hardware", so the
+ * number is logged rather than acted on and "the floor lands in the version after a capture
+ * of phrases that ARE in the vocabulary".
+ *
+ * That capture needs a serial console. This panel has not had one since the day it went in a
+ * bedroom, so the version after never came — and "turn red" firing `jump up` at p=0.19 has
+ * been waiting on an instrument that does not exist. Three deep is enough to see what a real
+ * command scores next to a false one, and small enough to ride in a telemetry body. */
+#define DECODE_MAX 3
+#define DECODE_CHARS 20
+typedef struct {
+    char phrase[DECODE_CHARS];
+    uint8_t prob; /* 0..100, because a float in a JSON body buys nothing here */
+    bool fired;   /* false when the decode TIMED OUT — a near miss, which is the interesting half */
+} decode_t;
+static decode_t s_decode[DECODE_MAX];
+static int s_decode_n;
+
+static void note_heard(const char *phrase, float prob, bool fired)
+{
+    /* Newest first, oldest pushed off the end: what someone asks after a command did not work
+       is "what did it hear JUST now", not "what has it heard since Tuesday". */
+    for (int i = DECODE_MAX - 1; i > 0; i--) s_decode[i] = s_decode[i - 1];
+    snprintf(s_decode[0].phrase, DECODE_CHARS, "%s", phrase != NULL ? phrase : "?");
+    float p = prob * 100.0f;
+    if (p < 0.0f) p = 0.0f;
+    if (p > 100.0f) p = 100.0f;
+    s_decode[0].prob = (uint8_t)p;
+    s_decode[0].fired = fired;
+    if (s_decode_n < DECODE_MAX) s_decode_n++;
+}
+
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired)
+{
+    if (i < 0 || i >= s_decode_n) return false;
+    if (phrase != NULL) *phrase = s_decode[i].phrase;
+    if (prob != NULL) *prob = s_decode[i].prob;
+    if (fired != NULL) *fired = s_decode[i].fired;
+    return true;
+}
+
 /* One-deep mailbox: the render task reads it once a frame, so a second phrase inside 40 ms is
    a phrase nobody could have read anyway. A queue here would only buffer the panel's own
    latency. */
@@ -251,6 +296,7 @@ static void detect_task(void *arg)
                     ESP_LOGI(TAG, "  also '%s' p=%.2f",
                              alt != NULL ? alt->phrase : "?", (double)r->prob[k]);
                 }
+                note_heard(v->phrase, r->prob[0], true);
                 publish(r->command_id[0], v->phrase);
             }
             /* MUST be cleaned after a detection or the next phrase decodes against this
@@ -262,6 +308,10 @@ static void detect_task(void *arg)
                phrase that missed and a microphone that is dead look identical from here. */
             esp_mn_results_t *r = s_mn->get_results(s_mn_data);
             ESP_LOGI(TAG, "timeout, raw decode: '%s'", r != NULL ? r->raw_string : "?");
+            /* The near miss, kept beside the hits. A decode the command graph REJECTED is
+               what says whether a phrase is unreachable because nobody said it or because
+               the model keeps almost hearing it — and those need opposite fixes. */
+            note_heard(r != NULL ? r->raw_string : NULL, 0.0f, false);
             s_mn->clean(s_mn_data);
         }
     }
@@ -277,7 +327,15 @@ static void note_refused(const char *phrase)
 
 static void load_vocabulary(void)
 {
-    esp_mn_commands_alloc(s_mn, s_mn_data);
+    /* CHECKED, because the pass below checks every `add` and this is the call that makes the
+       list those adds go into. Fixing the derived-counter bug and leaving the allocation
+       unchecked would put the same silence one function call earlier. */
+    if (esp_mn_commands_alloc(s_mn, s_mn_data) != ESP_OK) {
+        ESP_LOGE(TAG, "the command list would not allocate — the panel is deaf to everything");
+        s_accepted = 0;
+        s_rejected = vocab_count();
+        return;
+    }
     const vocab_t *all = vocab_all();
     s_refused_n = 0;
 
