@@ -210,10 +210,16 @@ section gets edited first.
 
 | route | takes | gives |
 |---|---|---|
-| `POST /send` | multipart `file` (16 kHz mono PCM WAV), `to` = `panel` \| `dad` | `200 {id, to_name}`; `409` when `to=panel` and there is not exactly one other panel |
+| `POST /send?to=panel\|dad` | the raw 16 kHz mono s16 body, exactly as `/converse` takes it | `200 {id, to_name}`; `409` when `to=panel` and there is not exactly one other panel |
 | `GET /waiting` | — | `200 {count, from_name}` — tiny on purpose, polled ~30 s per panel forever |
 | `GET /next` | — | `200` raw 16-bit PCM at 16 kHz with `X-Jpanel-Id` and `X-Jpanel-From`; `204` when the inbox is empty |
 | `POST /played` | `{id}` | `204` |
+
+**The body is raw PCM, not multipart**, and the first cut of this contract said multipart
+before `/converse` was re-read: *"In, raw 16 kHz mono s16 — no container, no codec, because the
+panel has neither."* A panel that cannot build a multipart body cannot send a message, and
+asking the firmware to grow a MIME encoder to satisfy a table in a plan would have been the
+wrong way round.
 
 `GET /next` returns the OLDEST unplayed message and does **not** mark it played — `POST /played`
 does, after the panel has actually finished playing it. Separating them is what makes a message

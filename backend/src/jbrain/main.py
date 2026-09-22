@@ -123,6 +123,7 @@ from jbrain.api import (
 )
 from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
+from jbrain.api import jpanel as jpanel_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import moltbook_settings as moltbook_settings_api
@@ -1578,6 +1579,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    app.include_router(jpanel_api.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
