@@ -39,12 +39,16 @@ extra_clearance = 0.4;  // [0:0.1:2]
 
 /* [2. Plate outline] */
 
+// Defaults from Waveshare's dimension drawing: case 37.6 x 45.2 mm,
+// corner radius fitted to the drawing at about 8.7 mm. See README.md.
+
+
 // Overall width of the plate
-plate_x = 38.0;     // [20:0.1:80]
+plate_x = 37.6;     // [20:0.1:80]
 // Overall height of the plate
-plate_y = 43.0;     // [20:0.1:80]
+plate_y = 45.2;     // [20:0.1:80]
 // Outer corner radius
-plate_r = 6.5;      // [0.5:0.1:20]
+plate_r = 8.7;      // [0.5:0.1:20]
 // Thickness of the flat back panel
 plate_t = 1.6;      // [0.8:0.1:5]
 // Round over the outside back edge (0 = sharp)
@@ -52,6 +56,10 @@ edge_fillet = 0.8;  // [0:0.1:3]
 
 
 /* [3. Rim that enters the front shell] */
+
+// Rim defaults assume a ~1.3 mm front-shell wall, estimated from photos.
+// These are the least certain numbers in the file: measure them.
+
 
 // How to define the rim outline.
 //   inset    = stepped in from the plate edge by lip_inset
@@ -62,9 +70,9 @@ lip_mode = "absolute";  // [inset, absolute]
 // Rim outside width
 lip_outer_x = 35.0;  // [10:0.1:80]
 // Rim outside length
-lip_outer_y = 40.0;  // [10:0.1:80]
+lip_outer_y = 42.6;  // [10:0.1:80]
 // Rim outside corner radius
-lip_outer_r = 5.1;   // [0.5:0.1:20]
+lip_outer_r = 7.4;   // [0.5:0.1:20]
 
 // -- inset mode only --
 // How far the rim steps in from the outer edge
@@ -78,15 +86,19 @@ lip_wall = 1.6;      // [0.4:0.1:4]
 // Clearance taken off the outside so it is not a press fit
 lip_slop = 0.15;     // [0:0.05:0.6]
 // Inside depth of the STOCK cover (rim top down to the floor)
-stock_clear = 4.5;   // [1:0.1:15]
+stock_clear = 3.9;   // [1:0.1:15]
 
 
 /* [4. Screws] */
 
+// Hole positions come from the PCB's mounting holes in Waveshare's 3D
+// model: 24.0 x 36.0 mm apart, centred on the board.
+
+
 // Centre of plate to hole centre, across X
-screw_dx = 14.5;    // [5:0.1:40]
+screw_dx = 12.0;    // [5:0.1:40]
 // Centre of plate to hole centre, across Y
-screw_dy = 17.0;    // [5:0.1:40]
+screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
 // Head style
@@ -146,7 +158,8 @@ head_t  = shaft_table[2];
 stack_t     = battery_t + tape_t + foam_t + extra_clearance;
 inner_clear = max(stock_clear, stack_t);
 extra_depth = inner_clear - stock_clear;
-spacer_h    = extra_depth;
+// The rim is part of the pocket's depth, so the body only makes up the rest.
+spacer_h    = max(0, inner_clear - lip_h);
 total_h     = plate_t + spacer_h + lip_h;
 
 pocket_x = auto_pocket ? battery_w + 2 * pocket_margin : manual_pocket_x;
@@ -209,12 +222,15 @@ module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
 module solid_body() {
     if (edge_fillet > 0.05)
-        minkowski() {
-            rbox(plate_x - 2*edge_fillet, plate_y - 2*edge_fillet,
-                 max(0.1, plate_t + spacer_h - edge_fillet),
-                 max(0.1, plate_r - edge_fillet));
-            sphere(r = edge_fillet);
-        }
+        // Raised by the fillet so the sphere's lower half lands at z = 0, where
+        // the screw holes start; otherwise it seals them over.
+        translate([0, 0, edge_fillet])
+            minkowski() {
+                rbox(plate_x - 2*edge_fillet, plate_y - 2*edge_fillet,
+                     max(0.1, plate_t + spacer_h - 2*edge_fillet),
+                     max(0.1, plate_r - edge_fillet));
+                sphere(r = edge_fillet);
+            }
     else
         rbox(plate_x, plate_y, plate_t + spacer_h, plate_r);
 
