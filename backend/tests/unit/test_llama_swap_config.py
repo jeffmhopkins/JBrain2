@@ -296,6 +296,66 @@ def test_main_applies_saved_extra_args_so_an_update_keeps_them(
     assert "--image-min-tokens 4096" in text
 
 
+def test_a_settings_read_that_fails_leaves_the_existing_config_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DB blink during a sync must NOT re-stamp the config without the operator's overrides.
+
+    This is the expensive one, and the cost is not the wrong window. Two processes write this
+    file — this CLI and the api's re-stamp before each load — and llama-swap watches it with
+    `--watch-config`, whose reload calls `old.Shutdown()` and kills EVERY running llama-server.
+    So a config written without the overrides is one the api rewrites on the very next load,
+    and that rewrite evicts the whole resident set: 59 GB of PINNED gpt-oss-120b gone because a
+    settings read blinked while a model downloaded. The pin cannot help — it orders the victims
+    of an eviction decision, and a config reload makes no decision.
+
+    Reachable rather than theoretical because the sync runs this under
+    `docker compose run --no-deps`, which starts the container with no guarantee the database
+    is up, and because the PWA's Download button runs the same script with no api restart
+    behind it — so the boot reconcile that the old fallback named as its backstop never fires.
+    """
+    _lay_down(tmp_path)
+    saved = ({"qwen3.8-27b-q4": 131072}, {"qwen3.5-0.8b": 2}, {}, {"qwen3-vl-30b": 4096})
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: saved)
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    good = (tmp_path / "llama-swap.yaml").read_text()
+
+    def _blink() -> None:
+        raise llama_swap_config.OverridesUnavailable("connection refused")
+
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", _blink)
+    # 0, not a failure: the sync runs under `set -eu`, so a non-zero exit here would abort a
+    # download the owner started from the PWA half way through — a worse outcome than a skip.
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert (tmp_path / "llama-swap.yaml").read_text() == good, (
+        "a failed settings read must leave the good config alone, not overwrite it with "
+        "catalog defaults"
+    )
+
+
+def test_a_settings_read_that_fails_still_writes_a_first_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one case where catalog defaults beat refusing: there is no config yet.
+
+    Refusing is right only because the file already on disk is BETTER than what we would write.
+    With no file there is nothing to protect and the gateway cannot start at all, so a wrong
+    window beats no gateway — and a first install has no overrides to lose anyway. Pinned
+    separately from the test above so that "refuse to overwrite" cannot quietly widen into
+    "never write", which would brick a fresh box."""
+    _lay_down(tmp_path)
+
+    def _blink() -> None:
+        raise llama_swap_config.OverridesUnavailable("connection refused")
+
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", _blink)
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert not (tmp_path / "llama-swap.yaml").exists()
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert (tmp_path / "llama-swap.yaml").exists()
+
+
 def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1,6 +1,6 @@
 # One row per instance, two columns
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b✅ L3◻️
+> **Status:** In progress · **Last verified:** 2026-09-22 · **Waves:** L0✅ L1✅ L1a✅ L2a✅ L2a-m✅ L2b✅ L3◻️
 
 > Replaces step 2 of W0 in `LOCAL_MODEL_ACCESS_PLAN.md`, which was attempted and withdrawn —
 > see that plan's "STEP 2 WAS ATTEMPTED AND WITHDRAWN" for the three anti-patterns it turned
@@ -525,6 +525,70 @@ that retry, the device pre-flight's own derivation, `smoketest`'s 20 GiB gate, a
 `_restore_plan`, which still budgets from the measurement.
 
 *Risk:* medium. *Test:* one budget, asserted from a single constant.
+
+## The config reload nobody budgets for (2026-09-22)
+
+**The owner, twice:** *"120b is still being evicted. There's plenty of memory and it was
+pinned."* Both halves of that are true, and neither is a residency bug — **no eviction decision
+is taken at all.**
+
+`llama-swap` runs with `--watch-config`. Its reload calls `old.Shutdown()`, which kills **every
+running llama-server**, not just the one whose entry moved. So any process that rewrites
+`llama-swap.yaml` frees the whole resident set, and it does so *inside llama-swap*, where
+nothing on this side writes a `box_events` row. **A pin cannot help**: `keep_loaded` orders the
+victims of an eviction *decision*, and there is no decision here to order.
+
+### Two writers, and the one that gives up quietly
+
+The file has two writers that must agree byte for byte:
+
+| | writes | reads the overrides via |
+|---|---|---|
+| `llama_swap_config._main` | the deploy re-stamp **and the PWA's Download/Remove** (`supervisor.gateway.PROVISION_COMMAND`) | `_saved_overrides()` — its own engine |
+| `llm_settings.regen_gateway_config` | immediately before **every model load** | `_saved_override_maps(store, ctx)` — the app's store |
+
+They disagree on exactly one thing: **what to do when the settings read fails.** The API path
+raises and its caller skips the write, leaving the good file alone. The CLI path returned empty
+maps and wrote the **catalog defaults** — a config it knows is missing the operator's settings —
+on the stated grounds that *"the boot reconcile will correct it"*.
+
+**It does not.** `_saved_overrides`'s own docstring, eleven lines above that fallback, already
+says why: *"`up -d` doesn't restart the api on a model-only sync, so the boot reconcile (the
+backstop) may not fire."* Both halves of the bug were sitting in adjacent comments.
+
+What it costs is not the wrong window. A config written without the overrides is one the api
+re-stamps on the **very next load** — and that re-stamp is a reload, and the reload takes 59 GB
+of pinned `gpt-oss-120b` with it. On this box eight of eleven models carry a saved override
+(three raised windows, one doubled slot count, two image floors), so the base render and the
+override render are guaranteed to differ.
+
+Reachable rather than theoretical for two reasons, both in the sync script: it runs the CLI
+under `docker compose run --no-deps`, which starts the container with **no guarantee the
+database is up**, and the PWA's Download button runs the same script with **no api restart
+behind it**.
+
+### The fix, and what it deliberately does not do
+
+The CLI now refuses to overwrite a config it cannot render correctly. The file already on disk
+was written *with* the overrides and llama-swap is already serving it, so leaving it alone costs
+nothing; replacing it costs the operator their settings and the box its resident set.
+
+Three deliberate choices:
+
+- **Exit 0, not a failure.** The sync runs under `set -eu`, so a non-zero exit would abort a
+  download the owner started from the PWA half way through — worse than a skip.
+- **Still write when there is no config at all.** Refusing is right only because the existing
+  file is *better* than what we would write. With no file the gateway cannot start, and a first
+  install has no overrides to lose. Pinned by its own test so "refuse to overwrite" cannot
+  quietly widen into "never write" and brick a fresh box.
+- **Not a claim that this was the occurrence the owner saw.** It was not caught in the act: the
+  deploy of 2026-09-22 logged `11 model(s), 8 with a saved override`, so the fallback did not
+  fire that time, and two deliberate loads afterwards (`gpt-oss-120b` then a cold `qwen3.5-4b`)
+  **co-resided cleanly with no re-stamp** — 69.2 GB and 6.1 GB measured, both resident. This
+  closes a silent path whose signature matches exactly; it is not a confirmed sighting.
+
+`llm_settings.gateway_config_changed` is live on the box and names the served-model entries that
+actually moved, so the next occurrence is attributable rather than re-observed.
 
 ## What this plan does NOT do
 

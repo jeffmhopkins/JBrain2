@@ -658,6 +658,28 @@ def served_shape_from_config(root: str) -> dict[str, tuple[int, int]]:
     return shapes
 
 
+class OverridesUnavailable(RuntimeError):
+    """The saved per-model overrides could not be read, so a render here would be WRONG.
+
+    Worth its own type because the only safe response is to write nothing, and that is the
+    opposite of what this used to do. It returned empty maps on any failure and wrote the
+    catalog defaults, on the stated grounds that "the boot reconcile will correct it" — and
+    `_saved_overrides` itself documents why that does not hold: `up -d` does not restart the
+    api on a model-only sync, so the backstop may never fire. The two halves of the bug were
+    in adjacent comments.
+
+    What it costs is not just a wrong window. The config is written by two processes — this
+    CLI and the api's load-time re-stamp — and llama-swap runs with `--watch-config`, whose
+    reload calls `old.Shutdown()` and kills EVERY running llama-server. So a config written
+    without the overrides is a config the api will rewrite on the very next load, and that
+    rewrite takes the whole resident set with it: 59 GB of pinned gpt-oss-120b evicted because
+    a settings read blinked during a model download. Nothing reports it, because the kill
+    happens inside llama-swap.
+
+    `docker compose run --no-deps` is what makes this reachable rather than theoretical — the
+    one-off container this runs in is started with no guarantee the database is up."""
+
+
 def _saved_overrides() -> tuple[
     dict[str, int], dict[str, int], dict[str, list[str]], dict[str, int]
 ]:
@@ -702,13 +724,8 @@ def _saved_overrides() -> tuple[
                 await engine.dispose()
 
         return asyncio.run(_load())
-    except Exception as exc:  # noqa: BLE001 — never fail config gen on a settings-read hiccup
-        print(
-            f"[llama-swap] could not load saved window/slot/flag/image-floor overrides ({exc}); "
-            "using catalog defaults — the boot reconcile will correct it",
-            file=sys.stderr,
-        )
-        return {}, {}, {}, {}
+    except Exception as exc:  # noqa: BLE001 — the caller decides; see OverridesUnavailable
+        raise OverridesUnavailable(str(exc)) from exc
 
 
 def _main(argv: list[str]) -> int:
@@ -734,7 +751,34 @@ def _main(argv: list[str]) -> int:
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])
-    windows, slots, extra, floors = _saved_overrides()
+    path = os.path.join(root, "llama-swap.yaml")
+    try:
+        windows, slots, extra, floors = _saved_overrides()
+    except OverridesUnavailable as exc:
+        # REFUSE TO WRITE over a config that is already correct. Leaving the existing file
+        # alone costs nothing — it was written with the overrides applied and llama-swap is
+        # already serving it — while replacing it with catalog defaults costs the operator
+        # their settings AND the whole resident set on the next load (see OverridesUnavailable).
+        if os.path.exists(path):
+            print(
+                f"[llama-swap] could not load saved window/slot/flag/image-floor overrides "
+                f"({exc}); LEAVING {path} as it is rather than re-stamping it without them — "
+                "overwriting would drop the overrides and the api's next load would re-stamp "
+                "them back, and that reload kills every resident model",
+                file=sys.stderr,
+            )
+            # 0, not a failure: this runs under `set -eu` inside the sync, and a settings-read
+            # blink must not abort a download the owner started from the PWA half way through.
+            return 0
+        # No config at all is the one case where catalog defaults beat the alternative: the
+        # gateway cannot start without one, and a first install has no overrides to lose.
+        print(
+            f"[llama-swap] could not load saved window/slot/flag/image-floor overrides ({exc}); "
+            f"no {path} exists yet, so writing catalog defaults to give the gateway something "
+            "to serve — re-run this once the settings store is reachable",
+            file=sys.stderr,
+        )
+        windows, slots, extra, floors = {}, {}, {}, {}
     path = write(
         root, models, windows=windows, slots=slots, extra_args=extra, image_min_tokens=floors
     )
