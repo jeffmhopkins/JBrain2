@@ -772,9 +772,24 @@ async def flash_panel(
 # `docs/proposed/PANEL_CONVERSATION_PLAN.md`. The box has CPU to spare; the panel has 31 KB of
 # contiguous internal RAM on a good day.
 PANEL_RATE = 16000
-# Six seconds. Long enough for anything a four-year-old says in one breath, short enough that
-# a pocketed panel holding the screen down cannot upload a minute of a room.
-PANEL_AUDIO_MAX = PANEL_RATE * 2 * 6
+# Ten seconds, up from six. Six was "long enough for anything a four-year-old says in one
+# breath", and it was — but a four-year-old also stops in the MIDDLE of a breath, and the
+# panel's silence window has to be long enough to wait that out (`LISTEN_HUSH_MS`) inside the
+# same cap. The owner: *"the babies keep getting cut off because they're a little bit slow."*
+# The extra padding is free now that `_trim_to_speech` takes the room back out before whisper
+# ever sees it. Still short enough that a pocketed panel cannot upload a minute of a room.
+PANEL_AUDIO_MAX = PANEL_RATE * 2 * 10
+
+# WHAT THE PANEL CAN ACTUALLY PLAY, which the box has to know because it is the box that
+# overruns it. `firmware/main/talk.c` reads the reply into a fixed PSRAM buffer and
+# `audio_play` truncates to the same ceiling, silently — so a reply longer than this does not
+# fail, it stops mid-word. The owner: *"sometimes when the robot is talking back on a longer
+# reply I get cut off."* Measured in the log the same afternoon: replies of 221,012 and
+# 261,290 bytes against the 192,000 the panel then held, so the 261 KB one lost its last 2.2
+# seconds. Both ends now say ten seconds; a box that outruns a panel that has not been
+# updated yet truncates exactly as it did before, which is why the two can ship in either
+# order. What must never happen again is it being SILENT, hence the warning below.
+PANEL_REPLY_MAX = PANEL_RATE * 2 * 10
 
 # DELIBERATELY PLAIN, AND DELIBERATELY SHORT. The jpet's prompt is built around wall objects,
 # scene effects and an action script schema; none of that exists on a panel, and inheriting it
@@ -948,10 +963,17 @@ _TRIM_TAIL_MS = 400
 _TRIM_QUIET = 300  # on a 32767 scale; below this a room is just a room
 
 
-def _trim_to_speech(pcm: bytes) -> bytes:
+def _trim_to_speech(
+    pcm: bytes, lead_ms: int = _TRIM_LEAD_MS, tail_ms: int = _TRIM_TAIL_MS
+) -> bytes:
     """The speech inside a clip of mostly silence, with margins. The clip unchanged if
     there is no telling — never an empty one, because silence is `204` downstream and a
-    truncated word is a wrong answer read aloud to a child."""
+    truncated word is a wrong answer read aloud to a child.
+
+    The margins are arguments because the two ends of a turn want different ones. A child's
+    recording needs room for a syllable the gate nearly missed; Kokoro's output has exact
+    digital silence at its edges and wants almost none, so the reply starts when the reply
+    starts."""
     samples = array.array("h")
     samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
     frames = len(samples) // _TRIM_FRAME
@@ -966,8 +988,8 @@ def _trim_to_speech(pcm: bytes) -> bytes:
     if not voiced:
         return pcm
 
-    start = max(0, voiced[0] * _TRIM_FRAME - _TRIM_LEAD_MS * PANEL_RATE // 1000)
-    end = min(len(samples), (voiced[-1] + 1) * _TRIM_FRAME + _TRIM_TAIL_MS * PANEL_RATE // 1000)
+    start = max(0, voiced[0] * _TRIM_FRAME - lead_ms * PANEL_RATE // 1000)
+    end = min(len(samples), (voiced[-1] + 1) * _TRIM_FRAME + tail_ms * PANEL_RATE // 1000)
     return samples[start:end].tobytes()
 
 
@@ -1092,6 +1114,22 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.warning("endpoint.converse_tts_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not speak") from exc
     out = _to_panel_rate(wav_pcm, wav_rate)
+    # Kokoro pads. The panel cannot skip it — it plays what it is handed from the first
+    # sample — so every reply starts with a beat of nothing, and that padding also counts
+    # against the ceiling below. 30 ms in front and 120 ms behind keeps the reply from
+    # sounding clipped while giving back the rest.
+    out = _trim_to_speech(out, lead_ms=30, tail_ms=120)
+    if len(out) > PANEL_REPLY_MAX:
+        # NEVER SILENTLY. The panel truncates a long reply mid-word with nothing on screen
+        # and nothing in a log, which is why this took a child complaining to find.
+        log.warning(
+            "endpoint.converse_reply_truncated",
+            reply_bytes=len(out),
+            ceiling=PANEL_REPLY_MAX,
+            lost_ms=(len(out) - PANEL_REPLY_MAX) * 1000 // (PANEL_RATE * 2),
+            reply=reply[:120],
+        )
+        out = out[:PANEL_REPLY_MAX]
     tts_ms = int((time.monotonic() - tts_started) * 1000)
 
     # THE THREE NUMBERS THAT DECIDE WHETHER THIS IS USABLE, on every turn. Whisper was

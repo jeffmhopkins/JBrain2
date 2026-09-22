@@ -127,6 +127,37 @@ before and 400 ms after. A room too loud to judge trims nothing rather than trim
 The panel's own VAD already knows where the speech is and could say so, but a backend fix
 ships without an OTA, and `held_ms` / `spoken_ms` in `endpoint.converse` are how it is watched.
 
+**The panel cut both ends of the turn off.** Two ceilings, both six seconds, both reasoned
+from the wrong thing. On the way IN, `LISTEN_HUSH_MS` was 900 ms — the silence the panel waits
+out to decide a sentence has ended — and it was chosen to fit under a six-second recording cap
+rather than around a child. Three seconds of lead-in plus 900 ms of hush left 2.1 s for the
+sentence itself, so a four-year-old who took a moment to start and paused once in the middle
+ran out of recording. The owner: *"the babies keep getting cut off because they're a little
+bit slow."* The cap is now ten seconds and the hush 1.8 s, which costs the box nothing because
+the trim above takes the extra room back out before whisper sees it. On the way OUT,
+`REPLY_MAX_BYTES` and the capture buffer were the SAME constant, so the reply inherited the
+recording's length — and `audio_play` truncated past it in silence. The log had replies of
+221,012 and 261,290 bytes against the 192,000 the panel held: the long one stopped mid-word,
+with nothing on screen and nothing in a log. Both ends now say ten seconds, the box logs
+`endpoint.converse_reply_truncated` rather than cutting quietly, and the two constants are
+pinned to each other by a test that reads `talk.c`.
+
+**"fish stop".** The conversation-ending word was a bare `stop`, the only single-word entry
+whose one-word case was easy to argue — every other costs a wiggle or a recording when the
+television says it, while a false stop only ends a conversation that was not happening. The
+owner asked for "fish stop" anyway, and it is the better phrase: ending a conversation with
+the pet's name is the same shape as starting one with it, and it hands the one-word allowance
+back to the words that need it. `vocab.h` rule 3 holds — neither phrase is a prefix of the
+other.
+
+**The burp was mute.** `burp` and `fart` have been in the vocabulary since bring-up and only
+ever moved the face. The twins kept asking. `audio_rude()` synthesises the noise rather than
+shipping a sample — a falling sawtooth with a fast amplitude flutter and a decay that never
+quite reaches zero, plus filtered noise for the wet one — which is twenty lines against a
+licence question and 100 KB of flash. It writes into the reply buffer and plays down the same
+chunked, interruptible path a reply takes, so it deafens the microphone while it sounds and
+cannot interrupt the pet mid-sentence.
+
 **The pet had no idea what it had just said.** The owner, on the reply quality: *"it also asks
 to play a game a lot, but being just a chatbot, games are not really the thing it should be
 asking to do with a kid — it could be more of a conversationalist, talking about what the kid

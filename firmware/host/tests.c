@@ -2033,13 +2033,11 @@ static void test_vocab_phrases_are_sayable(void)
            they are what a four-year-old actually says. Naming them means the next single word
            has to be argued for rather than slipped in beside these — which is the whole value
            of a list over a loosened check, and the list has already grown once. */
-        static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave", "shake",
-                                              "laugh", "eat",  "kick",  "spin",
-                                              /* "stop" is the one whose single-word case is
-                                                 easy: every other entry costs something when
-                                                 the television says it, and a false "stop"
-                                                 ends a conversation that was not happening. */
-                                              "stop"};
+        static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave",
+                                              "shake", "laugh", "eat",  "kick",  "spin"};
+        /* The list SHRANK once too: "stop" was on it, and is now "fish stop" at the owner's
+           ask — which is the outcome the list is for. A one-word entry that can be said
+           another way should be. */
         bool allowed_single = false;
         for (unsigned k = 0; k < sizeof(SINGLES) / sizeof(SINGLES[0]); k++) {
             if (strcmp(p, SINGLES[k]) == 0) allowed_single = true;
@@ -2064,6 +2062,29 @@ static void test_vocab_has_no_ambiguity(void)
                   "no phrase is a prefix of another");
         }
     }
+}
+
+static void test_ending_a_conversation_uses_the_panel_s_name(void)
+{
+    /* The owner asked for "fish stop" in place of a bare "stop". Two things follow and both
+       are worth pinning, because both are how the change could be undone by accident.
+
+       It must still be reachable — a stop phrase MultiNet cannot resolve is a child shouting
+       at a toy that keeps talking — and it must carry the name, because that is the point: a
+       conversation ends with the pet's name the same way it starts with one ("hey fish"), and
+       a rename has to move both or the panel answers to one name and stops for another. */
+    const vocab_t *v = vocab_all();
+    const char *name = vocab_name();
+    const char *stop = NULL;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind == VOCAB_STOP) stop = v[i].phrase;
+    }
+    CHECK(stop != NULL, "there is a way to end a conversation");
+    CHECK(name != NULL, "and the panel has a name to end it with");
+    CHECK(strstr(stop, name) != NULL, "the stop phrase carries the panel's own name");
+    /* And it is no longer a single word, which is what let it leave the named-list exception
+       above. A phrase that can be said in two words should be. */
+    CHECK(strchr(stop, ' ') != NULL, "the stop phrase is more than one word");
 }
 
 static void test_vocab_arguments_are_real(void)
@@ -2363,6 +2384,7 @@ int main(void)
     test_vocab_phrases_are_sayable();
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
+    test_ending_a_conversation_uses_the_panel_s_name();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();

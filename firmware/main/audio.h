@@ -45,6 +45,19 @@ void audio_set_levels(int volume, int mic_gain_db);
    was not. */
 void audio_beep(void);
 
+/* ASK for a rude noise — the twins' request, and the one action in the table that was mute.
+   `burp` and `fart` have been in the vocabulary since bring-up but only ever moved the face:
+   `rig.c` gives them a bewildered look and a wobble, and nothing came out of the speaker, so
+   what a four-year-old asked for did not happen. Synthesised rather than sampled, because a
+   WAV of a burp is a licence question, a download and 100 KB of flash to answer something an
+   oscillator answers in twenty lines.
+
+   Built straight into the reply buffer and played by the same path a reply takes, so it is
+   chunked, interruptible, and deafens the microphone while it sounds — a burp the recogniser
+   hears is a false trigger with a loudspeaker behind it. Refused, like a reply, while the
+   panel is already speaking. Safe from any task. */
+void audio_rude(bool wet);
+
 /* Largest absolute sample of the most recent chunk, 0..32767 — the one number that says
    whether anything reached the ADC at all, and what the meter draws. */
 int audio_level(void);

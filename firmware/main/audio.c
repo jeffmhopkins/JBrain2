@@ -110,20 +110,38 @@ static esp_codec_dev_handle_t s_codec;
 /* Kept so the ALC can be read back from the audio task — see `alc_settle()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
 
-/* THE RECORDING. Six seconds is the cap the box enforces too, and both ends need it: the
-   panel must not fill PSRAM because a screen is face-down in a bag, and the box must not
-   transcribe a minute of a room because the panel forgot to stop. 6 s of 16 kHz mono s16 is
-   192 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM nothing else wants.
-   Never allocated while recording: a heap request in the middle of a four-year-old talking
-   is a failure with no good outcome. */
-#define CAPTURE_MAX_MS 6000
+/* THE RECORDING. Ten seconds, and the box enforces the same cap: the panel must not fill
+   PSRAM because a screen is face-down in a bag, and the box must not transcribe a minute of a
+   room because the panel forgot to stop.
+
+   IT WAS SIX, AND SIX CUT CHILDREN OFF. The owner: *"the babies keep getting cut off because
+   they're a little bit slow."* The window has to hold the lead-in, the sentence AND the
+   silence the panel waits out to decide the sentence ended (`LISTEN_HUSH_MS`, now 1.8 s) —
+   three seconds of waiting plus two of talking plus the hush was already 6.8, so the cap was
+   ending turns before the hush could. The extra padding costs the box nothing now that it
+   trims the silence off before whisper sees it (`_trim_to_speech`).
+
+   10 s of 16 kHz mono s16 is 320 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM
+   nothing else wants. Never allocated while recording: a heap request in the middle of a
+   four-year-old talking is a failure with no good outcome. */
+#define CAPTURE_MAX_MS 10000
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */
 static volatile bool s_cap_on;
 
-/* THE REPLY. Its own buffer, the same six-second ceiling: a reply longer than the question
-   is not a conversation with a four-year-old, and the box caps its own text anyway. */
+/* THE REPLY, WITH ITS OWN CEILING RATHER THAN THE RECORDING'S.
+ *
+ * These were one constant, and that is how the reply got cut off: a reply is not a recording
+ * and there is no reason the two should be the same length. The owner: *"sometimes when the
+ * robot is talking back on a longer reply I get cut off."* The box's log the same afternoon
+ * had replies of 221,012 and 261,290 bytes against the 192,000 this held, so the long one
+ * stopped mid-word — silently, because `audio_play` truncates without a word to anyone.
+ *
+ * `PANEL_REPLY_MAX` in `backend/src/jbrain/api/endpoint.py` is the same ten seconds and now
+ * logs when it has to cut. The two must move together; the host suite checks that they have. */
+#define PLAY_MAX_MS 10000
+#define PLAY_MAX_SAMPLES (AUDIO_RATE * PLAY_MAX_MS / 1000)
 static int16_t *s_play;
 static volatile int s_play_len;  /* samples still to write */
 static volatile int s_play_pos;
@@ -133,7 +151,7 @@ bool audio_play(const int16_t *pcm, size_t bytes)
     if (s_play == NULL || pcm == NULL || bytes < 2) return false;
     if (s_play_pos < s_play_len) return false; /* still speaking */
     int n = (int)(bytes / sizeof(int16_t));
-    if (n > CAPTURE_MAX_SAMPLES) n = CAPTURE_MAX_SAMPLES;
+    if (n > PLAY_MAX_SAMPLES) n = PLAY_MAX_SAMPLES;
     memcpy(s_play, pcm, (size_t)n * sizeof(int16_t));
     s_play_pos = 0;
     s_play_len = n;
@@ -143,6 +161,59 @@ bool audio_play(const int16_t *pcm, size_t bytes)
 bool audio_playing(void)
 {
     return s_play_pos < s_play_len;
+}
+
+/* THE RUDE NOISE, AND WHY IT IS AN OSCILLATOR RATHER THAN A FILE.
+ *
+ * `burp` and `fart` have been in the vocabulary since bring-up and have only ever moved the
+ * face. A four-year-old saying "burp" to a robot is not asking for an expression.
+ *
+ * What makes a noise read as a BODY rather than a horn is three things, and none of them is
+ * the waveform: the pitch falls while it sounds, the amplitude flutters fast enough to be
+ * heard as texture rather than as tremolo, and it ends by running out rather than stopping.
+ * A sawtooth supplies the harmonics a sine has not got — a pure tone at 120 Hz is a foghorn —
+ * and the wet variant adds noise on top, which is the whole difference between the two words.
+ *
+ * Written into `s_play` and left for the audio task, so this shares the reply's chunked,
+ * interruptible playback and its deafening rather than introducing a third way to make a
+ * sound. That also means it cannot interrupt a reply, which is right: the pet finishing its
+ * sentence beats a burp, and the child can ask again. */
+#define RUDE_MS 620
+#define RUDE_SAMPLES (AUDIO_RATE * RUDE_MS / 1000)
+
+void audio_rude(bool wet)
+{
+    if (s_play == NULL) return;
+    if (s_play_pos < s_play_len) return; /* already speaking; a reply outranks a burp */
+
+    const float top = wet ? 105.0f : 140.0f;   /* where it starts */
+    const float fall = wet ? 45.0f : 65.0f;    /* and how far it drops while it sounds */
+    const float flutter = 2.0f * (float)M_PI * (wet ? 34.0f : 27.0f) / (float)AUDIO_RATE;
+    uint32_t noise = 0x9e3779b9u;
+    float phase = 0.0f;
+
+    for (int i = 0; i < RUDE_SAMPLES; i++) {
+        const float t = (float)i / (float)RUDE_SAMPLES;
+        phase += 2.0f * (float)M_PI * (top - fall * t) / (float)AUDIO_RATE;
+        if (phase > 2.0f * (float)M_PI) phase -= 2.0f * (float)M_PI;
+        /* A sawtooth from the phase directly, with the third harmonic lifted: cheaper than a
+           wavetable and the harmonics are the entire character of the thing. */
+        float v = phase / (float)M_PI - 1.0f + 0.3f * sinf(phase * 3.0f);
+        if (wet) {
+            noise = noise * 1664525u + 1013904223u;
+            v += 0.55f * ((float)((noise >> 16) & 0xffffu) / 32768.0f - 1.0f);
+        }
+        v *= 0.62f + 0.38f * sinf((float)i * flutter);
+        /* Fast in, slow out, and never quite silent at the end — a noise that stops dead
+           sounds like a fault rather than a body. */
+        const float env = t < 0.04f ? t / 0.04f : 0.15f + 0.85f * (1.0f - t) * (1.0f - t);
+        float s = v * env * 9000.0f;
+        if (s > 32000.0f) s = 32000.0f;
+        if (s < -32000.0f) s = -32000.0f;
+        s_play[i] = (int16_t)s;
+    }
+    s_play_pos = 0;
+    s_play_len = RUDE_SAMPLES;
 }
 
 void audio_capture_open(void)
@@ -306,7 +377,7 @@ bool audio_start(void)
        keeps its voice commands and its meter and simply cannot record a message, which is a
        smaller loss than refusing to start. */
     s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    s_play = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    s_play = heap_caps_malloc((size_t)PLAY_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "capture %s, playback %s (%d ms each)",
              s_cap != NULL ? "ready" : "UNAVAILABLE",
              s_play != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS);

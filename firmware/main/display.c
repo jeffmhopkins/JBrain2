@@ -646,15 +646,21 @@ static volatile bool s_debug_overlay;
  *
  * Three ways out, and each is a different sentence to a four-year-old:
  *
- *   HUSH   they finished  -> send it. 900 ms, which is long enough to survive the pause a
- *                            four-year-old puts in the middle of a sentence and short enough
- *                            that the six-second cap does not eat the tail of a slow one.
+ *   HUSH   they finished  -> send it. 1.8 s. It was 900 ms, and 900 ms was wrong: the owner,
+ *                            after watching them use it — *"the babies keep getting cut off
+ *                            because they're a little bit slow."* A four-year-old assembling
+ *                            a sentence stops for longer than an adult does, and every one of
+ *                            those pauses ended their turn for them. The old number was
+ *                            reasoned from the SIX-SECOND cap rather than from a child: a
+ *                            longer hush used to risk the cap eating the tail. The cap is ten
+ *                            seconds now (`CAPTURE_MAX_MS`) and the box trims the silence
+ *                            before whisper sees it, so waiting longer costs nothing at all.
  *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
  *                            accidental "hey fish" from the television must not become an
  *                            upload, and this is the branch that stops it.
  *   the cap `audio.c` already enforces -> send what we have rather than truncating to nothing.
  */
-#define LISTEN_HUSH_MS 900
+#define LISTEN_HUSH_MS 1800
 #define LISTEN_LEAD_MS 3000
 
 /* AND THEN IT LISTENS AGAIN, WITHOUT BEING ASKED.
@@ -1500,6 +1506,7 @@ static void face_task(void *arg)
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
+                bool rude = false; /* this phrase makes its own noise; skip the beep */
                 switch (v->kind) {
                 case VOCAB_FORM:
                     st.form = (face_form_t)v->arg;
@@ -1556,9 +1563,16 @@ static void face_task(void *arg)
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
+                    /* The two the twins kept asking for and that never made a sound. The
+                       noise REPLACES the acknowledging beep rather than following it — a
+                       tone and then a burp is the toy answering twice. */
+                    if (action == ACT_BURP || action == ACT_FART) {
+                        audio_rude(action == ACT_FART);
+                        rude = true;
+                    }
                     break;
                 }
-                if (sound) audio_beep();
+                if (sound && !rude) audio_beep();
                 dirty = true;
             }
         }

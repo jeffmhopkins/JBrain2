@@ -15,6 +15,7 @@ import array
 import asyncio
 import base64
 import hashlib
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -986,6 +987,8 @@ class TestConverse:
         heard: str = "what is your name",
         llm: "_FakeLlm | None" = None,
         tts_rate: int = 24000,
+        tts_long_ms: int = 0,
+        tts_pad_ms: int = 0,
     ) -> _FakeLlm:
         app = cast(FastAPI, c.app)
         app.state.settings.whisper_url = "http://tts-stt:8080/v1"
@@ -1006,7 +1009,22 @@ class TestConverse:
                 return None
 
             async def get(self, url: str, **kw: Any) -> Any:
-                pcm = b"\x10\x00" * 480  # a fifth of a second of something
+                if tts_long_ms:
+                    # A reply of a stated length, optionally with Kokoro's padding either
+                    # side of it. A tone rather than a constant: the trim looks for peak
+                    # structure, and a DC block has none.
+                    import math
+
+                    voice = array.array("h")
+                    for _ in range(tts_pad_ms * tts_rate // 1000):
+                        voice.append(0)
+                    for i in range(tts_long_ms * tts_rate // 1000):
+                        voice.append(int(11000 * math.sin(i * 0.15)))
+                    for _ in range(tts_pad_ms * tts_rate // 1000):
+                        voice.append(0)
+                    pcm = voice.tobytes()
+                else:
+                    pcm = b"\x10\x00" * 480  # a fifth of a second of something
                 # `request=` because `raise_for_status` refuses to judge a response that was
                 # never sent — a detached Response raises RuntimeError, not HTTPStatusError.
                 return httpx.Response(
@@ -1315,3 +1333,104 @@ class TestPanelMemory:
         assert "cannot play games" in prompt
         for subject in ("what they ate", "what they did today", "their toys"):
             assert subject in prompt
+
+
+class TestReplyCeiling:
+    """What the panel can actually play, and the fact that it never said so.
+
+    `firmware/main/talk.c` reads the reply into a fixed PSRAM buffer and `audio_play`
+    truncates to the same ceiling — silently, with nothing on screen and nothing in a log.
+    The owner: *"sometimes when the robot is talking back on a longer reply I get cut off."*
+    Measured in the box log the same afternoon: replies of 221,012 and 261,290 bytes against
+    the 192,000 the panel then held, so the 261 KB one lost its last 2.2 seconds mid-word.
+    """
+
+    def test_the_ceiling_is_the_panel_s_buffer(self) -> None:
+        """Both ends say ten seconds. If this ever drifts, a reply is cut off in a bedroom
+        and nothing anywhere says why — which is exactly how it was found."""
+        firmware = Path(__file__).resolve().parents[3] / "firmware" / "main" / "talk.c"
+        text = firmware.read_text()
+        assert "#define REPLY_MAX_BYTES (16000 * 2 * 10)" in text
+        assert endpoint_api.PANEL_REPLY_MAX == 16000 * 2 * 10
+
+    def test_a_reply_over_the_ceiling_is_cut_but_never_quietly(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=14000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+        assert len(r.content) == endpoint_api.PANEL_REPLY_MAX
+        # structlog renders to stdout, not through the logging module, so `caplog` sees
+        # nothing here and a test written against it would pass on a silent truncation —
+        # which is the one thing this is checking cannot happen.
+        out = capsys.readouterr().out
+        assert "converse_reply_truncated" in out
+        assert '"lost_ms": 4000' in out
+
+    def test_a_reply_inside_the_ceiling_is_left_whole(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=2000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert 0 < len(r.content) < endpoint_api.PANEL_REPLY_MAX
+
+    def test_the_recording_window_outlasts_the_silence_it_waits_for(self) -> None:
+        """The cut-off bug, as an invariant.
+
+        The panel opens the microphone, waits `LISTEN_LEAD_MS` for a child to start, records,
+        and needs `LISTEN_HUSH_MS` of quiet to decide they finished — all inside
+        `CAPTURE_MAX_MS`. At 3000 + 900 the old six-second cap left 2.1 s for the sentence
+        itself, so a child who took a moment to start and paused once in the middle ran out of
+        recording before the hush could fire. The owner: *"the babies keep getting cut off
+        because they're a little bit slow."*
+
+        There must be room for the waiting AND a real sentence, and the box must accept
+        whatever the panel is willing to send, or the tail is cut off at the other end
+        instead.
+        """
+        main = Path(__file__).resolve().parents[3] / "firmware" / "main"
+
+        def const(path: str, name: str) -> int:
+            m = re.search(rf"^#define {name} (\d+)$", (main / path).read_text(), re.M)
+            assert m is not None, f"{name} not found in {path}"
+            return int(m.group(1))
+
+        lead = const("display.c", "LISTEN_LEAD_MS")
+        hush = const("display.c", "LISTEN_HUSH_MS")
+        cap = const("audio.c", "CAPTURE_MAX_MS")
+        assert hush >= 1500, "a four-year-old pauses mid-sentence for longer than an adult"
+        # Four seconds of actual sentence left over, which is a long one at this age.
+        assert cap - lead - hush >= 4000, (lead, hush, cap)
+        assert endpoint_api.PANEL_RATE * 2 * cap // 1000 <= endpoint_api.PANEL_AUDIO_MAX
+
+    def test_the_reply_does_not_start_with_a_beat_of_nothing(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Kokoro pads, and the panel plays what it is handed from the first sample — so the
+        padding is dead air before every single reply, and it counts against the ceiling."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=1000, tts_pad_ms=2000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        spoken_ms = len(r.content) * 1000 // (endpoint_api.PANEL_RATE * 2)
+        # 1 s of speech plus the 30/120 ms margins, not 1 s of speech plus 4 s of padding.
+        assert 1000 <= spoken_ms <= 1400, spoken_ms
