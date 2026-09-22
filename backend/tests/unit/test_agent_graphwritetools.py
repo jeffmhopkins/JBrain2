@@ -579,6 +579,49 @@ def test_a_held_fact_says_it_is_not_live_and_names_decides_own_reason(reason: st
     assert "Re-read the note" in line and "ask the owner" in line
 
 
+def test_a_collision_with_this_notes_own_write_is_never_put_to_the_owner() -> None:
+    """Both values came from ONE reading, so nothing on file disagreed: the note states two
+    things and the pass wrote them to one slot. Measured on a visit summary listing two
+    appointments — the pass wrote both onto Me, the second replaced the first, and the
+    generic DISAGREED line sent four rounds of "which one should we keep?" to the owner."""
+    replaced = FactWrite(
+        gw.uuid.uuid4(),
+        REPLACED,
+        "health",
+        "Jeff has an appointment at 11:00",
+        replaced=("Jeff has an appointment at 10:30",),
+        hold_reason="attribute_collision",
+    )
+    own = gw._write_line(1, "Me", "hasAppointment", "11:00", replaced, [], own_collision=True)
+    assert "one YOU wrote from this same note" in own
+    assert "not a question for the owner" in own
+    assert "ask the owner" not in own
+    # An older value on file still gets the owner's question.
+    other = gw._write_line(1, "Me", "hasAppointment", "11:00", replaced, [])
+    assert "ask the owner which is right" in other
+
+
+@pytest.mark.parametrize(
+    "predicate", ["hasAppointment", "appointment", "appointments", "has_appointment", "bookingOn"]
+)
+def test_an_appointment_edge_is_recognised_in_its_common_spellings(predicate: str) -> None:
+    assert gw._APPOINTMENT_EDGE.match(predicate.replace("_", ""))
+
+
+@pytest.mark.parametrize("predicate", ["attendee", "scheduledTime", "visitType", "treatedBy"])
+def test_a_predicate_that_merely_mentions_a_visit_is_not_an_appointment_edge(
+    predicate: str,
+) -> None:
+    assert not gw._APPOINTMENT_EDGE.match(predicate)
+
+
+def test_a_compacted_quote_ignores_spacing_and_punctuation_but_not_words() -> None:
+    """OCR runs words together and the model re-spaces them when it copies. The compacted
+    form forgives exactly that and nothing else: a changed digit is still a miss."""
+    assert gw._compact("2027 at 10:30 AM") == gw._compact("2027at10:30AM")
+    assert gw._compact("March 09") != gw._compact("March o9")
+
+
 def test_a_collision_that_held_the_other_side_too_says_so() -> None:
     """`also_held` beside a HELD row. No `decide()` branch reaches this shape any more —
     the attribute collision that did now supersedes (§8 O15) — but `_write_line` is a

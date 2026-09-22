@@ -384,6 +384,31 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", text).strip().casefold()
 
 
+# Everything but letters and digits, for the tolerant half of the quote check. OCR runs
+# words together ("2027at10:30") and the model re-spaces and re-punctuates them when it
+# copies ("2027 at 10:30") — measured on a photographed visit summary, where every quote
+# the pass wrote missed the note on spacing alone and every fact was filed at low weight.
+_NON_ALNUM = re.compile(r"[\W_]+")
+
+
+# Below this a compacted quote ("12", "ok") is found almost anywhere, so it attests nothing.
+_MIN_COMPACT_QUOTE = 8
+
+
+def _compact(text: str) -> str:
+    return _NON_ALNUM.sub("", text).casefold()
+
+
+# The kinds an appointment entity carries — the same pair the calendar projection accepts
+# (`analysis/appointment_projection._APPOINTMENT_KINDS`).
+_APPOINTMENT_KINDS = frozenset({"appointment", "event"})
+# A predicate that states an appointment as a relation of its ATTENDEE. With a value
+# object instead of an appointment handle it is a single-valued attribute on the owner, so
+# the note's second appointment supersedes its first and neither reaches the calendar,
+# whose projection reads only an appointment entity's own `scheduledTime`.
+_APPOINTMENT_EDGE = re.compile(r"^(has)?(appointment|appt|booking)s?(with|on|at)?$", re.I)
+
+
 def _quantity_value(literal: str) -> dict[str, Any]:
     """`value_json` for a literal object. A recognised quantity keeps its number and
     unit apart so cross-unit equality works; anything else is stored verbatim under
@@ -791,6 +816,9 @@ class NoteGraphWriter:
         self.correct_budget = ToolCallBudget(CORRECT_CALL_BUDGET)
         self.reading_budget = ToolCallBudget(READING_CALL_BUDGET)
         self.reading = Reading()
+        # Normalized statements this writer has written, so a write that supersedes one of
+        # them is told it collided with its OWN note rather than with an older value.
+        self._written: set[str] = set()
 
     @property
     def target(self) -> NoteTarget:
@@ -893,7 +921,13 @@ class NoteGraphWriter:
         """Whether the quote is really in the note. The model cannot claim attestation;
         it can only offer text, and this is the deterministic check on the text."""
         body = _norm(quote)
-        return bool(body) and body in self._note_text
+        if not body:
+            return False
+        if body in self._note_text:
+            return True
+        # Spacing and punctuation only; the words and digits must still match exactly.
+        compact = _compact(quote)
+        return len(compact) >= _MIN_COMPACT_QUOTE and compact in _compact(self._note_text)
 
     def _from_attachment(self, quote: str) -> bool:
         """D12: whether the passage this fact rests on came off an ATTACHMENT.
@@ -901,7 +935,12 @@ class NoteGraphWriter:
         Same deterministic shape as `_attests` and for the same reason — the model does
         not get to say where a fact came from. `_load_note` must have run."""
         body = _norm(quote)
-        return bool(body) and body in self._attachment_text
+        if not body:
+            return False
+        if body in self._attachment_text:
+            return True
+        compact = _compact(quote)
+        return len(compact) >= _MIN_COMPACT_QUOTE and compact in _compact(self._attachment_text)
 
     # --- resolve_entity --------------------------------------------------------
 
@@ -1714,6 +1753,19 @@ class NoteGraphWriter:
                 None,
                 [],
             )
+        if (
+            obj is None
+            and subject.kind.casefold() not in _APPOINTMENT_KINDS
+            and _APPOINTMENT_EDGE.match(predicate.replace("_", ""))
+        ):
+            return (
+                f"err  facts[{idx}]: an appointment is not a value on {subject.label} — a"
+                " second one would replace the first, and neither would reach the calendar."
+                " Resolve each appointment as its own entity (kind appointment), then record"
+                " scheduledTime on it, plus organizer, location and attendee.",
+                None,
+                [],
+            )
         object_ref = obj.surface if obj is not None else None
         value_json = None if obj is not None else _quantity_value(literal)
         notes: list[str] = []
@@ -1979,8 +2031,18 @@ class NoteGraphWriter:
                 [],
             )
         refs = [_entity_ref(h) for h in (subject, obj) if h is not None]
+        own = any(_norm(r) in self._written for r in write.replaced)
+        self._written.add(_norm(write.statement))
         return (
-            _write_line(idx, subject.label, predicate, obj.label if obj else literal, write, notes),
+            _write_line(
+                idx,
+                subject.label,
+                predicate,
+                obj.label if obj else literal,
+                write,
+                notes,
+                own_collision=own,
+            ),
             FactWriteRef(
                 fact_id=str(write.fact_id),
                 label=write.statement,
@@ -2022,7 +2084,14 @@ def _trim_stop(text: str) -> str:
 
 
 def _write_line(
-    idx: int, subject: str, predicate: str, value: str, write: FactWrite, notes: Sequence[str]
+    idx: int,
+    subject: str,
+    predicate: str,
+    value: str,
+    write: FactWrite,
+    notes: Sequence[str],
+    *,
+    own_collision: bool = False,
 ) -> str:
     """One fact's landing, in the result shape TOOL_SURFACE specifies: the identity key,
     then what the SERVER did that the model did not ask for.
@@ -2046,7 +2115,20 @@ def _write_line(
         tail.insert(
             0, f"replaced {'; '.join(_trim_stop(r) for r in write.replaced)}, kept as history"
         )
-        if write.hold_reason == ATTRIBUTE_COLLISION:
+        if write.hold_reason == ATTRIBUTE_COLLISION and own_collision:
+            # Both values came from THIS reading, so nothing on file disagreed: the note
+            # states two things and they were written to one slot. Asking the owner which
+            # is right puts the modelling error to him — measured, as four rounds of
+            # "which appointment should we keep?" over a note that listed two.
+            tail.insert(
+                1,
+                "the value it replaced is one YOU wrote from this same note, so nothing on"
+                " file disagreed. If the note means two different things, record each as its"
+                " own entity (an appointment is its own entity with scheduledTime); if it"
+                " corrects itself, keep the value it ends on. This is not a question for"
+                " the owner",
+            )
+        elif write.hold_reason == ATTRIBUTE_COLLISION:
             # The owner's ruling on O15 has two halves and this line is the second one.
             # `decide()` made the newest value live BY RULE, which is the half that
             # unsticks the graph; it did not establish which value is TRUE, and on this
