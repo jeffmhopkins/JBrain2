@@ -30,6 +30,23 @@ static const vocab_t VOCAB[] = {
      * knobs; `esp_mn_commands_update()` already supports re-registering at runtime. */
     {"hey fish", VOCAB_LISTEN, 0},
 
+    /* THE WAY OUT, and the owner found it the way these things get found: *"now that it auto
+     * continues for six turns, it wants to keep going even if I say stop."*
+     *
+     * Saying "stop" used to be a sentence like any other — transcribed, sent, answered, and
+     * followed by the microphone opening again. A conversation that continues itself needs a
+     * word that ends it, or the only way out is to stop talking and wait the loop out.
+     *
+     * ON THE PANEL, NOT THE BOX, because that is where the loop lives: MultiNet resolves it
+     * on-chip in under half a second, so it takes effect before a recording is even uploaded,
+     * and it works when the box is slow or unreachable — which is exactly when a child would
+     * most want to give up.
+     *
+     * THE SAFEST SINGLE WORD IN THE TABLE, and the only one whose one-word case is easy. Every
+     * other entry here costs something when the television says it — a wiggle, or six seconds
+     * of a bedroom uploaded. A false "stop" ends a conversation that was not happening. */
+    {"stop", VOCAB_STOP, 0},
+
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
     {"change into merc", VOCAB_FORM, FORM_OSTRICH},

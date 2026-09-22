@@ -4,7 +4,8 @@
 # STT half — whisper.cpp's server compiled onto the official llama-swap unified Vulkan image
 # (which bundles llama-server + sd-server + llama-swap + ffmpeg, but NOT whisper.cpp). Built
 # in the SAME base so the binary's glibc/libstdc++ match the runtime. A CPU build keeps it
-# self-contained (ggml falls back to CPU; large-v3-turbo is quick on the Strix Halo CPU).
+# self-contained. That build is now VULKAN — see the cmake call below for why, and why the
+# default is still CPU.
 #
 # TTS half — Python + kokoro-onnx + the baked Kokoro weights. tts_server.py (bind-mounted
 # at /tts, like the wall's serve.py) holds the Kokoro model resident and reuses it, so a
@@ -17,8 +18,16 @@
 ARG WHISPER_BASE=ghcr.io/mostlygeek/llama-swap:vulkan
 
 FROM ${WHISPER_BASE} AS build
+# `libvulkan-dev` and `glslc` are what GGML_VULKAN needs at BUILD time — the base image
+# carries the Vulkan loader for running, not the headers or the shader compiler for building.
+# Non-fatal on their own line: if they cannot be fetched the cmake below falls back to CPU
+# rather than failing the image, because this image also carries Kokoro and a failed build
+# costs the box its read-aloud as well as its transcription.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git build-essential cmake ca-certificates \
+ && (apt-get install -y --no-install-recommends libvulkan-dev glslc \
+     || apt-get install -y --no-install-recommends libvulkan-dev glslang-tools \
+     || echo "[tts-stt] no Vulkan build deps — whisper will be built for CPU") \
  && rm -rf /var/lib/apt/lists/*
 # Pin a known-good whisper.cpp release (carries --inference-path + --convert, the
 # OpenAI-audio-endpoint flags the gateway config relies on).
@@ -28,9 +37,34 @@ RUN git clone --depth 1 --branch "${WHISPER_CPP_VERSION}" \
 WORKDIR /src
 # Static link (BUILD_SHARED_LIBS=OFF) so whisper-server carries its own ggml and
 # can't collide with the base image's bundled libggml*.so (a different version).
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-      -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
- && cmake --build build --target whisper-server -j"$(nproc)"
+#
+# VULKAN, so the encoder can run on the iGPU — and the header above used to say a CPU build
+# "keeps it self-contained" and that large-v3-turbo "is quick on the Strix Halo CPU". It is
+# not: measured from the room, a warm transcription of real speech takes 9.55 s, which is 83%
+# of a conversation turn (ROOM_ENDPOINT_PLAN.md §10.4ca). The base image is already the Vulkan
+# llama-swap image, so the loaders and the ICD are present and this costs build time rather
+# than runtime weight.
+#
+# BUILDING WITH IT IS NOT USING IT. `--no-gpu` at launch still pins whisper to the CPU, and
+# `deploy/whisper-config.sh` emits that flag unless WHISPER_GPU is exactly "true" — because
+# this iGPU is also serving gpt-oss-120b, and a model evicted from it costs ~47 s to reload
+# (§10.4ca again). So the default stays CPU and the GPU is a decision the owner makes, which
+# is the whole reason the flag is config rather than a rebuild.
+#
+# AND IT FALLS BACK, which is not optional on a box with no terminal. A Vulkan configure that
+# fails — missing headers, no glslc, an SDK the base image moved — would otherwise abort the
+# image build, and this image is also Kokoro: the owner would lose read-aloud AND transcription
+# to a speed optimisation. So a failed Vulkan build reconfigures for CPU and says so in the
+# build log, which is exactly where `--no-gpu` would have left it anyway.
+RUN (cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+       -DGGML_VULKAN=ON \
+       -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+     && cmake --build build --target whisper-server -j"$(nproc)") \
+ || (echo "[tts-stt] Vulkan build failed — falling back to CPU" \
+     && rm -rf build \
+     && cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+     && cmake --build build --target whisper-server -j"$(nproc)")
 
 FROM ${WHISPER_BASE}
 # STT: whisper-server onto PATH so the generated llama-swap config can invoke it by name.

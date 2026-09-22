@@ -634,6 +634,28 @@ if grep -q '^TUNNEL_ENABLED=true' .env; then
   TUNNEL_PROFILE="--profile tunnel"
 fi
 
+# On-box speech-to-text: regenerate the whisper gateway config from the freshly pulled source.
+#
+# THE REASON THIS EXISTS. That config was written once, by a sudo host script, and never again
+# — so a flag added to the repo reached a live box only if somebody re-ran the provisioner by
+# hand, and the owner of this deployment has no terminal to do it from (CLAUDE.md #10). It is
+# also where the GPU choice lives, which is a setting the PWA has to be able to move.
+#
+# SAFE TO RUN UNCONDITIONALLY, which is the whole design of the script: no whisper-models dir
+# or no ggml model in it means it writes nothing and exits 0. The model filename is discovered
+# from disk rather than assumed, so a box on base.en is not repointed at a model it lacks, and
+# the file is written atomically because llama-swap watches it and a half-written config is no
+# transcription at all. Best-effort: a failure here must never abort an update.
+# The GPU choice itself, defaulted OFF for boxes that predate it: this iGPU is also serving
+# the language model, and a model evicted from it costs ~47 s to reload (§10.4ca). Putting
+# whisper there is a decision, not a default.
+grep -q '^WHISPER_GPU=' .env || printf 'WHISPER_GPU=%s\n' 'false' >> .env
+if [ -d whisper-models ]; then
+  WHISPER_GPU_PREF="$(grep -E '^WHISPER_GPU=' .env | tail -1 | cut -d= -f2 || true)"
+  sh src/deploy/whisper-config.sh whisper-models "${WHISPER_GPU_PREF:-false}" \
+    || echo "[update] whisper config regeneration skipped"
+fi
+
 # Read-aloud (server-side Kokoro TTS) needs NOTHING here: Kokoro AND its weights
 # are baked into the tts-stt image (deploy/Dockerfile.tts-stt), rebuilt
 # by the `docker compose build` below. It is driven entirely by the Settings toggle

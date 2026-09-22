@@ -82,7 +82,32 @@ class WhisperCppClient:
         self._timeout = timeout
         self._transport = transport
 
-    async def transcribe(self, audio: bytes, *, filename: str, media_type: str) -> Transcript:
+    async def transcribe(
+        self,
+        audio: bytes,
+        *,
+        filename: str,
+        media_type: str,
+        audio_ctx: int | None = None,
+        language: str | None = None,
+    ) -> Transcript:
+        """Transcribe `audio`.
+
+        `audio_ctx` TRIMS THE ENCODER'S WINDOW, and it is the only lever that touches the cost
+        this client actually has. Whisper's encoder always processes a fixed 30 seconds of mel
+        — a 4-second clip is zero-padded to 30 — which is why the room panel measured 9,564 ms
+        and 9,549 ms on two utterances of very different length (§10.4ca). The cost is not
+        proportional to the audio, so sending less audio does not help; asking for a smaller
+        window does.
+
+        `whisper-server` takes it as a per-request form field (verified against the pinned
+        v1.7.4 source, `server.cpp:418`), in encoder frames at ~50 per second of audio against
+        1500 for the full window.
+
+        DEFAULT NONE, DELIBERATELY. This client is shared: the agent's transcribe tool feeds it
+        recordings of arbitrary length, and a window sized for a toy would truncate them. Only
+        a caller that knows its own bound passes one.
+        """
         async with httpx.AsyncClient(
             base_url=self._base_url, timeout=self._timeout, transport=self._transport
         ) as client:
@@ -90,10 +115,21 @@ class WhisperCppClient:
             # OpenAI-base convention, like local_llm_url), so the endpoint is just
             # audio/transcriptions — not /v1/... which httpx would append, doubling
             # the segment.
+            data: dict[str, str] = {
+                "model": self._model,
+                "response_format": "verbose_json",
+            }
+            if audio_ctx is not None:
+                data["audio_ctx"] = str(audio_ctx)
+            if language is not None:
+                # Otherwise whisper runs language detection on every clip, which is a decode
+                # pass spent on a question a bedroom in an English-speaking house has already
+                # answered.
+                data["language"] = language
             resp = await client.post(
                 "audio/transcriptions",
                 files={"file": (filename, audio, media_type)},
-                data={"model": self._model, "response_format": "verbose_json"},
+                data=data,
             )
             resp.raise_for_status()
             raw = resp.text

@@ -41,6 +41,10 @@ ONESHOT_SCRIPTS = [
     # The (destructive) weight pruner the sync calls for uninstalled models — also
     # runs in the bash-less updater, so it gets the POSIX-shebang + sh -n checks.
     "prune-local-weights.sh",
+    # Reached from update-inner.sh on every update: regenerates the whisper gateway
+    # config so
+    # a flag added to the repo reaches a live box. Runs in the same bash-less updater.
+    "whisper-config.sh",
 ]
 
 
@@ -1816,3 +1820,97 @@ def test_debug_connect_help_is_not_executable() -> None:
     assert "debug-connect.sh" in done.stdout + done.stderr, (
         "the script produced no usage at all"
     )
+
+
+# `whisper-config.sh` writes the file llama-swap watches to decide how whisper-server is
+# launched. It is called on EVERY update, on a box whose owner has no terminal — so the
+# properties that matter are what it does when whisper is NOT provisioned, and that it
+# never
+# leaves a half-written config behind.
+
+
+def _run_whisper_config(models: Path, gpu: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["sh", str(DEPLOY / "whisper-config.sh"), str(models), gpu],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_whisper_config_writes_nothing_when_whisper_is_not_provisioned(
+    tmp_path: Path,
+) -> None:
+    """The property that lets an update call it unconditionally.
+
+    A box that never ran the provisioner has no models directory, and one that ran it
+    half-way has a directory with no model in it. Neither may produce a config: a config
+    naming a model that is not there is a whisper-server that exits at launch, and STT
+    then
+    fails on a box nobody can shell into.
+    """
+    missing = tmp_path / "never-provisioned"
+    assert _run_whisper_config(missing, "false").returncode == 0
+    assert not missing.exists()
+
+    empty = tmp_path / "whisper-models"
+    empty.mkdir()
+    assert _run_whisper_config(empty, "false").returncode == 0
+    assert list(empty.iterdir()) == []
+
+
+def test_whisper_config_discovers_the_model_on_disk(tmp_path: Path) -> None:
+    """The filename is DISCOVERED, not assumed — a box provisioned with `base.en` must
+    not be
+    repointed at a model it does not have. When several are present the largest wins,
+    which is
+    the one a deliberate provision left there."""
+    models = tmp_path / "whisper-models"
+    models.mkdir()
+    (models / "ggml-base.en.bin").write_bytes(b"x" * 100)
+    (models / "ggml-large-v3-turbo.bin").write_bytes(b"x" * 500)
+
+    assert _run_whisper_config(models, "false").returncode == 0
+    body = (models / "llama-swap.yaml").read_text()
+    assert "--model /models/ggml-large-v3-turbo.bin" in body
+    assert "ggml-base.en.bin" not in body
+    # No temp file left behind: llama-swap watches this directory.
+    assert [p.name for p in models.iterdir() if p.name.startswith(".")] == []
+
+
+def test_whisper_config_gpu_flag_is_the_toggle(tmp_path: Path) -> None:
+    """GPU is one flag rather than a rebuild, which is what makes it settable from the
+    PWA.
+
+    `--no-gpu` is a real whisper-server flag (verified against the pinned v1.7.4 source)
+    and
+    an UNKNOWN flag makes whisper-server exit, so the two states are asserted explicitly
+    rather than assumed to be each other's negation.
+    """
+    models = tmp_path / "whisper-models"
+    models.mkdir()
+    (models / "ggml-base.en.bin").write_bytes(b"x" * 100)
+
+    _run_whisper_config(models, "false")
+    assert "--no-gpu" in (models / "llama-swap.yaml").read_text()
+
+    _run_whisper_config(models, "true")
+    assert "--no-gpu" not in (models / "llama-swap.yaml").read_text()
+
+    # Anything that is not exactly "true" keeps the CPU, because a misread .env value
+    # must
+    # not silently put whisper on the GPU the LLM is using.
+    _run_whisper_config(models, "yes")
+    assert "--no-gpu" in (models / "llama-swap.yaml").read_text()
+
+
+def test_whisper_config_does_not_force_a_language(tmp_path: Path) -> None:
+    """The server is shared with the agent's transcribe tool, which is handed recordings
+    in
+    whatever language they were made in. The room panel passes `language=en` per request
+    instead, where the assumption is true."""
+    models = tmp_path / "whisper-models"
+    models.mkdir()
+    (models / "ggml-base.en.bin").write_bytes(b"x" * 100)
+    _run_whisper_config(models, "false")
+    assert "--language" not in (models / "llama-swap.yaml").read_text()

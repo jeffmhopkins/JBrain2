@@ -58,3 +58,26 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);
  *
  * `reachable` false on a pending image triggers the revert and does not return. */
 void ota_confirm_health(bool reachable);
+
+/* THE SECOND BOOT, WHICH IS THE ONLY THING THAT HAS EVER FIXED THE BLACK SCREEN.
+ *
+ * A panel that updates comes up with its display dark. A panel that is rebooted again — the
+ * maintenance gesture, the same image, nothing reinstalled — comes up lit, every time. That
+ * has now held across many updates, and the cause is still unknown: §10.4by's mid-transfer
+ * theory was tested in 0.2.65 by parking the renderer before the OTA's restart, and 0.2.76
+ * came up black anyway. The remaining suspect is the CO5300's reset line, which the vendor
+ * BSP leaves at `GPIO_NUM_NC` and which most likely hangs off the TCA9554 expander this
+ * firmware has only ever read.
+ *
+ * So this is a WORKAROUND and is labelled one. It reproduces the only known cure: after an
+ * update, boot once more. Exactly once — the flag is cleared before the restart, so nothing
+ * here can loop, and a power cycle randomises the RTC word into a value the magic rejects.
+ *
+ * AFTER `ota_confirm_health`, NEVER BEFORE, and that ordering is the whole safety argument.
+ * A new image boots in `PENDING_VERIFY`; restarting before it is marked good makes the
+ * bootloader ROLL BACK to the previous firmware. A double reboot placed carelessly would
+ * therefore undo every update it was meant to rescue. */
+void ota_mark_restage(void);
+
+/* True once, on the boot that followed an update. Clears the flag as it answers. */
+bool ota_take_restage(void);

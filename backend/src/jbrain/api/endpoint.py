@@ -888,15 +888,33 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     if not settings.whisper_url:
         raise HTTPException(status_code=503, detail="speech recognition not configured")
 
-    started = time.monotonic()
     client = WhisperCppClient(
         base_url=settings.whisper_url,
         model=settings.whisper_model,
         timeout=min(settings.whisper_timeout, 60.0),
     )
+    # THE ENCODER WINDOW, SIZED TO THE CLIP — the single largest cost in a panel turn.
+    #
+    # Whisper pads every clip to 30 seconds and encodes all of it, which is why §10.4ca
+    # measured 9,564 ms and 9,549 ms for two utterances of very different length. The panel
+    # records at most six seconds (`CAPTURE_MAX_MS`), so the default window does five times
+    # the work this route can ever need.
+    #
+    # ~50 encoder frames per second of audio against 1500 for the full window, with half as
+    # much again for margin and a floor of 256 — a window trimmed too close truncates the tail
+    # of a sentence, and a four-year-old trailing off is exactly the clip that would lose it.
+    seconds = len(audio) / float(PANEL_RATE * 2)
+    audio_ctx = max(256, min(1500, int(seconds * 50 * 1.5)))
+    started = time.monotonic()
     try:
         transcript = await client.transcribe(
-            _wav(audio), filename="panel.wav", media_type="audio/wav"
+            _wav(audio),
+            filename="panel.wav",
+            media_type="audio/wav",
+            audio_ctx=audio_ctx,
+            # A bedroom in an English-speaking house has already answered this; without it
+            # whisper spends a decode pass detecting the language of every utterance.
+            language="en",
         )
     except Exception as exc:  # noqa: BLE001 — the panel gets an answer or a reason, never a hang
         log.warning("endpoint.converse_stt_error", error=repr(exc))
@@ -906,7 +924,7 @@ async def converse(principal: PanelDep, request: Request) -> Response:
 
     if not heard:
         # Silence is not an error. The panel shows "say that again" rather than a failure face.
-        log.info("endpoint.converse", heard="", stt_ms=stt_ms, reply="")
+        log.info("endpoint.converse", heard="", stt_ms=stt_ms, audio_ctx=audio_ctx, reply="")
         return Response(status_code=204)
 
     # THE LLM MUST NOT BREAK THE TOY — the jpet's rule, and the reason its `_say` is wrapped.
@@ -949,6 +967,9 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         heard=heard[:120],
         reply=reply[:120],
         stt_ms=stt_ms,
+        # Reported so the encoder window can be correlated with the cost it bought, rather
+        # than the effect being asserted from a changelog.
+        audio_ctx=audio_ctx,
         llm_ms=llm_ms,
         tts_ms=tts_ms,
         total_ms=int((time.monotonic() - started) * 1000),
