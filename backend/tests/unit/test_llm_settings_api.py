@@ -1753,3 +1753,42 @@ def test_keep_loaded_404s_for_a_model_that_is_not_provisioned() -> None:
     c, _store = _authed_client(_local_settings())
     r = c.put("/api/settings/llm/local-models/not-a-model/keep-loaded", json={"keep": True})
     assert r.status_code == 404
+
+
+def test_a_restamp_names_the_entry_that_actually_changed() -> None:
+    """A gateway re-stamp reloads llama-swap, and its reload kills EVERY running server — so
+    a re-stamp is never cheap and always needs explaining.
+
+    The existing narration names the model that happened to be LOADING, because it has nothing
+    else to name. Observed on the box 2026-09-22: every load of qwen3.5-4b re-stamped the
+    config and took gpt-oss-120b with it — 59 GB and a 47-second reload — recorded as
+    "changed settings for qwen3.5-4b", and the 4b's settings had not changed. A re-stamp that
+    cannot say what it re-stamped can only be re-observed, not fixed.
+    """
+    base = "models:\n  a:\n    cmd: llama -c 1024\n  b:\n    cmd: llama -c 2048\n"
+    same = "models:\n  a:\n    cmd: llama -c 1024\n  b:\n    cmd: llama -c 2048\n"
+    moved = "models:\n  a:\n    cmd: llama -c 1024\n  b:\n    cmd: llama -c 4096\n"
+
+    assert llm_settings._changed_entries(base, same) == []
+    assert llm_settings._changed_entries(base, moved) == ["b"]
+    # An entry appearing or vanishing is a change too — a model dropping out of the config is
+    # the loudest version of this and must not read as "nothing moved".
+    gone = "models:\n  a:\n    cmd: llama -c 1024\n"
+    assert llm_settings._changed_entries(base, gone) == ["b"]
+
+
+def test_a_restamp_outside_the_model_entries_is_still_reported() -> None:
+    """A header or group change costs the resident set exactly as much as a cmd change, and
+    would otherwise log as an empty list — which reads as "nothing happened" next to an
+    eviction that plainly did."""
+    a = "healthCheckTimeout: 300\nmodels:\n  a:\n    cmd: x\n"
+    b = "healthCheckTimeout: 900\nmodels:\n  a:\n    cmd: x\n"
+    assert llm_settings._changed_entries(a, b) == ["<outside-models>"]
+
+
+def test_an_unreadable_config_does_not_take_down_the_load_it_describes() -> None:
+    """Best-effort by contract: this runs on the path that loads a model, and a diagnostic
+    that can raise is worse than no diagnostic."""
+    assert llm_settings._changed_entries(None, "models: {}") == ["<absent>"]
+    assert llm_settings._changed_entries("models:\n  a: [", "models: {}") == ["<unparseable>"]
+    assert llm_settings._changed_entries("- a\n- b\n", "models: {}") == ["<unexpected-shape>"]
