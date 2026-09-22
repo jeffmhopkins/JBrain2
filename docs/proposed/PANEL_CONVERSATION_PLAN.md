@@ -239,6 +239,56 @@ exchanges, in memory, expiring after four minutes, folded into the system prompt
 exactly one conversation" survives intact: this is that one conversation, in that one process,
 for as long as it is still going on, and nothing reaches the database.
 
+## One tone for five events, and silence for the one that mattered
+
+The owner: *"replace the beep where applicable with a more appropriate fun sound — playful
+old arcade bleeps and bloops for all the things."*
+
+Every acknowledgement was the same 880 Hz tone: the label toggling, a tap on the pet, a voice
+command landing, a calibration sample, the microphone opening. Five events, one sound — so it
+told a four-year-old that *something* had registered and nothing about what. And a turn that
+FAILED had no sound at all, which is the worst of it: to a child who has just spoken to a toy,
+silence is not neutral, it is what a broken one does.
+
+**Synthesised, not sampled**, for the same reason the burp is: a WAV of a coin is a licence
+question, a download and 100 KB of flash to answer what an oscillator answers in a table.
+
+**Additive, and that decision is forced by the sample rate.** Output is 16 kHz, so Nyquist is
+8 kHz, and a hard-edged square at arcade pitches aliases badly — a 2 kHz square puts harmonics
+at 10, 14 and 18 kHz, which fold back to 6, 2 and 2 kHz and land on top of the real partials,
+sliding the wrong way as the pitch sweeps. That is the gritty shimmer on a cheap retro sweep,
+and there is no cheap fix at this ratio. Summing sines is *exactly* band-limited rather than
+approximately: a partial above Nyquist is never generated, so there is nothing to fold. CPU
+cost is irrelevant because a cue is rendered once into a buffer, not streamed. (`audio_rude`
+builds a raw sawtooth from its phase and certainly does alias — it gets away with it because a
+fart is meant to sound wrong.)
+
+`cue.c` is pure C with no ESP-IDF in it, deliberately: `audio.c` cannot be built on a host,
+which is why `audio_rude()` shipped with no test at all. The host suite now asserts the things
+that actually go wrong with generated audio — that no cue starts or ends on a step (a cosine
+pulse begins at its peak, and a plain exponential decay never reaches zero, which are the two
+clicks), that none clips or sits off centre, that each is audible, and that the pitch contour
+matches the meaning.
+
+| cue | shape | why |
+|---|---|---|
+| tap, toggle, tick | flat, short | neutrality is achieved by REMOVING contour — any movement imports a mood |
+| heard | B5→E6, short into long | the coin's interval and its duration asymmetry, decoded from the SMB ROM: short-into-long reads as arriving, not asking |
+| listen | rising, ~4 oct/s | rising is the prosody of a question, and an open microphone is one |
+| stop | falling | the same gesture, ending |
+| oops | low, falling, two voices ~1.5 semitones apart | roughness is a property of REGISTER, not interval: partials buzz inside one critical band, which near 300 Hz means a ~30 Hz gap and two octaves up is just a gentle beat |
+
+Three things the tests caught that a listen would not have:
+
+- **The tick was a semitone from the tap.** Sixteen of them fire during a calibration; they
+  now sit a fourth above it, so the run does not sound like sixteen accidental taps.
+- **An oscillator was stepped twice in one sample**, doubling its frequency against the others
+  and drifting further the longer the cue ran.
+- **`cue_render` put 22 KB of floats on the stack** to find its peak, called from a render
+  task with an 8192-byte stack — a panic on the first tap. The generator is pure, so it is now
+  run twice and stores nothing; a test pins that purity, because the two-pass trick is only
+  correct while it holds.
+
 ## Everything that only existed on a cable
 
 CLAUDE.md #10 says the owner has no terminal. The firmware knew that — `main.c` argues it

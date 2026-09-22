@@ -30,6 +30,8 @@
 
 #include "audio.h"
 
+#include "cue.h"
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -180,6 +182,26 @@ bool audio_playing(void)
  * sentence beats a burp, and the child can ask again. */
 #define RUDE_MS 620
 #define RUDE_SAMPLES (AUDIO_RATE * RUDE_MS / 1000)
+
+/* A CUE, RENDERED AND HANDED TO THE SPEAKER — the replacement for `audio_beep`.
+ *
+ * Same route as a reply and a rude noise: written into `s_play` and left for the audio task,
+ * so it is chunked, interruptible and deafens the microphone while it sounds. It therefore
+ * cannot interrupt the pet mid-sentence, which is right — an acknowledgement is worth less
+ * than the sentence it would talk over, and the beep it replaces had exactly the same rule.
+ *
+ * Rendered at BEEP_VOLUME against the speaking voice, because the original request that split
+ * the two levels apart is still the right one: the tone is the part heard closest to a child's
+ * face and the voice is the part they are listening to. */
+void audio_cue(cue_t c)
+{
+    if (s_play == NULL) return;
+    if (s_play_pos < s_play_len) return; /* a reply outranks an acknowledgement */
+    const int n = cue_render(c, s_play, AUDIO_RATE, BEEP_VOLUME);
+    if (n <= 0) return;
+    s_play_pos = 0;
+    s_play_len = n;
+}
 
 void audio_rude(bool wet)
 {

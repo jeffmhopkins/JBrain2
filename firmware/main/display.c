@@ -1521,7 +1521,7 @@ static void face_task(void *arg)
             if (label_hit(s_fig_x, s_fig_y, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
                 s_show_version = !s_show_version;
                 ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
-                if (sound) audio_beep();
+                if (sound) audio_cue(CUE_TOGGLE);
                 dirty = true;
                 goto tap_done;
             }
@@ -1542,7 +1542,7 @@ static void face_task(void *arg)
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
-            if (sound) audio_beep();
+            if (sound) audio_cue(CUE_BLIP);
             dirty = true;
         tap_done:;
         } else if (tapped) {
@@ -1561,7 +1561,12 @@ static void face_task(void *arg)
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
-                bool rude = false; /* this phrase makes its own noise; skip the beep */
+                bool rude = false; /* this phrase makes its own noise; skip the cue */
+                /* Understanding a word is not the same event as a finger landing, and used
+                   to sound identical. `stop` gets the falling gesture, the name gets the
+                   rising one that means the microphone is open, and everything else gets the
+                   coin. */
+                cue_t heard_cue = CUE_HEARD;
                 switch (v->kind) {
                 case VOCAB_FORM:
                     st.form = (face_form_t)v->arg;
@@ -1594,6 +1599,7 @@ static void face_task(void *arg)
                     s_follow_armed = false;
                     s_follow_turns = FOLLOW_MAX_TURNS;
                     ESP_LOGI(TAG, "talk: stopped by voice");
+                    heard_cue = CUE_STOP;
                     break;
                 case VOCAB_LISTEN:
                     /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
@@ -1611,6 +1617,7 @@ static void face_task(void *arg)
                         s_follow_turns = 0; /* a deliberate start is a fresh exchange */
                         audio_capture_open();
                         ESP_LOGI(TAG, "talk: listening (name)");
+                        heard_cue = CUE_LISTEN;
                     }
                     break;
                 case VOCAB_ACTION:
@@ -1627,7 +1634,9 @@ static void face_task(void *arg)
                     }
                     break;
                 }
-                if (sound && !rude) audio_beep();
+                /* `rude` means the phrase makes its own noise — a burp answering with a
+                   bleep first would be the toy answering twice. */
+                if (sound && !rude) audio_cue(heard_cue);
                 dirty = true;
             }
         }
@@ -1649,7 +1658,7 @@ static void face_task(void *arg)
                     /* RAW, not corrected: a calibration measured through the previous
                        calibration would fit the correction on top of itself. */
                     calib_sample_add(&s_cal_s, rx, ry);
-                    if (sound) audio_beep();
+                    if (sound) audio_cue(CUE_TICK);
                 }
                 /* Advance when the taps AGREE, or when this target has had its cap — a
                    target that will not settle must not trap the owner on it, so past the cap
@@ -1767,8 +1776,10 @@ static void face_task(void *arg)
             s_listen_voice = false;
             s_follow_turns = 0; /* a finger is a deliberate start, like the name */
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
-               that the thing is now listening rather than merely being held. */
-            if (sound) audio_beep();
+               that the thing is now listening rather than merely being held, and a rising
+               sweep says it better than a flat tone: rising is the prosody of a question,
+               which is what an open microphone is. */
+            if (sound) audio_cue(CUE_LISTEN);
             /* AFTER the beep, deliberately: `audio.c` goes deaf for six chunks once the
                speaker runs (§10.4bi), so opening the recording here keeps our own tone out
                of the front of every message. */
@@ -1859,9 +1870,14 @@ static void face_task(void *arg)
                    (talk_state() == TALK_NET_FAILED || now - s_talk_since > TALK_TIMEOUT_MS)) {
             talk_clear();
             /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
-               not hear you" and "it is broken" must not look identical (§10.4bc). */
+               not hear you" and "it is broken" must not look identical (§10.4bc).
+               AND NOT A SILENT ONE TO A CHILD EITHER, which it was: the bewildered face
+               arrived with no sound at all, and to a four-year-old who has just spoken to a
+               toy, silence IS the failure — it is what a broken one does. A low falling pair
+               says try again. It is deliberately gentle; it must not read as being told off. */
             s_talk = TALK_FAILED;
             s_talk_since = now;
+            if (sound) audio_cue(CUE_OOPS);
             ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
