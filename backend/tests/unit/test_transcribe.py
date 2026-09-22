@@ -67,6 +67,34 @@ async def test_posts_verbose_json_multipart_and_parses_words() -> None:
     assert result.words[1].confidence == pytest.approx(0.6)  # mean(0.4, 0.8)
 
 
+@pytest.mark.asyncio
+async def test_the_encoder_window_is_sent_only_when_a_caller_asks() -> None:
+    """`audio_ctx` is the one lever that touches whisper's real cost, and it is dangerous
+    by default.
+
+    Whisper's encoder always processes a fixed 30 seconds of mel, which is why the room panel
+    measured 9,564 ms and 9,549 ms on utterances of very different length. Trimming the window
+    is the fix — and trimming it for EVERY caller would truncate the agent's arbitrary-length
+    recordings, so the absence of the field matters as much as its presence.
+    """
+    seen: dict[str, bytes] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = req.content
+        return httpx.Response(200, json=VERBOSE)
+
+    await make_client(handler).transcribe(WAV, filename="memo.wav", media_type="audio/wav")
+    assert b'name="audio_ctx"' not in seen["body"], "a caller that did not ask gets the full window"
+    assert b'name="language"' not in seen["body"], "and no language is forced on it either"
+
+    await make_client(handler).transcribe(
+        WAV, filename="panel.wav", media_type="audio/wav", audio_ctx=384, language="en"
+    )
+    body = seen["body"]
+    assert b'name="audio_ctx"' in body and b"384" in body
+    assert b'name="language"' in body and b"en" in body
+
+
 def test_whisper_cpp_words_array_is_used_over_integer_tokens() -> None:
     # The real whisper.cpp verbose_json shape: integer token IDs PLUS a per-word
     # `words` array. The words array is the source of truth (the IDs carry no text).
