@@ -199,6 +199,59 @@ this is a person and not the toy.
 
 ---
 
+## 3b. The contract
+
+Written down before either side is built, because W3 (the panel) and W4 (the PWA) are both
+clients of W2 and a route that moves under them costs two rewrites. This section is the single
+source of truth; if an implementation disagrees with it, the implementation is wrong or this
+section gets edited first.
+
+### Panel-facing — `/api/endpoint/jpanel/*`, `Authorization: Bearer <device_key>`
+
+| route | takes | gives |
+|---|---|---|
+| `POST /send` | multipart `file` (16 kHz mono PCM WAV), `to` = `panel` \| `dad` | `200 {id, to_name}`; `409` when `to=panel` and there is not exactly one other panel |
+| `GET /waiting` | — | `200 {count, from_name}` — tiny on purpose, polled ~30 s per panel forever |
+| `GET /next` | — | `200` raw 16-bit PCM at 16 kHz with `X-Jpanel-Id` and `X-Jpanel-From`; `204` when the inbox is empty |
+| `POST /played` | `{id}` | `204` |
+
+`GET /next` returns the OLDEST unplayed message and does **not** mark it played — `POST /played`
+does, after the panel has actually finished playing it. Separating them is what makes a message
+survive a reboot mid-playback instead of being lost by having been handed over.
+
+### Owner-facing — `/api/jpanel/*`, owner cookie
+
+| route | takes | gives |
+|---|---|---|
+| `GET /messages` | `limit` (default 100) | `200 {panels: [PanelThread]}` |
+| `POST /messages` | `{to_device, text}` | `201 Message` — TTS renders it, the typed text is kept as the transcript |
+| `GET /messages/{id}/audio` | — | `200 audio/wav` |
+
+```ts
+type Message = {
+  id: string;
+  from_name: string;          // "Ellie", "Dad"
+  to_name: string;
+  direction: "in" | "out";    // relative to the OWNER: in = from a panel
+  transcript: string;         // STT for a panel's; the typed text for Dad's
+  composed: "voice" | "text";
+  duration_ms: number;
+  created_at: string;         // RFC3339
+  played_at: string | null;   // null = still waiting
+};
+
+type PanelThread = {
+  device_id: string;
+  name: string;
+  unplayed: number;           // messages from THIS panel the owner has not played
+  messages: Message[];        // newest first
+};
+```
+
+**`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
+work; the audio is the fallback for when the transcript does not make sense — which, given how
+the transcriber handles four-year-olds, it often will not.
+
 ## 4. Waves
 
 - **W1 — the screen sleeps.** Dim, dark, wake on touch/movement/voice. Firmware only,
