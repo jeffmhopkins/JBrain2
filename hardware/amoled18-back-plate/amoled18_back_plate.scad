@@ -169,9 +169,9 @@ wall_chamfer = 3.0;     // [0:0.5:8]
 
 // Raised texture so small hands don't drop it. All shapes slope 45 degrees
 // underneath, so they print without supports.
-grip_style = "none";    // [none, honeycomb, nubs, ribs]
+grip_style = "ribs";    // [none, honeycomb, nubs, ribs]
 // How far the texture stands out from the wall
-grip_depth = 0.6;       // [0.3:0.1:1.5]
+grip_depth = 0.3;       // [0.2:0.1:1.5]
 // Size of each hexagon or square (across)
 grip_size = 3.0;        // [1.5:0.1:6]
 // Gap between hexagons or squares, or between ribs

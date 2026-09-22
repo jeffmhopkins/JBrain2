@@ -234,6 +234,18 @@ makes a firm press fit without glue.
 
 ![The six hole plugs](preview-plugs.png)
 
+## Grip
+
+The outside walls carry horizontal ribs so small hands don't drop it: bands 3 mm tall that stand
+0.3 mm proud with 45° slopes top and bottom, running right round the body, corners included.
+They print as plain layers, need no supports, wipe clean, and stop 1.5 mm short of the bed edge
+and of the seam with the front shell. At the ribs the plate measures 38.2 × 45.8 mm, 0.3 mm
+proud of the front shell on each side.
+
+Group 5b adjusts them: `grip_depth` (how far out), `grip_size` (band height), `grip_gap`,
+`grip_margin`. `grip_style` also offers `honeycomb` (raised hexagons) and `nubs` (raised
+squares) on the flat sides, or `none` for smooth walls.
+
 ## The tall variation: 104050 on end
 
 A 104050 cell (10 × 40 × 50 mm, sold as 2400 mAh; expect about 2000) standing on its 10 × 40
