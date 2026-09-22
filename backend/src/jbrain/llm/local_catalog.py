@@ -1062,12 +1062,20 @@ CATALOG: tuple[LocalModel, ...] = (
         # 8-bit of a 4B dense model (~4.3 GB) — the step up from 0.8b when the tiny
         # model is too weak but you still want an instant, low-footprint local worker.
         size_gb=4.3,
-        # FLOOR-ANCHORED, not fully measured: on 2026-08-23 the runaway watchdog aborted this
-        # model's load at 12.8 GiB GTT, still climbing, against 5.15 declared — the same flat-
-        # overhead defect as the 0.8b, scaled up. 9.5 puts the declaration at 14.1, above the
-        # abort floor with margin; verify against a completed load once this ships (the old
-        # under-prediction also set the watchdog ceiling too low to let one finish).
-        runtime_overhead_gb=9.5,
+        # MEASURED 2026-09-22, which is what the 9.5 that used to sit here asked for. That
+        # number was floor-anchored to a load the runaway watchdog ABORTED on 2026-08-23 at
+        # 12.8 GiB GTT and still climbing — an aborted load measures the abort, not the
+        # model. A completed one now has: serving at 65536, with this as the only resident
+        # model, the WHOLE BOX reported 7.85 GiB of GTT (`debug-connect.sh metrics`,
+        # `gpu_mem.gtt_used_bytes`), against a 15.0 GiB declaration. The declaration was
+        # roughly double the truth and it cost a real eviction — the operator loaded this
+        # 4.3 GB model beside gpt-oss-120b and the coordinator threw the 120b out to make
+        # room that already existed. 3.5 puts the declaration at 8.4 GiB at this window:
+        # still ABOVE everything measured, because part of that 7.85 is the box's own
+        # baseline GTT and not this model at all. Left deliberately generous rather than
+        # tightened to the reading, since the reading has no no-model baseline subtracted
+        # from it; revisit with one.
+        runtime_overhead_gb=3.5,
         note="Small dense model — noticeably smarter than qwen3.5-0.8b while still "
         "loading instantly and co-residing beside anything. A solid low-tier daily "
         "driver for local one-shots. A hybrid reasoner: set its thinking level per "

@@ -359,6 +359,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Pin (or unpin) a model as keep-resident: the evictor takes pinned models LAST. Nothing
+  // loads or unloads — this only changes the ORDER victims are chosen in.
+  function setKeepLoaded(id: string, keep: boolean) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .setLocalKeepLoaded(id, keep)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
   // Set (or clear, with null) the model's --image-min-tokens floor: how much of an image the
   // model actually gets to see. The knob for small text in a photo.
   function setImageMinTokens(id: string, tokens: number | null) {
@@ -679,6 +693,7 @@ export function LLMSettingsScreen() {
         onCancelStage={clearPreview}
         onSetWindow={setContextWindow}
         onSetSlots={setParallelSlots}
+        onSetKeepLoaded={setKeepLoaded}
         onSetImageFloor={setImageMinTokens}
         onSetAvailable={setAvailable}
         onInstall={queueInstall}
@@ -1237,6 +1252,7 @@ function OnBoxModelsCard({
   onCancelStage,
   onSetWindow,
   onSetSlots,
+  onSetKeepLoaded,
   onSetImageFloor,
   onSetAvailable,
   onInstall,
@@ -1276,6 +1292,7 @@ function OnBoxModelsCard({
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
   onSetSlots: (id: string, slots: number | null) => void;
+  onSetKeepLoaded: (id: string, keep: boolean) => void;
   onSetImageFloor: (id: string, tokens: number | null) => void;
   onSetAvailable: (id: string, on: boolean) => void;
   onInstall: (id: string, on: boolean) => void;
@@ -1630,6 +1647,7 @@ function OnBoxModelsCard({
                     onCancelStage={onCancelStage}
                     onSetWindow={onSetWindow}
                     onSetSlots={onSetSlots}
+                    onSetKeepLoaded={onSetKeepLoaded}
                     onSetImageFloor={onSetImageFloor}
                   />
                 ),
@@ -1737,6 +1755,7 @@ function LlmModelRow({
   onCancelStage,
   onSetWindow,
   onSetSlots,
+  onSetKeepLoaded,
   onSetImageFloor,
 }: {
   model: LocalModelInfo;
@@ -1755,6 +1774,7 @@ function LlmModelRow({
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
   onSetSlots: (id: string, slots: number | null) => void;
+  onSetKeepLoaded: (id: string, keep: boolean) => void;
   onSetImageFloor: (id: string, tokens: number | null) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
@@ -1906,6 +1926,23 @@ function LlmModelRow({
           <option value="2">on (dedicated · 2× KV)</option>
         </select>
         {!m.loaded && <span className="llm-local-ctx-meta">keeps chat instant after restart</span>}
+      </div>
+      <div className="llm-local-ctx">
+        <label className="llm-local-ctx-label" htmlFor={`keep-${m.id}`}>
+          keep loaded
+        </label>
+        <select
+          id={`keep-${m.id}`}
+          className="llm-local-ctx-select"
+          value={m.keep_loaded ? "on" : "off"}
+          disabled={isBusy}
+          title="When the box needs room, models are evicted in order — and this puts a model at the BACK of that queue. Set it on the model you always want ready. It is not a lock: something big enough that nothing else frees the room will still take it, so a pin can never leave you unable to load what you asked for."
+          onChange={(e) => onSetKeepLoaded(m.id, e.target.value === "on")}
+        >
+          <option value="off">off (evict normally)</option>
+          <option value="on">on (evict last)</option>
+        </select>
+        {m.keep_loaded && <span className="llm-local-ctx-meta">others go first</span>}
       </div>
       {/* Vision entries only. A floor on a text-only model would never be read, so the row is
           absent rather than present-and-inert — the drawer should not offer a dead control. */}

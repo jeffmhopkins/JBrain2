@@ -67,6 +67,258 @@ it — whisper is a second llama-swap, and "Kokoro holds a model with no account
 exactly the pattern that accounting does not cover. Kokoro being CPU-only is the one piece of
 good luck here.
 
+## What the box actually measured, 2026-09-22
+
+The chain shipped, the twins used it, and the numbers moved the bottleneck twice. Both
+answers are the opposite of the guess above.
+
+**Whisper: the window was the cost, not the model.** `base.en` was never needed.
+whisper.cpp takes `audio_ctx` as a per-request form field (`server.cpp:418` →
+`wparams.audio_ctx`), so the encoder window can be sized to the clip instead of padded to
+thirty seconds — ~50 encoder frames per second of audio against 1500 for the full window.
+`api/endpoint.py` now sizes it per turn with half again for margin and a floor of 256.
+Measured on the same `large-v3-turbo` that took 9.55 s warm: **1,296–1,319 ms** on a short
+clip, 2,262–2,382 ms on a six-second one. A 7.3× cut with no second instance, no second
+model and no quality loss. Option 1 and option 2 above are both moot.
+
+**The LLM: the problem is one slot, not a big model.** `gpt-oss-120b` serves
+`total_slots = 1` (`props gpt-oss-120b`). `pet.turn` and `agent.turn` are routed to it
+together, so a child's turn and the owner's assistant contend for the same slot, and the
+thrash is mutual and expensive. From the 12:31–12:35 window, with an agent research loop
+running its `web_search`/`web_fetch` turns at a 32k–45k-token context:
+
+| what | tokens out | elapsed | rate |
+|---|---|---|---|
+| `pet.turn` | 46 | **43,216 ms** | 1.1 tok/s |
+| `pet.turn` | 46 | 12,250 ms | 3.8 tok/s |
+| `pet.turn` | 37 | 14,036 ms | 2.6 tok/s |
+| `pet.turn` (slot clear) | 46 | **815–997 ms** | ~50 tok/s |
+| `agent.turn` (slot clear) | 200–824 | 5.5–10.5 s | 19–29 tok/s |
+| `agent.turn` (panel interleaved) | 69–176 | 36–40 s | **1.7–2.3 tok/s** |
+
+The `kv_prefix.restore_waited_for_slot` and `kv_prefix.restored tokens: 32366 slot: 0`
+lines in `logs api` are the mechanism: every panel turn evicts the agent's 32k-token
+prefix from the one slot, and the agent pays a full restore to get it back. The panel
+makes the agent slow and the agent makes the panel slow. A steady-state turn is
+2.6–4.3 s end to end; a contended one is 12–52 s. **That variance is what "still really
+slow" means** — the toy is fast until someone else is using the box, which on this box is
+most of the time.
+
+The fix is not a faster 120B. It is to stop `pet.turn` sharing a slot with the assistant:
+give it its own resident model. `qwen3.5-4b` (Q8, 4.3 GB, `enabled`, on disk) co-resides —
+the residency coordinator evicts only to hold the free-RAM floor (5% of 121 GB ≈ 6 GB) and
+the box has ~32 GB available. Its catalogue default of a 131,072-token window costs 10.7 GB
+of KV for a prompt that is 190 tokens, so the served `-c` wants trimming to a few thousand
+first; footprint then lands near 5 GB. Effort is already `none` on this task, so no thinking
+tokens. Routing is live-settable (`llm-set pet.turn qwen3.5-4b none`) and revertible in one
+command, which makes it a measurement rather than a commitment — the quality question for a
+four-year-old's turn is answerable in five minutes on the real prompt.
+
+Unchanged and still true: Kokoro is ~450 ms and CPU-only, and the whisper call is still
+outside the ledger.
+
+**And the clip is not the sentence.** Sizing the encoder window to the clip stopped helping
+because the panel uploads its three-second lead-in and its 900 ms hush along with the speech:
+every turn in the log reports `audio_ctx` 390-450, the six-second cap, whatever was said.
+*"Yes, we wanted a story"* is about a second and a half of a child inside six seconds of
+bedroom. `_trim_to_speech` finds the speech and sends that, gating on a noise floor taken as
+the 10th-percentile frame — which the hush itself guarantees is silence — with 200 ms of room
+before and 400 ms after. A room too loud to judge trims nothing rather than trimming wrongly.
+The panel's own VAD already knows where the speech is and could say so, but a backend fix
+ships without an OTA, and `held_ms` / `spoken_ms` in `endpoint.converse` are how it is watched.
+
+**Which model gets evicted is not a question about bytes.** Correcting the 4b's declaration
+(above) stops the eviction that happened, but not the ranking that chose the victim. The
+coordinator ranked candidates biggest-footprint first, on the stated reasoning that freeing
+the room costs the fewest unloads — so the first thing it reached for was the 59 GB assistant
+that takes a minute to reload, to seat a pet model. The owner: *"I would rather keep OSS 120
+loaded all the time and then the Qwen models be able to hotswap first. The goal was to have
+27b as my multi-mode model but it's not loaded all the time. But if it is loaded, I should
+swap it out for the smaller 4b, not the OSS 120."*
+
+No ranking by size gets that right. Biggest-first minimises the NUMBER of unloads, which is
+not the cost — the reload is, and it scales with exactly what that ranking evicts first. But
+smallest-first would be just as much of a guess: shedding two small models to keep one big one
+is correct on this box and wrong on one whose big model is the disposable one. The preference
+is about what each model is FOR. So the operator says it: `llm_local_keep_loaded` is a
+per-model pin, set from the LLM settings card, and pinned models sort last among victims in
+both planners (the ledger one and the measured fallback — if they disagreed, the stage preview
+would promise one eviction and the load would make another).
+
+A last resort, not a lock. A model big enough that nothing else frees the room still takes a
+pinned one, because the module's paradigm is "load any model, unload until it fits" and a hard
+lock would turn a load the operator explicitly asked for into a refusal they cannot clear
+without remembering the setting exists. Note also what did NOT go wrong: the restore machinery
+behaved correctly. The manual load went through `free_room`, which records nothing to restore
+on purpose — an operator's deliberate load is a steady-state change, not a displacement to
+undo — so nothing brought the 120b back, and nothing was supposed to.
+
+**The panel cut both ends of the turn off.** Two ceilings, both six seconds, both reasoned
+from the wrong thing. On the way IN, `LISTEN_HUSH_MS` was 900 ms — the silence the panel waits
+out to decide a sentence has ended — and it was chosen to fit under a six-second recording cap
+rather than around a child. Three seconds of lead-in plus 900 ms of hush left 2.1 s for the
+sentence itself, so a four-year-old who took a moment to start and paused once in the middle
+ran out of recording. The owner: *"the babies keep getting cut off because they're a little
+bit slow."* The cap is now ten seconds and the hush 1.8 s, which costs the box nothing because
+the trim above takes the extra room back out before whisper sees it. On the way OUT,
+`REPLY_MAX_BYTES` and the capture buffer were the SAME constant, so the reply inherited the
+recording's length — and `audio_play` truncated past it in silence. The log had replies of
+221,012 and 261,290 bytes against the 192,000 the panel held: the long one stopped mid-word,
+with nothing on screen and nothing in a log. Both ends now say ten seconds, the box logs
+`endpoint.converse_reply_truncated` rather than cutting quietly, and the two constants are
+pinned to each other by a test that reads `talk.c`.
+
+**"fish stop".** The conversation-ending word was a bare `stop`, the only single-word entry
+whose one-word case was easy to argue — every other costs a wiggle or a recording when the
+television says it, while a false stop only ends a conversation that was not happening. The
+owner asked for "fish stop" anyway, and it is the better phrase: ending a conversation with
+the pet's name is the same shape as starting one with it, and it hands the one-word allowance
+back to the words that need it. `vocab.h` rule 3 holds — neither phrase is a prefix of the
+other.
+
+**The burp was mute — and that was the smaller half.** The owner, after the first fix landed:
+*"burp has been on there. It never actually activates them. The kids say the word — like the
+code word is wrong."* A silent action was real, but downstream of the phrase never resolving.
+
+The instrumentation that should have answered this had a hole in exactly the right place.
+`esp_mn_commands_add` runs a phrase through the model's own `check_speech_command` and returns
+`ESP_ERR_INVALID_STATE` when it will not take it — and `load_vocabulary` DISCARDED that return
+value. A phrase rejected there never enters the list, so the `esp_mn_commands_update` pass has
+nothing to report about it, and the accepted count (`vocab_count() - rejected`) went on
+claiming it was fine. The counter was derived from the assumption the bug breaks. Both paths
+are counted now and both name the phrase, and the counts plus the names go out in telemetry —
+for the same reason the ALC reading and the blit counts do, which `main.c` states outright: an
+ESP_LOG only reaches a serial console, and this panel has been on a plain charger since the
+day it went in a bedroom.
+
+What the root cause IS remains unproven. Two candidates were checked and cleared: the phrase
+count (40 against `ESP_MN_MAX_PHRASE_NUM` 400) and MultiNet's own prefix rule, which the
+vendor blob's error strings show operates on the PHONEME string with no word boundary — not
+the spelling, which is all `vocab.h` rule 3 and the host suite check. Reproducing esp-sr's
+`multinet_g2p.py` alphabet map over the whole table found no phoneme-prefix collision.
+`check_speech_command` itself is inside `libmultinet.a`, so the length rule cannot be read;
+what is visible is that `burp` is three phonemes (`BkP`) and `eat` is two, against ten for
+`come and boogie`. The next boot's telemetry answers it.
+
+Meanwhile the vocabulary stops depending on the answer. A one-word phrase is the fragile form,
+and four actions (`eat`, `jump`, `kick`, `spin`) had one as their ONLY phrasing while `fart`'s
+alternate was "make a rude noise", which is not a sentence a four-year-old has produced. Every
+action now has a multi-word way in, none of which may start with the single word it backs up
+("jump up high" would make "jump" a prefix of it, which MultiNet refuses outright). A host
+test holds it, and it asserts the right thing: not that single words work, but that nothing
+breaks when they do not.
+
+And the noise itself. `audio_rude()` synthesises it rather than shipping a sample — a falling sawtooth with a fast amplitude flutter and a decay that never
+quite reaches zero, plus filtered noise for the wet one — which is twenty lines against a
+licence question and 100 KB of flash. It writes into the reply buffer and plays down the same
+chunked, interruptible path a reply takes, so it deafens the microphone while it sounds and
+cannot interrupt the pet mid-sentence.
+
+**The pet had no idea what it had just said.** The owner, on the reply quality: *"it also asks
+to play a game a lot, but being just a chatbot, games are not really the thing it should be
+asking to do with a kid — it could be more of a conversationalist, talking about what the kid
+is doing or what the kid is eating or what the kid did today, talk about his toys."* Two
+causes, and the second is the larger. The prompt said "ask a small question back sometimes"
+and named no subject, so the model reached for the most generic child-question there is. But
+the route also sent one utterance and no history, so each turn of a six-turn hands-free
+conversation arrived as the first thing anyone had ever said. Run against the same model, the
+same six lines:
+
+| the child | with no history | with the last five turns |
+|---|---|---|
+| I had toast for breakfast. | Did you eat any fruit with your toast? | Was your toast buttery or with jam? |
+| It had jam on it. | **Was it on your tummy or a yummy cookie?** | Did you eat the whole slice of toast? |
+| My sister took it off me. | **Did she take my head off?** | Who took the digger from you? |
+| We have a yellow chicken. | **Is that your friend's pet or is it mine?** | Is that your pet? |
+| Her name is Sunny. | Do you think Sunny likes playing with me? | Sunny is a great name! |
+
+Half the no-history replies are not merely generic, they are incoherent — *"it had jam on it"*
+is unanswerable without the previous turn. The fix is a per-panel ring of the last five
+exchanges, in memory, expiring after four minutes, folded into the system prompt (the router's
+`complete` takes one user message). The route's promise that "a stolen panel key is worth
+exactly one conversation" survives intact: this is that one conversation, in that one process,
+for as long as it is still going on, and nothing reaches the database.
+
+## One tone for five events, and silence for the one that mattered
+
+The owner: *"replace the beep where applicable with a more appropriate fun sound — playful
+old arcade bleeps and bloops for all the things."*
+
+Every acknowledgement was the same 880 Hz tone: the label toggling, a tap on the pet, a voice
+command landing, a calibration sample, the microphone opening. Five events, one sound — so it
+told a four-year-old that *something* had registered and nothing about what. And a turn that
+FAILED had no sound at all, which is the worst of it: to a child who has just spoken to a toy,
+silence is not neutral, it is what a broken one does.
+
+**Synthesised, not sampled**, for the same reason the burp is: a WAV of a coin is a licence
+question, a download and 100 KB of flash to answer what an oscillator answers in a table.
+
+**Additive, and that decision is forced by the sample rate.** Output is 16 kHz, so Nyquist is
+8 kHz, and a hard-edged square at arcade pitches aliases badly — a 2 kHz square puts harmonics
+at 10, 14 and 18 kHz, which fold back to 6, 2 and 2 kHz and land on top of the real partials,
+sliding the wrong way as the pitch sweeps. That is the gritty shimmer on a cheap retro sweep,
+and there is no cheap fix at this ratio. Summing sines is *exactly* band-limited rather than
+approximately: a partial above Nyquist is never generated, so there is nothing to fold. CPU
+cost is irrelevant because a cue is rendered once into a buffer, not streamed. (`audio_rude`
+builds a raw sawtooth from its phase and certainly does alias — it gets away with it because a
+fart is meant to sound wrong.)
+
+`cue.c` is pure C with no ESP-IDF in it, deliberately: `audio.c` cannot be built on a host,
+which is why `audio_rude()` shipped with no test at all. The host suite now asserts the things
+that actually go wrong with generated audio — that no cue starts or ends on a step (a cosine
+pulse begins at its peak, and a plain exponential decay never reaches zero, which are the two
+clicks), that none clips or sits off centre, that each is audible, and that the pitch contour
+matches the meaning.
+
+| cue | shape | why |
+|---|---|---|
+| tap, toggle, tick | flat, short | neutrality is achieved by REMOVING contour — any movement imports a mood |
+| heard | B5→E6, short into long | the coin's interval and its duration asymmetry, decoded from the SMB ROM: short-into-long reads as arriving, not asking |
+| listen | rising, ~4 oct/s | rising is the prosody of a question, and an open microphone is one |
+| stop | falling | the same gesture, ending |
+| oops | low, falling, two voices ~1.5 semitones apart | roughness is a property of REGISTER, not interval: partials buzz inside one critical band, which near 300 Hz means a ~30 Hz gap and two octaves up is just a gentle beat |
+
+Three things the tests caught that a listen would not have:
+
+- **The tick was a semitone from the tap.** Sixteen of them fire during a calibration; they
+  now sit a fourth above it, so the run does not sound like sixteen accidental taps.
+- **An oscillator was stepped twice in one sample**, doubling its frequency against the others
+  and drifting further the longer the cue ran.
+- **`cue_render` put 22 KB of floats on the stack** to find its peak, called from a render
+  task with an 8192-byte stack — a panic on the first tap. The generator is pure, so it is now
+  run twice and stores nothing; a test pins that purity, because the two-pass trick is only
+  correct while it holds.
+
+## Everything that only existed on a cable
+
+CLAUDE.md #10 says the owner has no terminal. The firmware knew that — `main.c` argues it
+outright about the ALC reading and the blit counts: *"an ESP_LOG only reaches a serial
+console, which this panel no longer has"*. It was still true of most of the instrument panel.
+A sweep of `firmware/main/` found the readings below, all computed on the device and written
+to nowhere. Ranked by what they would have caught:
+
+| reading | what it answers that nothing else could |
+|---|---|
+| `int_largest` | the largest free INTERNAL DMA block. `free_heap` is the total, and the total cannot tell 60 KB fragmented from 60 KB contiguous — which is the difference between a panel that draws and one where every blit fails. Has explained that fault twice, both times needing a host toolchain. |
+| `heard` | the decode and its confidence. `speech.c` computes this every time and its own comment says the floor that would stop "turn red" firing `jump up` at p=0.19 *"lands in the version after a capture of phrases that ARE in the vocabulary"* — a capture that needed a console, so the version after never came. |
+| `ota_err` / `ota_tries` | a panel that CANNOT install retries every fifteen minutes forever reporting the old version, which from the box is indistinguishable from one nobody offered an update to. The update channel was the one component whose failure it could not report. |
+| `levels` | a volume or gain the codec REFUSED. Both setters ran with their returns dropped under a log line asserting success — the exact defect `audio.c`'s header documents catching at boot, reintroduced on the path the owner drives remotely. |
+| `wifi_reason` / `wifi_drops` | 201 (out of range), 15 (wrong password) and 8 (the router kicked it) are three different repairs. A panel that reconnects before its next report looked perfectly healthy. |
+| `blit_fail_total` / `blit_recov` / `meter_fail` | the reported pair is reset on recovery, so 249 failures followed by a self-heal read as a panel that never faltered. `meter_fail` reached no counter at all — and the meter blits at 25 Hz against the face's 5, so it is the more frequent transfer by five to one. |
+| `restart_why` | three callers reach `esp_restart()` and all three arrive as `reset_reason: "sw(3)"`, two of them also sharing `crash_phase: 9`. A self-heal after 250 failed blits read exactly like a four-year-old doing the reboot gesture. Carried in an RTC word that was already there and already dead. |
+| `tap` | **the panel was already sending this and the box was dropping it.** `TelemetryIn` never declared the field, so pydantic discarded it on every report — the panel spending the bytes, the box binning them, neither able to notice. Found by a test asserting that every key the firmware sends is one the model accepts. |
+
+**Two defects in the reporting channel itself, both of which undermined everything above.**
+`ota_report` returned `esp_http_client_perform`'s status, which is `ESP_OK` for *any* HTTP
+response it managed to receive — so a 422 or a 401 counted as a delivered report, and what
+`report()` does on success is `pmu_history_clear()`. The crash ring, which exists precisely
+because a panel in a bedroom cannot be asked what happened, was being wiped on the strength of
+a report the box had thrown away. And the body's closing `}` was written inside the last
+optional block, so a payload that ran out of room was sent as unterminated JSON — producing
+exactly the 422 that then cleared the ring. Both fixed; the brace is now unconditional and the
+buffer is sized against a computed worst case (1,069 bytes of 1,536) that a test recomputes
+from the real declaration.
+
 ## What the panel cannot do, and therefore where the work is
 
 On-panel open-vocabulary speech is **off the table**, permanently. MultiNet7 resolves a fixed
@@ -317,9 +569,14 @@ to a design on a number nobody has yet.
 
 ## Open questions
 
-- **Does `base.en` get under 2 s?** Everything above depends on it. Unmeasured.
-- **Which model answers?** `agent.turn` routing is per-task; a child's turn probably wants a
-  small fast model, not the 120B. The keyword classifier may answer most turns without one.
+- ~~**Does `base.en` get under 2 s?**~~ **Answered, and the question was wrong.** The
+  window was the cost, not the model: per-request `audio_ctx` gets `large-v3-turbo`
+  to 1.3 s on a short clip. See "What the box actually measured".
+- **Which model answers?** Still open, but no longer a guess about speed: the 120B answers
+  a child's turn in ~900 ms when its one slot is free and in 12–43 s when the assistant
+  has it. The reason to move `pet.turn` to a small co-resident model is the SLOT, not the
+  tokens/s. What is unmeasured is whether `qwen3.5-4b` is a good enough pet — that needs
+  the real prompt run against it, and the owner's ear, not another log.
 - **What does it say?** A pet talking to a four-year-old needs a persona and bounds, and that
   is a content decision, not a plumbing one. `agent_for_owner_reply(...)` is not the right
   profile for this.

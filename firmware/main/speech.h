@@ -56,3 +56,17 @@ bool speech_take(char *out, int cap, int *id);
  * MultiNet cannot tokenise is silently absent from the vocabulary, and the panel would look
  * deaf to exactly that one thing. Reported to the debug API rather than discovered by ear. */
 void speech_vocab(int *accepted, int *rejected);
+
+/* The i-th refused phrase, or NULL past the end. The counts say the panel is deaf to
+   something; this says to WHAT, and it is the difference between a number the owner cannot
+   act on and a name they can. Goes out in telemetry for the same reason the ALC reading and
+   the blit counts do: an ESP_LOG only reaches a serial console this panel does not have. */
+const char *speech_vocab_refused(int i);
+
+/* The i-th most recent decode: what the recogniser resolved, how sure it was (0..100), and
+   whether it FIRED or timed out against the command graph. False past the end.
+   `speech.c` computes the probability on every detection, prints it and discards it, and the
+   comment there says a confidence floor cannot be chosen until a real decode's score is known
+   on this hardware — a measurement that needs a console this panel does not have. This is
+   that measurement, taken where it happens and sent where it can be read. */
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired);

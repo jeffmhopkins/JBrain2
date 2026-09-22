@@ -20,6 +20,7 @@
 #include "speech.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_afe_config.h"
@@ -80,6 +81,58 @@ static int s_filled;
 static volatile bool s_live;
 static volatile bool s_hearing;
 static int s_accepted, s_rejected;
+/* WHICH phrases were refused, not just how many — the counts say the panel is deaf to
+   something, the names say to what. Six is more than a real fault produces and bounds what
+   telemetry has to carry. */
+#define REFUSED_MAX 6
+#define REFUSED_CHARS 20
+static char s_refused[REFUSED_MAX][REFUSED_CHARS];
+static int s_refused_n;
+
+/* THE LAST FEW DECODES, WITH THE NUMBER THE FLOOR WILL BE CHOSEN FROM.
+ *
+ * The detection path below computes `r->prob[0]`, formats it into a log line and throws it
+ * away, and the comment beside it states the plan outright: a confidence floor "cannot be
+ * chosen honestly until it is known what a CORRECT decode scores on this hardware", so the
+ * number is logged rather than acted on and "the floor lands in the version after a capture
+ * of phrases that ARE in the vocabulary".
+ *
+ * That capture needs a serial console. This panel has not had one since the day it went in a
+ * bedroom, so the version after never came — and "turn red" firing `jump up` at p=0.19 has
+ * been waiting on an instrument that does not exist. Three deep is enough to see what a real
+ * command scores next to a false one, and small enough to ride in a telemetry body. */
+#define DECODE_MAX 3
+#define DECODE_CHARS 20
+typedef struct {
+    char phrase[DECODE_CHARS];
+    uint8_t prob; /* 0..100, because a float in a JSON body buys nothing here */
+    bool fired;   /* false when the decode TIMED OUT — a near miss, which is the interesting half */
+} decode_t;
+static decode_t s_decode[DECODE_MAX];
+static int s_decode_n;
+
+static void note_heard(const char *phrase, float prob, bool fired)
+{
+    /* Newest first, oldest pushed off the end: what someone asks after a command did not work
+       is "what did it hear JUST now", not "what has it heard since Tuesday". */
+    for (int i = DECODE_MAX - 1; i > 0; i--) s_decode[i] = s_decode[i - 1];
+    snprintf(s_decode[0].phrase, DECODE_CHARS, "%s", phrase != NULL ? phrase : "?");
+    float p = prob * 100.0f;
+    if (p < 0.0f) p = 0.0f;
+    if (p > 100.0f) p = 100.0f;
+    s_decode[0].prob = (uint8_t)p;
+    s_decode[0].fired = fired;
+    if (s_decode_n < DECODE_MAX) s_decode_n++;
+}
+
+bool speech_heard(int i, const char **phrase, int *prob, bool *fired)
+{
+    if (i < 0 || i >= s_decode_n) return false;
+    if (phrase != NULL) *phrase = s_decode[i].phrase;
+    if (prob != NULL) *prob = s_decode[i].prob;
+    if (fired != NULL) *fired = s_decode[i].fired;
+    return true;
+}
 
 /* One-deep mailbox: the render task reads it once a frame, so a second phrase inside 40 ms is
    a phrase nobody could have read anyway. A queue here would only buffer the panel's own
@@ -96,6 +149,11 @@ bool speech_live(void)
 bool speech_hearing(void)
 {
     return s_hearing;
+}
+
+const char *speech_vocab_refused(int i)
+{
+    return (i >= 0 && i < s_refused_n) ? s_refused[i] : NULL;
 }
 
 void speech_vocab(int *accepted, int *rejected)
@@ -238,6 +296,7 @@ static void detect_task(void *arg)
                     ESP_LOGI(TAG, "  also '%s' p=%.2f",
                              alt != NULL ? alt->phrase : "?", (double)r->prob[k]);
                 }
+                note_heard(v->phrase, r->prob[0], true);
                 publish(r->command_id[0], v->phrase);
             }
             /* MUST be cleaned after a detection or the next phrase decodes against this
@@ -249,26 +308,72 @@ static void detect_task(void *arg)
                phrase that missed and a microphone that is dead look identical from here. */
             esp_mn_results_t *r = s_mn->get_results(s_mn_data);
             ESP_LOGI(TAG, "timeout, raw decode: '%s'", r != NULL ? r->raw_string : "?");
+            /* The near miss, kept beside the hits. A decode the command graph REJECTED is
+               what says whether a phrase is unreachable because nobody said it or because
+               the model keeps almost hearing it — and those need opposite fixes. */
+            note_heard(r != NULL ? r->raw_string : NULL, 0.0f, false);
             s_mn->clean(s_mn_data);
         }
     }
 }
 
+static void note_refused(const char *phrase)
+{
+    if (s_refused_n < REFUSED_MAX) {
+        snprintf(s_refused[s_refused_n], REFUSED_CHARS, "%s", phrase);
+        s_refused_n++;
+    }
+}
+
 static void load_vocabulary(void)
 {
-    esp_mn_commands_alloc(s_mn, s_mn_data);
-    const vocab_t *all = vocab_all();
-    for (int i = 0; i < vocab_count(); i++) esp_mn_commands_add(i, all[i].phrase);
-
-    /* THE REFUSALS ARE THE INTERESTING PART. A phrase MultiNet cannot tokenise is dropped
-       silently and the panel is then deaf to that one thing with nothing on the glass to say
-       so — which is indistinguishable, from the room, from a broken microphone. */
-    esp_mn_error_t *err = esp_mn_commands_update();
-    s_rejected = err != NULL ? err->num : 0;
-    s_accepted = vocab_count() - s_rejected;
-    for (int i = 0; err != NULL && i < err->num; i++) {
-        ESP_LOGE(TAG, "phrase refused by the model: '%s'", err->phrases[i]->string);
+    /* CHECKED, because the pass below checks every `add` and this is the call that makes the
+       list those adds go into. Fixing the derived-counter bug and leaving the allocation
+       unchecked would put the same silence one function call earlier. */
+    if (esp_mn_commands_alloc(s_mn, s_mn_data) != ESP_OK) {
+        ESP_LOGE(TAG, "the command list would not allocate — the panel is deaf to everything");
+        s_accepted = 0;
+        s_rejected = vocab_count();
+        return;
     }
+    const vocab_t *all = vocab_all();
+    s_refused_n = 0;
+
+    /* THERE ARE TWO WAYS TO BE REFUSED, AND THIS USED TO SEE ONLY ONE.
+     *
+     * `esp_mn_commands_add` runs the phrase through the model's own `check_speech_command`
+     * and returns ESP_ERR_INVALID_STATE when it will not take it. Its return value was
+     * DISCARDED here — and a phrase rejected there never enters the list at all, so the
+     * `esp_mn_commands_update` pass below has nothing to report about it and
+     * `vocab_count() - rejected` went on claiming it had been accepted. The counter was
+     * derived rather than measured, and derived from the assumption the bug breaks.
+     *
+     * The owner, on the twins: *"burp has been on there. It never actually activates them.
+     * The kids say the word — like the code word is wrong."* That is exactly what this hole
+     * looks like from a bedroom, and the instrumentation that should have answered it said
+     * everything was fine. Both paths are counted now, and both name the phrase. */
+    int added = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (esp_mn_commands_add(i, all[i].phrase) == ESP_OK) {
+            added++;
+            continue;
+        }
+        ESP_LOGE(TAG, "phrase refused when added: '%s'", all[i].phrase);
+        note_refused(all[i].phrase);
+    }
+
+    /* The second pass: a phrase the model takes but cannot then tokenise. Silent here too,
+       and the panel is deaf to that one thing with nothing on the glass to say so — which is
+       indistinguishable, from the room, from a broken microphone. */
+    esp_mn_error_t *err = esp_mn_commands_update();
+    const int late = err != NULL ? err->num : 0;
+    for (int i = 0; i < late; i++) {
+        ESP_LOGE(TAG, "phrase refused by the model: '%s'", err->phrases[i]->string);
+        note_refused(err->phrases[i]->string);
+    }
+
+    s_rejected = (vocab_count() - added) + late;
+    s_accepted = vocab_count() - s_rejected;
     ESP_LOGI(TAG, "vocabulary: %d accepted, %d refused", s_accepted, s_rejected);
 }
 

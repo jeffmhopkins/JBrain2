@@ -460,6 +460,7 @@ const LLM_SETTINGS: LlmSettings = {
       image_min_tokens: null,
       image_min_tokens_default: null,
       kv_gb: 1.5,
+      keep_loaded: false,
     },
     {
       id: "gpt-oss-120b",
@@ -486,6 +487,7 @@ const LLM_SETTINGS: LlmSettings = {
       image_min_tokens: null,
       image_min_tokens_default: null,
       kv_gb: 4.5,
+      keep_loaded: false,
     },
     {
       id: "nemotron-3.5-lightning-30b",
@@ -512,6 +514,7 @@ const LLM_SETTINGS: LlmSettings = {
       image_min_tokens: null,
       image_min_tokens_default: null,
       kv_gb: 0.8,
+      keep_loaded: false,
     },
     {
       id: "qwen3.6-27b",
@@ -538,6 +541,7 @@ const LLM_SETTINGS: LlmSettings = {
       image_min_tokens: null,
       image_min_tokens_default: null,
       kv_gb: 1.5,
+      keep_loaded: false,
     },
     {
       id: "qwen3.6-27b-q4",
@@ -564,6 +568,7 @@ const LLM_SETTINGS: LlmSettings = {
       image_min_tokens: null,
       image_min_tokens_default: null,
       kv_gb: 1.5,
+      keep_loaded: false,
     },
   ],
   host_memory: null,

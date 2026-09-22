@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from jbrain.config import Settings
-from jbrain.llm import local_catalog
+from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.providers import active_local_override, provider_choices
 from jbrain.llm.router import PROVIDERS, _split_spec
 
@@ -951,21 +951,50 @@ def test_every_prediction_errs_on_the_side_of_reserving_too_much() -> None:
 
 def test_the_tiny_qwen35_declarations_carry_their_measured_overhead() -> None:
     """The 2026-08-23 on-box sweep: the 0.8b held 3.83 GiB resident after a real prefill
-    against 1.57 declared, and the 4b's load was aborted by the runaway watchdog at
-    12.8 GiB, still climbing, against 5.15 — the flat RUNTIME_OVERHEAD_GB collapses on
-    models whose buffers dwarf their weights. Each declaration must clear what the box
-    actually measured, with margin."""
+    against 1.57 declared — the flat RUNTIME_OVERHEAD_GB collapses on models whose buffers
+    dwarf their weights. A declaration must clear what the box actually measured."""
     small = local_catalog.get("qwen3.5-0.8b")
     assert small is not None and small.runtime_overhead_gb == 3.3
     host, device = local_catalog.declared_gb(small, 32768, slots=1)
     assert host == device == 4.32
     assert host > 3.83, "must clear the measured resident footprint"
 
+
+def test_qwen35_4b_declares_a_completed_load_not_an_aborted_one() -> None:
+    """The 4b's term came from the same sweep and was the one reading in it that was NOT a
+    measurement of the model: the load was ABORTED by the runaway watchdog at 12.8 GiB, still
+    climbing, and an aborted load measures where the watchdog cut in. The entry said so, and
+    said to "verify against a completed load once this ships".
+
+    A completed load has now been observed (2026-09-22). Serving at 65536 as the only resident
+    model, the WHOLE BOX reported 7.85 GiB of GTT — against a 15.0 GiB declaration. That
+    declaration was roughly double the truth and it bought a real eviction: the operator loaded
+    this 4.3 GB model beside gpt-oss-120b and the coordinator threw the 120b out to make room
+    that already existed.
+
+    Two bounds, and the second is the one that keeps the abort shut. The declaration must stay
+    ABOVE the reading — which has no no-model baseline subtracted out of it, so the model's own
+    share is smaller still — and the runaway ceiling it sets must stay ABOVE the 12.8 GiB climb,
+    so a load that behaves the way that one did is allowed to finish instead of being killed
+    again.
+    """
     four = local_catalog.get("qwen3.5-4b")
-    assert four is not None and four.runtime_overhead_gb == 9.5
-    host4, device4 = local_catalog.declared_gb(four, 32768, slots=1)
-    assert host4 == device4 == 14.1
-    assert host4 > 12.8, "must clear the watchdog abort floor (the true peak is above it)"
+    assert four is not None and four.runtime_overhead_gb == 3.5
+    measured_whole_box_gib = 7.85
+    aborted_at_gib = 12.8
+
+    host4, device4 = local_catalog.declared_gb(four, 65536, slots=1)
+    assert host4 == device4 == 8.40
+    assert host4 > measured_whole_box_gib, "must still clear everything a real load measured"
+    assert host4 < measured_whole_box_gib * 1.5, "2x the truth is what bought the eviction"
+
+    ceiling = local_catalog.load_footprint_gb(four, 65536) * gpu_guard.RUNAWAY_MULTIPLE
+    assert ceiling > aborted_at_gib, "a load that climbs like the aborted one must now finish"
+
+    # And the weights are the dominant term again, as they are for every other entry: an
+    # overhead larger than the model it belongs to is the shape of the original defect.
+    assert four.runtime_overhead_gb is not None
+    assert four.runtime_overhead_gb < four.size_gb
 
 
 def test_the_overhead_override_does_not_leak_to_models_that_did_not_set_it() -> None:

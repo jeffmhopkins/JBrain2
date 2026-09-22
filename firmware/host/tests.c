@@ -23,6 +23,7 @@
 #include "orient.h"
 #include "rig.h"
 #include "variants.h"
+#include "cue.h"
 #include "vocab.h"
 
 static int checks;
@@ -2033,13 +2034,11 @@ static void test_vocab_phrases_are_sayable(void)
            they are what a four-year-old actually says. Naming them means the next single word
            has to be argued for rather than slipped in beside these — which is the whole value
            of a list over a loosened check, and the list has already grown once. */
-        static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave", "shake",
-                                              "laugh", "eat",  "kick",  "spin",
-                                              /* "stop" is the one whose single-word case is
-                                                 easy: every other entry costs something when
-                                                 the television says it, and a false "stop"
-                                                 ends a conversation that was not happening. */
-                                              "stop"};
+        static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave",
+                                              "shake", "laugh", "eat",  "kick",  "spin"};
+        /* The list SHRANK once too: "stop" was on it, and is now "fish stop" at the owner's
+           ask — which is the outcome the list is for. A one-word entry that can be said
+           another way should be. */
         bool allowed_single = false;
         for (unsigned k = 0; k < sizeof(SINGLES) / sizeof(SINGLES[0]); k++) {
             if (strcmp(p, SINGLES[k]) == 0) allowed_single = true;
@@ -2064,6 +2063,328 @@ static void test_vocab_has_no_ambiguity(void)
                   "no phrase is a prefix of another");
         }
     }
+}
+
+/* --- the arcade cues ------------------------------------------------------------------
+ *
+ * `audio.c` cannot be built on a host, which is why `audio_rude()` shipped with no test at
+ * all. `cue.c` is pure C precisely so these can exist, and they assert the things that
+ * actually go wrong with generated audio rather than the things that are easy to assert.
+ */
+
+#define CUE_RATE 16000
+
+static int cue_fill(cue_t c, int16_t *buf)
+{
+    return cue_render(c, buf, CUE_RATE, 100);
+}
+
+static void test_no_cue_starts_or_ends_with_a_step(void)
+{
+    /* THE TWO CLICKS. A pulse built on cosines starts at its peak, so writing it as sample
+       zero is a full-scale step — broadband, and audible as a tick in front of every sound.
+       The end is the one more often missed: a plain exponential decay never reaches zero, so
+       the buffer stops on a live sample and the speaker steps back to silence. Quiet on a
+       desk, obvious on a small hard-cased speaker in a quiet bedroom. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int n = cue_fill((cue_t)c, buf);
+        CHECK(n > 0, "every cue renders something");
+        CHECK(abs(buf[0]) < 900, "a cue starts from silence, not from a step");
+        CHECK(abs(buf[n - 1]) < 900, "and returns to silence rather than being cut off");
+    }
+}
+
+static void test_no_cue_clips(void)
+{
+    /* Peak-normalisation is what makes this true, and the reason it is done by measurement
+       rather than by arithmetic: the naive bound on a summed harmonic series is 2.7 for a
+       square whose real peak is 1.18, and it MOVES as a sweep carries partials through the
+       anti-alias taper. A cue that clips does not sound loud, it sounds broken. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int n = cue_fill((cue_t)c, buf);
+        int railed = 0;
+        for (int i = 0; i < n; i++) {
+            if (buf[i] >= 32767 || buf[i] <= -32768) railed++;
+        }
+        CHECK(railed == 0, "no cue reaches the rail");
+    }
+}
+
+static void test_every_cue_is_actually_audible(void)
+{
+    /* The other direction, and the failure a click test cannot see: a cue that renders
+       silence passes every check above. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int n = cue_fill((cue_t)c, buf);
+        int peak = 0;
+        for (int i = 0; i < n; i++) {
+            const int m = buf[i] < 0 ? -buf[i] : buf[i];
+            if (m > peak) peak = m;
+        }
+        CHECK(peak > 12000, "a cue is loud enough to hear");
+        CHECK(peak <= 26001, "and leaves headroom under the speaking voice");
+    }
+}
+
+static void test_no_cue_sits_off_centre(void)
+{
+    /* DC offset, which additive synthesis avoids by simply never summing the n=0 term. A
+       pulse of duty d carries a DC of 2d-1, which is -0.75 on the narrow duty the `oops` cue
+       uses — that would spend three quarters of the headroom on a constant, push the cone off
+       centre and turn any duty change into a thump that has nothing to do with the note. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int n = cue_fill((cue_t)c, buf);
+        long sum = 0;
+        for (int i = 0; i < n; i++) sum += buf[i];
+        const long mean = sum / n;
+        CHECK(mean < 900 && mean > -900, "a cue is centred on silence");
+    }
+}
+
+/* TWO MEASURES, EACH ONLY ASKED WHAT IT CAN ANSWER.
+ *
+ * The first cut used one autocorrelation estimator for everything and it was wrong twice
+ * over: a plain argmax lands on a sub-harmonic (a lag of twice the period correlates nearly
+ * as well), so the `oops` cue read an octave low, and the short neutral cues are not long
+ * enough to autocorrelate at a useful floor at all. Chasing that would have meant writing a
+ * decent pitch tracker to test seven bleeps.
+ *
+ * So: direction comes from the zero-crossing rate, which is meaningless ACROSS cues (a
+ * narrow-duty pulse has far more crossings per period than a square) but exactly right
+ * WITHIN one, where the duty is fixed and the rate therefore tracks the fundamental. And
+ * register comes from how much of the energy sits below a split frequency, which is the thing
+ * the claim is really about and needs no pitch at all. */
+static float cue_rate(const int16_t *buf, int from, int to)
+{
+    int crossings = 0;
+    for (int i = from + 1; i < to; i++) {
+        if ((buf[i - 1] < 0) != (buf[i] < 0)) crossings++;
+    }
+    return (float)crossings * (float)CUE_RATE / (2.0f * (float)(to - from));
+}
+
+/* The share of a cue's energy under `split` Hz, via a one-pole low pass. */
+static float cue_low_share(const int16_t *buf, int n, float split)
+{
+    const float k = 1.0f - expf(-2.0f * 3.14159265f * split / (float)CUE_RATE);
+    float lp = 0.0f;
+    double low = 0.0, all = 0.0;
+    for (int i = 0; i < n; i++) {
+        lp += k * ((float)buf[i] - lp);
+        low += (double)lp * (double)lp;
+        all += (double)buf[i] * (double)buf[i];
+    }
+    return all > 0.0 ? (float)(low / all) : 0.0f;
+}
+
+static void test_the_contour_says_what_the_cue_means(void)
+{
+    /* THE ONE THING THAT CANNOT BE GOT WRONG QUIETLY. Rising and falling pitch carry
+       valence — rising reads as open, questioning, positive; falling as closed, final,
+       negative — and that mapping is strong enough that a descending "listening" cue would
+       read as a refusal however carefully it was voiced. */
+    int16_t buf[CUE_MAX_SAMPLES];
+
+    int n = cue_fill(CUE_LISTEN, buf);
+    float early = cue_rate(buf, n / 8, n / 3), late = cue_rate(buf, n / 2, (n * 7) / 8);
+    CHECK(late > early * 1.15f, "the microphone opening RISES — it is a question");
+
+    n = cue_fill(CUE_STOP, buf);
+    early = cue_rate(buf, n / 8, n / 3);
+    late = cue_rate(buf, n / 2, (n * 7) / 8);
+    CHECK(late < early * 0.9f, "stopping FALLS — it is an ending");
+
+    n = cue_fill(CUE_OOPS, buf);
+    early = cue_rate(buf, n / 8, n / 3);
+    late = cue_rate(buf, n / 2, (n * 3) / 4);
+    CHECK(late < early * 0.95f, "an apology falls rather than rises");
+
+    /* Windows either side of the note step rather than across it: the step is at 70 ms and a
+       window that straddles it measures neither note. */
+    n = cue_fill(CUE_HEARD, buf);
+    early = cue_rate(buf, CUE_RATE / 100, (CUE_RATE * 6) / 100);
+    late = cue_rate(buf, (CUE_RATE * 9) / 100, (CUE_RATE * 20) / 100);
+    CHECK(late > early * 1.15f, "being understood rises, like the coin it is shaped on");
+}
+
+static void test_an_apology_sits_low_where_roughness_is_felt(void)
+{
+    /* Roughness is not a property of an interval, it is a property of where the interval
+       sits: two partials buzz when they fall inside the same critical band, which near
+       300 Hz means a separation of roughly thirty Hz — and the SAME interval two octaves up
+       just beats gently and sounds pleasant. So an error cue that is not LOW is not rough,
+       whatever intervals it uses. Measured as the share of energy under 300 Hz, which is the
+       claim itself rather than a pitch estimate standing in for it.
+
+       The filter is one pole, so it is gentle — 6 dB per octave leaks plenty of the band
+       above the split into the "low" figure, and these shares are therefore nowhere near 1.0
+       even for a cue sitting right on 300 Hz. What matters is the SEPARATION, and there is a
+       lot of it: the apology reads 0.31 against a neutral tap's 0.09. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    int n = cue_fill(CUE_OOPS, buf);
+    const float oops_low = cue_low_share(buf, n, 300.0f);
+    n = cue_fill(CUE_BLIP, buf);
+    const float blip_low = cue_low_share(buf, n, 300.0f);
+    CHECK(oops_low > 0.25f, "an apology is weighted low, where a beat is felt as a buzz");
+    CHECK(oops_low > blip_low * 2.5f, "and far lower than a neutral tap");
+}
+
+static void test_a_tap_and_a_toggle_do_not_move_at_all(void)
+{
+    /* Neutrality is achieved by REMOVING contour, not by choosing a neutral timbre. Any
+       movement at all imports a mood, and an acknowledgement should mean only "registered".
+       Measured over the body of the cue, before the decay gets quiet enough that a crossing
+       count is counting dither rather than a waveform. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    const cue_t flat[] = {CUE_BLIP, CUE_TOGGLE, CUE_TICK};
+    for (unsigned k = 0; k < sizeof(flat) / sizeof(flat[0]); k++) {
+        const int n = cue_fill(flat[k], buf);
+        const float early = cue_rate(buf, n / 16, n / 4);
+        const float late = cue_rate(buf, n / 4, n / 2);
+        CHECK(late > early * 0.9f && late < early * 1.1f, "a neutral cue holds its pitch");
+    }
+}
+
+static void test_the_cues_are_distinguishable_from_each_other(void)
+{
+    /* The whole reason for this file. Five events used to share one 880 Hz tone, so the sound
+       told a child only that SOMETHING had registered. Two cues that measure the same on both
+       axes are that failure returning quietly. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    float rate[CUE_COUNT], low[CUE_COUNT];
+    int len[CUE_COUNT];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        len[c] = cue_fill((cue_t)c, buf);
+        rate[c] = cue_rate(buf, len[c] / 16, len[c] / 2);
+        low[c] = cue_low_share(buf, len[c], 500.0f);
+    }
+    for (int i = 0; i < CUE_COUNT; i++) {
+        for (int j = i + 1; j < CUE_COUNT; j++) {
+            const float rr = rate[i] > rate[j] ? rate[i] / rate[j] : rate[j] / rate[i];
+            const float dl = low[i] > low[j] ? low[i] - low[j] : low[j] - low[i];
+            const int dn = len[i] > len[j] ? len[i] - len[j] : len[j] - len[i];
+            CHECK(rr > 1.06f || dl > 0.1f || dn > CUE_RATE / 33,
+                  "no two cues are the same sound");
+        }
+    }
+}
+
+static void test_a_cue_never_writes_past_the_buffer_it_asked_for(void)
+{
+    /* `cue_samples` is what a caller sizes its buffer from. If the renderer disagreed with it
+       the overrun would be a reboot on this part, not a wrong noise. */
+    int16_t buf[CUE_MAX_SAMPLES + 8];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int want = cue_samples((cue_t)c, CUE_RATE);
+        CHECK(want > 0 && want <= CUE_MAX_SAMPLES, "every cue fits the shared ceiling");
+        for (int i = 0; i < 8; i++) buf[CUE_MAX_SAMPLES + i] = 0x5A5A;
+        const int got = cue_render((cue_t)c, buf, CUE_RATE, 100);
+        CHECK(got == want, "the renderer writes exactly what cue_samples promised");
+        for (int i = 0; i < 8; i++) {
+            CHECK(buf[CUE_MAX_SAMPLES + i] == 0x5A5A, "and not one sample further");
+        }
+    }
+}
+
+static void test_rendering_a_cue_costs_no_buffer(void)
+{
+    /* THE BUG THIS EXISTS TO STOP COMING BACK. The first version held the rendered floats in
+       `float buf[CUE_MAX_SAMPLES]` so it could find the peak before scaling — 22 KB on the
+       stack of whichever task asks for a sound, and the task that asks is the renderer, whose
+       stack is 8192 bytes. That is a panic on the first tap, not a glitch, and `display.c`
+       already carries a comment about raising that stack once while chasing a field panic.
+       A static buffer would have been the same 22 KB taken permanently out of the internal
+       RAM `speech.c` refuses to start the recogniser without.
+
+       The fix is that the generator is PURE, so it can be run twice — once to measure, once
+       to write — and store nothing. This asserts the purity that makes that sound: two
+       renders of the same cue must be sample-for-sample identical, or the measuring pass and
+       the writing pass are not describing the same waveform and the normalisation is against
+       a peak that never occurs. */
+    int16_t first[CUE_MAX_SAMPLES], second[CUE_MAX_SAMPLES];
+    for (int c = 0; c < CUE_COUNT; c++) {
+        const int a = cue_render((cue_t)c, first, CUE_RATE, 100);
+        const int b = cue_render((cue_t)c, second, CUE_RATE, 100);
+        CHECK(a == b && a > 0, "a cue renders the same length every time");
+        int same = 1;
+        for (int i = 0; i < a; i++) {
+            if (first[i] != second[i]) same = 0;
+        }
+        CHECK(same, "and the same samples — the generator carries no state between calls");
+    }
+}
+
+static void test_the_gain_is_the_only_loudness_control(void)
+{
+    int16_t loud[CUE_MAX_SAMPLES], quiet[CUE_MAX_SAMPLES];
+    const int n = cue_render(CUE_BLIP, loud, CUE_RATE, 100);
+    CHECK(cue_render(CUE_BLIP, quiet, CUE_RATE, 20) == n, "gain does not change the length");
+    int pl = 0, pq = 0;
+    for (int i = 0; i < n; i++) {
+        const int a = loud[i] < 0 ? -loud[i] : loud[i];
+        const int b = quiet[i] < 0 ? -quiet[i] : quiet[i];
+        if (a > pl) pl = a;
+        if (b > pq) pq = b;
+    }
+    CHECK(pq * 4 < pl, "a fifth of the gain is audibly quieter");
+    CHECK(pq > 0, "but not silent");
+    CHECK(cue_render(CUE_BLIP, quiet, CUE_RATE, -5) == n, "a silly gain is clamped, not fatal");
+    CHECK(cue_render((cue_t)CUE_COUNT, quiet, CUE_RATE, 50) == 0, "an unknown cue makes nothing");
+}
+
+static void test_every_action_can_be_asked_for_in_more_than_one_word(void)
+{
+    /* The owner, on the twins: *"burp has been on there. It never actually activates them.
+       The kids say the word — like the code word is wrong."*
+
+       A one-word phrase is the FRAGILE form. "burp" is three phonemes against ten for "come
+       and boogie", it is always live because WakeNet is disabled, and MultiNet can refuse it
+       outright at registration — a path the firmware used to discard the return value of, so
+       a refused phrase still counted as accepted. Whatever the model decides about any single
+       word, no action may depend on it: `eat`, `jump`, `kick` and `spin` had a single word as
+       their ONLY phrasing, and `fart`'s alternate was "make a rude noise", which is not a
+       sentence a four-year-old has ever produced.
+
+       This does not assert that single words work. It asserts that nothing BREAKS if they
+       don't. */
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind != VOCAB_ACTION) continue;
+        if (strchr(v[i].phrase, ' ') != NULL) continue; /* already a multi-word phrase */
+        bool has_long_form = false;
+        for (int j = 0; j < vocab_count(); j++) {
+            if (j == i || v[j].kind != VOCAB_ACTION || v[j].arg != v[i].arg) continue;
+            if (strchr(v[j].phrase, ' ') != NULL) has_long_form = true;
+        }
+        CHECK(has_long_form, "a one-word action is never the only way to ask for it");
+    }
+}
+
+static void test_ending_a_conversation_uses_the_panel_s_name(void)
+{
+    /* The owner asked for "fish stop" in place of a bare "stop". Two things follow and both
+       are worth pinning, because both are how the change could be undone by accident.
+
+       It must still be reachable — a stop phrase MultiNet cannot resolve is a child shouting
+       at a toy that keeps talking — and it must carry the name, because that is the point: a
+       conversation ends with the pet's name the same way it starts with one ("hey fish"), and
+       a rename has to move both or the panel answers to one name and stops for another. */
+    const vocab_t *v = vocab_all();
+    const char *name = vocab_name();
+    const char *stop = NULL;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind == VOCAB_STOP) stop = v[i].phrase;
+    }
+    CHECK(stop != NULL, "there is a way to end a conversation");
+    CHECK(name != NULL, "and the panel has a name to end it with");
+    CHECK(strstr(stop, name) != NULL, "the stop phrase carries the panel's own name");
+    /* And it is no longer a single word, which is what let it leave the named-list exception
+       above. A phrase that can be said in two words should be. */
+    CHECK(strchr(stop, ' ') != NULL, "the stop phrase is more than one word");
 }
 
 static void test_vocab_arguments_are_real(void)
@@ -2363,6 +2684,19 @@ int main(void)
     test_vocab_phrases_are_sayable();
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
+    test_ending_a_conversation_uses_the_panel_s_name();
+    test_every_action_can_be_asked_for_in_more_than_one_word();
+    test_no_cue_starts_or_ends_with_a_step();
+    test_no_cue_clips();
+    test_every_cue_is_actually_audible();
+    test_no_cue_sits_off_centre();
+    test_the_contour_says_what_the_cue_means();
+    test_an_apology_sits_low_where_roughness_is_felt();
+    test_a_tap_and_a_toggle_do_not_move_at_all();
+    test_the_cues_are_distinguishable_from_each_other();
+    test_a_cue_never_writes_past_the_buffer_it_asked_for();
+    test_rendering_a_cue_costs_no_buffer();
+    test_the_gain_is_the_only_loudness_control();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();

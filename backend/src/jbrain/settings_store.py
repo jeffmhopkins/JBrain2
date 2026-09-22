@@ -70,6 +70,21 @@ LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
 # absence. Feeds the regenerated gateway `-np` and the residency KV budget.
 LLM_LOCAL_PARALLEL_SLOTS_KEY = "llm_local_parallel_slots"
 LLM_LOCAL_IMAGE_MIN_TOKENS_KEY = "llm_local_image_min_tokens"
+# Catalog ids the operator wants kept resident — the models the coordinator evicts LAST.
+#
+# Size cannot answer this and the coordinator used to try. It ranked victims biggest-first,
+# on the reasoning that freeing the room costs the fewest unloads, and on 2026-09-22 that
+# reasoning threw gpt-oss-120b — 59 GB of weights and a minute to reload — out of the box to
+# seat a 4.3 GB pet model. The owner: *"I would rather keep OSS 120 loaded all the time and
+# then the Qwen models be able to hotswap first."* That is not derivable from bytes. Which
+# model matters is what the operator uses it FOR, so the operator has to be able to say it,
+# and on this box saying it means a toggle in the PWA (CLAUDE.md #10).
+#
+# A LAST RESORT, NOT A LOCK. A pinned model is still evictable when nothing else frees
+# enough — the module's paradigm is "load any model, unload until it fits", and a hard lock
+# would turn a load the operator explicitly asked for into a refusal they cannot clear
+# without finding this setting again.
+LLM_LOCAL_KEEP_LOADED_KEY = "llm_local_keep_loaded"
 # Per-model EXTRA llama-server flags (catalog id → argv list), appended after the catalog's
 # static `extra_server_args`. The owner runs this box remotely with no terminal, so a launch
 # flag that can only be tried by editing the catalog and shipping a release is a flag that
@@ -1181,6 +1196,30 @@ class SqlSettingsStore:
         else:
             current[model_id] = slots
         await self.upsert(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, current)
+        return current
+
+    async def llm_local_keep_loaded(self, ctx: SessionContext) -> set[str]:
+        """Catalog ids the operator pinned as keep-resident, sanitized.
+
+        Stored as a list because JSON has no set. A non-list store, or any member that is not
+        a non-empty string, is dropped rather than trusted — this feeds an eviction ranking,
+        and a junk value there decides which model leaves the box."""
+        raw = await self.get(ctx, LLM_LOCAL_KEEP_LOADED_KEY, [])
+        if not isinstance(raw, list):
+            return set()
+        return {mid for mid in raw if isinstance(mid, str) and mid}
+
+    async def set_llm_local_keep_loaded(
+        self, ctx: SessionContext, *, model_id: str, keep: bool
+    ) -> set[str]:
+        """Pin (keep) or unpin one model; returns the sanitized set. Read-modify-write on the
+        single row, sorted on the way out so the stored JSON is stable to diff."""
+        current = await self.llm_local_keep_loaded(ctx)
+        if keep:
+            current.add(model_id)
+        else:
+            current.discard(model_id)
+        await self.upsert(ctx, LLM_LOCAL_KEEP_LOADED_KEY, sorted(current))
         return current
 
     async def llm_local_image_min_tokens(self, ctx: SessionContext) -> dict[str, int]:

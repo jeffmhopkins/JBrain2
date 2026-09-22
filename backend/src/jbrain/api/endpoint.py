@@ -42,7 +42,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
@@ -430,6 +430,65 @@ class TelemetryIn(BaseModel):
     blit_ok: int = 0
     blit_fail: int = 0
     boot_btn: int = 0
+    # How many of the panel's phrases the speech model ACCEPTED, and how many it refused —
+    # and, when it refused any, which ones.
+    #
+    # The owner, on the twins: *"burp has been on there. It never actually activates them.
+    # The kids say the word — like the code word is wrong."* The panel has counted this since
+    # bring-up and said so only to a serial console, on a device that has been on a plain
+    # charger since the day it went in a bedroom. A phrase the model will not take is silently
+    # absent from the vocabulary, and from the room that is indistinguishable from a broken
+    # microphone; the count says the panel is deaf to something and the names say to what.
+    # `vocab_ok` of 0 from firmware too old to report it, so a zero here is "unknown", not
+    # "nothing worked".
+    vocab_ok: int = 0
+    vocab_bad: int = 0
+    vocab_refused: list[str] = Field(default_factory=list)
+    # The last few things the recogniser resolved: [phrase, confidence 0-100, did it fire].
+    # `speech.c` has computed this on every decode since bring-up and printed it to a console
+    # the panel does not have — and its own comment says the confidence floor that would stop
+    # "turn red" firing `jump up` at p=0.19 cannot be chosen until a CORRECT decode's score is
+    # known on this hardware. This is that measurement, finally leaving the device.
+    heard: list[tuple[str, int, int]] = Field(default_factory=list)
+    # The largest free INTERNAL DMA block. `free_heap` above is the total, and the total is
+    # exactly the number that cannot tell 60 KB free-and-contiguous from 60 KB
+    # free-and-fragmented — which is the difference between a panel that draws and one where
+    # every blit fails. This reading has explained that fault twice and both times it took a
+    # host toolchain to read it.
+    int_largest: int = 0
+    # What the codec last ACCEPTED, "90/36" — or "90!/36" when it refused the volume. Both
+    # setters used to run with their returns dropped under a log line asserting success, on
+    # the one path the owner drives remotely.
+    levels: str = ""
+    # Monotonic, unlike `blit_ok`/`blit_fail`, which are reset on recovery and therefore
+    # report a panel that failed 249 blits and self-healed as one that never faltered.
+    # `meter_fail` is its own transfer and reached no counter at all: the meter redraws at
+    # 25 Hz against the face's 5, so it is the more frequent blit on this bus by five to one.
+    blit_fail_total: int = 0
+    blit_recov: int = 0
+    meter_fail: int = 0
+    # `wifi_err_reason_t` and how many times the link has dropped since boot. 201 (out of
+    # range / SSID gone), 15 (wrong password) and 8 (the router kicked it) are three different
+    # repairs; a panel that reconnects before its next report used to look perfectly healthy.
+    wifi_reason: int = 0
+    wifi_drops: int = 0
+    # Why an update would not install, and how many have failed. A panel that CANNOT install
+    # retries every fifteen minutes forever reporting the old version, which from here is
+    # indistinguishable from a panel nobody offered an update to.
+    ota_err: str = ""
+    ota_tries: int = 0
+    # Where the last touch landed and which zone it resolved to: [x, y, zone].
+    #
+    # THE PANEL HAS BEEN SENDING THIS ALL ALONG and nothing declared it, so pydantic dropped
+    # it on the floor of every report — the panel spending the bytes, the box discarding them,
+    # and no side of it able to notice. It is the reading that separates "the glass is dead"
+    # from "the glass works and the rotation maths puts the finger somewhere else", which is a
+    # fault this panel has actually had.
+    tap: list[int] = Field(default_factory=list)
+    # Which of the three callers of `esp_restart()` it was — "blit-heal" (a real fault),
+    # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
+    # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
+    restart_why: str = ""
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -492,6 +551,24 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         blit_ok=body.blit_ok,
         blit_fail=body.blit_fail,
         boot_btn=body.boot_btn,
+        vocab_ok=body.vocab_ok,
+        vocab_bad=body.vocab_bad,
+        int_largest=body.int_largest,
+        levels=body.levels,
+        blit_fail_total=body.blit_fail_total,
+        blit_recov=body.blit_recov,
+        meter_fail=body.meter_fail,
+        wifi_reason=body.wifi_reason,
+        wifi_drops=body.wifi_drops,
+        restart_why=body.restart_why,
+        tap=body.tap,
+        # Only when there is something to say. An empty key on every report for fifteen
+        # minutes of a healthy panel is how a log stops being read.
+        **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
+        **({"heard": body.heard} if body.heard else {}),
+        # Only when there are any: an empty list on every report is noise in a log a human
+        # reads, and the counts already say when to look.
+        **({"vocab_refused": body.vocab_refused} if body.vocab_refused else {}),
         pmu_history=body.pmu_history,
         note=body.note,
     )
@@ -772,9 +849,24 @@ async def flash_panel(
 # `docs/proposed/PANEL_CONVERSATION_PLAN.md`. The box has CPU to spare; the panel has 31 KB of
 # contiguous internal RAM on a good day.
 PANEL_RATE = 16000
-# Six seconds. Long enough for anything a four-year-old says in one breath, short enough that
-# a pocketed panel holding the screen down cannot upload a minute of a room.
-PANEL_AUDIO_MAX = PANEL_RATE * 2 * 6
+# Ten seconds, up from six. Six was "long enough for anything a four-year-old says in one
+# breath", and it was — but a four-year-old also stops in the MIDDLE of a breath, and the
+# panel's silence window has to be long enough to wait that out (`LISTEN_HUSH_MS`) inside the
+# same cap. The owner: *"the babies keep getting cut off because they're a little bit slow."*
+# The extra padding is free now that `_trim_to_speech` takes the room back out before whisper
+# ever sees it. Still short enough that a pocketed panel cannot upload a minute of a room.
+PANEL_AUDIO_MAX = PANEL_RATE * 2 * 10
+
+# WHAT THE PANEL CAN ACTUALLY PLAY, which the box has to know because it is the box that
+# overruns it. `firmware/main/talk.c` reads the reply into a fixed PSRAM buffer and
+# `audio_play` truncates to the same ceiling, silently — so a reply longer than this does not
+# fail, it stops mid-word. The owner: *"sometimes when the robot is talking back on a longer
+# reply I get cut off."* Measured in the log the same afternoon: replies of 221,012 and
+# 261,290 bytes against the 192,000 the panel then held, so the 261 KB one lost its last 2.2
+# seconds. Both ends now say ten seconds; a box that outruns a panel that has not been
+# updated yet truncates exactly as it did before, which is why the two can ship in either
+# order. What must never happen again is it being SILENT, hence the warning below.
+PANEL_REPLY_MAX = PANEL_RATE * 2 * 10
 
 # DELIBERATELY PLAIN, AND DELIBERATELY SHORT. The jpet's prompt is built around wall objects,
 # scene effects and an action script schema; none of that exists on a panel, and inheriting it
@@ -786,12 +878,71 @@ PANEL_AUDIO_MAX = PANEL_RATE * 2 * 6
 PANEL_CONVERSATION_PROMPT = """You are a small friendly robot pet who lives on a little screen \
 in a child's bedroom. You are talking with a four-year-old.
 
+Talk about their life: what they are doing right now, what they ate, what they did today, \
+their toys, their room, their animals, the people they know. Ask about the thing they just \
+said rather than changing the subject.
+
+You are a voice on a small screen. You cannot play games, look at things, go anywhere or do \
+anything, so never offer to. An offer you cannot keep is a promise broken every time, and a \
+four-year-old will hold you to it.
+
 Reply with ONE or TWO short spoken sentences. Never more.
-Be warm, playful and curious. Ask a small question back sometimes.
-Use simple words a four-year-old knows.
+Be warm and curious. Use simple words a four-year-old knows.
 Your reply is read aloud, so write only what should be said — no emoji, no asterisks, no \
 stage directions, no lists.
 If you did not understand, say so cheerfully and ask them to say it again."""
+
+
+# IT HAD NO IDEA WHAT IT HAD JUST SAID.
+#
+# The owner, on the pet: *"it also asks to play a game a lot"*. The prompt is part of it, but
+# not the whole: this route sent one utterance and nothing else, so every turn of a six-turn
+# hands-free conversation arrived as the first thing anyone had ever said. A model with no
+# idea it asked about a game last time asks about a game again — and a follow-up question it
+# does ask gets answered into a void, which is what makes the toy feel like it is not
+# listening rather than merely slow.
+#
+# IN MEMORY, AND ONLY WHILE THE CONVERSATION IS HAPPENING. The route's promise is that "a
+# stolen panel key is worth exactly one conversation", and that stays true: this is the ONE
+# conversation, in this process, for as long as it is still going on. Nothing reaches the
+# database, no domain is touched, and a restart forgets — which for a bedroom toy is not a
+# defect, because a four-year-old starting again in the morning is starting again.
+_PANEL_TURNS_KEPT = 5
+# Longer than the 2 s the panel waits before reopening the microphone and far shorter than an
+# afternoon: the same child coming back after tea is a new conversation, not turn seven.
+_PANEL_MEMORY_TTL_S = 240.0
+_panel_memory: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+
+
+def _panel_history(key: str, now: float) -> list[tuple[str, str]]:
+    """This panel's live conversation, and a sweep of everyone else's dead ones — the
+    cheapest possible expiry, on a dict that holds one entry per panel in the house."""
+    for stale in [k for k, (seen, _) in _panel_memory.items() if now - seen > _PANEL_MEMORY_TTL_S]:
+        del _panel_memory[stale]
+    entry = _panel_memory.get(key)
+    return list(entry[1]) if entry else []
+
+
+def _panel_remember(key: str, now: float, heard: str, reply: str) -> None:
+    turns = _panel_history(key, now)
+    turns.append((heard, reply))
+    _panel_memory[key] = (now, turns[-_PANEL_TURNS_KEPT:])
+
+
+def _with_history(turns: list[tuple[str, str]]) -> str:
+    """The conversation so far, folded into the system prompt. `complete` takes one user
+    message, so this is where a transcript goes without a router change — and at five turns
+    of a four-year-old it costs a few dozen tokens, which is nothing next to being answered
+    as though they had not spoken."""
+    if not turns:
+        return PANEL_CONVERSATION_PROMPT
+    said = "\n".join(f"They said: {heard}\nYou answered: {reply}" for heard, reply in turns)
+    return (
+        f"{PANEL_CONVERSATION_PROMPT}\n\n"
+        f"You are part-way through a conversation. It has gone like this so far, "
+        f"oldest first:\n{said}\n\n"
+        f"Carry it on. Do not greet them again and do not ask something you already asked."
+    )
 
 
 # When the model is slow, missing or broken. Never the same line twice in a row by luck, and
@@ -860,6 +1011,65 @@ def _to_panel_rate(pcm: bytes, rate: int) -> bytes:
     return out.tobytes()
 
 
+# THE CLIP IS MOSTLY ROOM, AND WHISPER IS CHARGED FOR ALL OF IT.
+#
+# Sizing the encoder window to the clip (below) cut a turn from 9.5 s to 2.3 s and then
+# stopped, because the clip is not the sentence. The panel opens the microphone, waits up to
+# three seconds for a child to start, records, and then waits 900 ms of silence to decide they
+# have finished — so *"yes, we wanted a story"* arrives as six seconds of audio with about a
+# second and a half of speech in it. Measured 2026-09-22: every turn in the log reports
+# `audio_ctx` 390-450, which is the six-second cap, whatever was actually said.
+#
+# So find the speech and send that. The panel already knows where it is — `speech.c` has a VAD
+# running for the wake word — but it does not tell us, and a backend fix ships without an OTA.
+#
+# THE GATE IS RELATIVE TO THE ROOM, NOT A NUMBER. A fixed threshold is wrong in both
+# directions: it deafens a quiet child and it hears a noisy bedroom with a fan in it. The
+# noise floor is taken as the 10th-percentile frame — which the 900 ms hush alone guarantees
+# is silence, and which one door slam therefore cannot move — and the gate sits three times
+# above it. A room so loud that nothing clears the gate trims nothing at all rather than
+# trimming wrongly, which is the failure worth having: an extra half second of silence costs
+# whisper a few milliseconds, and a clipped word is a wrong answer read aloud to a child.
+_TRIM_FRAME = PANEL_RATE // 50  # 20 ms: a word boundary is findable, one sample is not
+_TRIM_LEAD_MS = 200
+# Longer than the lead on purpose. A four-year-old trailing off at the end of a sentence is
+# the clip this must not lose, and whisper reads a trailing breath as punctuation. Together
+# the two margins also put a 620 ms floor under any result, so a one-word turn still arrives
+# as a window whisper can place rather than a syllable it guesses at.
+_TRIM_TAIL_MS = 400
+_TRIM_QUIET = 300  # on a 32767 scale; below this a room is just a room
+
+
+def _trim_to_speech(
+    pcm: bytes, lead_ms: int = _TRIM_LEAD_MS, tail_ms: int = _TRIM_TAIL_MS
+) -> bytes:
+    """The speech inside a clip of mostly silence, with margins. The clip unchanged if
+    there is no telling — never an empty one, because silence is `204` downstream and a
+    truncated word is a wrong answer read aloud to a child.
+
+    The margins are arguments because the two ends of a turn want different ones. A child's
+    recording needs room for a syllable the gate nearly missed; Kokoro's output has exact
+    digital silence at its edges and wants almost none, so the reply starts when the reply
+    starts."""
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
+    frames = len(samples) // _TRIM_FRAME
+    if frames < 8:  # under 160 ms there is nothing to find and nothing to save
+        return pcm
+    peaks = []
+    for i in range(frames):
+        seg = samples[i * _TRIM_FRAME : (i + 1) * _TRIM_FRAME]
+        peaks.append(max(max(seg), -min(seg)))
+    gate = max(sorted(peaks)[frames // 10] * 3, _TRIM_QUIET)
+    voiced = [i for i, peak in enumerate(peaks) if peak >= gate]
+    if not voiced:
+        return pcm
+
+    start = max(0, voiced[0] * _TRIM_FRAME - lead_ms * PANEL_RATE // 1000)
+    end = min(len(samples), (voiced[-1] + 1) * _TRIM_FRAME + tail_ms * PANEL_RATE // 1000)
+    return samples[start:end].tobytes()
+
+
 @router.post("/converse")
 async def converse(principal: PanelDep, request: Request) -> Response:
     """A child holds the panel, talks, and the panel answers out loud.
@@ -878,11 +1088,15 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     telemetry. Nothing is stored — this holds no memories and touches no domain, which keeps
     a stolen panel key worth exactly one conversation.
     """
+    started = time.monotonic()
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
     if len(audio) > PANEL_AUDIO_MAX:
         audio = audio[:PANEL_AUDIO_MAX]
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    spoken_ms = len(audio) * 1000 // (PANEL_RATE * 2)
 
     settings = cast(Settings, request.app.state.settings)
     if not settings.whisper_url:
@@ -901,11 +1115,17 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     # the work this route can ever need.
     #
     # ~50 encoder frames per second of audio against 1500 for the full window, with half as
-    # much again for margin and a floor of 256 — a window trimmed too close truncates the tail
-    # of a sentence, and a four-year-old trailing off is exactly the clip that would lose it.
+    # much again for margin and a floor — a window trimmed too close truncates the tail of a
+    # sentence, and a four-year-old trailing off is exactly the clip that would lose it.
+    #
+    # The floor was 256 while the clip was the whole six-second hold and the margin was the
+    # only thing standing between a word and a guess. `_trim_to_speech` now hands this the
+    # sentence with 200/400 ms of room either side, so the floor can be what a real utterance
+    # needs rather than what a padded one did: 160 is ~2.1 s of audio after the 1.5x margin,
+    # which is longer than anything that survives the trim.
     seconds = len(audio) / float(PANEL_RATE * 2)
-    audio_ctx = max(256, min(1500, int(seconds * 50 * 1.5)))
-    started = time.monotonic()
+    audio_ctx = max(160, min(1500, int(seconds * 50 * 1.5)))
+    stt_started = time.monotonic()
     try:
         transcript = await client.transcribe(
             _wav(audio),
@@ -920,27 +1140,41 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.warning("endpoint.converse_stt_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not hear") from exc
     heard = (transcript.text or "").strip()
-    stt_ms = int((time.monotonic() - started) * 1000)
+    stt_ms = int((time.monotonic() - stt_started) * 1000)
 
     if not heard:
         # Silence is not an error. The panel shows "say that again" rather than a failure face.
-        log.info("endpoint.converse", heard="", stt_ms=stt_ms, audio_ctx=audio_ctx, reply="")
+        log.info(
+            "endpoint.converse",
+            heard="",
+            stt_ms=stt_ms,
+            audio_ctx=audio_ctx,
+            held_ms=held_ms,
+            spoken_ms=spoken_ms,
+            reply="",
+        )
         return Response(status_code=204)
 
     # THE LLM MUST NOT BREAK THE TOY — the jpet's rule, and the reason its `_say` is wrapped.
     reply = ""
+    turns = _panel_history(principal.id, started)
     llm_started = time.monotonic()
     try:
         result = await cast(LlmRouter, request.app.state.llm_router).complete(
             "pet.turn",
-            system=PANEL_CONVERSATION_PROMPT,
+            system=_with_history(turns),
             user_text=heard[:500],
             max_tokens=256,
         )
         reply = (result.text or "").strip()
     except Exception as exc:  # noqa: BLE001
         log.warning("endpoint.converse_llm_error", error=repr(exc))
-    if not reply:
+    if reply:
+        _panel_remember(principal.id, started, heard, reply)
+    else:
+        # A babble is the toy apologising for a model that did not answer. Remembering it
+        # would put "You answered: my brain did a wobble" in front of the next turn, and the
+        # model would take the hint and wobble again.
         reply = random.choice(PANEL_BABBLE)
     llm_ms = int((time.monotonic() - llm_started) * 1000)
 
@@ -957,6 +1191,22 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.warning("endpoint.converse_tts_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not speak") from exc
     out = _to_panel_rate(wav_pcm, wav_rate)
+    # Kokoro pads. The panel cannot skip it — it plays what it is handed from the first
+    # sample — so every reply starts with a beat of nothing, and that padding also counts
+    # against the ceiling below. 30 ms in front and 120 ms behind keeps the reply from
+    # sounding clipped while giving back the rest.
+    out = _trim_to_speech(out, lead_ms=30, tail_ms=120)
+    if len(out) > PANEL_REPLY_MAX:
+        # NEVER SILENTLY. The panel truncates a long reply mid-word with nothing on screen
+        # and nothing in a log, which is why this took a child complaining to find.
+        log.warning(
+            "endpoint.converse_reply_truncated",
+            reply_bytes=len(out),
+            ceiling=PANEL_REPLY_MAX,
+            lost_ms=(len(out) - PANEL_REPLY_MAX) * 1000 // (PANEL_RATE * 2),
+            reply=reply[:120],
+        )
+        out = out[:PANEL_REPLY_MAX]
     tts_ms = int((time.monotonic() - tts_started) * 1000)
 
     # THE THREE NUMBERS THAT DECIDE WHETHER THIS IS USABLE, on every turn. Whisper was
@@ -968,8 +1218,12 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         reply=reply[:120],
         stt_ms=stt_ms,
         # Reported so the encoder window can be correlated with the cost it bought, rather
-        # than the effect being asserted from a changelog.
+        # than the effect being asserted from a changelog. `held_ms` is what the panel
+        # uploaded and `spoken_ms` what survived the trim: the gap between them is the room,
+        # and if it ever closes the trim has stopped working.
         audio_ctx=audio_ctx,
+        held_ms=held_ms,
+        spoken_ms=spoken_ms,
         llm_ms=llm_ms,
         tts_ms=tts_ms,
         total_ms=int((time.monotonic() - started) * 1000),

@@ -43,6 +43,30 @@ void display_set_debug_overlay(bool on);
    panel with no console, which is the only kind there will be from now on. */
 void display_blit_counts(int *ok, int *fail);
 
+/* The same story WITHOUT the amnesia. The pair above is "since the last recovery", so a panel
+   that failed 249 blits in a row, self-healed and has drawn cleanly since reports exactly what
+   a panel that never faltered reports. These three are monotonic: total failures, how many
+   times it recovered, and the meter's own failures — which reached no counter at all until
+   now, on the transfer that happens FIVE TIMES more often than the face's. */
+void display_blit_totals(int *fail_total, int *recoveries, int *meter_fail);
+
+/* WHY THE PANEL RESTARTED ITSELF, across the restart.
+ *
+ * Three unrelated callers reach `esp_restart()` and all three arrive at the box as
+ * `reset_reason: "sw(3)"`, with two of them also sharing `PHASE(9)`. So a self-heal after 250
+ * failed blits — a real fault — is indistinguishable from a four-year-old doing the reboot
+ * gesture. Each caller now says which it was, into an RTC word that was already there and
+ * already dead, and the next boot reports it once and forgets it. "" when the panel did not
+ * restart itself (a power cycle, a crash, a fresh flash). */
+typedef enum {
+    DISPLAY_RESTART_NONE = 0,
+    DISPLAY_RESTART_BLIT_HEAL,
+    DISPLAY_RESTART_GESTURE,
+    DISPLAY_RESTART_OTA_PARK,
+} display_restart_t;
+void display_note_restart(display_restart_t why);
+const char *display_restart_reason(void);
+
 /* PARK THE RENDERER, THEN RESTART — the reboot an OTA must use.
  *
  * An `esp_restart()` from any other task cuts a QSPI pixel transfer in half, and the CO5300

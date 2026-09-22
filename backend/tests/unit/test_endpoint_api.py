@@ -11,9 +11,12 @@ worth pinning — a missing image, an image that does not match its checksum —
 of files, and stubbing the reads away would pin nothing.
 """
 
+import array
 import asyncio
 import base64
 import hashlib
+import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -821,6 +824,130 @@ class TestAPanelCanReportItsOwnState:
         resp = c.post("/api/endpoint/telemetry", json={"version": "x", "uptime_ms": 1})
         assert resp.status_code == 401
 
+    def test_everything_that_used_to_need_a_cable_gets_through(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A panel's worst-case report, with every diagnostic populated at once.
+
+        These readings were all computed on the device and written to an ESP_LOG, which on
+        this panel means written to nowhere — it has been on a plain charger in a bedroom
+        since the day it went in. Each one is here because it would have named a real fault
+        that was otherwise invisible: the largest free INTERNAL block (which `free_heap`
+        cannot distinguish from a fragmented one, and which has explained the blit fault
+        twice), a codec that REFUSED a level the owner set from the box, the Wi-Fi reason
+        code, an update that can never install, and which of the three callers of
+        `esp_restart` it was.
+
+        The whole body has to arrive, because a field the box rejects is a field that reads
+        as absent — and the panel cannot tell the difference.
+        """
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={
+                "version": "0.2.82",
+                "uptime_ms": 900000,
+                "int_largest": 9728,
+                "levels": "90!/36",
+                "blit_fail_total": 249,
+                "blit_recov": 3,
+                "meter_fail": 5100,
+                "wifi_reason": 201,
+                "wifi_drops": 7,
+                "ota_err": "ESP_ERR_OTA_VALIDATE_FAILED",
+                "ota_tries": 4,
+                "restart_why": "blit-heal",
+                "heard": [["jump up", 19, 1], ["burp", 0, 0]],
+            },
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+        out = capsys.readouterr().out
+        for evidence in (
+            '"int_largest": 9728',
+            '"levels": "90!/36"',
+            '"blit_fail_total": 249',
+            '"meter_fail": 5100',
+            '"wifi_reason": 201',
+            '"ota_err": "ESP_ERR_OTA_VALIDATE_FAILED"',
+            '"restart_why": "blit-heal"',
+            '"jump up"',
+        ):
+            assert evidence in out, f"{evidence} did not reach the log"
+
+    def test_a_healthy_panel_does_not_fill_the_log_with_empty_keys(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Fifteen minutes apart, forever. A key that is present and empty on every report
+        from a panel with nothing wrong is how a log stops being read, and the counters
+        already say when to go looking."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.2.82", "uptime_ms": 900000, "int_largest": 81920},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        out = capsys.readouterr().out
+        assert "ota_err" not in out
+        assert "heard" not in out
+        # The always-present ones stay present: a zero here is a reading, not an absence.
+        assert '"int_largest": 81920' in out
+        assert '"wifi_drops": 0' in out
+
+    def test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in(self) -> None:
+        """The firmware builds this body with snprintf into a fixed `char body[N]`, and an
+        overrun does not crash — it TRUNCATES, which until today produced JSON with no
+        closing brace, a 422 from this route, and (because `ota_report` returned ESP_OK for
+        any status it received) a panel that then cleared its crash ring on the strength of a
+        report the box had thrown away. So the buffer must fit the worst case with room, and
+        that worst case must be computed from the real declaration rather than assumed."""
+        main_c = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text()
+        m = re.search(r"char body\[(\d+)\];", main_c)
+        assert m is not None, "the telemetry buffer declaration moved"
+        cap = int(m.group(1))
+
+        worst = {
+            "version": "0.2.82",
+            "uptime_ms": 4294967295,
+            "reset_reason": "poweron_reset(1)",
+            "free_heap": 4294967295,
+            "free_psram": 4294967295,
+            "mic_peak": 32767,
+            "accel": [-32768, -32768, -32768],
+            "stack_free": 999999,
+            "crash_phase": -1,
+            "alc": "ff-ff no-readback",
+            "blit_ok": 999999999,
+            "blit_fail": 999999999,
+            "boot_btn": 999,
+            "vocab_ok": 999,
+            "vocab_bad": 999,
+            "int_largest": 4294967295,
+            "levels": "100!/100!",
+            "blit_fail_total": 999999999,
+            "blit_recov": 999999,
+            "meter_fail": 999999999,
+            "wifi_reason": 999,
+            "wifi_drops": 999999,
+            "ota_err": "ESP_ERR_OTA_VALIDATE_FAILED",
+            "ota_tries": 999999,
+            "restart_why": "blit-heal",
+            "tap": [999, 999, 9],
+            "pmu_history": ["0123456789abcdef0123456789a"] * 8,
+            "vocab_refused": ["make a rude noise"] * 6,
+            "heard": [["make a rude noise", 100, 1]] * 3,
+        }
+        wire = json.dumps(worst, separators=(",", ":"))
+        assert len(wire) < cap, f"worst case {len(wire)} B does not fit {cap} B"
+        # And every key really is one this route accepts — a field the panel spends bytes on
+        # and the box silently drops is worse than one it never sent.
+        assert set(worst) <= set(endpoint_api.TelemetryIn.model_fields)
+
     def test_the_pmu_history_survives_the_round_trip(
         self, client: tuple[TestClient, Path, list[Any]]
     ) -> None:
@@ -985,6 +1112,8 @@ class TestConverse:
         heard: str = "what is your name",
         llm: "_FakeLlm | None" = None,
         tts_rate: int = 24000,
+        tts_long_ms: int = 0,
+        tts_pad_ms: int = 0,
     ) -> _FakeLlm:
         app = cast(FastAPI, c.app)
         app.state.settings.whisper_url = "http://tts-stt:8080/v1"
@@ -1005,7 +1134,22 @@ class TestConverse:
                 return None
 
             async def get(self, url: str, **kw: Any) -> Any:
-                pcm = b"\x10\x00" * 480  # a fifth of a second of something
+                if tts_long_ms:
+                    # A reply of a stated length, optionally with Kokoro's padding either
+                    # side of it. A tone rather than a constant: the trim looks for peak
+                    # structure, and a DC block has none.
+                    import math
+
+                    voice = array.array("h")
+                    for _ in range(tts_pad_ms * tts_rate // 1000):
+                        voice.append(0)
+                    for i in range(tts_long_ms * tts_rate // 1000):
+                        voice.append(int(11000 * math.sin(i * 0.15)))
+                    for _ in range(tts_pad_ms * tts_rate // 1000):
+                        voice.append(0)
+                    pcm = voice.tobytes()
+                else:
+                    pcm = b"\x10\x00" * 480  # a fifth of a second of something
                 # `request=` because `raise_for_status` refuses to judge a response that was
                 # never sent — a detached Response raises RuntimeError, not HTTPStatusError.
                 return httpx.Response(
@@ -1117,3 +1261,301 @@ class TestConverse:
         out = endpoint_api._to_panel_rate(pcm, 48000)
         assert 0 < len(out) < len(pcm)
         assert len(out) % 2 == 0
+
+
+class TestTrimToSpeech:
+    """Finding the sentence inside the hold.
+
+    Measured on the box 2026-09-22: every turn in the log reported `audio_ctx` 390-450 — the
+    six-second cap — whatever was actually said, because the panel uploads its three-second
+    lead-in and its 900 ms hush along with the speech. Whisper is charged for all of it, and
+    with the LLM off the contended slot that padding became the largest term in a turn.
+
+    The gate is relative to the room rather than a number, so these build clips the way a
+    bedroom does: a noise floor everywhere, speech somewhere in the middle.
+    """
+
+    RATE = endpoint_api.PANEL_RATE
+
+    def _clip(
+        self, *, lead_ms: int, speech_ms: int, tail_ms: int, noise: int = 120, level: int = 9000
+    ) -> bytes:
+        import math
+
+        out = array.array("h")
+        for ms, amp in ((lead_ms, 0), (speech_ms, level), (tail_ms, 0)):
+            for i in range(ms * self.RATE // 1000):
+                # A tone, not a constant: a DC block has no peak structure and would let a
+                # broken frame loop pass. The noise is deterministic for the same reason.
+                voice = int(amp * math.sin(i * 0.2)) if amp else 0
+                out.append(voice + (noise if i % 3 else -noise))
+        return out.tobytes()
+
+    def _ms(self, pcm: bytes) -> int:
+        return len(pcm) * 1000 // (self.RATE * 2)
+
+    def test_the_room_goes_and_the_sentence_stays(self) -> None:
+        """The real shape: 3 s of waiting, 1.5 s of a child, 900 ms of hush."""
+        clip = self._clip(lead_ms=3000, speech_ms=1500, tail_ms=900)
+        assert self._ms(clip) == 5400
+        got = endpoint_api._trim_to_speech(clip)
+        # The speech plus its two margins, and nothing else: 200 before, 400 after.
+        assert 2050 <= self._ms(got) <= 2250, self._ms(got)
+
+    def test_the_margins_are_actually_there(self) -> None:
+        """A window sized to a clip that clipped a word is a wrong answer read aloud, so the
+        trim must keep room on both sides — and more after than before, because a four-year-old
+        trailing off is the clip this would lose."""
+        clip = self._clip(lead_ms=2000, speech_ms=1000, tail_ms=2000)
+        got = endpoint_api._trim_to_speech(clip)
+        kept = self._ms(got)
+        assert kept > 1000 + 200 + 400 - 40, kept  # a frame of slack at each edge
+        assert kept < 1000 + 200 + 400 + 60, kept
+
+    def test_a_clip_with_no_speech_in_it_is_handed_over_whole(self) -> None:
+        """Silence is `204` downstream — a judgement whisper makes, not this. Returning an
+        empty clip here would turn a quiet room into a 400 from the WAV writer instead."""
+        clip = self._clip(lead_ms=2000, speech_ms=0, tail_ms=2000)
+        assert endpoint_api._trim_to_speech(clip) == clip
+
+    def test_a_loud_room_does_not_deafen_a_quiet_child(self) -> None:
+        """The reason the gate is not a constant. A fixed threshold tuned for a still bedroom
+        finds speech everywhere once a fan is on, and trims nothing."""
+        clip = self._clip(lead_ms=3000, speech_ms=1500, tail_ms=900, noise=1400, level=9000)
+        got = endpoint_api._trim_to_speech(clip)
+        assert self._ms(got) < 2600, self._ms(got)
+
+    def test_a_slam_does_not_move_the_noise_floor(self) -> None:
+        """Why the floor is a 10th percentile and not an average or a minimum: a single loud
+        transient must leave the gate exactly where it was, so the child is still found."""
+        quiet = self._clip(lead_ms=3000, speech_ms=1500, tail_ms=900)
+        samples = array.array("h")
+        samples.frombytes(quiet)
+        for i in range(300):  # ~19 ms of door, in the lead-in, far louder than the voice
+            samples[16000 + i] = 32000
+        slammed = endpoint_api._trim_to_speech(samples.tobytes())
+        # The door is at 1.0 s and the child starts at 3.0 s, so the kept span now reaches
+        # back to the door — but it still runs all the way through the speech, which is the
+        # part a gate raised by the transient would have lost.
+        assert self._ms(slammed) > self._ms(endpoint_api._trim_to_speech(quiet))
+        assert self._ms(slammed) < 4400, self._ms(slammed)
+
+    def test_a_single_word_still_gets_a_window_whisper_can_place(self) -> None:
+        """ "No!" is a real turn, and 150 ms of it is a clip whisper guesses at. The two
+        margins are what put a floor under it — and the hold around it still has to go."""
+        clip = self._clip(lead_ms=2000, speech_ms=150, tail_ms=2000)
+        got = endpoint_api._trim_to_speech(clip)
+        assert 600 <= self._ms(got) <= 800, self._ms(got)
+
+    def test_a_clip_too_short_to_read_is_left_alone(self) -> None:
+        got = endpoint_api._trim_to_speech(b"\x00\x01" * 200)
+        assert got == b"\x00\x01" * 200
+
+    def test_an_odd_byte_count_does_not_raise(self) -> None:
+        """The panel streams raw s16 with no framing; a cut connection can land mid-sample."""
+        clip = self._clip(lead_ms=500, speech_ms=500, tail_ms=500) + b"\x7f"
+        assert len(endpoint_api._trim_to_speech(clip)) % 2 == 0
+
+    def test_the_window_follows_the_speech_not_the_hold(self) -> None:
+        """The whole point, end to end: the same sentence held for six seconds and for three
+        must cost whisper the same, because it is the same sentence."""
+        long_hold = endpoint_api._trim_to_speech(
+            self._clip(lead_ms=3500, speech_ms=1500, tail_ms=1000)
+        )
+        short_hold = endpoint_api._trim_to_speech(
+            self._clip(lead_ms=400, speech_ms=1500, tail_ms=900)
+        )
+        assert abs(self._ms(long_hold) - self._ms(short_hold)) < 60
+
+
+class TestPanelMemory:
+    """The conversation, for as long as it is one.
+
+    The owner, on the pet: *"it also asks to play a game a lot"*. Part of that was the prompt,
+    but the route also sent one utterance and nothing else — so every turn of a six-turn
+    hands-free conversation arrived as the first thing anyone had ever said, and a model with
+    no idea it asked about a game last time asks about a game again.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean(self) -> Iterator[None]:
+        endpoint_api._panel_memory.clear()
+        yield
+        endpoint_api._panel_memory.clear()
+
+    def test_the_second_turn_knows_about_the_first(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = TestConverse()._wire(c, monkeypatch, heard="I ate toast")
+        for _ in range(2):
+            c.post(
+                "/api/endpoint/converse",
+                content=b"\x00\x01" * 1600,
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        assert len(model.calls) == 2
+        # The first turn cannot know anything; the second must carry both halves of it.
+        assert "I ate toast" not in model.calls[0]["system"]
+        assert "I ate toast" in model.calls[1]["system"]
+        assert model.calls[1]["system"].count(_FakeLlm().text) >= 1
+
+    def test_a_babble_is_not_remembered(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dead model makes the toy apologise for itself. Feeding that back as something it
+        said teaches the next turn to apologise too."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = TestConverse()._wire(c, monkeypatch, llm=_FakeLlm(boom=True), heard="hello")
+        for _ in range(2):
+            c.post(
+                "/api/endpoint/converse",
+                content=b"\x00\x01" * 1600,
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        assert len(model.calls) == 2
+        assert not any(b in model.calls[1]["system"] for b in endpoint_api.PANEL_BABBLE)
+        assert "hello" not in model.calls[1]["system"]
+
+    def test_one_panel_cannot_read_another_panel_s_conversation(self) -> None:
+        endpoint_api._panel_remember("panel-a", 100.0, "my chickens", "which one is yours?")
+        assert endpoint_api._panel_history("panel-b", 100.0) == []
+
+    def test_a_conversation_that_stopped_is_over(self) -> None:
+        """The same child after tea is starting again, not on turn seven."""
+        endpoint_api._panel_remember("panel-a", 100.0, "my chickens", "which one is yours?")
+        still_going = 100.0 + endpoint_api._PANEL_MEMORY_TTL_S - 1
+        assert endpoint_api._panel_history("panel-a", still_going)
+        assert (
+            endpoint_api._panel_history("panel-a", 100.0 + endpoint_api._PANEL_MEMORY_TTL_S + 1)
+            == []
+        )
+
+    def test_a_long_conversation_keeps_only_the_recent_end_of_it(self) -> None:
+        """A bounded prompt and a bounded dict. The panel caps itself at six hands-free turns,
+        but a child pressing the face can go all afternoon."""
+        for i in range(20):
+            endpoint_api._panel_remember("panel-a", 100.0 + i, f"thing {i}", f"reply {i}")
+        turns = endpoint_api._panel_history("panel-a", 120.0)
+        assert len(turns) == endpoint_api._PANEL_TURNS_KEPT
+        assert turns[-1] == ("thing 19", "reply 19")
+
+    def test_the_dead_conversations_do_not_pile_up(self) -> None:
+        """The dict is swept on read, so an expired panel is not a leak waiting for a restart."""
+        for i in range(50):
+            endpoint_api._panel_remember(f"panel-{i}", 100.0, "hi", "hello")
+        endpoint_api._panel_history("panel-0", 100.0 + endpoint_api._PANEL_MEMORY_TTL_S + 1)
+        assert endpoint_api._panel_memory == {}
+
+    def test_the_prompt_does_not_offer_what_the_panel_cannot_do(self) -> None:
+        """The owner: the pet *"could be more of a conversationalist talking about what the
+        kid is doing or what the kid is eating or what the kid did today... talk about his
+        toys"*. A screen with a speaker cannot play a game, and offering one is a promise a
+        four-year-old will hold it to."""
+        prompt = endpoint_api.PANEL_CONVERSATION_PROMPT.lower()
+        assert "cannot play games" in prompt
+        for subject in ("what they ate", "what they did today", "their toys"):
+            assert subject in prompt
+
+
+class TestReplyCeiling:
+    """What the panel can actually play, and the fact that it never said so.
+
+    `firmware/main/talk.c` reads the reply into a fixed PSRAM buffer and `audio_play`
+    truncates to the same ceiling — silently, with nothing on screen and nothing in a log.
+    The owner: *"sometimes when the robot is talking back on a longer reply I get cut off."*
+    Measured in the box log the same afternoon: replies of 221,012 and 261,290 bytes against
+    the 192,000 the panel then held, so the 261 KB one lost its last 2.2 seconds mid-word.
+    """
+
+    def test_the_ceiling_is_the_panel_s_buffer(self) -> None:
+        """Both ends say ten seconds. If this ever drifts, a reply is cut off in a bedroom
+        and nothing anywhere says why — which is exactly how it was found."""
+        firmware = Path(__file__).resolve().parents[3] / "firmware" / "main" / "talk.c"
+        text = firmware.read_text()
+        assert "#define REPLY_MAX_BYTES (16000 * 2 * 10)" in text
+        assert endpoint_api.PANEL_REPLY_MAX == 16000 * 2 * 10
+
+    def test_a_reply_over_the_ceiling_is_cut_but_never_quietly(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=14000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+        assert len(r.content) == endpoint_api.PANEL_REPLY_MAX
+        # structlog renders to stdout, not through the logging module, so `caplog` sees
+        # nothing here and a test written against it would pass on a silent truncation —
+        # which is the one thing this is checking cannot happen.
+        out = capsys.readouterr().out
+        assert "converse_reply_truncated" in out
+        assert '"lost_ms": 4000' in out
+
+    def test_a_reply_inside_the_ceiling_is_left_whole(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=2000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert 0 < len(r.content) < endpoint_api.PANEL_REPLY_MAX
+
+    def test_the_recording_window_outlasts_the_silence_it_waits_for(self) -> None:
+        """The cut-off bug, as an invariant.
+
+        The panel opens the microphone, waits `LISTEN_LEAD_MS` for a child to start, records,
+        and needs `LISTEN_HUSH_MS` of quiet to decide they finished — all inside
+        `CAPTURE_MAX_MS`. At 3000 + 900 the old six-second cap left 2.1 s for the sentence
+        itself, so a child who took a moment to start and paused once in the middle ran out of
+        recording before the hush could fire. The owner: *"the babies keep getting cut off
+        because they're a little bit slow."*
+
+        There must be room for the waiting AND a real sentence, and the box must accept
+        whatever the panel is willing to send, or the tail is cut off at the other end
+        instead.
+        """
+        main = Path(__file__).resolve().parents[3] / "firmware" / "main"
+
+        def const(path: str, name: str) -> int:
+            m = re.search(rf"^#define {name} (\d+)$", (main / path).read_text(), re.M)
+            assert m is not None, f"{name} not found in {path}"
+            return int(m.group(1))
+
+        lead = const("display.c", "LISTEN_LEAD_MS")
+        hush = const("display.c", "LISTEN_HUSH_MS")
+        cap = const("audio.c", "CAPTURE_MAX_MS")
+        assert hush >= 1500, "a four-year-old pauses mid-sentence for longer than an adult"
+        # Four seconds of actual sentence left over, which is a long one at this age.
+        assert cap - lead - hush >= 4000, (lead, hush, cap)
+        assert endpoint_api.PANEL_RATE * 2 * cap // 1000 <= endpoint_api.PANEL_AUDIO_MAX
+
+    def test_the_reply_does_not_start_with_a_beat_of_nothing(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Kokoro pads, and the panel plays what it is handed from the first sample — so the
+        padding is dead air before every single reply, and it counts against the ceiling."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, tts_long_ms=1000, tts_pad_ms=2000)
+        r = c.post(
+            "/api/endpoint/converse",
+            content=b"\x00\x01" * 1600,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        spoken_ms = len(r.content) * 1000 // (endpoint_api.PANEL_RATE * 2)
+        # 1 s of speech plus the 30/120 ms margins, not 1 s of speech plus 4 s of padding.
+        assert 1000 <= spoken_ms <= 1400, spoken_ms

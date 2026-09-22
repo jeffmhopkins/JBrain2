@@ -4605,6 +4605,33 @@ lands in the follow-up window where it does work. Barge-in is a different featur
 codec problem solved first, which §"Step 8" of the conversation plan already had as an open
 question.
 
+#### 10.4co Confirmed on the hardware (0.2.79, 2026-09-22)
+
+```
+04:20:31  v0.2.79  uptime 9s  sw(3)   first boot after the OTA — dark
+04:20:45  v0.2.79  uptime 9s  sw(3)   restarted itself — lit
+```
+
+Two boots, fourteen seconds apart, nobody touching the panel. The owner: *"display worked."*
+
+**The recurring cost is gone**: every deploy in this session until now ended with a manual
+reboot, on a device whose owner has no terminal and whose two units are going into children's
+bedrooms. That is what `CLAUDE.md` #10 calls a gap to design out, and it is now designed out —
+by a workaround rather than a fix, which is worth keeping straight.
+
+**What is still unknown is the cause.** Three theories were tested and two were wrong: the
+DMA/underflow family (§10.4bf), the mid-transfer restart (§10.4by, falsified in 0.2.76), and
+the OLED rail (§10.4x, killed by the PMU ring reading byte-identical through three separate
+dark periods). The remaining suspect is the CO5300's reset line: the vendor BSP leaves
+`BSP_LCD_RST` at `GPIO_NUM_NC`, and the TCA9554 expander — whose configuration register reads
+`0xff`, every pin an input, nothing ever driven — is where that line would be if it is not a
+GPIO. Confirming it needs the Waveshare schematic. Probing it blind does not: an unknown
+expander output could be a power rail or the touch controller, and that is a guess that damages
+hardware rather than costing a cycle.
+
+So the second boot stays until someone reads that schematic, and this section is the note that
+says why it is there — because a workaround nobody remembers is a workaround nobody removes.
+
 #### 10.4cn RTC memory does not survive an OTA (0.2.79, 2026-09-22)
 
 0.2.77's second-boot workaround **never fired**, and the telemetry says exactly why. Two boots,

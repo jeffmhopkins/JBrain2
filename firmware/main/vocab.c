@@ -42,10 +42,14 @@ static const vocab_t VOCAB[] = {
      * and it works when the box is slow or unreachable — which is exactly when a child would
      * most want to give up.
      *
-     * THE SAFEST SINGLE WORD IN THE TABLE, and the only one whose one-word case is easy. Every
-     * other entry here costs something when the television says it — a wiggle, or six seconds
-     * of a bedroom uploaded. A false "stop" ends a conversation that was not happening. */
-    {"stop", VOCAB_STOP, 0},
+     * IT CARRIES THE PANEL'S NAME, and that is the whole reason it is two words. Bare "stop"
+     * was the safest single word in the table — the others cost a wiggle or a recording when
+     * the television says one, while a false "stop" only ends a conversation that was not
+     * happening. But the owner asked for "fish stop", and it is better than the argument that
+     * kept "stop": a child ending a conversation with the pet's own name is the same shape as
+     * starting one with it ("hey fish"), and it leaves the one-word allowance to the words
+     * that genuinely need it. */
+    {"fish stop", VOCAB_STOP, 0},
 
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
@@ -99,6 +103,24 @@ static const vocab_t VOCAB[] = {
        the long bewildered hold after them is the joke (`rig.c`). */
     {"do a burp", VOCAB_ACTION, ACT_BURP},
     {"make a rude noise", VOCAB_ACTION, ACT_FART},
+
+    /* A WAY IN THAT IS NOT ONE WORD, FOR EVERY ACTION.
+     *
+     * The owner: *"burp has been on there. It never actually activates them. The kids say the
+     * word — like the code word is wrong."* Four actions had a single word as their ONLY
+     * phrasing (eat, jump, kick, spin) and two more had alternates no four-year-old would
+     * ever say ("make a rude noise"). A one word phrase is the FRAGILE form here — three
+     * phonemes for "burp" against ten for "come and boogie" — so it must never be the only
+     * way to ask for something. `tests.c` now holds that.
+     *
+     * None of these may start with the single word it backs up: "jump up high" would make
+     * "jump" a prefix of it, which rule 3 forbids and which MultiNet refuses outright. */
+    {"can you burp", VOCAB_ACTION, ACT_BURP},
+    {"can you fart", VOCAB_ACTION, ACT_FART},
+    {"do a big jump", VOCAB_ACTION, ACT_JUMP},
+    {"have a snack", VOCAB_ACTION, ACT_EAT},
+    {"give it a kick", VOCAB_ACTION, ACT_KICK},
+    {"do a spin", VOCAB_ACTION, ACT_SPIN},
 
     /* "color", not "colour", and this is the one place in the repo that spells it that way.
        The phrase is not prose — it is fed to MultiNet's English grapheme-to-phoneme pass,

@@ -646,15 +646,21 @@ static volatile bool s_debug_overlay;
  *
  * Three ways out, and each is a different sentence to a four-year-old:
  *
- *   HUSH   they finished  -> send it. 900 ms, which is long enough to survive the pause a
- *                            four-year-old puts in the middle of a sentence and short enough
- *                            that the six-second cap does not eat the tail of a slow one.
+ *   HUSH   they finished  -> send it. 1.8 s. It was 900 ms, and 900 ms was wrong: the owner,
+ *                            after watching them use it — *"the babies keep getting cut off
+ *                            because they're a little bit slow."* A four-year-old assembling
+ *                            a sentence stops for longer than an adult does, and every one of
+ *                            those pauses ended their turn for them. The old number was
+ *                            reasoned from the SIX-SECOND cap rather than from a child: a
+ *                            longer hush used to risk the cap eating the tail. The cap is ten
+ *                            seconds now (`CAPTURE_MAX_MS`) and the box trims the silence
+ *                            before whisper sees it, so waiting longer costs nothing at all.
  *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
  *                            accidental "hey fish" from the television must not become an
  *                            upload, and this is the branch that stops it.
  *   the cap `audio.c` already enforces -> send what we have rather than truncating to nothing.
  */
-#define LISTEN_HUSH_MS 900
+#define LISTEN_HUSH_MS 1800
 #define LISTEN_LEAD_MS 3000
 
 /* AND THEN IT LISTENS AGAIN, WITHOUT BEING ASKED.
@@ -853,6 +859,18 @@ static int s_lean;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
 static int s_blit_ok;
+/* THE TOTALS, because the reported pair is "since the last recovery" and therefore erases
+   exactly the history worth having. A panel that failed 249 consecutive blits, self-healed,
+   and has drawn cleanly for the last fourteen minutes reports `blit_ok` climbing and
+   `blit_fail` at zero — indistinguishable from one that never faltered. The near miss is the
+   reading you want BEFORE the self-heal reboot fires, not after. */
+static int s_blit_fail_total;
+static int s_blit_recoveries;
+/* Meter blits are their own transfer and their failures reached no counter at all. The meter
+   redraws at 25 Hz against the face's 5, so it is by far the more frequent transfer on this
+   bus — a panel whose meter blits are all failing while face blits succeed was reporting
+   perfect health. */
+static int s_meter_fail;
 
 /* GPIO0 on an ESP32-S3 is the BOOT strap: held low through a reset it enters download mode,
    and read at runtime it is an ordinary input with an external pull-up. Configured as an input
@@ -893,6 +911,13 @@ void display_blit_counts(int *ok, int *fail)
 {
     if (ok != NULL) *ok = s_blit_ok;
     if (fail != NULL) *fail = s_blit_fails;
+}
+
+void display_blit_totals(int *fail_total, int *recoveries, int *meter_fail)
+{
+    if (fail_total != NULL) *fail_total = s_blit_fail_total;
+    if (recoveries != NULL) *recoveries = s_blit_recoveries;
+    if (meter_fail != NULL) *meter_fail = s_meter_fail;
 }
 
 /* THE WHOLE FRAME, THROUGH ONE STATIC INTERNAL BUFFER, A STRIPE AT A TIME.
@@ -1185,7 +1210,10 @@ static void blit_meter(int level)
         x0 = FACE_W - METER_X - METER_W;
         y0 = FACE_H - METER_BOTTOM;
     }
-    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x0 + METER_W, y0 + METER_SPAN, strip);
+    if (esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x0 + METER_W, y0 + METER_SPAN, strip) !=
+        ESP_OK) {
+        s_meter_fail++;
+    }
 }
 
 #define BOB_PX 5
@@ -1251,7 +1279,29 @@ static volatile int s_stack_free;
 #define PHASE_MAGIC 0x50484131u
 static RTC_NOINIT_ATTR uint32_t s_phase_magic;
 static RTC_NOINIT_ATTR uint32_t s_phase;
+/* WAS DEAD, AND IS NOW THE ANSWER TO "WHY DID IT REBOOT". Written at `phase_init` and read
+   by nobody, ever. Three unrelated callers reach `esp_restart()` — the blit self-heal below,
+   the owner's reboot gesture, and the post-update second boot — and all three arrive at the
+   box as `reset_reason: "sw(3)"` with the first two also sharing `PHASE(9)`. So "the panel
+   restarted itself because it could not draw", which is a fault, reads exactly like "a
+   four-year-old did the gesture", which is not. The reason is known at each call site and was
+   being logged to a console this panel does not have. */
 static RTC_NOINIT_ATTR uint32_t s_phase_prev;
+#define RESTART_MAGIC 0x52535441u
+static RTC_NOINIT_ATTR uint32_t s_restart_magic;
+static RTC_NOINIT_ATTR uint32_t s_restart_why;
+static const char *s_restart_why_at_boot = "";
+
+void display_note_restart(display_restart_t why)
+{
+    s_restart_magic = RESTART_MAGIC;
+    s_restart_why = (uint32_t)why;
+}
+
+const char *display_restart_reason(void)
+{
+    return s_restart_why_at_boot;
+}
 
 /* Read once at boot, before the loop overwrites it. */
 static int s_phase_at_crash = -1;
@@ -1268,6 +1318,17 @@ int display_crash_phase(void)
 
 static void phase_init(void)
 {
+    if (s_restart_magic == RESTART_MAGIC) {
+        switch ((display_restart_t)s_restart_why) {
+        case DISPLAY_RESTART_BLIT_HEAL: s_restart_why_at_boot = "blit-heal"; break;
+        case DISPLAY_RESTART_GESTURE:   s_restart_why_at_boot = "gesture";   break;
+        case DISPLAY_RESTART_OTA_PARK:  s_restart_why_at_boot = "ota-park";  break;
+        default:                        s_restart_why_at_boot = "";          break;
+        }
+        /* Consumed, so the NEXT restart has to say so for itself — otherwise a power cycle
+           after a self-heal keeps reporting the self-heal forever. */
+        s_restart_magic = 0;
+    }
     if (s_phase_magic == PHASE_MAGIC) {
         s_phase_at_crash = (int)s_phase;
         s_phase_prev = s_phase;
@@ -1460,7 +1521,7 @@ static void face_task(void *arg)
             if (label_hit(s_fig_x, s_fig_y, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
                 s_show_version = !s_show_version;
                 ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
-                if (sound) audio_beep();
+                if (sound) audio_cue(CUE_TOGGLE);
                 dirty = true;
                 goto tap_done;
             }
@@ -1481,7 +1542,7 @@ static void face_task(void *arg)
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
-            if (sound) audio_beep();
+            if (sound) audio_cue(CUE_BLIP);
             dirty = true;
         tap_done:;
         } else if (tapped) {
@@ -1500,6 +1561,12 @@ static void face_task(void *arg)
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
+                bool rude = false; /* this phrase makes its own noise; skip the cue */
+                /* Understanding a word is not the same event as a finger landing, and used
+                   to sound identical. `stop` gets the falling gesture, the name gets the
+                   rising one that means the microphone is open, and everything else gets the
+                   coin. */
+                cue_t heard_cue = CUE_HEARD;
                 switch (v->kind) {
                 case VOCAB_FORM:
                     st.form = (face_form_t)v->arg;
@@ -1532,6 +1599,7 @@ static void face_task(void *arg)
                     s_follow_armed = false;
                     s_follow_turns = FOLLOW_MAX_TURNS;
                     ESP_LOGI(TAG, "talk: stopped by voice");
+                    heard_cue = CUE_STOP;
                     break;
                 case VOCAB_LISTEN:
                     /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
@@ -1549,6 +1617,7 @@ static void face_task(void *arg)
                         s_follow_turns = 0; /* a deliberate start is a fresh exchange */
                         audio_capture_open();
                         ESP_LOGI(TAG, "talk: listening (name)");
+                        heard_cue = CUE_LISTEN;
                     }
                     break;
                 case VOCAB_ACTION:
@@ -1556,9 +1625,18 @@ static void face_task(void *arg)
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
+                    /* The two the twins kept asking for and that never made a sound. The
+                       noise REPLACES the acknowledging beep rather than following it — a
+                       tone and then a burp is the toy answering twice. */
+                    if (action == ACT_BURP || action == ACT_FART) {
+                        audio_rude(action == ACT_FART);
+                        rude = true;
+                    }
                     break;
                 }
-                if (sound) audio_beep();
+                /* `rude` means the phrase makes its own noise — a burp answering with a
+                   bleep first would be the toy answering twice. */
+                if (sound && !rude) audio_cue(heard_cue);
                 dirty = true;
             }
         }
@@ -1580,7 +1658,7 @@ static void face_task(void *arg)
                     /* RAW, not corrected: a calibration measured through the previous
                        calibration would fit the correction on top of itself. */
                     calib_sample_add(&s_cal_s, rx, ry);
-                    if (sound) audio_beep();
+                    if (sound) audio_cue(CUE_TICK);
                 }
                 /* Advance when the taps AGREE, or when this target has had its cap — a
                    target that will not settle must not trap the owner on it, so past the cap
@@ -1698,8 +1776,10 @@ static void face_task(void *arg)
             s_listen_voice = false;
             s_follow_turns = 0; /* a finger is a deliberate start, like the name */
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
-               that the thing is now listening rather than merely being held. */
-            if (sound) audio_beep();
+               that the thing is now listening rather than merely being held, and a rising
+               sweep says it better than a flat tone: rising is the prosody of a question,
+               which is what an open microphone is. */
+            if (sound) audio_cue(CUE_LISTEN);
             /* AFTER the beep, deliberately: `audio.c` goes deaf for six chunks once the
                speaker runs (§10.4bi), so opening the recording here keeps our own tone out
                of the front of every message. */
@@ -1790,9 +1870,14 @@ static void face_task(void *arg)
                    (talk_state() == TALK_NET_FAILED || now - s_talk_since > TALK_TIMEOUT_MS)) {
             talk_clear();
             /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
-               not hear you" and "it is broken" must not look identical (§10.4bc). */
+               not hear you" and "it is broken" must not look identical (§10.4bc).
+               AND NOT A SILENT ONE TO A CHILD EITHER, which it was: the bewildered face
+               arrived with no sound at all, and to a four-year-old who has just spoken to a
+               toy, silence IS the failure — it is what a broken one does. A low falling pair
+               says try again. It is deliberately gentle; it must not read as being told off. */
             s_talk = TALK_FAILED;
             s_talk_since = now;
+            if (sound) audio_cue(CUE_OOPS);
             ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
@@ -1955,6 +2040,7 @@ static void face_task(void *arg)
                    ESP_ERR_NO_MEM for a DMA buffer, and the number that explains it is the
                    largest free INTERNAL block, which `mem_log` prints. Diagnosing 0.2.38
                    needed a host toolchain because the panel would not say this itself. */
+                s_blit_fail_total++;
                 if (s_blit_fails++ % 100 == 0) {
                     ESP_LOGE(TAG, "blit: %s (failure %d)", esp_err_to_name(err),
                              s_blit_fails);
@@ -1978,6 +2064,7 @@ static void face_task(void *arg)
                 if (now > BLIT_HEAL_AFTER_MS && s_blit_fails >= BLIT_HEAL_FAILS) {
                     ESP_LOGE(TAG, "%d consecutive blit failures — restarting", s_blit_fails);
                     mem_log("blit-heal");
+                    display_note_restart(DISPLAY_RESTART_BLIT_HEAL);
                     vTaskDelay(pdMS_TO_TICKS(150)); /* let the log drain */
                     esp_restart();
                 }
@@ -1985,6 +2072,7 @@ static void face_task(void *arg)
                 if (s_blit_fails > 0) {
                     ESP_LOGI(TAG, "blit recovered after %d failures", s_blit_fails);
                     s_blit_fails = 0;
+                    s_blit_recoveries++;
                 }
                 s_blit_ok++;
             }
@@ -1998,6 +2086,9 @@ static void face_task(void *arg)
         if (rebooting || s_restart_pending) {
             ESP_LOGW(TAG, "%s — parking the renderer and restarting",
                      rebooting ? "reboot gesture completed" : "restart requested");
+            /* The two paths through here are the child's gesture and the OTA's parked
+               restart, and they are the two the box could not tell apart. */
+            display_note_restart(rebooting ? DISPLAY_RESTART_GESTURE : DISPLAY_RESTART_OTA_PARK);
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }

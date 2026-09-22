@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cue.h"
+
 /* Capture and playback share one rate: the ES8311 is one part, opened once.
    16 kHz, not the vendor BSP's 22050, because ESP-SR's audio front end takes "16-bit signed,
    16 kHz" and nothing else — and the models are already on the board (`firmware/README.md`).
@@ -42,8 +44,36 @@ void audio_set_levels(int volume, int mic_gain_db);
 
 /* ASK for a tone. Returns immediately; the audio task plays it between two captures, within
    one chunk. Safe from any task, which a direct `esp_codec_dev_write` from the render loop
-   was not. */
+   was not.
+
+   Kept as the fallback for anything with no cue of its own, and as the one sound that does
+   not need the renderer — see `audio_cue` for what replaced it everywhere else. */
 void audio_beep(void);
+
+/* ASK for a CUE — one of the arcade bleeps in `cue.h`, chosen per event.
+   Every acknowledgement used to be this file's single 880 Hz tone, which told a four-year-old
+   that SOMETHING registered and nothing about what. Refused while the panel is speaking, for
+   the same reason a rude noise is: the sentence outranks the acknowledgement. */
+void audio_cue(cue_t c);
+
+/* ASK for a rude noise — the twins' request, and the one action in the table that was mute.
+   `burp` and `fart` have been in the vocabulary since bring-up but only ever moved the face:
+   `rig.c` gives them a bewildered look and a wobble, and nothing came out of the speaker, so
+   what a four-year-old asked for did not happen. Synthesised rather than sampled, because a
+   WAV of a burp is a licence question, a download and 100 KB of flash to answer something an
+   oscillator answers in twenty lines.
+
+   Built straight into the reply buffer and played by the same path a reply takes, so it is
+   chunked, interruptible, and deafens the microphone while it sounds — a burp the recogniser
+   hears is a false trigger with a loudspeaker behind it. Refused, like a reply, while the
+   panel is already speaking. Safe from any task. */
+void audio_rude(bool wet);
+
+/* The volume and mic gain the codec last ACCEPTED — "90/36", or "90!/36" when it refused the
+   volume. Both setters used to be called with their return values dropped and a log line
+   asserting success underneath, which is the one failure the owner cannot diagnose: they
+   change a level from the box, the part says no, and nothing anywhere disagrees with them. */
+const char *audio_levels_state(void);
 
 /* Largest absolute sample of the most recent chunk, 0..32767 — the one number that says
    whether anything reached the ADC at all, and what the meter draws. */
