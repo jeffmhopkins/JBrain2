@@ -67,6 +67,56 @@ it — whisper is a second llama-swap, and "Kokoro holds a model with no account
 exactly the pattern that accounting does not cover. Kokoro being CPU-only is the one piece of
 good luck here.
 
+## What the box actually measured, 2026-09-22
+
+The chain shipped, the twins used it, and the numbers moved the bottleneck twice. Both
+answers are the opposite of the guess above.
+
+**Whisper: the window was the cost, not the model.** `base.en` was never needed.
+whisper.cpp takes `audio_ctx` as a per-request form field (`server.cpp:418` →
+`wparams.audio_ctx`), so the encoder window can be sized to the clip instead of padded to
+thirty seconds — ~50 encoder frames per second of audio against 1500 for the full window.
+`api/endpoint.py` now sizes it per turn with half again for margin and a floor of 256.
+Measured on the same `large-v3-turbo` that took 9.55 s warm: **1,296–1,319 ms** on a short
+clip, 2,262–2,382 ms on a six-second one. A 7.3× cut with no second instance, no second
+model and no quality loss. Option 1 and option 2 above are both moot.
+
+**The LLM: the problem is one slot, not a big model.** `gpt-oss-120b` serves
+`total_slots = 1` (`props gpt-oss-120b`). `pet.turn` and `agent.turn` are routed to it
+together, so a child's turn and the owner's assistant contend for the same slot, and the
+thrash is mutual and expensive. From the 12:31–12:35 window, with an agent research loop
+running its `web_search`/`web_fetch` turns at a 32k–45k-token context:
+
+| what | tokens out | elapsed | rate |
+|---|---|---|---|
+| `pet.turn` | 46 | **43,216 ms** | 1.1 tok/s |
+| `pet.turn` | 46 | 12,250 ms | 3.8 tok/s |
+| `pet.turn` | 37 | 14,036 ms | 2.6 tok/s |
+| `pet.turn` (slot clear) | 46 | **815–997 ms** | ~50 tok/s |
+| `agent.turn` (slot clear) | 200–824 | 5.5–10.5 s | 19–29 tok/s |
+| `agent.turn` (panel interleaved) | 69–176 | 36–40 s | **1.7–2.3 tok/s** |
+
+The `kv_prefix.restore_waited_for_slot` and `kv_prefix.restored tokens: 32366 slot: 0`
+lines in `logs api` are the mechanism: every panel turn evicts the agent's 32k-token
+prefix from the one slot, and the agent pays a full restore to get it back. The panel
+makes the agent slow and the agent makes the panel slow. A steady-state turn is
+2.6–4.3 s end to end; a contended one is 12–52 s. **That variance is what "still really
+slow" means** — the toy is fast until someone else is using the box, which on this box is
+most of the time.
+
+The fix is not a faster 120B. It is to stop `pet.turn` sharing a slot with the assistant:
+give it its own resident model. `qwen3.5-4b` (Q8, 4.3 GB, `enabled`, on disk) co-resides —
+the residency coordinator evicts only to hold the free-RAM floor (5% of 121 GB ≈ 6 GB) and
+the box has ~32 GB available. Its catalogue default of a 131,072-token window costs 10.7 GB
+of KV for a prompt that is 190 tokens, so the served `-c` wants trimming to a few thousand
+first; footprint then lands near 5 GB. Effort is already `none` on this task, so no thinking
+tokens. Routing is live-settable (`llm-set pet.turn qwen3.5-4b none`) and revertible in one
+command, which makes it a measurement rather than a commitment — the quality question for a
+four-year-old's turn is answerable in five minutes on the real prompt.
+
+Unchanged and still true: Kokoro is ~450 ms and CPU-only, and the whisper call is still
+outside the ledger.
+
 ## What the panel cannot do, and therefore where the work is
 
 On-panel open-vocabulary speech is **off the table**, permanently. MultiNet7 resolves a fixed
@@ -317,9 +367,14 @@ to a design on a number nobody has yet.
 
 ## Open questions
 
-- **Does `base.en` get under 2 s?** Everything above depends on it. Unmeasured.
-- **Which model answers?** `agent.turn` routing is per-task; a child's turn probably wants a
-  small fast model, not the 120B. The keyword classifier may answer most turns without one.
+- ~~**Does `base.en` get under 2 s?**~~ **Answered, and the question was wrong.** The
+  window was the cost, not the model: per-request `audio_ctx` gets `large-v3-turbo`
+  to 1.3 s on a short clip. See "What the box actually measured".
+- **Which model answers?** Still open, but no longer a guess about speed: the 120B answers
+  a child's turn in ~900 ms when its one slot is free and in 12–43 s when the assistant
+  has it. The reason to move `pet.turn` to a small co-resident model is the SLOT, not the
+  tokens/s. What is unmeasured is whether `qwen3.5-4b` is a good enough pet — that needs
+  the real prompt run against it, and the owner's ear, not another log.
 - **What does it say?** A pet talking to a four-year-old needs a persona and bounds, and that
   is a content decision, not a plumbing one. `agent_for_owner_reply(...)` is not the right
   profile for this.
