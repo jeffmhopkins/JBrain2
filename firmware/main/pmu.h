@@ -23,6 +23,21 @@ bool pmu_start(void);
 /* Take one sample into the RTC ring. Cheap: nine one-byte register reads. */
 void pmu_sample(void);
 
+/* PULSE THE PANEL'S HARDWARE RESET, before the display is brought up. Needs `pmu_start()`
+   first (it owns the expander handle). False means the expander did not answer and the panel
+   is being initialised exactly as it always was — a degradation, not a failure, so the caller
+   carries on rather than refusing to boot.
+
+   This is the line `.reset_gpio_num = GPIO_NUM_NC` says does not exist. It does; it hangs off
+   the TCA9554, and nothing in this firmware has ever driven it. See the long comment in
+   `pmu.c` for why that is the black screen after every OTA, and why the pin numbers come from
+   Waveshare's own V2 samples rather than from probing.
+
+   Note for anyone reading the PMU ring afterwards: the expander's config byte was 0xff on
+   every sample ever taken here, meaning all-inputs. Once this runs it reads 0xf8, which is
+   how telemetry confirms the reset actually happened. */
+bool pmu_reset_panel(void);
+
 /* Call ONCE at boot, before the first sample. Copies whatever survived the restart into plain
    RAM, logs it oldest-first, and then re-arms the ring for this boot.
 

@@ -166,6 +166,10 @@ static void fill_stripe(void)
 static esp_lcd_panel_handle_t s_panel;
 /* Kept so display-on and brightness can be re-asserted from the render loop. */
 static esp_lcd_panel_io_handle_t s_io;
+/* Whether the hardware reset above actually landed. Reported, because "the panel came up" and
+   "the panel came up after a real reset" are different facts and only one of them is evidence
+   about the black screen. */
+static bool s_panel_reset;
 
 static bool paint(void)
 {
@@ -192,6 +196,14 @@ bool display_start(void)
     /* Before the first sample, so the history is what preceded the restart rather than a
        mixture of then and now. */
     if (pmu_start()) pmu_report_history();
+    /* AND THEN PULL THE PANEL'S RESET, which this firmware has never done. `esp_restart()`
+       leaves the CO5300 powered and holding whatever state it was in, so a controller stopped
+       mid memory-write swallows the init sequence below as pixel data and the screen stays
+       black — the software reset included, because it goes down the same bus. Only the
+       hardware line can reach it, and it hangs off the expander `pmu.c` already talks to.
+       Best-effort: if the expander does not answer, the bring-up below is exactly what it has
+       always been. */
+    s_panel_reset = pmu_reset_panel();
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 
@@ -1310,6 +1322,11 @@ static int s_phase_at_crash = -1;
     do {              \
         s_phase = (n); \
     } while (0)
+
+bool display_panel_reset(void)
+{
+    return s_panel_reset;
+}
 
 int display_crash_phase(void)
 {

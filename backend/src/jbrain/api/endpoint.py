@@ -489,6 +489,13 @@ class TelemetryIn(BaseModel):
     # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
     # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
     restart_why: str = ""
+    # Whether the panel got a real HARDWARE reset before the display was brought up. The
+    # CO5300's reset line hangs off the TCA9554 expander and no build before 0.2.86 ever drove
+    # it, so the controller only ever saw a SOFTWARE reset — a command down the same QSPI bus
+    # it was already wedged on. False here means this boot initialised the panel the old way
+    # (the expander did not answer), which is the state the post-OTA black screen lives in, so
+    # a dark panel reporting `panel_reset: false` and one reporting `true` are different bugs.
+    panel_reset: bool = False
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -562,6 +569,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         wifi_drops=body.wifi_drops,
         restart_why=body.restart_why,
         tap=body.tap,
+        panel_reset=body.panel_reset,
         # Only when there is something to say. An empty key on every report for fifteen
         # minutes of a healthy panel is how a log stops being read.
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),

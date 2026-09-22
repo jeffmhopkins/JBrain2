@@ -5,6 +5,8 @@
 
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "i2c_bus.h"
 
 static const char *TAG = "pmu";
@@ -83,6 +85,78 @@ static void read_one(i2c_master_dev_handle_t dev, const uint8_t *regs, unsigned 
         uint8_t v = 0;
         if (i2c_master_transmit_receive(dev, &regs[i], 1, &v, 1, 50) == ESP_OK) out[i] = v;
     }
+}
+
+static bool write_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
+{
+    const uint8_t buf[2] = {reg, val};
+    return dev != NULL && i2c_master_transmit(dev, buf, 2, 50) == ESP_OK;
+}
+
+static bool read_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *val)
+{
+    return dev != NULL && i2c_master_transmit_receive(dev, &reg, 1, val, 1, 50) == ESP_OK;
+}
+
+/* THE HARDWARE RESET THIS FIRMWARE HAS NEVER ISSUED, AND THE BLACK SCREEN IT EXPLAINS.
+ *
+ * `display.c` brings the panel up with `.reset_gpio_num = GPIO_NUM_NC` and a comment saying
+ * the line is not brought out, so the CO5300 has only ever had a SOFTWARE reset — a command,
+ * down the same QSPI bus as everything else. That works from a cold boot, where the
+ * controller resets itself when the rails come up, and it cannot work at all in the one case
+ * that matters: `esp_restart()` leaves the CO5300 powered and holding its state, so a
+ * controller stopped mid memory-write is still waiting for pixels. It swallows the next
+ * boot's init sequence as picture data, including the software reset, and the panel never
+ * lights. Nothing sent over that bus can reach it, which is why only TIME or luck has
+ * recovered it — and why the reboot gesture, which the owner has had to perform after every
+ * single update, works on the second try and not the first.
+ *
+ * The line does exist. `pmu.c` has said so since it was written ("the BSP brings the panel's
+ * reset and enable lines out here"), and Waveshare's own V2 sample code says which pins:
+ * every display example for this board drives expander pins 0, 1 and 2 low together, waits
+ * 20 ms, and releases them BEFORE touching the touch controller or the display. This is that
+ * sequence. The pins were not guessed — guessing them is how you cut a rail or hold the touch
+ * controller down, which is why this waited for the vendor's code rather than a probe.
+ *
+ * Measured on the box 2026-09-22, from the PMU ring: the expander's config register reads
+ * 0xff, so all eight pins are INPUTS and nothing is driven. External pull-ups hold the three
+ * reset lines deasserted, which is exactly why a cold boot works and why no reboot has ever
+ * been able to assert them. */
+#define PANEL_RESET_PINS 0x07 /* expander P0, P1, P2 — Waveshare's V2 samples, verbatim */
+#define RESET_LOW_MS     20   /* the vendor's own pulse width */
+#define RESET_SETTLE_MS  120  /* before the init sequence goes out; boot is not time-critical */
+
+bool pmu_reset_panel(void)
+{
+    if (s_exp == NULL) return false;
+
+    uint8_t out = 0xff, cfg = 0xff;
+    if (!read_reg(s_exp, 0x01, &out) || !read_reg(s_exp, 0x03, &cfg)) {
+        ESP_LOGW(TAG, "expander would not answer — panel reset skipped");
+        return false;
+    }
+
+    /* READ-MODIFY-WRITE, and only these three bits. The other five are not ours: two of them
+       read low on this board and the vendor drives a sixth for the SD card in one sample. A
+       blanket write here is how a diagnostic becomes an outage. */
+    const bool ok =
+    /* Deassert BEFORE switching to outputs, so becoming an output cannot glitch the lines
+       low — the pin drives whatever the output register already held. */
+    write_reg(s_exp, 0x01, (uint8_t)(out | PANEL_RESET_PINS)) &&
+    write_reg(s_exp, 0x03, (uint8_t)(cfg & (uint8_t)~PANEL_RESET_PINS)) &&
+    write_reg(s_exp, 0x01, (uint8_t)(out & (uint8_t)~PANEL_RESET_PINS));
+    if (!ok) {
+        ESP_LOGW(TAG, "expander write failed — panel reset incomplete");
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(RESET_LOW_MS));
+    if (!write_reg(s_exp, 0x01, (uint8_t)(out | PANEL_RESET_PINS))) {
+        ESP_LOGE(TAG, "the panel reset went low and would not come back up");
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(RESET_SETTLE_MS));
+    ESP_LOGI(TAG, "panel hardware reset: expander pins 0-2 pulsed low %d ms", RESET_LOW_MS);
+    return true;
 }
 
 int pmu_history_hex(char (*out)[PMU_SAMPLE_CHARS], int max)

@@ -4936,6 +4936,98 @@ than rhythm anyway, and nothing escaping that fast has time to flutter.
 deliberate room above it, because §10.4cq's silent-swallow is what a tight ceiling here looks
 like.
 
+#### 10.4cs The reset line that was there all along (0.2.86, 2026-09-22)
+
+**The panel has never had a hardware reset, and that is the black screen.**
+
+`display.c` brings the CO5300 up with `.reset_gpio_num = GPIO_NUM_NC` and a comment asserting
+*"the panel has no reset line brought out; the init sequence does the work."* That comment is
+wrong, and everything downstream of it followed.
+
+With no reset pin, the controller only ever gets a **software** reset — a command, down the
+same QSPI bus as everything else. From a cold boot that is fine: the CO5300 resets itself when
+the rails come up. It cannot work in the one case that matters. `esp_restart()` leaves the
+controller **powered and holding its state**, so a CO5300 stopped mid memory-write is still
+waiting for pixels — and it swallows the next boot's entire init sequence as picture data,
+**including the software reset**. Nothing sent over that bus can reach it.
+
+That is the whole shape of the fault, and it finally explains the parts that never fitted:
+
+- **Why the screen is dark while the firmware is provably fine.** §10.4am measured rails up,
+  firmware alive and beeping, `blit_ok` climbing with `blit_fail` at zero — frames going out
+  to a controller that was not listening. Exactly what a wedged memory-write looks like.
+- **Why the reboot gesture works and the OTA's own restart does not.** §10.4cl blamed leaving
+  mid-transfer and 0.2.77 parked the renderer to fix it; telemetry confirms the park FIRES
+  (`restart_why: "ota-park"`) and the screen is still black, which §10.4cp recorded as a
+  correction without explaining it. Now it explains itself: how the panel leaves was never the
+  variable. The gesture works because it is a *later* reboot, by which time the controller has
+  been fed enough bytes to finish the write it was stuck in.
+- **Why waiting helps.** The owner: *"I don't want to wait 15 minutes. Can I just do the
+  gesture update"* — waiting was already known to work, and nobody had a reason for it.
+
+##### The line exists, and `pmu.c` has said so since it was written
+
+*"The BSP brings the panel's reset and enable lines out here, which is why a chip nothing has
+ever written to can still be holding the screen off."* The suspicion was recorded; what was
+missing was **which pins**, and probing blind next to a power rail and a touch controller was
+never worth the risk.
+
+Waveshare's own V2 sample code answers it. Every display example for this board does the same
+thing before touching the touch controller or the display:
+
+```cpp
+expander.pinMode(0/1/2, OUTPUT);
+expander.digitalWrite(0/1/2, LOW);
+delay(20);
+expander.digitalWrite(0/1/2, HIGH);
+```
+
+A 20 ms active-low pulse on **TCA9554 pins 0, 1 and 2**. Verified identical across
+`04_GFX_FT3168_Image`, `02_Drawing_board` and `13_LVGL_Widgets` in the `arduino-v2` tree —
+this board's revision, not V1's.
+
+##### Confirmed against the box's own telemetry
+
+The PMU ring that survived the 0.2.85 OTA reads, on all eight samples:
+
+```
+20 15 4a 0f ff 01 | cf ff ff
+                    in out cfg
+```
+
+**`cfg = 0xff` — all eight expander pins are INPUTS.** Nothing is driven, exactly as `pmu.h`
+says. External pull-ups hold the three reset lines deasserted, which is precisely why a cold
+boot works and why no reboot has ever been able to assert them.
+
+(Those samples are a *healthy-panel* baseline — they cover the two minutes before the OTA
+reboot. A dark-period capture would still be worth having, and the gesture is how to get one.)
+
+##### What shipped
+
+`pmu_reset_panel()` pulses pins 0–2 low for 20 ms and releases them, then settles 120 ms
+before the init sequence goes out. It is called from `display_start()` immediately after
+`pmu_start()` — which already owned the expander handle — and before the SPI bus comes up.
+
+Three things it deliberately does:
+
+- **Read-modify-write, three bits only.** The other five are not ours: two read low on this
+  board and the vendor drives a sixth for the SD card. A blanket write is how a diagnostic
+  becomes an outage.
+- **Deassert before switching to outputs**, so becoming an output cannot glitch the lines low.
+- **Degrade, don't refuse.** If the expander does not answer, the bring-up is exactly what it
+  has always been — a panel that boots the old way beats a panel that will not boot.
+
+`panel_reset` is now in telemetry (and in `TelemetryIn`, because a key the panel sends and the
+box drops is a bug this plan has already had once). A dark panel reporting `panel_reset: true`
+and one reporting `false` are different bugs, and until now every boot was silently the
+second.
+
+**Not yet confirmed on hardware.** This is an I2C write sequence that cannot be exercised on
+the host, and the panel is 0.2.85 and unattended. The prediction is specific and cheap to
+falsify: the first boot of 0.2.86 — the very boot that has been going dark after every single
+update — should come back lit, with `panel_reset: true` and the expander's config byte reading
+`0xf8` instead of `0xff`.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
