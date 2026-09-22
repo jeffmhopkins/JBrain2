@@ -3807,6 +3807,94 @@ people as well as devices, and the prefix being stripped on the BOX, which is th
 that has a transcript. Unbuildable until press-and-hold is confirmed on hardware; that
 dependency has not moved.
 
+#### 10.4by The black screen after every update was the reboot, not the rail (0.2.65, 2026-09-22)
+
+The owner, with a dark panel minutes after the 0.2.64 update landed: *"Black screen right now —
+do you want me to restart it, or are there logs you should pull? It seems after every
+over-the-air update the screen is black these times."*
+
+**Solved, by the instrument built for it, and the answer was not the one everything pointed
+at.**
+
+##### What the recording said
+
+`pmu.h` exists for exactly this moment: the dark state cannot be observed live (QSPI reads
+return zeros, and opening the USB console resets the S3 before anything can be seen), so the
+AXP2101 and the TCA9554 are sampled every ten seconds into RTC memory, which survives
+`esp_restart()` and is cleared only by pulling the plug. The standing hypothesis it was built
+to test is in `display.c`'s own comment: *"it still blanks -> nothing the controller is told
+matters, which points at the OLED rail and the AXP2101 this firmware has never spoken to."*
+
+So the first thing to say was **do not power-cycle it** — that is the one action that erases
+the evidence. The owner rebooted with the maintenance gesture instead, which is
+`esp_restart()` and preserves the ring, and the boot telemetry carried eight samples from the
+dark period:
+
+```
+20 15 4a 0f ff 01 cf ff ff     x8, dark
+20 15 4a 0f ff 01 cf ff ff     the working panel, previous boot
+```
+
+**Byte-identical.** Status, chip id `0x4a`, and the three rail-enable registers `0x80/0x90/0x91`
+= `0f/ff/01` — the OLED rail was powered the entire time the screen was black. The hypothesis
+that had led since §10.4x is dead, killed by a measurement rather than by an argument.
+
+Three more facts arrived with it: the panel **beeped on touch** while dark (firmware and touch
+alive), `blit_ok` climbed with `blit_fail` at **zero** (transfers accepted), and the gesture
+reboot **brought the screen straight back** (no power cycle needed, which is what everyone had
+been doing).
+
+##### The cause, which was in the diff of who calls `esp_restart()`
+
+Frames going out, rails up, controller dark. That leaves the CO5300's own state — and the
+difference between the reboot that fixes it and the reboot that causes it is *which task
+restarts the chip*.
+
+- **The gesture reboot** restarts from **inside the render loop**, at a point the code already
+  chose deliberately (§10.4: *"the frame carrying a full-width cue has to reach the glass
+  first"*). Nothing is in flight on the QSPI bus.
+- **The OTA reboot** called `esp_restart()` from `app_main`'s loop, **asynchronously, while the
+  render task was mid-blit.**
+
+So the OTA cut a pixel transfer in half and the controller kept the half it got. It comes back
+still waiting for the rest of a memory-write, and the next boot's init sequence is swallowed as
+pixel data — including the driver's software reset, which is why that never rescued it:
+`reset_gpio_num` is `GPIO_NUM_NC` on this board, so `panel_co5300_reset()` falls back to
+sending `0x01`, and `0x01` is eaten as a parameter like everything else. The renderer then
+queues perfect frames into a controller that is not listening, which is precisely the telemetry
+signature: `blit_ok` rising, `blit_fail` zero, screen black.
+
+A power cycle fixed it because it takes the controller's state with it. That is why the fault
+looked like a rail problem for days: **the only known cure was removing power**, and that is
+also what a rail fault would have needed.
+
+##### The fix
+
+`display_request_restart()`. The OTA sets a flag and the render loop restarts at the same point
+the gesture always has — after the frame, nothing in flight. `ota_apply` then waits one second
+and restarts from its own task anyway if the renderer never parks: the image is already
+installed and marked bootable by then, so a dead render task must not be able to strand the
+panel on the old one. Rebooting late beats not rebooting.
+
+##### What is and is not verified
+
+The mechanism is not a theory about what might be happening — the two reboot paths are a
+controlled experiment that has now run many times, one leaving the panel dark on every update
+and the other recovering it on every attempt, differing only in this. But **neither `display.c`
+nor `ota.c` is in the host harness** (both are full of ESP headers), so there is no test here;
+the build is the only static check.
+
+The real verification is the next update, and it is self-announcing: if the panel comes up lit
+without anyone touching it, this was it. If it comes up dark, the parking is not sufficient and
+the next suspect is resynchronising the controller at init — sending enough `0x00` NOPs to
+flush a half-consumed command before the reset, since a controller mid-parameter cannot be
+talked to any other way.
+
+Worth recording separately: **this cost a manual power cycle on every single deploy**, on a
+device whose owner has no terminal and whose two units are going into children's bedrooms.
+`CLAUDE.md` #10 calls that a gap to design out rather than a step to document, and it had been
+quietly accepted as the cost of updating for long enough to be described as *"these times"*.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

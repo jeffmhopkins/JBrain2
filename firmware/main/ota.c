@@ -11,11 +11,21 @@
 #include "esp_https_ota.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "display.h"
 
 static const char *TAG = "ota";
 
 #define MANIFEST_MAX 1024
 #define HTTP_TIMEOUT_MS 15000
+/* How long to let the renderer park before restarting anyway. One frame plus its own 150 ms
+   drain is about 200 ms, so a second is generous — and the fallback is not optional: the
+   image is already installed and marked bootable at this point, so a render task that has
+   died must not be able to strand the panel on the old one. Rebooting late beats not
+   rebooting. */
+#define PARK_TIMEOUT_MS 1000
 
 /* Who this panel is willing to believe.
  *
@@ -247,7 +257,20 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
         ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
         return err;
     }
-    ESP_LOGI(TAG, "installed; rebooting into the new slot on probation");
+    /* THROUGH THE RENDERER, NOT FROM HERE, and the black screen after every update is the
+       reason. `esp_restart()` on this task cuts a QSPI pixel transfer in half and the CO5300
+       keeps the half it got — it is still waiting for the rest of a memory-write when the
+       chip comes back, so the next boot's init bytes are swallowed as pixel data and the
+       panel never lights. Measured 2026-09-22: the rails were up the whole time (the PMU ring
+       through the dark period is byte-identical to a working panel's), the firmware was alive
+       and beeping, and `blit_ok` climbed with `blit_fail` at zero — frames going out to a
+       controller that was not listening. The reboot GESTURE recovered it every time, and the
+       only thing it does differently is leave from inside the render loop with nothing in
+       flight. See `display_request_restart`. */
+    ESP_LOGI(TAG, "installed; parking the renderer, then rebooting into the new slot");
+    display_request_restart();
+    vTaskDelay(pdMS_TO_TICKS(PARK_TIMEOUT_MS));
+    ESP_LOGW(TAG, "renderer did not park in %d ms — restarting from here", PARK_TIMEOUT_MS);
     esp_restart();
     return ESP_OK;
 }

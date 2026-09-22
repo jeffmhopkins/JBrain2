@@ -327,6 +327,15 @@ bool display_start(void)
 #define BRIGHTNESS_DEFAULT 0xFF
 static volatile uint8_t s_brightness = BRIGHTNESS_DEFAULT;
 static volatile bool s_brightness_pending;
+/* Set from the OTA task, honoured by the render loop — see `display_request_restart`. A flag
+   rather than a call, for the reason the codec has one: the owner of a peripheral restarts
+   it, never a passer-by. */
+static volatile bool s_restart_pending;
+
+void display_request_restart(void)
+{
+    s_restart_pending = true;
+}
 
 /* ONE TASK OWNS THE PANEL IO, AND IT IS THE RENDER TASK.
  *
@@ -1635,8 +1644,14 @@ static void face_task(void *arg)
             }
             since_draw = 0;
         }
-        if (rebooting) {
-            ESP_LOGW(TAG, "reboot gesture completed — re-checking firmware");
+        /* BOTH REBOOTS LEAVE FROM HERE, and that is the point. This is the one place in the
+           firmware where a frame has just finished and nothing is in flight on the QSPI bus,
+           which is the difference between a panel that comes back and one the owner has to
+           power-cycle by hand (`display.h`). The gesture has always left from here; the OTA
+           used to restart from its own task, mid-transfer. */
+        if (rebooting || s_restart_pending) {
+            ESP_LOGW(TAG, "%s — parking the renderer and restarting",
+                     rebooting ? "reboot gesture completed" : "restart requested");
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }
