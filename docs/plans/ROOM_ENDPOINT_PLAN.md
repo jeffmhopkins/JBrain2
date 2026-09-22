@@ -3895,6 +3895,61 @@ device whose owner has no terminal and whose two units are going into children's
 `CLAUDE.md` #10 calls that a gap to design out rather than a step to document, and it had been
 quietly accepted as the cost of updating for long enough to be described as *"these times"*.
 
+#### 10.4bz The microphone dot is gone, and the argument for it was overstated (0.2.66, 2026-09-22)
+
+The owner, once 0.2.64 made it visible: *"The little LED on the bottom left turns on — I think
+when the local model starts listening to audio, and it gains diameter as the mic volume
+increases. I'd prefer just to remove that altogether. The red dot on the top right that says
+listening I want to keep when I press it, but the other one on the bottom left is unneeded."*
+
+Their reading of it is exactly right: `caption.c` eased a value toward 1.0 while the VAD heard
+speech and 0.25 while the microphone was merely open, and the dot's radius scaled with it. So
+it grew when the room got louder.
+
+Removed, along with `caption_t`'s `live` and `lit`, the `live`/`speech` arguments to
+`caption_tick`, the `pip` argument to `caption_draw`, and `MIC_COLOUR`. A feature deleted by
+commenting out its draw call leaves dead state behind that the next person has to reason about.
+
+##### The correction that matters more than the deletion
+
+§10.4bx justified this dot as a compliance requirement — *"the one mark on this panel that is a
+promise to a room rather than a decoration: the ICO Children's Code requires it while the
+microphone is open"* — and `caption.h` said the same. **That was overstated, and it is worth
+saying plainly because it was said in this plan, in a header, and in a test name.**
+
+The Code's explicit *"obvious sign to children when it is active"* wording belongs to its
+GEOLOCATION standard. Its connected-toys standard asks that a device include effective tools
+for conformance, not that it carry a specific light. And the Code governs information society
+services offered to the public — not a self-hosted panel a parent runs in their own house for
+their own children, where the data controller and the parent are the same person.
+
+The honest version: **it was a good idea argued as a legal one.** Dressing a design preference
+in a regulation is how a preference becomes unarguable, and the owner should not have had to
+argue with a citation to remove a dot from their own toy.
+
+##### What is true, and now unmarked
+
+The microphone IS always open — the wake-word recogniser needs it to be — and after this there
+is no always-on sign of that on the glass. What remains is `draw_listening`, which marks the
+press-and-hold recordings, and those are the ones that **leave the panel** for whisper and the
+LLM. Continuous wake-word audio never leaves the device; it is matched on-chip against a fixed
+command list and discarded. So the indicator that survived is the one covering the traffic that
+reaches the network, which is the more defensible half of the pair if only one is kept.
+
+##### The tests moved rather than went
+
+Two asserted the dot. `test_caption_indicator_tracks_the_microphone` ("an open microphone is
+always indicated", "muted is a promise") was the right assertion for a feature that no longer
+exists, and is replaced by `test_the_ticker_draws_nothing_of_its_own` — with no phrase to show,
+the row is empty and the pet underneath it untouched, which is what a deletion should leave
+behind and is exactly where a stray pixel would survive.
+
+`test_the_microphone_light_is_inside_the_case` from §10.4bx becomes
+`test_the_case_geometry_is_the_case`. The dot is gone but the enclosure is not, and
+`face_inside_case` still keeps the version label out of the corners. Pinning the predicate
+directly also closes a hole in the old test: one that returned true everywhere would have
+passed it just as happily, and would have been the more dangerous bug.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

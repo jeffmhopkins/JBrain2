@@ -11,13 +11,6 @@
 #define ADVANCE ((FONT_W + 1) * SCALE)
 #define ROW_H (FONT_H * SCALE)
 #define MARGIN 8
-#define PIP_R 5
-/* 32, NOT 10, AND THE DIFFERENCE IS WHETHER ANYONE CAN SEE IT. At 10 the dot's outer edge sat
-   about 50 px from the bottom-left corner's centre of curvature, against the case's 48 px
-   radius (`FACE_CASE_CORNER_R`) — so the indicator the ICO Children's Code requires while the
-   microphone is open was drawn perfectly and hidden by the enclosure. 32 puts the whole dot,
-   at its largest pulse, inside the opening with room to spare. */
-#define PIP_X 32
 
 /* Slow enough to read, and it SPEEDS UP WITH THE BACKLOG. A fixed rate is what makes a ticker
    feel broken: say four things quickly and the fourth arrives half a minute later, by which
@@ -64,17 +57,11 @@ bool caption_say(caption_t *c, const char *text)
     return true;
 }
 
-void caption_tick(caption_t *c, uint32_t now_ms, int panel_w, bool live, bool speech)
+void caption_tick(caption_t *c, uint32_t now_ms, int panel_w)
 {
     if (c == NULL) return;
     const uint32_t dt = c->last_ms == 0 ? 0 : now_ms - c->last_ms;
     c->last_ms = now_ms;
-    c->live = live;
-
-    /* Eased both ways, because a VAD flag toggling per frame would strobe a light that exists
-       to tell a room the microphone is open. */
-    const float want = (live && speech) ? 1.0f : (live ? 0.25f : 0.0f);
-    c->lit += (want - c->lit) * 0.25f;
 
     if (panel_w <= 0) panel_w = 1;
     if (c->len == 0 || dt == 0 || dt > 2000) return; /* a long gap is a stall, not travel */
@@ -95,8 +82,7 @@ bool caption_idle(const caption_t *c)
     return c == NULL || c->len == 0;
 }
 
-void caption_draw(const caption_t *c, uint16_t *fb, int fbw, int fbh, uint16_t text,
-                  uint16_t pip)
+void caption_draw(const caption_t *c, uint16_t *fb, int fbw, int fbh, uint16_t text)
 {
     if (c == NULL || fb == NULL) return;
     const int y = fbh - MARGIN - ROW_H;
@@ -129,21 +115,5 @@ void caption_draw(const caption_t *c, uint16_t *fb, int fbw, int fbh, uint16_t t
            arriving. `font_draw` clips, which is the whole reason the ticker can be drawn as
            one string however long the backlog is. */
         font_draw(fb, fbw, fbh, x, y, SCALE, c->buf, text);
-    }
-
-    /* THE INDICATOR IS DRAWN WHENEVER THE MICROPHONE IS OPEN, with or without a caption, and
-       LAST so a caption sweeping past can never paint over it. It is what tells the room it
-       is being listened to. */
-    if (c->live) {
-        const int r = (int)(PIP_R * (0.6f + 0.6f * c->lit));
-        const int cy = y + ROW_H / 2;
-        for (int dy = -r; dy <= r; dy++) {
-            for (int dx = -r; dx <= r; dx++) {
-                if (dx * dx + dy * dy > r * r) continue;
-                const int px = PIP_X + dx, py = cy + dy;
-                if (px < 0 || py < 0 || px >= fbw || py >= fbh) continue;
-                fb[py * fbw + px] = pip;
-            }
-        }
     }
 }

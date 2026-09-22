@@ -845,49 +845,37 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
 }
 
-static void test_the_microphone_light_is_inside_the_case(void)
+static void test_the_case_geometry_is_the_case(void)
 {
-    /* THE OWNER FOUND THIS BY TURNING THE PANEL SIDEWAYS: "there is a small red light on the
-       bottom left ... the bottom left one is always there regardless. It might be hidden from
-       the curvature while vertical?" It was. §10.4c measured the enclosure rounding the
-       display into a squircle and `frontend/src/pet/scale.ts` has masked the preview to it
-       since; the firmware never did, and the one mark on this panel that is a promise to a
-       room rather than a decoration — the ICO Children's Code indicator, drawn whenever the
-       microphone is open — sat behind the case.
+    /* §10.4bx: the enclosure rounds the display into a squircle, so a pixel can be drawn
+       perfectly and still be behind plastic. `frontend/src/pet/scale.ts` has masked the PWA
+       preview to that shape since day one; the firmware did not, and the microphone-open dot
+       spent its whole life hidden in the bottom-left corner as a result.
 
-       A screenshot could never show this. The framebuffer was always correct. So the test
-       asks the question the framebuffer cannot: of the pixels this draws, is every one of
-       them somewhere a person can actually see?
-
-       The PIP ALONE, with no caption. The ticker deliberately scrolls in from the right edge
-       and is clipped by the corner on its way past, which is what a ticker does; the
-       indicator is not allowed to be. */
-    caption_t c;
-    caption_reset(&c);
-    caption_tick(&c, 1000, FACE_W, true, true);
-    for (int i = 0; i < 40; i++) caption_tick(&c, 1000 + (uint32_t)i * 40, FACE_W, true, true);
-
-    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-    caption_draw(&c, fb, FACE_W, FACE_H, 0x1234, 0x00F8);
-
-    long lit = 0, outside = 0;
-    for (int y = 0; y < FACE_H; y++) {
-        for (int x = 0; x < FACE_W; x++) {
-            if (fb[y * FACE_W + x] == 0) continue;
-            lit++;
-            if (!face_inside_case(x, y, FACE_W, FACE_H)) outside++;
-        }
-    }
-    CHECK(lit > 40, "the indicator is actually drawn");
-    CHECK(outside == 0, "every pixel of the microphone light clears the case");
-
-    /* And the geometry it is checked against is the case, not a rectangle that would pass
-       anything: the four corners are out, the centre and the edge midpoints are in. */
+       THE DOT IS GONE NOW — the owner had it removed (0.2.66) — but the geometry is not, and
+       it is what keeps the version label and anything drawn next to it out of the corners. So
+       this pins `face_inside_case` itself: a predicate that returned true everywhere would
+       have passed the old test just as happily, and would have been the more dangerous bug. */
     CHECK(!face_inside_case(0, 0, FACE_W, FACE_H), "the corner pixel is behind the case");
-    CHECK(!face_inside_case(FACE_W - 1, FACE_H - 1, FACE_W, FACE_H), "and the opposite one");
+    CHECK(!face_inside_case(FACE_W - 1, 0, FACE_W, FACE_H), "and the opposite top one");
+    CHECK(!face_inside_case(0, FACE_H - 1, FACE_W, FACE_H), "and both bottom ones");
+    CHECK(!face_inside_case(FACE_W - 1, FACE_H - 1, FACE_W, FACE_H), "including that one");
+    CHECK(!face_inside_case(10, FACE_H - 15, FACE_W, FACE_H),
+          "and where the microphone dot used to sit, which is how this was found");
     CHECK(face_inside_case(FACE_W / 2, 0, FACE_W, FACE_H), "the top edge's middle is visible");
     CHECK(face_inside_case(0, FACE_H / 2, FACE_W, FACE_H), "so is the left edge's");
     CHECK(face_inside_case(FACE_W / 2, FACE_H / 2, FACE_W, FACE_H), "and the centre");
+    CHECK(!face_inside_case(-1, 10, FACE_W, FACE_H), "off the panel is not on the panel");
+    CHECK(!face_inside_case(10, FACE_H, FACE_W, FACE_H), "in either direction");
+
+    /* The corner is a quarter circle, not a diagonal cut: a point on the arc is in, one just
+       outside it is out, and a predicate that got the sense backwards fails both. */
+    const int r = FACE_CASE_CORNER_R;
+    CHECK(face_inside_case(r, r, FACE_W, FACE_H), "the arc's own centre is inside");
+    CHECK(face_inside_case(r - (r * 70) / 100, r - (r * 70) / 100, FACE_W, FACE_H),
+          "and a point just inside the arc");
+    CHECK(!face_inside_case(r - (r * 72) / 100, r - (r * 72) / 100, FACE_W, FACE_H),
+          "but not one just outside it");
 }
 
 static void test_the_caption_does_not_black_out_the_pet(void)
@@ -922,9 +910,9 @@ static void test_the_caption_does_not_black_out_the_pet(void)
     caption_t cap;
     caption_reset(&cap);
     caption_say(&cap, "play peekaboo");
-    for (int i = 0; i < 30; i++) caption_tick(&cap, (uint32_t)(i * 40), FACE_W, true, false);
+    for (int i = 0; i < 30; i++) caption_tick(&cap, (uint32_t)(i * 40), FACE_W);
     face_draw(fb, 0, &st);
-    caption_draw(&cap, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
+    caption_draw(&cap, fb, FACE_W, FACE_H, 0xFFFF);
     long over = 0;
     for (int r = y - 3; r < y + ROW_H + 3 && r < FACE_H; r++) {
         for (int c = 0; c < FACE_W; c++) {
@@ -1852,32 +1840,31 @@ static void test_caption_starts_empty_and_silent(void)
     caption_reset(&c);
     CHECK(caption_idle(&c), "nothing to show at boot");
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
-    CHECK(non_black() == 0, "and nothing drawn — no indicator until the microphone is open");
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF);
+    CHECK(non_black() == 0, "and nothing drawn");
 }
 
-static void test_caption_indicator_tracks_the_microphone(void)
+static void test_the_ticker_draws_nothing_of_its_own(void)
 {
-    /* This is the ICO requirement, so it is asserted against the REAL state: the dot exists
-       when the microphone is open and cannot exist when it is not. */
+    /* THIS REPLACES `test_caption_indicator_tracks_the_microphone`, which asserted that an
+       open microphone is always indicated. That was the right assertion for a feature that no
+       longer exists: the owner had the dot removed (0.2.66), so the property to hold now is
+       the opposite one — with no phrase to show, this row is empty, and the pet underneath it
+       is untouched. A leftover pixel from a removed feature is exactly the kind of thing that
+       survives a deletion. */
     caption_t c;
     caption_reset(&c);
-    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, false);
+    for (int i = 0; i < 60; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W);
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
-    const long idle_dot = non_black();
-    CHECK(idle_dot > 0, "an open microphone is always indicated");
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF);
+    CHECK(non_black() == 0, "an idle ticker draws nothing at all");
 
-    for (int i = 20; i < 60; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, true, true);
+    /* And it still draws the thing it is for. */
+    CHECK(caption_say(&c, "HELLO"), "a phrase is accepted");
+    caption_tick(&c, 2400, FACE_W);
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
-    CHECK(non_black() > idle_dot, "and brightens while someone is talking");
-
-    caption_reset(&c);
-    for (int i = 0; i < 20; i++) caption_tick(&c, (uint32_t)(i * 40), FACE_W, false, false);
-    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x00F8);
-    CHECK(non_black() == 0, "a closed microphone shows nothing — muted is a promise");
+    caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF);
+    CHECK(non_black() > 0, "but a phrase still reaches the glass");
 }
 
 static void test_caption_scrolls_and_drains(void)
@@ -1893,9 +1880,9 @@ static void test_caption_scrolls_and_drains(void)
     int seen = 0;
     for (int i = 0; i < 1000 && !caption_idle(&c); i++) {
         t += 40;
-        caption_tick(&c, t, FACE_W, true, false);
+        caption_tick(&c, t, FACE_W);
         memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
-        caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF, 0x0000);
+        caption_draw(&c, fb, FACE_W, FACE_H, 0xFFFF);
         if (non_black() > 0) seen++;
     }
     CHECK(caption_idle(&c), "the ticker drains");
@@ -1933,11 +1920,11 @@ static void test_caption_survives_a_stalled_clock(void)
     caption_t c;
     caption_reset(&c);
     caption_say(&c, "DO A DANCE");
-    caption_tick(&c, 1000, FACE_W, true, false);
+    caption_tick(&c, 1000, FACE_W);
     const float before = c.scrolled;
-    caption_tick(&c, 31000, FACE_W, true, false); /* thirty seconds later */
+    caption_tick(&c, 31000, FACE_W); /* thirty seconds later */
     CHECK(c.scrolled == before, "a long stall advances nothing");
-    caption_tick(&c, 31040, FACE_W, true, false);
+    caption_tick(&c, 31040, FACE_W);
     CHECK(c.scrolled > before, "and the next ordinary frame resumes");
 }
 
@@ -1949,8 +1936,8 @@ static void test_caption_ignores_nonsense(void)
     CHECK(!caption_say(&c, NULL), "nor is nothing at all");
     CHECK(caption_idle(&c), "and neither put anything in the ticker");
     caption_reset(NULL);
-    caption_tick(NULL, 0, FACE_W, true, true);
-    caption_draw(NULL, fb, FACE_W, FACE_H, 0, 0);
+    caption_tick(NULL, 0, FACE_W);
+    caption_draw(NULL, fb, FACE_W, FACE_H, 0);
     CHECK(caption_idle(NULL), "a null ticker is an empty one, not a crash");
 }
 
@@ -2025,7 +2012,7 @@ int main(void)
     test_a_tap_lands_where_the_pixel_it_touched_came_from();
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
-    test_the_microphone_light_is_inside_the_case();
+    test_the_case_geometry_is_the_case();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();
@@ -2065,7 +2052,7 @@ int main(void)
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
     test_caption_starts_empty_and_silent();
-    test_caption_indicator_tracks_the_microphone();
+    test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();
     test_caption_is_bounded_by_a_talkative_room();
     test_caption_survives_a_stalled_clock();
