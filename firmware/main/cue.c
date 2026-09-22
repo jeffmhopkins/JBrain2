@@ -182,6 +182,72 @@ typedef struct {
 #define END 127
 
 /* Ordered exactly as `cue_t` declares them. */
+/* --- THE FIVE FARTS -------------------------------------------------------------------
+ *
+ * The owner: *"fart should have five different kinds of farts, different tones, length,
+ * squeakiness, etc. The kids really love the farts."*
+ *
+ * `variant` already transposed every cue by up to a tone and stretched it by a tenth, and for
+ * a fart that is not enough: a fart transposed a semitone is the SAME fart. What makes two of
+ * them different is what makes them different in life — how long the pressure lasts, whether
+ * it is tight enough to squeak, and how much is liquid. So the fart gets five rows of its own
+ * rather than one row and a pitch knob, and they differ on every axis at once.
+ *
+ * Four things actually distinguish one from another, and every row moves all four:
+ *
+ *   - **Register.** 92 Hz is a rumble you feel; 340 Hz is a squeak. That is nearly two
+ *     octaves of spread, where the variant knob offers two semitones.
+ *   - **Contour.** Pressure normally runs out, so the pitch FALLS. The squeaker is the
+ *     exception and rises, because a tight one pinches higher as it closes — which is why
+ *     `fall` is allowed to be negative.
+ *   - **Flutter.** The amplitude modulation is the texture. Slow and shallow is blubbery;
+ *     past `depth` ~0.5 the tremolo reaches zero and the thing stops being one sound and
+ *     becomes a SPUTTER — separate bursts, which no amount of pitch change imitates.
+ *   - **Wetness.** Noise against sawtooth. Dry is brassy; wet is the one the twins will
+ *     request by name.
+ *
+ * Lengths run 170 ms to 700 ms, a factor of four, and that is deliberate: length is the first
+ * thing a listener notices and the cheapest axis to be lazy about. */
+typedef struct {
+    uint16_t ms;
+    float hz;      /* where it starts */
+    float fall;    /* Hz shed across the run; NEGATIVE rises, which is what squeaking is */
+    float wet;     /* how much noise rides the sawtooth; 0 is dry */
+    float flutter; /* Hz of the amplitude flutter — the texture */
+    float depth;   /* how deep it cuts, 0..1; past ~0.5 the sound breaks into bursts */
+    float buzz;    /* third-harmonic lift: brassy rather than breathy */
+} rude_t;
+
+static const rude_t FARTS[] = {
+    /* 1. THE RUMBLER. Long, low, slow flutter, barely wet — the one that goes on too long,
+          which at four is the entire joke. */
+    {700, 92.0f, 38.0f, 0.10f, 19.0f, 0.34f, 0.30f},
+    /* 2. THE SQUEAKER. High and tight, and the only one that RISES: a small opening pinches
+          higher as it closes. Short, dry, buzzy. */
+    {220, 340.0f, -95.0f, 0.00f, 41.0f, 0.30f, 0.55f},
+    /* 3. THE SPUTTERER. Mid, and `depth` 0.92 is the whole row — the tremolo goes through
+          zero, so this arrives as four or five separate bursts rather than one noise. */
+    {420, 150.0f, 55.0f, 0.15f, 13.0f, 0.92f, 0.40f},
+    /* 4. THE WET ONE. Noise at 0.75 against the sawtooth, low and unhurried. */
+    {560, 118.0f, 46.0f, 0.75f, 31.0f, 0.38f, 0.22f},
+    /* 5. THE PFFT. Over before it starts: 170 ms, mostly air, falling hard. The one that
+          punctuates rather than performs. Shallow flutter on purpose — at 48 Hz a deep one
+          reads as buzz rather than rhythm anyway, and nothing escaping this fast has time to
+          flutter. */
+    {170, 210.0f, 120.0f, 0.55f, 48.0f, 0.25f, 0.20f},
+};
+
+#define FART_COUNT ((int)(sizeof(FARTS) / sizeof(FARTS[0])))
+
+/* The burp stays one character — it was not what was asked for, and the same struct describes
+   it exactly: these are the numbers the single RUDE row used to carry inline. */
+static const rude_t BURP = {560, 140.0f, 65.0f, 0.0f, 27.0f, 0.38f, 0.30f};
+
+static const rude_t *rude_def(cue_t c, unsigned variant)
+{
+    return c == CUE_FART ? &FARTS[variant % (unsigned)FART_COUNT] : &BURP;
+}
+
 static const cue_def_t DEF[CUE_COUNT] = {
     /* -- the actions ----------------------------------------------------------------- */
     /* A wobble that goes nowhere: vibrato is the whole content, which is what makes it read
@@ -218,8 +284,12 @@ static const cue_def_t DEF[CUE_COUNT] = {
     [CUE_SLEEP] = {SH_SWEEP, 560, 330.0f, 0.0f, -0.9f, 60.0f, {END}, 25, 0},
     /* Gone: a fast drop to nothing. Fast, because hiding is sudden. */
     [CUE_HIDE] = {SH_SWEEP, 180, 900.0f, 0.3f, -1.8f, 0.0f, {END}, 2, 20},
-    [CUE_FART] = {SH_RUDE, 620, 105.0f, 0.0f, 1.0f, 45.0f, {END}, 3, 0},
-    [CUE_BURP] = {SH_RUDE, 560, 140.0f, 0.0f, 0.0f, 65.0f, {END}, 3, 0},
+    /* The two RUDE rows carry a shape, an attack and nothing else: their numbers are in
+       FARTS[] and BURP above, because five characters do not fit in one row. `ms` here is the
+       LONGEST of the five, which is what a caller sizing a buffer is promised — the real
+       per-variant length comes from `cue_ms`. */
+    [CUE_FART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
+    [CUE_BURP] = {SH_RUDE, 560, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     /* Two soft bites. Noise, but low-clocked and short, so it chews rather than hisses. */
     [CUE_EAT] = {SH_NOISE, 300, 0.0f, 0, 2.6f, 0.0f, {0, 0, END}, 3, 20},
     /* A thud: a noise burst over a tone dropping fast. Contact, then nothing. */
@@ -250,10 +320,31 @@ static const cue_def_t DEF[CUE_COUNT] = {
    here because `cue_samples` is above it and a caller's buffer depends on the two agreeing. */
 #define STRETCH_MAX 1.07f
 
+/* The nominal length of `c` at `variant`, before stretch. One number per cue for everything
+   except the fart, whose five characters differ in LENGTH as much as in pitch — 170 ms to
+   700 ms — and a single `ms` field cannot say that. */
+static float cue_ms(cue_t c, unsigned variant)
+{
+    return c == CUE_FART ? (float)rude_def(c, variant)->ms : (float)DEF[c].ms;
+}
+
+/* The longest `c` can nominally be, across every variant. Computed rather than read off the
+   table, so adding a longer fart cannot leave this behind — a caller sizes a buffer from it,
+   and it has to be the worst case rather than the typical one. */
+static float cue_ms_max(cue_t c)
+{
+    if (c != CUE_FART) return (float)DEF[c].ms;
+    float ms = 0.0f;
+    for (int i = 0; i < FART_COUNT; i++) {
+        if ((float)FARTS[i].ms > ms) ms = (float)FARTS[i].ms;
+    }
+    return ms;
+}
+
 int cue_samples(cue_t c, int rate)
 {
     if (c < 0 || c >= CUE_COUNT || rate <= 0) return 0;
-    return (int)((float)DEF[c].ms * STRETCH_MAX * (float)rate / 1000.0f + 0.5f);
+    return (int)(cue_ms_max(c) * STRETCH_MAX * (float)rate / 1000.0f + 0.5f);
 }
 
 cue_t cue_for_action(int action)
@@ -421,15 +512,25 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
         }
 
         case SH_RUDE: {
-            /* What makes a noise read as a BODY and not a horn: the pitch falls while it
+            /* What makes a noise read as a BODY and not a horn: the pitch moves while it
                sounds, the amplitude flutters fast enough to be texture rather than tremolo,
                and it runs out rather than stopping. A sawtooth supplies the harmonics a sine
-               has not got; `a` adds the noise that separates the wet one from the dry. */
-            const float hz = base - d->b * u;
+               has not got. Every number comes from the character in FARTS[] (or BURP), so
+               this is one renderer and six sounds rather than six branches. */
+            const rude_t *r = rude_def(c, variant);
+            const float hz = (r->hz - r->fall * u) * vary;
             const float ph = step_osc(&a, hz, rate);
-            float s = ph / (float)M_PI - 1.0f + 0.3f * sinf(ph * 3.0f);
-            if (d->a > 0.0f) s += 0.55f * noise_next(&nz, 3800.0f, rate);
-            s *= 0.62f + 0.38f * sinf(TWO_PI * (d->a > 0.0f ? 34.0f : 27.0f) * t * 0.001f);
+            float s = ph / (float)M_PI - 1.0f + r->buzz * sinf(ph * 3.0f);
+            if (r->wet > 0.0f) s += r->wet * noise_next(&nz, 3800.0f * vary, rate);
+            /* CLAMPED AT ZERO, and that clamp is the sputterer. Below `depth` 0.5 it never
+               bites and this is an ordinary tremolo; above it the envelope would go NEGATIVE,
+               which inverts the waveform instead of interrupting it — a phase flip, audible
+               as harshness rather than as a gap. Clamping turns the same number into real
+               silence between bursts, which is what sputtering is. A corner in an envelope
+               does not click; a jump would. */
+            float trem = (1.0f - r->depth) + r->depth * sinf(TWO_PI * r->flutter * t * 0.001f);
+            if (trem < 0.0f) trem = 0.0f;
+            s *= trem;
             e.hold_ms = dur * 0.12f;
             e.decay_ms = dur * 0.88f - (float)d->attack_ms;
             v = s;
@@ -472,7 +573,8 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
 int cue_render(cue_t c, int16_t *out, int rate, int gain, unsigned variant)
 {
     if (c < 0 || c >= CUE_COUNT || out == NULL || rate <= 0) return 0;
-    const int n = (int)((float)DEF[c].ms * variant_stretch(variant) * (float)rate / 1000.0f + 0.5f);
+    const int n =
+    (int)(cue_ms(c, variant) * variant_stretch(variant) * (float)rate / 1000.0f + 0.5f);
     if (n <= 0 || n > CUE_MAX_SAMPLES) return 0;
 
     /* PEAK-NORMALISE BY MEASUREMENT, not arithmetic. The naive bound (the sum of the

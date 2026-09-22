@@ -4700,7 +4700,7 @@ was **six seconds of mostly room**. The first cut of this also carried a `ref//4
 620 ms against a 600 ms floor — so both came out. A guard that cannot fire is a guard nobody
 can reason about.
 
-**The stop word is "fish stop"**, matching the panel's name.
+**The stop word is "fish stop"**, matching the panel's name. (Changed again in §10.4cr.)
 
 ##### The replies were incoherent, and history was why
 
@@ -4847,6 +4847,94 @@ and it held a 2,880-byte tone buffer in the **internal** RAM `speech.c` is tight
 second hand-rolled its own sawtooth, envelope and clipping — the one generator in the firmware
 that could not be built on a host, and the only one that stayed at a fixed level while the
 rest were peak-normalised. CUE_FART and CUE_BURP are the same sounds through the tested path.
+
+#### 10.4cr Five farts, and a way out a child would actually say (0.2.85, 2026-09-22)
+
+Two asks, and the second one is a design point rather than a request for more content.
+
+##### "stop stop"
+
+The way out of a conversation has now been three things: bare `stop`, then "fish stop", now
+**"stop stop"**. §10.4cm argued for the name version on symmetry — a conversation ends with
+the pet's name the way it starts with one ("hey fish") — and that argument **was wrong about
+the user**. A four-year-old who wants it to stop is not composing a phrase. Repetition is what
+escalation sounds like at four; "stop stop" is already what they say, where "fish stop" is a
+thing they have to remember to say. The phrase most likely to be uttered in the moment it is
+needed wins, and it is not always the tidiest one.
+
+It costs nothing that bare `stop` did not already cost less of — a television has to say it
+twice in a row — and `vocab.h` rule 3 still holds.
+
+The test that pinned this changed shape rather than its threshold, which is the honest move
+when a premise goes away: "carries the panel's name" is gone, because it is no longer true.
+What it pins now is the two properties that survive every rewording — the phrase is **more
+than one word** (or it is always live and the television ends conversations), and **nothing in
+the table shadows it**, because a stop phrase MultiNet will not resolve is a child shouting at
+a toy that keeps talking, and that failure is silent.
+
+##### Five farts
+
+The owner: *"fart should have five different kinds of farts, different tones, length,
+squeakiness, etc. The kids really love the farts."*
+
+**The variant machinery every other cue uses is not enough here, and that is the finding.**
+§10.4cq's `variant` moves pitch by up to two semitones and length by a tenth. For a giggle
+that is plenty. For a fart it is nothing: **a fart transposed a semitone is the same fart.**
+Variation that preserves identity is the right default — it is what stops a giggle becoming a
+different sound — and it is exactly wrong for the one cue where the *identity* is supposed to
+vary. So the fart gets five rows of its own rather than one row and a knob.
+
+Four axes actually distinguish one from another, and every row moves all four:
+
+| | length | starts | contour | texture | wet |
+|---|---|---|---|---|---|
+| **rumbler** | 700 ms | 92 Hz | falls | slow flutter | barely |
+| **squeaker** | 220 ms | 340 Hz | **rises** | tight, buzzy | dry |
+| **sputterer** | 420 ms | 150 Hz | falls | **breaks into bursts** | a little |
+| **wet one** | 560 ms | 118 Hz | falls | unhurried | 0.75 |
+| **pfft** | 170 ms | 210 Hz | falls hard | shallow | 0.55 |
+
+Lengths span **a factor of four** and registers nearly **two octaves**, against the two
+semitones the knob offered. The squeaker is the only one that rises, which is why `fall` is
+allowed to be negative: a tight opening pinches *higher* as it closes.
+
+**The sputterer is a clamp, not a number.** Its tremolo depth of 0.92 would drive the envelope
+negative, and a negative envelope **inverts the waveform rather than interrupting it** — a
+phase flip, which is audible as harshness and not as a gap. Clamping at zero turns the same
+number into real silence between bursts, which is what sputtering actually is. (A corner in an
+envelope does not click; a jump would.)
+
+`variant` still applies on top, so it is 5 characters × 8 transpositions × 4 stretches, and 5
+and 8 being coprime means the counter in `audio_cue` walks all forty rather than cycling five.
+
+##### Measuring "squeakiness" honestly
+
+The first attempt to test this measured **the decay envelope and called it texture**: counting
+frames quiet relative to the cue's *global* peak marks the end of every cue, so all five
+scored 0.35–0.68 and the test proved nothing. Measured against each frame's own ±30 ms
+neighbourhood instead, the number says the one thing sputtering is — the flow stopping and
+restarting *while the sound is still going* — and the separation is unambiguous: **0.53 for
+the sputterer against ≤0.05 for the rest** (worst case across all forty variants: 0.485
+against 0.150).
+
+Register is measured as a low-frequency energy share rather than a pitch, for the same reason
+§10.4cq switched estimators: three of the five carry noise, and a crossing-rate estimate on a
+noisy signal reports the **noise bandwidth**, not the fundamental. The first probe cheerfully
+reported the wet one, whose fundamental is 118 Hz falling to 72, as rising through 843→982 Hz.
+
+The test checks each axis **separately** — length, register, texture, then pairwise
+distinctness — because a single "are the waveforms different" check passes on five rows that
+differ in one number, which is precisely the failure being guarded. Probed against two
+degenerate implementations: five rows differing only in pitch (fails on length), and the
+tremolo clamp removed (fails on sputter).
+
+One sound was tuned by this rather than by ear, and the direction was already right: the
+pfft's flutter depth came down from 0.45 to 0.25. At 48 Hz a deep flutter reads as buzz rather
+than rhythm anyway, and nothing escaping that fast has time to flutter.
+
+`CUE_MAX_SAMPLES` is now 12800 (800 ms) for the 700 ms rumbler, which stretches to 749 — with
+deliberate room above it, because §10.4cq's silent-swallow is what a tight ceiling here looks
+like.
 
 ### 10.5 Three findings from the board in hand
 

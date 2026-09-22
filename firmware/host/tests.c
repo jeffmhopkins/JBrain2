@@ -2036,7 +2036,7 @@ static void test_vocab_phrases_are_sayable(void)
            of a list over a loosened check, and the list has already grown once. */
         static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave",
                                               "shake", "laugh", "eat",  "kick",  "spin"};
-        /* The list SHRANK once too: "stop" was on it, and is now "fish stop" at the owner's
+        /* The list SHRANK once too: "stop" was on it, and is now "stop stop" at the owner's
            ask — which is the outcome the list is for. A one-word entry that can be said
            another way should be. */
         bool allowed_single = false;
@@ -2326,6 +2326,113 @@ static void test_the_body_noises_are_the_lowest_things_here(void)
     CHECK(burp > giggle * 3.0f, "far below a giggle, which is the point of both");
 }
 
+/* HOW DEEP THE AMPLITUDE MODULATION CUTS, measured against the cue's OWN NEIGHBOURHOOD
+   rather than its global peak. That distinction is the whole measurement: every cue here
+   decays, so "quiet compared to the loudest sample" is true of the end of all of them and
+   says nothing about texture. Against a local maximum it says the one thing sputtering IS —
+   the flow stopping and restarting while the sound is still going. */
+static float cue_sputter(const int16_t *b, int n)
+{
+    enum { F = 80, WIN = 6 }; /* 5 ms frames, a +/-30 ms neighbourhood */
+    static int pk[CUE_MAX_SAMPLES / F + 2];
+    int m = 0;
+    for (int i = 0; i + F <= n; i += F, m++) {
+        int p = 0;
+        for (int j = 0; j < F; j++) {
+            if (abs(b[i + j]) > p) p = abs(b[i + j]);
+        }
+        pk[m] = p;
+    }
+    int quiet = 0, total = 0;
+    for (int i = WIN; i < m - WIN; i++) {
+        int loc = 0;
+        for (int j = i - WIN; j <= i + WIN; j++) {
+            if (pk[j] > loc) loc = pk[j];
+        }
+        total++;
+        if (loc > 0 && pk[i] * 100 < loc * 15) quiet++;
+    }
+    return total > 0 ? (float)quiet / (float)total : 0.0f;
+}
+
+static void test_the_five_farts_are_five_different_farts(void)
+{
+    /* The owner: *"fart should have five different kinds of farts, different tones, length,
+       squeakiness, etc. The kids really love the farts."*
+     *
+     * The variant machinery the other cues use is NOT enough here and that is the point of
+     * this test. It moves pitch by up to two semitones and length by a tenth, which for a
+     * giggle is plenty and for a fart is nothing — a fart a semitone higher is the same
+     * fart. So the five are five rows rather than one row and a knob, and what is pinned is
+     * that they still differ on each axis SEPARATELY. Checking only that the waveforms differ
+     * would pass on five rows that vary in one number, which is the failure this guards. */
+    int16_t buf[CUE_MAX_SAMPLES];
+    int len[5];
+    float low[5], spu[5];
+    for (unsigned v = 0; v < 5; v++) {
+        len[v] = cue_render(CUE_FART, buf, CUE_RATE, 100, v);
+        CHECK(len[v] > 0, "every fart renders");
+        low[v] = cue_low_share(buf, len[v], 250.0f);
+        spu[v] = cue_sputter(buf, len[v]);
+    }
+
+    /* LENGTH — the axis a listener notices first and the cheapest one to be lazy about. */
+    int shortest = len[0], longest = len[0];
+    for (int v = 1; v < 5; v++) {
+        if (len[v] < shortest) shortest = len[v];
+        if (len[v] > longest) longest = len[v];
+    }
+    CHECK(longest > shortest * 3, "the farts are not all the same length");
+
+    /* REGISTER. A rumble and a squeak are nearly two octaves apart, which is an order of
+       magnitude more than the variant knob offers — so this margin is wide on purpose and a
+       narrow one would mean the rows had quietly converged. Measured as an energy share
+       rather than a pitch, because three of the five carry noise and a crossing-rate estimate
+       on a noisy signal reports the NOISE bandwidth, not the fundamental. */
+    float lowest = low[0], highest = low[0];
+    for (int v = 1; v < 5; v++) {
+        if (low[v] > lowest) lowest = low[v];
+        if (low[v] < highest) highest = low[v];
+    }
+    CHECK(lowest - highest > 0.35f, "the farts are not all in the same register");
+
+    /* TEXTURE. Exactly one of them breaks into separate bursts, and it has to be the one
+       declared to — `depth` past 0.5 is what does it, and the clamp that makes the tremolo
+       reach zero instead of inverting is what makes it a gap rather than a harshness. If a
+       refactor drops that clamp the waveform still differs and only this notices. */
+    for (unsigned v = 0; v < 40; v++) {
+        const int n = cue_render(CUE_FART, buf, CUE_RATE, 100, v);
+        const float s = cue_sputter(buf, n);
+        if (v % 5 == 2) {
+            CHECK(s > 0.35f, "the sputtering one sputters, at every variant");
+        } else {
+            CHECK(s < 0.30f, "and none of the others does");
+        }
+    }
+
+    /* And they are still five distinct waveforms, which the axes above imply but do not
+       state — two rows could differ in length and register and still be the same recording
+       played at two speeds. */
+    for (int i = 0; i < 5; i++) {
+        for (int j = i + 1; j < 5; j++) {
+            const float dl = low[i] > low[j] ? low[i] - low[j] : low[j] - low[i];
+            const float ds = spu[i] > spu[j] ? spu[i] - spu[j] : spu[j] - spu[i];
+            const int dn = len[i] > len[j] ? len[i] - len[j] : len[j] - len[i];
+            CHECK(dl > 0.05f || ds > 0.10f || dn > CUE_RATE / 20,
+                  "no two farts are the same fart");
+        }
+    }
+
+    /* The burp is not one of them. It kept its single character, and a refactor that made it
+       index the fart table would be silent otherwise. */
+    const int bn = cue_render(CUE_BURP, buf, CUE_RATE, 100, 0);
+    CHECK(cue_sputter(buf, bn) < 0.30f, "the burp does not sputter");
+    for (int v = 0; v < 5; v++) {
+        CHECK(bn != len[v] || cue_low_share(buf, bn, 250.0f) != low[v],
+              "the burp is not simply one of the farts");
+    }
+}
+
 static void test_no_two_cues_are_the_same_sound(void)
 {
     /* The whole reason this file exists. The owner: *"You can't all just be the same little
@@ -2417,27 +2524,43 @@ static void test_every_action_can_be_asked_for_in_more_than_one_word(void)
     }
 }
 
-static void test_ending_a_conversation_uses_the_panel_s_name(void)
+static void test_the_way_out_is_the_word_a_child_would_actually_say(void)
 {
-    /* The owner asked for "fish stop" in place of a bare "stop". Two things follow and both
-       are worth pinning, because both are how the change could be undone by accident.
+    /* THIS IS THE ONE PHRASE THAT HAS TO WORK WHEN A CHILD IS UPSET, which is a different
+       requirement from the rest of the table and the reason it gets its own test.
 
-       It must still be reachable — a stop phrase MultiNet cannot resolve is a child shouting
-       at a toy that keeps talking — and it must carry the name, because that is the point: a
-       conversation ends with the pet's name the same way it starts with one ("hey fish"), and
-       a rename has to move both or the panel answers to one name and stops for another. */
+       It has been three things: bare "stop" (one word, always live, fires at the television),
+       then "fish stop" (the pet's name, mirroring "hey fish"), now "stop stop". The name
+       version read well and was wrong about the user: a four-year-old who wants it to stop is
+       not composing a phrase, they are repeating a word. So what is pinned here is no longer
+       "carries the name" — that premise is gone — but the two properties that survive every
+       rewording of it, because both are how this gets broken by accident:
+
+       it must be MORE THAN ONE WORD, or it is always live and the television ends
+       conversations; and it must be REACHABLE, which for the stop word specifically means
+       nothing else in the table may shadow it. A stop phrase MultiNet will not resolve is a
+       child shouting at a toy that keeps talking, and that failure is silent. */
     const vocab_t *v = vocab_all();
-    const char *name = vocab_name();
     const char *stop = NULL;
+    int stops = 0;
     for (int i = 0; i < vocab_count(); i++) {
-        if (v[i].kind == VOCAB_STOP) stop = v[i].phrase;
+        if (v[i].kind == VOCAB_STOP) {
+            stop = v[i].phrase;
+            stops++;
+        }
     }
-    CHECK(stop != NULL, "there is a way to end a conversation");
-    CHECK(name != NULL, "and the panel has a name to end it with");
-    CHECK(strstr(stop, name) != NULL, "the stop phrase carries the panel's own name");
-    /* And it is no longer a single word, which is what let it leave the named-list exception
-       above. A phrase that can be said in two words should be. */
-    CHECK(strchr(stop, ' ') != NULL, "the stop phrase is more than one word");
+    CHECK(stops == 1, "there is exactly one way to end a conversation");
+    CHECK(stop != NULL && strchr(stop, ' ') != NULL, "and it is more than one word");
+
+    /* Rule 3 is checked across the whole table elsewhere; asserted again HERE, against the
+       stop phrase alone, because the general test failing tells you the table is wrong while
+       this one tells you the way out is gone. */
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind == VOCAB_STOP) continue;
+        const size_t n = strlen(v[i].phrase);
+        CHECK(strncmp(stop, v[i].phrase, n) != 0,
+              "nothing in the table shadows the way out of a conversation");
+    }
 }
 
 static void test_vocab_arguments_are_real(void)
@@ -2737,7 +2860,7 @@ int main(void)
     test_vocab_phrases_are_sayable();
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
-    test_ending_a_conversation_uses_the_panel_s_name();
+    test_the_way_out_is_the_word_a_child_would_actually_say();
     test_every_action_can_be_asked_for_in_more_than_one_word();
     test_every_cue_renders_something_audible();
     test_no_cue_starts_or_ends_with_a_step();
@@ -2751,6 +2874,7 @@ int main(void)
     test_an_apology_sits_low_where_roughness_is_felt();
     test_the_body_noises_are_the_lowest_things_here();
     test_no_two_cues_are_the_same_sound();
+    test_the_five_farts_are_five_different_farts();
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
     test_caption_starts_empty_and_silent();

@@ -55,8 +55,11 @@ typedef enum {
     CUE_SHIMMY,     /* fast vibrato, buzzier than the wiggle */
     CUE_SLEEP,      /* a slow descent that fades — a yawn */
     CUE_HIDE,       /* a quick drop to nothing */
-    CUE_FART,       /* the wet rude noise */
-    CUE_BURP,       /* the dry one */
+    CUE_FART,       /* FIVE of them — see FARTS[] in cue.c. Rumbler, squeaker, sputterer,
+                       wet one, pfft; 170-700 ms and nearly two octaves apart, because a fart
+                       transposed a semitone is the same fart and these are the twins'
+                       favourite thing the panel does. */
+    CUE_BURP,       /* the dry one, and still a single character */
     CUE_EAT,        /* two soft noise bites */
     CUE_KICK,       /* a thud: noise plus a pitch drop */
     CUE_SPIN,       /* three rising sweeps, each starting higher */
@@ -79,12 +82,13 @@ typedef enum {
    cue. */
 int cue_samples(cue_t c, int rate);
 
-/* 700 ms at 16 kHz. The longest cue is the fart at 620 ms, which stretches to 663 — and the
-   first cut of this constant said 600, so the fart rendered NOTHING and the length guard in
-   `cue_render` swallowed it silently. A ceiling that excludes a real cue is worse than no
-   ceiling; the host suite now checks every cue against it rather than trusting the arithmetic
-   here. */
-#define CUE_MAX_SAMPLES 11200
+/* 800 ms at 16 kHz. The longest cue is the rumbling fart at 700 ms, which stretches to 749.
+   The first cut of this constant said 600 against a 620 ms fart, so the fart rendered NOTHING
+   and the length guard in `cue_render` swallowed it silently. A ceiling that excludes a real
+   cue is worse than no ceiling, so there is deliberate room above the longest one here, and
+   the host suite checks every cue at every variant against it rather than trusting the
+   arithmetic in this comment. */
+#define CUE_MAX_SAMPLES 12800
 
 /* Render `c` into `out` and return the samples written.
    `gain` is 0..100 on the speaker's own scale; the cues are peak-normalised internally so
