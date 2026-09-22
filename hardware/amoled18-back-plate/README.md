@@ -11,12 +11,13 @@ runs the room-endpoint pet firmware in [`../../firmware/`](../../firmware/README
 The stock cover leaves almost no room behind the board: Waveshare's largest recommended cell
 for the stock case is 3.85 × 24 × 28 mm. This plate is a tall box with straight walls: the
 whole inside is open apart from four hollow screw towers, and its depth follows the cell. Any
-gaps are padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything else about
-the case stays stock: all ports, buttons and the mic are in the **front** shell, so the plate
-has no other openings.
+gaps are padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything
+else about the case stays stock: all ports, buttons and the mic are in the **front** shell, so
+the plate has no other openings.
 
 The default is a **1000 mAh 103035 cell (10 × 30 × 35 mm) standing on its long edge**, which
-makes the unit about **37.6 × 45.2 × 44 mm**, close to a cube. Along the case it reserves 2 mm at
+makes the unit about **37.6 × 45.2 × 44 mm** (38.2 × 45.8 across the [grip ribs](#grip)), close
+to a cube. Along the case it reserves 2 mm at
 one end for the wires (`lead_end`) and still leaves 1.85 mm spare at each end for cells that run
 over size. A long cell can't lie flat: the screws pass through
 24 mm apart across the case, so a 30 mm wide cell would sit across them, but a cell on its edge
@@ -53,9 +54,9 @@ hand. The upside is that you never have to model anything: you change a number i
 ("battery thickness = 8.6"), and the whole part redraws itself to fit. This file was written
 that way on purpose, so **you should never need to touch the code** — only the form.
 
-The `.stl` in this folder is built from the defaults in [Where the numbers come
+The `.stl` files in this folder are built from the defaults in [Where the numbers come
 from](#where-the-numbers-come-from). The outline and screw holes come from Waveshare's own
-drawings; the rim and depth are estimates. Print it as a first test, then use the steps below
+drawings; the rim and depth are estimates. Print one as a first test, then use the steps below
 to adjust anything that doesn't fit.
 
 ### 1. Get the files
@@ -95,10 +96,10 @@ ideal; a good ruler works for a first try. All values are in millimetres.
 | 2. Plate outline | `plate_r` | Roughly how round the outer corners are (radius) |
 | 3. Rim | `lip_outer_x`, `lip_outer_y` | Outside width and height of the raised rim that slides into the front shell |
 | 3. Rim | `lip_h` | How tall that rim stands |
+| 3. Rim | `stock_clear` | Inside depth of the stock cover, rim top down to the floor |
 | 4. Screws | `tower_drop` | How far below the rim top the tops of the stock cover's screw posts are (0 if level) |
 | 4. Screws | — | The length of one stock screw, for choosing new ones (see [Screws](#screws)) |
 | 4. Screws | — | How tall the brass nuts stand off the back of the board, which caps the screw length |
-| 3. Rim | `stock_clear` | Inside depth of the stock cover, rim top down to the floor |
 | 4. Screws | `screw_dx`, `screw_dy` | Distance from the **centre** of the plate to the centre of a screw hole, across and up. Easiest: measure hole-to-hole and halve it. |
 
 ### 5. Enter the battery you actually have
@@ -108,7 +109,8 @@ cell's label or listing (the size code reads thickness, width, length: "103035" 
 10 × 30 × 35 mm). Measure the real cell if you can, including the little circuit board folded
 at the wire end. Then pick `battery_orientation`:
 
-- **edge** — standing on its long edge. Use this for long cells (35–40 mm).
+- **edge** — standing on its long edge. Use this for longer cells, up to about 37 mm with the
+  default 2 mm of wire room.
 - **flat** — lying on its face. Fine for small square cells like 802525.
 - **end** — standing upright on its end. Any length fits; the plate just gets taller.
 
@@ -147,7 +149,9 @@ Open the exported `.stl` in your usual slicer (Bambu Studio, PrusaSlicer, Cura, 
 settings in [Printing](#printing) below: flat face down, rim up, no supports.
 
 **Do a test print first.** Print one quickly and hold it against the front shell to check the
-rim slides in and the four holes line up with the brass inserts. If something is off, measure
+rim slides in and the four towers line up with the brass nuts on the board. The stock cover
+also has side rails and a raised block inside that this plate doesn't copy; check nothing on the
+board (the speaker, for instance) was resting on them. If something is off, measure
 again, change the number, and re-export — that's the whole point of the parametric file.
 
 ### 9. Save your numbers
@@ -173,8 +177,8 @@ but not the case shells.
 | `lip_outer_x` × `lip_outer_y`, `lip_outer_r` | 35.0 × 42.6, 7.4 | Outline minus a ~1.3 mm front-shell wall, estimated from the photos. (The board itself is 33.0 × 40.6.) | Estimate: **measure** |
 | `stock_clear` | 3.9 | The stock cover shows 3.5 mm on the side view; depth derived from that and the rim height | Estimate: **measure** |
 | `lip_h` | 2.0 | Not visible in any source | Guess: **measure** |
-| `lip_wall` | 0.8 | Chosen, not measured: the walls run straight up to the rim, so the rim's inside is the cavity, and 0.8 mm leaves a 40.7 mm opening for a 40 mm cell. Two nozzle widths, plenty for a 2 mm locating lip. | Design choice |
-| `screw_size` | M2 | Screw heads measure ~3.8 mm across in the drawing, which matches M2 | Likely: check a stock screw |
+| `lip_wall` | 0.8 | Chosen, not measured: the walls run straight up to the rim, so the rim's inside is the cavity, and 0.8 mm leaves a 40.7 mm opening, enough for the 40 mm-wide 104050 on end. Two nozzle widths, plenty for a 2 mm locating lip. | Design choice |
+| `screw_size` | M2 | Screw heads measure ~3.8 mm across in the drawing, which matches M2 (the stock ones are Phillips) | Likely: check a stock screw |
 | Tower bore | Ø4.6 | ISO 4762 M2 socket head (Ø3.8) + `head_clear` 0.6 + `hole_slop` 0.2 | Standard |
 | `tower_drop` | 0 | Towers stop level with the rim top. Where the stock posts stop isn't visible in any source | Guess: **measure** |
 
@@ -211,9 +215,12 @@ To choose the length:
    board), less half a millimetre.
 
 If you can't measure a stock screw, use **M2 × 4**. Go to M2 × 5 only if the nut turns out to
-be at least 2 mm tall. Drive them with a **1.5 mm hex key long enough to reach down the tower**: the console's
-`Hex key reach` line gives the depth, about 33 mm for the default, 11 mm for the flat 802525 and
-56 mm for the tall variation (a screwdriver-style 1.5 mm hex driver reaches all of them).
+be at least 2 mm tall.
+
+Drive them with a **1.5 mm hex key long enough to reach down the tower**. The console's
+`Hex key reach` line gives the depth: about 33 mm for the default, 11 mm for the flat 802525
+and 56 mm for the tall variation. A screwdriver-style 1.5 mm hex driver with a shaft of 60 mm or
+more reaches all of them.
 
 ## Hole plugs
 
@@ -244,8 +251,8 @@ proud of the front shell on each side.
 
 Group 5b adjusts them. `grip_depth` is how far they stand out, in millimetres: 0 gives smooth
 walls, 0.3 is the default, 0.5 the most. `grip_size` (band height), `grip_gap` and
-`grip_margin` set the spacing. `grip_style` also offers `honeycomb` (raised hexagons) and `nubs` (raised
-squares) on the flat sides, or `none` for smooth walls.
+`grip_margin` set the spacing. `grip_style` also offers `honeycomb` (raised hexagons) and
+`nubs` (raised squares) on the flat sides, or `none` for smooth walls.
 
 ## The tall variation: 104050 on end
 
@@ -259,8 +266,7 @@ roughly twice the capacity of the default and 5–6× the 802525. Select the
 Things to know before building it:
 
 - **The fit along the case is tight:** 40 mm in a 40.7 mm opening, 0.35 mm per end. Measure the
-  real cell. If it's over 40 mm, set `lip_wall` to 0.6, which opens
-  the space to 41.1 mm.
+  real cell. If it's over 40 mm, set `lip_wall` to 0.6, which opens the space to 41.1 mm.
 - **The common listing has the wrong plug.** It ships with a JST PH 2.0 mm plug; the board
   needs MX1.25 (1.25 mm). Swap the plug for a 1.25 mm two-pin one, or use a short PH 2.0 to
   Micro JST 1.25 adapter; there's room beside the cell for either. Check which pin is + and
@@ -302,6 +308,10 @@ halfway along. That's why the flat 802525 preset leaves 2 mm extra above the cel
 These go to kids. Never pinch or compress a lithium pouch cell — keep the clearance the model
 allows. Don't install a cell that is puffed, dented or damaged, and don't leave one charging
 unattended.
+
+**The hole plugs are a choking hazard for babies and toddlers.** They're about 5 mm across and a
+determined kid can pry one out. For small children, glue them in, or leave them off and set
+`plug_recess` to off so the back is plain.
 
 ## Photos
 
