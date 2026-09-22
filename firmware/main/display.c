@@ -582,8 +582,25 @@ static volatile bool s_debug_overlay;
 #define TALK_MARGIN_PX 72
 /* Long enough that a slow answer is not mistaken for a broken one, short enough that a child
    is not staring at a bubble. Beyond it the panel says it failed rather than returning to
-   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc). */
-#define TALK_TIMEOUT_MS 12000
+   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc).
+ *
+ * 25 s, AND 12 WAS A GUESS THAT COST A WORKING REPLY BY 777 MILLISECONDS. The first warm turn
+ * ever measured from the room took 12,777 ms end to end — whisper 10,668, the model 1,540,
+ * Kokoro 568 — and returned 200 OK with 118 KB of speech. The panel had given up at 12,000,
+ * called `talk_clear()`, and shown a failure face. Every part of the system worked and the
+ * answer was thrown away three quarters of a second before it landed.
+ *
+ * The budget this has to clear is now measured rather than hoped for: whisper is a FLAT ~10.7 s
+ * (it pads every clip to 30 s regardless of length — 10,715 and 10,668 on two utterances of
+ * very different length), and the prompt holds replies to one or two sentences, so the model
+ * and the speech together run a few seconds more. ~17 s is a bad-but-real turn; 25 leaves
+ * headroom without waiting on something that is never coming.
+ *
+ * This is a SAFETY NET, NOT A TARGET. A longer net costs nothing when turns are fast; it only
+ * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
+ * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
+ * is 83% of it, and no timeout value improves that. */
+#define TALK_TIMEOUT_MS 25000
 #define TALK_FAILED_MS 2500
 
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;

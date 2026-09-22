@@ -3950,6 +3950,75 @@ behind and is exactly where a stray pixel would survive.
 directly also closes a hole in the old test: one that returned true everywhere would have
 passed it just as happily, and would have been the more dangerous bug.
 
+#### 10.4ca The loop closed, and the panel threw the answer away by 777 ms (0.2.67, 2026-09-22)
+
+Press-and-hold ran end to end from the room for the first time. **It works.**
+
+```
+heard:  "Hello, one, two, three..."
+reply:  "Hi there! Did you just count to three? What fun thing shall we do now?"
+
+heard:  "Aardvarks love to eat mushrooms and bananas. One, two, three."
+reply:  "Aardvarks are funny! Do you like mushrooms or bananas more?"
+```
+
+Real speech from a bedroom, transcribed correctly — including a sentence chosen to be hard —
+answered on persona with a question back, synthesised, and returned. Every piece of the design
+in `../proposed/PANEL_CONVERSATION_PLAN.md` holds.
+
+##### The numbers nobody had
+
+| | turn 1 (cold) | turn 2 (warm) |
+|---|---|---|
+| STT — whisper large-v3-turbo | 10,715 ms | 10,668 ms |
+| LLM — gpt-oss-120b, `pet.turn` | **48,798 ms** | **1,540 ms** |
+| TTS — Kokoro | 2,428 ms | 568 ms |
+| **total** | **61,942 ms** | **12,777 ms** |
+
+**The 48.8 s was not inference.** The adapter's own record of that same call says
+`input_tokens: 191, output_tokens: 40, elapsed_ms: 1441, output_tokens_per_s: 27.8` — 1.4
+seconds of generation inside a 48.8-second wait. The 01:06 update had explicitly evicted the
+model (`[unload] released gpt-oss-120b`) and this was the first `pet.turn` since, so ~47 s went
+on bringing a 120B model back up. The warm turn confirms it: same model, same prompt,
+**1,540 ms**.
+
+Two things that settle open questions in the plan:
+
+- **The 191-token prompt is right.** §10.4bo's worry that a panel turn might drag the full agent
+  context in was unfounded — `pet.turn` routes to `PANEL_CONVERSATION_PROMPT` and nothing else.
+- **Whisper is flat, and it is now the whole problem.** 10,715 ms and 10,668 ms on utterances of
+  very different length, because it pads every clip to 30 s regardless. That is **83% of a warm
+  turn**, and no other component comes close. `base.en` stops being a nice-to-have and becomes
+  the critical path.
+
+##### And the panel discarded it
+
+The warm turn returned **200 OK with 118 KB of speech at 12,777 ms**. `TALK_TIMEOUT_MS` was
+**12,000**. So at 12.0 s the renderer called `talk_clear()`, went to `TALK_FAILED`, and drew the
+failure face; at 12.8 s the reply arrived into a state machine that had already binned it — the
+`TALK_NET_SPOKE` branch requires `s_talk == TALK_THINKING`, which it no longer was.
+
+**Everything worked and the answer was thrown away three quarters of a second before it
+landed.** 12,000 was a guess made before any turn had ever been measured, and it happened to
+sit just below the real number.
+
+Raised to **25 s**, with `talk.c`'s HTTP timeout to **30 s** — that ordering is the point rather
+than the values: the socket must never die while the face is still willing to wait. The gap
+between them is why the capture buffer is guarded on `TALK_NET_BUSY` (§10.4bn), and that guard
+is what keeps the widened window safe.
+
+It is a **safety net, not a target.** A longer net costs nothing when turns are fast; it only
+matters when they are slow, and a slow turn currently produces *nothing*, which is strictly
+worse than a late answer. Nobody should read 25 s as the intended experience — the intended
+experience needs whisper to stop taking eleven seconds, and no timeout value improves that.
+
+##### What is still true
+
+A 12.8 s wait for a four-year-old is too long, and this release does not fix that; it stops the
+system discarding work it has already done. The next measurement worth taking is `base.en`
+against the same two utterances, since the whole latency argument now rests on a single flat
+number with an obvious lever on it.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
