@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 import structlog
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
@@ -721,6 +722,33 @@ async def _saved_override_maps(
     )
 
 
+def _changed_entries(before: str | None, after: str | None) -> list[str]:
+    """The served-model names whose rendered entry differs between two configs, or a marker
+    when the shape is unreadable. Names only — the commands carry absolute weight paths and a
+    log line is not the place for them; the name is what says where to look."""
+    if before is None or after is None:
+        return ["<absent>"]
+    if before == after:
+        return []
+    try:
+        top_a, top_b = yaml.safe_load(before), yaml.safe_load(after)
+    except yaml.YAMLError:
+        return ["<unparseable>"]
+    # A top level that is not a mapping cannot be indexed, and `.get` on a list raises
+    # AttributeError rather than YAMLError — which would take down the load this is only
+    # supposed to describe.
+    if not isinstance(top_a, dict) or not isinstance(top_b, dict):
+        return ["<unexpected-shape>"]
+    a, b = top_a.get("models") or {}, top_b.get("models") or {}
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return ["<unexpected-shape>"]
+    changed = [n for n in sorted(set(a) | set(b)) if a.get(n) != b.get(n)]
+    # The texts differ (checked above) but no entry does: a header or group change, which
+    # costs the resident set exactly as much and would otherwise log as "nothing happened"
+    # beside an eviction that plainly did.
+    return changed or ["<outside-models>"]
+
+
 async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> None:
     """Re-stamp llama-swap.yaml from the saved overrides. Called by the gateway client
     IMMEDIATELY BEFORE A LOAD, not by the settings PUTs that change those overrides.
@@ -738,11 +766,25 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
     the gateway catching up and must never fail the load that called it."""
     windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
     path = Path(settings.local_models_dir or ".") / "llama-swap.yaml"
-    before = path.stat().st_mtime_ns if path.exists() else None
+    before_text = path.read_text() if path.exists() else None
     _try_regenerate(settings, windows, slots, extra, floors)
-    after = path.stat().st_mtime_ns if path.exists() else None
+    after_text = path.read_text() if path.exists() else None
 
-    if before != after:
+    if before_text != after_text:
+        # WHICH MODEL'S LINE MOVED, because without this the eviction is reported against the
+        # wrong model. `_narrate_reload_casualties` names the model that happened to be
+        # LOADING — it has nothing else to name — so a change to some other entry is recorded
+        # as "changed settings for <whatever was loading>". Observed on the box 2026-09-22:
+        # every load of qwen3.5-4b re-stamped and took gpt-oss-120b (59 GB, a 47 s reload)
+        # with it, reported as the 4b's settings changing, and the 4b's settings had not
+        # changed. A re-stamp that cannot say what it re-stamped cannot be fixed, only
+        # re-observed.
+        log.warning(
+            "llm_settings.gateway_config_changed",
+            changed=_changed_entries(before_text, after_text),
+            bytes_before=len(before_text or ""),
+            bytes_after=len(after_text or ""),
+        )
         # The file CHANGED, so llama-swap is about to reload — and its reload kills every
         # running llama-server. Wait for that to land BEFORE the caller starts its load,
         # otherwise the reload arrives ~2 s later and kills the model that just came up.
