@@ -42,13 +42,6 @@ void audio_set_levels(int volume, int mic_gain_db);
 
 
 
-/* ASK for a tone. Returns immediately; the audio task plays it between two captures, within
-   one chunk. Safe from any task, which a direct `esp_codec_dev_write` from the render loop
-   was not.
-
-   Kept as the fallback for anything with no cue of its own, and as the one sound that does
-   not need the renderer — see `audio_cue` for what replaced it everywhere else. */
-void audio_beep(void);
 
 /* ASK for a CUE — one of the arcade bleeps in `cue.h`, chosen per event.
    Every acknowledgement used to be this file's single 880 Hz tone, which told a four-year-old
@@ -56,18 +49,11 @@ void audio_beep(void);
    the same reason a rude noise is: the sentence outranks the acknowledgement. */
 void audio_cue(cue_t c);
 
-/* ASK for a rude noise — the twins' request, and the one action in the table that was mute.
-   `burp` and `fart` have been in the vocabulary since bring-up but only ever moved the face:
-   `rig.c` gives them a bewildered look and a wobble, and nothing came out of the speaker, so
-   what a four-year-old asked for did not happen. Synthesised rather than sampled, because a
-   WAV of a burp is a licence question, a download and 100 KB of flash to answer something an
-   oscillator answers in twenty lines.
-
-   Built straight into the reply buffer and played by the same path a reply takes, so it is
-   chunked, interruptible, and deafens the microphone while it sounds — a burp the recogniser
-   hears is a false trigger with a loudspeaker behind it. Refused, like a reply, while the
-   panel is already speaking. Safe from any task. */
-void audio_rude(bool wet);
+/* The rude noises moved into `cue.h` with everything else. `audio_rude()` hand-rolled its own
+   sawtooth, envelope and clipping here — the one generator in the firmware that could not be
+   built on a host and so shipped with no test at all, and the one that stayed at a fixed
+   level while the rest were peak-normalised. CUE_FART and CUE_BURP are the same sound through
+   the tested path, and the DC blocker they inherit is not something the old loop had. */
 
 /* The volume and mic gain the codec last ACCEPTED — "90/36", or "90!/36" when it refused the
    volume. Both setters used to be called with their return values dropped and a log line

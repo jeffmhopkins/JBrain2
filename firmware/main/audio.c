@@ -58,8 +58,6 @@ static const char *TAG = "audio";
 #define PIN_DSIN GPIO_NUM_10 /* codec -> ESP: the microphone */
 #define PIN_PA GPIO_NUM_46
 
-#define BEEP_HZ 880
-#define BEEP_MS 90
 /* The microphone is ANALOGUE into the ES8311's own ADC (`digital_mic = false` in the vendor
    BSP), so it needs the codec's PGA. The part quantises to 6 dB steps up to 42; 30 is the
    middle and a first guess — the peak this firmware reports is what moves it, not a listen. */
@@ -99,11 +97,14 @@ static const char *TAG = "audio";
    70 as good at the distance a child holds it. That is the measurement §10.4q said it was
    waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
 #define VOLUME 90
-/* What the beep should SOUND like on that same scale — the owner asked for 20 against the
-   voice's 90. Applied as an amplitude ratio rather than a second codec call, because
-   `esp_codec_dev` has no locking and one task owns the codec (§10.4al): changing the output
-   level around every beep is exactly the kind of cross-task poke that panicked a panel. */
-#define BEEP_VOLUME 20
+/* What an ACKNOWLEDGEMENT should sound like on that same scale — the owner asked for 20
+   against the voice's 90, back when there was one 880 Hz tone rather than twenty-six cues,
+   and the reason holds for all of them: the cue is the part heard closest to a child's face
+   and the voice is the part they are listening to. Applied as an amplitude ratio rather than
+   a second codec call, because `esp_codec_dev` has no locking and one task owns the codec
+   (§10.4al): changing the output level around every cue is exactly the kind of cross-task
+   poke that panicked a panel. */
+#define CUE_VOLUME 20
 
 /* One handle for both directions. The vendor BSP builds two codec instances, one per
    direction — two objects writing the same chip's registers over the same I2C bus. A single
@@ -180,62 +181,32 @@ bool audio_playing(void)
  * interruptible playback and its deafening rather than introducing a third way to make a
  * sound. That also means it cannot interrupt a reply, which is right: the pet finishing its
  * sentence beats a burp, and the child can ask again. */
-#define RUDE_MS 620
-#define RUDE_SAMPLES (AUDIO_RATE * RUDE_MS / 1000)
-
 /* A CUE, RENDERED AND HANDED TO THE SPEAKER — the replacement for `audio_beep`.
  *
- * Same route as a reply and a rude noise: written into `s_play` and left for the audio task,
- * so it is chunked, interruptible and deafens the microphone while it sounds. It therefore
- * cannot interrupt the pet mid-sentence, which is right — an acknowledgement is worth less
- * than the sentence it would talk over, and the beep it replaces had exactly the same rule.
+ * Same route as a reply: written into `s_play` and left for the audio task, so it is chunked,
+ * interruptible and deafens the microphone while it sounds. It therefore cannot interrupt the
+ * pet mid-sentence, which is right — an acknowledgement is worth less than the sentence it
+ * would talk over, and the beep it replaces had exactly the same rule.
  *
- * Rendered at BEEP_VOLUME against the speaking voice, because the original request that split
+ * Rendered at CUE_VOLUME against the speaking voice, because the original request that split
  * the two levels apart is still the right one: the tone is the part heard closest to a child's
- * face and the voice is the part they are listening to. */
+ * face and the voice is the part they are listening to.
+ *
+ * THE VARIANT IS COUNTED PER CUE, not drawn at random. The complaint was repetition, and what
+ * a child actually does is poke the same spot four times — so what has to differ is two
+ * consecutive plays of the SAME cue, which a counter guarantees and a random draw only makes
+ * likely. Kept as a byte per cue and allowed to wrap; `cue_render` accepts any value. */
 void audio_cue(cue_t c)
 {
     if (s_play == NULL) return;
     if (s_play_pos < s_play_len) return; /* a reply outranks an acknowledgement */
-    const int n = cue_render(c, s_play, AUDIO_RATE, BEEP_VOLUME);
+    if (c < 0 || c >= CUE_COUNT) return;
+
+    static uint8_t s_variant[CUE_COUNT];
+    const int n = cue_render(c, s_play, AUDIO_RATE, CUE_VOLUME, s_variant[c]++);
     if (n <= 0) return;
     s_play_pos = 0;
     s_play_len = n;
-}
-
-void audio_rude(bool wet)
-{
-    if (s_play == NULL) return;
-    if (s_play_pos < s_play_len) return; /* already speaking; a reply outranks a burp */
-
-    const float top = wet ? 105.0f : 140.0f;   /* where it starts */
-    const float fall = wet ? 45.0f : 65.0f;    /* and how far it drops while it sounds */
-    const float flutter = 2.0f * (float)M_PI * (wet ? 34.0f : 27.0f) / (float)AUDIO_RATE;
-    uint32_t noise = 0x9e3779b9u;
-    float phase = 0.0f;
-
-    for (int i = 0; i < RUDE_SAMPLES; i++) {
-        const float t = (float)i / (float)RUDE_SAMPLES;
-        phase += 2.0f * (float)M_PI * (top - fall * t) / (float)AUDIO_RATE;
-        if (phase > 2.0f * (float)M_PI) phase -= 2.0f * (float)M_PI;
-        /* A sawtooth from the phase directly, with the third harmonic lifted: cheaper than a
-           wavetable and the harmonics are the entire character of the thing. */
-        float v = phase / (float)M_PI - 1.0f + 0.3f * sinf(phase * 3.0f);
-        if (wet) {
-            noise = noise * 1664525u + 1013904223u;
-            v += 0.55f * ((float)((noise >> 16) & 0xffffu) / 32768.0f - 1.0f);
-        }
-        v *= 0.62f + 0.38f * sinf((float)i * flutter);
-        /* Fast in, slow out, and never quite silent at the end — a noise that stops dead
-           sounds like a fault rather than a body. */
-        const float env = t < 0.04f ? t / 0.04f : 0.15f + 0.85f * (1.0f - t) * (1.0f - t);
-        float s = v * env * 9000.0f;
-        if (s > 32000.0f) s = 32000.0f;
-        if (s < -32000.0f) s = -32000.0f;
-        s_play[i] = (int16_t)s;
-    }
-    s_play_pos = 0;
-    s_play_len = RUDE_SAMPLES;
 }
 
 void audio_capture_open(void)
@@ -266,34 +237,6 @@ int audio_capture_ms(void)
 
 /* The one task that touches `s_codec`. Defined below, beside the requests it services. */
 static void audio_task(void *arg);
-
-/* The tone is built once. `audio_beep` runs on the face task, between two frames of a
-   500 ms floor the panel needs to stay lit — so it may spend its time in the I2S write
-   and not in two thousand calls to sinf. */
-#define BEEP_SAMPLES (AUDIO_RATE * BEEP_MS / 1000)
-static int16_t s_beep[BEEP_SAMPLES];
-
-static void build_beep(void)
-{
-    const float step = 2.0f * (float)M_PI * BEEP_HZ / AUDIO_RATE;
-    const int fade = BEEP_SAMPLES / 5;
-    for (int i = 0; i < BEEP_SAMPLES; i++) {
-        /* Raised-cosine in and out: a square-edged tone clicks, and the click is the
-           loudest thing in it — which is the part a 65 dB(A) cap is really about. */
-        float env = 1.0f;
-        if (i < fade) {
-            env = 0.5f - 0.5f * cosf((float)M_PI * (float)i / (float)fade);
-        } else if (i > BEEP_SAMPLES - fade) {
-            env = 0.5f - 0.5f * cosf((float)M_PI * (float)(BEEP_SAMPLES - i) / (float)fade);
-        }
-        /* 9000 was the peak when the codec sat at 70 and the beep shared the voice's level.
-           Scaling by the ratio keeps that reference point honest: raising the output to 90
-           would otherwise have made the beep LOUDER at the same time as the request was to
-           make it quieter. */
-        const float peak = 9000.0f * (float)BEEP_VOLUME / (float)VOLUME;
-        s_beep[i] = (int16_t)(sinf(step * (float)i) * peak * env);
-    }
-}
 
 bool audio_start(void)
 {
@@ -386,7 +329,6 @@ bool audio_start(void)
         if (retry != 0) ESP_LOGE(TAG, "fallback gain refused too: %d — mic level is unknown",
                                  retry);
     }
-    build_beep();
     ESP_LOGI(TAG, "es8311 ready: out %d/100 (%s), in %.0f dB (%s), %d Hz", VOLUME,
              vol_err ? "REFUSED" : "accepted", MIC_GAIN_DB,
              gain_err ? "REFUSED" : "accepted",
@@ -416,15 +358,9 @@ bool audio_start(void)
    would help — what needed a lock was the CODEC, and the answer to that is that only one task
    touches it at all. */
 static volatile int s_level;
-static volatile bool s_beep_want;
 
 /* Defined with the rest of the level machinery, below the task that is its only caller. */
 static void apply_levels(void);
-
-void audio_beep(void)
-{
-    s_beep_want = true;
-}
 
 int audio_level(void)
 {
@@ -521,12 +457,6 @@ static void audio_task(void *arg)
        poke from anywhere else is the race that panicked a panel on 2026-09-21. */
     alc_settle();
     while (true) {
-        /* Before the read, so a tap is answered within one chunk rather than after it. */
-        if (s_beep_want) {
-            s_beep_want = false;
-            esp_codec_dev_write(s_codec, s_beep, sizeof(s_beep));
-            s_deaf = DEAF_CHUNKS;
-        }
         if (s_play_pos < s_play_len) {
             /* ONE CHUNK PER PASS, NOT THE WHOLE REPLY. `esp_codec_dev_write` blocks, so
                handing it two seconds of audio would stop this task — and this task's read is
