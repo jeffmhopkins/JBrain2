@@ -4331,6 +4331,58 @@ on. A **muted** badge is the opposite case: it appears only in the rare state, i
 way to tell a muted panel from a deaf one, and without it the first support question is "is it
 broken or did someone press the button?"
 
+#### 10.4ch A beak you can see from across a room, and a conversation that continues itself (0.2.74, 2026-09-22)
+
+##### The mouth was sized against a host render, not against a bedroom
+
+The owner, watching the ostrich talk: *"the mouth movement is definitely not big enough or
+obvious enough that his mouth is moving for talking."*
+
+§10.4cb dropped the lower mandible 11 px and split the beak so only the narrow tip moved. That
+is legible in a 368×448 host render at desk distance and invisible on a 29 mm screen across a
+room — which is the only distance that matters.
+
+The hinge moves up (the widest segment alone is the upper mandible; the other three swing as one
+jaw), the drop is **progressive** so the jaw pivots rather than sliding down in one piece, and
+the gape goes to 30 px — most of the beak's own height. The robot's mouth gets the same
+treatment for the same reason.
+
+**And the test was complicit.** `test_the_mouth_moves_only_while_talking` asserted the open
+mouth changed more than **80 px** and passed cheerfully on a mouth nobody could see. A threshold
+below the smallest thing a person would accept is not testing what it is named for. Measured
+after widening — 721 px on the ostrich, 838 on the robot — the floor is now **500**, which
+catches a regression toward subtle while leaving room to restyle.
+
+##### And then it listens again, without being asked
+
+The owner: *"after the text-to-speech comes back and finishes talking, we should just turn the
+microphone on and start recording again, and if I start talking within 2 seconds, just
+automatically record all that until I stopped talking again and send that as the next turn. That
+way I can have fluid conversations."*
+
+Which is the difference between a toy you operate and one you talk to. The machinery already
+existed: this is §10.4cd's hands-free listen with a different trigger and a shorter lead, so the
+whole feature is *notice the reply finished, and open the window the name opens*.
+
+Fired on the **edge** where the speaker falls silent, not on a timer — a long reply must not
+have the microphone opened underneath it. `audio.c`'s six-chunk deafness after the speaker runs
+conveniently keeps the tail of our own voice out of the front of the next recording.
+
+**No beep on this one.** A tone after every reply is the toy interrupting the conversation it
+just started; the red indicator is the affordance, and by the second turn a child knows what it
+means.
+
+##### The cap, because this is a loop with a loudspeaker in it
+
+Every reply reopens the microphone. A television talking in the room can therefore hold a
+conversation with the panel **indefinitely**, each turn costing a whisper pass, a model call and
+a synthesised voice — and §10.4cd's wake phrase means it need not even be started by a person.
+
+Six consecutive follow-ups is far more than a four-year-old's exchange and bounds the runaway.
+After that it wants a deliberate start — the name or a finger — either of which resets the
+count. The refusal logs, so a panel that keeps hitting the cap says so rather than quietly
+talking to a television all afternoon.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

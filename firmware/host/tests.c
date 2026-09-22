@@ -1029,7 +1029,13 @@ static void test_the_mouth_moves_only_while_talking(void)
         for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
             if (fb[i] != shut[i]) moved++;
         }
-        CHECK(moved > 80, "an open mouth is visibly different from a shut one");
+        /* 500, NOT 80, AND THE FLOOR IS THE POINT. The first version of this asserted 80 px
+           and passed happily on a mouth the owner could not see moving from across the room:
+           *"definitely not big enough or obvious enough."* A test whose threshold sits below
+           the smallest thing a person would accept is not testing the thing it is named for.
+           Measured after widening: 721 px on the ostrich, 838 on the robot — so 500 catches a
+           regression toward subtle while leaving room to restyle. */
+        CHECK(moved > 500, "an open mouth is visibly different from a shut one");
 
         /* And it is the MOUTH that moved, not the whole figure: the change sits in the head,
            which is the top half. A `talk` wired to the wrong offset would still differ. */

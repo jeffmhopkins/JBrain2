@@ -432,9 +432,11 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         /* The open mouth goes UNDER the arc, so the smile stays the lip of it rather than
            being replaced by a hole. At talk 0 nothing is drawn and the face is byte-for-byte
            what it was before this channel existed. */
-        const int gape = (int)lrintf(st->talk * 17.0f);
+        /* The robot's mouth gets the same treatment for the same reason — it was sized
+           against a host render rather than against a room. */
+        const int gape = (int)lrintf(st->talk * 26.0f);
         if (gape > 0) {
-            fill_round_rect(fb, mx - SX(17), my + SY(2), SX(34), SY(gape), (int)(7 * s), dark);
+            fill_round_rect(fb, mx - SX(21), my + SY(2), SX(42), SY(gape), (int)(8 * s), dark);
         }
         arc_stroke(fb, mx, my, (int)(30 * s), (float)M_PI * 0.15f, (float)M_PI * 0.85f,
                    (int)(9 * s), dark);
@@ -584,11 +586,21 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
             int w, h, y;
         } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
         /* THE LOWER MANDIBLE DROPS, the upper one does not — which is how a beak opens and
-           the reason this is not just "make the whole beak bigger". The split is between the
-           two wide segments and the two narrow ones, so the gap opens where a bird's does. */
-        const int gape = (int)lrintf(st->talk * 11.0f);
+           the reason this is not just "make the whole beak bigger".
+         *
+           MUCH BIGGER THAN THE FIRST ATTEMPT, and the owner's verdict is the measurement:
+           *"the mouth movement is definitely not big enough or obvious enough that his mouth
+           is moving for talking."* 11 px of drop, split so only the narrow tip moved, was a
+           third of the beak twitching on a 29 mm screen — legible in a host render, invisible
+           across a bedroom. So the hinge moves UP (only the widest segment is the upper
+           mandible, the other three swing as one jaw) and the gape goes to 30, which is most
+           of the beak's own height. A talking mouth has to read from the far side of a room
+           or it is not doing the job the animation exists for. */
+        const int gape = (int)lrintf(st->talk * 30.0f);
         for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
-            const int drop = i >= 2 ? SY(gape) : 0;
+            /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
+               piece: the further from the joint, the further it travels. */
+            const int drop = i >= 1 ? SY(gape * (int)i / 3) : 0;
             fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
                             SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
         }

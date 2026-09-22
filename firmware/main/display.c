@@ -630,6 +630,30 @@ static volatile bool s_debug_overlay;
 #define LISTEN_HUSH_MS 900
 #define LISTEN_LEAD_MS 3000
 
+/* AND THEN IT LISTENS AGAIN, WITHOUT BEING ASKED.
+ *
+ * The owner: *"after the text-to-speech comes back and finishes talking, we should just turn
+ * the microphone on and start recording again, and if I start talking within 2 seconds, just
+ * automatically record all that until I stopped talking again and send that as the next turn.
+ * That way I can have fluid conversations."*
+ *
+ * Which is the difference between a toy you operate and one you talk to. The machinery is
+ * already here — this is the hands-free listen from `VOCAB_LISTEN` with a different trigger
+ * and a shorter lead — so the whole feature is: notice the reply finished, and open the same
+ * window the name opens.
+ *
+ * NO BEEP ON THIS ONE. A tone after every reply is the toy interrupting the conversation it
+ * just started; the red indicator is the affordance, and by the second turn a child knows what
+ * it means.
+ *
+ * A CAP, BECAUSE THIS IS A LOOP WITH A LOUDSPEAKER IN IT. Every reply reopens the microphone,
+ * and a television talking in the room can therefore hold a conversation with the panel
+ * indefinitely — each turn costing whisper, a model and a voice. Six consecutive follow-ups is
+ * far more than a four-year-old's exchange and bounds the runaway; after that it wants a
+ * deliberate start again, which resets the count. */
+#define FOLLOW_LEAD_MS 2000
+#define FOLLOW_MAX_TURNS 6
+
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
@@ -649,6 +673,16 @@ static int s_down_y = -1;
 static bool s_listen_voice;
 static bool s_listen_heard;
 static uint32_t s_listen_hush;
+/* How long this particular listen waits for someone to start: the name gives 3 s, a follow-up
+   2 s, and a hold does not use it at all. */
+static uint32_t s_listen_lead;
+/* A reply has finished playing and has not yet been followed up, and how many turns this
+   exchange has run without a deliberate start. */
+static bool s_follow_armed;
+static int s_follow_turns;
+/* Last frame's speaking state, so the follow-up fires on the EDGE where the speaker falls
+   silent rather than on every frame after it. */
+static bool s_was_speaking;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -1340,6 +1374,31 @@ static void face_task(void *arg)
            the only thing on screen explaining the sound. Decided once a frame so every branch
            below agrees about it. */
         const bool speaking = audio_playing();
+        /* THE EXCHANGE CONTINUES ITSELF. Armed when a reply starts playing, fired on the edge
+           where the speaker falls silent — not on a timer, because a long reply must not have
+           the microphone opened underneath it. `audio.c` stays deaf for six chunks after the
+           speaker runs, which conveniently keeps the tail of our own voice out of the front of
+           the next recording. */
+        if (s_was_speaking && !speaking && s_follow_armed) {
+            s_follow_armed = false;
+            if (s_talk == TALK_IDLE && talk_state() != TALK_NET_BUSY &&
+                s_follow_turns < FOLLOW_MAX_TURNS) {
+                s_talk = TALK_LISTENING;
+                s_talk_since = now;
+                s_listen_voice = true;
+                s_listen_heard = false;
+                s_listen_hush = 0;
+                s_listen_lead = FOLLOW_LEAD_MS;
+                s_follow_turns++;
+                audio_capture_open();
+                ESP_LOGI(TAG, "talk: listening (follow-up %d)", s_follow_turns);
+                dirty = true;
+            } else if (s_follow_turns >= FOLLOW_MAX_TURNS) {
+                ESP_LOGW(TAG, "talk: %d follow-ups without a deliberate start — stopping",
+                         s_follow_turns);
+            }
+        }
+        s_was_speaking = speaking;
         if (tapped && !speaking) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
@@ -1409,6 +1468,8 @@ static void face_task(void *arg)
                         s_listen_voice = true;
                         s_listen_heard = false;
                         s_listen_hush = 0;
+                        s_listen_lead = LISTEN_LEAD_MS;
+                        s_follow_turns = 0; /* a deliberate start is a fresh exchange */
                         audio_capture_open();
                         ESP_LOGI(TAG, "talk: listening (name)");
                     }
@@ -1558,6 +1619,7 @@ static void face_task(void *arg)
                explicitly rather than relied upon: the two paths share one state machine, and a
                stale flag here would leave a held turn waiting for a hush that never comes. */
             s_listen_voice = false;
+            s_follow_turns = 0; /* a finger is a deliberate start, like the name */
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
                that the thing is now listening rather than merely being held. */
             if (sound) audio_beep();
@@ -1587,7 +1649,7 @@ static void face_task(void *arg)
             const bool hushed =
                 s_listen_heard && s_listen_hush != 0 && now - s_listen_hush >= LISTEN_HUSH_MS;
             const bool full = audio_capture_ms() >= audio_capture_cap_ms();
-            const bool nothing = !s_listen_heard && now - s_talk_since > LISTEN_LEAD_MS;
+            const bool nothing = !s_listen_heard && now - s_talk_since > s_listen_lead;
             if (nothing) {
                 /* The name and then silence — a television, or a child who changed their mind.
                    Dropped without a bubble: an accidental wake must cost nothing, which is the
@@ -1638,6 +1700,9 @@ static void face_task(void *arg)
                mid-sentence. */
             s_talk = TALK_IDLE;
             talk_clear();
+            /* Armed, not opened: the reply has not started coming out of the speaker yet, let
+               alone finished. The edge above does the opening. */
+            s_follow_armed = true;
             action = ACT_NOD;
             action_mag = 1.0f;
             action_start = now;
