@@ -119,6 +119,23 @@ tower_drop = 0.0;   // [0:0.1:10]
 // poke it through with the screw. 0 = none
 bridge_skin = 0.2;  // [0:0.05:0.6]
 
+/* [4c. Hole plugs - press-fit caps that hide the tower openings] */
+
+// Recess each tower opening so a plug sits flush (off = no recess)
+plug_recess = true;
+// Recess and plug cap depth
+plug_cap_t = 0.8;       // [0.4:0.1:2]
+// How much wider the recess is than the bore
+plug_cap_extra = 1.0;   // [0.6:0.1:3]
+// Length of the plug's shank inside the bore
+plug_len = 4.0;         // [1:0.5:10]
+// Press fit: how far the ribs stand over the printed bore. Raise if loose, lower if tight
+plug_interference = 0.1;  // [-0.2:0.05:0.4]
+// Gap around the cap in its recess, so a knife tip can pry the plug out
+plug_cap_gap = 0.15;    // [0:0.05:0.5]
+// Plugs to print (4 plus spares)
+plug_count = 6;         // [1:1:12]
+
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
 
@@ -145,6 +162,8 @@ wall_chamfer = 3.0;     // [0:0.5:8]
 
 // Curve smoothness. 48 previews fast, 96 is export quality.
 smoothness = 72;    // [24:8:144]
+// What to output: the plate, the hole plugs, or both side by side
+part = "plate";     // [plate, plugs, both]
 // Show a ghost of the battery to check placement (preview only)
 show_battery = false;
 
@@ -168,6 +187,13 @@ shaft_table = screw_size == "M1.6" ? [1.8, 3.0, 1.6]
 shaft_d = shaft_table[0] + hole_slop;
 head_d  = shaft_table[1] + head_clear + hole_slop;
 tower_r = head_d / 2 + tower_wall;
+
+// Plugs. Holes print under size by about hole_slop, so the ribs are sized
+// from the printed bore, not the drawn one.
+recess_d   = head_d + plug_cap_extra;
+cap_d      = recess_d - hole_slop - 2 * plug_cap_gap;
+rib_d      = head_d - hole_slop + plug_interference;
+plug_core_d = rib_d - 0.6;
 
 // Cell footprint and height as it sits in the plate.
 edge   = battery_orientation == "edge";
@@ -328,7 +354,32 @@ module screw_holes() {
                 cylinder(d = head_d, h = bore_top + eps);
             translate([0, 0, bore_top + bridge_skin])
                 cylinder(d = shaft_d, h = total_h);
+            if (plug_recess)
+                translate([0, 0, -eps])
+                    cylinder(d = recess_d, h = plug_cap_t + eps);
         }
+}
+
+// Printed cap-down: the flat face that shows is on the bed. Six ribs crush
+// slightly as the shank goes in; the tip is chamfered to start it straight.
+module plug() {
+    cylinder(d = cap_d, h = plug_cap_t);
+    translate([0, 0, plug_cap_t - eps]) {
+        cylinder(d = plug_core_d, h = plug_len + eps);
+        intersection() {
+            for (a = [0 : 60 : 359])
+                rotate(a) translate([0, -0.3, 0]) cube([rib_d / 2, 0.6, plug_len]);
+            cylinder(d = rib_d, h = plug_len - 0.6);
+        }
+        translate([0, 0, plug_len - 0.6])
+            cylinder(d1 = rib_d, d2 = plug_core_d - 0.4, h = 0.6);
+    }
+}
+
+module plugs() {
+    cols = min(plug_count, 3);
+    for (i = [0 : plug_count - 1])
+        translate([(i % cols) * (cap_d + 3), floor(i / cols) * (cap_d + 3), 0]) plug();
 }
 
 module back_plate() {
@@ -339,9 +390,10 @@ module back_plate() {
     }
 }
 
-back_plate();
+if (part != "plugs") back_plate();
+if (part != "plate") translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs();
 
-if (show_battery)
+if (show_battery && part != "plugs")
     color("green", 0.35)
         translate([-fx/2, -fy/2, plate_t + tape_t])
             cube([fx, fy, cell_h]);

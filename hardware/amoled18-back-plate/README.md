@@ -39,8 +39,9 @@ head screws do the job (see [Screws](#screws)).
 | `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 22.7 mm thick. |
 | `back_plate_852540_1000mAh_edge.stl` | An 852540 cell on its edge. Unit ≈ 39 mm thick. **Tight: 0.35 mm per end, no room for wires at the ends — measure first.** |
 | `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. **Tight — measure first.** See [The tall variation](#the-tall-variation-104050-on-end). |
-| `amoled18_back_plate.json` | The four builds above as presets, selectable in OpenSCAD's Customizer. |
-| `preview.png`, `preview-back.png`, `preview-cutaway.png`, `preview-104050-end.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, and the tall variation. |
+| `amoled18_hole_plugs.stl` | Six press-fit plugs (four plus spares) that hide the screw openings on the back. Fits every plate. See [Hole plugs](#hole-plugs). |
+| `amoled18_back_plate.json` | The four plate builds above as presets, selectable in OpenSCAD's Customizer. |
+| `preview.png`, `preview-back.png`, `preview-cutaway.png`, `preview-104050-end.png`, `preview-plugs.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, the tall variation, and the plugs. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
@@ -202,6 +203,25 @@ If you can't measure a stock screw, **M2 × 5** is the likely answer; **M2 × 4*
 first. Drive them with a **1.5 mm hex key long enough to reach down the tower**: the console's
 `Hex key reach` line gives the depth, about 33 mm for the default, 11 mm for the flat 802525 and
 56 mm for the tall variation (a screwdriver-style 1.5 mm hex driver reaches all of them).
+
+## Hole plugs
+
+Each tower opening on the back face has a shallow recess (Ø5.6 × 0.8 mm), and
+`amoled18_hole_plugs.stl` has six plugs that press into them so the back reads as one flat face.
+Each plug is a thin cap with a ribbed shank: the six ribs crush slightly as it goes in, which
+makes a firm press fit without glue.
+
+- **Print them cap-down** (as laid out in the file), so the face that shows is the smooth one
+  from the bed. Same material as the plate if you want them to match.
+- **Push them in by hand** once the screws are tight; a flat tool helps the last bit. The cap
+  sits flush.
+- **To get at a screw again**, pry a plug out with a knife tip in the small gap around its cap.
+- **If they're loose or too tight**, change `plug_interference` in group 4c (up for looser
+  printers, down for tighter) and export again. In OpenSCAD, set `part` in group 6 to `plugs` to
+  export just the plugs, or `both` to see them next to the plate. `plug_recess` turns the
+  recesses off if you'd rather leave the openings plain.
+
+![The six hole plugs](preview-plugs.png)
 
 ## The tall variation: 104050 on end
 
