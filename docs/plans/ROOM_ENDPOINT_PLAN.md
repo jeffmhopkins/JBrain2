@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-22 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -3581,6 +3581,231 @@ Cost: the CA bundle grows the image from 894 K to 985 K, still 37% free in the f
 Firmware is **0.2.0**; three backend tests pin the pairing and were confirmed to fail
 against the shipped behaviour. Adding the bundle also needed `mbedtls` in the component's
 `REQUIRES` — the third defect in this wave that only compiling would find.
+
+#### 10.4bv One buffer, two frames, and a corner that never got the message (0.2.62, 2026-09-22)
+
+The owner, on 0.2.61: *"mic bar is gone, but when horizontal, we now have some weird screen
+artifacts on the left side, and I'm not quite sure why there's a red dot when I'm horizontal on
+the bottom left. What does that indicate?"*
+
+Three separate things, and the interesting one is not the one that looks like a display bug.
+
+##### The artifacts: the double buffer had a seam at every frame boundary
+
+§10.4bf bought two stripe buffers and a one-deep transfer queue, and the comment there states
+the invariant exactly: *"at most ONE is ever in flight when we return — and the stripe we are
+about to fill is by definition the other one."* True within a blit. Both blits then opened with
+a **local** `bool odd = false`, so the alternation restarted every frame — and "by definition
+the other one" quietly stopped being true across the boundary.
+
+Portrait survived on arithmetic. 448 / 16 = **28** transfers, an even count, so a frame ends on
+`stripe_b` and the next begins on `stripe`. The rotated blit does 368 / 16 = **23**, an odd
+count: every landscape frame ended on `stripe` and the next frame's first `memcpy` wrote over
+the transfer still sending it. One 16 px column of glass, assembled from two different frames,
+25 times a second, for as long as the panel is held sideways.
+
+The one-shot clear on the turn had the same hole and left a permanent mark rather than a
+flickering one. It queues 28 stripes of zeros over the whole panel, returns with the last still
+in flight, and `blit_frame_rotated` then fills a buffer whose size is `SQ * COL_STRIPE` = 5888
+pixels — **exactly `sizeof(stripe)`**. So the rotated figure landed on top of the zeros the DMA
+was reading, and panel rows 432–447 came out as transposed garbage. Nothing rewrites that
+region until the next turn, so it stays.
+
+Both are the same defect, and the fix is one line of state: the toggle moves to file scope and
+is never reset. Three loops share it now; none may assume where the previous one stopped.
+
+**What this cost to find, and why.** The first hypothesis was the overlays — the cue bar and
+the tap pips still draw at rows 0–3, which a quarter turn does not carry. That is a real defect
+and is fixed here too, but it is the **opposite** symptom: content that lands outside the square
+is *invisible* in landscape, never corrupt. Checking which rows the rotated blit actually reads
+(`SQ_Y0` … `SQ_Y0 + SQ`) ruled it out in a minute and pointed at the only other thing that
+writes those rows — the clear — and from there at the buffer it writes them with.
+
+##### The red dot: it is not an artifact, and the panel should not have been listening
+
+`draw_listening`. The recording indicator, top-right of the square, which a quarter turn puts in
+a corner — as designed. The answer to *"what does that indicate?"* is **the panel thought it was
+being held to talk**, because it was being held.
+
+Two things follow.
+
+The dot needed a word. Its comment claimed it was *"the one symbol for recording that needs no
+explaining"*, and then the person who specified the feature photographed it and asked what it
+meant. A red dot reads as recording next to a camera; on a pet's face it reads as part of the
+pet. The dot stays for the twins, who cannot read it. `LISTENING` under it is for whoever has to
+work out why the panel is doing something — and it is the fastest way to spot a listen nobody
+started.
+
+And 700 ms is short enough that **carrying the panel starts a recording**. §10.4bn waved this
+through — *"the cost of a false listen is a beep and a discarded recording"* — which was true of
+the state machine and stopped being true when `talk.c` landed behind it. A false listen now
+uploads six seconds of a child's bedroom and makes the pet answer something nobody asked.
+
+The discriminator was already computed. A hand carrying a 32 mm panel touches its **rim**; a
+press meant for the pet lands on the pet, which occupies the middle. The hold must now begin
+inside a 72 px inset — about 6 mm, roughly the half-width of an adult thumb pad — leaving a
+224 × 304 target a four-year-old cannot miss. In **panel** coordinates, so the rim is the rim
+whichever way up the unit is mounted, and sampled at the down edge rather than read at the
+threshold, because `s_tap_x` outlives its press and a finger already down when the loop starts
+would otherwise inherit the last one's position. A rejected hold logs once, with the
+coordinates: the owner has no terminal, and a margin that is too wide looks exactly like a
+microphone that stopped working unless the panel says which it is.
+
+This is a margin, not a cure. Grip contact that lands squarely on the pet's face still fires.
+The complete answer is the rhythm in `gesture.h` — slots 1 and 2 are free, and it measured 12
+false fires per 20,000 simulated child presses against a bare hold's 1,937 — but a rhythm is a
+thing to teach, and the owner asked for press-and-hold. Teach it only if the margin is not
+enough.
+
+##### Still unverified
+
+Press-and-hold has **never been exercised end to end on hardware**, so the whisper round trip
+from the room is still a number nobody has. The margin makes the gesture harder to trigger by
+accident; whether it is still easy to trigger on purpose is a question only the twins answer.
+
+#### 10.4bw The finger was in the wrong space, and so was my answer (0.2.63, 2026-09-22)
+
+The owner, correcting §10.4bv: *"No, the listening is on the top right. Also in landscape he
+should be able to tilt and slide all over to the right and I'll put it to the left, not
+restrained as much. Also, while horizontal the touch screen indicators do not indicate where I
+actually tapped — it's like rotated 90° or something."*
+
+**The red dot at the bottom left was never `draw_listening`.** The listening dot is top right,
+where it is drawn. What was at the bottom left was the **tap marker** — the amber ring that
+rides the flinch — landing a quarter turn away from the finger that made it. §10.4bv's
+explanation was confident and wrong, and it was wrong in the way worth recording: it explained
+a symptom with the most recently changed code rather than checking which code draws the shape
+that was actually photographed. The margin it added to the talk gesture is still right for its
+own reasons; the diagnosis it was attached to was not.
+
+##### Panel coordinates are not frame coordinates
+
+The touch controller reports where a finger is on the **glass**. The figure is drawn in
+**frame** coordinates and permuted into panel coordinates by `blit_frame_rotated` on the way
+out. Everything downstream of a finger read the first as if it were the second, so on a
+side-mounted panel:
+
+- the tap marker was drawn into the frame at the glass position, and the blit then carried it a
+  quarter turn away — the owner's rotated indicator, and the bottom-left dot;
+- `face_zone` was asked where on the figure the finger landed using a point that is not in the
+  figure's space, so poking the bird's neck answered as a leg. **Nothing said so.** A wrong
+  reaction and a right one look alike from across a room, which is why this half of the defect
+  could have lived indefinitely.
+
+`panel_to_frame()` inverts the blit's mapping. Upright is the identity; upside down is *also*
+the identity here, because `flip_frame` reverses the whole buffer after the marker is drawn and
+the panel is then physically turned over — the same two-reversals-cancel argument §10.4bu had
+to get right for the lean, and the same one that is easy to talk yourself out of. What stays in
+panel coordinates: the calibration map, the telemetry, and 0.2.62's talk margin, because the
+rim of the glass is the rim of the glass whichever way up the unit is mounted.
+
+`face_zone` had a second, quieter fault in the same family: it ignored `s_fit` and `s_fit_oy`
+entirely, so side-mounted it asked about a figure a sixth larger than the one on the glass. It
+now inverts the same transform `face_draw` applies, and the test below measured the old code
+disagreeing with itself on **30% of a sampled grid**.
+
+The tap log now prints both pairs. A tap the glass and the figure place differently is a
+rotation fault; one they place identically but in the wrong zone is a calibration fault; the
+owner has no terminal to tell those apart with.
+
+##### The lean: 110, and it is a measurement
+
+*"Not restrained as much"* is a number, so it was measured rather than chosen. Walk the lean
+until a form's bounding box touches an edge, under each fit:
+
+| | ostrich | robot |
+|---|---|---|
+| portrait | 46 | 75 |
+| side-mounted (scaled 368/448) | 85 | 115 |
+
+Portrait ships **±60** — already 1.30× the ostrich's clean limit, deliberately, on §10.4at's
+argument that "a cropped toe at the peak of a gag reads as energy" on a 29 mm screen. Carrying
+exactly that generosity across gives 85 × 60/46 = **110**, which is also what the limit is for:
+it doubles as the *gain* (`tilt * max / LEAN_FULL`), so the same tilt now buys nearly double the
+travel. Both constants moved to `face.h` so the host harness can pin them against the drawn
+geometry — a lean limit that is only a firmware `#define` is a number nothing checks.
+
+##### What the tests had to stop asserting
+
+The first version of the lean test demanded the figure be wholly on screen at full lean, and
+**portrait failed it** — the shipped ±60 has cropped the ostrich's tail since it landed. An
+invariant the shipped product violates is not an invariant; it is a bug report about the test.
+The property that survives is proportion: measure the room each fit has, require the
+side-mounted limit to be as generous as portrait's and no more.
+
+Three new tests, each confirmed to fail against the old code before being trusted:
+
+- `test_a_tap_lands_where_the_pixel_it_touched_came_from` — for every pixel of glass inside the
+  square, the frame pixel `panel_to_frame` names must be the one the rotated blit actually put
+  there. Not "there is a mapping": the exact inverse of that one function.
+- `test_the_zones_follow_the_scaled_figure` — a point and the figure move together, so a zone
+  must not change when both go through the fit.
+- `test_the_lean_limits_are_the_room_that_exists` — the proportion above, measured in-test.
+
+And a defect in the harness itself: `firmware/host/Makefile` did not list headers as
+prerequisites, so moving a constant into `face.h` produced a **green run against a stale
+binary**. A suite that can report OK without having compiled the change is worse than no suite.
+
+#### 10.4bx Two red lights, and the case had been eating one of them (0.2.64, 2026-09-22)
+
+The owner, correcting me again and correctly: *"There is a small red light on the bottom left
+and a larger red light on the top right. The larger red light only shows while I'm starting
+recording. The bottom left one is always there regardless. It might be hidden from the
+curvature while vertical?"*
+
+Two lights. The large top-right one is `draw_listening`, as they said in §10.4bw. The small
+always-on bottom-left one is the **caption's microphone-open indicator** — `caption.c`, drawn
+whenever `c->live`, which is whenever the wake-word recogniser has the microphone open, which
+is always. It is the one mark on this panel that is a promise to a room rather than a
+decoration: the ICO Children's Code requires it while the microphone is open.
+
+**And their hypothesis is right, measured against this repo's own number.** §10.4c, from the
+first photograph of the hardware: *"the enclosure hides its corners — anything drawn there is
+invisible to whoever is holding it."* `frontend/src/pet/scale.ts` acted on it the same day
+(`CASE_CORNER_FRACTION = 0.13`, so 48 px of a 368 px width) and has clipped the PWA preview to
+the case shape ever since. **The firmware never did.** The pip sat at x=10 on the caption row,
+about 50 px from the bottom-left corner's centre of curvature against a radius of 48 — just
+outside. So the compliance indicator has been drawn correctly and hidden by the enclosure for
+the whole life of the device, and it took a quarter turn to reveal it, because a rotation maps
+a corner of the SQUARE onto the middle of an EDGE of the glass.
+
+The version label had the same fault more mildly: at (8, 6) its glyph box started ~58 px from
+the same centre, so the leading `v` was chewed on every panel. Readable enough that nobody
+filed it, which is exactly how it survived.
+
+##### The thing worth keeping
+
+**A screenshot could never have shown this.** The framebuffer was always correct. Every test
+this firmware has, every host render, every reasoning-about-the-code pass — all of them
+operate on a 368x448 rectangle that does not exist. The defect lives entirely in the gap
+between what is drawn and what can be seen, and the only instrument that could detect it was a
+person holding the object.
+
+So the geometry moves into the firmware as `FACE_CASE_CORNER_R` and `face_inside_case()`, and
+the host suite gains the question the framebuffer cannot answer: of the pixels this draws, is
+every one of them somewhere a person can actually see? `test_the_microphone_light_is_inside_
+the_case` asserts it for the indicator alone — the ticker deliberately scrolls in past the
+corner, which is what a ticker does; a compliance light is not allowed to. Confirmed to fail
+at the old x=10 before being trusted.
+
+Both constants are hand-synced with `CASE_CORNER_FRACTION`; they live in different languages
+and neither can import the other. That is a real seam and it is written down here because it
+is the kind that drifts.
+
+##### And the routing grammar the owner decided in the same message
+
+*"I want the commands to be 'send xyz' or 'send to dad xyz'. If we didn't say 'to dad', default
+the voice message to the other robot. Voice commands not starting with 'send' should go to the
+LLM."*
+
+One reserved word rather than a vocabulary of names, the common case (twin to twin) as the
+no-argument default, and everything else falling through to the conversation path that already
+exists. It is a better rule than the three-equal-recipients sketch it replaces, and it is
+recorded in `../proposed/PANEL_CONVERSATION_PLAN.md` § "The grammar, decided" along with the
+three things it still needs — a per-panel default recipient, a recipient table that holds
+people as well as devices, and the prefix being stripped on the BOX, which is the only end
+that has a transcript. Unbuildable until press-and-hold is confirmed on hardware; that
+dependency has not moved.
 
 ### 10.5 Three findings from the board in hand
 
