@@ -4383,6 +4383,39 @@ After that it wants a deliberate start — the name or a finger — either of wh
 count. The refusal logs, so a panel that keeps hitting the cap says so rather than quietly
 talking to a television all afternoon.
 
+#### 10.4ci The smile is the lower lip, not a second mouth (0.2.75, 2026-09-22)
+
+The owner: *"when changing to the robot, when it speaks the happy face doesn't go away while
+the mouth appears, which looks really weird."*
+
+Correct, and §10.4cb earned it. The open mouth was a rounded **box** drawn under the smile arc,
+on the stated theory that "the smile stays the lip of it rather than being replaced by a hole."
+It does not. A curved smile with a rectangle below it reads as **two mouths**, because that is
+what it is — and the comment asserting otherwise is why it shipped twice.
+
+The opening is now bounded **by the arc**: for every column across the smile, fill from the
+arc's own y upward by the gape, tapered to nothing at the corners so the hole is a lens rather
+than a band. That is the cartoon convention — the mouth opens out of the smile line and the
+smile becomes the bottom of it — and it collapses exactly to the untouched arc as the gape goes
+to zero, with no pop and no second shape.
+
+##### The corners are the property, and the threshold is measured
+
+A real mouth closes where the lips meet. A box is full height right out to its edge. So the
+test walks the per-column height of the opening and compares the centre against nine tenths of
+the way out, **on both sides** — a taper on one side is a shape that slid rather than a mouth
+that opened.
+
+Nine tenths is measured, not picked: the lens runs 23 px at the centre and 8 px at 90%, while a
+rounded box of the same width is still near full height there because its corner radius only
+bites in the last fifth. Confirmed by putting the old `fill_round_rect` back and watching the
+check fail.
+
+This is the second time in two releases that the mouth's test was weaker than the owner's eye
+— §10.4ch raised a visibility floor that had passed on a mouth nobody could see, and this adds
+the shape check that would have caught a box pretending to be a mouth. Both were found by
+someone looking at the object, which remains the instrument this project cannot replace.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

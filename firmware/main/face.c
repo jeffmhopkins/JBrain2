@@ -429,17 +429,34 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
     if (front) {
         const int mx = ox + tilt, my = hy + SY((int)(HH * 0.52f)) - SY(16);
-        /* The open mouth goes UNDER the arc, so the smile stays the lip of it rather than
-           being replaced by a hole. At talk 0 nothing is drawn and the face is byte-for-byte
-           what it was before this channel existed. */
-        /* The robot's mouth gets the same treatment for the same reason — it was sized
-           against a host render rather than against a room. */
-        const int gape = (int)lrintf(st->talk * 26.0f);
+        const int mr = (int)(30 * s);
+        /* THE SMILE IS THE LOWER LIP, NOT A SECOND MOUTH.
+         *
+           The owner: *"when changing to the robot, when it speaks the happy face doesn't go
+           away while the mouth appears, which looks really weird."* Correct, and the first
+           version earned it — the open mouth was a rounded box drawn UNDER the smile arc, on
+           the theory that the smile would read as its lip. It does not. A curved smile with a
+           rectangle below it reads as two mouths, because that is what it is.
+         *
+           So the opening is bounded BY the arc: for every column across the smile, fill from
+           the arc's own y upward by the gape, tapered to nothing at the corners so the hole is
+           a lens rather than a band. That is the cartoon convention — the mouth opens out of
+           the smile line, and the smile becomes the bottom of it — and it collapses exactly to
+           the untouched arc as the gape goes to zero, with no pop and no second shape. */
+        const int gape = (int)lrintf(st->talk * 26.0f * s);
         if (gape > 0) {
-            fill_round_rect(fb, mx - SX(21), my + SY(2), SX(42), SY(gape), (int)(8 * s), dark);
+            /* 0.15pi is where the arc starts, so its half-width is r*cos(0.15pi). */
+            const int xmax = (int)(cosf((float)M_PI * 0.15f) * (float)mr);
+            for (int dx = -xmax; dx <= xmax; dx++) {
+                const float t = (float)dx / (float)xmax;
+                const int lip = my + (int)lrintf(sqrtf((float)(mr * mr - dx * dx)));
+                const int open = (int)lrintf((float)gape * sqrtf(1.0f - t * t));
+                for (int y = lip - open; y <= lip; y++) px(fb, mx + dx, y, dark);
+            }
         }
-        arc_stroke(fb, mx, my, (int)(30 * s), (float)M_PI * 0.15f, (float)M_PI * 0.85f,
-                   (int)(9 * s), dark);
+        /* The lip last, so the opening never eats its own edge. */
+        arc_stroke(fb, mx, my, mr, (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s),
+                   dark);
     }
 
     /* A RAISED ARM IS REDRAWN OVER THE HEAD. The head is 216 px wide and the shoulder sits

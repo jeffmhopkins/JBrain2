@@ -914,6 +914,58 @@ static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
     }
 }
 
+static void test_the_open_mouth_is_the_smile_opening(void)
+{
+    /* The owner: "when changing to the robot, when it speaks the happy face doesn't go away
+       while the mouth appears, which looks really weird."
+
+       The first version drew the opening as a rounded BOX under the smile arc, on the theory
+       that the smile would read as its lip. It does not — a curved smile with a rectangle
+       below it reads as two mouths, because that is what it is.
+
+       THE PROPERTY THAT SEPARATES THEM IS THE CORNERS. A real mouth closes where the lips
+       meet, so the opening tapers to nothing at each end; a box is full height right out to
+       its edge. Comparing a column at the centre against one near the corner catches that,
+       and would have caught it before the owner had to. */
+    face_state_t st;
+    face_rest(&st);
+    st.form = FORM_ROBOT;
+    face_draw(fb, 0, &st);
+    uint16_t *shut = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(shut != NULL, "scratch frame allocated");
+    memcpy(shut, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    st.talk = 1.0f;
+    face_draw(fb, 0, &st);
+
+    /* Per-column change, across the whole frame — the mouth is the only thing that moved. */
+    int col[FACE_W];
+    memset(col, 0, sizeof(col));
+    int widest = 0;
+    for (int x = 0; x < FACE_W; x++) {
+        for (int y = 0; y < FACE_H; y++) {
+            if (fb[y * FACE_W + x] != shut[y * FACE_W + x]) col[x]++;
+        }
+        if (col[x] > col[widest]) widest = x;
+    }
+    CHECK(col[widest] > 10, "the mouth opens somewhere");
+
+    /* Walk out to the edge of the opening and check it closed rather than stopped. */
+    int edge = widest;
+    while (edge + 1 < FACE_W && col[edge + 1] > 0) edge++;
+    const int span = edge - widest;
+    CHECK(span > 8, "the opening is wide enough to have corners at all");
+    /* NINE TENTHS OF THE WAY OUT, and the fraction is measured rather than picked. The lens
+       profile runs 23 px at the centre and 8 at 90% — a rounded box of the same width is
+       still near full height there, because its corner radius only bites in the last fifth.
+       Checked on BOTH sides, since a taper on one is a shape that slid rather than a mouth
+       that opened. */
+    CHECK(col[widest + (span * 9) / 10] * 2 < col[widest],
+          "the opening tapers toward the corner, as lips do");
+    CHECK(col[widest - (span * 9) / 10] * 2 < col[widest], "and toward the other corner");
+    free(shut);
+}
+
 static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
 {
     /* The owner: "the robot should kind of shuffle his legs back and forth as tilt causes him
@@ -2246,6 +2298,7 @@ int main(void)
     test_the_lean_limits_are_the_room_that_exists();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
+    test_the_open_mouth_is_the_smile_opening();
     test_the_shuffle_is_driven_by_distance_not_by_a_clock();
     test_the_orientation_needs_a_band_crossed_on_purpose();
     test_the_bird_moves_between_frames();
