@@ -26,6 +26,7 @@ for the battery pocket and four screw holes.
 | `back_plate_802525_400mAh.stl` | Ready-made export with the defaults below and an 802525 cell. |
 | `preview.png` | Render with the battery ghosted in. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
+| `reference/` | Waveshare's dimension drawing, 3D model and schematic, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
 ## Step by step, if you've never used OpenSCAD
 
@@ -123,7 +124,9 @@ alongside the `.scad` file.
 Sources: Waveshare's [dimension drawing](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8)
 and [3D model](https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8-3D.zip)
 (from the [resources page](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8/Resources-And-Documents)),
-and the photos in `photos/`. The 3D model has the board and display but not the case shells.
+and the photos in `photos/`. Copies of Waveshare's files are in [`reference/`](reference/README.md),
+with `reference/measure.py` to re-derive the numbers. The 3D model has the board and display
+but not the case shells.
 
 | Default | Value | Source | Confidence |
 |---|---|---|---|
