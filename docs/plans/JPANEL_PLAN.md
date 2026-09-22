@@ -221,6 +221,16 @@ costs two rewrites.
 - **Retention.** 30 days after playing is a proposal. Unplayed-forever is not.
 - **More than two panels.** The refusal rule above is safe but unhelpful; addressing by name
   needs the twins' names in the offline vocabulary, which the owner has deferred.
+- **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
+  ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
+  an OwnTracks phone — and the only thing marking one is the label `/flash` writes:
+  `"panel {name}"`, or `"room endpoint panel"` when the owner named no unit. So "the other
+  panel" has to be resolved by `label LIKE 'panel%'`, which a hand-labelled device key could
+  join and which a re-flash without a name degrades.
+  It is survivable — the worst case is a message offered to a device that RLS then refuses to
+  deliver to, so the failure is a dead letter rather than a leak — and W2 proceeds on it. But it
+  wants a real marker (a principal sub-kind, or a panel roster table) the first time a third
+  device key exists in this house, and that is a schema change rather than a patch.
 - **Notifying Dad.** A message to the PWA currently waits to be looked at. Whether it should
   push is a question about a parent's phone, not about the panels.
 - **The transcriber mangles small children.** `"tell us a joke"` arrived as `"There is a joke.
