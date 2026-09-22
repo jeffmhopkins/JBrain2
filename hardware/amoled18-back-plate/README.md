@@ -16,13 +16,15 @@ the case stays stock: all ports, buttons and the mic are in the **front** shell,
 has no other openings.
 
 The default is a **1000 mAh 103035 cell (10 × 30 × 35 mm) standing on its long edge**, which
-makes the unit about **37.6 × 45.2 × 44 mm**, close to a cube, with 2.85 mm at each end for the
-wires and for cells that run over size. A long cell can't lie flat: the screws pass through
+makes the unit about **37.6 × 45.2 × 44 mm**, close to a cube. Along the case it reserves 2 mm at
+one end for the wires (`lead_end`) and still leaves 1.85 mm spare at each end for cells that run
+over size. A long cell can't lie flat: the screws pass through
 24 mm apart across the case, so a 30 mm wide cell would sit across them, but a cell on its edge
 is just 10 mm wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an
-802525 lying flat makes the unit about 22.7 mm thick.
+802525 lying flat makes the unit about 24.7 mm thick.
 
-The back face is flat, with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
+The back face is flat apart from four shallow round recesses for the [hole plugs](#hole-plugs),
+with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
 Each screw runs up a hollow tower and its head sits near the top, so short standard M2 socket
 head screws do the job (see [Screws](#screws)).
 
@@ -36,11 +38,10 @@ head screws do the job (see [Screws](#screws)).
 |---|---|
 | `amoled18_back_plate.scad` | The parametric model. Every dimension is adjustable. |
 | `back_plate_103035_1000mAh_edge.stl` | Ready to print: the defaults, for a 103035 cell on its edge. Unit ≈ 44 mm thick. |
-| `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 22.7 mm thick. |
-| `back_plate_852540_1000mAh_edge.stl` | An 852540 cell on its edge. Unit ≈ 39 mm thick. **Tight: 0.35 mm per end, no room for wires at the ends — measure first.** |
+| `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 24.7 mm thick. |
 | `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. **Tight — measure first.** See [The tall variation](#the-tall-variation-104050-on-end). |
 | `amoled18_hole_plugs.stl` | Six press-fit plugs (four plus spares) that hide the screw openings on the back. Fits every plate. See [Hole plugs](#hole-plugs). |
-| `amoled18_back_plate.json` | The four plate builds above as presets, selectable in OpenSCAD's Customizer. |
+| `amoled18_back_plate.json` | The three plate builds above as presets, selectable in OpenSCAD's Customizer. |
 | `preview.png`, `preview-back.png`, `preview-cutaway.png`, `preview-104050-end.png`, `preview-plugs.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, the tall variation, and the plugs. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
@@ -96,6 +97,7 @@ ideal; a good ruler works for a first try. All values are in millimetres.
 | 3. Rim | `lip_h` | How tall that rim stands |
 | 4. Screws | `tower_drop` | How far below the rim top the tops of the stock cover's screw posts are (0 if level) |
 | 4. Screws | — | The length of one stock screw, for choosing new ones (see [Screws](#screws)) |
+| 4. Screws | — | How tall the brass nuts stand off the back of the board, which caps the screw length |
 | 3. Rim | `stock_clear` | Inside depth of the stock cover, rim top down to the floor |
 | 4. Screws | `screw_dx`, `screw_dy` | Distance from the **centre** of the plate to the centre of a screw hole, across and up. Easiest: measure hole-to-hole and halve it. |
 
@@ -111,8 +113,12 @@ at the wire end. Then pick `battery_orientation`:
 - **end** — standing upright on its end. Any length fits; the plate just gets taller.
 
 Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll use, and `lead_space` to
-the room the wires and plug need above the cell (3 mm is plenty; 0 for cells whose wires come
-out the side). The plate's depth follows automatically.
+the room the wires and plug need above the cell (3 mm is plenty for a cell on its end). For a cell
+lying flat or on its edge, whose wires come out of one end, `lead_end` reserves room past that
+end (2 mm). The plate's depth follows automatically.
+
+A 40 mm long cell (such as an 852540) doesn't fit flat or on its edge once its wires have room:
+the console says so and OpenSCAD refuses to export.
 
 Shortcut: the drop-down at the top of the Customizer has the three builds in this folder as
 presets. Pick one and every battery setting fills in.
@@ -185,6 +191,9 @@ face to the rim top:
 - The bore is wide enough (Ø4.6 mm) for the screw head and a hex key, from the back face up to
   the **seat**: 2 mm of plastic at the top of the tower (`head_seat`). The screw head rests under
   the seat, and the tower top presses on the nut.
+- Only a small pad at the very top touches the board: Ø4.5 mm around the nut, standing 0.5 mm
+  proud of the rest of the tower (`nut_pad_d`, `nut_pad_h`). Waveshare's 3D model has small
+  parts on the board about 3 mm from some nuts, and the pad keeps the wider tower off them.
 - So the screw only has to pass through the seat and into the nut. Short standard screws do it,
   whichever battery or height you pick.
 - The top of each bore is closed by one printed layer (`bridge_skin`, 0.2 mm) so the printer can
@@ -196,11 +205,13 @@ To choose the length:
 
 1. Push a stock screw through the stock cover and measure how far it sticks out past the top of
    its post. That's how far it goes into the nut.
-2. Screw length = 2 mm (the seat) + that, to the nearest length that's sold. Don't go longer: a
-   screw that passes right through the nut could press on the display.
+2. Screw length = 2 mm (the seat) + that, rounded **down** to a length that's sold. Never go
+   longer: the display sits right against the front of the board, so a screw that passes
+   through the nut presses on it. The hard limit is 2 mm + the nut's height + 1.2 mm (the
+   board), less half a millimetre.
 
-If you can't measure a stock screw, **M2 × 5** is the likely answer; **M2 × 4** is safe to try
-first. Drive them with a **1.5 mm hex key long enough to reach down the tower**: the console's
+If you can't measure a stock screw, use **M2 × 4**. Go to M2 × 5 only if the nut turns out to
+be at least 2 mm tall. Drive them with a **1.5 mm hex key long enough to reach down the tower**: the console's
 `Hex key reach` line gives the depth, about 33 mm for the default, 11 mm for the flat 802525 and
 56 mm for the tall variation (a screwdriver-style 1.5 mm hex driver reaches all of them).
 
@@ -248,15 +259,19 @@ Things to know before building it:
 
 The walls are braced by a 45° chamfer where they meet the floor, all the way around the inside
 (`wall_chamfer`, 3 mm). On any wall the cell sits close to, it shrinks by itself so it never
-lifts the cell. With the default cell it's 3 mm all round; with the 40 mm cells it drops to
-1.25 mm on the end walls. OpenSCAD's console prints both.
+lifts the cell: it always keeps 0.5 mm clear of the cell's bottom edge, or stays below the
+tape where the cell is closer than that. With the default cell it's 3 mm on the long walls and
+2.45 mm on the end walls; OpenSCAD's console prints both. Trim the tape so it sits flat on the
+floor rather than riding up the chamfer.
 
 The cell is held by double-sided VHB tape on the floor and foam padding above it, which presses
 it down when the case closes. The cavity is deliberately open rather than shaped to the cell;
 pack foam into the gaps around it so it can't shift. Set `tape_t` and `foam_t` to what you
-actually have; both add to the depth. With the default cell there's 2.85 mm at each end and
-over 11 mm beside it for the wires to reach the `BAT` connector. The 40 mm cells have no room
-at their ends, so their wires must leave from the top or side.
+actually have; both add to the depth. With the default cell there's almost 4 mm at the wire
+end and over 11 mm beside it for the wires to reach the `BAT` connector. Keep the cell and its
+foam clear of the connector: it stands 3.5 mm off the back of the board, on one long side about
+halfway along. That's why the flat 802525 preset leaves 2 mm extra above the cell
+(`lead_space`).
 
 ## Printing
 
@@ -265,7 +280,7 @@ at their ends, so their wires must leave from the top or side.
 | Orientation | Flat face down, rim up. No supports. |
 | Screw towers | The top of each bore is closed by a one-layer bridge; push it through after printing. |
 | Layer | 0.2 mm |
-| Perimeters | 3 or more (the walls and screw towers take the load) |
+| Perimeters | 3 or more (the walls and screw towers take the load). The rim is 0.8 mm, so it prints as 2 lines — check the slicer preview shows it solid. |
 | Infill | 40 %+ |
 | Material | PETG or ABS — PLA softens in a warm car. |
 

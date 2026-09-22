@@ -39,6 +39,8 @@ tape_t = 1.1;       // [0:0.1:3]
 foam_t = 1.5;       // [0:0.1:5]
 // Room above the cell for its wires and plug (the circuit board end faces up)
 lead_space = 0.0;   // [0:0.5:10]
+// Room past one end of the cell for its wires, when they leave from an end (flat and edge)
+lead_end = 2.0;     // [0:0.5:8]
 // Extra air so nothing is ever compressed
 extra_clearance = 0.4;  // [0:0.1:2]
 
@@ -107,6 +109,11 @@ screw_dx = 12.0;    // [5:0.1:40]
 screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
+// Only this much of each tower top touches the board, around the nut,
+// so it clears the small parts on the board near the nuts
+nut_pad_d = 4.5;    // [3:0.1:7]
+// How far that pad stands above the rest of the tower top (0 = whole top touches)
+nut_pad_h = 0.5;    // [0:0.1:2]
 // Room around the head so it slides down the tower and a hex key reaches
 head_clear = 0.6;   // [0:0.1:2]
 // Plastic between the screw head and the board's nut, at the top of each tower
@@ -158,6 +165,21 @@ custom_head_t = 2.0;    // [0.4:0.1:6]
 wall_chamfer = 3.0;     // [0:0.5:8]
 
 
+/* [5b. Grip texture on the outside walls] */
+
+// Raised texture so small hands don't drop it. All shapes slope 45 degrees
+// underneath, so they print without supports.
+grip_style = "none";    // [none, honeycomb, nubs, ribs]
+// How far the texture stands out from the wall
+grip_depth = 0.6;       // [0.3:0.1:1.5]
+// Size of each hexagon or square (across)
+grip_size = 3.0;        // [1.5:0.1:6]
+// Gap between hexagons or squares, or between ribs
+grip_gap = 1.0;         // [0.4:0.1:4]
+// Keep the texture this far from the bed edge and from the seam at the top
+grip_margin = 1.5;      // [0.5:0.5:5]
+
+
 /* [6. Output] */
 
 // Curve smoothness. 48 previews fast, 96 is export quality.
@@ -199,7 +221,9 @@ plug_core_d = rib_d - 0.6;
 edge   = battery_orientation == "edge";
 on_end = battery_orientation == "end";
 fx     = edge || on_end ? battery_t : battery_w;
-fy     = on_end ? battery_w : battery_l;
+cell_y = on_end ? battery_w : battery_l;
+// The wire end needs room too, so fit checks treat it as part of the cell.
+fy     = cell_y + (on_end ? 0 : lead_end);
 cell_h = on_end ? battery_l : edge ? battery_w : battery_t;
 
 // Rim outline, from whichever mode is selected
@@ -227,10 +251,10 @@ body_h      = plate_t + spacer_h;
 total_h     = body_h + lip_h;
 extra_depth = total_h - plate_t - stock_clear;
 
-// Full chamfer where the cell leaves room; near the cell it may rise only to
-// the tape under it.
-chamfer_x = min(wall_chamfer, max(0, (cav_x - fx) / 2 + tape_t - 0.2));
-chamfer_y = min(wall_chamfer, max(0, (cav_y - fy) / 2 + tape_t - 0.2));
+// Full chamfer where the cell leaves room. Near the cell it may rise only to the
+// tape under it plus whatever keeps 0.5 mm clear of the cell's bottom edge.
+chamfer_x = min(wall_chamfer, tape_t + max(0, (cav_x - fx) / 2 - 0.5));
+chamfer_y = min(wall_chamfer, tape_t + max(0, (cav_y - fy) / 2 - 0.5));
 
 tower_top = total_h - tower_drop;
 bore_top  = tower_top - head_seat;
@@ -274,6 +298,7 @@ if (!screws_inside) echo("*** SCREW TOWERS FALL OFF THE PLATE EDGE ***");
 if (rim_fits && fits && screws_inside)
     echo("All checks passed.");
 echo("===========================================");
+assert(fits, "CELL DOES NOT FIT - try another orientation or a smaller cell");
 
 
 // =====================================================================
@@ -290,8 +315,10 @@ module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
 module towers() {
     for (sx = [-1, 1], sy = [-1, 1])
-        translate([sx * screw_dx, sy * screw_dy, plate_t - eps])
-            cylinder(r = tower_r, h = tower_top - plate_t + eps);
+        translate([sx * screw_dx, sy * screw_dy, plate_t - eps]) {
+            cylinder(r = tower_r, h = tower_top - nut_pad_h - plate_t + eps);
+            cylinder(d = nut_pad_d, h = tower_top - plate_t + eps);
+        }
 }
 
 // Cavity limited by a 45 degree chamfer of size c along one pair of walls:
@@ -382,9 +409,87 @@ module plugs() {
         translate([(i % cols) * (cap_d + 3), floor(i / cols) * (cap_d + 3), 0]) plug();
 }
 
+// ---- grip texture ------------------------------------------------------
+
+grip_z0 = grip_margin;
+grip_z1 = body_h - grip_margin;
+
+// A frustum standing out of the wall along +y: its base (the 2D shape) sits
+// in the wall and it shrinks by the depth at the tip, so every side slopes
+// at 45 degrees.
+module grip_bump() {
+    hull() {
+        rotate([-90, 0, 0]) translate([0, 0, -eps])
+            linear_extrude(height = eps) children();
+        translate([0, grip_depth - eps, 0]) rotate([-90, 0, 0])
+            linear_extrude(height = eps) offset(delta = -grip_depth) children();
+    }
+}
+
+module hex_2d()    { rotate(30) circle(d = grip_size / cos(30), $fn = 6); }
+module square_2d() { square(grip_size, center = true); }
+
+// Lays bumps over one straight face of width w centred at the origin.
+module grip_face(w) {
+    pitch_u = grip_size + grip_gap;
+    hexes   = grip_style == "honeycomb";
+    pitch_z = hexes ? pitch_u * cos(30) : pitch_u;
+    usable  = w - grip_size;
+    rows    = floor((grip_z1 - grip_z0 - grip_size) / pitch_z) + 1;
+    cols    = floor(usable / pitch_u) + 1;
+    z_start = (grip_z0 + grip_z1) / 2 - (rows - 1) * pitch_z / 2;
+    for (j = [0 : rows - 1]) {
+        shift = hexes && j % 2 == 1 ? pitch_u / 2 : 0;
+        n     = hexes && j % 2 == 1 ? cols - 1 : cols;
+        for (i = [0 : n - 1])
+            translate([-(cols - 1) * pitch_u / 2 + i * pitch_u + shift, 0,
+                       z_start + j * pitch_z])
+                grip_bump() {
+                    if (hexes) hex_2d(); else square_2d();
+                }
+    }
+}
+
+// Bumps go on the four straight faces; the rounded corners stay smooth.
+module grip_bumps() {
+    fx_w = plate_y - 2 * plate_r;
+    fy_w = plate_x - 2 * plate_r;
+    for (sx = [-1, 1])
+        translate([sx * plate_x / 2, 0, 0]) rotate(sx > 0 ? -90 : 90) grip_face(fx_w);
+    for (sy = [-1, 1])
+        translate([0, sy * plate_y / 2, 0]) rotate(sy > 0 ? 0 : 180) grip_face(fy_w);
+}
+
+// Ribs run right round the body, corners included: each is a band that
+// steps out at 45 degrees, runs flat, and steps back in at 45 degrees.
+module grip_ribs() {
+    flat  = max(0.4, grip_size - 2 * grip_depth);
+    rib_h = 2 * grip_depth + flat;
+    pitch = rib_h + grip_gap;
+    n     = floor((grip_z1 - grip_z0 - rib_h) / pitch) + 1;
+    z_start = (grip_z0 + grip_z1) / 2 - ((n - 1) * pitch + rib_h) / 2;
+    for (j = [0 : n - 1])
+        translate([0, 0, z_start + j * pitch])
+            hull() {
+                rbox(plate_x, plate_y, eps, plate_r);
+                translate([0, 0, grip_depth])
+                    rbox(plate_x + 2 * grip_depth, plate_y + 2 * grip_depth, flat,
+                         plate_r + grip_depth);
+                translate([0, 0, rib_h - eps]) rbox(plate_x, plate_y, eps, plate_r);
+            }
+}
+
+module grip() {
+    if (grip_style == "ribs") grip_ribs();
+    else if (grip_style != "none") grip_bumps();
+}
+
 module back_plate() {
     difference() {
-        solid_body();
+        union() {
+            solid_body();
+            grip();
+        }
         battery_cavity();
         screw_holes();
     }
@@ -396,7 +501,7 @@ if (part != "plate") translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs
 if (show_battery && part != "plugs")
     color("green", 0.35)
         translate([-fx/2, -fy/2, plate_t + tape_t])
-            cube([fx, fy, cell_h]);
+            cube([fx, cell_y, cell_h]);
 
 
 // =====================================================================
