@@ -25,28 +25,100 @@ for the battery pocket and four screw holes.
 | `preview.png` | Render with the battery ghosted in. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 
-## Measure before printing one you intend to keep
+## Step by step, if you've never used OpenSCAD
 
-The outline, rim and screw spacing in the file are **estimates**. Before a keeper print,
-measure the stock back cover and correct group 2 (plate outline), group 3 (rim) and group 4
-(screw spacing). A quick first print to check that the screw holes line up is cheap insurance.
+OpenSCAD is a free CAD program where the shape is described by numbers rather than drawn by
+hand. The upside is that you never have to model anything: you change a number in a form
+("battery thickness = 8.6"), and the whole part redraws itself to fit. This file was written
+that way on purpose, so **you should never need to touch the code** — only the form.
 
-## Adjusting it
+The `.stl` in this folder will print, but it was made from estimated dimensions (see
+step 4), so treat it as a test piece. The steps below take you from nothing to a plate made for the real case.
 
-1. Install [OpenSCAD](https://openscad.org) (free).
-2. Open `amoled18_back_plate.scad`.
-3. **Window → Customizer** — the parameters show as labelled fields in six groups; no code
-   editing needed.
-4. Set the battery size (group 1) to the cell you actually have, including `tape_t` and
-   `foam_t`. The console prints the resulting depth and warns if the pocket overlaps a screw
-   hole or the rim doesn't fit.
-5. **F5** preview, **F6** render, **F7** export STL.
+### 1. Get the files
+
+On the GitHub page for this folder, click `amoled18_back_plate.scad`, then the **download**
+button (the down-arrow icon, top right of the file view). You only need the `.scad` file; the
+`.stl` is just a pre-made example.
+
+### 2. Install OpenSCAD
+
+Download it free from [openscad.org](https://openscad.org/downloads.html) (Windows, Mac,
+Linux) and install it like any other program.
+
+### 3. Open the file and find the form
+
+1. Open OpenSCAD, choose **Open**, and pick `amoled18_back_plate.scad`.
+2. The window has three parts: the **code** on the left (ignore it), the **3D view** in the
+   middle, and — after the next step — the **Customizer** form on the right.
+3. If there is no form, go to **Window → Customizer** (on some versions, **View → Hide
+   customizer** is ticked — untick it).
+4. Press **F5**. The plate appears in the 3D view. Drag to spin it, scroll to zoom.
+
+The form has numbered groups — click a group name to expand it. Each field has a plain-English
+label, and most are sliders or drop-downs, so you can't enter something wildly wrong.
+
+### 4. Measure the stock cover and fix the estimates
+
+The outline, rim and screw positions in the file are **guesses**. Before a print you intend
+to keep, measure the original black back cover (digital calipers are ideal; a good ruler
+works for a first try). All values are in millimetres.
+
+| Form group | Field | What to measure on the stock cover |
+|---|---|---|
+| 2. Plate outline | `plate_x`, `plate_y` | Overall outside width and height |
+| 2. Plate outline | `plate_r` | Roughly how round the outer corners are (radius) |
+| 3. Rim | `lip_outer_x`, `lip_outer_y` | Outside width and height of the raised rim that slides into the front shell |
+| 3. Rim | `lip_h` | How tall that rim stands |
+| 3. Rim | `stock_clear` | Inside depth of the stock cover, rim top down to the floor |
+| 4. Screws | `screw_dx`, `screw_dy` | Distance from the **centre** of the plate to the centre of a screw hole, across and up. Easiest: measure hole-to-hole and halve it. |
+
+### 5. Enter the battery you actually have
+
+In **group 1 (Battery)** type the cell's thickness, width and length — they're usually on the
+cell's label or listing (an "802525" cell is 8.0 × 25 × 25 mm; allow a little extra for
+swelling on thickness). Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll
+use. The pocket sizes itself from these automatically.
+
+### 6. Check the console for warnings
+
+Press **F5** again after changing values. At the bottom of the window is the **console**
+(if it's hidden: **Window → Console**). It prints a summary block, and the last line should
+say **`All checks passed.`** If instead it says something like `POCKET OVERLAPS A SCREW HOLE`,
+the battery is too big for this plate — pick a smaller cell or adjust the flagged value.
+
+Write down the **`SCREWS:`** line — it tells you how much longer your screws need to be than
+the stock ones (see [Screws](#screws)).
+
+### 7. Export the file for the printer
+
+1. Press **F6** to do the full render. This can take a minute; wait until the progress bar
+   finishes and the console says it's done.
+2. Press **F7** (or **File → Export → Export as STL**) and save it.
+
+F5 is just a quick preview; export only works after F6.
+
+### 8. Slice and print
+
+Open the exported `.stl` in your usual slicer (Bambu Studio, PrusaSlicer, Cura, …) and use the
+settings in [Printing](#printing) below: flat face down, rim up, no supports.
+
+**Do a test print first.** Print one quickly and hold it against the front shell to check the
+rim slides in and the four holes line up with the brass inserts. If something is off, measure
+again, change the number, and re-export — that's the whole point of the parametric file.
+
+### 9. Save your numbers
+
+The form remembers your values only while the file is open. To keep them, use the **preset**
+bar at the top of the Customizer: click **+**, name it (e.g. `my 802525`), and it's saved
+alongside the `.scad` file.
 
 ## Screws
 
 Deepening the plate means the stock screws no longer reach the brass inserts in the board. The
 OpenSCAD console prints exactly how much longer they must be (`SCREWS: M2, … mm longer than
-stock`). Buy M2 screws of that length.
+stock`). Measure a stock screw's length, add that number, and buy M2 screws that long
+(round up to the next size sold).
 
 ## Battery mounting
 
