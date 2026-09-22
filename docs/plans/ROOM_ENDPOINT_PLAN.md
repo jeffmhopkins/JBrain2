@@ -4223,6 +4223,55 @@ would settle it in a minute**, and a 29 mm speaker a four-year-old holds to thei
 right place to spend that minute. Until then the beep going *down* is the part of this change
 that reduces exposure, and it lands on the sound that fires most often.
 
+#### 10.4cf He has to come home (0.2.72, 2026-09-22)
+
+The owner, on 0.2.69's walk: *"the foot movement while tilting is now great. However, if we're
+static and not moving very fast or kind of just sitting there, the legs need to be back in the
+neutral position."*
+
+Correct, and it was **three faults stacked**, only one of which is in the walk itself.
+
+##### 1. A crawl is not a walk
+
+`s_lean` is smoothed and integer, so it converges on its target by ever-smaller steps, and the
+accelerometer keeps nudging it by a pixel at rest. Without a floor that trickle is
+indistinguishable from a very slow walk: the phase creeps, the amplitude never quite reaches
+zero, and the legs sit forever at some arbitrary point in a stride. A panel on a shelf was
+walking imperceptibly.
+
+`RIG_WALK_DEADBAND_PX` (1 px/frame, so 25 px/s — eight seconds to cross the panel) stops
+**both** the phase and the amplitude. It also gets the physics right for free: the tail of every
+real movement falls under the floor as the lean converges, so he decelerates into a stop rather
+than being cut off at one.
+
+##### 2. The settle was drawn at five frames a second
+
+The real one, and it is not in `rig.c` at all. `dirty` is set while the lean is *changing* — so
+the moment the lean reached its target the render loop dropped to the 200 ms idle floor **while
+the stride was still settling**. Fourteen frames of decay at 5 fps is nearly three seconds of a
+pet standing on a shelf with one leg out. That is what was being seen.
+
+`if (walk.amp > 0.0f) dirty = true;` — the same rule the flinch and the blink already follow:
+animating means every poll is a frame. Worth recording because the symptom was entirely in the
+legs and the cause was entirely in the frame pacing, and no amount of tuning in `rig_walk` would
+have fixed it.
+
+##### 3. And the release was too slow anyway
+
+0.08 per frame is about two seconds even at full rate. 0.25 settles in fourteen frames — still
+visibly a settle rather than a snap, and done in half a second. The attack stays at 0.35: legs
+pick up quickly and put themselves down deliberately.
+
+The phase now homes to zero once the amplitude does. The legs are already neutral at zero
+amplitude — the pose is amplitude times the swing — but leaving the phase where it stopped means
+the next step begins mid-stride from a standing start.
+
+##### Both new checks fail independently against the old code
+
+Removing the deadband fails *"a crawl leaves the legs standing"*; restoring the 0.08 release
+fails *"about half a second after stopping he is standing again"*. Verified separately, because
+two fixes landing together are exactly where one of them turns out to do nothing.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

@@ -892,6 +892,38 @@ static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
     /* And the faster crossing is the bigger stride, because amplitude follows speed. */
     CHECK(fast.amp > slow.amp, "a scramble swings wider than a drift");
 
+    /* HE HAS TO COME HOME, and the owner is the one who found this: "if we're static and not
+       moving very fast or kind of just sitting there, the legs need to be back in the neutral
+       position." Two separate failures, so two separate checks.
+
+       A CRAWL IS NOT A WALK. `s_lean` is smoothed and integer, so it converges by ever-smaller
+       steps and the accelerometer nudges it a pixel at rest — a trickle that, without a floor,
+       is indistinguishable from a very slow walk and leaves the legs parked mid-stride
+       forever. */
+    rig_walk_t crawl = {0};
+    rig_pose_t c = base;
+    for (int i = 0; i < 200; i++) {
+        c = base;
+        rig_walk(&crawl, 0.4f, &c);
+    }
+    CHECK(c.leg_l == base.leg_l && c.leg_r == base.leg_r, "a crawl leaves the legs standing");
+    CHECK(crawl.phase == 0.0f, "and does not creep the stride along");
+
+    /* AND STOPPING PUTS THEM BACK, promptly. The legs are neutral once the amplitude is zero,
+       so this is really a check on how long that takes: the release used to be slow enough
+       that a pet set down on a shelf stood there with one leg out. Half a second at 25 fps. */
+    rig_walk_t stopping = {0};
+    rig_pose_t d = base;
+    for (int i = 0; i < 30; i++) rig_walk(&stopping, 5.0f, &d);
+    CHECK(stopping.amp > 0.5f, "walking first, or the next check proves nothing");
+    for (int i = 0; i < 15; i++) {
+        d = base;
+        rig_walk(&stopping, 0.0f, &d);
+    }
+    CHECK(d.leg_l == base.leg_l && d.leg_r == base.leg_r,
+          "and about half a second after stopping he is standing again");
+    CHECK(d.step == base.step, "with both feet down");
+
     /* The phase must not grow without bound: a panel left tilting accumulates travel forever,
        and a float large enough that one frame's addition rounds away stops the legs dead. */
     rig_walk_t forever = {0};

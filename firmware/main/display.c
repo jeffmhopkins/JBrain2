@@ -1472,6 +1472,13 @@ static void face_task(void *arg)
            waiting out the idle floor — but only once it has moved enough to see, or every
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
+        /* AND WHILE HE IS STILL PUTTING HIS FEET DOWN. The lean stops changing the moment it
+           reaches its target, so without this the loop drops to the 200 ms idle floor while
+           the stride is still settling — five frames a second, which turns a half-second
+           settle into nearly three and leaves the pet standing on a shelf with one leg out.
+           That is what the owner saw. Same rule as the flinch and the blink above: animating
+           means every poll is a frame. */
+        if (walk.amp > 0.0f) dirty = true;
 
         const int prev_taps = gest.taps;
         const float prev_cue = gesture_cue(&gest);
