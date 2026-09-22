@@ -429,6 +429,7 @@ class TelemetryIn(BaseModel):
     # drawing cannot say so on a channel that needs someone standing next to it.
     blit_ok: int = 0
     blit_fail: int = 0
+    boot_btn: int = 0
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -490,6 +491,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         alc=body.alc,
         blit_ok=body.blit_ok,
         blit_fail=body.blit_fail,
+        boot_btn=body.boot_btn,
         pmu_history=body.pmu_history,
         note=body.note,
     )

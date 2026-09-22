@@ -4117,6 +4117,340 @@ taking the wider stride, and the phase wrapping — because a panel left tilting
 travel forever, and a float big enough that one frame's addition rounds away would stop the legs
 dead. Confirmed to fail against a clock-driven phase before being trusted.
 
+#### 10.4cd "Hey fish" — a name, and finding the end of a sentence (0.2.70, 2026-09-22)
+
+The owner: *"both of these panels will have a wake word that will allow the same interaction as
+if I held the panel and it was listening ... but we just need a way for emptiness at the end to
+stop it."* The twins named this one **fish**.
+
+##### It needed no wake-word engine, and that was the surprise
+
+WakeNet only recognises models Espressif has trained; "fish" is not one and cannot be added.
+But §10.4ar's configuration already solved this by accident: **WakeNet is disabled** and
+MultiNet runs continuously over a command list, registered from **plain English text** at
+runtime (`esp_mn_commands_add(i, "change into merc")`). So the panel's name is one more row in
+`vocab.c`, and `esp_mn_commands_update()` already supports re-registering it live.
+
+The endpointing signal was likewise already there and unused. `speech.c` has set
+`s_hearing = res->vad_state == VAD_SPEECH` since bring-up, to gate MultiNet and drive the
+indicator. The front end has been deciding "is someone talking" every frame and nobody had
+asked it the question the owner just asked.
+
+##### Two words, and the first choice did not work
+
+The twins' first name was **robot**, and it is unusable for a reason nothing to do with
+preference: `vocab.h` rule 3 forbids a phrase being a prefix of another, and **"change into
+robot"** and **"be a robot"** are already in the table. Bare "robot" breaks all three.
+
+"hey fish" clears that, and the carrier word earns its place independently. Every other phrase
+in the table costs an animation when it misfires. **This one opens the microphone, uploads six
+seconds of a child's bedroom, calls a language model and makes the pet talk to an empty room.**
+`speech.h`'s warning that "a one-word always-on vocabulary fires at the television" stops being
+a style note at that price, and a carrier word is what every always-on device puts in front of
+its name for exactly this reason.
+
+##### Three ways out, and each is a different sentence to a four-year-old
+
+A hold has a release. A name does not, so the end has to be found:
+
+| | | |
+|---|---|---|
+| **hush** | 900 ms of VAD silence after speech | send it |
+| **lead** | the name, then nothing for 3 s | **drop it silently** |
+| **full** | `audio.c`'s six-second cap | send what we have |
+
+The middle one is the important one. An accidental "hey fish" off the television must cost
+**nothing** — no upload, no bubble, no reply to an empty room — and that branch is the only
+thing standing between a false trigger and a conversation with the TV. 900 ms is the compromise
+on the other end: long enough to survive the pause a four-year-old puts in the middle of a
+sentence, short enough that the six-second cap does not eat the tail of a slow one.
+
+It reaches **the same `TALK_LISTENING` state a hold does**, deliberately — the bubble, the
+upload, the reply and the failure face are the press-and-hold machine, and the only difference
+is how the turn ends. Refused while a turn is in flight or while the pet is speaking, for the
+same reasons the hold is.
+
+##### The test, and the gap
+
+The suite pins that there is **exactly one** name (two would give the panel two names and the
+twins no way to know which worked; zero would leave the hands-free path unreachable with
+nothing to say so) and that the phrase carries a space — the carrier word, asserted rather than
+remembered.
+
+**The name is compiled in, and that is a gap.** §10.4ab's argument applies exactly: the owner
+has no terminal, so a name only a rebuild can change is a name they cannot change — and the two
+panels will want different ones. It belongs on `endpoint_settings` beside the other knobs, with
+the panel re-registering on the settings fetch it already makes at boot.
+
+**Unverified:** every timing here is reasoned, not measured. Whether 900 ms cuts a four-year-old
+off mid-sentence, and how often "hey fish" fires at a television, are questions only the twins'
+bedroom answers. The trigger logs, so false fires can be counted from telemetry rather than
+guessed at.
+
+#### 10.4ce The beep and the voice stop sharing a volume (0.2.71, 2026-09-22)
+
+The owner: *"can we have the beep down to say volume 20, and the [speech] to volume 90?"*
+
+Two changes, and only one of them is comfortable.
+
+**The beep and the voice have shared a single codec output for the whole life of this
+project.** So the acknowledgement tone has always been *exactly* as loud as the pet's speech —
+and the beep is the part fired on every poke, the part with a hard transient in it, and the part
+held closest to an ear. Splitting them costs nothing, because the tone is synthesised here:
+scaling its amplitude by `BEEP_VOLUME / VOLUME` lets the voice get louder while the beep gets
+quieter. Done as an amplitude ratio rather than a second codec call, because `esp_codec_dev` has
+no locking and one task owns the codec — changing the output level around every beep is exactly
+the cross-task poke that panicked a panel in §10.4al.
+
+The reference point matters: 9000 was the peak when the codec sat at 70 and the beep shared the
+voice's level. Without the ratio, raising the output to 90 would have made the beep **louder**
+at the same moment the request was to make it quieter.
+
+##### The uncomfortable half, recorded rather than quietly changed
+
+`audio.c`'s header opens with *"VOLUME IS A SAFETY LIMIT HERE, not a preference"*, cites ASTM
+F963 / EN 71-1 capping close-to-ear toys at **65 dB(A)**, and ends *"raise it only against a
+measurement."* This raises it to 90, and **there is still no measurement.**
+
+What there is instead is a parent who has listened to the thing in the room it lives in — which
+is the only instrument this project has ever had for this number, and is why 70 was a guess too.
+90 is also the vendor's own figure for this hardware. So the change is reasonable and it is
+still a limit crossed on judgement rather than on data.
+
+It is written into the header rather than left in a commit message so the next person to read
+that paragraph knows the limit was crossed deliberately and by whom. **A sound level meter
+would settle it in a minute**, and a 29 mm speaker a four-year-old holds to their ear is the
+right place to spend that minute. Until then the beep going *down* is the part of this change
+that reduces exposure, and it lands on the sound that fires most often.
+
+#### 10.4cf He has to come home (0.2.72, 2026-09-22)
+
+The owner, on 0.2.69's walk: *"the foot movement while tilting is now great. However, if we're
+static and not moving very fast or kind of just sitting there, the legs need to be back in the
+neutral position."*
+
+Correct, and it was **three faults stacked**, only one of which is in the walk itself.
+
+##### 1. A crawl is not a walk
+
+`s_lean` is smoothed and integer, so it converges on its target by ever-smaller steps, and the
+accelerometer keeps nudging it by a pixel at rest. Without a floor that trickle is
+indistinguishable from a very slow walk: the phase creeps, the amplitude never quite reaches
+zero, and the legs sit forever at some arbitrary point in a stride. A panel on a shelf was
+walking imperceptibly.
+
+`RIG_WALK_DEADBAND_PX` (1 px/frame, so 25 px/s — eight seconds to cross the panel) stops
+**both** the phase and the amplitude. It also gets the physics right for free: the tail of every
+real movement falls under the floor as the lean converges, so he decelerates into a stop rather
+than being cut off at one.
+
+##### 2. The settle was drawn at five frames a second
+
+The real one, and it is not in `rig.c` at all. `dirty` is set while the lean is *changing* — so
+the moment the lean reached its target the render loop dropped to the 200 ms idle floor **while
+the stride was still settling**. Fourteen frames of decay at 5 fps is nearly three seconds of a
+pet standing on a shelf with one leg out. That is what was being seen.
+
+`if (walk.amp > 0.0f) dirty = true;` — the same rule the flinch and the blink already follow:
+animating means every poll is a frame. Worth recording because the symptom was entirely in the
+legs and the cause was entirely in the frame pacing, and no amount of tuning in `rig_walk` would
+have fixed it.
+
+##### 3. And the release was too slow anyway
+
+0.08 per frame is about two seconds even at full rate. 0.25 settles in fourteen frames — still
+visibly a settle rather than a snap, and done in half a second. The attack stays at 0.35: legs
+pick up quickly and put themselves down deliberately.
+
+The phase now homes to zero once the amplitude does. The legs are already neutral at zero
+amplitude — the pose is amplitude times the swing — but leaving the phase where it stopped means
+the next step begins mid-stride from a standing start.
+
+##### Both new checks fail independently against the old code
+
+Removing the deadband fails *"a crawl leaves the legs standing"*; restoring the 0.08 release
+fails *"about half a second after stopping he is standing again"*. Verified separately, because
+two fixes landing together are exactly where one of them turns out to do nothing.
+
+#### 10.4cg A band you have to mean to cross, and a button nobody has read (0.2.73, 2026-09-22)
+
+##### The orientation flipped on noise, and the hysteresis that "existed" was not where it looked
+
+The owner: *"the tilt going to 90 and causing an orientation change shouldn't happen right at
+45. We should have like an extra 20 you should have to go in order to cause the orientation
+change, and then another 20 back past that 45 to go back the other way."*
+
+`FLIP_THRESHOLD` has been in this file since §10.4 and its comment says *"hysteresis at about
+half a gravity"* — which is true and is about a different thing. It gates **how much gravity is
+in the XY plane before the reading is trusted at all**, so a panel lying flat does not flip on
+noise. **Which quarter** a trusted reading meant came from `|ax| > |ay|`, and that comparison
+turns over at exactly 45 degrees with no hysteresis whatsoever. Hold a panel at 45 and the two
+axes are equal, so a millivolt of accelerometer noise picks the orientation — several times a
+second, which is what the owner was watching.
+
+Worth recording as a shape rather than a bug: there **was** a constant named for hysteresis, it
+**was** doing its job, and the thing it guarded was not the thing that needed guarding. A
+comment that is accurate about the wrong quantity is harder to see past than no comment.
+
+The quarter now comes from the **angle** of gravity in the plane, and the current quarter keeps
+it until the angle is more than 45 + `ORIENT_HYST_DEG` from that quarter's own centre. Turning
+from upright toward landscape the flip lands at 65 degrees; coming back, 65 degrees from the
+landscape centre is 25 degrees from upright. A 40 degree band either side of the boundary,
+which is what was asked for.
+
+**In `orient.c`, so it can be tested.** `display.c` cannot be linked by the host harness, and an
+orientation rule that is only reasoned about is exactly how the first flip shipped backwards in
+0.2.19. The suite holds it at 45 from both sides and shows it does not move, jitters it 400
+times across the boundary and counts **zero** flips, and checks each quarter is reachable from
+the one opposite — a panel set down and picked up the other way should land where it *is*,
+rather than stepping round through a neighbour.
+
+##### And the buttons: measured, not assumed
+
+The owner: *"there are two switches on this board, one labeled power, one labeled boot. Can we
+utilize those to basically turn off the microphone with one of them?"*
+
+A mute is worth having and this firmware has never read either button, so the first question is
+which of them it **can** read. BOOT is GPIO0 on every ESP32-S3 board there is — but "every board
+there is" is not this board, and this plan's history is full of pin maps that were obvious and
+wrong. `audio.c`'s header opens with two pins named from opposite ends of the same link, where
+guessing gives silence *and* a dead microphone with no error from either.
+
+So 0.2.73 **counts edges on GPIO0 and reports the count in telemetry**. Press it a few times and
+the panel answers the question instead of me. Configured as an input with its pull-up and never
+driven, because this pin is the boot strap and driving it is a way to make a panel unflashable.
+
+PWR is almost certainly not a GPIO at all — it goes to the AXP2101, whose latched PWRON bits sit
+in registers `pmu.c` does not sample. That is the next probe if BOOT comes back alive and one
+button turns out not to be enough.
+
+**The design question a mute raises, before it is built:** a firmware mute is a promise, not a
+wire — the microphone keeps running and the code chooses to discard. And §10.4bz removed the
+always-on "microphone is open" dot at the owner's request, which was right because it was always
+on. A **muted** badge is the opposite case: it appears only in the rare state, it is the only
+way to tell a muted panel from a deaf one, and without it the first support question is "is it
+broken or did someone press the button?"
+
+#### 10.4ch A beak you can see from across a room, and a conversation that continues itself (0.2.74, 2026-09-22)
+
+##### The mouth was sized against a host render, not against a bedroom
+
+The owner, watching the ostrich talk: *"the mouth movement is definitely not big enough or
+obvious enough that his mouth is moving for talking."*
+
+§10.4cb dropped the lower mandible 11 px and split the beak so only the narrow tip moved. That
+is legible in a 368×448 host render at desk distance and invisible on a 29 mm screen across a
+room — which is the only distance that matters.
+
+The hinge moves up (the widest segment alone is the upper mandible; the other three swing as one
+jaw), the drop is **progressive** so the jaw pivots rather than sliding down in one piece, and
+the gape goes to 30 px — most of the beak's own height. The robot's mouth gets the same
+treatment for the same reason.
+
+**And the test was complicit.** `test_the_mouth_moves_only_while_talking` asserted the open
+mouth changed more than **80 px** and passed cheerfully on a mouth nobody could see. A threshold
+below the smallest thing a person would accept is not testing what it is named for. Measured
+after widening — 721 px on the ostrich, 838 on the robot — the floor is now **500**, which
+catches a regression toward subtle while leaving room to restyle.
+
+##### And then it listens again, without being asked
+
+The owner: *"after the text-to-speech comes back and finishes talking, we should just turn the
+microphone on and start recording again, and if I start talking within 2 seconds, just
+automatically record all that until I stopped talking again and send that as the next turn. That
+way I can have fluid conversations."*
+
+Which is the difference between a toy you operate and one you talk to. The machinery already
+existed: this is §10.4cd's hands-free listen with a different trigger and a shorter lead, so the
+whole feature is *notice the reply finished, and open the window the name opens*.
+
+Fired on the **edge** where the speaker falls silent, not on a timer — a long reply must not
+have the microphone opened underneath it. `audio.c`'s six-chunk deafness after the speaker runs
+conveniently keeps the tail of our own voice out of the front of the next recording.
+
+**No beep on this one.** A tone after every reply is the toy interrupting the conversation it
+just started; the red indicator is the affordance, and by the second turn a child knows what it
+means.
+
+##### The cap, because this is a loop with a loudspeaker in it
+
+Every reply reopens the microphone. A television talking in the room can therefore hold a
+conversation with the panel **indefinitely**, each turn costing a whisper pass, a model call and
+a synthesised voice — and §10.4cd's wake phrase means it need not even be started by a person.
+
+Six consecutive follow-ups is far more than a four-year-old's exchange and bounds the runaway.
+After that it wants a deliberate start — the name or a finger — either of which resets the
+count. The refusal logs, so a panel that keeps hitting the cap says so rather than quietly
+talking to a television all afternoon.
+
+#### 10.4ci The smile is the lower lip, not a second mouth (0.2.75, 2026-09-22)
+
+The owner: *"when changing to the robot, when it speaks the happy face doesn't go away while
+the mouth appears, which looks really weird."*
+
+Correct, and §10.4cb earned it. The open mouth was a rounded **box** drawn under the smile arc,
+on the stated theory that "the smile stays the lip of it rather than being replaced by a hole."
+It does not. A curved smile with a rectangle below it reads as **two mouths**, because that is
+what it is — and the comment asserting otherwise is why it shipped twice.
+
+The opening is now bounded **by the arc**: for every column across the smile, fill from the
+arc's own y upward by the gape, tapered to nothing at the corners so the hole is a lens rather
+than a band. That is the cartoon convention — the mouth opens out of the smile line and the
+smile becomes the bottom of it — and it collapses exactly to the untouched arc as the gape goes
+to zero, with no pop and no second shape.
+
+##### The corners are the property, and the threshold is measured
+
+A real mouth closes where the lips meet. A box is full height right out to its edge. So the
+test walks the per-column height of the opening and compares the centre against nine tenths of
+the way out, **on both sides** — a taper on one side is a shape that slid rather than a mouth
+that opened.
+
+Nine tenths is measured, not picked: the lens runs 23 px at the centre and 8 px at 90%, while a
+rounded box of the same width is still near full height there because its corner radius only
+bites in the last fifth. Confirmed by putting the old `fill_round_rect` back and watching the
+check fail.
+
+This is the second time in two releases that the mouth's test was weaker than the owner's eye
+— §10.4ch raised a visibility floor that had passed on a mouth nobody could see, and this adds
+the shape check that would have caught a box pretending to be a mouth. Both were found by
+someone looking at the object, which remains the instrument this project cannot replace.
+
+#### 10.4cj The corner says whose pet it is (0.2.76, 2026-09-22)
+
+The owner: *"top left where we have the version number, if I touch that it should change
+between the version number and the panel name. Default to only showing the panel name."*
+
+The right default, and it was not the right default for most of this project's life. The
+version earned that corner while every other message in this session was *"which build is it
+on"* — and it stops earning it the moment there are **two panels in two bedrooms** and the
+question becomes whose. A four-year-old cannot read `0.2.76` and can read their pet's name.
+
+The version is one touch away rather than gone, because it is still the first thing anyone
+debugging this asks for and telemetry is not in the room with you.
+
+##### The name comes from the wake phrase, not from a second constant
+
+`vocab_name()` returns the word after the carrier in the `VOCAB_LISTEN` phrase — "hey fish"
+gives "fish". One place to change it when the phrase becomes a per-panel setting (§10.4cd's
+open gap); a second constant holding the name would be a second thing to forget, and the two
+would drift the first time only one of them was edited.
+
+The host suite pins the derivation: the word after the carrier, plain lowercase, drawable in a
+font that has uppercase, digits and one lowercase `v` and nothing else. Confirmed to fail
+against a broken split.
+
+##### The label is its own button
+
+Checked **before** the zones, so a corner of the glass that says something cannot also be a
+poke — a tap that both flipped the label and made the pet sneeze would read as two things
+happening at once. It costs nothing: the label sits above the pet's head where `face_zone`
+returns nothing anyway.
+
+In frame coordinates, so it follows the quarter turn like everything else a finger touches
+(§10.4bw), and padded 14 px beyond the glyphs in every direction — the text is 14 px tall and
+a four-year-old's fingertip is not, so the target is the corner rather than the letters.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

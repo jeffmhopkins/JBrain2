@@ -20,6 +20,7 @@
 #include "face.h"
 #include "font.h"
 #include "gesture.h"
+#include "orient.h"
 #include "rig.h"
 #include "variants.h"
 #include "vocab.h"
@@ -845,6 +846,126 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
 }
 
+/* Gravity at `deg` around the XY plane, at one g, as the accelerometer would report it. */
+static void gravity_at(float deg, int *ax, int *ay)
+{
+    const float r = deg * (float)M_PI / 180.0f;
+    *ax = (int)lrintf(cosf(r) * 8192.0f);
+    *ay = (int)lrintf(sinf(r) * 8192.0f);
+}
+
+static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
+{
+    /* The owner: "the tilt going to 90 and causing an orientation change shouldn't happen right
+       at 45. We should have like an extra 20 you should have to go, and then another 20 back
+       past that 45 to go back the other way."
+
+       THE OLD CODE HAD NO HYSTERESIS AT THE BOUNDARY, which is easy to miss because it looks
+       like it does: `FLIP_THRESHOLD` gated how much gravity was in the plane, but WHICH quarter
+       came from `|ax| > |ay|`, and that turns over at exactly 45 degrees. Held at 45 the two
+       axes are equal and noise picks the orientation, several times a second. */
+    int ax, ay;
+
+    /* Upright stays upright well past the old boundary. */
+    for (float d = 0.0f; d <= 64.0f; d += 4.0f) {
+        gravity_at(d, &ax, &ay);
+        CHECK(orient_quarter(0, ax, ay) == 0, "upright holds past 45 degrees");
+    }
+    gravity_at(70.0f, &ax, &ay);
+    CHECK(orient_quarter(0, ax, ay) == 3, "and gives way once the band is crossed");
+
+    /* AND IT IS STICKY THE OTHER WAY TOO, which is the half that stops the oscillation. Having
+       landed in 3, coming back must go well past 45 before returning — at 40 degrees, which the
+       old code would already have called upright, it stays. */
+    gravity_at(40.0f, &ax, &ay);
+    CHECK(orient_quarter(3, ax, ay) == 3, "the new orientation holds coming back");
+    gravity_at(20.0f, &ax, &ay);
+    CHECK(orient_quarter(3, ax, ay) == 0, "until it too has crossed the band");
+
+    /* THE PROPERTY THAT MATTERS: sitting exactly on the boundary, nothing changes — whichever
+       quarter you were in, you stay in. This is the check the old comparison fails outright. */
+    gravity_at(45.0f, &ax, &ay);
+    CHECK(orient_quarter(0, ax, ay) == 0, "held at 45 from upright, stay upright");
+    CHECK(orient_quarter(3, ax, ay) == 3, "held at 45 from landscape, stay landscape");
+
+    /* Noise on the boundary must not flip it either — the actual symptom. */
+    int flips = 0, last = 0;
+    for (int i = 0; i < 400; i++) {
+        gravity_at(45.0f + (float)((i * 7919) % 41 - 20) * 0.05f, &ax, &ay);
+        const int q = orient_quarter(last, ax, ay);
+        if (q != last) flips++;
+        last = q;
+    }
+    CHECK(flips == 0, "and jitter on the boundary never flips it");
+
+    /* Flat on its back is not an orientation: hold whatever was being drawn. */
+    CHECK(orient_quarter(2, 100, -80) == 2, "a flat panel keeps the orientation it had");
+    CHECK(orient_quarter(1, 0, 0) == 1, "including a perfectly still one");
+
+    /* All four are reachable, and each from its own centre. */
+    for (int q = 0; q < 4; q++) {
+        static const float CENTRE[4] = {0.0f, 270.0f, 180.0f, 90.0f};
+        gravity_at(CENTRE[q], &ax, &ay);
+        CHECK(orient_quarter(q, ax, ay) == q, "every quarter is stable at its own centre");
+        /* And is reached from the opposite one, rather than stepping round through a
+           neighbour: a panel set down and picked up the other way should land where it is. */
+        const int opposite = (q + 2) % 4;
+        CHECK(orient_quarter(opposite, ax, ay) == q, "and reachable from the far side");
+    }
+}
+
+static void test_the_open_mouth_is_the_smile_opening(void)
+{
+    /* The owner: "when changing to the robot, when it speaks the happy face doesn't go away
+       while the mouth appears, which looks really weird."
+
+       The first version drew the opening as a rounded BOX under the smile arc, on the theory
+       that the smile would read as its lip. It does not — a curved smile with a rectangle
+       below it reads as two mouths, because that is what it is.
+
+       THE PROPERTY THAT SEPARATES THEM IS THE CORNERS. A real mouth closes where the lips
+       meet, so the opening tapers to nothing at each end; a box is full height right out to
+       its edge. Comparing a column at the centre against one near the corner catches that,
+       and would have caught it before the owner had to. */
+    face_state_t st;
+    face_rest(&st);
+    st.form = FORM_ROBOT;
+    face_draw(fb, 0, &st);
+    uint16_t *shut = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(shut != NULL, "scratch frame allocated");
+    memcpy(shut, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    st.talk = 1.0f;
+    face_draw(fb, 0, &st);
+
+    /* Per-column change, across the whole frame — the mouth is the only thing that moved. */
+    int col[FACE_W];
+    memset(col, 0, sizeof(col));
+    int widest = 0;
+    for (int x = 0; x < FACE_W; x++) {
+        for (int y = 0; y < FACE_H; y++) {
+            if (fb[y * FACE_W + x] != shut[y * FACE_W + x]) col[x]++;
+        }
+        if (col[x] > col[widest]) widest = x;
+    }
+    CHECK(col[widest] > 10, "the mouth opens somewhere");
+
+    /* Walk out to the edge of the opening and check it closed rather than stopped. */
+    int edge = widest;
+    while (edge + 1 < FACE_W && col[edge + 1] > 0) edge++;
+    const int span = edge - widest;
+    CHECK(span > 8, "the opening is wide enough to have corners at all");
+    /* NINE TENTHS OF THE WAY OUT, and the fraction is measured rather than picked. The lens
+       profile runs 23 px at the centre and 8 at 90% — a rounded box of the same width is
+       still near full height there, because its corner radius only bites in the last fifth.
+       Checked on BOTH sides, since a taper on one is a shape that slid rather than a mouth
+       that opened. */
+    CHECK(col[widest + (span * 9) / 10] * 2 < col[widest],
+          "the opening tapers toward the corner, as lips do");
+    CHECK(col[widest - (span * 9) / 10] * 2 < col[widest], "and toward the other corner");
+    free(shut);
+}
+
 static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
 {
     /* The owner: "the robot should kind of shuffle his legs back and forth as tilt causes him
@@ -892,6 +1013,38 @@ static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
     /* And the faster crossing is the bigger stride, because amplitude follows speed. */
     CHECK(fast.amp > slow.amp, "a scramble swings wider than a drift");
 
+    /* HE HAS TO COME HOME, and the owner is the one who found this: "if we're static and not
+       moving very fast or kind of just sitting there, the legs need to be back in the neutral
+       position." Two separate failures, so two separate checks.
+
+       A CRAWL IS NOT A WALK. `s_lean` is smoothed and integer, so it converges by ever-smaller
+       steps and the accelerometer nudges it a pixel at rest — a trickle that, without a floor,
+       is indistinguishable from a very slow walk and leaves the legs parked mid-stride
+       forever. */
+    rig_walk_t crawl = {0};
+    rig_pose_t c = base;
+    for (int i = 0; i < 200; i++) {
+        c = base;
+        rig_walk(&crawl, 0.4f, &c);
+    }
+    CHECK(c.leg_l == base.leg_l && c.leg_r == base.leg_r, "a crawl leaves the legs standing");
+    CHECK(crawl.phase == 0.0f, "and does not creep the stride along");
+
+    /* AND STOPPING PUTS THEM BACK, promptly. The legs are neutral once the amplitude is zero,
+       so this is really a check on how long that takes: the release used to be slow enough
+       that a pet set down on a shelf stood there with one leg out. Half a second at 25 fps. */
+    rig_walk_t stopping = {0};
+    rig_pose_t d = base;
+    for (int i = 0; i < 30; i++) rig_walk(&stopping, 5.0f, &d);
+    CHECK(stopping.amp > 0.5f, "walking first, or the next check proves nothing");
+    for (int i = 0; i < 15; i++) {
+        d = base;
+        rig_walk(&stopping, 0.0f, &d);
+    }
+    CHECK(d.leg_l == base.leg_l && d.leg_r == base.leg_r,
+          "and about half a second after stopping he is standing again");
+    CHECK(d.step == base.step, "with both feet down");
+
     /* The phase must not grow without bound: a panel left tilting accumulates travel forever,
        and a float large enough that one frame's addition rounds away stops the legs dead. */
     rig_walk_t forever = {0};
@@ -928,7 +1081,13 @@ static void test_the_mouth_moves_only_while_talking(void)
         for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
             if (fb[i] != shut[i]) moved++;
         }
-        CHECK(moved > 80, "an open mouth is visibly different from a shut one");
+        /* 500, NOT 80, AND THE FLOOR IS THE POINT. The first version of this asserted 80 px
+           and passed happily on a mouth the owner could not see moving from across the room:
+           *"definitely not big enough or obvious enough."* A test whose threshold sits below
+           the smallest thing a person would accept is not testing the thing it is named for.
+           Measured after widening: 721 px on the ostrich, 838 on the robot — so 500 catches a
+           regression toward subtle while leaving room to restyle. */
+        CHECK(moved > 500, "an open mouth is visibly different from a shut one");
 
         /* And it is the MOUTH that moved, not the whole figure: the change sits in the head,
            which is the top half. A `talk` wired to the wrong offset would still differ. */
@@ -1905,7 +2064,7 @@ static void test_vocab_has_no_ambiguity(void)
 static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
-    int forms = 0, actions = 0, colours = 0, named_colours = 0;
+    int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -1925,12 +2084,44 @@ static void test_vocab_arguments_are_real(void)
             if (v[i].arg >= 0) named_colours++;
             colours++;
             break;
+        case VOCAB_LISTEN:
+            /* THE NAME, and there must be EXACTLY ONE of it. Two wake phrases would give the
+               panel two names and the twins no way to know which one worked; zero would leave
+               the hands-free path unreachable with nothing to say so. Counted below. */
+            listens++;
+            /* And it must be more than one word. Every other phrase here costs an animation
+               when it misfires; this one opens a microphone and calls a model, which is the
+               whole argument in `vocab.c` for a carrier word in front of the name. */
+            {
+                const char *sp = v[i].phrase;
+                bool spaced = false;
+                while (*sp != '\0') {
+                    if (*sp == ' ') spaced = true;
+                    sp++;
+                }
+                CHECK(spaced, "the wake phrase carries a word in front of the name");
+            }
+            break;
         }
         CHECK(vocab_get(i) == &v[i], "ids are indices, which is what MultiNet hands back");
     }
     CHECK(vocab_get(-1) == NULL && vocab_get(vocab_count()) == NULL, "a bad id is NULL, not a read off the end");
     /* Both forms must be reachable BY VOICE, which is the request that started this: the
        ostrich is the default, so "change into robot" is the only way back without five taps. */
+    CHECK(listens == 1, "the panel has exactly one name");
+    /* AND THAT NAME IS WHAT THE GLASS SHOWS. The label defaults to it now, derived from the
+       wake phrase rather than stored twice — so this pins the derivation: the word after the
+       carrier, drawable in a font that has uppercase and digits and nothing else. */
+    {
+        const char *nm = vocab_name();
+        CHECK(nm != NULL && nm[0] != '\0', "the panel's name is derivable from its phrase");
+        bool spaced = false;
+        for (const char *q = nm; *q != '\0'; q++) {
+            if (*q == ' ') spaced = true;
+            CHECK(*q >= 'a' && *q <= 'z', "and is plain lowercase letters, which the font can shout");
+        }
+        CHECK(!spaced, "the name is the last word, not the whole phrase");
+    }
     CHECK(forms >= 2, "both bodies can be asked for");
     CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
     /* The owner asked for "turn [color]" by name, so a palette command that only ever steps
@@ -2120,7 +2311,9 @@ int main(void)
     test_the_lean_limits_are_the_room_that_exists();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
+    test_the_open_mouth_is_the_smile_opening();
     test_the_shuffle_is_driven_by_distance_not_by_a_clock();
+    test_the_orientation_needs_a_band_crossed_on_purpose();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

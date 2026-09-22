@@ -95,6 +95,10 @@ typedef struct {
  * so the host suite can check that the legs actually alternate.
  */
 #define RIG_WALK_PX_PER_STEP 20.0f
+/* Below this much travel in a frame, he is not walking — he is being jostled by accelerometer
+   noise or converging on a lean he has nearly reached. At 25 fps this is 25 px/s, which would
+   take eight seconds to cross the panel: a crawl nobody would call a walk. */
+#define RIG_WALK_DEADBAND_PX 1.0f
 /* Pixels per frame that earn a full-size stride. A full lean sweep in about a second is
    ~5 px/frame, so 3 puts an ordinary deliberate tilt at full amplitude. */
 #define RIG_WALK_FULL_PX 3.0f

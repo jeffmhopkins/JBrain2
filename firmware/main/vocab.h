@@ -33,10 +33,22 @@
  * Pure C: the table and its rules are testable on the host, which is where they are checked.
  */
 
+/* THE PANEL'S NAME, taken from the wake phrase rather than stored twice.
+ *
+ * `VOCAB_LISTEN`'s phrase is "hey fish": a carrier word and then the name the twins chose. The
+ * name is what the label on the glass shows, and deriving it from the phrase means there is
+ * one place to change it when the phrase becomes a per-panel setting — a second constant
+ * holding "fish" would be a second thing to forget.
+ *
+ * Returns the word after the last space, or the whole phrase if it has none. NULL only if no
+ * `VOCAB_LISTEN` entry exists, which the host suite forbids. */
+const char *vocab_name(void);
+
 typedef enum {
     VOCAB_ACTION = 0, /* play an action */
     VOCAB_FORM,       /* become a body */
     VOCAB_COLOUR,     /* `arg` < 0: next colour in the palette; otherwise that palette index */
+    VOCAB_LISTEN,     /* the panel's NAME: start a conversation turn, hands-free */
 } vocab_kind_t;
 
 typedef struct {

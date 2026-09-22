@@ -406,7 +406,22 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
 void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p)
 {
     if (w == NULL || p == NULL) return;
-    const float travel = fabsf(dlean_px);
+    /* A DEADBAND FIRST, and the owner's report is what put it here: *"if we're static and not
+       moving very fast or kind of just sitting there, the legs need to be back in the neutral
+       position."* They were not, for two reasons that both live in this line.
+     *
+       `s_lean` is smoothed and integer, so it approaches its target by ever-smaller steps and
+       the accelerometer keeps nudging it by a pixel at rest. Without a floor, that trickle is
+       indistinguishable from a very slow walk: the phase creeps, the amplitude never quite
+       reaches zero, and the legs sit forever at some arbitrary point in a stride.
+     *
+       Below the floor nothing moves AT ALL — not the amplitude and not the phase — so a panel
+       sitting on a shelf is standing still rather than walking imperceptibly. It also gets the
+       physics right for free: the tail of every real movement falls under the floor as the
+       lean converges, so he decelerates into a stop instead of being cut off at one. */
+    float travel = fabsf(dlean_px);
+    if (travel < RIG_WALK_DEADBAND_PX) travel = 0.0f;
+
     w->phase += travel * (float)M_PI / RIG_WALK_PX_PER_STEP;
     /* Wrapped, or a panel left tilting for an hour accumulates a float big enough that adding
        a frame's travel to it changes nothing and the legs quietly stop. */
@@ -414,11 +429,17 @@ void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p)
 
     float want = travel / RIG_WALK_FULL_PX;
     if (want > 1.0f) want = 1.0f;
-    /* Asymmetric on purpose: legs pick up quickly and settle slowly, so the stride finishes
-       rather than being cut off the instant the panel stops moving. */
-    w->amp += (want - w->amp) * (want > w->amp ? 0.35f : 0.08f);
-    if (w->amp < 0.01f) {
+    /* Asymmetric on purpose: legs pick up quickly and settle back deliberately. The release
+       used to be 0.08, which took about two seconds to reach neutral — long enough that a pet
+       set down on a shelf stood there with one leg out, which is what the owner saw. 0.25 is
+       still visibly a settle rather than a snap, and it is done in under half a second. */
+    w->amp += (want - w->amp) * (want > w->amp ? 0.35f : 0.25f);
+    if (w->amp < 0.02f) {
         w->amp = 0.0f;
+        /* Home the stride too. The legs are already neutral once the amplitude is zero — the
+           pose is amplitude times the swing — but leaving the phase wherever it stopped means
+           the next step begins mid-stride from a standing start. */
+        w->phase = 0.0f;
         return; /* standing still is the action's pose, untouched */
     }
 

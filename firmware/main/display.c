@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_attr.h"
@@ -48,6 +49,7 @@
 #include "speech.h"
 #include "vocab.h"
 #include "variants.h"
+#include "orient.h"
 #include "ota.h"
 #include "pmu.h"
 #include "freertos/FreeRTOS.h"
@@ -385,6 +387,33 @@ static void apply_brightness(void)
 #define LABEL_X 16
 #define LABEL_Y 18
 #define LABEL_SCALE 2
+/* WHOSE PANEL THIS IS, BY DEFAULT — and the version only when asked for.
+ *
+ * The owner: *"top left where we have the version number, if I touch that it should change
+ * between the version number and the panel name. Default to only showing the panel name."*
+ *
+ * Which is the right default and was not the right default for most of this project's life:
+ * the version mattered while every other message was "which build is it on", and it stops
+ * mattering the moment there are two panels in two bedrooms and the question is whose. A
+ * four-year-old cannot read `0.2.75` and can read their pet's name.
+ *
+ * The version is one touch away rather than gone, because it is still the first thing anyone
+ * debugging this asks for, and telemetry is not in the room with you. */
+static bool s_show_version;
+/* The name in the font's own alphabet — it has uppercase, digits and a lowercase `v`, so a
+   name has to be shouted. Built once; `vocab_name()` is derived from the wake phrase. */
+static char s_name_up[24];
+
+static void build_name(void)
+{
+    const char *n = vocab_name();
+    if (n == NULL) n = "PET";
+    size_t i = 0;
+    for (; n[i] != '\0' && i + 1 < sizeof(s_name_up); i++) {
+        s_name_up[i] = (n[i] >= 'a' && n[i] <= 'z') ? (char)(n[i] - 'a' + 'A') : n[i];
+    }
+    s_name_up[i] = '\0';
+}
 #define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
@@ -604,6 +633,54 @@ static volatile bool s_debug_overlay;
 #define TALK_TIMEOUT_MS 25000
 #define TALK_FAILED_MS 2500
 
+/* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.
+ *
+ * The owner: *"a wake word that will allow the same interaction as if I held the panel and it
+ * was listening ... but we just need a way for emptiness at the end to stop it."*
+ *
+ * A hold has a release. A name does not, so the end of the sentence has to be FOUND. The
+ * signal already exists and already runs: `speech.c` sets `s_hearing` from the front end's
+ * own `vad_state`, which is what gates MultiNet and drives the indicator. Nothing new is
+ * computed here — the recogniser has been deciding "is someone talking" every frame since
+ * bring-up and nobody had asked it.
+ *
+ * Three ways out, and each is a different sentence to a four-year-old:
+ *
+ *   HUSH   they finished  -> send it. 900 ms, which is long enough to survive the pause a
+ *                            four-year-old puts in the middle of a sentence and short enough
+ *                            that the six-second cap does not eat the tail of a slow one.
+ *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
+ *                            accidental "hey fish" from the television must not become an
+ *                            upload, and this is the branch that stops it.
+ *   the cap `audio.c` already enforces -> send what we have rather than truncating to nothing.
+ */
+#define LISTEN_HUSH_MS 900
+#define LISTEN_LEAD_MS 3000
+
+/* AND THEN IT LISTENS AGAIN, WITHOUT BEING ASKED.
+ *
+ * The owner: *"after the text-to-speech comes back and finishes talking, we should just turn
+ * the microphone on and start recording again, and if I start talking within 2 seconds, just
+ * automatically record all that until I stopped talking again and send that as the next turn.
+ * That way I can have fluid conversations."*
+ *
+ * Which is the difference between a toy you operate and one you talk to. The machinery is
+ * already here — this is the hands-free listen from `VOCAB_LISTEN` with a different trigger
+ * and a shorter lead — so the whole feature is: notice the reply finished, and open the same
+ * window the name opens.
+ *
+ * NO BEEP ON THIS ONE. A tone after every reply is the toy interrupting the conversation it
+ * just started; the red indicator is the affordance, and by the second turn a child knows what
+ * it means.
+ *
+ * A CAP, BECAUSE THIS IS A LOOP WITH A LOUDSPEAKER IN IT. Every reply reopens the microphone,
+ * and a television talking in the room can therefore hold a conversation with the panel
+ * indefinitely — each turn costing whisper, a model and a voice. Six consecutive follow-ups is
+ * far more than a four-year-old's exchange and bounds the runaway; after that it wants a
+ * deliberate start again, which resets the count. */
+#define FOLLOW_LEAD_MS 2000
+#define FOLLOW_MAX_TURNS 6
+
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
@@ -618,6 +695,21 @@ static uint32_t s_down_since;
    the touch gave no point, which the margin test rejects for free. */
 static int s_down_x = -1;
 static int s_down_y = -1;
+/* The hands-free listen: whether this turn was started by the name rather than by a finger,
+   whether anyone has actually spoken yet, and when the room went quiet. */
+static bool s_listen_voice;
+static bool s_listen_heard;
+static uint32_t s_listen_hush;
+/* How long this particular listen waits for someone to start: the name gives 3 s, a follow-up
+   2 s, and a hold does not use it at all. */
+static uint32_t s_listen_lead;
+/* A reply has finished playing and has not yet been followed up, and how many turns this
+   exchange has run without a deliberate start. */
+static bool s_follow_armed;
+static int s_follow_turns;
+/* Last frame's speaking state, so the follow-up fires on the EDGE where the speaker falls
+   silent rather than on every frame after it. */
+static bool s_was_speaking;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -713,7 +805,10 @@ void display_set_debug_overlay(bool on)
     s_debug_overlay = on;
 }
 
-/* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
+/* WHICH WAY IS UP — the reading's own trustworthiness. The BAND that decides which quarter a
+   trusted reading means now lives in `orient.h`, where it can be tested.
+
+   The owner asked for the flip now rather than after a reporting round:
    getting the sign wrong costs one release and is obvious on sight, which is cheaper than
    waiting. 0.2.18 guessed `ay` and the panel's own telemetry settled it in one cycle:
    gravity is on **X** — `ay` sat well inside the hysteresis band, where nothing would ever
@@ -724,8 +819,8 @@ void display_set_debug_overlay(bool on)
    backwards. Two readings, two axes eliminated, one orientation named.
 
    Hysteresis at about half a gravity, because a panel lying near flat has almost nothing on
-   this axis and a bare sign test would flip it back and forth on noise. */
-#define FLIP_THRESHOLD 4000
+   this axis and a bare sign test would flip it back and forth on noise. That figure now lives
+   in `orient.h` as `ORIENT_MIN_MAG`, beside the band it belongs with. */
 static bool s_upside_down;
 
 /* THE LEAN. The robot slides downhill in proportion to the sideways component of gravity, so
@@ -758,6 +853,41 @@ static int s_lean;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
 static int s_blit_ok;
+
+/* GPIO0 on an ESP32-S3 is the BOOT strap: held low through a reset it enters download mode,
+   and read at runtime it is an ordinary input with an external pull-up. Configured as an input
+   and never driven, so nothing here can interfere with flashing. */
+#define BOOT_BTN GPIO_NUM_0
+static int s_boot_presses;
+static bool s_boot_was_down;
+
+/* Did that tap land on the label? In FRAME coordinates, so it follows the quarter turn like
+   everything else the finger touches (§10.4bw). Padded well beyond the glyphs: the text is
+   ~14 px tall and a four-year-old's fingertip is not, so the target is the corner rather than
+   the letters. */
+static bool label_hit(int fx, int fy, int over_y0)
+{
+    if (fx < 0 || fy < 0) return false;
+    const int w = font_text_w(s_show_version ? "0.0.00" : s_name_up, LABEL_SCALE);
+    const int x0 = LABEL_X - 14, x1 = LABEL_X + w + 14;
+    const int y0 = over_y0 + LABEL_Y - 14, y1 = over_y0 + LABEL_Y + FONT_H * LABEL_SCALE + 14;
+    return fx >= x0 && fx <= x1 && fy >= y0 && fy <= y1;
+}
+
+static void boot_button_poll(void)
+{
+    const bool down = gpio_get_level(BOOT_BTN) == 0; /* active low, pulled up */
+    if (down && !s_boot_was_down) {
+        s_boot_presses++;
+        ESP_LOGI(TAG, "boot button: press %d", s_boot_presses);
+    }
+    s_boot_was_down = down;
+}
+
+int display_boot_presses(void)
+{
+    return s_boot_presses;
+}
 
 void display_blit_counts(int *ok, int *fail)
 {
@@ -945,16 +1075,13 @@ static void update_orientation(void)
        side, and its sign says which. Whichever axis is larger wins, with the same half-a-
        gravity hysteresis the two-way version needed — a panel lying near flat has almost
        nothing on either axis, and a bare comparison would flip it back and forth on noise. */
-    const int mag_x = ax < 0 ? -ax : ax;
-    const int mag_y = ay < 0 ? -ay : ay;
     const int was = s_quarter;
-    if (mag_x > mag_y) {
-        if (ax < -FLIP_THRESHOLD) s_quarter = 2;
-        else if (ax > FLIP_THRESHOLD) s_quarter = 0;
-    } else {
-        if (ay < -FLIP_THRESHOLD) s_quarter = 1;
-        else if (ay > FLIP_THRESHOLD) s_quarter = 3;
-    }
+    /* `orient.c`, and the band is the whole reason it moved out of here: `|ax| > |ay|` turns
+       over at exactly 45 degrees, so a panel HELD at 45 had its orientation chosen by
+       accelerometer noise several times a second. The angle and the hysteresis are pure C and
+       host-tested, because an orientation rule that is only reasoned about is how the first
+       flip shipped backwards (§10.4). */
+    s_quarter = orient_quarter(s_quarter, ax, ay);
     s_upside_down = (s_quarter == 2);
     /* Function scope: both the fit and the lean limit depend on it. */
     const bool side = (s_quarter == 1 || s_quarter == 3);
@@ -1193,6 +1320,17 @@ static void reassert_panel(void)
 static void face_task(void *arg)
 {
     (void)arg;
+    /* Input with its pull-up, never an output: this pin is the BOOT strap and driving it would
+       be a way to make the panel unflashable. */
+    const gpio_config_t boot_cfg = {
+        .pin_bit_mask = 1ULL << BOOT_BTN,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    if (gpio_config(&boot_cfg) != ESP_OK) ESP_LOGW(TAG, "boot button: gpio_config refused");
+    build_name();
     /* The framebuffer PSRAM was enabled for: 368x448x2 = 322 KB, which does not fit in the
        332 KB of internal RAM with Wi-Fi and TLS also to feed. */
     uint16_t *fb = heap_caps_malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t),
@@ -1277,6 +1415,31 @@ static void face_task(void *arg)
            the only thing on screen explaining the sound. Decided once a frame so every branch
            below agrees about it. */
         const bool speaking = audio_playing();
+        /* THE EXCHANGE CONTINUES ITSELF. Armed when a reply starts playing, fired on the edge
+           where the speaker falls silent — not on a timer, because a long reply must not have
+           the microphone opened underneath it. `audio.c` stays deaf for six chunks after the
+           speaker runs, which conveniently keeps the tail of our own voice out of the front of
+           the next recording. */
+        if (s_was_speaking && !speaking && s_follow_armed) {
+            s_follow_armed = false;
+            if (s_talk == TALK_IDLE && talk_state() != TALK_NET_BUSY &&
+                s_follow_turns < FOLLOW_MAX_TURNS) {
+                s_talk = TALK_LISTENING;
+                s_talk_since = now;
+                s_listen_voice = true;
+                s_listen_heard = false;
+                s_listen_hush = 0;
+                s_listen_lead = FOLLOW_LEAD_MS;
+                s_follow_turns++;
+                audio_capture_open();
+                ESP_LOGI(TAG, "talk: listening (follow-up %d)", s_follow_turns);
+                dirty = true;
+            } else if (s_follow_turns >= FOLLOW_MAX_TURNS) {
+                ESP_LOGW(TAG, "talk: %d follow-ups without a deliberate start — stopping",
+                         s_follow_turns);
+            }
+        }
+        s_was_speaking = speaking;
         if (tapped && !speaking) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
@@ -1290,6 +1453,17 @@ static void face_task(void *arg)
                all speak the same coordinates. The identity until a calibration exists. */
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
+               that says something cannot also be a poke. It sits above the pet's head where
+               `face_zone` returns nothing anyway, so no reaction is lost — and a tap that both
+               flipped the label and made the pet sneeze would read as two things happening. */
+            if (label_hit(s_fig_x, s_fig_y, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
+                s_show_version = !s_show_version;
+                ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
+                if (sound) audio_beep();
+                dirty = true;
+                goto tap_done;
+            }
             s_tap_zone = (int)face_zone(st.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
@@ -1309,6 +1483,7 @@ static void face_task(void *arg)
             PHASE(3);
             if (sound) audio_beep();
             dirty = true;
+        tap_done:;
         } else if (tapped) {
             /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would read
                as a frozen pet — but no beep, no colour change and no new action, so the reply
@@ -1333,6 +1508,24 @@ static void face_task(void *arg)
                     /* A named colour lands on its index; "pick a new color" still steps. */
                     colour = v->arg < 0 ? (colour + 1) % face_colour_count()
                                         : v->arg % face_colour_count();
+                    break;
+                case VOCAB_LISTEN:
+                    /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
+                       two. Everything after this — the bubble, the upload, the reply, the
+                       failure face — is the press-and-hold machine, and the only difference is
+                       how the turn ends (`LISTEN_HUSH_MS`). Refused while a turn is in flight
+                       or while we are speaking, for the same reasons the hold is. */
+                    if (s_talk == TALK_IDLE && !speaking && talk_state() != TALK_NET_BUSY) {
+                        s_talk = TALK_LISTENING;
+                        s_talk_since = now;
+                        s_listen_voice = true;
+                        s_listen_heard = false;
+                        s_listen_hush = 0;
+                        s_listen_lead = LISTEN_LEAD_MS;
+                        s_follow_turns = 0; /* a deliberate start is a fresh exchange */
+                        audio_capture_open();
+                        ESP_LOGI(TAG, "talk: listening (name)");
+                    }
                     break;
                 case VOCAB_ACTION:
                 default:
@@ -1414,6 +1607,7 @@ static void face_task(void *arg)
         s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
         PHASE(5);
         update_orientation();
+        boot_button_poll();
         s_open = blink_open(TOUCH_POLL_MS);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;
@@ -1427,6 +1621,13 @@ static void face_task(void *arg)
            waiting out the idle floor — but only once it has moved enough to see, or every
            frame would be a full 322 KB blit for a pixel of accelerometer noise. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
+        /* AND WHILE HE IS STILL PUTTING HIS FEET DOWN. The lean stops changing the moment it
+           reaches its target, so without this the loop drops to the 200 ms idle floor while
+           the stride is still settling — five frames a second, which turns a half-second
+           settle into nearly three and leaves the pet standing on a shelf with one leg out.
+           That is what the owner saw. Same rule as the flinch and the blink above: animating
+           means every poll is a frame. */
+        if (walk.amp > 0.0f) dirty = true;
 
         const int prev_taps = gest.taps;
         const float prev_cue = gesture_cue(&gest);
@@ -1467,6 +1668,11 @@ static void face_task(void *arg)
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
+            /* A finger, not the name — so this turn ends on the release, not on silence. Set
+               explicitly rather than relied upon: the two paths share one state machine, and a
+               stale flag here would leave a held turn waiting for a hush that never comes. */
+            s_listen_voice = false;
+            s_follow_turns = 0; /* a finger is a deliberate start, like the name */
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
                that the thing is now listening rather than merely being held. */
             if (sound) audio_beep();
@@ -1482,6 +1688,44 @@ static void face_task(void *arg)
                microphone that stopped working unless the panel says which it is. */
             ESP_LOGI(TAG, "talk: hold at (%d,%d) is on the rim, not the pet", s_down_x,
                      s_down_y);
+        } else if (s_talk == TALK_LISTENING && s_listen_voice) {
+            /* WAITING FOR THE ROOM TO GO QUIET. A held turn ends when the finger lifts; this
+               one has to be read off the front end's VAD, which `speech.c` has been computing
+               all along. */
+            const bool voice = speech_hearing();
+            if (voice) {
+                s_listen_heard = true;
+                s_listen_hush = 0;
+            } else if (s_listen_heard && s_listen_hush == 0) {
+                s_listen_hush = now;
+            }
+            const bool hushed =
+                s_listen_heard && s_listen_hush != 0 && now - s_listen_hush >= LISTEN_HUSH_MS;
+            const bool full = audio_capture_ms() >= audio_capture_cap_ms();
+            const bool nothing = !s_listen_heard && now - s_talk_since > s_listen_lead;
+            if (nothing) {
+                /* The name and then silence — a television, or a child who changed their mind.
+                   Dropped without a bubble: an accidental wake must cost nothing, which is the
+                   whole reason this branch exists rather than sending six seconds of a room. */
+                size_t got = 0;
+                (void)audio_capture_close(&got);
+                s_talk = TALK_IDLE;
+                s_listen_voice = false;
+                ESP_LOGI(TAG, "talk: named but nobody spoke — dropped");
+            } else if (hushed || full) {
+                size_t got = 0;
+                const int16_t *pcm = audio_capture_close(&got);
+                ESP_LOGI(TAG, "talk: %s after %u ms (%u bytes)", full ? "full" : "hushed",
+                         (unsigned)audio_capture_ms(), (unsigned)got);
+                s_listen_voice = false;
+                if (pcm == NULL || !talk_send(pcm, got)) {
+                    s_talk = TALK_IDLE;
+                } else {
+                    s_talk = TALK_THINKING;
+                    s_talk_since = now;
+                }
+                dirty = true;
+            }
         } else if (s_talk == TALK_LISTENING && !down) {
             size_t got = 0;
             const int16_t *pcm = audio_capture_close(&got);
@@ -1509,6 +1753,9 @@ static void face_task(void *arg)
                mid-sentence. */
             s_talk = TALK_IDLE;
             talk_clear();
+            /* Armed, not opened: the reply has not started coming out of the speaker yet, let
+               alone finished. The edge above does the opening. */
+            s_follow_armed = true;
             action = ACT_NOD;
             action_mag = 1.0f;
             action_start = now;
@@ -1620,7 +1867,7 @@ static void face_task(void *arg)
             const int over_y0 = side ? SQ_Y0 : 0;
             const int over_h = side ? SQ_Y0 + SQ : FACE_H;
             font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
-                      ota_running_version(), LABEL_COLOUR);
+                      s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);

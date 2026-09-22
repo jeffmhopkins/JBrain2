@@ -7,6 +7,29 @@
    spend most of its day misfiring. These are the things they asked for, plus the gags that
    are worth asking for by name. */
 static const vocab_t VOCAB[] = {
+    /* THE PANEL'S NAME, and the one phrase here whose cost is not an animation.
+     *
+     * The owner: *"both of these panels will have a wake word that will allow the same
+     * interaction as if I held the panel and it was listening"* — and the twins named this one
+     * **fish**.
+     *
+     * TWO WORDS, AND THE SECOND ONE IS THE NAME. Every other phrase in this table costs a
+     * wiggle when it misfires. This one opens the microphone, uploads six seconds of a child's
+     * bedroom, calls a language model and makes the pet talk to an empty room — so it is the
+     * one entry where `vocab.h`'s warning that "a one-word always-on vocabulary fires at the
+     * television" is not a style note. A carrier word in front is what every always-on device
+     * does and it is why they do it.
+     *
+     * It also happens to be the only form that WORKS here: the twins' first choice was
+     * "robot", and rule 3 forbids a phrase being a prefix of another — "change into robot" and
+     * "be a robot" are already in this table. "hey fish" collides with nothing.
+     *
+     * COMPILED IN FOR NOW, WHICH IS A GAP. §10.4ab's argument applies: the owner has no
+     * terminal, so a name only a rebuild can change is a name they cannot change, and the two
+     * panels will want different ones. It belongs on `endpoint_settings` beside the other
+     * knobs; `esp_mn_commands_update()` already supports re-registering at runtime. */
+    {"hey fish", VOCAB_LISTEN, 0},
+
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
     {"change into merc", VOCAB_FORM, FORM_OSTRICH},
@@ -99,4 +122,18 @@ const vocab_t *vocab_get(int id)
 {
     if (id < 0 || id >= vocab_count()) return NULL;
     return &VOCAB[id];
+}
+
+const char *vocab_name(void)
+{
+    for (int i = 0; i < (int)(sizeof(VOCAB) / sizeof(VOCAB[0])); i++) {
+        if (VOCAB[i].kind != VOCAB_LISTEN) continue;
+        const char *p = VOCAB[i].phrase, *last = VOCAB[i].phrase;
+        while (*p != '\0') {
+            if (*p == ' ' && *(p + 1) != '\0') last = p + 1;
+            p++;
+        }
+        return last;
+    }
+    return NULL;
 }

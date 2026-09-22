@@ -89,4 +89,10 @@ bool audio_playing(void);
    says how much audio a hold actually produced. */
 int audio_capture_ms(void);
 
+/* The hard ceiling `audio_capture_open` records to, in ms. Public because the hands-free
+   listen has to know when the buffer is full: a held turn ends when the finger lifts, but a
+   turn started by name ends on silence, and silence that never comes must still send what it
+   has rather than record into a buffer that stopped accepting samples. */
+int audio_capture_cap_ms(void);
+
 int audio_peak(const int16_t *buf, int samples);

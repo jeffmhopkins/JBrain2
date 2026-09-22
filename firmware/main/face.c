@@ -429,15 +429,34 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
     if (front) {
         const int mx = ox + tilt, my = hy + SY((int)(HH * 0.52f)) - SY(16);
-        /* The open mouth goes UNDER the arc, so the smile stays the lip of it rather than
-           being replaced by a hole. At talk 0 nothing is drawn and the face is byte-for-byte
-           what it was before this channel existed. */
-        const int gape = (int)lrintf(st->talk * 17.0f);
+        const int mr = (int)(30 * s);
+        /* THE SMILE IS THE LOWER LIP, NOT A SECOND MOUTH.
+         *
+           The owner: *"when changing to the robot, when it speaks the happy face doesn't go
+           away while the mouth appears, which looks really weird."* Correct, and the first
+           version earned it — the open mouth was a rounded box drawn UNDER the smile arc, on
+           the theory that the smile would read as its lip. It does not. A curved smile with a
+           rectangle below it reads as two mouths, because that is what it is.
+         *
+           So the opening is bounded BY the arc: for every column across the smile, fill from
+           the arc's own y upward by the gape, tapered to nothing at the corners so the hole is
+           a lens rather than a band. That is the cartoon convention — the mouth opens out of
+           the smile line, and the smile becomes the bottom of it — and it collapses exactly to
+           the untouched arc as the gape goes to zero, with no pop and no second shape. */
+        const int gape = (int)lrintf(st->talk * 26.0f * s);
         if (gape > 0) {
-            fill_round_rect(fb, mx - SX(17), my + SY(2), SX(34), SY(gape), (int)(7 * s), dark);
+            /* 0.15pi is where the arc starts, so its half-width is r*cos(0.15pi). */
+            const int xmax = (int)(cosf((float)M_PI * 0.15f) * (float)mr);
+            for (int dx = -xmax; dx <= xmax; dx++) {
+                const float t = (float)dx / (float)xmax;
+                const int lip = my + (int)lrintf(sqrtf((float)(mr * mr - dx * dx)));
+                const int open = (int)lrintf((float)gape * sqrtf(1.0f - t * t));
+                for (int y = lip - open; y <= lip; y++) px(fb, mx + dx, y, dark);
+            }
         }
-        arc_stroke(fb, mx, my, (int)(30 * s), (float)M_PI * 0.15f, (float)M_PI * 0.85f,
-                   (int)(9 * s), dark);
+        /* The lip last, so the opening never eats its own edge. */
+        arc_stroke(fb, mx, my, mr, (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s),
+                   dark);
     }
 
     /* A RAISED ARM IS REDRAWN OVER THE HEAD. The head is 216 px wide and the shoulder sits
@@ -584,11 +603,21 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
             int w, h, y;
         } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
         /* THE LOWER MANDIBLE DROPS, the upper one does not — which is how a beak opens and
-           the reason this is not just "make the whole beak bigger". The split is between the
-           two wide segments and the two narrow ones, so the gap opens where a bird's does. */
-        const int gape = (int)lrintf(st->talk * 11.0f);
+           the reason this is not just "make the whole beak bigger".
+         *
+           MUCH BIGGER THAN THE FIRST ATTEMPT, and the owner's verdict is the measurement:
+           *"the mouth movement is definitely not big enough or obvious enough that his mouth
+           is moving for talking."* 11 px of drop, split so only the narrow tip moved, was a
+           third of the beak twitching on a 29 mm screen — legible in a host render, invisible
+           across a bedroom. So the hinge moves UP (only the widest segment is the upper
+           mandible, the other three swing as one jaw) and the gape goes to 30, which is most
+           of the beak's own height. A talking mouth has to read from the far side of a room
+           or it is not doing the job the animation exists for. */
+        const int gape = (int)lrintf(st->talk * 30.0f);
         for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
-            const int drop = i >= 2 ? SY(gape) : 0;
+            /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
+               piece: the further from the joint, the further it travels. */
+            const int drop = i >= 1 ? SY(gape * (int)i / 3) : 0;
             fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
                             SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
         }
