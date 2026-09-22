@@ -4074,6 +4074,49 @@ existed — because a channel that leaks at rest changes every frame the pet has
 Both forms, since a change reaching only one of them is half a feature. Confirmed to fail with
 the mouth stubbed out.
 
+#### 10.4cc He walks when he moves (0.2.69, 2026-09-22)
+
+The owner: *"the robot should kind of shuffle his legs back and forth as tilt causes him to
+move left and right."*
+
+The lean has slid the figure downhill since §10.4 and the legs have never once acknowledged it
+— the pet travels the width of the panel like a chess piece. So: a walk.
+
+##### The phase advances with distance, not with a clock
+
+This is the whole design and it is the part worth defending, because the obvious implementation
+is a timed oscillation gated on "is he moving" and it is wrong in two ways a screenshot cannot
+show. It keeps stepping for a frame or two after he stops, and it takes the **same number of
+steps to cross the panel slowly as quickly** — which is exactly what a walk is not.
+
+Driving the phase off pixels travelled makes the relationship the real one: a step per 20 px of
+ground, so he takes more steps when he goes further and **none at all when he is still, with no
+gate to get wrong**. Amplitude is separate and eased, and follows speed rather than distance —
+a slow drift is a shuffle, a fast slide is a scramble — with a fast attack and a slow release so
+a stride finishes instead of being cut off the instant the panel stops moving.
+
+Applied on top of whatever the action posed, like the lean itself: a pet tilted mid-wave keeps
+waving and moves its feet. The robot swings its legs; the ostrich also lifts, because
+§10.4's note stands — a bird drawn head-on has no depth to step into, so its stride reads as a
+lift, and the lift has to be in phase with the swing or the raised foot is the one taking the
+weight.
+
+##### In `rig.c`, which is the only reason it has a test
+
+`display.c` cannot be linked by the host harness, so a walk written there would have shipped on
+an argument. `rig_walk()` is pure C, and the suite checks the property a timer would fail:
+
+```
+twenty pixels covered in 20 frames of 1 px  ->  phase 3.1416
+twenty pixels covered in  4 frames of 5 px  ->  phase 3.1416
+```
+
+Plus the legs alternating rather than swinging together (what a careless `+=` on both would
+give), a stationary pet leaving the action's pose **exactly** untouched, the faster crossing
+taking the wider stride, and the phase wrapping — because a panel left tilting accumulates
+travel forever, and a float big enough that one frame's addition rounds away would stop the legs
+dead. Confirmed to fail against a clock-driven phase before being trusted.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

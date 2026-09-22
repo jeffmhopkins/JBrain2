@@ -1246,6 +1246,11 @@ static void face_task(void *arg)
     for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
+    /* The shuffle's own state, and the lean it last saw — the walk is driven by how far the
+       figure MOVED this frame, so it needs the previous position rather than the current one
+       (`rig.h`). */
+    rig_walk_t walk = {0};
+    int walked_from = 0;
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
@@ -1565,6 +1570,11 @@ static void face_task(void *arg)
             emotion_approach_face(&st.eyes, &target, target.rate);
             emotion_approach_face(&st.eyes, &target, target.rate);
             rig_for(action, p, action_mag, now, &st.rig);
+            /* AFTER the action posed the limbs and before anything reads them: the shuffle
+               rides on top, the way the lean itself does, so a pet tilted mid-wave keeps
+               waving and moves its feet. */
+            rig_walk(&walk, (float)(s_lean - walked_from), &st.rig);
+            walked_from = s_lean;
             rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
             st.bob = bob_step(frame++);
             st.lean = s_lean;
