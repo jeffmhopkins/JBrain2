@@ -4520,6 +4520,50 @@ The PWA toggle, and the measurement. `audio_ctx` ships in this change and is the
 be measured immediately — the next thing said to the panel will report its own window beside
 its own `stt_ms`.
 
+#### 10.4cl The mid-transfer theory was wrong, and the workaround is a second boot (0.2.77, 2026-09-22)
+
+§10.4by root-caused the black-screen-after-every-update to the OTA's `esp_restart()` cutting a
+QSPI pixel transfer in half, and 0.2.65 fixed it by parking the renderer first. **That theory is
+now falsified.** The panel updated to 0.2.76 using 0.2.69's parked restart — from a
+power-cycled, known-good controller, which was the clean test — and came up black exactly as
+before. Rails identical through the dark period for the third time.
+
+The story fitted every observation available and was still wrong. Worth recording as that
+rather than quietly replaced: "frames accepted, rails up, a restart cures it" is consistent with
+several causes, and the one that got written down was the one that had a mechanism attached.
+
+##### What the evidence still says
+
+A **second boot of the same image** cures it, every time, with nothing reinstalled. That has
+held across many updates and is the only reliable cure short of pulling the plug.
+
+And the remaining suspect has a name now. §10.4x recorded that the vendor BSP leaves both
+`BSP_LCD_RST` and `BSP_LCD_BACKLIGHT` at `GPIO_NUM_NC`, and concluded *"so neither is a line we
+are failing to drive."* **That conclusion assumed a GPIO.** The TCA9554 expander at `0x20` is
+where such a line would be if it is not one — and `pmu.c` reads its configuration register as
+`0xff`, every pin an input, nothing ever driven. So the CO5300 has very likely **never had a
+hardware reset in this project's life**, only the driver's SWRESET fallback, which a controller
+mid-command eats.
+
+That is a hypothesis, not a finding. Confirming it needs the schematic, and **probing it blind
+is the one thing not worth doing** — an unknown expander output could be a power rail or the
+touch controller, and that is a guess that damages hardware rather than wasting a cycle.
+
+##### The workaround, labelled as one
+
+After an update, boot once more. Exactly once: the flag lives in RTC memory, is cleared before
+the restart so nothing can loop, and a power cycle randomises the word into something the magic
+rejects.
+
+**Placed after `ota_confirm_health`, and that ordering is the entire safety argument.** A new
+image boots in `PENDING_VERIFY`; restarting before it is marked good makes the bootloader **roll
+back to the previous firmware**. A double reboot dropped in carelessly would have quietly undone
+every update it was meant to rescue — which would have looked, from the outside, exactly like an
+update that failed to take.
+
+It also sits after `report`, so the boot that went dark still gets its telemetry out before the
+restart. Two seconds is worth less than the evidence.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

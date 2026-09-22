@@ -250,6 +250,18 @@ void app_main(void)
     if (reachable) {
         apply_settings(&cfg);
         report(&cfg);
+        /* THE SECOND BOOT AFTER AN UPDATE — `ota.h` explains what it works around and why it
+           is a workaround. Placed HERE and nowhere earlier: `ota_confirm_health` above has
+           just marked this image good, and restarting while it is still PENDING_VERIFY would
+           make the bootloader roll back to the firmware we came from. After `report` as well,
+           so the boot that went dark still gets its telemetry out before we restart it — the
+           evidence is worth more than the two seconds. */
+        if (ota_take_restage()) {
+            ESP_LOGW(TAG, "post-update boot — restarting once more (display workaround)");
+            display_request_restart();
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            esp_restart();
+        }
     }
 
     bool ears_tried = false;
