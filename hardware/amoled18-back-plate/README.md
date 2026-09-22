@@ -12,11 +12,17 @@ The stock cover leaves almost no room behind the board: Waveshare's largest reco
 for the stock case is 3.85 × 24 × 28 mm. This plate is deeper and has a pocket sized to a real
 LiPo (the sample export is for an 802525, 8 × 25 × 25 mm, about twice that volume), plugged
 into the board's MX1.25 `BAT` connector. With that cell the unit goes from 15.0 mm thick to
-about 22.7 mm. Everything else about the case stays
-stock: all ports, buttons and the mic are in the **front** shell, so this part is solid except
-for the battery pocket and four screw holes.
+about 22.7 mm. Everything else about the case stays stock: all ports, buttons and the mic are
+in the **front** shell, so this part is solid except for the battery pocket and four screw
+holes.
 
-![Render with the battery ghosted in green](preview.png)
+The back face is flat, with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
+The screw holes are counterbored so standard M2 socket head cap screws (the hex-key kind) sit
+just below the surface.
+
+| Inside, battery ghosted in green | Back face |
+|---|---|
+| ![Render with the battery ghosted in green](preview.png) | ![Flat back face with counterbored screw holes](preview-back.png) |
 
 ## Files
 
@@ -24,9 +30,9 @@ for the battery pocket and four screw holes.
 |---|---|
 | `amoled18_back_plate.scad` | The parametric model. Every dimension is adjustable. |
 | `back_plate_802525_400mAh.stl` | Ready-made export with the defaults below and an 802525 cell. |
-| `preview.png` | Render with the battery ghosted in. |
+| `preview.png`, `preview-back.png` | Renders of the inside (battery ghosted in) and the back face. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
-| `reference/` | Waveshare's dimension drawing, 3D model and schematic, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
+| `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
 ## Step by step, if you've never used OpenSCAD
 
@@ -93,8 +99,8 @@ Press **F5** again after changing values. At the bottom of the window is the **c
 say **`All checks passed.`** If instead it says something like `POCKET OVERLAPS A SCREW HOLE`,
 the battery is too big for this plate — pick a smaller cell or adjust the flagged value.
 
-Write down the **`SCREWS:`** line — it tells you how much longer your screws need to be than
-the stock ones (see [Screws](#screws)).
+Write down the **`SCREWS:`** line — it gives the grip length you need to work out which
+screws to buy (see [Screws](#screws)).
 
 ### 7. Export the file for the printer
 
@@ -137,16 +143,29 @@ but not the case shells.
 | `stock_clear` | 3.9 | The stock cover shows 3.5 mm on the side view; depth derived from that and the rim height | Estimate: **measure** |
 | `lip_h` | 2.0 | Not visible in any source | Guess: **measure** |
 | `screw_size` | M2 | Screw heads measure ~3.8 mm across in the drawing, which matches M2 | Likely: check a stock screw |
+| Counterbores | Ø4.6 × 2.3 deep | ISO 4762 M2 socket head (Ø3.8 × 2.0) + `head_clear` 0.6 + `hole_slop` 0.2, sunk `head_sink` 0.3 | Standard |
 
 For reference, the whole stock unit is 15.0 mm thick, and the back label window is
 27.6 × 27.6 mm with R1.8 corners.
 
 ## Screws
 
-Deepening the plate means the stock screws no longer reach the brass inserts in the board. The
-OpenSCAD console prints exactly how much longer they must be (`SCREWS: M2, … mm longer than
-stock`). Measure a stock screw's length, add that number, and buy M2 screws that long
-(round up to the next size sold).
+Use **M2 socket head cap screws** (ISO 4762 / DIN 912 — the round head with a hex-key
+socket). The counterbores are sized for them with room for the key; other sizes in the
+`screw_size` drop-down get matching counterbores.
+
+Each hole runs through a post that rises to the rim top, as on the stock cover, so the screw
+clamps through solid plastic. The deeper plate means the stock screws are far too short. To
+work out the length:
+
+1. The console's `SCREWS:` line gives the **grip**: the plastic between the head's seat and the
+   post top. It's 10.9 mm with the defaults.
+2. Push a stock screw through the stock cover and measure how far it sticks out past the top of
+   its post. That's how far it goes into the case.
+3. Screw length = grip + that, rounded **down** to a length that's sold, so it can't bottom out.
+
+If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 12
+with the defaults. A small M2 socket-head assortment covers it either way.
 
 ## Battery mounting
 
@@ -158,8 +177,9 @@ clip. Set `tape_t` and `foam_t` to what you actually have; both add to the requi
 | Setting | Value |
 |---|---|
 | Orientation | Flat face down, rim up. No supports. |
+| Counterbores | The shelf at the top of each one is a short bridge; it prints fine at 0.2 mm. |
 | Layer | 0.2 mm |
-| Perimeters | 3 or more (the screw columns take the load) |
+| Perimeters | 3 or more (the screw posts take the load) |
 | Infill | 40 %+ |
 | Material | PETG or ABS — PLA softens in a warm car. |
 

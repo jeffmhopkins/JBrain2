@@ -13,9 +13,9 @@
 //
 // Workflow:  set values  >  F5 preview  >  F6 render  >  F7 export STL
 //
-// NOTE ON SCREWS: making the plate deeper means the stock screws no
-// longer reach the brass inserts. The console prints exactly how much
-// longer they need to be.
+// NOTE ON SCREWS: the holes are counterbored for socket head cap screws
+// (the standard hex-key M screws). Making the plate deeper means the
+// stock screws no longer reach; the console prints the new length.
 //
 // Units: millimetres.   OpenSCAD is free at openscad.org
 // =====================================================================
@@ -51,8 +51,8 @@ plate_y = 45.2;     // [20:0.1:80]
 plate_r = 8.7;      // [0.5:0.1:20]
 // Thickness of the flat back panel
 plate_t = 1.6;      // [0.8:0.1:5]
-// Round over the outside back edge (0 = sharp)
-edge_fillet = 0.8;  // [0:0.1:3]
+// Small 45 degree chamfer on the flat back edge, against elephant's foot (0 = sharp)
+edge_chamfer = 0.4;  // [0:0.1:1.5]
 
 
 /* [3. Rim that enters the front shell] */
@@ -101,15 +101,23 @@ screw_dx = 12.0;    // [5:0.1:40]
 screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
-// Head style
-head_style = "counterbore";  // [counterbore, countersink, none]
+// Recess the heads (off = plain through holes)
+counterbore = true;
+// Room around the head so it drops in and a hex key reaches
+head_clear = 0.6;   // [0:0.1:2]
+// How far below the back face the head sits
+head_sink = 0.3;    // [0:0.1:2]
+// Wall around the screw in each post
+boss_wall = 1.5;    // [0.8:0.1:3]
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
 
 /* [4b. Custom screw sizes - used only when screw_size is Custom] */
 custom_shaft_d = 2.0;   // [1:0.1:6]
+// Socket head diameter
 custom_head_d = 3.8;    // [2:0.1:10]
-custom_head_t = 1.0;    // [0.4:0.1:4]
+// Socket head height
+custom_head_t = 2.0;    // [0.4:0.1:6]
 
 
 /* [5. Battery pocket] */
@@ -145,15 +153,18 @@ $fn = smoothness;
 // DERIVED VALUES
 // =====================================================================
 
-shaft_table = screw_size == "M1.6" ? [1.8, 3.2, 0.9]
-            : screw_size == "M2"   ? [2.2, 3.8, 1.0]
-            : screw_size == "M2.5" ? [2.7, 4.6, 1.2]
-            : screw_size == "M3"   ? [3.2, 5.6, 1.4]
+// Clearance hole, then ISO 4762 socket head diameter and height.
+shaft_table = screw_size == "M1.6" ? [1.8, 3.0, 1.6]
+            : screw_size == "M2"   ? [2.2, 3.8, 2.0]
+            : screw_size == "M2.5" ? [2.7, 4.5, 2.5]
+            : screw_size == "M3"   ? [3.2, 5.5, 3.0]
             : [custom_shaft_d, custom_head_d, custom_head_t];
 
 shaft_d = shaft_table[0] + hole_slop;
-head_d  = shaft_table[1] + hole_slop;
-head_t  = shaft_table[2];
+head_d  = counterbore ? shaft_table[1] + head_clear + hole_slop : shaft_d;
+head_t  = counterbore ? shaft_table[2] + head_sink : 0;
+boss_d  = shaft_d + 2 * boss_wall;
+screw_r = max(head_d, boss_d) / 2;
 
 stack_t     = battery_t + tape_t + foam_t + extra_clearance;
 inner_clear = max(stock_clear, stack_t);
@@ -181,11 +192,13 @@ rim_in_y = rim_out_y - 2 * lip_wall;
 pocket_fits_x = pocket_x <= rim_in_x - 0.5;
 pocket_fits_y = pocket_y <= rim_in_y - 0.5;
 rim_fits      = (rim_out_x <= plate_x - 0.4) && (rim_out_y <= plate_y - 0.4);
-screw_clear_x = screw_dx - head_d/2 > pocket_x/2 + 0.8;
-screw_clear_y = screw_dy - head_d/2 > pocket_y/2 + 0.8;
+screw_clear_x = screw_dx - screw_r > pocket_x/2 + 0.8;
+screw_clear_y = screw_dy - screw_r > pocket_y/2 + 0.8;
 screws_solid  = screw_clear_x || screw_clear_y;
 screws_inside = (screw_dx + head_d/2 < plate_x/2 - 0.6)
              && (screw_dy + head_d/2 < plate_y/2 - 0.6);
+// Plastic the screw passes through, from the head's seat to the post top.
+screw_grip = total_h - head_t;
 
 echo("================ BACK PLATE ================");
 echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l, " mm"));
@@ -193,7 +206,8 @@ echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + air)"));
 echo(str("Pocket:             ", pocket_x, " x ", pocket_y, " x ", pocket_depth, " mm"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
-echo(str("SCREWS:             ", screw_size, ", ", extra_depth, " mm longer than stock"));
+echo(str("SCREWS:             ", screw_size, " socket head cap, grip ", screw_grip,
+         " mm. Length = grip + how far a stock screw pokes through the stock cover."));
 echo(str("Rim outside:        ", rim_out_x, " x ", rim_out_y,
          "  (r ", rim_out_r, ", wall ", lip_wall, ")"));
 echo(str("Rim opening:        ", rim_in_x, " x ", rim_in_y, " mm"));
@@ -221,18 +235,23 @@ module rrect(x, y, r) {
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
 module solid_body() {
-    if (edge_fillet > 0.05)
-        // Raised by the fillet so the sphere's lower half lands at z = 0, where
-        // the screw holes start; otherwise it seals them over.
-        translate([0, 0, edge_fillet])
-            minkowski() {
-                rbox(plate_x - 2*edge_fillet, plate_y - 2*edge_fillet,
-                     max(0.1, plate_t + spacer_h - 2*edge_fillet),
-                     max(0.1, plate_r - edge_fillet));
-                sphere(r = edge_fillet);
-            }
+    body_h = plate_t + spacer_h;
+    if (edge_chamfer > 0.05)
+        hull() {
+            linear_extrude(height = eps)
+                rrect(plate_x - 2*edge_chamfer, plate_y - 2*edge_chamfer,
+                      max(0.1, plate_r - edge_chamfer));
+            translate([0, 0, edge_chamfer])
+                rbox(plate_x, plate_y, body_h - edge_chamfer, plate_r);
+        }
     else
-        rbox(plate_x, plate_y, plate_t + spacer_h, plate_r);
+        rbox(plate_x, plate_y, body_h, plate_r);
+
+    // Posts up to the rim top, as on the stock cover, so the screws clamp
+    // through plastic rather than across the rim's air gap.
+    for (sx = [-1, 1], sy = [-1, 1])
+        translate([sx * screw_dx, sy * screw_dy, body_h - eps])
+            cylinder(d = boss_d, h = lip_h + eps);
 
     if (lip_h > 0.05)
         translate([0, 0, plate_t + spacer_h - eps])
@@ -263,14 +282,9 @@ module screw_holes() {
             translate([0, 0, -eps])
                 cylinder(d = shaft_d, h = total_h + 2*eps);
 
-            if (head_style == "counterbore")
+            if (counterbore)
                 translate([0, 0, -eps])
                     cylinder(d = head_d, h = head_t + eps);
-
-            if (head_style == "countersink")
-                translate([0, 0, -eps])
-                    cylinder(d1 = head_d, d2 = shaft_d,
-                             h = (head_d - shaft_d)/2 + eps);
         }
 }
 
