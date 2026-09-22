@@ -327,6 +327,15 @@ bool display_start(void)
 #define BRIGHTNESS_DEFAULT 0xFF
 static volatile uint8_t s_brightness = BRIGHTNESS_DEFAULT;
 static volatile bool s_brightness_pending;
+/* Set from the OTA task, honoured by the render loop — see `display_request_restart`. A flag
+   rather than a call, for the reason the codec has one: the owner of a peripheral restarts
+   it, never a passer-by. */
+static volatile bool s_restart_pending;
+
+void display_request_restart(void)
+{
+    s_restart_pending = true;
+}
 
 /* ONE TASK OWNS THE PANEL IO, AND IT IS THE RENDER TASK.
  *
@@ -378,11 +387,10 @@ static void apply_brightness(void)
 #define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
-/* The heard-speech ticker along the bottom, and the recording indicator beside it. The dot is
-   red because it is the one thing on this panel that is a promise to a room rather than a
-   decoration — the ICO Children's Code requires it whenever the microphone is open. */
+/* The heard-speech ticker along the bottom. The microphone-open dot that used to sit beside it
+   was removed at the owner's request (0.2.66) — `caption.h` records what it was for and why
+   the compliance argument this comment made for it was overstated. */
 #define CAPTION_COLOUR SWAP16(0xCE79) /* pale grey: readable, never louder than the robot */
-#define MIC_COLOUR SWAP16(0xF800)
 
 /* The gesture itself lives in `gesture.h`, pure and host-tested: three short taps in rhythm,
    then a hold. A reboot IS the firmware re-check, because the OTA loop asks the box before
@@ -1299,7 +1307,7 @@ static void face_task(void *arg)
             }
         }
         if (speech_live() && !caption_idle(&cap)) dirty = true;
-        caption_tick(&cap, now, FACE_W, speech_live(), speech_hearing());
+        caption_tick(&cap, now, FACE_W);
 
         /* THE CALIBRATION ROUTINE OWNS THE FRAME while it runs. It deliberately bypasses the
            rig rather than drawing over it: a robot reacting to the taps being measured would
@@ -1538,7 +1546,7 @@ static void face_task(void *arg)
             font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
                       ota_running_version(), LABEL_COLOUR);
             draw_meter(fb, level);
-            caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR, MIC_COLOUR);
+            caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);
             else if (s_talk != TALK_IDLE) {
                 draw_thinking(fb, over_y0, over_h - over_y0, now, s_talk == TALK_FAILED);
@@ -1635,8 +1643,14 @@ static void face_task(void *arg)
             }
             since_draw = 0;
         }
-        if (rebooting) {
-            ESP_LOGW(TAG, "reboot gesture completed — re-checking firmware");
+        /* BOTH REBOOTS LEAVE FROM HERE, and that is the point. This is the one place in the
+           firmware where a frame has just finished and nothing is in flight on the QSPI bus,
+           which is the difference between a panel that comes back and one the owner has to
+           power-cycle by hand (`display.h`). The gesture has always left from here; the OTA
+           used to restart from its own task, mid-transfer. */
+        if (rebooting || s_restart_pending) {
+            ESP_LOGW(TAG, "%s — parking the renderer and restarting",
+                     rebooting ? "reboot gesture completed" : "restart requested");
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }

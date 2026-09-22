@@ -43,6 +43,24 @@ void display_set_debug_overlay(bool on);
    panel with no console, which is the only kind there will be from now on. */
 void display_blit_counts(int *ok, int *fail);
 
+/* PARK THE RENDERER, THEN RESTART — the reboot an OTA must use.
+ *
+ * An `esp_restart()` from any other task cuts a QSPI pixel transfer in half, and the CO5300
+ * keeps the half it got: it is still waiting for the rest of a memory-write when the chip
+ * comes back, so the next boot's init bytes are consumed as pixel data and the panel never
+ * initialises. That is the black screen after every over-the-air update, and it is why the
+ * driver's software reset does not rescue it — 0x01 is eaten as a parameter like everything
+ * else. The renderer meanwhile queues frames into a controller that is not listening, which
+ * is why telemetry reads `blit_ok` climbing with `blit_fail` at zero.
+ *
+ * The reboot GESTURE never had the fault, and that is the whole proof: it restarts from
+ * inside the render loop, after the frame has gone out, with nothing in flight.
+ *
+ * So this asks the render loop to restart at that same point. It returns immediately; the
+ * caller waits, and must keep its own timeout, because a renderer that has died cannot be
+ * allowed to strand a panel on an image it has already installed. */
+void display_request_restart(void);
+
 /* Where the last tap landed and which zone it was classified as. Reported so the touch
    controller's orientation is a measurement rather than an assumption — see display.c. */
 void display_last_tap(int *x, int *y, int *zone);
