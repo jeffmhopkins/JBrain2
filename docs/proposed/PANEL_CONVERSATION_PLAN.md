@@ -117,6 +117,41 @@ four-year-old's turn is answerable in five minutes on the real prompt.
 Unchanged and still true: Kokoro is ~450 ms and CPU-only, and the whisper call is still
 outside the ledger.
 
+**And the clip is not the sentence.** Sizing the encoder window to the clip stopped helping
+because the panel uploads its three-second lead-in and its 900 ms hush along with the speech:
+every turn in the log reports `audio_ctx` 390-450, the six-second cap, whatever was said.
+*"Yes, we wanted a story"* is about a second and a half of a child inside six seconds of
+bedroom. `_trim_to_speech` finds the speech and sends that, gating on a noise floor taken as
+the 10th-percentile frame — which the hush itself guarantees is silence — with 200 ms of room
+before and 400 ms after. A room too loud to judge trims nothing rather than trimming wrongly.
+The panel's own VAD already knows where the speech is and could say so, but a backend fix
+ships without an OTA, and `held_ms` / `spoken_ms` in `endpoint.converse` are how it is watched.
+
+**The pet had no idea what it had just said.** The owner, on the reply quality: *"it also asks
+to play a game a lot, but being just a chatbot, games are not really the thing it should be
+asking to do with a kid — it could be more of a conversationalist, talking about what the kid
+is doing or what the kid is eating or what the kid did today, talk about his toys."* Two
+causes, and the second is the larger. The prompt said "ask a small question back sometimes"
+and named no subject, so the model reached for the most generic child-question there is. But
+the route also sent one utterance and no history, so each turn of a six-turn hands-free
+conversation arrived as the first thing anyone had ever said. Run against the same model, the
+same six lines:
+
+| the child | with no history | with the last five turns |
+|---|---|---|
+| I had toast for breakfast. | Did you eat any fruit with your toast? | Was your toast buttery or with jam? |
+| It had jam on it. | **Was it on your tummy or a yummy cookie?** | Did you eat the whole slice of toast? |
+| My sister took it off me. | **Did she take my head off?** | Who took the digger from you? |
+| We have a yellow chicken. | **Is that your friend's pet or is it mine?** | Is that your pet? |
+| Her name is Sunny. | Do you think Sunny likes playing with me? | Sunny is a great name! |
+
+Half the no-history replies are not merely generic, they are incoherent — *"it had jam on it"*
+is unanswerable without the previous turn. The fix is a per-panel ring of the last five
+exchanges, in memory, expiring after four minutes, folded into the system prompt (the router's
+`complete` takes one user message). The route's promise that "a stolen panel key is worth
+exactly one conversation" survives intact: this is that one conversation, in that one process,
+for as long as it is still going on, and nothing reaches the database.
+
 ## What the panel cannot do, and therefore where the work is
 
 On-panel open-vocabulary speech is **off the table**, permanently. MultiNet7 resolves a fixed
