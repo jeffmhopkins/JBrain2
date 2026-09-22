@@ -109,10 +109,12 @@ counterbore = true;
 head_clear = 0.6;   // [0:0.1:2]
 // How far below the back face the head sits
 head_sink = 0.3;    // [0:0.1:2]
-// Plastic under each screw head, in the floor pads
-head_seat = 1.2;    // [0.6:0.1:4]
+// Plastic over each screw head (the pad's roof)
+head_seat = 2.0;    // [0.6:0.1:5]
 // Wall around each screw head in the floor pads
-pad_wall = 1.2;     // [0.6:0.1:3]
+pad_wall = 2.0;     // [0.6:0.1:4]
+// Height of the 45 degree brace from each pad up into the wall corner (0 = none)
+brace_h = 4.0;      // [0:0.5:12]
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
 
@@ -242,9 +244,20 @@ module rrect(x, y, r) {
 
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
-module pads_2d() {
-    for (sx = [-1, 1], sy = [-1, 1])
-        translate([sx * screw_dx, sy * screw_dy]) circle(r = pad_r);
+// Each pad, plus a brace that climbs at 45 degrees away from the cell into
+// the wall corner, tying the pad to the wall.
+module pads() {
+    for (sx = [-1, 1], sy = [-1, 1]) {
+        c = [sx * screw_dx, sy * screw_dy];
+        u = c / norm(c);
+        hull() {
+            translate([c[0], c[1], plate_t - eps])
+                cylinder(r = pad_r, h = pad_top - plate_t + eps);
+            if (brace_h > 0.05)
+                translate([c[0] + u[0] * brace_h, c[1] + u[1] * brace_h, pad_top])
+                    cylinder(r = pad_r, h = brace_h);
+        }
+    }
 }
 
 module solid_body() {
@@ -271,8 +284,7 @@ module solid_body() {
 module battery_cavity() {
     difference() {
         translate([0, 0, plate_t]) rbox(cav_x, cav_y, spacer_h + lip_h + eps, cav_r);
-        translate([0, 0, plate_t - eps])
-            linear_extrude(height = pad_top - plate_t + eps) pads_2d();
+        pads();
     }
 }
 
