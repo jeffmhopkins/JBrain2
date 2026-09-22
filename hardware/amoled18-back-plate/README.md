@@ -169,8 +169,9 @@ with the defaults. A small M2 socket-head assortment covers it either way.
 
 ## Battery mounting
 
-The cell sits on double-sided VHB tape on the pocket floor with foam padding above it — no
-clip. Set `tape_t` and `foam_t` to what you actually have; both add to the required depth.
+The cell is held by double-sided VHB tape on the pocket floor and foam padding above it, which
+presses it down when the case closes. Set `tape_t` and `foam_t` to what you actually have; both
+add to the pocket depth.
 
 ## Printing
 
