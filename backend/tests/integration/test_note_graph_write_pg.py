@@ -2469,6 +2469,7 @@ async def test_an_ocr_quote_respaced_by_the_model_still_attests(maker, tmp_path)
             row = (
                 await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
             ).scalar_one()
+        assert row.confidence is not None
         return row.confidence
 
     assert await weight("Resource: A-Pretlow, Kimberly 2027 at 11:00 AM") == pytest.approx(1.0)
