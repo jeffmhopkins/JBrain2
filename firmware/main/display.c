@@ -20,6 +20,7 @@
 
 #include "display.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1261,7 +1262,17 @@ static void face_task(void *arg)
            for whichever caller ran first. */
         const bool tapped = touch && touch_tapped();
         const bool down = touch && touch_is_down();
-        if (tapped) {
+        /* SPEAKING, AND IT OUTRANKS THE TOY. The owner, after the first real conversation:
+           "when the agent is talking we should prohibit beeps from cutting it off, and we
+           should also stop poke interactions making other animations."
+         *
+           Both of those are the same rule — a reply is the panel's one sustained utterance and
+           everything else on this device is an interjection. A beep over it is a toy talking
+           over a person; a new action mid-sentence throws away the talking animation that is
+           the only thing on screen explaining the sound. Decided once a frame so every branch
+           below agrees about it. */
+        const bool speaking = audio_playing();
+        if (tapped && !speaking) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
@@ -1292,6 +1303,12 @@ static void face_task(void *arg)
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
             if (sound) audio_beep();
+            dirty = true;
+        } else if (tapped) {
+            /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would read
+               as a frozen pet — but no beep, no colour change and no new action, so the reply
+               finishes with the mouth still moving. */
+            s_flinch = 1.0f;
             dirty = true;
         }
         /* WHAT THE PANEL HEARD. Popped once a frame, so a phrase cannot arrive between two
@@ -1434,7 +1451,14 @@ static void face_task(void *arg)
            child who holds again after a failure face would call `audio_capture_open()` and
            overwrite the bytes still being read by the socket. A five-second window, on the
            one path a frustrated four-year-old is most likely to take. */
-        if (s_talk == TALK_IDLE && down && on_the_pet && gest.taps == 0 &&
+        /* NOT WHILE WE ARE SPEAKING, and this one is measured rather than tidy: the owner
+           held the panel to ask a second question while the first reply was still playing and
+           the recording came back EMPTY (`heard: ""`, 2026-09-22 01:53:54). `audio.c` goes
+           deaf for six chunks whenever the speaker runs — the codec routes the DAC into the
+           ADC, so without that the pet would transcribe itself — which means a hold taken over
+           our own voice can only ever capture silence. Refusing it costs nothing and saves a
+           child from being ignored by a toy that looked like it was listening. */
+        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && gest.taps == 0 &&
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
@@ -1546,6 +1570,31 @@ static void face_task(void *arg)
             st.lean = s_lean;
             st.open = s_open;
             st.startle = s_flinch;
+            /* THE MOUTH, WHILE THERE IS SOUND COMING OUT OF IT.
+             *
+             * TWO FREQUENCIES, NOT ONE, for the reason the blink is jittered: a mouth opening
+             * and closing on a single sine is a metronome, and the regularity is exactly what
+             * gives away a machine. 6.3 Hz carries the syllable rate and 2.7 Hz the phrase,
+             * and the product never quite repeats — so it reads as speech rather than as a
+             * hinge. Never fully shut while talking (the 0.25 floor), because a beak that
+             * closes completely between syllables reads as chewing.
+             *
+             * NOT DRIVEN BY THE ACTUAL AUDIO, and that is a deliberate limit rather than an
+             * oversight: `audio.c` deafens the microphone whenever the speaker runs, so the
+             * one signal that could give a real envelope is the one signal this panel throws
+             * away on purpose (it would otherwise transcribe itself). An honest fake at the
+             * right rate beats a real envelope the hardware cannot supply. */
+            if (speaking) {
+                const float t = (float)now * 0.001f;
+                const float syll = sinf(t * 6.3f), phrase = sinf(t * 2.7f + 1.1f);
+                float open = 0.55f + 0.30f * syll + 0.15f * phrase;
+                if (open < 0.25f) open = 0.25f;
+                if (open > 1.0f) open = 1.0f;
+                st.talk = open;
+                dirty = true; /* a mouth redrawn five times a second is a glitch, not speech */
+            } else {
+                st.talk = 0.0f;
+            }
             /* The poke recoil rides on top of whatever the action is already doing. */
             st.fig.oy += FLINCH_DIP * s_flinch;
             PHASE(6);

@@ -428,8 +428,16 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
     if (front) {
-        arc_stroke(fb, ox + tilt, hy + SY((int)(HH * 0.52f)) - SY(16), (int)(30 * s),
-                   (float)M_PI * 0.15f, (float)M_PI * 0.85f, (int)(9 * s), dark);
+        const int mx = ox + tilt, my = hy + SY((int)(HH * 0.52f)) - SY(16);
+        /* The open mouth goes UNDER the arc, so the smile stays the lip of it rather than
+           being replaced by a hole. At talk 0 nothing is drawn and the face is byte-for-byte
+           what it was before this channel existed. */
+        const int gape = (int)lrintf(st->talk * 17.0f);
+        if (gape > 0) {
+            fill_round_rect(fb, mx - SX(17), my + SY(2), SX(34), SY(gape), (int)(7 * s), dark);
+        }
+        arc_stroke(fb, mx, my, (int)(30 * s), (float)M_PI * 0.15f, (float)M_PI * 0.85f,
+                   (int)(9 * s), dark);
     }
 
     /* A RAISED ARM IS REDRAWN OVER THE HEAD. The head is 216 px wide and the shoulder sits
@@ -575,8 +583,13 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
         static const struct {
             int w, h, y;
         } BEAK[] = {{42, 13, -112}, {33, 12, -101}, {23, 11, -91}, {13, 10, -82}};
+        /* THE LOWER MANDIBLE DROPS, the upper one does not — which is how a beak opens and
+           the reason this is not just "make the whole beak bigger". The split is between the
+           two wide segments and the two narrow ones, so the gap opens where a bird's does. */
+        const int gape = (int)lrintf(st->talk * 11.0f);
         for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
-            fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob,
+            const int drop = i >= 2 ? SY(gape) : 0;
+            fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
                             SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
         }
         fill_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), shade(hex, 0.28f));
@@ -609,6 +622,7 @@ void face_rest(face_state_t *st)
     st->form = FORM_OSTRICH;
     st->bob = 0;
     st->lean = 0;
+    st->talk = 0.0f;
     st->open = 1.0f;
     st->startle = 0.0f;
     emotion_resolve(FACE_HAPPY, &st->eyes);

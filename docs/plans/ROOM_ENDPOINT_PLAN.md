@@ -4019,6 +4019,61 @@ system discarding work it has already done. The next measurement worth taking is
 against the same two utterances, since the whole latency argument now rests on a single flat
 number with an obvious lever on it.
 
+#### 10.4cb A reply is an utterance, and everything else on the panel is an interjection (0.2.68, 2026-09-22)
+
+The owner, straight after the first real conversation: *"When the agent is talking we should
+prohibit beeps from cutting it off, and we should also stop poke interactions making other
+animations, because we should make an animation of the robot talking as it talks."*
+
+Three requests that are one rule. A reply is the only sustained thing this panel ever says, and
+a beep over it is a toy talking over a person. `speaking` (`audio_playing()`) is now decided
+once a frame and every branch defers to it.
+
+- **No beep, no colour change, no new action** while the reply plays. The flinch stays — a pet
+  that ignores a finger entirely reads as frozen — but the stage is not taken over.
+- **The mouth moves.** A `talk` channel on `face_state_t` rather than an `action_t`, because a
+  reply can arrive mid-wave and a pet that stops waving to talk reads as two pets. The ostrich
+  drops its lower mandible (the split is between the two wide beak segments and the two narrow
+  ones, so the gape opens where a bird's does); the robot opens a mouth under its smile, so the
+  smile stays the lip of it rather than being replaced by a hole.
+- **A hold cannot start a recording while we speak**, and this one is measured rather than
+  tidy. At 01:53:54 the owner held to ask a second question while the first reply was playing
+  and the recording came back **empty** (`heard: ""`). `audio.c` deafens the microphone for six
+  chunks whenever the speaker runs — the codec routes the DAC into the ADC, so without that the
+  pet transcribes itself — which means a hold taken over our own voice can only ever capture
+  silence. Refusing it costs nothing and stops a child being ignored by a toy that looked like
+  it was listening.
+
+##### The mouth is an honest fake, and the reason is worth keeping
+
+Two frequencies, not one: 6.3 Hz for the syllable rate and 2.7 Hz for the phrase, so the product
+never quite repeats. Same argument as the jittered blink — a mouth on a single sine is a
+metronome and the regularity is what gives away a machine. It never fully shuts while talking,
+because a beak closing between syllables reads as chewing.
+
+It is **not driven by the actual audio**, and that is a limit rather than an oversight: the one
+signal that could give a real envelope is the microphone, and `audio.c` deafens it whenever the
+speaker runs precisely so the pet does not transcribe itself. An honest fake at the right rate
+beats a real envelope the hardware refuses to supply.
+
+##### And the red failure face the owner saw was already fixed
+
+*"I got the little red even though it successfully sent a message to the server and then got a
+response back — maybe we need to extend the time on that?"* That is §10.4ca: the 12 s timeout
+against turns measuring 11,661 and 13,897 ms, straddling it. 0.2.67 raised it to 25 s and this
+release carries that. No further change needed; the turns were measured, and 25 clears the
+worst of them by 11 seconds.
+
+##### What the test pins
+
+`test_the_mouth_moves_only_while_talking` asserts two things, and the second is the one that
+catches a careless channel: the mouth must visibly change the drawn face (a `talk` field nothing
+reads would pass anything weaker), the change must land on the head rather than anywhere else,
+and at `talk = 0` the frame must be **byte-identical** to what it was before this channel
+existed — because a channel that leaks at rest changes every frame the pet has ever drawn.
+Both forms, since a change reaching only one of them is half a feature. Confirmed to fail with
+the mouth stubbed out.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

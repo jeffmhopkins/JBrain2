@@ -845,6 +845,56 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
 }
 
+static void test_the_mouth_moves_only_while_talking(void)
+{
+    /* The owner, after the first real conversation: "we should make an animation of the robot
+       talking as it talks."
+
+       TWO PROPERTIES, and the second is the one that catches a careless channel. The mouth has
+       to actually change the drawn face — a `talk` field nothing reads would pass any test
+       that only checked it compiles. And at talk 0 the face must be EXACTLY what it was
+       before this existed, because a channel that leaks at rest changes every frame the pet
+       has ever drawn. Both forms: the ostrich opens a beak, the robot opens a mouth, and a
+       change that reaches only one of them is half a feature. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        CHECK(st.talk == 0.0f, "a resting pet is not talking");
+        face_draw(fb, 0, &st);
+        uint16_t *shut = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        CHECK(shut != NULL, "scratch frame allocated");
+        memcpy(shut, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+        st.talk = 1.0f;
+        face_draw(fb, 0, &st);
+        long moved = 0;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
+            if (fb[i] != shut[i]) moved++;
+        }
+        CHECK(moved > 80, "an open mouth is visibly different from a shut one");
+
+        /* And it is the MOUTH that moved, not the whole figure: the change sits in the head,
+           which is the top half. A `talk` wired to the wrong offset would still differ. */
+        long high = 0;
+        for (int y = 0; y < FACE_H / 2; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != shut[y * FACE_W + x]) high++;
+            }
+        }
+        CHECK(high * 10 >= moved * 9, "and the change is on the face, not the feet");
+
+        st.talk = 0.0f;
+        face_draw(fb, 0, &st);
+        long leaked = 0;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
+            if (fb[i] != shut[i]) leaked++;
+        }
+        CHECK(leaked == 0, "and a shut mouth draws exactly what it always did");
+        free(shut);
+    }
+}
+
 static void test_the_case_geometry_is_the_case(void)
 {
     /* §10.4bx: the enclosure rounds the display into a squircle, so a pixel can be drawn
@@ -2013,6 +2063,7 @@ int main(void)
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
     test_the_case_geometry_is_the_case();
+    test_the_mouth_moves_only_while_talking();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();
