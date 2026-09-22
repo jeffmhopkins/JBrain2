@@ -5023,10 +5023,85 @@ and one reporting `false` are different bugs, and until now every boot was silen
 second.
 
 **Not yet confirmed on hardware.** This is an I2C write sequence that cannot be exercised on
-the host, and the panel is 0.2.85 and unattended. The prediction is specific and cheap to
-falsify: the first boot of 0.2.86 — the very boot that has been going dark after every single
-update — should come back lit, with `panel_reset: true` and the expander's config byte reading
-`0xf8` instead of `0xff`.
+the host. The prediction is specific and cheap to falsify: a boot of 0.2.86 should report
+`panel_reset: true` with the expander's config byte reading `0xf8` instead of `0xff`, and a
+panel that goes dark after an update anyway would then be a DIFFERENT fault from this one.
+
+**And the claim this entry was first written with is already too strong.** It said 0.2.86 fixes
+"the very boot that has gone dark after every single update". The 0.2.85 OTA did not go dark:
+the owner found the screen on, and telemetry agrees — 2757 s of continuous uptime, no gesture
+reboot, `restart_why: "ota-park"`. So **the black screen is intermittent, not deterministic**,
+which matters twice over. It weakens the evidence that the missing hardware reset is the cause
+(a wedged controller would not unwedge itself between updates), and it means a single good boot
+of 0.2.86 proves nothing on its own — only a run of updates that all come back lit would. The
+missing reset is a real gap worth closing either way; whether it is THE gap is still open.
+
+#### 10.4ct A finger that cancels, and a name that stops being the question (0.2.87, 2026-09-22)
+
+Two asks from the owner, and the second one is not where it looks like it is.
+
+##### A touch cancels a listen
+
+*"When it's listening, if I touch the screen it should stop and discard."*
+
+A hands-free listen had no way out for someone who was not going to say a phrase. It runs until
+the room goes quiet, so an accidental wake — or a child who changes their mind — was committed
+to a turn they did not want. A finger is the one input that is always available and never
+ambiguous.
+
+It does exactly what `"stop stop"` does: the recording closed and dropped, the follow-up window
+shut so the microphone does not reopen, and the turn counter parked at its cap until a
+deliberate start resets it. Two ways to say stop that behaved differently would be a worse toy
+than one that only had a word.
+
+Two deliberate limits. **Only the voice-started listen** — a held turn ends on the RELEASE of
+the same finger that started it, so treating that touch as an abort would make press-and-hold
+impossible to complete. And **the tap is consumed**: no colour change, no action, no poke. A
+touch that both cancelled the question and made the pet fart reads as two things happening and
+the child cannot tell which one they asked for. The flinch stays, because something has to
+acknowledge the finger.
+
+##### The name stops being the first word of the question
+
+*"If I say hey fish and then proceed with asking it something, it shouldn't be transcribed hey
+fish at the beginning."*
+
+**The obvious fix is on the panel, and it is the wrong one.** The recogniser fires on the
+phrase, so opening the microphone after it leaves the name already past — which is exactly what
+happens on a cold start, and is not the path this shows up on.
+
+The path is the follow-up. After a reply the panel reopens the microphone by itself for
+`FOLLOW_LEAD_MS` (2 s), and a child who starts their next sentence with the pet's name is
+recorded saying **all** of it. The recogniser does fire, but `VOCAB_LISTEN` is refused because a
+turn is already live, so nothing trims anything and the whole utterance goes up. **The name
+arrives inside the audio**, so it has to come off the text.
+
+Stripped rather than left for the model to ignore, because it is not inert: it is the subject of
+the first sentence the model sees, and *"hey fish, what do dogs eat"* gets answers about fish.
+
+Three properties, each with a test: it comes off **only as a prefix** (a name mid-sentence is the
+child talking about the pet, and deleting it would change what they said); it does not eat a word
+that merely starts with the name (`"hey fisherman"` survives — the trailing `\b` is the whole
+reason); and an utterance that was ONLY the name becomes empty, which the caller already treats
+as "say that again" rather than an error. That is the right answer to an accidental wake and a
+better one than a reply about fish.
+
+The spelling variants are Whisper's, not ours — it has no idea this is a name and spells it by
+sound. And the coupling is pinned: a test reads `VOCAB_LISTEN`'s phrase out of `vocab.c` and
+asserts the box strips it, so **renaming the pet fails loudly here** instead of silently
+restoring the symptom.
+
+##### A note on the suite, and on measuring before concluding
+
+28 backend tests failed on the first run of this change and none of them were related to it —
+`RecorderRefused: there is only 465 MB left on the box`. The sdr recorder asserts a free-space
+floor, and repeated full-suite runs had left 8.1 GB of pytest temp directories behind, taking
+the session's writable allowance to 99%. Cleared, the suite is 6555 green.
+
+Worth recording because the first two diagnoses were both wrong: "pre-existing" (reached by
+running the failing file alone, which passes, rather than the suite that fails) and then "mine"
+(reached from a clean-tree comparison that happened to run when there was more disk). Neither
+hypothesis was tested against the actual error text, which named the cause in one line.
 
 ### 10.5 Three findings from the board in hand
 

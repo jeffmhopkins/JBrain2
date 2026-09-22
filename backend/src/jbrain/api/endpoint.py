@@ -32,6 +32,7 @@ import array
 import base64
 import hashlib
 import random
+import re
 import struct
 import time
 from collections.abc import AsyncIterator
@@ -931,6 +932,41 @@ def _panel_history(key: str, now: float) -> list[tuple[str, str]]:
     return list(entry[1]) if entry else []
 
 
+# THE PANEL'S NAME, STRIPPED OFF THE FRONT OF WHAT IT HEARD.
+#
+# The owner: *"if I say hey fish and then proceed with asking it something, it shouldn't be
+# transcribed hey fish at the beginning."*
+#
+# WHY THE AUDIO CANNOT BE TRUSTED TO EXCLUDE IT. The obvious place to fix this is the panel —
+# the recogniser fires on the phrase, so open the microphone after it and the name is already
+# past. That is what happens on a cold start, and it is not the path this shows up on. After a
+# reply the panel reopens the microphone by itself for a couple of seconds
+# (`FOLLOW_LEAD_MS`), and a child who starts their next sentence with the pet's name is
+# recorded saying ALL of it: the recogniser does fire, but `VOCAB_LISTEN` is refused because a
+# turn is already live, so nothing trims anything and the whole utterance goes up. The name
+# arrives inside the audio, so it has to come off the text.
+#
+# Stripped rather than left for the model to ignore, because it is not inert: it is the
+# subject of the first sentence the model sees, and a four-year-old asking "hey fish, what do
+# dogs eat" gets answers about fish.
+#
+# ONLY AS A PREFIX. A name in the middle of a sentence is the child talking about the pet, and
+# deleting it there would change what they said.
+#
+# The variants are Whisper's, not ours: it has no idea this is a name and spells it by sound.
+# The trailing \b is load-bearing — without it this eats the front of "fisherman".
+_WAKE_PREFIX = re.compile(r"^\W*(?:hey|hay)\W+(?:fish|fishy|fisch|phish)\b\W*", re.IGNORECASE)
+
+
+def _strip_wake_prefix(text: str) -> str:
+    """`text` without a leading wake phrase. Unchanged when it does not start with one.
+
+    An utterance that was ONLY the name becomes empty, which is right: there is no question in
+    it, and the caller already treats empty as "say that again" rather than as an error. That
+    is the correct answer to an accidental wake and a better one than a reply about fish."""
+    return _WAKE_PREFIX.sub("", text, count=1).strip()
+
+
 def _panel_remember(key: str, now: float, heard: str, reply: str) -> None:
     turns = _panel_history(key, now)
     turns.append((heard, reply))
@@ -1147,7 +1183,8 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001 — the panel gets an answer or a reason, never a hang
         log.warning("endpoint.converse_stt_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not hear") from exc
-    heard = (transcript.text or "").strip()
+    raw_heard = (transcript.text or "").strip()
+    heard = _strip_wake_prefix(raw_heard)
     stt_ms = int((time.monotonic() - stt_started) * 1000)
 
     if not heard:
@@ -1155,6 +1192,10 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.info(
             "endpoint.converse",
             heard="",
+            # What the transcriber actually returned, when the name was all of it. Otherwise
+            # an accidental wake and a dead microphone log identically, and they are not the
+            # same fault.
+            **({"raw_heard": raw_heard} if raw_heard else {}),
             stt_ms=stt_ms,
             audio_ctx=audio_ctx,
             held_ms=held_ms,

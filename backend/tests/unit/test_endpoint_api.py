@@ -1559,3 +1559,57 @@ class TestReplyCeiling:
         spoken_ms = len(r.content) * 1000 // (endpoint_api.PANEL_RATE * 2)
         # 1 s of speech plus the 30/120 ms margins, not 1 s of speech plus 4 s of padding.
         assert 1000 <= spoken_ms <= 1400, spoken_ms
+
+
+class TestWakePrefix:
+    """The pet's name, taken off the front of what it heard."""
+
+    def test_the_name_comes_off_the_front_of_a_question(self) -> None:
+        # The owner: "if I say hey fish and then proceed with asking it something, it
+        # shouldn't be transcribed hey fish at the beginning." Whisper punctuates and
+        # capitalises as it likes, so the shapes matter more than the exact string.
+        # Exact expectations per input: an `or` across two acceptable answers would pass on a
+        # stripper that mangled the case or ate a word, which is the failure worth catching.
+        cases = {
+            "Hey fish, what do dogs eat?": "what do dogs eat?",
+            "hey fish what do dogs eat?": "what do dogs eat?",
+            "Hey, Fish! What do dogs eat?": "What do dogs eat?",
+            "  hey  fish  -  what do dogs eat?": "what do dogs eat?",
+            "Hey fishy, what do dogs eat?": "what do dogs eat?",
+        }
+        for said, want in cases.items():
+            assert endpoint_api._strip_wake_prefix(said) == want, said
+
+    def test_a_wake_on_its_own_leaves_nothing_to_answer(self) -> None:
+        # Which the caller already handles: empty means "say that again", not an error. That
+        # is the right answer to an accidental wake and a better one than a reply about fish.
+        assert endpoint_api._strip_wake_prefix("Hey fish.") == ""
+        assert endpoint_api._strip_wake_prefix("hey fish") == ""
+
+    def test_the_name_is_only_stripped_as_a_prefix(self) -> None:
+        # In the middle of a sentence it is a child talking ABOUT the pet, and deleting it
+        # would change what they said.
+        assert endpoint_api._strip_wake_prefix("I told hey fish a joke") == "I told hey fish a joke"
+        assert endpoint_api._strip_wake_prefix("what is a fish") == "what is a fish"
+
+    def test_it_does_not_eat_a_word_that_merely_starts_with_the_name(self) -> None:
+        # The trailing \b in the pattern is the whole reason this passes.
+        assert endpoint_api._strip_wake_prefix("hey fisherman") == "hey fisherman"
+
+    def test_an_ordinary_question_is_untouched(self) -> None:
+        assert endpoint_api._strip_wake_prefix("what do dogs eat?") == "what do dogs eat?"
+        assert endpoint_api._strip_wake_prefix("") == ""
+
+    def test_it_strips_the_phrase_the_firmware_actually_listens_for(self) -> None:
+        """THE COUPLING, PINNED. The wake phrase lives in the firmware's vocabulary table and
+        the pattern here is a copy of it, so a rename would silently leave the box stripping a
+        name the panel no longer answers to — and the symptom is the one the owner reported,
+        returning. Read from `vocab.c` so that rename fails here instead."""
+        vocab = Path(__file__).resolve().parents[3] / "firmware" / "main" / "vocab.c"
+        text = vocab.read_text()
+        match = re.search(r'\{"([^"]+)",\s*VOCAB_LISTEN', text)
+        assert match is not None, "no VOCAB_LISTEN phrase in vocab.c"
+        phrase = match.group(1)
+        assert (
+            endpoint_api._strip_wake_prefix(f"{phrase} what do dogs eat?") == "what do dogs eat?"
+        ), f"the firmware listens for {phrase!r} and the box does not strip it"

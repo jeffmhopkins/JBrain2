@@ -1519,6 +1519,43 @@ static void face_task(void *arg)
         }
         s_was_speaking = speaking;
         if (tapped && !speaking) {
+            /* A FINGER CANCELS A LISTEN, AND THROWS THE RECORDING AWAY.
+             *
+             * The owner: *"when it's listening, if I touch the screen it should stop and
+             * discard."* A hands-free listen has no other way out for someone who is not
+             * going to say a phrase — it runs until the room goes quiet, so an accidental
+             * wake, or a child who changes their mind, is otherwise committed to a turn they
+             * did not want. A finger is the one input that is always available and never
+             * ambiguous.
+             *
+             * ONLY THE VOICE-STARTED LISTEN. A held turn ends on the RELEASE of the same
+             * finger that started it, which is the gesture working, not a cancel — treating
+             * the touch as an abort there would make press-and-hold impossible to complete.
+             *
+             * This does exactly what "stop stop" does, deliberately: the same three states
+             * left the same way, the follow-up window closed so the microphone does not
+             * reopen, and the turn counter parked at its cap until a deliberate start resets
+             * it. Two ways to say stop that behaved differently would be a worse toy than one
+             * that only had a word.
+             *
+             * The tap is CONSUMED — no colour change, no action, no poke. A touch that both
+             * cancelled the question and made the pet fart reads as two things happening, and
+             * the child cannot tell which one they asked for. The flinch stays, because
+             * something has to acknowledge the finger. */
+            if (s_talk == TALK_LISTENING && s_listen_voice) {
+                size_t dropped = 0;
+                (void)audio_capture_close(&dropped);
+                s_talk = TALK_IDLE;
+                s_listen_voice = false;
+                s_follow_armed = false;
+                s_follow_turns = FOLLOW_MAX_TURNS;
+                s_flinch = 1.0f;
+                if (sound) audio_cue(CUE_STOP);
+                ESP_LOGI(TAG, "talk: cancelled by touch, %u bytes discarded",
+                         (unsigned)dropped);
+                dirty = true;
+                goto tap_done;
+            }
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
