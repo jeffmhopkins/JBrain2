@@ -242,8 +242,9 @@ They print as plain layers, need no supports, wipe clean, and stop 1.5 mm short 
 and of the seam with the front shell. At the ribs the plate measures 38.2 × 45.8 mm, 0.3 mm
 proud of the front shell on each side.
 
-Group 5b adjusts them: `grip_depth` (how far out), `grip_size` (band height), `grip_gap`,
-`grip_margin`. `grip_style` also offers `honeycomb` (raised hexagons) and `nubs` (raised
+Group 5b adjusts them. `grip_depth` is how far they stand out, in millimetres: 0 gives smooth
+walls, 0.3 is the default, 0.5 the most. `grip_size` (band height), `grip_gap` and
+`grip_margin` set the spacing. `grip_style` also offers `honeycomb` (raised hexagons) and `nubs` (raised
 squares) on the flat sides, or `none` for smooth walls.
 
 ## The tall variation: 104050 on end

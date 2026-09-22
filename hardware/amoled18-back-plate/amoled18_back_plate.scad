@@ -170,8 +170,8 @@ wall_chamfer = 3.0;     // [0:0.5:8]
 // Raised texture so small hands don't drop it. All shapes slope 45 degrees
 // underneath, so they print without supports.
 grip_style = "ribs";    // [none, honeycomb, nubs, ribs]
-// How far the texture stands out from the wall
-grip_depth = 0.3;       // [0.2:0.1:1.5]
+// How far the texture stands out from the wall, in mm. 0 = smooth walls
+grip_depth = 0.3;       // [0:0.05:0.5]
 // Size of each hexagon or square (across)
 grip_size = 3.0;        // [1.5:0.1:6]
 // Gap between hexagons or squares, or between ribs
@@ -480,7 +480,8 @@ module grip_ribs() {
 }
 
 module grip() {
-    if (grip_style == "ribs") grip_ribs();
+    if (grip_depth <= 0) { }
+    else if (grip_style == "ribs") grip_ribs();
     else if (grip_style != "none") grip_bumps();
 }
 
