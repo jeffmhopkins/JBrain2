@@ -136,12 +136,21 @@ static void report(const cfg_t *cfg)
     int blit_ok = 0, blit_fail = 0;
     display_blit_counts(&blit_ok, &blit_fail);
 
-    char body[832];
+    /* AND A THIRD ANSWER THAT ONLY EXISTED ON A CABLE. The recogniser counts the phrases the
+       model refused and names them, and until now it said so only to a serial console. That
+       is the one reading that could have answered "the kids say the word and nothing
+       happens" — the owner's report on `burp` — so it is worth exactly as much as the two
+       above and was reaching exactly as far: nowhere. */
+    int vocab_ok = 0, vocab_bad = 0;
+    speech_vocab(&vocab_ok, &vocab_bad);
+
+    char body[1024];
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
                      "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,\"boot_btn\":%d,"
+                     "\"vocab_ok\":%d,\"vocab_bad\":%d,"
                      "\"tap\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -149,12 +158,23 @@ static void report(const cfg_t *cfg)
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
                      have_imu ? az : 0, display_stack_free(), display_crash_phase(),
-                     audio_alc_state(), blit_ok, blit_fail, display_boot_presses(), tap_x,
-                     tap_y, tap_zone);
+                     audio_alc_state(), blit_ok, blit_fail, display_boot_presses(),
+                     vocab_ok, vocab_bad, tap_x, tap_y, tap_zone);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
-    if (w > 0 && w < (int)sizeof(body) - 4) snprintf(body + w, sizeof(body) - (size_t)w, "]}");
+    if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
+    /* The NAMES, not just the count. A number says the panel is deaf to something; a name
+       says to what, and only the name can be acted on. */
+    if (w > 0 && w < (int)sizeof(body) - 24) {
+        w += snprintf(body + w, sizeof(body) - (size_t)w, ",\"vocab_refused\":[");
+        for (int i = 0; i < 6 && w > 0 && w < (int)sizeof(body) - 32; i++) {
+            const char *bad = speech_vocab_refused(i);
+            if (bad == NULL) break;
+            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", bad);
+        }
+        if (w > 0 && w < (int)sizeof(body) - 4) snprintf(body + w, sizeof(body) - (size_t)w, "]}");
+    }
     /* Cleared only once it has left the box. Clearing at boot is what made every report say
        `pmu_history: []` while the ring had in fact survived. */
     if (ota_report(cfg, body) == ESP_OK && n > 0) pmu_history_clear();

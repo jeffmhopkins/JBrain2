@@ -176,9 +176,39 @@ the pet's name is the same shape as starting one with it, and it hands the one-w
 back to the words that need it. `vocab.h` rule 3 holds — neither phrase is a prefix of the
 other.
 
-**The burp was mute.** `burp` and `fart` have been in the vocabulary since bring-up and only
-ever moved the face. The twins kept asking. `audio_rude()` synthesises the noise rather than
-shipping a sample — a falling sawtooth with a fast amplitude flutter and a decay that never
+**The burp was mute — and that was the smaller half.** The owner, after the first fix landed:
+*"burp has been on there. It never actually activates them. The kids say the word — like the
+code word is wrong."* A silent action was real, but downstream of the phrase never resolving.
+
+The instrumentation that should have answered this had a hole in exactly the right place.
+`esp_mn_commands_add` runs a phrase through the model's own `check_speech_command` and returns
+`ESP_ERR_INVALID_STATE` when it will not take it — and `load_vocabulary` DISCARDED that return
+value. A phrase rejected there never enters the list, so the `esp_mn_commands_update` pass has
+nothing to report about it, and the accepted count (`vocab_count() - rejected`) went on
+claiming it was fine. The counter was derived from the assumption the bug breaks. Both paths
+are counted now and both name the phrase, and the counts plus the names go out in telemetry —
+for the same reason the ALC reading and the blit counts do, which `main.c` states outright: an
+ESP_LOG only reaches a serial console, and this panel has been on a plain charger since the
+day it went in a bedroom.
+
+What the root cause IS remains unproven. Two candidates were checked and cleared: the phrase
+count (40 against `ESP_MN_MAX_PHRASE_NUM` 400) and MultiNet's own prefix rule, which the
+vendor blob's error strings show operates on the PHONEME string with no word boundary — not
+the spelling, which is all `vocab.h` rule 3 and the host suite check. Reproducing esp-sr's
+`multinet_g2p.py` alphabet map over the whole table found no phoneme-prefix collision.
+`check_speech_command` itself is inside `libmultinet.a`, so the length rule cannot be read;
+what is visible is that `burp` is three phonemes (`BkP`) and `eat` is two, against ten for
+`come and boogie`. The next boot's telemetry answers it.
+
+Meanwhile the vocabulary stops depending on the answer. A one-word phrase is the fragile form,
+and four actions (`eat`, `jump`, `kick`, `spin`) had one as their ONLY phrasing while `fart`'s
+alternate was "make a rude noise", which is not a sentence a four-year-old has produced. Every
+action now has a multi-word way in, none of which may start with the single word it backs up
+("jump up high" would make "jump" a prefix of it, which MultiNet refuses outright). A host
+test holds it, and it asserts the right thing: not that single words work, but that nothing
+breaks when they do not.
+
+And the noise itself. `audio_rude()` synthesises it rather than shipping a sample — a falling sawtooth with a fast amplitude flutter and a decay that never
 quite reaches zero, plus filtered noise for the wet one — which is twenty lines against a
 licence question and 100 KB of flash. It writes into the reply buffer and plays down the same
 chunked, interruptible path a reply takes, so it deafens the microphone while it sounds and

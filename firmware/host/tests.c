@@ -2064,6 +2064,34 @@ static void test_vocab_has_no_ambiguity(void)
     }
 }
 
+static void test_every_action_can_be_asked_for_in_more_than_one_word(void)
+{
+    /* The owner, on the twins: *"burp has been on there. It never actually activates them.
+       The kids say the word — like the code word is wrong."*
+
+       A one-word phrase is the FRAGILE form. "burp" is three phonemes against ten for "come
+       and boogie", it is always live because WakeNet is disabled, and MultiNet can refuse it
+       outright at registration — a path the firmware used to discard the return value of, so
+       a refused phrase still counted as accepted. Whatever the model decides about any single
+       word, no action may depend on it: `eat`, `jump`, `kick` and `spin` had a single word as
+       their ONLY phrasing, and `fart`'s alternate was "make a rude noise", which is not a
+       sentence a four-year-old has ever produced.
+
+       This does not assert that single words work. It asserts that nothing BREAKS if they
+       don't. */
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind != VOCAB_ACTION) continue;
+        if (strchr(v[i].phrase, ' ') != NULL) continue; /* already a multi-word phrase */
+        bool has_long_form = false;
+        for (int j = 0; j < vocab_count(); j++) {
+            if (j == i || v[j].kind != VOCAB_ACTION || v[j].arg != v[i].arg) continue;
+            if (strchr(v[j].phrase, ' ') != NULL) has_long_form = true;
+        }
+        CHECK(has_long_form, "a one-word action is never the only way to ask for it");
+    }
+}
+
 static void test_ending_a_conversation_uses_the_panel_s_name(void)
 {
     /* The owner asked for "fish stop" in place of a bare "stop". Two things follow and both
@@ -2385,6 +2413,7 @@ int main(void)
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
     test_ending_a_conversation_uses_the_panel_s_name();
+    test_every_action_can_be_asked_for_in_more_than_one_word();
     test_caption_starts_empty_and_silent();
     test_the_ticker_draws_nothing_of_its_own();
     test_caption_scrolls_and_drains();

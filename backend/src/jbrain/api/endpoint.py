@@ -42,7 +42,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
@@ -430,6 +430,20 @@ class TelemetryIn(BaseModel):
     blit_ok: int = 0
     blit_fail: int = 0
     boot_btn: int = 0
+    # How many of the panel's phrases the speech model ACCEPTED, and how many it refused —
+    # and, when it refused any, which ones.
+    #
+    # The owner, on the twins: *"burp has been on there. It never actually activates them.
+    # The kids say the word — like the code word is wrong."* The panel has counted this since
+    # bring-up and said so only to a serial console, on a device that has been on a plain
+    # charger since the day it went in a bedroom. A phrase the model will not take is silently
+    # absent from the vocabulary, and from the room that is indistinguishable from a broken
+    # microphone; the count says the panel is deaf to something and the names say to what.
+    # `vocab_ok` of 0 from firmware too old to report it, so a zero here is "unknown", not
+    # "nothing worked".
+    vocab_ok: int = 0
+    vocab_bad: int = 0
+    vocab_refused: list[str] = Field(default_factory=list)
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -492,6 +506,11 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         blit_ok=body.blit_ok,
         blit_fail=body.blit_fail,
         boot_btn=body.boot_btn,
+        vocab_ok=body.vocab_ok,
+        vocab_bad=body.vocab_bad,
+        # Only when there are any: an empty list on every report is noise in a log a human
+        # reads, and the counts already say when to look.
+        **({"vocab_refused": body.vocab_refused} if body.vocab_refused else {}),
         pmu_history=body.pmu_history,
         note=body.note,
     )

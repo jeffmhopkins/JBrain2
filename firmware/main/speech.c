@@ -20,6 +20,7 @@
 #include "speech.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_afe_config.h"
@@ -80,6 +81,13 @@ static int s_filled;
 static volatile bool s_live;
 static volatile bool s_hearing;
 static int s_accepted, s_rejected;
+/* WHICH phrases were refused, not just how many — the counts say the panel is deaf to
+   something, the names say to what. Six is more than a real fault produces and bounds what
+   telemetry has to carry. */
+#define REFUSED_MAX 6
+#define REFUSED_CHARS 20
+static char s_refused[REFUSED_MAX][REFUSED_CHARS];
+static int s_refused_n;
 
 /* One-deep mailbox: the render task reads it once a frame, so a second phrase inside 40 ms is
    a phrase nobody could have read anyway. A queue here would only buffer the panel's own
@@ -96,6 +104,11 @@ bool speech_live(void)
 bool speech_hearing(void)
 {
     return s_hearing;
+}
+
+const char *speech_vocab_refused(int i)
+{
+    return (i >= 0 && i < s_refused_n) ? s_refused[i] : NULL;
 }
 
 void speech_vocab(int *accepted, int *rejected)
@@ -254,21 +267,55 @@ static void detect_task(void *arg)
     }
 }
 
+static void note_refused(const char *phrase)
+{
+    if (s_refused_n < REFUSED_MAX) {
+        snprintf(s_refused[s_refused_n], REFUSED_CHARS, "%s", phrase);
+        s_refused_n++;
+    }
+}
+
 static void load_vocabulary(void)
 {
     esp_mn_commands_alloc(s_mn, s_mn_data);
     const vocab_t *all = vocab_all();
-    for (int i = 0; i < vocab_count(); i++) esp_mn_commands_add(i, all[i].phrase);
+    s_refused_n = 0;
 
-    /* THE REFUSALS ARE THE INTERESTING PART. A phrase MultiNet cannot tokenise is dropped
-       silently and the panel is then deaf to that one thing with nothing on the glass to say
-       so — which is indistinguishable, from the room, from a broken microphone. */
-    esp_mn_error_t *err = esp_mn_commands_update();
-    s_rejected = err != NULL ? err->num : 0;
-    s_accepted = vocab_count() - s_rejected;
-    for (int i = 0; err != NULL && i < err->num; i++) {
-        ESP_LOGE(TAG, "phrase refused by the model: '%s'", err->phrases[i]->string);
+    /* THERE ARE TWO WAYS TO BE REFUSED, AND THIS USED TO SEE ONLY ONE.
+     *
+     * `esp_mn_commands_add` runs the phrase through the model's own `check_speech_command`
+     * and returns ESP_ERR_INVALID_STATE when it will not take it. Its return value was
+     * DISCARDED here — and a phrase rejected there never enters the list at all, so the
+     * `esp_mn_commands_update` pass below has nothing to report about it and
+     * `vocab_count() - rejected` went on claiming it had been accepted. The counter was
+     * derived rather than measured, and derived from the assumption the bug breaks.
+     *
+     * The owner, on the twins: *"burp has been on there. It never actually activates them.
+     * The kids say the word — like the code word is wrong."* That is exactly what this hole
+     * looks like from a bedroom, and the instrumentation that should have answered it said
+     * everything was fine. Both paths are counted now, and both name the phrase. */
+    int added = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (esp_mn_commands_add(i, all[i].phrase) == ESP_OK) {
+            added++;
+            continue;
+        }
+        ESP_LOGE(TAG, "phrase refused when added: '%s'", all[i].phrase);
+        note_refused(all[i].phrase);
     }
+
+    /* The second pass: a phrase the model takes but cannot then tokenise. Silent here too,
+       and the panel is deaf to that one thing with nothing on the glass to say so — which is
+       indistinguishable, from the room, from a broken microphone. */
+    esp_mn_error_t *err = esp_mn_commands_update();
+    const int late = err != NULL ? err->num : 0;
+    for (int i = 0; i < late; i++) {
+        ESP_LOGE(TAG, "phrase refused by the model: '%s'", err->phrases[i]->string);
+        note_refused(err->phrases[i]->string);
+    }
+
+    s_rejected = (vocab_count() - added) + late;
+    s_accepted = vocab_count() - s_rejected;
     ESP_LOGI(TAG, "vocabulary: %d accepted, %d refused", s_accepted, s_rejected);
 }
 

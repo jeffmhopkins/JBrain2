@@ -104,6 +104,24 @@ static const vocab_t VOCAB[] = {
     {"do a burp", VOCAB_ACTION, ACT_BURP},
     {"make a rude noise", VOCAB_ACTION, ACT_FART},
 
+    /* A WAY IN THAT IS NOT ONE WORD, FOR EVERY ACTION.
+     *
+     * The owner: *"burp has been on there. It never actually activates them. The kids say the
+     * word — like the code word is wrong."* Four actions had a single word as their ONLY
+     * phrasing (eat, jump, kick, spin) and two more had alternates no four-year-old would
+     * ever say ("make a rude noise"). A one word phrase is the FRAGILE form here — three
+     * phonemes for "burp" against ten for "come and boogie" — so it must never be the only
+     * way to ask for something. `tests.c` now holds that.
+     *
+     * None of these may start with the single word it backs up: "jump up high" would make
+     * "jump" a prefix of it, which rule 3 forbids and which MultiNet refuses outright. */
+    {"can you burp", VOCAB_ACTION, ACT_BURP},
+    {"can you fart", VOCAB_ACTION, ACT_FART},
+    {"do a big jump", VOCAB_ACTION, ACT_JUMP},
+    {"have a snack", VOCAB_ACTION, ACT_EAT},
+    {"give it a kick", VOCAB_ACTION, ACT_KICK},
+    {"do a spin", VOCAB_ACTION, ACT_SPIN},
+
     /* "color", not "colour", and this is the one place in the repo that spells it that way.
        The phrase is not prose — it is fed to MultiNet's English grapheme-to-phoneme pass,
        whose lexicon is American. The two spellings are the same sound; only one is looked
