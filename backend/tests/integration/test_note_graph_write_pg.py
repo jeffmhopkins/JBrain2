@@ -2353,3 +2353,158 @@ async def test_a_strangers_note_cannot_write_a_repeating_schedule(maker, tmp_pat
     fact, token = await _token_of(maker, out.facts[0].fact_id)
     assert token is None
     assert fact.status == "active"
+
+
+# --- appointments --------------------------------------------------------------------
+
+VISIT_SUMMARY = (
+    "Next Appointment Details\n"
+    "Appointment: Tuesday, March o9, Resource: D-Device Checks\n"
+    "2027at10:30 AM\n"
+    "Appointment: Tuesday, March o9, Resource: A-Pretlow, Kimberly\n"
+    "2027at11:00AM"
+)
+
+
+@pytest.mark.asyncio
+async def test_an_appointment_as_a_value_on_a_person_is_refused_with_the_shape_to_use(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:  # noqa: F811
+    """`Me hasAppointment "<text>"` is a single-valued attribute, so the note's second
+    appointment replaces its first and neither reaches the calendar, which projects only an
+    appointment entity's own `scheduledTime`. Measured on a photographed visit summary."""
+    note_id = await _note(maker, tmp_path, body=VISIT_SUMMARY)
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity(
+        {
+            "entities": [
+                {"surface": "Me", "kind": "person"},
+                {"surface": "Device check with Dr. Apptguard", "kind": "appointment"},
+            ]
+        },
+        _ctx(),
+    )
+    out = await writer.close_reading(
+        {
+            "title": "Appointments",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "hasAppointment",
+                    "object": "Device check on 2027-03-09 at 10:30",
+                    "statement": "Jeff has a device check.",
+                    "when": "2027-03-09T10:30",
+                    "quote": "Resource: D-Device Checks",
+                },
+                {
+                    "subject": "e2",
+                    "predicate": "scheduledTime",
+                    "object": "2027-03-09T10:30",
+                    "statement": "The device check is on March 9, 2027 at 10:30.",
+                    "when": "2027-03-09T10:30",
+                    "quote": "2027at10:30 AM",
+                },
+            ],
+        },
+        _ctx(),
+    )
+    lines = str(out).splitlines()
+    assert lines[0].startswith("err  facts[0]: an appointment is not a value on Me")
+    assert "kind appointment" in lines[0]
+    # The rest of the batch still lands, and the shape it points at is the one that does.
+    assert lines[1].startswith("ok  Device check with Dr. Apptguard.scheduledTime")
+    # A handle as the object stays a relationship, which is not refused.
+    edge = await writer.close_reading(
+        {
+            "title": "Appointments",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "hasAppointment",
+                    "object": "e2",
+                    "statement": "Jeff has the device check.",
+                    "when": "",
+                    "quote": "Resource: D-Device Checks",
+                }
+            ],
+        },
+        _ctx(),
+    )
+    assert str(edge).startswith("ok  Me.hasAppointment → Device check with Dr. Apptguard")
+
+
+@pytest.mark.asyncio
+async def test_an_ocr_quote_respaced_by_the_model_still_attests(maker, tmp_path) -> None:  # noqa: F811
+    """OCR runs words together and the model re-spaces them when it copies: "2027at10:30
+    AM" comes back as "2027 at 10:30 AM". Every quote on the measured visit summary missed
+    on spacing alone, so every fact was filed at low weight and held. A changed CHARACTER
+    ("o9" read as "09") is still a miss — the check forgives layout, never content."""
+    note_id = await _note(maker, tmp_path, body=VISIT_SUMMARY)
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity(
+        {"entities": [{"surface": "Follow-up with Dr. Quotespace", "kind": "appointment"}]},
+        _ctx(),
+    )
+
+    async def weight(quote: str) -> float:
+        out = await writer.assert_fact(
+            {
+                "facts": [
+                    {
+                        "subject": "e1",
+                        "predicate": "scheduledTime",
+                        "object": "2027-03-09T11:00",
+                        "statement": "The follow-up is on March 9, 2027 at 11:00.",
+                        "when": "2027-03-09T11:00",
+                        "quote": quote,
+                    }
+                ]
+            },
+            _ctx(),
+        )
+        async with scoped_session(maker, SYSTEM_CTX) as s:
+            row = (
+                await s.execute(select(Fact).where(Fact.id == uuid.UUID(out.facts[0].fact_id)))
+            ).scalar_one()
+        assert row.confidence is not None
+        return row.confidence
+
+    assert await weight("Resource: A-Pretlow, Kimberly 2027 at 11:00 AM") == pytest.approx(1.0)
+    assert await weight("Tuesday, March 09, Resource: A-Pretlow") < 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_second_value_from_the_same_reading_is_named_as_the_passes_own(
+    maker,  # noqa: F811
+    tmp_path,
+) -> None:  # noqa: F811
+    """Two values the SAME reading wrote to one slot are not a disagreement with the graph
+    — nothing on file disagreed. The line says so, and says it is not the owner's question,
+    instead of the generic DISAGREED line that asks him which is right."""
+    note_id = await _note(maker, tmp_path, body='The Owncheck tv is 58". The Owncheck tv is 60".')
+    writer = await _writer(maker, note_id)
+    await writer.resolve_entity({"entities": [{"surface": "Owncheck tv", "kind": "thing"}]}, _ctx())
+    out = await writer.close_reading(
+        {
+            "title": "TV size",
+            "tags": [],
+            "facts": [
+                {
+                    "subject": "e1",
+                    "predicate": "hasSizeInches",
+                    "object": size,
+                    "statement": f'The Owncheck tv is {size}".',
+                    "when": "",
+                    "quote": f'The Owncheck tv is {size}".',
+                }
+                for size in ("58", "60")
+            ],
+        },
+        _ctx(),
+    )
+    second = str(out).splitlines()[1]
+    assert "one YOU wrote from this same note" in second
+    assert "ask the owner" not in second

@@ -967,9 +967,15 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # (entity e1) with the fact hasPet", which is the addressing layer read aloud at
         # the one person who cannot look any of it up. The panel under the answer already
         # shows him exactly what landed; the sentences are for the meaning.
+        #
+        # v13 says how an APPOINTMENT is written: its own entity with `scheduledTime`,
+        # `organizer`, `location`, never a value on Me — and that `quote` is copied as the
+        # note spells it, OCR typos included. Measured on a two-appointment visit summary:
+        # both were written as `Me hasAppointment "<text>"`, the second replaced the first,
+        # neither reached the calendar, and every re-spaced OCR quote was filed at low weight.
         "note_ingest": (
-            "agent-note-ingest-v12",
-            "4a9df3b633e334c19e60bb1b9cc47f1058359fc59f825649f24e3ee4be19eac4",
+            "agent-note-ingest-v13",
+            "3350c0f145a5dbaf927953f030878fb4d0609110bdbac313ea2e1eb3b2d49cf1",
         ),
     }
     assert set(pins) == AGENT_NAMES
