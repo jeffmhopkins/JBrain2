@@ -9,8 +9,23 @@
  * VOLUME IS A SAFETY LIMIT HERE, not a preference. The vendor example ships 90/100 for V2
  * hardware. This is a 29 mm object a four-year-old will hold to his ear, and ASTM F963 /
  * EN 71-1 cap close-to-ear toys at 65 dB(A) (ROOM_ENDPOINT_PLAN.md). Nothing in this session
- * can measure decibels, so the starting point is deliberately low and the owner's ear is the
- * instrument. Raise it only against a measurement.
+ * can measure decibels, so the starting point was deliberately low and the owner's ear is the
+ * instrument.
+ *
+ * RAISED TO 90 AT THE OWNER'S REQUEST (0.2.71), which is the vendor's own figure and the
+ * thing the paragraph above says to do only against a measurement. There is still no
+ * measurement — there is a parent who has listened to it in the room it lives in, which is
+ * the only instrument this project has ever had for this number. Recorded rather than
+ * quietly changed, because the next person to read this should know the limit was crossed
+ * deliberately and by whom, and because a sound level meter would settle it in a minute.
+ *
+ * THE BEEP AND THE VOICE ARE NOW SEPARATE, which is the better half of the same request.
+ * They share one codec output, so for the whole of this project's life the acknowledgement
+ * tone has been exactly as loud as the pet's speech — and the beep is the part held closest
+ * to an ear, the part that fires on every poke, and the part with a hard transient in it.
+ * Scaling the tone in software costs nothing (it is synthesised here) and lets the voice get
+ * louder while the beep gets quieter, which is the direction that makes the toy both more
+ * useful and less shrill.
  */
 
 #include "audio.h"
@@ -81,7 +96,12 @@ static const char *TAG = "audio";
    nothing here able to measure decibels; the owner reported it a little quiet, and confirmed
    70 as good at the distance a child holds it. That is the measurement §10.4q said it was
    waiting for — so this number is no longer a guess, and still well under the vendor's 90. */
-#define VOLUME 70
+#define VOLUME 90
+/* What the beep should SOUND like on that same scale — the owner asked for 20 against the
+   voice's 90. Applied as an amplitude ratio rather than a second codec call, because
+   `esp_codec_dev` has no locking and one task owns the codec (§10.4al): changing the output
+   level around every beep is exactly the kind of cross-task poke that panicked a panel. */
+#define BEEP_VOLUME 20
 
 /* One handle for both directions. The vendor BSP builds two codec instances, one per
    direction — two objects writing the same chip's registers over the same I2C bus. A single
@@ -173,7 +193,12 @@ static void build_beep(void)
         } else if (i > BEEP_SAMPLES - fade) {
             env = 0.5f - 0.5f * cosf((float)M_PI * (float)(BEEP_SAMPLES - i) / (float)fade);
         }
-        s_beep[i] = (int16_t)(sinf(step * (float)i) * 9000.0f * env);
+        /* 9000 was the peak when the codec sat at 70 and the beep shared the voice's level.
+           Scaling by the ratio keeps that reference point honest: raising the output to 90
+           would otherwise have made the beep LOUDER at the same time as the request was to
+           make it quieter. */
+        const float peak = 9000.0f * (float)BEEP_VOLUME / (float)VOLUME;
+        s_beep[i] = (int16_t)(sinf(step * (float)i) * peak * env);
     }
 }
 

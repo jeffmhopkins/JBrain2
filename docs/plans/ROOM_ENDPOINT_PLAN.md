@@ -4187,6 +4187,42 @@ off mid-sentence, and how often "hey fish" fires at a television, are questions 
 bedroom answers. The trigger logs, so false fires can be counted from telemetry rather than
 guessed at.
 
+#### 10.4ce The beep and the voice stop sharing a volume (0.2.71, 2026-09-22)
+
+The owner: *"can we have the beep down to say volume 20, and the [speech] to volume 90?"*
+
+Two changes, and only one of them is comfortable.
+
+**The beep and the voice have shared a single codec output for the whole life of this
+project.** So the acknowledgement tone has always been *exactly* as loud as the pet's speech —
+and the beep is the part fired on every poke, the part with a hard transient in it, and the part
+held closest to an ear. Splitting them costs nothing, because the tone is synthesised here:
+scaling its amplitude by `BEEP_VOLUME / VOLUME` lets the voice get louder while the beep gets
+quieter. Done as an amplitude ratio rather than a second codec call, because `esp_codec_dev` has
+no locking and one task owns the codec — changing the output level around every beep is exactly
+the cross-task poke that panicked a panel in §10.4al.
+
+The reference point matters: 9000 was the peak when the codec sat at 70 and the beep shared the
+voice's level. Without the ratio, raising the output to 90 would have made the beep **louder**
+at the same moment the request was to make it quieter.
+
+##### The uncomfortable half, recorded rather than quietly changed
+
+`audio.c`'s header opens with *"VOLUME IS A SAFETY LIMIT HERE, not a preference"*, cites ASTM
+F963 / EN 71-1 capping close-to-ear toys at **65 dB(A)**, and ends *"raise it only against a
+measurement."* This raises it to 90, and **there is still no measurement.**
+
+What there is instead is a parent who has listened to the thing in the room it lives in — which
+is the only instrument this project has ever had for this number, and is why 70 was a guess too.
+90 is also the vendor's own figure for this hardware. So the change is reasonable and it is
+still a limit crossed on judgement rather than on data.
+
+It is written into the header rather than left in a commit message so the next person to read
+that paragraph knows the limit was crossed deliberately and by whom. **A sound level meter
+would settle it in a minute**, and a 29 mm speaker a four-year-old holds to their ear is the
+right place to spend that minute. Until then the beep going *down* is the part of this change
+that reduces exposure, and it lands on the sound that fires most often.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
