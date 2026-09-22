@@ -193,3 +193,85 @@ async def test_the_owner_sees_both_twins(maker: async_sessionmaker) -> None:
             )
         ).scalar_one()
     assert seen == 2
+
+
+async def test_the_owners_badge_counts_only_what_was_sent_to_him(
+    maker: async_sessionmaker,
+) -> None:
+    """The unplayed badge, and the two bugs that made it wrong.
+
+    Found by building the PWA against the contract: `PanelThread.unplayed` is defined as
+    messages from a panel the owner has not dealt with, and the first implementation counted
+    the rows the LIST query had fetched. That deflates the badge the moment `limit` truncates —
+    a parent who sees "2 waiting" when four are waiting stops trusting the number, and a badge
+    nobody trusts is worse than no badge.
+
+    Underneath it was a second one the PWA could not have seen: counting everything a PANEL
+    sent includes twin-to-twin post, which is not the owner's to clear. That badge would show a
+    number he could never make go away.
+
+    So the count takes both predicates — from a panel, TO the owner, unplayed — and this
+    asserts each of the three ways to get it wrong."""
+    from jbrain.api.jpanel import _unplayed_by_panel
+
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.jpanel_message"))
+        await s.commit()
+
+    # Two to Dad, unplayed. These are the only ones that should count.
+    async with scoped_session(maker, ONE) as s:
+        for sha in ("badge-a", "badge-b"):
+            await s.execute(
+                text(
+                    """
+                    INSERT INTO app.jpanel_message
+                        (sender_kind, sender_device, recipient_kind, blob_sha256, composed)
+                    VALUES ('panel', :me, 'owner', :sha, 'voice')
+                    """
+                ),
+                {"me": ONE.principal_id, "sha": sha},
+            )
+        await s.commit()
+
+    # Twin-to-twin: not the owner's, and the bug that counted it left an unclearable badge.
+    await _send(maker, ONE, to="panel-two", sha="badge-sibling")
+
+    # Already dealt with: must not count.
+    async with scoped_session(maker, ONE) as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, sender_device, recipient_kind, blob_sha256, composed,
+                     played_at)
+                VALUES ('panel', :me, 'owner', 'badge-done', 'voice', now())
+                """
+            ),
+            {"me": ONE.principal_id},
+        )
+        await s.commit()
+
+    # Dad's own outgoing message is not something Dad has to read.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, recipient_kind, recipient_device, blob_sha256, composed)
+                VALUES ('owner', 'panel', :to, 'badge-outgoing', 'text')
+                """
+            ),
+            {"to": ONE.principal_id},
+        )
+        await s.commit()
+
+    # A fresh session for the read: committing closes the transaction this context manager
+    # holds, so counting inside it would run on a finished one.
+    async with scoped_session(maker, OWNER) as s:
+        counts = await _unplayed_by_panel(s)
+
+    assert counts.get("panel-one") == 2, (
+        f"the badge counted {counts.get('panel-one')} rather than the 2 messages actually "
+        "waiting for the owner"
+    )
+    assert "panel-two" not in counts, "a twin who sent nothing to the owner has no badge"

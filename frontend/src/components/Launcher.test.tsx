@@ -33,26 +33,38 @@ describe("Launcher tile navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("ops");
   });
 
-  // The pet-face endpoint preview is its OWN button, distinct from "Pet" (which is the
-  // phone remote for the wall). They were briefly adjacent under Knowledge sharing one icon,
-  // which made them read as one feature with two names.
-  it("routes the Pet face card to the endpoint preview", () => {
+  // jpanel took the pet-face preview's slot: what the owner reaches for from work is a
+  // message from a four-year-old, not a hardware validation surface.
+  it("routes the jpanel card to the panels surface", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
-    expect(onNavigate).toHaveBeenCalledWith("petface");
+    fireEvent.click(screen.getByRole("button", { name: "jpanel" }));
+    expect(onNavigate).toHaveBeenCalledWith("jpanel");
   });
 
-  it("keeps Pet and Pet face as two separate buttons", () => {
+  // "Pet" is the phone remote for the wall and is a different feature; the two were
+  // briefly adjacent sharing one icon, which made them read as one thing with two names.
+  it("keeps Pet and jpanel as two separate buttons", () => {
     const onNavigate = vi.fn();
     render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Pet" }));
     expect(onNavigate).toHaveBeenCalledWith("petcontrol");
-    fireEvent.click(screen.getByRole("button", { name: "Pet face" }));
-    expect(onNavigate).toHaveBeenCalledWith("petface");
+    fireEvent.click(screen.getByRole("button", { name: "jpanel" }));
+    expect(onNavigate).toHaveBeenCalledWith("jpanel");
     expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
+  // The flasher kept a tile of its own even though it is now jpanel's second tab: it is
+  // done standing at the box with a board in hand, which is no time to hunt for a tab.
+  it("keeps an Endpoints door that opens the same surface", () => {
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    expect(screen.queryByRole("button", { name: "Pet face" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Endpoints" }));
+    expect(onNavigate).toHaveBeenCalledWith("endpoints");
   });
 
   it("routes the Data card to its launcher screen", () => {

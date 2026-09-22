@@ -231,6 +231,7 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 |---|---|---|
 | `GET /messages` | `limit` (default 100) | `200 {panels: [PanelThread]}` |
 | `POST /messages` | `{to_device, text}` | `201 Message` — TTS renders it, the typed text is kept as the transcript |
+| `POST /messages/{id}/played` | — | `204` — the owner has dealt with it; idempotent, keeps the first timestamp |
 | `GET /messages/{id}/audio` | — | `200 audio/wav` |
 
 ```ts
@@ -253,6 +254,21 @@ type PanelThread = {
   messages: Message[];        // newest first
 };
 ```
+
+**`unplayed` counts only what a panel sent to the OWNER, and is counted independently of
+`limit`.** Two bugs live in the obvious implementation, and the PWA found the first by being
+built against this: counting the fetched rows deflates the badge as soon as `limit` truncates,
+and counting everything a panel sent includes twin-to-twin post, which is not the owner's to
+clear and would leave a badge he cannot make go away. `limit` bounds rows across all panels.
+
+**Every enrolled panel is listed, including one that has never sent anything.** Otherwise the
+owner could not message a twin who has not yet spoken into her panel — exactly the child he
+would most want to reach.
+
+**Clearing the badge is an explicit call, not a side effect of fetching the audio.** The
+tempting fix is to stamp `played_at` in `GET .../audio`, and it is wrong for the same reason the
+next paragraph gives: the expected interaction is READING. A father who reads the transcript and
+never presses play would leave the count sitting there forever.
 
 **`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
 work; the audio is the fallback for when the transcript does not make sense — which, given how

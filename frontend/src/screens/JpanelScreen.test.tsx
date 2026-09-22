@@ -1,0 +1,400 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { JpanelScreen, durationText, whenText } from "./JpanelScreen";
+
+// The reader is a father on a phone at work and the senders are two four-year-olds, so
+// the states this screen has to survive are not edge cases: a transcript that came back
+// as nonsense, one that came back empty, and a twin who has not sent anything at all.
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const GARBLED =
+  "and then and then the the dinosaur he goed in the the water but not the water the other one";
+
+const THREADS = [
+  {
+    device_id: "panel-ellie",
+    name: "Ellie",
+    unplayed: 2,
+    messages: [
+      {
+        id: "jp-1",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript: "There is a joke. There is a joke.",
+        composed: "voice",
+        duration_ms: 3400,
+        created_at: new Date(Date.now() - 6 * 60_000).toISOString(),
+        played_at: null,
+      },
+      {
+        id: "jp-2",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript: "",
+        composed: "voice",
+        duration_ms: 1900,
+        created_at: new Date(Date.now() - 24 * 60_000).toISOString(),
+        played_at: null,
+      },
+      {
+        id: "jp-3",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript: GARBLED,
+        composed: "voice",
+        duration_ms: 19_600,
+        created_at: new Date(Date.now() - 190 * 60_000).toISOString(),
+        played_at: new Date(Date.now() - 120 * 60_000).toISOString(),
+      },
+    ],
+  },
+  { device_id: "panel-mabel", name: "Mabel", unplayed: 0, messages: [] },
+];
+
+const SENT = {
+  id: "jp-sent-1",
+  from_name: "Dad",
+  to_name: "Ellie",
+  direction: "out",
+  transcript: "Five more minutes then teeth.",
+  composed: "text",
+  duration_ms: 3200,
+  created_at: new Date().toISOString(),
+  played_at: null,
+};
+
+/** The requests each case cares about; everything else 404s, as a real box would. */
+function box(opts: { threads?: unknown[]; post?: () => Response } = {}) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const path = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (path.startsWith("/api/jpanel/messages") && method === "GET") {
+      return json({ panels: opts.threads ?? THREADS });
+    }
+    if (path === "/api/jpanel/messages" && method === "POST") {
+      return opts.post ? opts.post() : json(SENT, 201);
+    }
+    if (/^\/api\/jpanel\/messages\/[^/]+\/played$/.test(path) && method === "POST") {
+      return new Response(null, { status: 204 });
+    }
+    if (path === "/api/endpoint/ports") return json({ ports: [], flasher: true });
+    if (path === "/api/endpoint/firmware") return json({ version: "0.2.0", url: "https://box/fw" });
+    return new Response(null, { status: 404 });
+  };
+}
+
+/** jsdom has no media pipeline, so playback is observed through the element it built. */
+class FakeAudio {
+  static built: FakeAudio[] = [];
+  readonly src: string;
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  paused = false;
+  constructor(src: string) {
+    this.src = src;
+    FakeAudio.built.push(this);
+  }
+  play(): Promise<void> {
+    return Promise.resolve();
+  }
+  pause(): void {
+    this.paused = true;
+  }
+}
+
+/** jsdom has no IntersectionObserver. This one records what was observed and lets a case
+ *  say "that row came into view", which is the only way to drive read-tracking here. */
+class FakeObserver {
+  static live: FakeObserver[] = [];
+  readonly cb: IntersectionObserverCallback;
+  readonly targets: Element[] = [];
+  constructor(cb: IntersectionObserverCallback) {
+    this.cb = cb;
+    FakeObserver.live.push(this);
+  }
+  observe(el: Element): void {
+    this.targets.push(el);
+  }
+  disconnect(): void {}
+  /** Scroll every observed row into view. */
+  showAll(): void {
+    this.cb(
+      this.targets.map((target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry),
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
+/** The row a given transcript sits in. Every twin's messages share one accessible name,
+ *  so indexing a list of play buttons would silently follow a different message the
+ *  moment the thread grows; the transcript is what identifies a message here anyway. */
+function rowFor(transcript: HTMLElement): HTMLElement {
+  const row = transcript.closest("li");
+  if (!row) throw new Error("transcript is not inside a message row");
+  return row;
+}
+
+describe("JpanelScreen messages", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    FakeAudio.built = [];
+    FakeObserver.live = [];
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("Audio", FakeAudio);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("groups by panel and badges each panel's unplayed count", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const ellie = await screen.findByRole("region", { name: "Ellie" });
+    expect(within(ellie).getByText("2 unplayed")).toBeTruthy();
+    // The count is the box's, not one recounted from the rows on this page: a `limit`
+    // that truncated the thread must not quietly deflate the badge.
+    const mabel = screen.getByRole("region", { name: "Mabel" });
+    expect(within(mabel).queryByText(/unplayed/)).toBeNull();
+  });
+
+  it("still offers a panel that has sent nothing — an empty thread is normal", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const mabel = await screen.findByRole("region", { name: "Mabel" });
+    expect(within(mabel).getByText("Nothing from Mabel yet.")).toBeTruthy();
+    // A silent twin is still someone you can message; the compose box is not conditional
+    // on there being a conversation already.
+    expect(within(mabel).getByLabelText("Message Mabel")).toBeTruthy();
+  });
+
+  it("leads with the transcript and puts the player beside it, not over it", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    // The garbled transcript is shown whole — it is the thing being read, and clipping it
+    // would hide exactly the words that need squinting at.
+    const row = rowFor(await screen.findByText(GARBLED));
+    // Beside, not below: the play control shares the body row with the words.
+    const body = within(row).getByText(GARBLED).parentElement;
+    expect(body?.className).toContain("jp-msg-body");
+    expect(within(row).getByRole("button", { name: "Play Ellie's message" })).toBeTruthy();
+  });
+
+  it("says when the transcriber produced no words at all", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    expect(await screen.findByText(/No words came through/)).toBeTruthy();
+  });
+
+  it("plays a message from its own audio route, and a second tap stops it", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const row = rowFor(await screen.findByText("There is a joke. There is a joke."));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+    expect(FakeAudio.built[0]?.src).toBe("/api/jpanel/messages/jp-1/audio");
+
+    const stop = within(row).getByRole("button", { name: "Stop playing" });
+    fireEvent.click(stop);
+    expect(FakeAudio.built[0]?.paused).toBe(true);
+  });
+
+  it("sends TEXT — the PWA never uploads audio", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const input = await screen.findByLabelText("Message Ellie");
+    fireEvent.change(input, { target: { value: "Five more minutes then teeth." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+
+    await waitFor(() => expect(screen.getByText("Five more minutes then teeth.")).toBeTruthy());
+    const post = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "GET") === "POST");
+    expect(post?.[0]).toBe("/api/jpanel/messages");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      to_device: "panel-ellie",
+      text: "Five more minutes then teeth.",
+    });
+    // No recorder anywhere on the surface: a parent at work cannot talk into a phone, and
+    // the panels are the only half of this that speaks.
+    expect(screen.queryByRole("button", { name: /record|hold to talk|microphone/i })).toBeNull();
+  });
+
+  it("keeps the words in the box when the send fails", async () => {
+    fetchMock.mockImplementation(box({ post: () => json({ detail: "the box is busy" }, 503) }));
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const input = await screen.findByLabelText("Message Ellie");
+    fireEvent.change(input, { target: { value: "on my way home" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+
+    expect(await screen.findByText(/the box is busy/)).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe("on my way home");
+  });
+});
+
+describe("JpanelScreen read tracking", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    FakeAudio.built = [];
+    FakeObserver.live = [];
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    fetchMock.mockImplementation(box());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function played(): string[] {
+    return fetchMock.mock.calls
+      .filter((c) => (c[1]?.method ?? "GET") === "POST")
+      .map((c) => String(c[0]))
+      .filter((p) => p.endsWith("/played"));
+  }
+
+  it("clears a message once its row has actually been on screen — reading is enough", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    await screen.findByText("There is a joke. There is a joke.");
+
+    // Only the two unheard rows are watched: Dad's own text is not his to read, and a
+    // message he has already heard is not waiting on him.
+    const observer = FakeObserver.live[FakeObserver.live.length - 1];
+    expect(observer?.targets).toHaveLength(2);
+    await act(async () => observer?.showAll());
+
+    await waitFor(() =>
+      expect(played()).toEqual([
+        "/api/jpanel/messages/jp-1/played",
+        "/api/jpanel/messages/jp-2/played",
+      ]),
+    );
+  });
+
+  it("reports a row once, however many polls redraw it", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    await screen.findByText("There is a joke. There is a joke.");
+
+    const observer = FakeObserver.live[FakeObserver.live.length - 1];
+    await act(async () => observer?.showAll());
+    await act(async () => observer?.showAll());
+
+    await waitFor(() => expect(played()).toHaveLength(2));
+  });
+
+  it("clears a message the owner plays, even where nothing can see the row", async () => {
+    // The fallback path: a browser with no IntersectionObserver still has a play button.
+    vi.stubGlobal("IntersectionObserver", undefined);
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const row = rowFor(await screen.findByText("There is a joke. There is a joke."));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+
+    await waitFor(() => expect(played()).toEqual(["/api/jpanel/messages/jp-1/played"]));
+  });
+
+  it("keeps the last messages on screen when the refetch behind a mark fails", async () => {
+    // A failed refetch is not evidence of an empty inbox — the words stay put and the
+    // screen says what it is showing rather than blanking.
+    let gets = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path.startsWith("/api/jpanel/messages") && (init?.method ?? "GET") === "GET") {
+        gets += 1;
+        if (gets > 1) throw new TypeError("Failed to fetch");
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+    await screen.findByText("There is a joke. There is a joke.");
+
+    const observer = FakeObserver.live[FakeObserver.live.length - 1];
+    await act(async () => observer?.showAll());
+
+    expect(await screen.findByText(/Showing what was last fetched/)).toBeTruthy();
+    expect(screen.getByText("There is a joke. There is a joke.")).toBeTruthy();
+  });
+
+  it("does not report a message that was already heard", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    // jp-3 carries a played_at, so playing it again is a re-listen, not news for the box.
+    const row = rowFor(await screen.findByText(GARBLED));
+    fireEvent.click(within(row).getByRole("button", { name: "Play Ellie's message" }));
+
+    await waitFor(() => expect(FakeAudio.built).toHaveLength(1));
+    expect(played()).toEqual([]);
+  });
+});
+
+describe("JpanelScreen tabs", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(box());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("carries the flasher whole on its second tab", async () => {
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Flash" }));
+    expect(await screen.findByText("Plug a panel into the box")).toBeTruthy();
+    // jpanel owns the wrap and the back bar; the moved surface must not bring a second
+    // Back that would close the wrong thing.
+    expect(screen.getAllByRole("button", { name: "Back" })).toHaveLength(1);
+  });
+
+  it("opens straight on Flash for someone standing at the box with a board", async () => {
+    render(<JpanelScreen onClose={vi.fn()} initialTab="flash" />);
+
+    expect(await screen.findByText("Plug a panel into the box")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Flash" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("closes to the launcher from its own back bar", () => {
+    const onClose = vi.fn();
+    render(<JpanelScreen onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("message metadata", () => {
+  it("dates anything older than a day, so an old message cannot read as today's", () => {
+    const now = new Date("2026-09-22T17:00:00Z").getTime();
+    expect(whenText(new Date(now - 30_000).toISOString(), now)).toBe("just now");
+    expect(whenText(new Date(now - 6 * 60_000).toISOString(), now)).toBe("6m ago");
+    expect(whenText(new Date(now - 5 * 3_600_000).toISOString(), now)).toBe("5h ago");
+    expect(whenText(new Date(now - 3 * 86_400_000).toISOString(), now)).toMatch(/Sep 19/);
+  });
+
+  it("reads a duration as a listen length", () => {
+    expect(durationText(3400)).toBe("3s");
+    expect(durationText(19_600)).toBe("20s");
+    expect(durationText(65_000)).toBe("1:05");
+    // A message too short to round to a second is still a message, not "0s".
+    expect(durationText(200)).toBe("1s");
+  });
+});

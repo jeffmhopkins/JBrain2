@@ -20,7 +20,11 @@ import {
 import "./endpoints.css";
 
 interface EndpointsScreenProps {
-  onClose: () => void;
+  /** Absent when this renders as jpanel's Flash tab: that screen owns the full-screen
+   *  wrap and the back bar, and a second Back button inside a tab would close the thing
+   *  the owner is standing in front of. Everything below the bar is untouched — this is
+   *  the same surface, moved, not a rebuild. */
+  onClose?: () => void;
 }
 
 /** A numbered step, because this is a sequence and the owner is holding a board. */
@@ -36,7 +40,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
+export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
   const [ports, setPorts] = useState<EndpointPort[] | null>(null);
   const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
   const [absent, setAbsent] = useState(false);
@@ -146,13 +150,15 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps) {
   const failed = log.some((l) => l.startsWith("FAILED"));
 
   return (
-    <div className="ep-wrap">
-      <header className="ep-bar">
-        <button type="button" onClick={onClose}>
-          Back
-        </button>
-        <h1>Room endpoints</h1>
-      </header>
+    <div className={onClose ? "ep-wrap" : "ep-tab"}>
+      {onClose && (
+        <header className="ep-bar">
+          <button type="button" onClick={onClose}>
+            Back
+          </button>
+          <h1>Room endpoints</h1>
+        </header>
+      )}
 
       {absent ? (
         <p className="ep-empty">

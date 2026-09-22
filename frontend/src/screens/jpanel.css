@@ -1,0 +1,223 @@
+/* jpanel — the panels in the house (docs/plans/JPANEL_PLAN.md). Two tabs over one
+   full-screen surface: the messages the panels carry, and the flasher that puts firmware
+   on them. Steel is the accent here: this is general household information, not one of
+   the firewalled domains (docs/reference/DESIGN.md "Color codes the domain"). */
+.jp-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.jp-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.jp-bar h1 {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  margin: 0;
+}
+.jp-bar button {
+  min-height: 44px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+
+.jp-seg {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 3px;
+  margin: 12px 16px 0;
+  max-width: 640px;
+  box-sizing: border-box;
+}
+.jp-seg button {
+  flex: 1;
+  min-height: 44px;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 11px;
+}
+.jp-seg button.on {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+
+.jp-threads {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.jp-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 14px;
+  background: var(--surface);
+}
+.jp-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.jp-panel-name {
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+/* The count, not a dot: "how many have I not heard from her" is the question this
+   screen is opened to answer, and a dot answers a different, smaller one. */
+.jp-unplayed {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.jp-msgs {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.jp-msg {
+  background: var(--surface-2);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+}
+/* Unheard: a hairline down the edge rather than a border, so nothing reflows when a
+   message is played and the marker leaves. */
+.jp-msg-new {
+  box-shadow: inset 2px 0 0 var(--steel);
+}
+.jp-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.jp-from {
+  color: var(--text);
+  font-weight: 500;
+}
+.jp-dur {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+/* The transcript leads and the player sits beside it — never under it. The text is what
+   gets read at work; the audio is the fallback for when it makes no sense. The row is
+   top-aligned so a long garbled transcript keeps the play button in the same place
+   instead of pushing it down the screen. */
+.jp-msg-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.jp-transcript {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  color: var(--text);
+  /* Four-year-old speech comes back as one unbroken run; it wraps rather than scrolls. */
+  overflow-wrap: anywhere;
+}
+.jp-no-words {
+  color: var(--text-3);
+  font-style: italic;
+}
+.jp-play {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--steel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.jp-compose {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.jp-compose input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 8px 12px;
+}
+.jp-send {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  background: var(--steel-tint);
+  color: var(--steel);
+  border: 0;
+  border-radius: 999px;
+}
+.jp-send:disabled {
+  opacity: 0.45;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.jp-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 6px 2px 0;
+}
+.jp-empty {
+  padding: 16px 2px;
+  color: var(--text-3);
+  font-size: var(--fs-secondary);
+  margin: 0;
+}
+.jp-warn {
+  color: var(--danger);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  margin: 0;
+}

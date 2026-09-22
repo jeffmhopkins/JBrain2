@@ -150,6 +150,36 @@ async def _panel_names(session) -> dict[str, str]:
     return {str(pid): _display_name(str(label)) for pid, label in rows}
 
 
+async def _unplayed_by_panel(session) -> dict[str, int]:
+    """Panel id → how many of its messages the OWNER has not dealt with.
+
+    A function rather than inline SQL so it can be exercised directly, because two bugs live in
+    the obvious version and both are invisible until someone is staring at a wrong number on a
+    phone:
+
+    - **Counting the rows the list query fetched** deflates the badge as soon as `limit`
+      truncates. A parent who sees "2 waiting" when four are stops trusting the number, and a
+      badge nobody trusts is worse than no badge.
+    - **Counting everything a panel sent** includes twin-to-twin post, which is not the owner's
+      to clear — so the badge would show a count he can never make go away.
+
+    Hence both predicates: from a panel, TO the owner, unplayed."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT sender_device, count(*)
+                FROM app.jpanel_message
+                WHERE sender_kind = 'panel' AND recipient_kind = 'owner'
+                  AND played_at IS NULL
+                GROUP BY sender_device
+                """
+            )
+        )
+    ).all()
+    return {str(pid): int(n) for pid, n in rows}
+
+
 def _name_of(names: dict[str, str], kind: str, device: str | None) -> str:
     return DAD_NAME if kind == "owner" else names.get(device or "", "the other one")
 
@@ -373,9 +403,17 @@ async def played(principal: PanelDep, request: Request, body: Played) -> Respons
 
 @router.get("/messages")
 async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threads:
-    """Everything, grouped by the panel it concerns — which is the question asked at work."""
+    """Everything, grouped by the panel it concerns — which is the question asked at work.
+
+    `limit` bounds the ROWS RETURNED across all panels, not the unplayed counts: those come
+    from `_unplayed_by_panel` precisely so a truncating limit cannot deflate a badge.
+
+    EVERY ENROLLED PANEL IS LISTED, including one that has never sent anything. Otherwise the
+    owner could not message a twin who has not yet spoken into her panel — exactly the child he
+    would most want to reach."""
     async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
         names = await _panel_names(session)
+        unplayed = await _unplayed_by_panel(session)
         rows = (
             await session.execute(
                 text(
@@ -392,7 +430,7 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
         ).all()
 
     threads: dict[str, PanelThread] = {
-        pid: PanelThread(device_id=pid, name=name, unplayed=0, messages=[])
+        pid: PanelThread(device_id=pid, name=name, unplayed=unplayed.get(pid, 0), messages=[])
         for pid, name in names.items()
     }
     for row in rows:
@@ -403,10 +441,7 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
         thread = threads.get(str(pid or ""))
         if thread is None:
             continue
-        msg = _row_to_message(row, names)
-        thread.messages.append(msg)
-        if msg.direction == "in" and msg.played_at is None:
-            thread.unplayed += 1
+        thread.messages.append(_row_to_message(row, names))
     return Threads(panels=list(threads.values()))
 
 
@@ -465,6 +500,33 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
         duration_ms=duration_ms,
     )
     return _row_to_message(row, names)
+
+
+@router.post("/messages/{message_id}/played", status_code=204)
+async def mark_read(owner: OwnerDep, request: Request, message_id: str) -> Response:
+    """The owner has dealt with this one.
+
+    THE BADGE HAD NO WAY TO CLEAR WITHOUT THIS, found by building the PWA against the contract:
+    the panel side had `POST /played` and the owner side had nothing, so `PanelThread.unplayed`
+    could only ever climb.
+
+    Stamping it in `GET .../audio` instead would have been the tempting fix and is the wrong
+    one. §3b's premise is that the TRANSCRIPT is the primary content — the expected interaction
+    is reading, not playing — so a father who reads the text and never presses play would leave
+    the count sitting there forever. Clearing has to be something the reader can do by reading.
+
+    Idempotent, and `played_at IS NULL` keeps the FIRST time: when he saw it is a real answer,
+    and a second look should not overwrite it."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        await session.execute(
+            text(
+                "UPDATE app.jpanel_message SET played_at = now()"
+                " WHERE id = CAST(:id AS uuid) AND played_at IS NULL"
+            ),
+            {"id": message_id},
+        )
+        await session.commit()
+    return Response(status_code=204)
 
 
 @router.get("/messages/{message_id}/audio")

@@ -7,10 +7,10 @@ import { api } from "../api/client";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
 import {
-  AnimalIcon,
   BookIcon,
   BotIcon,
   CalendarIcon,
+  ChatIcon,
   CheckSquareIcon,
   CodeIcon,
   DatabaseIcon,
@@ -51,7 +51,7 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "petcontrol"
-  | "petface"
+  | "jpanel"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -102,15 +102,15 @@ const SECTIONS: Section[] = [
     header: "System",
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
-      // The endpoint display preview. It sits in System rather than beside "Pet" because it
-      // is a validation surface for the room-endpoint hardware, not a second way to play with
-      // the pet — and it carries AnimalIcon rather than BotIcon so it cannot be mistaken for
-      // one (BotIcon is already doing duty for both "Pet" and "LLM").
-      { title: "Pet face", icon: <AnimalIcon size={24} />, target: "petface" },
-      // Flashing a physical panel over the box's USB port. Its own door rather than a card
-      // inside Ops: Ops is a dashboard you scan, this is a form you work with a board in
-      // your hand, and folding a multi-step sequence into a scrolling dashboard made both
-      // worse on a phone.
+      // The panels in the house, as one door: the messages they carry and the flasher that
+      // puts firmware on them. It takes the slot the pet-face preview held — that preview
+      // was a hardware validation surface, and what the owner reaches for at work is a
+      // message from a four-year-old. Distinct from "Pet" (the phone remote for the wall).
+      { title: "jpanel", icon: <ChatIcon size={24} />, target: "jpanel" },
+      // Flashing a physical panel over the box's USB port — the same surface, opened on
+      // its own tab. It keeps a tile because it is a rare-but-urgent errand done with a
+      // board in your hand and a cable in the box, and hunting for a tab behind a
+      // messaging screen is the wrong thing to be doing while standing there.
       { title: "Endpoints", icon: <PinIcon size={24} />, target: "endpoints" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
       { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },

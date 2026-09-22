@@ -7,6 +7,8 @@ import type {
   AppSettings,
   AttachmentExtract,
   EntityOut,
+  JpanelMessage,
+  JpanelMessages,
   LlmUsage,
   NoteAnalysis,
   NoteOut,
@@ -641,5 +643,67 @@ describe("mock API", () => {
   it("acknowledges a chat-run cancel (the composer's Stop)", async () => {
     const res = await call("/api/chat/runs/run-1/cancel", { method: "POST" });
     expect(res.status).toBe(204);
+  });
+
+  // jpanel's fixture exists to exercise the states the real inbox will be full of: a
+  // transcript the transcriber mangled, one it returned empty, and a twin who has not
+  // sent anything yet.
+  it("serves jpanel messages grouped by panel, newest first", async () => {
+    const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
+    const ellie = out.panels.find((p) => p.name === "Ellie");
+    const mabel = out.panels.find((p) => p.name === "Mabel");
+    expect(ellie?.unplayed).toBe(2);
+    expect(mabel?.messages).toEqual([]);
+    expect(mabel?.unplayed).toBe(0);
+    const times = (ellie?.messages ?? []).map((m) => Date.parse(m.created_at));
+    expect([...times].sort((a, b) => b - a)).toEqual(times);
+    expect(ellie?.messages.some((m) => m.transcript === "")).toBe(true);
+    expect(ellie?.messages.some((m) => m.transcript.length > 200)).toBe(true);
+  });
+
+  it("clears an unplayed message when the owner has seen it, keeping the first look", async () => {
+    const before = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
+    const waiting = before.panels
+      .find((p) => p.name === "Ellie")
+      ?.messages.find((m) => !m.played_at);
+    expect(waiting).toBeDefined();
+    const id = String(waiting?.id);
+
+    expect((await call(`/api/jpanel/messages/${id}/played`, { method: "POST" })).status).toBe(204);
+    const after = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
+    const ellie = after.panels.find((p) => p.name === "Ellie");
+    const seen = ellie?.messages.find((m) => m.id === id);
+    expect(seen?.played_at).not.toBeNull();
+    expect(ellie?.unplayed).toBe(
+      (before.panels.find((p) => p.name === "Ellie")?.unplayed ?? 0) - 1,
+    );
+
+    // A second look is not a new answer to "when did he see it".
+    await call(`/api/jpanel/messages/${id}/played`, { method: "POST" });
+    const again = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
+    const twice = again.panels.find((p) => p.name === "Ellie")?.messages.find((m) => m.id === id);
+    expect(twice?.played_at).toBe(seen?.played_at);
+  });
+
+  it("keeps a typed message's own words as its transcript", async () => {
+    const sent = (await (
+      await call(
+        "/api/jpanel/messages",
+        jsonInit("POST", {
+          to_device: "panel-mabel",
+          text: "  goodnight, see you in the morning  ",
+        }),
+      )
+    ).json()) as JpanelMessage;
+    expect(sent.composed).toBe("text");
+    expect(sent.direction).toBe("out");
+    expect(sent.transcript).toBe("goodnight, see you in the morning");
+
+    const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
+    const mabel = out.panels.find((p) => p.name === "Mabel");
+    expect(mabel?.messages[0]?.id).toBe(sent.id);
+    // Dad's own message is not something Dad has to play: the badge counts what the
+    // panels sent HIM.
+    expect(mabel?.unplayed).toBe(0);
   });
 });

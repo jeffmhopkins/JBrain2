@@ -11,6 +11,12 @@
   flex-direction: column;
   overflow: auto;
 }
+/* As jpanel's Flash tab the same body renders in flow: jpanel owns the fixed wrap, the
+   back bar and the scroll, so this must not claim any of them a second time. */
+.ep-tab {
+  display: flex;
+  flex-direction: column;
+}
 .ep-bar {
   display: flex;
   align-items: center;
