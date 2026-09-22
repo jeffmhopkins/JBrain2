@@ -343,6 +343,19 @@ static face_zone_t zone_ostrich(int dx, int dy)
     return ZONE_NONE;
 }
 
+/* Whether (x, y) can actually be SEEN, given the case's rounded corners. The straight edges
+   are all inside; only the four corner quadrants curve away. Used by whatever must be visible
+   rather than merely drawn — see `FACE_CASE_CORNER_R`. */
+bool face_inside_case(int x, int y, int w, int h)
+{
+    const int r = FACE_CASE_CORNER_R;
+    if (x < 0 || y < 0 || x >= w || y >= h) return false;
+    const int cx = x < r ? r : (x >= w - r ? w - 1 - r : x);
+    const int cy = y < r ? r : (y >= h - r ? h - 1 - r : y);
+    const int dx = x - cx, dy = y - cy;
+    return dx * dx + dy * dy <= r * r;
+}
+
 face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean)
 {
     /* The frame the child sees is the framebuffer rotated 180 degrees when inverted, so undo

@@ -1,6 +1,6 @@
 # Talking to the panel — press, hold, ask, be answered
 
-> **Status:** Proposed · **Last verified:** 2026-09-21
+> **Status:** Proposed · **Last verified:** 2026-09-22
 
 The owner, while a display fix was deploying: *"how do we put it in a mode where we can have
 bidirectional conversation with the AI box via tts stt?"* — and then, unprompted, the exact
@@ -265,6 +265,47 @@ VAD gate on the upload so an accidental hold sends nothing.
 The PWA side makes that easier rather than harder: the owner's list of received notes is also
 the audit surface, so "what has this thing recorded" has an answer that is a screen rather
 than a log grep. Building the Dad route first would arguably be the safer order.
+
+### The grammar, decided (owner, 2026-09-22)
+
+*"Eventually when all the text recognition stuff is going, I want the commands to be 'send
+xyz' or 'send to dad xyz'. If we didn't say 'to dad', default the voice message to the other
+robot. Voice commands not starting with 'send' should go to the LLM."*
+
+That is the whole routing rule, and it is a better one than the three-recipient sketch above
+proposed, for three reasons.
+
+**One reserved word, not a vocabulary.** Everything hinges on whether the transcript begins
+with `send`. There is no list of names to keep in step with the panels that exist, no
+disambiguation between "Elora" and "a Laura", and nothing to relearn when a third panel
+arrives. The recogniser question shrinks to: did the first word come back as `send`?
+
+**The default is the useful one.** A panel in Elora's room has exactly one obvious other
+robot, and it is Lydian's. Making that the no-argument case means the common message — one
+twin to the other — costs the shorter sentence, and the rarer one (to a parent, who is not a
+device) costs the longer. The sketch above had this backwards by treating all three
+recipients as equals.
+
+**Everything else is a conversation.** No classifier decides whether an utterance is a
+command; the absence of one word does. An utterance that is not a `send` goes to the LLM
+unchanged, which is what the panel already does with a press-and-hold today — so this adds
+a prefix check in front of an existing path rather than a second path.
+
+Three things it still needs, none of them hard but none of them free:
+
+- **Whose "other robot" is whose.** The default recipient is a property of the sending panel,
+  so it is a column on `endpoint_settings`, not a constant. The bench unit is provisioned with
+  an empty name, which is the same gap §10.4bs flagged for telemetry.
+- **What "dad" resolves to.** A parent is a principal with a PWA, not a device; the recipient
+  table has to hold both kinds without the panel knowing the difference.
+- **Where the prefix is stripped.** On the box, not the panel: the panel uploads audio and has
+  no transcript. `POST /endpoint/converse` already has the text and is the only place that can
+  both read the first word and route the rest — which also means an accidental "send" costs a
+  misrouted note rather than a lost one, so the fallback when a recipient does not resolve is
+  to answer it as a conversation, not to drop it.
+
+The retention and audit points below apply unchanged: this makes the routing simpler, not the
+recording less consequential.
 
 ### The dependency, stated plainly
 

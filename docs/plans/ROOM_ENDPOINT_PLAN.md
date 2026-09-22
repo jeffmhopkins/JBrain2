@@ -3746,6 +3746,67 @@ And a defect in the harness itself: `firmware/host/Makefile` did not list header
 prerequisites, so moving a constant into `face.h` produced a **green run against a stale
 binary**. A suite that can report OK without having compiled the change is worse than no suite.
 
+#### 10.4bx Two red lights, and the case had been eating one of them (0.2.64, 2026-09-22)
+
+The owner, correcting me again and correctly: *"There is a small red light on the bottom left
+and a larger red light on the top right. The larger red light only shows while I'm starting
+recording. The bottom left one is always there regardless. It might be hidden from the
+curvature while vertical?"*
+
+Two lights. The large top-right one is `draw_listening`, as they said in §10.4bw. The small
+always-on bottom-left one is the **caption's microphone-open indicator** — `caption.c`, drawn
+whenever `c->live`, which is whenever the wake-word recogniser has the microphone open, which
+is always. It is the one mark on this panel that is a promise to a room rather than a
+decoration: the ICO Children's Code requires it while the microphone is open.
+
+**And their hypothesis is right, measured against this repo's own number.** §10.4c, from the
+first photograph of the hardware: *"the enclosure hides its corners — anything drawn there is
+invisible to whoever is holding it."* `frontend/src/pet/scale.ts` acted on it the same day
+(`CASE_CORNER_FRACTION = 0.13`, so 48 px of a 368 px width) and has clipped the PWA preview to
+the case shape ever since. **The firmware never did.** The pip sat at x=10 on the caption row,
+about 50 px from the bottom-left corner's centre of curvature against a radius of 48 — just
+outside. So the compliance indicator has been drawn correctly and hidden by the enclosure for
+the whole life of the device, and it took a quarter turn to reveal it, because a rotation maps
+a corner of the SQUARE onto the middle of an EDGE of the glass.
+
+The version label had the same fault more mildly: at (8, 6) its glyph box started ~58 px from
+the same centre, so the leading `v` was chewed on every panel. Readable enough that nobody
+filed it, which is exactly how it survived.
+
+##### The thing worth keeping
+
+**A screenshot could never have shown this.** The framebuffer was always correct. Every test
+this firmware has, every host render, every reasoning-about-the-code pass — all of them
+operate on a 368x448 rectangle that does not exist. The defect lives entirely in the gap
+between what is drawn and what can be seen, and the only instrument that could detect it was a
+person holding the object.
+
+So the geometry moves into the firmware as `FACE_CASE_CORNER_R` and `face_inside_case()`, and
+the host suite gains the question the framebuffer cannot answer: of the pixels this draws, is
+every one of them somewhere a person can actually see? `test_the_microphone_light_is_inside_
+the_case` asserts it for the indicator alone — the ticker deliberately scrolls in past the
+corner, which is what a ticker does; a compliance light is not allowed to. Confirmed to fail
+at the old x=10 before being trusted.
+
+Both constants are hand-synced with `CASE_CORNER_FRACTION`; they live in different languages
+and neither can import the other. That is a real seam and it is written down here because it
+is the kind that drifts.
+
+##### And the routing grammar the owner decided in the same message
+
+*"I want the commands to be 'send xyz' or 'send to dad xyz'. If we didn't say 'to dad', default
+the voice message to the other robot. Voice commands not starting with 'send' should go to the
+LLM."*
+
+One reserved word rather than a vocabulary of names, the common case (twin to twin) as the
+no-argument default, and everything else falling through to the conversation path that already
+exists. It is a better rule than the three-equal-recipients sketch it replaces, and it is
+recorded in `../proposed/PANEL_CONVERSATION_PLAN.md` § "The grammar, decided" along with the
+three things it still needs — a per-panel default recipient, a recipient table that holds
+people as well as devices, and the prefix being stripped on the BOX, which is the only end
+that has a transcript. Unbuildable until press-and-hold is confirmed on hardware; that
+dependency has not moved.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

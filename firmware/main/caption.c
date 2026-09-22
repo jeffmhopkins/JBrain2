@@ -12,7 +12,12 @@
 #define ROW_H (FONT_H * SCALE)
 #define MARGIN 8
 #define PIP_R 5
-#define PIP_X 10
+/* 32, NOT 10, AND THE DIFFERENCE IS WHETHER ANYONE CAN SEE IT. At 10 the dot's outer edge sat
+   about 50 px from the bottom-left corner's centre of curvature, against the case's 48 px
+   radius (`FACE_CASE_CORNER_R`) — so the indicator the ICO Children's Code requires while the
+   microphone is open was drawn perfectly and hidden by the enclosure. 32 puts the whole dot,
+   at its largest pulse, inside the opening with room to spare. */
+#define PIP_X 32
 
 /* Slow enough to read, and it SPEEDS UP WITH THE BACKLOG. A fixed rate is what makes a ticker
    feel broken: say four things quickly and the fourth arrives half a minute later, by which

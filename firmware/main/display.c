@@ -368,8 +368,12 @@ static void apply_brightness(void)
    console, which resets it. Top-left: the head spans x 76..292 and starts at y 60, so this
    corner is the one piece of the panel the robot never occupies. Dim on purpose; it shares a
    bedroom. */
-#define LABEL_X 8
-#define LABEL_Y 6
+/* Clear of the case's corner radius (`FACE_CASE_CORNER_R`), which the old 8,6 was not: the
+   glyph box started ~58 px from the corner's centre of curvature against a radius of 48, so
+   the leading `v` was chewed by the enclosure on every panel. Readable enough that nobody
+   filed it, which is exactly how it survived — see `face.h`. */
+#define LABEL_X 16
+#define LABEL_Y 18
 #define LABEL_SCALE 2
 #define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */

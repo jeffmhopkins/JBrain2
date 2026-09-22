@@ -845,6 +845,51 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
 }
 
+static void test_the_microphone_light_is_inside_the_case(void)
+{
+    /* THE OWNER FOUND THIS BY TURNING THE PANEL SIDEWAYS: "there is a small red light on the
+       bottom left ... the bottom left one is always there regardless. It might be hidden from
+       the curvature while vertical?" It was. §10.4c measured the enclosure rounding the
+       display into a squircle and `frontend/src/pet/scale.ts` has masked the preview to it
+       since; the firmware never did, and the one mark on this panel that is a promise to a
+       room rather than a decoration — the ICO Children's Code indicator, drawn whenever the
+       microphone is open — sat behind the case.
+
+       A screenshot could never show this. The framebuffer was always correct. So the test
+       asks the question the framebuffer cannot: of the pixels this draws, is every one of
+       them somewhere a person can actually see?
+
+       The PIP ALONE, with no caption. The ticker deliberately scrolls in from the right edge
+       and is clipped by the corner on its way past, which is what a ticker does; the
+       indicator is not allowed to be. */
+    caption_t c;
+    caption_reset(&c);
+    caption_tick(&c, 1000, FACE_W, true, true);
+    for (int i = 0; i < 40; i++) caption_tick(&c, 1000 + (uint32_t)i * 40, FACE_W, true, true);
+
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    caption_draw(&c, fb, FACE_W, FACE_H, 0x1234, 0x00F8);
+
+    long lit = 0, outside = 0;
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            if (fb[y * FACE_W + x] == 0) continue;
+            lit++;
+            if (!face_inside_case(x, y, FACE_W, FACE_H)) outside++;
+        }
+    }
+    CHECK(lit > 40, "the indicator is actually drawn");
+    CHECK(outside == 0, "every pixel of the microphone light clears the case");
+
+    /* And the geometry it is checked against is the case, not a rectangle that would pass
+       anything: the four corners are out, the centre and the edge midpoints are in. */
+    CHECK(!face_inside_case(0, 0, FACE_W, FACE_H), "the corner pixel is behind the case");
+    CHECK(!face_inside_case(FACE_W - 1, FACE_H - 1, FACE_W, FACE_H), "and the opposite one");
+    CHECK(face_inside_case(FACE_W / 2, 0, FACE_W, FACE_H), "the top edge's middle is visible");
+    CHECK(face_inside_case(0, FACE_H / 2, FACE_W, FACE_H), "so is the left edge's");
+    CHECK(face_inside_case(FACE_W / 2, FACE_H / 2, FACE_W, FACE_H), "and the centre");
+}
+
 static void test_the_caption_does_not_black_out_the_pet(void)
 {
     /* THE TICKER USED TO CLEAR A FULL-WIDTH BLACK STRIP before drawing, and the reason was
@@ -1980,6 +2025,7 @@ int main(void)
     test_a_tap_lands_where_the_pixel_it_touched_came_from();
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
+    test_the_microphone_light_is_inside_the_case();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();
