@@ -4605,6 +4605,48 @@ lands in the follow-up window where it does work. Barge-in is a different featur
 codec problem solved first, which §"Step 8" of the conversation plan already had as an open
 question.
 
+#### 10.4cn RTC memory does not survive an OTA (0.2.79, 2026-09-22)
+
+0.2.77's second-boot workaround **never fired**, and the telemetry says exactly why. Two boots,
+two hours apart, same panel:
+
+| | `crash_phase` | PMU ring |
+|---|---|---|
+| after a **gesture** reboot | 9 | 8 samples |
+| after an **OTA** reboot | **−1** | **empty** |
+
+**`RTC_NOINIT` survives `esp_restart()` of the same image and not an OTA.** Those variables are
+placed by the linker; a new image is a new link, its RTC data lands at different addresses, and
+the incoming firmware reads the outgoing one's bytes. The restage flag was written by the old
+image and looked for by the new one at an address that meant something else.
+
+Nothing broke — the magic rejected the garbage, exactly as `pmu.h` designed it to after §10.4am
+— so the restart simply did not happen, silently. Which is the worst way for a workaround to
+fail: it looked like the fault it was meant to fix.
+
+##### The signal was already there, and it needs no storage
+
+`ESP_OTA_IMG_PENDING_VERIFY` is true on exactly the first boot of a newly installed image and no
+other. It asks the system the question instead of asking memory nobody controls, and a layout
+change cannot confuse it. `ota_confirm_health` was already reading it three lines away.
+
+Read **before** that call, because marking the image good clears it, and held in an ordinary
+local — the value only has to survive a few hundred milliseconds, not a reboot.
+
+##### What this says about everything else in RTC
+
+`pmu.c`'s ring and `display.c`'s crash breadcrumb have the same limitation, and it is now
+measured rather than assumed: **both are blind across an update.** That is tolerable — each
+exists to explain a crash or a dark screen on a panel that restarted itself, which is the same
+image — but it is worth knowing that the one boot they cannot describe is the boot after an
+update, which is precisely the boot that has been going dark.
+
+##### And the BOOT button is real
+
+`boot_btn: 1` in the same report. The owner pressed it, GPIO0 counted it. The pin map guess was
+right and is now a measurement, so a mute switch has somewhere to live (§10.4cg). PWR remains
+unprobed and still most likely belongs to the AXP2101 rather than to a GPIO.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

@@ -59,25 +59,28 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out);
  * `reachable` false on a pending image triggers the revert and does not return. */
 void ota_confirm_health(bool reachable);
 
-/* THE SECOND BOOT, WHICH IS THE ONLY THING THAT HAS EVER FIXED THE BLACK SCREEN.
+/* IS THIS THE FIRST BOOT OF A NEWLY INSTALLED IMAGE?
  *
- * A panel that updates comes up with its display dark. A panel that is rebooted again — the
- * maintenance gesture, the same image, nothing reinstalled — comes up lit, every time. That
- * has now held across many updates, and the cause is still unknown: §10.4by's mid-transfer
- * theory was tested in 0.2.65 by parking the renderer before the OTA's restart, and 0.2.76
- * came up black anyway. The remaining suspect is the CO5300's reset line, which the vendor
- * BSP leaves at `GPIO_NUM_NC` and which most likely hangs off the TCA9554 expander this
- * firmware has only ever read.
+ * Which is the question behind the second boot after an update — the only thing that has ever
+ * reliably cured the black screen short of pulling the plug. A panel that updates comes up
+ * dark; rebooted again, same image, nothing reinstalled, it comes up lit. §10.4by's
+ * mid-transfer theory was tested in 0.2.65 and falsified in 0.2.76, so this is a workaround
+ * and is labelled one. The remaining suspect is the CO5300's reset line, which the vendor BSP
+ * leaves at `GPIO_NUM_NC` and which most likely hangs off the TCA9554 expander.
  *
- * So this is a WORKAROUND and is labelled one. It reproduces the only known cure: after an
- * update, boot once more. Exactly once — the flag is cleared before the restart, so nothing
- * here can loop, and a power cycle randomises the RTC word into a value the magic rejects.
+ * NO FLAG, AND THAT IS THE FIX FOR 0.2.77. The first attempt carried the answer across the
+ * reboot in an `RTC_NOINIT` word — and RTC memory DOES NOT SURVIVE AN OTA. It survives
+ * `esp_restart()` of the same image, which is why the gesture reboot's telemetry shows a live
+ * crash phase and a full PMU ring; but a new image is a new link, its RTC variables land at
+ * different addresses, and the incoming firmware reads the outgoing one's bytes. Measured
+ * directly: the post-update boot reports `crash_phase: -1` and an empty ring where a gesture
+ * reboot reports 9 and eight samples. The magic rejected the garbage, so nothing broke — the
+ * restart simply never happened.
  *
- * AFTER `ota_confirm_health`, NEVER BEFORE, and that ordering is the whole safety argument.
- * A new image boots in `PENDING_VERIFY`; restarting before it is marked good makes the
- * bootloader ROLL BACK to the previous firmware. A double reboot placed carelessly would
- * therefore undo every update it was meant to rescue. */
-void ota_mark_restage(void);
-
-/* True once, on the boot that followed an update. Clears the flag as it answers. */
-bool ota_take_restage(void);
+ * `ESP_OTA_IMG_PENDING_VERIFY` is the same question asked of the system rather than of memory
+ * we do not control. It is true on exactly the first boot of a newly installed image and on no
+ * other, it needs no storage, and it cannot be confused by a layout change.
+ *
+ * MUST BE READ BEFORE `ota_confirm_health`, which clears the state when it marks the image
+ * good. */
+bool ota_boot_is_new_image(void);

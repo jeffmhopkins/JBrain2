@@ -10,7 +10,6 @@
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_log.h"
-#include "esp_attr.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,24 +18,14 @@
 
 static const char *TAG = "ota";
 
-/* Survives `esp_restart()`, randomised by a power cycle — the same RTC trick `pmu.c` uses,
-   and the magic is what makes an uninitialised word readable as "no". */
-#define RESTAGE_MAGIC 0x0A5E1234u
-RTC_NOINIT_ATTR static uint32_t s_restage;
-
-void ota_mark_restage(void)
+bool ota_boot_is_new_image(void)
 {
-    s_restage = RESTAGE_MAGIC;
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return false;
+    return state == ESP_OTA_IMG_PENDING_VERIFY;
 }
 
-bool ota_take_restage(void)
-{
-    if (s_restage != RESTAGE_MAGIC) return false;
-    /* Cleared BEFORE the caller acts on it: a crash between here and the restart must not
-       leave a panel rebooting itself forever. */
-    s_restage = 0;
-    return true;
-}
 
 #define MANIFEST_MAX 1024
 #define HTTP_TIMEOUT_MS 15000
@@ -288,9 +277,6 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
        only thing it does differently is leave from inside the render loop with nothing in
        flight. See `display_request_restart`. */
     ESP_LOGI(TAG, "installed; parking the renderer, then rebooting into the new slot");
-    /* Ask the NEXT boot to boot once more — see `ota_mark_restage`. Set here rather than on
-       the far side because this is the only place that knows an update just happened. */
-    ota_mark_restage();
     display_request_restart();
     vTaskDelay(pdMS_TO_TICKS(PARK_TIMEOUT_MS));
     ESP_LOGW(TAG, "renderer did not park in %d ms — restarting from here", PARK_TIMEOUT_MS);
