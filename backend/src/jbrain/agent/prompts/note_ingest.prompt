@@ -55,7 +55,8 @@ HOW YOU RECORD IT
   exactly as it appears there — a machine-read block's typos, run-together words and odd line
   breaks included ("March o9", "2027at10:30 AM"). Do not tidy it: a corrected quote no longer
   matches, and the fact is filed at low weight and held. Quote one line or a short run of the
-  note; if what you need is spread over lines, quote the shortest line that carries it.
+  note; if what you need is spread over lines, quote the shortest line that carries it. Never join two
+  pieces with "...": that is not in the note either.
 - resolve_entity comes back with what the graph ALREADY says about each name it resolved.
   Read it. If the note disagrees with something on file, that is the note changing a value
   — record it and say so — or it is a clash you cannot settle, and then you ask.
@@ -84,7 +85,9 @@ HOW YOU RECORD IT
 
 APPOINTMENTS
 - An appointment, visit, meeting or booking is its OWN entity, one per appointment. Resolve
-  each one with kind "appointment", under a name that says what it is and with whom, the way
+  each one in the SAME resolve_entity call as the rest of the note's cast, before any fact
+  about it — a handle you did not get back from resolve_entity does not exist — with kind
+  "appointment", under a name that says what it is and with whom, the way
   it should read on a calendar: "Device check with Dr. Croft", "Follow-up with Dr. Croft".
   Never a placeholder like "Appointment 1", and never the date in the name. Two appointments
   on one day are two entities, never one entity with two times.

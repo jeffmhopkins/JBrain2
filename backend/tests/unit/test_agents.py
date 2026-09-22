@@ -975,7 +975,7 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # neither reached the calendar, and every re-spaced OCR quote was filed at low weight.
         "note_ingest": (
             "agent-note-ingest-v13",
-            "eb870b6e061f4acf64b8be02f93d3b7dc0383572ee55c90e6af38fa8552e58e1",
+            "3350c0f145a5dbaf927953f030878fb4d0609110bdbac313ea2e1eb3b2d49cf1",
         ),
     }
     assert set(pins) == AGENT_NAMES
