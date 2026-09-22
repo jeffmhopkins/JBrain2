@@ -604,6 +604,30 @@ static volatile bool s_debug_overlay;
 #define TALK_TIMEOUT_MS 25000
 #define TALK_FAILED_MS 2500
 
+/* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.
+ *
+ * The owner: *"a wake word that will allow the same interaction as if I held the panel and it
+ * was listening ... but we just need a way for emptiness at the end to stop it."*
+ *
+ * A hold has a release. A name does not, so the end of the sentence has to be FOUND. The
+ * signal already exists and already runs: `speech.c` sets `s_hearing` from the front end's
+ * own `vad_state`, which is what gates MultiNet and drives the indicator. Nothing new is
+ * computed here — the recogniser has been deciding "is someone talking" every frame since
+ * bring-up and nobody had asked it.
+ *
+ * Three ways out, and each is a different sentence to a four-year-old:
+ *
+ *   HUSH   they finished  -> send it. 900 ms, which is long enough to survive the pause a
+ *                            four-year-old puts in the middle of a sentence and short enough
+ *                            that the six-second cap does not eat the tail of a slow one.
+ *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
+ *                            accidental "hey fish" from the television must not become an
+ *                            upload, and this is the branch that stops it.
+ *   the cap `audio.c` already enforces -> send what we have rather than truncating to nothing.
+ */
+#define LISTEN_HUSH_MS 900
+#define LISTEN_LEAD_MS 3000
+
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
@@ -618,6 +642,11 @@ static uint32_t s_down_since;
    the touch gave no point, which the margin test rejects for free. */
 static int s_down_x = -1;
 static int s_down_y = -1;
+/* The hands-free listen: whether this turn was started by the name rather than by a finger,
+   whether anyone has actually spoken yet, and when the room went quiet. */
+static bool s_listen_voice;
+static bool s_listen_heard;
+static uint32_t s_listen_hush;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -1334,6 +1363,22 @@ static void face_task(void *arg)
                     colour = v->arg < 0 ? (colour + 1) % face_colour_count()
                                         : v->arg % face_colour_count();
                     break;
+                case VOCAB_LISTEN:
+                    /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
+                       two. Everything after this — the bubble, the upload, the reply, the
+                       failure face — is the press-and-hold machine, and the only difference is
+                       how the turn ends (`LISTEN_HUSH_MS`). Refused while a turn is in flight
+                       or while we are speaking, for the same reasons the hold is. */
+                    if (s_talk == TALK_IDLE && !speaking && talk_state() != TALK_NET_BUSY) {
+                        s_talk = TALK_LISTENING;
+                        s_talk_since = now;
+                        s_listen_voice = true;
+                        s_listen_heard = false;
+                        s_listen_hush = 0;
+                        audio_capture_open();
+                        ESP_LOGI(TAG, "talk: listening (name)");
+                    }
+                    break;
                 case VOCAB_ACTION:
                 default:
                     action = (action_t)v->arg;
@@ -1467,6 +1512,10 @@ static void face_task(void *arg)
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
+            /* A finger, not the name — so this turn ends on the release, not on silence. Set
+               explicitly rather than relied upon: the two paths share one state machine, and a
+               stale flag here would leave a held turn waiting for a hush that never comes. */
+            s_listen_voice = false;
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
                that the thing is now listening rather than merely being held. */
             if (sound) audio_beep();
@@ -1482,6 +1531,44 @@ static void face_task(void *arg)
                microphone that stopped working unless the panel says which it is. */
             ESP_LOGI(TAG, "talk: hold at (%d,%d) is on the rim, not the pet", s_down_x,
                      s_down_y);
+        } else if (s_talk == TALK_LISTENING && s_listen_voice) {
+            /* WAITING FOR THE ROOM TO GO QUIET. A held turn ends when the finger lifts; this
+               one has to be read off the front end's VAD, which `speech.c` has been computing
+               all along. */
+            const bool voice = speech_hearing();
+            if (voice) {
+                s_listen_heard = true;
+                s_listen_hush = 0;
+            } else if (s_listen_heard && s_listen_hush == 0) {
+                s_listen_hush = now;
+            }
+            const bool hushed =
+                s_listen_heard && s_listen_hush != 0 && now - s_listen_hush >= LISTEN_HUSH_MS;
+            const bool full = audio_capture_ms() >= audio_capture_cap_ms();
+            const bool nothing = !s_listen_heard && now - s_talk_since > LISTEN_LEAD_MS;
+            if (nothing) {
+                /* The name and then silence — a television, or a child who changed their mind.
+                   Dropped without a bubble: an accidental wake must cost nothing, which is the
+                   whole reason this branch exists rather than sending six seconds of a room. */
+                size_t got = 0;
+                (void)audio_capture_close(&got);
+                s_talk = TALK_IDLE;
+                s_listen_voice = false;
+                ESP_LOGI(TAG, "talk: named but nobody spoke — dropped");
+            } else if (hushed || full) {
+                size_t got = 0;
+                const int16_t *pcm = audio_capture_close(&got);
+                ESP_LOGI(TAG, "talk: %s after %u ms (%u bytes)", full ? "full" : "hushed",
+                         (unsigned)audio_capture_ms(), (unsigned)got);
+                s_listen_voice = false;
+                if (pcm == NULL || !talk_send(pcm, got)) {
+                    s_talk = TALK_IDLE;
+                } else {
+                    s_talk = TALK_THINKING;
+                    s_talk_since = now;
+                }
+                dirty = true;
+            }
         } else if (s_talk == TALK_LISTENING && !down) {
             size_t got = 0;
             const int16_t *pcm = audio_capture_close(&got);

@@ -140,6 +140,11 @@ const int16_t *audio_capture_close(size_t *len_bytes)
     return (s_cap != NULL && used > 0) ? s_cap : NULL;
 }
 
+int audio_capture_cap_ms(void)
+{
+    return CAPTURE_MAX_MS;
+}
+
 int audio_capture_ms(void)
 {
     return s_cap_used * 1000 / AUDIO_RATE;

@@ -4117,6 +4117,76 @@ taking the wider stride, and the phase wrapping — because a panel left tilting
 travel forever, and a float big enough that one frame's addition rounds away would stop the legs
 dead. Confirmed to fail against a clock-driven phase before being trusted.
 
+#### 10.4cd "Hey fish" — a name, and finding the end of a sentence (0.2.70, 2026-09-22)
+
+The owner: *"both of these panels will have a wake word that will allow the same interaction as
+if I held the panel and it was listening ... but we just need a way for emptiness at the end to
+stop it."* The twins named this one **fish**.
+
+##### It needed no wake-word engine, and that was the surprise
+
+WakeNet only recognises models Espressif has trained; "fish" is not one and cannot be added.
+But §10.4ar's configuration already solved this by accident: **WakeNet is disabled** and
+MultiNet runs continuously over a command list, registered from **plain English text** at
+runtime (`esp_mn_commands_add(i, "change into merc")`). So the panel's name is one more row in
+`vocab.c`, and `esp_mn_commands_update()` already supports re-registering it live.
+
+The endpointing signal was likewise already there and unused. `speech.c` has set
+`s_hearing = res->vad_state == VAD_SPEECH` since bring-up, to gate MultiNet and drive the
+indicator. The front end has been deciding "is someone talking" every frame and nobody had
+asked it the question the owner just asked.
+
+##### Two words, and the first choice did not work
+
+The twins' first name was **robot**, and it is unusable for a reason nothing to do with
+preference: `vocab.h` rule 3 forbids a phrase being a prefix of another, and **"change into
+robot"** and **"be a robot"** are already in the table. Bare "robot" breaks all three.
+
+"hey fish" clears that, and the carrier word earns its place independently. Every other phrase
+in the table costs an animation when it misfires. **This one opens the microphone, uploads six
+seconds of a child's bedroom, calls a language model and makes the pet talk to an empty room.**
+`speech.h`'s warning that "a one-word always-on vocabulary fires at the television" stops being
+a style note at that price, and a carrier word is what every always-on device puts in front of
+its name for exactly this reason.
+
+##### Three ways out, and each is a different sentence to a four-year-old
+
+A hold has a release. A name does not, so the end has to be found:
+
+| | | |
+|---|---|---|
+| **hush** | 900 ms of VAD silence after speech | send it |
+| **lead** | the name, then nothing for 3 s | **drop it silently** |
+| **full** | `audio.c`'s six-second cap | send what we have |
+
+The middle one is the important one. An accidental "hey fish" off the television must cost
+**nothing** — no upload, no bubble, no reply to an empty room — and that branch is the only
+thing standing between a false trigger and a conversation with the TV. 900 ms is the compromise
+on the other end: long enough to survive the pause a four-year-old puts in the middle of a
+sentence, short enough that the six-second cap does not eat the tail of a slow one.
+
+It reaches **the same `TALK_LISTENING` state a hold does**, deliberately — the bubble, the
+upload, the reply and the failure face are the press-and-hold machine, and the only difference
+is how the turn ends. Refused while a turn is in flight or while the pet is speaking, for the
+same reasons the hold is.
+
+##### The test, and the gap
+
+The suite pins that there is **exactly one** name (two would give the panel two names and the
+twins no way to know which worked; zero would leave the hands-free path unreachable with
+nothing to say so) and that the phrase carries a space — the carrier word, asserted rather than
+remembered.
+
+**The name is compiled in, and that is a gap.** §10.4ab's argument applies exactly: the owner
+has no terminal, so a name only a rebuild can change is a name they cannot change — and the two
+panels will want different ones. It belongs on `endpoint_settings` beside the other knobs, with
+the panel re-registering on the settings fetch it already makes at boot.
+
+**Unverified:** every timing here is reasoned, not measured. Whether 900 ms cuts a four-year-old
+off mid-sentence, and how often "hey fish" fires at a television, are questions only the twins'
+bedroom answers. The trigger logs, so false fires can be counted from telemetry rather than
+guessed at.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

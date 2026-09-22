@@ -1905,7 +1905,7 @@ static void test_vocab_has_no_ambiguity(void)
 static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
-    int forms = 0, actions = 0, colours = 0, named_colours = 0;
+    int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -1925,12 +1925,31 @@ static void test_vocab_arguments_are_real(void)
             if (v[i].arg >= 0) named_colours++;
             colours++;
             break;
+        case VOCAB_LISTEN:
+            /* THE NAME, and there must be EXACTLY ONE of it. Two wake phrases would give the
+               panel two names and the twins no way to know which one worked; zero would leave
+               the hands-free path unreachable with nothing to say so. Counted below. */
+            listens++;
+            /* And it must be more than one word. Every other phrase here costs an animation
+               when it misfires; this one opens a microphone and calls a model, which is the
+               whole argument in `vocab.c` for a carrier word in front of the name. */
+            {
+                const char *sp = v[i].phrase;
+                bool spaced = false;
+                while (*sp != '\0') {
+                    if (*sp == ' ') spaced = true;
+                    sp++;
+                }
+                CHECK(spaced, "the wake phrase carries a word in front of the name");
+            }
+            break;
         }
         CHECK(vocab_get(i) == &v[i], "ids are indices, which is what MultiNet hands back");
     }
     CHECK(vocab_get(-1) == NULL && vocab_get(vocab_count()) == NULL, "a bad id is NULL, not a read off the end");
     /* Both forms must be reachable BY VOICE, which is the request that started this: the
        ostrich is the default, so "change into robot" is the only way back without five taps. */
+    CHECK(listens == 1, "the panel has exactly one name");
     CHECK(forms >= 2, "both bodies can be asked for");
     CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
     /* The owner asked for "turn [color]" by name, so a palette command that only ever steps

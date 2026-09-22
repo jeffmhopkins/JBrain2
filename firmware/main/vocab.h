@@ -37,6 +37,7 @@ typedef enum {
     VOCAB_ACTION = 0, /* play an action */
     VOCAB_FORM,       /* become a body */
     VOCAB_COLOUR,     /* `arg` < 0: next colour in the palette; otherwise that palette index */
+    VOCAB_LISTEN,     /* the panel's NAME: start a conversation turn, hands-free */
 } vocab_kind_t;
 
 typedef struct {
