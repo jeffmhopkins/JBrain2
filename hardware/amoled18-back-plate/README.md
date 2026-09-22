@@ -9,12 +9,17 @@ A 3D-printable replacement for the stock back cover of the
 runs the room-endpoint pet firmware in [`../../firmware/`](../../firmware/README.md).
 
 The stock cover leaves almost no room behind the board: Waveshare's largest recommended cell
-for the stock case is 3.85 × 24 × 28 mm. This plate is deeper and has a pocket sized to a real
-LiPo (the sample export is for an 802525, 8 × 25 × 25 mm, about twice that volume), plugged
-into the board's MX1.25 `BAT` connector. With that cell the unit goes from 15.0 mm thick to
-about 22.7 mm. Everything else about the case stays stock: all ports, buttons and the mic are
-in the **front** shell, so this part is solid except for the battery pocket and four screw
-holes.
+for the stock case is 3.85 × 24 × 28 mm. This plate is a tall box with straight walls: the
+whole inside is open except the four screw posts, and its depth follows the cell. Any gaps are
+padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything else about
+the case stays stock: all ports, buttons and the mic are in the **front** shell, so the plate
+has no other openings.
+
+The default is a **1000 mAh 852540 cell (8.5 × 25 × 40 mm) standing on its long edge**, which
+makes the unit about **37.6 × 45.2 × 39 mm**, close to a cube. A long cell can't lie flat: the
+screw posts sit only about 19 mm apart across the case, but a cell on its edge is just 8.5 mm
+wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an 802525 lying
+flat makes the unit about 22.7 mm thick.
 
 The back face is flat, with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
 The screw holes are counterbored so standard M2 socket head cap screws (the hex-key kind) sit
@@ -29,7 +34,8 @@ just below the surface.
 | File | What it is |
 |---|---|
 | `amoled18_back_plate.scad` | The parametric model. Every dimension is adjustable. |
-| `back_plate_802525_400mAh.stl` | Ready-made export with the defaults below and an 802525 cell. |
+| `back_plate_852540_1000mAh_edge.stl` | Ready to print: the defaults, for an 852540 cell on its edge. Unit ≈ 39 mm thick. |
+| `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 22.7 mm thick. |
 | `preview.png`, `preview-back.png` | Renders of the inside (battery ghosted in) and the back face. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
@@ -88,15 +94,21 @@ ideal; a good ruler works for a first try. All values are in millimetres.
 ### 5. Enter the battery you actually have
 
 In **group 1 (Battery)** type the cell's thickness, width and length — they're usually on the
-cell's label or listing (an "802525" cell is 8.0 × 25 × 25 mm; allow a little extra for
-swelling on thickness). Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll
-use. The pocket sizes itself from these automatically.
+cell's label or listing (the size code reads thickness, width, length: "852540" is
+8.5 × 25 × 40 mm). Measure the real cell if you can, including the little circuit board folded
+at the wire end. Then pick `battery_orientation`:
+
+- **edge** — standing on its long edge. Use this for long cells (35–40 mm).
+- **flat** — lying on its face. Fine for small square cells like 802525.
+
+Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll use. The plate's depth
+follows automatically.
 
 ### 6. Check the console for warnings
 
 Press **F5** again after changing values. At the bottom of the window is the **console**
 (if it's hidden: **Window → Console**). It prints a summary block, and the last line should
-say **`All checks passed.`** If instead it says something like `POCKET OVERLAPS A SCREW HOLE`,
+say **`All checks passed.`** If instead it says something like `CELL HITS A SCREW POST`,
 the battery is too big for this plate — pick a smaller cell or adjust the flagged value.
 
 Write down the **`SCREWS:`** line — it gives the grip length you need to work out which
@@ -142,6 +154,7 @@ but not the case shells.
 | `lip_outer_x` × `lip_outer_y`, `lip_outer_r` | 35.0 × 42.6, 7.4 | Outline minus a ~1.3 mm front-shell wall, estimated from the photos. (The board itself is 33.0 × 40.6.) | Estimate: **measure** |
 | `stock_clear` | 3.9 | The stock cover shows 3.5 mm on the side view; depth derived from that and the rim height | Estimate: **measure** |
 | `lip_h` | 2.0 | Not visible in any source | Guess: **measure** |
+| `lip_wall` | 0.8 | Chosen, not measured: the walls run straight up to the rim, so the rim's inside is the cavity, and 0.8 mm leaves a 40.7 mm opening for a 40 mm cell. Two nozzle widths, plenty for a 2 mm locating lip. | Design choice |
 | `screw_size` | M2 | Screw heads measure ~3.8 mm across in the drawing, which matches M2 | Likely: check a stock screw |
 | Counterbores | Ø4.6 × 2.3 deep | ISO 4762 M2 socket head (Ø3.8 × 2.0) + `head_clear` 0.6 + `hole_slop` 0.2, sunk `head_sink` 0.3 | Standard |
 
@@ -159,19 +172,22 @@ clamps through solid plastic. The deeper plate means the stock screws are far to
 work out the length:
 
 1. The console's `SCREWS:` line gives the **grip**: the plastic between the head's seat and the
-   post top. It's 10.9 mm with the defaults.
+   post top. It's 27.3 mm with the defaults (10.9 mm for the flat 802525 version).
 2. Push a stock screw through the stock cover and measure how far it sticks out past the top of
    its post. That's how far it goes into the case.
 3. Screw length = grip + that, rounded **down** to a length that's sold, so it can't bottom out.
 
-If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 12
-with the defaults. A small M2 socket-head assortment covers it either way.
+If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 30
+for the default tall plate and M2 × 12 for the flat 802525 one. Long M2 socket head screws are
+sold on their own; small assortments usually stop at 20 mm.
 
 ## Battery mounting
 
-The cell is held by double-sided VHB tape on the pocket floor and foam padding above it, which
-presses it down when the case closes. Set `tape_t` and `foam_t` to what you actually have; both
-add to the pocket depth.
+The cell is held by double-sided VHB tape on the floor and foam padding above it, which presses
+it down when the case closes. The cavity is deliberately open rather than shaped to the cell;
+pack foam into the gaps around it so it can't shift. Set `tape_t` and `foam_t` to what you
+actually have; both add to the depth. There's room at the ends and beside the cell for the wires
+to reach the `BAT` connector.
 
 ## Printing
 

@@ -4,7 +4,7 @@
 //
 // The stock back is a flat plate with a shallow rim. All ports, buttons
 // and the mic live in the FRONT shell, so this part is solid except for
-// the battery pocket and four screw holes.
+// the battery cavity and four screw holes.
 //
 // EVERY dimension is adjustable. In OpenSCAD open
 //     Window > Customizer
@@ -23,12 +23,14 @@
 
 /* [1. Battery] */
 
-// Cell thickness (the dimension that drives the whole design)
-battery_t = 8.6;    // [2:0.1:25]
-// Cell width
+// Cell thickness (the first number in a size code: 852540 is 8.5)
+battery_t = 8.5;    // [2:0.1:25]
+// Cell width (852540: 25)
 battery_w = 25.0;   // [10:0.5:60]
-// Cell length
-battery_l = 25.0;   // [10:0.5:60]
+// Cell length, laid along the long side of the case (852540: 40)
+battery_l = 40.0;   // [10:0.5:60]
+// flat = lying on its face. edge = standing on its long edge, which fits long cells
+battery_orientation = "edge";  // [flat, edge]
 // Double-sided tape under the cell (VHB 1mm measures about 1.1)
 tape_t = 1.1;       // [0:0.1:3]
 // Foam padding above the cell
@@ -82,7 +84,7 @@ lip_inset = 1.4;     // [0:0.1:6]
 // How tall the rim stands above the floor
 lip_h = 2.0;         // [0:0.1:8]
 // Width of the rim wall (how thick the band is)
-lip_wall = 1.6;      // [0.4:0.1:4]
+lip_wall = 0.8;      // [0.4:0.1:4]
 // Clearance taken off the outside so it is not a press fit
 lip_slop = 0.15;     // [0:0.05:0.6]
 // Inside depth of the STOCK cover (rim top down to the floor)
@@ -120,20 +122,11 @@ custom_head_d = 3.8;    // [2:0.1:10]
 custom_head_t = 2.0;    // [0.4:0.1:6]
 
 
-/* [5. Battery pocket] */
+/* [5. Battery cavity] */
 
-// Size the pocket automatically from the cell dimensions
-auto_pocket = true;
-// Gap around the cell when auto sizing
-pocket_margin = 1.5;    // [0:0.1:5]
-// Manual pocket width (used when auto_pocket is off)
-manual_pocket_x = 30.0; // [10:0.5:70]
-// Manual pocket length
-manual_pocket_y = 28.0; // [10:0.5:70]
-// Pocket corner radius
-pocket_r = 3.0;         // [0.5:0.1:10]
-// Soften the bottom edge of the pocket
-pocket_floor_fillet = 0.6;  // [0:0.1:2]
+// The whole inside is hollow except the screw posts; pad gaps with foam.
+// The walls rise straight up to the rim, so the cavity is the rim opening
+// and the rim wall below sets how much room there is.
 
 
 /* [6. Output] */
@@ -166,16 +159,11 @@ head_t  = counterbore ? shaft_table[2] + head_sink : 0;
 boss_d  = shaft_d + 2 * boss_wall;
 screw_r = max(head_d, boss_d) / 2;
 
-stack_t     = battery_t + tape_t + foam_t + extra_clearance;
-inner_clear = max(stock_clear, stack_t);
-extra_depth = inner_clear - stock_clear;
-// The rim is part of the pocket's depth, so the body only makes up the rest.
-spacer_h    = max(0, inner_clear - lip_h);
-total_h     = plate_t + spacer_h + lip_h;
-
-pocket_x = auto_pocket ? battery_w + 2 * pocket_margin : manual_pocket_x;
-pocket_y = auto_pocket ? battery_l + 2 * pocket_margin : manual_pocket_y;
-pocket_depth = spacer_h + lip_h;
+// Cell footprint and height as it sits in the plate.
+edge  = battery_orientation == "edge";
+fx     = edge ? battery_t : battery_w;
+fy     = battery_l;
+cell_h = edge ? battery_w : battery_t;
 
 // Rim outline, from whichever mode is selected
 rim_out_x = (lip_mode == "absolute" ? lip_outer_x
@@ -184,26 +172,43 @@ rim_out_y = (lip_mode == "absolute" ? lip_outer_y
                                     : plate_y - 2 * lip_inset) - 2 * lip_slop;
 rim_out_r = (lip_mode == "absolute" ? lip_outer_r
                                     : plate_r - lip_inset) - lip_slop;
-
-// Inside of the rim, which also caps how big the pocket can be
 rim_in_x = rim_out_x - 2 * lip_wall;
 rim_in_y = rim_out_y - 2 * lip_wall;
+rim_in_r = max(0.3, rim_out_r - lip_wall);
 
-pocket_fits_x = pocket_x <= rim_in_x - 0.5;
-pocket_fits_y = pocket_y <= rim_in_y - 0.5;
+// Straight walls whose inside is the rim's inside, so the rim stands on the
+// wall with nothing overhanging.
+cav_x = rim_in_x;
+cav_y = rim_in_y;
+cav_r = rim_in_r;
+
+stack_t     = cell_h + tape_t + foam_t + extra_clearance;
+inner_clear = max(stock_clear, stack_t);
+// The rim is part of the cavity's depth, so the body only makes up the rest.
+spacer_h    = max(0, inner_clear - lip_h);
+body_h      = plate_t + spacer_h;
+total_h     = body_h + lip_h;
+extra_depth = total_h - plate_t - stock_clear;
+
+// Nearest gap between the cell's corner and a screw post.
+post_gap  = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - screw_r;
+clears_posts = post_gap >= 0.3;
+kx = cav_x/2 - cav_r;
+ky = cav_y/2 - cav_r;
+fits_walls = fx <= cav_x - 0.6 && fy <= cav_y - 0.6
+          && (fx/2 <= kx || fy/2 <= ky || norm([fx/2 - kx, fy/2 - ky]) <= cav_r - 0.3);
 rim_fits      = (rim_out_x <= plate_x - 0.4) && (rim_out_y <= plate_y - 0.4);
-screw_clear_x = screw_dx - screw_r > pocket_x/2 + 0.8;
-screw_clear_y = screw_dy - screw_r > pocket_y/2 + 0.8;
-screws_solid  = screw_clear_x || screw_clear_y;
 screws_inside = (screw_dx + head_d/2 < plate_x/2 - 0.6)
              && (screw_dy + head_d/2 < plate_y/2 - 0.6);
 // Plastic the screw passes through, from the head's seat to the post top.
 screw_grip = total_h - head_t;
 
 echo("================ BACK PLATE ================");
-echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l, " mm"));
+echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
+         " mm, ", edge ? "standing on its edge" : "lying flat"));
 echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + air)"));
-echo(str("Pocket:             ", pocket_x, " x ", pocket_y, " x ", pocket_depth, " mm"));
+echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open around the posts"));
+echo(str("Gap cell to post:   ", post_gap, " mm"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
 echo(str("SCREWS:             ", screw_size, " socket head cap, grip ", screw_grip,
@@ -213,11 +218,10 @@ echo(str("Rim outside:        ", rim_out_x, " x ", rim_out_y,
 echo(str("Rim opening:        ", rim_in_x, " x ", rim_in_y, " mm"));
 echo("-------------------------------------------");
 if (!rim_fits)      echo("*** RIM IS LARGER THAN THE PLATE ***");
-if (!pocket_fits_x) echo("*** POCKET TOO WIDE for the rim opening ***");
-if (!pocket_fits_y) echo("*** POCKET TOO LONG for the rim opening ***");
-if (!screws_solid)  echo("*** POCKET OVERLAPS A SCREW HOLE - shrink pocket or move screws ***");
+if (!clears_posts)  echo("*** CELL HITS A SCREW POST - try the other orientation or a narrower cell ***");
+if (!fits_walls)    echo("*** CELL DOES NOT FIT INSIDE THE WALLS ***");
 if (!screws_inside) echo("*** SCREW HOLES FALL OFF THE PLATE EDGE ***");
-if (rim_fits && pocket_fits_x && pocket_fits_y && screws_solid && screws_inside)
+if (rim_fits && clears_posts && fits_walls && screws_inside)
     echo("All checks passed.");
 echo("===========================================");
 
@@ -234,8 +238,12 @@ module rrect(x, y, r) {
 
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
+module posts_2d() {
+    for (sx = [-1, 1], sy = [-1, 1])
+        translate([sx * screw_dx, sy * screw_dy]) circle(r = screw_r);
+}
+
 module solid_body() {
-    body_h = plate_t + spacer_h;
     if (edge_chamfer > 0.05)
         hull() {
             linear_extrude(height = eps)
@@ -254,26 +262,20 @@ module solid_body() {
             cylinder(d = boss_d, h = lip_h + eps);
 
     if (lip_h > 0.05)
-        translate([0, 0, plate_t + spacer_h - eps])
+        translate([0, 0, body_h - eps])
             linear_extrude(height = lip_h + eps)
                 difference() {
                     rrect(rim_out_x, rim_out_y, rim_out_r);
-                    rrect(rim_in_x, rim_in_y, max(0.3, rim_out_r - lip_wall));
+                    rrect(rim_in_x, rim_in_y, rim_in_r);
                 }
 }
 
-module battery_pocket() {
-    translate([0, 0, plate_t])
-        if (pocket_floor_fillet > 0.05)
-            minkowski() {
-                rbox(pocket_x - 2*pocket_floor_fillet,
-                     pocket_y - 2*pocket_floor_fillet,
-                     pocket_depth, max(0.1, pocket_r - pocket_floor_fillet));
-                cylinder(r1 = pocket_floor_fillet, r2 = 0,
-                         h = pocket_floor_fillet);
-            }
-        else
-            rbox(pocket_x, pocket_y, pocket_depth + eps, pocket_r);
+module battery_cavity() {
+    difference() {
+        translate([0, 0, plate_t]) rbox(cav_x, cav_y, spacer_h + lip_h + eps, cav_r);
+        translate([0, 0, plate_t - eps])
+            linear_extrude(height = spacer_h + lip_h + 3*eps) posts_2d();
+    }
 }
 
 module screw_holes() {
@@ -291,7 +293,7 @@ module screw_holes() {
 module back_plate() {
     difference() {
         solid_body();
-        battery_pocket();
+        battery_cavity();
         screw_holes();
     }
 }
@@ -300,15 +302,15 @@ back_plate();
 
 if (show_battery)
     color("green", 0.35)
-        translate([-battery_w/2, -battery_l/2, plate_t + tape_t])
-            cube([battery_w, battery_l, battery_t]);
+        translate([-fx/2, -fy/2, plate_t + tape_t])
+            cube([fx, fy, cell_h]);
 
 
 // =====================================================================
 // PRINTING NOTES
 //   Orientation : flat face down on the bed, rim upward. No supports.
 //   Layer       : 0.2 mm
-//   Walls       : 3 perimeters minimum around the screw columns
+//   Walls       : 3 perimeters minimum around the screw posts
 //   Infill      : 40% or more
 //   Material    : PETG or ABS if it may sit in a warm car; PLA softens
 //   First print : check the screw holes line up before printing a final
