@@ -25,16 +25,19 @@
 
 // Cell thickness (the first number in a size code: 852540 is 8.5)
 battery_t = 8.5;    // [2:0.1:25]
-// Cell width (852540: 25)
+// Cell width (852540: 25). On edge it's the height; on end it runs along the case
 battery_w = 25.0;   // [10:0.5:60]
-// Cell length, laid along the long side of the case (852540: 40)
+// Cell length (852540: 40). Along the case, or the height when on end
 battery_l = 40.0;   // [10:0.5:60]
-// flat = lying on its face. edge = standing on its long edge, which fits long cells
-battery_orientation = "edge";  // [flat, edge]
+// flat = lying on its face. edge = standing on its long edge, which fits long cells.
+// end = standing upright on its end: any length fits, the plate just gets taller.
+battery_orientation = "edge";  // [flat, edge, end]
 // Double-sided tape under the cell (VHB 1mm measures about 1.1)
 tape_t = 1.1;       // [0:0.1:3]
 // Foam padding above the cell
 foam_t = 1.5;       // [0:0.1:5]
+// Room above the cell for its wires and plug (the circuit board end faces up)
+lead_space = 0.0;   // [0:0.5:10]
 // Extra air so nothing is ever compressed
 extra_clearance = 0.4;  // [0:0.1:2]
 
@@ -168,10 +171,11 @@ pad_r   = head_d / 2 + pad_wall;
 pad_top = max(plate_t, head_t + head_seat);
 
 // Cell footprint and height as it sits in the plate.
-edge  = battery_orientation == "edge";
-fx     = edge ? battery_t : battery_w;
-fy     = battery_l;
-cell_h = edge ? battery_w : battery_t;
+edge   = battery_orientation == "edge";
+on_end = battery_orientation == "end";
+fx     = edge || on_end ? battery_t : battery_w;
+fy     = on_end ? battery_w : battery_l;
+cell_h = on_end ? battery_l : edge ? battery_w : battery_t;
 
 // Rim outline, from whichever mode is selected
 rim_out_x = (lip_mode == "absolute" ? lip_outer_x
@@ -190,7 +194,7 @@ cav_x = rim_in_x;
 cav_y = rim_in_y;
 cav_r = rim_in_r;
 
-stack_t     = cell_h + tape_t + foam_t + extra_clearance;
+stack_t     = cell_h + tape_t + foam_t + lead_space + extra_clearance;
 inner_clear = max(stock_clear, stack_t);
 // The rim is part of the cavity's depth, so the body only makes up the rest.
 spacer_h    = max(0, inner_clear - lip_h);
@@ -218,8 +222,8 @@ screw_reach = total_h - head_t;
 
 echo("================ BACK PLATE ================");
 echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
-         " mm, ", edge ? "standing on its edge" : "lying flat"));
-echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + air)"));
+         " mm, ", on_end ? "standing on its end" : edge ? "standing on its edge" : "lying flat"));
+echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + wires + air)"));
 echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open"));
 echo(str("Gap cell to pad:    ", pad_gap, " mm"));
 echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls"));

@@ -36,7 +36,9 @@ just below the surface.
 | `amoled18_back_plate.scad` | The parametric model. Every dimension is adjustable. |
 | `back_plate_852540_1000mAh_edge.stl` | Ready to print: the defaults, for an 852540 cell on its edge. Unit ≈ 39 mm thick. |
 | `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 22.7 mm thick. |
-| `preview.png`, `preview-back.png` | Renders of the inside (battery ghosted in) and the back face. |
+| `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. See [The tall variation](#the-tall-variation-104050-on-end). |
+| `amoled18_back_plate.json` | The three builds above as presets, selectable in OpenSCAD's Customizer. |
+| `preview.png`, `preview-back.png`, `preview-104050-end.png` | Renders of the inside (battery ghosted in), the back face, and the tall variation. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
@@ -55,8 +57,9 @@ to adjust anything that doesn't fit.
 ### 1. Get the files
 
 On the GitHub page for this folder, click `amoled18_back_plate.scad`, then the **download**
-button (the down-arrow icon, top right of the file view). You only need the `.scad` file; the
-`.stl` is just a pre-made example.
+button (the down-arrow icon, top right of the file view). Download `amoled18_back_plate.json`
+the same way and keep it in the same folder: it holds the ready-made presets. The `.stl` files
+are pre-made exports.
 
 ### 2. Install OpenSCAD
 
@@ -100,9 +103,14 @@ at the wire end. Then pick `battery_orientation`:
 
 - **edge** — standing on its long edge. Use this for long cells (35–40 mm).
 - **flat** — lying on its face. Fine for small square cells like 802525.
+- **end** — standing upright on its end. Any length fits; the plate just gets taller.
 
-Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll use. The plate's depth
-follows automatically.
+Set `tape_t` and `foam_t` to the thickness of the tape and foam you'll use, and `lead_space` to
+the room the wires and plug need above the cell (3 mm is plenty; 0 for cells whose wires come
+out the side). The plate's depth follows automatically.
+
+Shortcut: the drop-down at the top of the Customizer has the three builds in this folder as
+presets. Pick one and every battery setting fills in.
 
 ### 6. Check the console for warnings
 
@@ -180,8 +188,33 @@ plate means the stock screws are far too short. To work out the length:
 3. Screw length = reach + that, rounded **down** to a length that's sold, so it can't bottom out.
 
 If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 30
-for the default tall plate and M2 × 12 for the flat 802525 one. Long M2 socket head screws are
-sold on their own; small assortments usually stop at 20 mm.
+for the default plate and M2 × 12 for the flat 802525 one. Long M2 socket head screws are sold
+on their own; small assortments usually stop at 20 mm. The tall variation needs about 58 mm,
+which is covered below.
+
+## The tall variation: 104050 on end
+
+A 104050 cell (10 × 40 × 50 mm, sold as 2400 mAh; expect about 2000) standing on its 10 × 40
+face, circuit board and wires at the top. The unit comes out about **37.6 × 45.2 × 67 mm**, with
+roughly twice the capacity of the default and 5–6× the 802525. Select the
+`104050 2400mAh on end` preset, or print `back_plate_104050_2400mAh_end.stl`.
+
+![The tall variation with the cell ghosted in](preview-104050-end.png)
+
+Things to know before building it:
+
+- **The fit along the case is tight:** 40 mm in a 40.7 mm opening, the same 0.35 mm per end as
+  the default. Measure the real cell. If it's over 40 mm, set `lip_wall` to 0.6, which opens
+  the space to 41.1 mm.
+- **The common listing has the wrong plug.** It ships with a JST PH 2.0 mm plug; the board
+  needs MX1.25 (1.25 mm). Swap the plug for a 1.25 mm two-pin one, or use a short PH 2.0 to
+  Micro JST 1.25 adapter; there's room beside the cell for either. Check which pin is + and
+  which is − against the board's `BAT` marks before plugging in.
+- **The screws are about 58 mm long** (reach 55.3 mm + ~2.5 into the case). M2 socket head
+  screws that long are hard to find, so search for them before printing. The fallback is M2
+  threaded rod cut to length: screw it into the case's insert, then tighten an M2 nut on the
+  back with a 4 mm nut driver. A round counterbore can't hold a nut still, so for that route
+  untick `counterbore` and let the nut and a washer sit on the flat back face.
 
 ## Battery mounting
 
