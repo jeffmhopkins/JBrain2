@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_attr.h"
@@ -48,6 +49,7 @@
 #include "speech.h"
 #include "vocab.h"
 #include "variants.h"
+#include "orient.h"
 #include "ota.h"
 #include "pmu.h"
 #include "freertos/FreeRTOS.h"
@@ -742,7 +744,10 @@ void display_set_debug_overlay(bool on)
     s_debug_overlay = on;
 }
 
-/* WHICH WAY IS UP. The owner asked for the flip now rather than after a reporting round:
+/* WHICH WAY IS UP — the reading's own trustworthiness. The BAND that decides which quarter a
+   trusted reading means now lives in `orient.h`, where it can be tested.
+
+   The owner asked for the flip now rather than after a reporting round:
    getting the sign wrong costs one release and is obvious on sight, which is cheaper than
    waiting. 0.2.18 guessed `ay` and the panel's own telemetry settled it in one cycle:
    gravity is on **X** — `ay` sat well inside the hysteresis band, where nothing would ever
@@ -753,8 +758,8 @@ void display_set_debug_overlay(bool on)
    backwards. Two readings, two axes eliminated, one orientation named.
 
    Hysteresis at about half a gravity, because a panel lying near flat has almost nothing on
-   this axis and a bare sign test would flip it back and forth on noise. */
-#define FLIP_THRESHOLD 4000
+   this axis and a bare sign test would flip it back and forth on noise. That figure now lives
+   in `orient.h` as `ORIENT_MIN_MAG`, beside the band it belongs with. */
 static bool s_upside_down;
 
 /* THE LEAN. The robot slides downhill in proportion to the sideways component of gravity, so
@@ -787,6 +792,28 @@ static int s_lean;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
 static int s_blit_ok;
+
+/* GPIO0 on an ESP32-S3 is the BOOT strap: held low through a reset it enters download mode,
+   and read at runtime it is an ordinary input with an external pull-up. Configured as an input
+   and never driven, so nothing here can interfere with flashing. */
+#define BOOT_BTN GPIO_NUM_0
+static int s_boot_presses;
+static bool s_boot_was_down;
+
+static void boot_button_poll(void)
+{
+    const bool down = gpio_get_level(BOOT_BTN) == 0; /* active low, pulled up */
+    if (down && !s_boot_was_down) {
+        s_boot_presses++;
+        ESP_LOGI(TAG, "boot button: press %d", s_boot_presses);
+    }
+    s_boot_was_down = down;
+}
+
+int display_boot_presses(void)
+{
+    return s_boot_presses;
+}
 
 void display_blit_counts(int *ok, int *fail)
 {
@@ -974,16 +1001,13 @@ static void update_orientation(void)
        side, and its sign says which. Whichever axis is larger wins, with the same half-a-
        gravity hysteresis the two-way version needed — a panel lying near flat has almost
        nothing on either axis, and a bare comparison would flip it back and forth on noise. */
-    const int mag_x = ax < 0 ? -ax : ax;
-    const int mag_y = ay < 0 ? -ay : ay;
     const int was = s_quarter;
-    if (mag_x > mag_y) {
-        if (ax < -FLIP_THRESHOLD) s_quarter = 2;
-        else if (ax > FLIP_THRESHOLD) s_quarter = 0;
-    } else {
-        if (ay < -FLIP_THRESHOLD) s_quarter = 1;
-        else if (ay > FLIP_THRESHOLD) s_quarter = 3;
-    }
+    /* `orient.c`, and the band is the whole reason it moved out of here: `|ax| > |ay|` turns
+       over at exactly 45 degrees, so a panel HELD at 45 had its orientation chosen by
+       accelerometer noise several times a second. The angle and the hysteresis are pure C and
+       host-tested, because an orientation rule that is only reasoned about is how the first
+       flip shipped backwards (§10.4). */
+    s_quarter = orient_quarter(s_quarter, ax, ay);
     s_upside_down = (s_quarter == 2);
     /* Function scope: both the fit and the lean limit depend on it. */
     const bool side = (s_quarter == 1 || s_quarter == 3);
@@ -1222,6 +1246,16 @@ static void reassert_panel(void)
 static void face_task(void *arg)
 {
     (void)arg;
+    /* Input with its pull-up, never an output: this pin is the BOOT strap and driving it would
+       be a way to make the panel unflashable. */
+    const gpio_config_t boot_cfg = {
+        .pin_bit_mask = 1ULL << BOOT_BTN,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    if (gpio_config(&boot_cfg) != ESP_OK) ESP_LOGW(TAG, "boot button: gpio_config refused");
     /* The framebuffer PSRAM was enabled for: 368x448x2 = 322 KB, which does not fit in the
        332 KB of internal RAM with Wi-Fi and TLS also to feed. */
     uint16_t *fb = heap_caps_malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t),
@@ -1459,6 +1493,7 @@ static void face_task(void *arg)
         s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
         PHASE(5);
         update_orientation();
+        boot_button_poll();
         s_open = blink_open(TOUCH_POLL_MS);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;

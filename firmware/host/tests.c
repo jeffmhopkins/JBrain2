@@ -20,6 +20,7 @@
 #include "face.h"
 #include "font.h"
 #include "gesture.h"
+#include "orient.h"
 #include "rig.h"
 #include "variants.h"
 #include "vocab.h"
@@ -843,6 +844,74 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
         }
     }
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
+}
+
+/* Gravity at `deg` around the XY plane, at one g, as the accelerometer would report it. */
+static void gravity_at(float deg, int *ax, int *ay)
+{
+    const float r = deg * (float)M_PI / 180.0f;
+    *ax = (int)lrintf(cosf(r) * 8192.0f);
+    *ay = (int)lrintf(sinf(r) * 8192.0f);
+}
+
+static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
+{
+    /* The owner: "the tilt going to 90 and causing an orientation change shouldn't happen right
+       at 45. We should have like an extra 20 you should have to go, and then another 20 back
+       past that 45 to go back the other way."
+
+       THE OLD CODE HAD NO HYSTERESIS AT THE BOUNDARY, which is easy to miss because it looks
+       like it does: `FLIP_THRESHOLD` gated how much gravity was in the plane, but WHICH quarter
+       came from `|ax| > |ay|`, and that turns over at exactly 45 degrees. Held at 45 the two
+       axes are equal and noise picks the orientation, several times a second. */
+    int ax, ay;
+
+    /* Upright stays upright well past the old boundary. */
+    for (float d = 0.0f; d <= 64.0f; d += 4.0f) {
+        gravity_at(d, &ax, &ay);
+        CHECK(orient_quarter(0, ax, ay) == 0, "upright holds past 45 degrees");
+    }
+    gravity_at(70.0f, &ax, &ay);
+    CHECK(orient_quarter(0, ax, ay) == 3, "and gives way once the band is crossed");
+
+    /* AND IT IS STICKY THE OTHER WAY TOO, which is the half that stops the oscillation. Having
+       landed in 3, coming back must go well past 45 before returning — at 40 degrees, which the
+       old code would already have called upright, it stays. */
+    gravity_at(40.0f, &ax, &ay);
+    CHECK(orient_quarter(3, ax, ay) == 3, "the new orientation holds coming back");
+    gravity_at(20.0f, &ax, &ay);
+    CHECK(orient_quarter(3, ax, ay) == 0, "until it too has crossed the band");
+
+    /* THE PROPERTY THAT MATTERS: sitting exactly on the boundary, nothing changes — whichever
+       quarter you were in, you stay in. This is the check the old comparison fails outright. */
+    gravity_at(45.0f, &ax, &ay);
+    CHECK(orient_quarter(0, ax, ay) == 0, "held at 45 from upright, stay upright");
+    CHECK(orient_quarter(3, ax, ay) == 3, "held at 45 from landscape, stay landscape");
+
+    /* Noise on the boundary must not flip it either — the actual symptom. */
+    int flips = 0, last = 0;
+    for (int i = 0; i < 400; i++) {
+        gravity_at(45.0f + (float)((i * 7919) % 41 - 20) * 0.05f, &ax, &ay);
+        const int q = orient_quarter(last, ax, ay);
+        if (q != last) flips++;
+        last = q;
+    }
+    CHECK(flips == 0, "and jitter on the boundary never flips it");
+
+    /* Flat on its back is not an orientation: hold whatever was being drawn. */
+    CHECK(orient_quarter(2, 100, -80) == 2, "a flat panel keeps the orientation it had");
+    CHECK(orient_quarter(1, 0, 0) == 1, "including a perfectly still one");
+
+    /* All four are reachable, and each from its own centre. */
+    for (int q = 0; q < 4; q++) {
+        static const float CENTRE[4] = {0.0f, 270.0f, 180.0f, 90.0f};
+        gravity_at(CENTRE[q], &ax, &ay);
+        CHECK(orient_quarter(q, ax, ay) == q, "every quarter is stable at its own centre");
+        /* And is reached from the opposite one, rather than stepping round through a
+           neighbour: a panel set down and picked up the other way should land where it is. */
+        const int opposite = (q + 2) % 4;
+        CHECK(orient_quarter(opposite, ax, ay) == q, "and reachable from the far side");
+    }
 }
 
 static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
@@ -2172,6 +2241,7 @@ int main(void)
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
     test_the_shuffle_is_driven_by_distance_not_by_a_clock();
+    test_the_orientation_needs_a_band_crossed_on_purpose();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

@@ -141,7 +141,7 @@ static void report(const cfg_t *cfg)
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
                      "\"accel\":[%d,%d,%d],\"stack_free\":%d,\"crash_phase\":%d,"
-                     "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,"
+                     "\"alc\":\"%s\",\"blit_ok\":%d,\"blit_fail\":%d,\"boot_btn\":%d,"
                      "\"tap\":[%d,%d,%d],\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -149,7 +149,7 @@ static void report(const cfg_t *cfg)
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                      display_mic_peak(), have_imu ? ax : 0, have_imu ? ay : 0,
                      have_imu ? az : 0, display_stack_free(), display_crash_phase(),
-                     audio_alc_state(), blit_ok, blit_fail, tap_x,
+                     audio_alc_state(), blit_ok, blit_fail, display_boot_presses(), tap_x,
                      tap_y, tap_zone);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);

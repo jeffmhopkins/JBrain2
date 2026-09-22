@@ -4272,6 +4272,65 @@ Removing the deadband fails *"a crawl leaves the legs standing"*; restoring the 
 fails *"about half a second after stopping he is standing again"*. Verified separately, because
 two fixes landing together are exactly where one of them turns out to do nothing.
 
+#### 10.4cg A band you have to mean to cross, and a button nobody has read (0.2.73, 2026-09-22)
+
+##### The orientation flipped on noise, and the hysteresis that "existed" was not where it looked
+
+The owner: *"the tilt going to 90 and causing an orientation change shouldn't happen right at
+45. We should have like an extra 20 you should have to go in order to cause the orientation
+change, and then another 20 back past that 45 to go back the other way."*
+
+`FLIP_THRESHOLD` has been in this file since §10.4 and its comment says *"hysteresis at about
+half a gravity"* — which is true and is about a different thing. It gates **how much gravity is
+in the XY plane before the reading is trusted at all**, so a panel lying flat does not flip on
+noise. **Which quarter** a trusted reading meant came from `|ax| > |ay|`, and that comparison
+turns over at exactly 45 degrees with no hysteresis whatsoever. Hold a panel at 45 and the two
+axes are equal, so a millivolt of accelerometer noise picks the orientation — several times a
+second, which is what the owner was watching.
+
+Worth recording as a shape rather than a bug: there **was** a constant named for hysteresis, it
+**was** doing its job, and the thing it guarded was not the thing that needed guarding. A
+comment that is accurate about the wrong quantity is harder to see past than no comment.
+
+The quarter now comes from the **angle** of gravity in the plane, and the current quarter keeps
+it until the angle is more than 45 + `ORIENT_HYST_DEG` from that quarter's own centre. Turning
+from upright toward landscape the flip lands at 65 degrees; coming back, 65 degrees from the
+landscape centre is 25 degrees from upright. A 40 degree band either side of the boundary,
+which is what was asked for.
+
+**In `orient.c`, so it can be tested.** `display.c` cannot be linked by the host harness, and an
+orientation rule that is only reasoned about is exactly how the first flip shipped backwards in
+0.2.19. The suite holds it at 45 from both sides and shows it does not move, jitters it 400
+times across the boundary and counts **zero** flips, and checks each quarter is reachable from
+the one opposite — a panel set down and picked up the other way should land where it *is*,
+rather than stepping round through a neighbour.
+
+##### And the buttons: measured, not assumed
+
+The owner: *"there are two switches on this board, one labeled power, one labeled boot. Can we
+utilize those to basically turn off the microphone with one of them?"*
+
+A mute is worth having and this firmware has never read either button, so the first question is
+which of them it **can** read. BOOT is GPIO0 on every ESP32-S3 board there is — but "every board
+there is" is not this board, and this plan's history is full of pin maps that were obvious and
+wrong. `audio.c`'s header opens with two pins named from opposite ends of the same link, where
+guessing gives silence *and* a dead microphone with no error from either.
+
+So 0.2.73 **counts edges on GPIO0 and reports the count in telemetry**. Press it a few times and
+the panel answers the question instead of me. Configured as an input with its pull-up and never
+driven, because this pin is the boot strap and driving it is a way to make a panel unflashable.
+
+PWR is almost certainly not a GPIO at all — it goes to the AXP2101, whose latched PWRON bits sit
+in registers `pmu.c` does not sample. That is the next probe if BOOT comes back alive and one
+button turns out not to be enough.
+
+**The design question a mute raises, before it is built:** a firmware mute is a promise, not a
+wire — the microphone keeps running and the code chooses to discard. And §10.4bz removed the
+always-on "microphone is open" dot at the owner's request, which was right because it was always
+on. A **muted** badge is the opposite case: it appears only in the rare state, it is the only
+way to tell a muted panel from a deaf one, and without it the first support question is "is it
+broken or did someone press the button?"
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

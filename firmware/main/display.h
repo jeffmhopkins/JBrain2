@@ -61,6 +61,26 @@ void display_blit_counts(int *ok, int *fail);
  * allowed to strand a panel on an image it has already installed. */
 void display_request_restart(void);
 
+/* HOW MANY TIMES THE BOOT BUTTON HAS BEEN PRESSED SINCE BOOT, and why that is a question.
+ *
+ * The owner: *"there are two switches on this board, one labeled power, one labeled boot. Can
+ * we utilize those to basically turn off the microphone with one of them?"*
+ *
+ * A mute switch is worth having and this firmware has never read either button, so the first
+ * thing needed is which of them it CAN read. BOOT is GPIO0 on every ESP32-S3 board there is —
+ * but "every board there is" is not this board, and the plan's own history is full of pin maps
+ * that were obvious and wrong (`audio.c`'s header opens with two pins named from opposite ends
+ * of the link, where guessing gives silence AND a dead microphone with no error from either).
+ *
+ * So this counts edges rather than assuming them. Press the button a few times, read the count
+ * out of telemetry, and the question is answered by the panel instead of by me. A count rather
+ * than a level because the button is momentary and telemetry is every fifteen minutes.
+ *
+ * PWR is almost certainly not a GPIO at all — it goes to the AXP2101, whose latched PWRON bits
+ * are in registers `pmu.c` does not sample. That is the next probe if this one comes back
+ * alive and one button is not enough. */
+int display_boot_presses(void);
+
 /* Where the last tap landed and which zone it was classified as. Reported so the touch
    controller's orientation is a measurement rather than an assumption — see display.c. */
 void display_last_tap(int *x, int *y, int *zone);
