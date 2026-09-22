@@ -19,7 +19,12 @@ static const char *TAG = "talk";
 /* Generous, because the box may be transcribing on a shared GPU behind a chat model. The
    renderer gives up sooner than this and shows the failure face; that is deliberate — a child
    should be told "say that again" long before a socket decides it has waited enough. */
-#define TALK_HTTP_TIMEOUT_MS 20000
+/* ABOVE the renderer's `TALK_TIMEOUT_MS`, always, and that ordering is the point rather than
+   the value: the socket must not die while the face is still willing to wait, or the panel
+   gives up on a turn the box would have finished. The gap is also why the capture buffer is
+   guarded on `TALK_NET_BUSY` — between the renderer giving up and this timeout firing, a
+   frustrated child can hold again while the socket is still reading the last recording. */
+#define TALK_HTTP_TIMEOUT_MS 30000
 /* 6 s of 16 kHz mono s16 is what the box returns at most, and it caps its own reply text. */
 #define REPLY_MAX_BYTES (16000 * 2 * 6)
 

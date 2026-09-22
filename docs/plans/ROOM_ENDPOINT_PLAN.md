@@ -3950,6 +3950,173 @@ behind and is exactly where a stray pixel would survive.
 directly also closes a hole in the old test: one that returned true everywhere would have
 passed it just as happily, and would have been the more dangerous bug.
 
+#### 10.4ca The loop closed, and the panel threw the answer away by 777 ms (0.2.67, 2026-09-22)
+
+Press-and-hold ran end to end from the room for the first time. **It works.**
+
+```
+heard:  "Hello, one, two, three..."
+reply:  "Hi there! Did you just count to three? What fun thing shall we do now?"
+
+heard:  "Aardvarks love to eat mushrooms and bananas. One, two, three."
+reply:  "Aardvarks are funny! Do you like mushrooms or bananas more?"
+```
+
+Real speech from a bedroom, transcribed correctly — including a sentence chosen to be hard —
+answered on persona with a question back, synthesised, and returned. Every piece of the design
+in `../proposed/PANEL_CONVERSATION_PLAN.md` holds.
+
+##### The numbers nobody had
+
+| | turn 1 (cold) | turn 2 (warm) |
+|---|---|---|
+| STT — whisper large-v3-turbo | 10,715 ms | 10,668 ms |
+| LLM — gpt-oss-120b, `pet.turn` | **48,798 ms** | **1,540 ms** |
+| TTS — Kokoro | 2,428 ms | 568 ms |
+| **total** | **61,942 ms** | **12,777 ms** |
+
+**The 48.8 s was not inference.** The adapter's own record of that same call says
+`input_tokens: 191, output_tokens: 40, elapsed_ms: 1441, output_tokens_per_s: 27.8` — 1.4
+seconds of generation inside a 48.8-second wait. The 01:06 update had explicitly evicted the
+model (`[unload] released gpt-oss-120b`) and this was the first `pet.turn` since, so ~47 s went
+on bringing a 120B model back up. The warm turn confirms it: same model, same prompt,
+**1,540 ms**.
+
+Two things that settle open questions in the plan:
+
+- **The 191-token prompt is right.** §10.4bo's worry that a panel turn might drag the full agent
+  context in was unfounded — `pet.turn` routes to `PANEL_CONVERSATION_PROMPT` and nothing else.
+- **Whisper is flat, and it is now the whole problem.** 10,715 ms and 10,668 ms on utterances of
+  very different length, because it pads every clip to 30 s regardless. That is **83% of a warm
+  turn**, and no other component comes close. `base.en` stops being a nice-to-have and becomes
+  the critical path.
+
+##### And the panel discarded it
+
+The warm turn returned **200 OK with 118 KB of speech at 12,777 ms**. `TALK_TIMEOUT_MS` was
+**12,000**. So at 12.0 s the renderer called `talk_clear()`, went to `TALK_FAILED`, and drew the
+failure face; at 12.8 s the reply arrived into a state machine that had already binned it — the
+`TALK_NET_SPOKE` branch requires `s_talk == TALK_THINKING`, which it no longer was.
+
+**Everything worked and the answer was thrown away three quarters of a second before it
+landed.** 12,000 was a guess made before any turn had ever been measured, and it happened to
+sit just below the real number.
+
+Raised to **25 s**, with `talk.c`'s HTTP timeout to **30 s** — that ordering is the point rather
+than the values: the socket must never die while the face is still willing to wait. The gap
+between them is why the capture buffer is guarded on `TALK_NET_BUSY` (§10.4bn), and that guard
+is what keeps the widened window safe.
+
+It is a **safety net, not a target.** A longer net costs nothing when turns are fast; it only
+matters when they are slow, and a slow turn currently produces *nothing*, which is strictly
+worse than a late answer. Nobody should read 25 s as the intended experience — the intended
+experience needs whisper to stop taking eleven seconds, and no timeout value improves that.
+
+##### What is still true
+
+A 12.8 s wait for a four-year-old is too long, and this release does not fix that; it stops the
+system discarding work it has already done. The next measurement worth taking is `base.en`
+against the same two utterances, since the whole latency argument now rests on a single flat
+number with an obvious lever on it.
+
+#### 10.4cb A reply is an utterance, and everything else on the panel is an interjection (0.2.68, 2026-09-22)
+
+The owner, straight after the first real conversation: *"When the agent is talking we should
+prohibit beeps from cutting it off, and we should also stop poke interactions making other
+animations, because we should make an animation of the robot talking as it talks."*
+
+Three requests that are one rule. A reply is the only sustained thing this panel ever says, and
+a beep over it is a toy talking over a person. `speaking` (`audio_playing()`) is now decided
+once a frame and every branch defers to it.
+
+- **No beep, no colour change, no new action** while the reply plays. The flinch stays — a pet
+  that ignores a finger entirely reads as frozen — but the stage is not taken over.
+- **The mouth moves.** A `talk` channel on `face_state_t` rather than an `action_t`, because a
+  reply can arrive mid-wave and a pet that stops waving to talk reads as two pets. The ostrich
+  drops its lower mandible (the split is between the two wide beak segments and the two narrow
+  ones, so the gape opens where a bird's does); the robot opens a mouth under its smile, so the
+  smile stays the lip of it rather than being replaced by a hole.
+- **A hold cannot start a recording while we speak**, and this one is measured rather than
+  tidy. At 01:53:54 the owner held to ask a second question while the first reply was playing
+  and the recording came back **empty** (`heard: ""`). `audio.c` deafens the microphone for six
+  chunks whenever the speaker runs — the codec routes the DAC into the ADC, so without that the
+  pet transcribes itself — which means a hold taken over our own voice can only ever capture
+  silence. Refusing it costs nothing and stops a child being ignored by a toy that looked like
+  it was listening.
+
+##### The mouth is an honest fake, and the reason is worth keeping
+
+Two frequencies, not one: 6.3 Hz for the syllable rate and 2.7 Hz for the phrase, so the product
+never quite repeats. Same argument as the jittered blink — a mouth on a single sine is a
+metronome and the regularity is what gives away a machine. It never fully shuts while talking,
+because a beak closing between syllables reads as chewing.
+
+It is **not driven by the actual audio**, and that is a limit rather than an oversight: the one
+signal that could give a real envelope is the microphone, and `audio.c` deafens it whenever the
+speaker runs precisely so the pet does not transcribe itself. An honest fake at the right rate
+beats a real envelope the hardware refuses to supply.
+
+##### And the red failure face the owner saw was already fixed
+
+*"I got the little red even though it successfully sent a message to the server and then got a
+response back — maybe we need to extend the time on that?"* That is §10.4ca: the 12 s timeout
+against turns measuring 11,661 and 13,897 ms, straddling it. 0.2.67 raised it to 25 s and this
+release carries that. No further change needed; the turns were measured, and 25 clears the
+worst of them by 11 seconds.
+
+##### What the test pins
+
+`test_the_mouth_moves_only_while_talking` asserts two things, and the second is the one that
+catches a careless channel: the mouth must visibly change the drawn face (a `talk` field nothing
+reads would pass anything weaker), the change must land on the head rather than anywhere else,
+and at `talk = 0` the frame must be **byte-identical** to what it was before this channel
+existed — because a channel that leaks at rest changes every frame the pet has ever drawn.
+Both forms, since a change reaching only one of them is half a feature. Confirmed to fail with
+the mouth stubbed out.
+
+#### 10.4cc He walks when he moves (0.2.69, 2026-09-22)
+
+The owner: *"the robot should kind of shuffle his legs back and forth as tilt causes him to
+move left and right."*
+
+The lean has slid the figure downhill since §10.4 and the legs have never once acknowledged it
+— the pet travels the width of the panel like a chess piece. So: a walk.
+
+##### The phase advances with distance, not with a clock
+
+This is the whole design and it is the part worth defending, because the obvious implementation
+is a timed oscillation gated on "is he moving" and it is wrong in two ways a screenshot cannot
+show. It keeps stepping for a frame or two after he stops, and it takes the **same number of
+steps to cross the panel slowly as quickly** — which is exactly what a walk is not.
+
+Driving the phase off pixels travelled makes the relationship the real one: a step per 20 px of
+ground, so he takes more steps when he goes further and **none at all when he is still, with no
+gate to get wrong**. Amplitude is separate and eased, and follows speed rather than distance —
+a slow drift is a shuffle, a fast slide is a scramble — with a fast attack and a slow release so
+a stride finishes instead of being cut off the instant the panel stops moving.
+
+Applied on top of whatever the action posed, like the lean itself: a pet tilted mid-wave keeps
+waving and moves its feet. The robot swings its legs; the ostrich also lifts, because
+§10.4's note stands — a bird drawn head-on has no depth to step into, so its stride reads as a
+lift, and the lift has to be in phase with the swing or the raised foot is the one taking the
+weight.
+
+##### In `rig.c`, which is the only reason it has a test
+
+`display.c` cannot be linked by the host harness, so a walk written there would have shipped on
+an argument. `rig_walk()` is pure C, and the suite checks the property a timer would fail:
+
+```
+twenty pixels covered in 20 frames of 1 px  ->  phase 3.1416
+twenty pixels covered in  4 frames of 5 px  ->  phase 3.1416
+```
+
+Plus the legs alternating rather than swinging together (what a careless `+=` on both would
+give), a stationary pet leaving the action's pose **exactly** untouched, the faster crossing
+taking the wider stride, and the phase wrapping — because a panel left tilting accumulates
+travel forever, and a float big enough that one frame's addition rounds away would stop the legs
+dead. Confirmed to fail against a clock-driven phase before being trusted.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

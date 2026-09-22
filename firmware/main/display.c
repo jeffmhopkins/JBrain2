@@ -20,6 +20,7 @@
 
 #include "display.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -582,8 +583,25 @@ static volatile bool s_debug_overlay;
 #define TALK_MARGIN_PX 72
 /* Long enough that a slow answer is not mistaken for a broken one, short enough that a child
    is not staring at a bubble. Beyond it the panel says it failed rather than returning to
-   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc). */
-#define TALK_TIMEOUT_MS 12000
+   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc).
+ *
+ * 25 s, AND 12 WAS A GUESS THAT COST A WORKING REPLY BY 777 MILLISECONDS. The first warm turn
+ * ever measured from the room took 12,777 ms end to end — whisper 10,668, the model 1,540,
+ * Kokoro 568 — and returned 200 OK with 118 KB of speech. The panel had given up at 12,000,
+ * called `talk_clear()`, and shown a failure face. Every part of the system worked and the
+ * answer was thrown away three quarters of a second before it landed.
+ *
+ * The budget this has to clear is now measured rather than hoped for: whisper is a FLAT ~10.7 s
+ * (it pads every clip to 30 s regardless of length — 10,715 and 10,668 on two utterances of
+ * very different length), and the prompt holds replies to one or two sentences, so the model
+ * and the speech together run a few seconds more. ~17 s is a bad-but-real turn; 25 leaves
+ * headroom without waiting on something that is never coming.
+ *
+ * This is a SAFETY NET, NOT A TARGET. A longer net costs nothing when turns are fast; it only
+ * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
+ * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
+ * is 83% of it, and no timeout value improves that. */
+#define TALK_TIMEOUT_MS 25000
 #define TALK_FAILED_MS 2500
 
 typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
@@ -1228,6 +1246,11 @@ static void face_task(void *arg)
     for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
+    /* The shuffle's own state, and the lean it last saw — the walk is driven by how far the
+       figure MOVED this frame, so it needs the previous position rather than the current one
+       (`rig.h`). */
+    rig_walk_t walk = {0};
+    int walked_from = 0;
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
@@ -1244,7 +1267,17 @@ static void face_task(void *arg)
            for whichever caller ran first. */
         const bool tapped = touch && touch_tapped();
         const bool down = touch && touch_is_down();
-        if (tapped) {
+        /* SPEAKING, AND IT OUTRANKS THE TOY. The owner, after the first real conversation:
+           "when the agent is talking we should prohibit beeps from cutting it off, and we
+           should also stop poke interactions making other animations."
+         *
+           Both of those are the same rule — a reply is the panel's one sustained utterance and
+           everything else on this device is an interjection. A beep over it is a toy talking
+           over a person; a new action mid-sentence throws away the talking animation that is
+           the only thing on screen explaining the sound. Decided once a frame so every branch
+           below agrees about it. */
+        const bool speaking = audio_playing();
+        if (tapped && !speaking) {
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
@@ -1275,6 +1308,12 @@ static void face_task(void *arg)
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
             if (sound) audio_beep();
+            dirty = true;
+        } else if (tapped) {
+            /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would read
+               as a frozen pet — but no beep, no colour change and no new action, so the reply
+               finishes with the mouth still moving. */
+            s_flinch = 1.0f;
             dirty = true;
         }
         /* WHAT THE PANEL HEARD. Popped once a frame, so a phrase cannot arrive between two
@@ -1417,7 +1456,14 @@ static void face_task(void *arg)
            child who holds again after a failure face would call `audio_capture_open()` and
            overwrite the bytes still being read by the socket. A five-second window, on the
            one path a frustrated four-year-old is most likely to take. */
-        if (s_talk == TALK_IDLE && down && on_the_pet && gest.taps == 0 &&
+        /* NOT WHILE WE ARE SPEAKING, and this one is measured rather than tidy: the owner
+           held the panel to ask a second question while the first reply was still playing and
+           the recording came back EMPTY (`heard: ""`, 2026-09-22 01:53:54). `audio.c` goes
+           deaf for six chunks whenever the speaker runs — the codec routes the DAC into the
+           ADC, so without that the pet would transcribe itself — which means a hold taken over
+           our own voice can only ever capture silence. Refusing it costs nothing and saves a
+           child from being ignored by a toy that looked like it was listening. */
+        if (s_talk == TALK_IDLE && down && on_the_pet && !speaking && gest.taps == 0 &&
             held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
@@ -1524,11 +1570,41 @@ static void face_task(void *arg)
             emotion_approach_face(&st.eyes, &target, target.rate);
             emotion_approach_face(&st.eyes, &target, target.rate);
             rig_for(action, p, action_mag, now, &st.rig);
+            /* AFTER the action posed the limbs and before anything reads them: the shuffle
+               rides on top, the way the lean itself does, so a pet tilted mid-wave keeps
+               waving and moves its feet. */
+            rig_walk(&walk, (float)(s_lean - walked_from), &st.rig);
+            walked_from = s_lean;
             rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
             st.bob = bob_step(frame++);
             st.lean = s_lean;
             st.open = s_open;
             st.startle = s_flinch;
+            /* THE MOUTH, WHILE THERE IS SOUND COMING OUT OF IT.
+             *
+             * TWO FREQUENCIES, NOT ONE, for the reason the blink is jittered: a mouth opening
+             * and closing on a single sine is a metronome, and the regularity is exactly what
+             * gives away a machine. 6.3 Hz carries the syllable rate and 2.7 Hz the phrase,
+             * and the product never quite repeats — so it reads as speech rather than as a
+             * hinge. Never fully shut while talking (the 0.25 floor), because a beak that
+             * closes completely between syllables reads as chewing.
+             *
+             * NOT DRIVEN BY THE ACTUAL AUDIO, and that is a deliberate limit rather than an
+             * oversight: `audio.c` deafens the microphone whenever the speaker runs, so the
+             * one signal that could give a real envelope is the one signal this panel throws
+             * away on purpose (it would otherwise transcribe itself). An honest fake at the
+             * right rate beats a real envelope the hardware cannot supply. */
+            if (speaking) {
+                const float t = (float)now * 0.001f;
+                const float syll = sinf(t * 6.3f), phrase = sinf(t * 2.7f + 1.1f);
+                float open = 0.55f + 0.30f * syll + 0.15f * phrase;
+                if (open < 0.25f) open = 0.25f;
+                if (open > 1.0f) open = 1.0f;
+                st.talk = open;
+                dirty = true; /* a mouth redrawn five times a second is a glitch, not speech */
+            } else {
+                st.talk = 0.0f;
+            }
             /* The poke recoil rides on top of whatever the action is already doing. */
             st.fig.oy += FLINCH_DIP * s_flinch;
             PHASE(6);

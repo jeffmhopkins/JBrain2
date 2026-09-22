@@ -845,6 +845,112 @@ static void test_the_lean_limits_are_the_room_that_exists(void)
     face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
 }
 
+static void test_the_shuffle_is_driven_by_distance_not_by_a_clock(void)
+{
+    /* The owner: "the robot should kind of shuffle his legs back and forth as tilt causes him
+       to move left and right."
+
+       THE PROPERTY THAT MATTERS IS THE ONE A TIMER WOULD FAIL. A timed wiggle gated on "is he
+       moving" looks the same in a screenshot and is wrong in the hand: it keeps stepping after
+       he stops and takes the same number of steps to cross the panel slowly as quickly. So the
+       phase advances with PIXELS TRAVELLED, and these checks are about that relationship
+       rather than about the legs wiggling at all. */
+    rig_pose_t base;
+    rig_for(ACT_NONE, 0.0f, 1.0f, 0, &base);
+
+    /* Standing still leaves the action's pose exactly alone. */
+    rig_walk_t still = {0};
+    rig_pose_t p = base;
+    for (int i = 0; i < 40; i++) rig_walk(&still, 0.0f, &p);
+    CHECK(p.leg_l == base.leg_l && p.leg_r == base.leg_r, "a stationary pet does not shuffle");
+    CHECK(p.step == base.step, "and its feet stay down");
+
+    /* Moving swings the legs, and in OPPOSITE directions — one stride, not two legs doing the
+       same thing, which is what a careless `+=` on both would give. */
+    rig_walk_t going = {0};
+    p = base;
+    float apart = 0.0f;
+    for (int i = 0; i < 12; i++) {
+        p = base;
+        rig_walk(&going, 4.0f, &p);
+        const float dl = p.leg_l - base.leg_l, dr = p.leg_r - base.leg_r;
+        if (dl * dr < 0.0f) apart += 1.0f;
+    }
+    CHECK(apart >= 8.0f, "the legs alternate rather than swinging together");
+    CHECK(p.step != base.step, "and the bird lifts a foot too");
+
+    /* THE HEADLINE: the same ground covered in different numbers of frames reaches the same
+       point in the stride. A clock-driven phase fails this outright. */
+    rig_walk_t slow = {0}, fast = {0};
+    rig_pose_t q = base;
+    for (int i = 0; i < 20; i++) rig_walk(&slow, 1.0f, &q);
+    q = base;
+    for (int i = 0; i < 4; i++) rig_walk(&fast, 5.0f, &q);
+    const float diff = fabsf(slow.phase - fast.phase);
+    CHECK(diff < 0.001f, "twenty pixels is twenty pixels, however many frames it took");
+
+    /* And the faster crossing is the bigger stride, because amplitude follows speed. */
+    CHECK(fast.amp > slow.amp, "a scramble swings wider than a drift");
+
+    /* The phase must not grow without bound: a panel left tilting accumulates travel forever,
+       and a float large enough that one frame's addition rounds away stops the legs dead. */
+    rig_walk_t forever = {0};
+    q = base;
+    for (int i = 0; i < 5000; i++) rig_walk(&forever, 7.0f, &q);
+    CHECK(forever.phase <= 2.0f * (float)M_PI + 0.001f, "the phase wraps rather than drifting");
+    CHECK(forever.phase >= 0.0f, "and stays positive");
+}
+
+static void test_the_mouth_moves_only_while_talking(void)
+{
+    /* The owner, after the first real conversation: "we should make an animation of the robot
+       talking as it talks."
+
+       TWO PROPERTIES, and the second is the one that catches a careless channel. The mouth has
+       to actually change the drawn face — a `talk` field nothing reads would pass any test
+       that only checked it compiles. And at talk 0 the face must be EXACTLY what it was
+       before this existed, because a channel that leaks at rest changes every frame the pet
+       has ever drawn. Both forms: the ostrich opens a beak, the robot opens a mouth, and a
+       change that reaches only one of them is half a feature. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        CHECK(st.talk == 0.0f, "a resting pet is not talking");
+        face_draw(fb, 0, &st);
+        uint16_t *shut = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        CHECK(shut != NULL, "scratch frame allocated");
+        memcpy(shut, fb, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+        st.talk = 1.0f;
+        face_draw(fb, 0, &st);
+        long moved = 0;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
+            if (fb[i] != shut[i]) moved++;
+        }
+        CHECK(moved > 80, "an open mouth is visibly different from a shut one");
+
+        /* And it is the MOUTH that moved, not the whole figure: the change sits in the head,
+           which is the top half. A `talk` wired to the wrong offset would still differ. */
+        long high = 0;
+        for (int y = 0; y < FACE_H / 2; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] != shut[y * FACE_W + x]) high++;
+            }
+        }
+        CHECK(high * 10 >= moved * 9, "and the change is on the face, not the feet");
+
+        st.talk = 0.0f;
+        face_draw(fb, 0, &st);
+        long leaked = 0;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) {
+            if (fb[i] != shut[i]) leaked++;
+        }
+        CHECK(leaked == 0, "and a shut mouth draws exactly what it always did");
+        free(shut);
+    }
+}
+
 static void test_the_case_geometry_is_the_case(void)
 {
     /* §10.4bx: the enclosure rounds the display into a squircle, so a pixel can be drawn
@@ -2013,6 +2119,8 @@ int main(void)
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
     test_the_case_geometry_is_the_case();
+    test_the_mouth_moves_only_while_talking();
+    test_the_shuffle_is_driven_by_distance_not_by_a_clock();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

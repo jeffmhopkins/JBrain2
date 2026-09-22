@@ -74,6 +74,40 @@ typedef struct {
     float crest; /* degrees the plumes trail — follow-through, never authored per action */
 } rig_pose_t;
 
+/* THE SHUFFLE — legs that move because the FIGURE moved, not because a clock ticked.
+ *
+ * The owner: *"the robot should kind of shuffle his legs back and forth as tilt causes him to
+ * move left and right."*
+ *
+ * THE PHASE ADVANCES WITH DISTANCE, NOT TIME, and that is the whole design. A timed
+ * oscillation gated on "is he moving" has to decide when to start and stop, and gets both
+ * wrong: it keeps stepping for a frame after he stops, and it takes the same number of steps
+ * to cross the panel slowly as quickly. Driving the phase off pixels travelled makes the
+ * relationship the real one — a step per `RIG_WALK_PX_PER_STEP` of ground, so he takes more
+ * steps when he goes further and none at all when he is still, with no gate to get wrong.
+ *
+ * The amplitude is separate and eased, because a leg that snaps to full swing on the first
+ * pixel reads as a twitch. It follows speed: a slow drift is a shuffle, a fast slide is a
+ * scramble.
+ *
+ * Applied ON TOP of whatever the action is doing, like the lean itself — a pet tilted
+ * mid-wave should keep waving and move its feet. Pure C and here rather than in `display.c`
+ * so the host suite can check that the legs actually alternate.
+ */
+#define RIG_WALK_PX_PER_STEP 20.0f
+/* Pixels per frame that earn a full-size stride. A full lean sweep in about a second is
+   ~5 px/frame, so 3 puts an ordinary deliberate tilt at full amplitude. */
+#define RIG_WALK_FULL_PX 3.0f
+
+typedef struct {
+    float phase; /* radians; advances with |distance travelled| */
+    float amp;   /* 0..1, eased toward the current speed */
+} rig_walk_t;
+
+/* Advance by one frame's horizontal travel and write the shuffle into `p`, on top of whatever
+   the action already posed. `dlean_px` is signed; only its magnitude drives the phase. */
+void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p);
+
 /* Whole-figure transform. `extra` is a one-shot the renderer draws on top. */
 typedef enum { EXTRA_NONE = 0, EXTRA_PUFF, EXTRA_BLUSH } extra_t;
 

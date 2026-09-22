@@ -73,6 +73,13 @@ typedef struct {
     int lean;       /* horizontal offset, px: he slides downhill as the panel tilts */
     float open;     /* eyelids: 1 fully open, 0 shut. Blink, not emotion. */
     float startle;  /* 0 calm, 1 wide-eyed. The poke recoil, on top of whatever face is worn. */
+    /* 0 shut, 1 fully open — the mouth while the pet is SPEAKING. The owner: "we should make
+       an animation of the robot talking as it talks."
+     *
+       A channel rather than an action, because it has to ride on top of whatever the figure is
+       already doing: a reply can arrive mid-wave, and a talking pet that stops waving to talk
+       reads as two pets. `display.c` drives it from `audio_playing()`. */
+    float talk;
     face_params_t eyes; /* the emotion, as lid geometry — already tweened by the caller */
     rig_pose_t rig;     /* limb angles for this instant */
     figure_pose_t fig;  /* whole-figure offset, squash and head tilt */

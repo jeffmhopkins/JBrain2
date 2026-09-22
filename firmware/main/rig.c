@@ -401,3 +401,31 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
     out->sx *= breathe;
     out->sy *= 2.0f - breathe;
 }
+
+/* THE SHUFFLE. See `rig.h` for why the phase is driven by distance rather than by a clock. */
+void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p)
+{
+    if (w == NULL || p == NULL) return;
+    const float travel = fabsf(dlean_px);
+    w->phase += travel * (float)M_PI / RIG_WALK_PX_PER_STEP;
+    /* Wrapped, or a panel left tilting for an hour accumulates a float big enough that adding
+       a frame's travel to it changes nothing and the legs quietly stop. */
+    if (w->phase > 2.0f * (float)M_PI) w->phase -= 2.0f * (float)M_PI;
+
+    float want = travel / RIG_WALK_FULL_PX;
+    if (want > 1.0f) want = 1.0f;
+    /* Asymmetric on purpose: legs pick up quickly and settle slowly, so the stride finishes
+       rather than being cut off the instant the panel stops moving. */
+    w->amp += (want - w->amp) * (want > w->amp ? 0.35f : 0.08f);
+    if (w->amp < 0.01f) {
+        w->amp = 0.0f;
+        return; /* standing still is the action's pose, untouched */
+    }
+
+    const float swing = sinf(w->phase) * w->amp * 15.0f;
+    p->leg_l += swing;
+    p->leg_r -= swing;
+    /* The bird cannot step fore-and-aft head-on, so its stride reads as a lift — and it has to
+       be in phase with the swing or the raised foot is the one taking the weight. */
+    p->step += sinf(w->phase) * w->amp * 24.0f;
+}
