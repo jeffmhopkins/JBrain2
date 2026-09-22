@@ -2033,14 +2033,19 @@ static void test_vocab_phrases_are_sayable(void)
            they are what a four-year-old actually says. Naming them means the next single word
            has to be argued for rather than slipped in beside these — which is the whole value
            of a list over a loosened check, and the list has already grown once. */
-        static const char *const SINGLES[] = {"burp", "fart",  "dance", "jump", "wave",
-                                              "shake", "laugh", "eat",   "kick", "spin"};
+        static const char *const SINGLES[] = {"burp",  "fart", "dance", "jump", "wave", "shake",
+                                              "laugh", "eat",  "kick",  "spin",
+                                              /* "stop" is the one whose single-word case is
+                                                 easy: every other entry costs something when
+                                                 the television says it, and a false "stop"
+                                                 ends a conversation that was not happening. */
+                                              "stop"};
         bool allowed_single = false;
         for (unsigned k = 0; k < sizeof(SINGLES) / sizeof(SINGLES[0]); k++) {
             if (strcmp(p, SINGLES[k]) == 0) allowed_single = true;
         }
         CHECK(words >= 2 || allowed_single,
-              "a one-word phrase is one of the four the owner named");
+              "a one-word phrase is one the owner named");
     }
 }
 
@@ -2064,7 +2069,7 @@ static void test_vocab_has_no_ambiguity(void)
 static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
-    int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0;
+    int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0, stops = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -2083,6 +2088,11 @@ static void test_vocab_arguments_are_real(void)
             CHECK(v[i].arg < face_colour_count(), "a named colour is in the palette");
             if (v[i].arg >= 0) named_colours++;
             colours++;
+            break;
+        case VOCAB_STOP:
+            /* No argument to be wrong: it names no action, form or colour. Counted so the
+               table cannot lose the only way out of a self-continuing conversation. */
+            stops++;
             break;
         case VOCAB_LISTEN:
             /* THE NAME, and there must be EXACTLY ONE of it. Two wake phrases would give the
@@ -2109,6 +2119,7 @@ static void test_vocab_arguments_are_real(void)
     /* Both forms must be reachable BY VOICE, which is the request that started this: the
        ostrich is the default, so "change into robot" is the only way back without five taps. */
     CHECK(listens == 1, "the panel has exactly one name");
+    CHECK(stops == 1, "and exactly one way to end a conversation");
     /* AND THAT NAME IS WHAT THE GLASS SHOWS. The label defaults to it now, derived from the
        wake phrase rather than stored twice — so this pins the derivation: the word after the
        carrier, drawable in a font that has uppercase and digits and nothing else. */

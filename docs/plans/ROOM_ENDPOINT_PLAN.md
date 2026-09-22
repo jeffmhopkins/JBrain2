@@ -4564,6 +4564,47 @@ update that failed to take.
 It also sits after `report`, so the boot that went dark still gets its telemetry out before the
 restart. Two seconds is worth less than the evidence.
 
+#### 10.4cm "Stop" (0.2.78, 2026-09-22)
+
+The owner, one release after the follow-up loop landed: *"we also need a keyword added, 'stop',
+that will stop the conversation. Now that it auto continues for six turns, it wants to keep
+going even if I say stop."*
+
+Which is the obvious consequence nobody thought of: §10.4ch built a conversation that continues
+itself and gave it no way out. Saying "stop" was a sentence like any other — transcribed, sent,
+answered, and followed by the microphone opening again. The only exit was to stop talking and
+wait the loop out, which is a strange thing to ask of a four-year-old who has just asked it to
+stop.
+
+##### On the panel, because that is where the loop lives
+
+MultiNet resolves it on-chip in under half a second, so it takes effect **before a recording is
+even uploaded** — and it works when the box is slow or unreachable, which is precisely when a
+child would most want to give up. Routing it through the transcript instead would have made the
+way out depend on the thing being escaped.
+
+Three states to leave, because "stop" has to mean stop wherever it is said: a recording in
+progress is **dropped rather than sent**, a reply already in flight is **abandoned rather than
+spoken**, and the follow-up window is closed so the microphone does not reopen. The turn counter
+goes to its cap rather than to a separate flag — the next deliberate start (the name, or a
+finger) resets it, which is the rule that already governs the loop.
+
+##### The single-word list grows, and this one is easy to argue
+
+`vocab.h` requires two words and keeps the exceptions as a **named list** so each new one has to
+be argued rather than slipped in. "stop" is the easiest argument that list has had: every other
+entry costs something when the television says it — a wiggle, or six seconds of a bedroom
+uploaded to a model. **A false "stop" ends a conversation that was not happening.**
+
+##### The limit, stated
+
+**"Stop" cannot be heard while the pet is speaking.** `audio.c` deafens the microphone whenever
+the speaker runs — the codec routes the DAC into the ADC, so without it the pet transcribes
+itself. So an interruption mid-reply still waits for the reply to finish, and then the word
+lands in the follow-up window where it does work. Barge-in is a different feature and needs the
+codec problem solved first, which §"Step 8" of the conversation plan already had as an open
+question.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

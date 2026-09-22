@@ -1509,6 +1509,30 @@ static void face_task(void *arg)
                     colour = v->arg < 0 ? (colour + 1) % face_colour_count()
                                         : v->arg % face_colour_count();
                     break;
+                case VOCAB_STOP:
+                    /* THE WAY OUT OF A CONVERSATION THAT CONTINUES ITSELF. The owner: "now
+                       that it auto continues for six turns, it wants to keep going even if I
+                       say stop."
+                     *
+                       Three states to leave, because "stop" has to mean stop wherever it is
+                       said: a recording in progress is dropped rather than sent, a reply
+                       already in flight is abandoned rather than spoken, and the follow-up
+                       window is closed so the microphone does not reopen. The turn counter
+                       goes to its cap rather than to a separate flag — the next deliberate
+                       start (the name, or a finger) resets it, which is exactly the rule that
+                       already governs the loop. */
+                    if (s_talk == TALK_LISTENING) {
+                        size_t dropped = 0;
+                        (void)audio_capture_close(&dropped);
+                    } else if (s_talk != TALK_IDLE) {
+                        talk_clear();
+                    }
+                    s_talk = TALK_IDLE;
+                    s_listen_voice = false;
+                    s_follow_armed = false;
+                    s_follow_turns = FOLLOW_MAX_TURNS;
+                    ESP_LOGI(TAG, "talk: stopped by voice");
+                    break;
                 case VOCAB_LISTEN:
                     /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
                        two. Everything after this — the bubble, the upload, the reply, the
