@@ -237,6 +237,11 @@ void app_main(void)
         ota_confirm_health(false);
     }
 
+    /* BEFORE `ota_confirm_health`, which clears the state when it marks the image good — see
+       `ota_boot_is_new_image`. A local, not a flag in memory that survives a reboot: RTC does
+       not survive an OTA, which is what 0.2.77 learned the hard way. */
+    const bool fresh_image = ota_boot_is_new_image();
+
     ota_manifest_t manifest;
     bool reachable = false;
     if (joined) {
@@ -256,7 +261,7 @@ void app_main(void)
            make the bootloader roll back to the firmware we came from. After `report` as well,
            so the boot that went dark still gets its telemetry out before we restart it — the
            evidence is worth more than the two seconds. */
-        if (ota_take_restage()) {
+        if (fresh_image) {
             ESP_LOGW(TAG, "post-update boot — restarting once more (display workaround)");
             display_request_restart();
             vTaskDelay(pdMS_TO_TICKS(1500));
