@@ -405,6 +405,10 @@ static const pool_t ZONE_POOL[] = {
    mapping is wrong and the numbers say exactly how. */
 static int s_tap_x = -1;
 static int s_tap_y = -1;
+/* The same tap in FRAME space — see `panel_to_frame`. The zones and the marker use these;
+   calibration, telemetry and the talk margin keep the panel-space pair above. */
+static int s_fig_x = -1;
+static int s_fig_y = -1;
 static int s_tap_zone = 0;
 
 /* THE TOUCH CALIBRATION. The owner reports the middle of the panel reading true and the outer
@@ -699,8 +703,12 @@ static bool s_upside_down;
    cut. Tilt a little, he leans a little; tilt past the threshold and he comes all the way
    round.
 
-   ±60 px is what the composition allows: the head is 216 px on a 368 px panel, so there is
-   76 px of slack each side and this keeps a margin rather than pressing him against the edge.
+   HOW FAR is `face.h`'s to say, because it is a property of the drawn geometry rather than of
+   the accelerometer: ±60 upright, ±110 on the side, both measured by walking the lean until
+   the bounding box touches an edge. The limit is also the GAIN — `tilt * max / LEAN_FULL` —
+   so side-mounting nearly doubles the travel for the same tilt, which is the owner's *"he
+   should be able to tilt and slide all over to the right and I'll put it to the left, not
+   restrained as much."* Portrait is unchanged; the room it has has not grown.
 
    THE SIGN DOES NEED A CASE WHEN INVERTED, and the argument that it does not was wrong in a
    way worth keeping. It claimed two negations cancel: the panel's rotation negates `ay`, and
@@ -710,7 +718,6 @@ static bool s_upside_down;
    directly in both orientations. Only the accelerometer's sign actually flips, leaving the
    lean correct in one orientation and backwards in the other, which is exactly what the owner
    saw. So the tilt is taken in viewer terms explicitly. */
-#define LEAN_MAX 60
 /* A little over a quarter of a gravity reaches full lean: tilting a panel that far is a
    deliberate act, and anything gentler stays proportional rather than pinned. */
 #define LEAN_FULL 2400
@@ -791,6 +798,44 @@ static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
         if (err != ESP_OK) return err;
     }
     return ESP_OK;
+}
+
+/* PANEL COORDINATES ARE NOT FRAME COORDINATES ONCE THE PANEL IS ON ITS SIDE, and everything
+ * downstream of a finger was reading them as if they were. The owner: *"while horizontal the
+ * touch screen indicators do not indicate where I actually tapped, it's like rotated 90° or
+ * something."* They are rotated 90°, exactly — by `blit_frame_rotated`, on the way out.
+ *
+ * The touch controller reports where the finger is on the GLASS. The figure is drawn in frame
+ * coordinates and permuted into panel coordinates at blit time, so a tap marker drawn into the
+ * frame at the glass position lands wherever the permutation sends it — a quarter turn away.
+ * The reaction picker had the same fault silently: `face_zone` was asked where on the figure a
+ * point landed using a point that was not in the figure's space, so poking the bird's head
+ * sideways answered as a leg.
+ *
+ * This inverts the mapping `blit_frame_rotated` applies, and it must stay the inverse of that
+ * function and no other. Upright is the identity. Upside down is ALSO the identity here,
+ * because `flip_frame` reverses the whole buffer after the marker is drawn and the panel is
+ * then physically turned over — the two cancel, which is the same argument §10.4bu had to get
+ * right for the lean.
+ *
+ * What stays in PANEL coordinates: the calibration map, the telemetry, and the talk margin —
+ * the rim of the glass is the rim of the glass whichever way up the thing is mounted. */
+static void panel_to_frame(int px, int py, int *fx, int *fy)
+{
+    switch (s_quarter) {
+    case 1:
+        *fx = SQ_Y0 + SQ - 1 - py;
+        *fy = SQ_Y0 + px;
+        break;
+    case 3:
+        *fx = py - SQ_Y0;
+        *fy = SQ_Y0 + SQ - 1 - px;
+        break;
+    default:
+        *fx = px;
+        *fy = py;
+        break;
+    }
 }
 
 static esp_err_t blit_frame(const uint16_t *fb)
@@ -881,12 +926,13 @@ static void update_orientation(void)
         else if (ay > FLIP_THRESHOLD) s_quarter = 3;
     }
     s_upside_down = (s_quarter == 2);
+    /* Function scope: both the fit and the lean limit depend on it. */
+    const bool side = (s_quarter == 1 || s_quarter == 3);
     if (was != s_quarter) {
         static const char *NAMES[] = {"upright", "clockwise", "upside down", "anticlockwise"};
         s_quarter_changed = true;
         /* The figure is composed for 448 of height and gets 368 on its side, so the whole
            thing scales by 368/448 into the square a quarter turn preserves. */
-        const bool side = (s_quarter == 1 || s_quarter == 3);
         face_set_fit(side ? (float)SQ / (float)FACE_H : 1.0f,
                      side ? SQ_Y0 + (int)(SQ * 0.545f) : -1);
         ESP_LOGI(TAG, "orientation: %s (ax=%d ay=%d az=%d)", NAMES[s_quarter], ax, ay, az);
@@ -919,9 +965,10 @@ static void update_orientation(void)
     case 3: tilt = ax; break;
     default: tilt = -ay; break;
     }
-    int target = tilt * LEAN_MAX / LEAN_FULL;
-    if (target > LEAN_MAX) target = LEAN_MAX;
-    if (target < -LEAN_MAX) target = -LEAN_MAX;
+    const int lean_max = side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX;
+    int target = tilt * lean_max / LEAN_FULL;
+    if (target > lean_max) target = lean_max;
+    if (target < -lean_max) target = -lean_max;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
 }
 
@@ -1197,13 +1244,21 @@ static void face_task(void *arg)
             /* Corrected before anything reads it, so the zones, the marker and the telemetry
                all speak the same coordinates. The identity until a calibration exists. */
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
-            s_tap_zone = (int)face_zone(st.form, s_tap_x, s_tap_y, s_upside_down, s_lean);
+            panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            s_tap_zone = (int)face_zone(st.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
             action_mag = variants_penalty(pool, &mem[pool], now);
             action_start = now;
-            ESP_LOGI(TAG, "tap (%d,%d) zone %d -> colour %d, action %d, mag %.2f", s_tap_x,
-                     s_tap_y, s_tap_zone, colour, (int)action, (double)action_mag);
+            /* BOTH PAIRS, because they agree only when the panel is upright and a
+               disagreement is the whole diagnosis: a tap the glass and the figure place
+               differently is a rotation fault, one they place identically but in the wrong
+               zone is a calibration fault, and the owner has no terminal to tell them apart
+               with. */
+            ESP_LOGI(TAG, "tap glass (%d,%d) figure (%d,%d) zone %d -> colour %d, action %d, "
+                          "mag %.2f",
+                     s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
+                     (double)action_mag);
             /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
                over QSPI, and the tap feels answered by whichever lands first. */
             PHASE(3);
@@ -1486,15 +1541,16 @@ static void face_task(void *arg)
             }
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
-            /* After the flip, because the finger is in PANEL coordinates and the flip has
-               already turned the figure the other way up. Rides the flinch, so it fades with
-               the recoil instead of leaving a dot on the glass. */
-            if (s_flinch > 0.25f && s_tap_x >= 0) {
+            /* In FRAME coordinates (`panel_to_frame`), and after the flip: upside down that
+               mapping is the identity precisely because `flip_frame` has already run, and on
+               the side there is no flip to be after. Rides the flinch, so it fades with the
+               recoil instead of leaving a dot on the glass. */
+            if (s_flinch > 0.25f && s_fig_x >= 0) {
                 for (int dy = -9; dy <= 9; dy++) {
                     for (int dx = -9; dx <= 9; dx++) {
                         const int d = dx * dx + dy * dy;
                         if (d > 81 || d < 36) continue;
-                        const int px2 = s_tap_x + dx, py2 = s_tap_y + dy;
+                        const int px2 = s_fig_x + dx, py2 = s_fig_y + dy;
                         if (px2 < 0 || px2 >= FACE_W || py2 < 0 || py2 >= FACE_H) continue;
                         fb[py2 * FACE_W + px2] = CUE_COLOUR;
                     }

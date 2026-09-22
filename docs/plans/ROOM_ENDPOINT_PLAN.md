@@ -3663,6 +3663,89 @@ Press-and-hold has **never been exercised end to end on hardware**, so the whisp
 from the room is still a number nobody has. The margin makes the gesture harder to trigger by
 accident; whether it is still easy to trigger on purpose is a question only the twins answer.
 
+#### 10.4bw The finger was in the wrong space, and so was my answer (0.2.63, 2026-09-22)
+
+The owner, correcting §10.4bv: *"No, the listening is on the top right. Also in landscape he
+should be able to tilt and slide all over to the right and I'll put it to the left, not
+restrained as much. Also, while horizontal the touch screen indicators do not indicate where I
+actually tapped — it's like rotated 90° or something."*
+
+**The red dot at the bottom left was never `draw_listening`.** The listening dot is top right,
+where it is drawn. What was at the bottom left was the **tap marker** — the amber ring that
+rides the flinch — landing a quarter turn away from the finger that made it. §10.4bv's
+explanation was confident and wrong, and it was wrong in the way worth recording: it explained
+a symptom with the most recently changed code rather than checking which code draws the shape
+that was actually photographed. The margin it added to the talk gesture is still right for its
+own reasons; the diagnosis it was attached to was not.
+
+##### Panel coordinates are not frame coordinates
+
+The touch controller reports where a finger is on the **glass**. The figure is drawn in
+**frame** coordinates and permuted into panel coordinates by `blit_frame_rotated` on the way
+out. Everything downstream of a finger read the first as if it were the second, so on a
+side-mounted panel:
+
+- the tap marker was drawn into the frame at the glass position, and the blit then carried it a
+  quarter turn away — the owner's rotated indicator, and the bottom-left dot;
+- `face_zone` was asked where on the figure the finger landed using a point that is not in the
+  figure's space, so poking the bird's neck answered as a leg. **Nothing said so.** A wrong
+  reaction and a right one look alike from across a room, which is why this half of the defect
+  could have lived indefinitely.
+
+`panel_to_frame()` inverts the blit's mapping. Upright is the identity; upside down is *also*
+the identity here, because `flip_frame` reverses the whole buffer after the marker is drawn and
+the panel is then physically turned over — the same two-reversals-cancel argument §10.4bu had
+to get right for the lean, and the same one that is easy to talk yourself out of. What stays in
+panel coordinates: the calibration map, the telemetry, and 0.2.62's talk margin, because the
+rim of the glass is the rim of the glass whichever way up the unit is mounted.
+
+`face_zone` had a second, quieter fault in the same family: it ignored `s_fit` and `s_fit_oy`
+entirely, so side-mounted it asked about a figure a sixth larger than the one on the glass. It
+now inverts the same transform `face_draw` applies, and the test below measured the old code
+disagreeing with itself on **30% of a sampled grid**.
+
+The tap log now prints both pairs. A tap the glass and the figure place differently is a
+rotation fault; one they place identically but in the wrong zone is a calibration fault; the
+owner has no terminal to tell those apart with.
+
+##### The lean: 110, and it is a measurement
+
+*"Not restrained as much"* is a number, so it was measured rather than chosen. Walk the lean
+until a form's bounding box touches an edge, under each fit:
+
+| | ostrich | robot |
+|---|---|---|
+| portrait | 46 | 75 |
+| side-mounted (scaled 368/448) | 85 | 115 |
+
+Portrait ships **±60** — already 1.30× the ostrich's clean limit, deliberately, on §10.4at's
+argument that "a cropped toe at the peak of a gag reads as energy" on a 29 mm screen. Carrying
+exactly that generosity across gives 85 × 60/46 = **110**, which is also what the limit is for:
+it doubles as the *gain* (`tilt * max / LEAN_FULL`), so the same tilt now buys nearly double the
+travel. Both constants moved to `face.h` so the host harness can pin them against the drawn
+geometry — a lean limit that is only a firmware `#define` is a number nothing checks.
+
+##### What the tests had to stop asserting
+
+The first version of the lean test demanded the figure be wholly on screen at full lean, and
+**portrait failed it** — the shipped ±60 has cropped the ostrich's tail since it landed. An
+invariant the shipped product violates is not an invariant; it is a bug report about the test.
+The property that survives is proportion: measure the room each fit has, require the
+side-mounted limit to be as generous as portrait's and no more.
+
+Three new tests, each confirmed to fail against the old code before being trusted:
+
+- `test_a_tap_lands_where_the_pixel_it_touched_came_from` — for every pixel of glass inside the
+  square, the frame pixel `panel_to_frame` names must be the one the rotated blit actually put
+  there. Not "there is a mapping": the exact inverse of that one function.
+- `test_the_zones_follow_the_scaled_figure` — a point and the figure move together, so a zone
+  must not change when both go through the fit.
+- `test_the_lean_limits_are_the_room_that_exists` — the proportion above, measured in-test.
+
+And a defect in the harness itself: `firmware/host/Makefile` did not list headers as
+prerequisites, so moving a constant into `face.h` produced a **green run against a stale
+binary**. A suite that can report OK without having compiled the change is worse than no suite.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

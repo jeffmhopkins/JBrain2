@@ -652,6 +652,199 @@ static void test_a_quarter_turn_is_a_permutation(void)
     free(src);
 }
 
+/* The inverse of `rotate_square`, as `display.c`'s `panel_to_frame` computes it. Duplicated
+   for the same reason the rotation is: this is the only place the index maths can be checked
+   rather than reasoned about, and these two functions are only correct as a PAIR. */
+static void panel_to_frame(int quarter, int px, int py, int *fx, int *fy)
+{
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2;
+    switch (quarter) {
+    case 1:
+        *fx = SQ_Y0 + SQ - 1 - py;
+        *fy = SQ_Y0 + px;
+        break;
+    case 3:
+        *fx = py - SQ_Y0;
+        *fy = SQ_Y0 + SQ - 1 - px;
+        break;
+    default:
+        *fx = px;
+        *fy = py;
+        break;
+    }
+}
+
+static void test_a_tap_lands_where_the_pixel_it_touched_came_from(void)
+{
+    /* THE OWNER: "while horizontal the touch screen indicators do not indicate where I
+       actually tapped, it's like rotated 90 degrees or something." They were rotated 90
+       degrees, exactly — by the blit, on the way out. The touch controller reports a point on
+       the GLASS; the figure lives in the frame; and for two releases everything downstream of
+       a finger read the first as if it were the second.
+
+       The property is stronger than "there is a mapping": the mapping has to be the exact
+       inverse of the one the blit applies, so the test asks the rotation itself. For every
+       pixel of glass inside the square, the frame pixel `panel_to_frame` names must be the one
+       the rotated blit actually put there. A sign error, a transposition or an off-by-one all
+       fail this and all of them look deliberate on a screen. */
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2;
+    uint16_t *src = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    uint16_t *out = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    CHECK(src != NULL && out != NULL, "scratch frames allocated");
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) src[y * FACE_W + x] = (uint16_t)(y * FACE_W + x);
+    }
+
+    for (int q = 1; q <= 3; q += 2) {
+        memset(out, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+        rotate_square(src, out, q == 1);
+        long agree = 0, checked = 0;
+        for (int py = SQ_Y0; py < SQ_Y0 + SQ; py++) {
+            for (int px = 0; px < FACE_W; px++) {
+                int fx, fy;
+                panel_to_frame(q, px, py, &fx, &fy);
+                checked++;
+                if (fx < 0 || fx >= FACE_W || fy < 0 || fy >= FACE_H) continue;
+                if (out[py * FACE_W + px] == src[fy * FACE_W + fx]) agree++;
+            }
+        }
+        CHECK(agree == checked, "every tap maps to the frame pixel the blit drew there");
+    }
+
+    /* Upright and upside down are the identity, the second only because the marker is drawn
+       AFTER `flip_frame` and the panel is then physically turned over. Two reversals that
+       cancel — the same argument the lean needed, and the same one that is easy to talk
+       yourself out of. */
+    for (int q = 0; q <= 2; q += 2) {
+        int fx, fy;
+        panel_to_frame(q, 17, 300, &fx, &fy);
+        CHECK(fx == 17 && fy == 300, "upright and inverted need no mapping here");
+    }
+    free(src);
+    free(out);
+}
+
+static void test_the_zones_follow_the_scaled_figure(void)
+{
+    /* The quiet half of the same complaint. `face_zone` answers WHERE ON THE FIGURE a finger
+       landed, and side-mounted the figure is a sixth smaller and sits at a different origin —
+       so a zone test that ignored the fit was asking about a figure that is not on the glass.
+       Poking the bird's neck answered as a leg, and nothing said so.
+
+       The invariant: a point and the figure move TOGETHER. Take a point in portrait, put it
+       through the same transform `face_draw` puts the drawing through, and the zone must not
+       change. These are the numbers `display.c` passes to `face_set_fit`. */
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2;
+    const float fit = (float)SQ / (float)FACE_H;
+    const int fit_oy = SQ_Y0 + (int)(SQ * 0.545f);
+    const int OX = FACE_W / 2, OY = (int)(FACE_H * 0.545f);
+
+    for (int f = 0; f < FORM_COUNT; f++) {
+        long agree = 0, sampled = 0, on_the_figure = 0;
+        for (int y = 0; y < FACE_H; y += 3) {
+            for (int x = 0; x < FACE_W; x += 3) {
+                face_set_fit(1.0f, -1);
+                const face_zone_t up = face_zone((face_form_t)f, x, y, false, 0);
+                /* Where `face_draw` puts that same bit of figure when it is scaled. */
+                const int sx = OX + (int)lrintf((float)(x - OX) * fit);
+                const int sy = fit_oy + (int)lrintf((float)(y - OY) * fit);
+                face_set_fit(fit, fit_oy);
+                const face_zone_t side = face_zone((face_form_t)f, sx, sy, false, 0);
+                sampled++;
+                if (up != ZONE_NONE) on_the_figure++;
+                if (up == side) agree++;
+            }
+        }
+        face_set_fit(1.0f, -1);
+        CHECK(on_the_figure > 800, "enough of the grid lands on the figure to mean anything");
+        /* Not 100%: the round trip through two lrintf calls moves a point by up to half a
+           pixel, which flips the verdict for points sitting exactly on a zone boundary. The
+           old code disagreed on 30% of the grid; a budget of 2% catches any return of that
+           while tolerating the rounding. */
+        CHECK((sampled - agree) * 100 <= sampled * 2,
+              "a zone does not move when the figure is scaled into the square");
+    }
+}
+
+/* The largest symmetric lean at which EVERY form is still drawn whole, under the fit already
+   set. Measured rather than asserted, because the answer depends on the drawn silhouette and
+   the silhouettes change. */
+static int clean_lean_limit(void)
+{
+    for (int lean = 0; lean <= 240; lean++) {
+        for (int f = 0; f < FORM_COUNT; f++) {
+            for (int sign = -1; sign <= 1; sign += 2) {
+                face_state_t st;
+                face_rest(&st);
+                st.form = (face_form_t)f;
+                st.lean = sign * lean;
+                face_draw(fb, 0, &st);
+                int x0, x1, y0, y1;
+                bbox(&x0, &x1, &y0, &y1);
+                if (x0 <= 0 || x1 >= FACE_W - 1) return lean - 1;
+            }
+        }
+    }
+    return 240;
+}
+
+static void test_the_lean_limits_are_the_room_that_exists(void)
+{
+    /* The owner, side-mounted: "he should be able to tilt and slide all over to the right and
+       I'll put it to the left, not restrained as much."
+
+       WHAT THIS TEST HAD TO STOP ASSERTING. The first version demanded the figure be wholly
+       on screen at full lean, and portrait failed it — the shipped ±60 is already 30% past
+       the point where the ostrich's tail crosses the left edge, and has been since it landed.
+       That is deliberate, and §10.4at is where it was argued: "a cropped toe at the peak of a
+       gag reads as energy" on a 29 mm screen. An invariant the shipped product violates is
+       not an invariant, it is a bug report about the test.
+
+       So the real property is PROPORTION. Measure the room each fit actually has, and require
+       the side-mounted limit to be as generous as portrait's and no more — which is what
+       makes 110 a measurement (85 x 60/46) rather than a number that felt about right. */
+    const int SQ = FACE_W, SQ_Y0 = (FACE_H - SQ) / 2;
+
+    face_set_fit(1.0f, -1);
+    const int room_up = clean_lean_limit();
+    face_set_fit((float)SQ / (float)FACE_H, SQ_Y0 + (int)(SQ * 0.545f));
+    const int room_side = clean_lean_limit();
+    face_set_fit(1.0f, -1);
+
+    CHECK(room_up > 20 && room_side > room_up,
+          "scaling into the square really does buy sideways room");
+    /* Portrait's shipped generosity, as a ratio, is the budget the side limit may spend. */
+    CHECK(FACE_LEAN_MAX * room_side <= FACE_LEAN_MAX_SIDE * room_up + room_up,
+          "the side-mounted limit is at least as generous as portrait's");
+    CHECK(FACE_LEAN_MAX_SIDE * room_up <= FACE_LEAN_MAX * room_side + room_side,
+          "and no more generous, so the pet is not cropped worse for being on its side");
+
+    /* And the crop that generosity buys stays small. At full lean the figure still covers most
+       of the width it covers at rest — a pet sliding off the edge is not a lean. */
+    for (int side = 0; side < 2; side++) {
+        face_set_fit(side ? (float)SQ / (float)FACE_H : 1.0f,
+                     side ? SQ_Y0 + (int)(SQ * 0.545f) : -1);
+        for (int f = 0; f < FORM_COUNT; f++) {
+            face_state_t st;
+            face_rest(&st);
+            st.form = (face_form_t)f;
+            face_draw(fb, 0, &st);
+            int x0, x1, y0, y1;
+            bbox(&x0, &x1, &y0, &y1);
+            const int rest_w = x1 - x0;
+            for (int sign = -1; sign <= 1; sign += 2) {
+                face_rest(&st);
+                st.form = (face_form_t)f;
+                st.lean = sign * (side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX);
+                face_draw(fb, 0, &st);
+                bbox(&x0, &x1, &y0, &y1);
+                CHECK((x1 - x0) * 100 >= rest_w * 88, "full lean crops a sliver, not a limb");
+            }
+        }
+    }
+    face_set_fit(1.0f, -1); /* leave the renderer as every other test expects it */
+}
+
 static void test_the_caption_does_not_black_out_the_pet(void)
 {
     /* THE TICKER USED TO CLEAR A FULL-WIDTH BLACK STRIP before drawing, and the reason was
@@ -1784,6 +1977,9 @@ int main(void)
     test_the_caption_does_not_black_out_the_pet();
     test_the_side_mounted_fit_stays_in_the_square();
     test_a_quarter_turn_is_a_permutation();
+    test_a_tap_lands_where_the_pixel_it_touched_came_from();
+    test_the_zones_follow_the_scaled_figure();
+    test_the_lean_limits_are_the_room_that_exists();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

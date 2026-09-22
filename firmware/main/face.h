@@ -9,6 +9,20 @@
 #define FACE_W 368
 #define FACE_H 448
 
+/* HOW FAR THE FIGURE MAY SLIDE, and the two numbers differ because the composition does.
+ *
+ * Both are measured, not chosen: render every form at rest and walk the lean until the
+ * bounding box touches an edge. Portrait clips past 70, so 60 keeps a margin. Side-mounted the
+ * figure is scaled by 368/448, which narrows it by a sixth and moves the wall out — it clips
+ * past 110, and 110 is what the owner asked for: *"in landscape he should be able to tilt and
+ * slide all over to the right and I'll put it to the left, not restrained as much."* Nearly
+ * double the travel for the same tilt, because the same tilt has nearly double the room.
+ *
+ * Here rather than in `display.c` so the host harness can pin them against the actual drawn
+ * geometry. A lean constant that is only a firmware `#define` is a number nothing checks. */
+#define FACE_LEAN_MAX 60
+#define FACE_LEAN_MAX_SIDE 110
+
 /* How many colours the tap cycles through (the shipped palette plus the robot default). */
 int face_colour_count(void);
 

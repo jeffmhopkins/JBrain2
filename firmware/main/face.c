@@ -351,8 +351,15 @@ face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean
         x = FACE_W - 1 - x;
         y = FACE_H - 1 - y;
     }
-    const int dx = x - (OX + lean);
-    const int dy = y - OY;
+    /* THE SAME TRANSFORM `face_draw` USES, INVERTED — and it has to be the same one or the
+       zones drift away from the drawing. Side-mounted, `s_fit` shrinks the figure by a sixth
+       and `s_fit_oy` moves its origin into the square; a zone test that ignored both asked
+       where the finger landed on a figure that is not the one on the glass, which is the
+       quiet half of the owner's "the indicators do not indicate where I actually tapped". */
+    const int ox = OX + (int)lrintf((float)lean * s_fit);
+    const int oy = s_fit_oy >= 0 ? s_fit_oy : OY;
+    const int dx = (int)lrintf((float)(x - ox) / s_fit);
+    const int dy = (int)lrintf((float)(y - oy) / s_fit);
     return form == FORM_ROBOT ? zone_robot(dx, dy) : zone_ostrich(dx, dy);
 }
 
