@@ -168,13 +168,15 @@ with nothing on screen and nothing in a log. Both ends now say ten seconds, the 
 `endpoint.converse_reply_truncated` rather than cutting quietly, and the two constants are
 pinned to each other by a test that reads `talk.c`.
 
-**"fish stop".** The conversation-ending word was a bare `stop`, the only single-word entry
-whose one-word case was easy to argue — every other costs a wiggle or a recording when the
-television says it, while a false stop only ends a conversation that was not happening. The
-owner asked for "fish stop" anyway, and it is the better phrase: ending a conversation with
-the pet's name is the same shape as starting one with it, and it hands the one-word allowance
-back to the words that need it. `vocab.h` rule 3 holds — neither phrase is a prefix of the
-other.
+**"stop stop"** (was `stop`, then briefly "fish stop"). The conversation-ending word started
+as a bare `stop`, the only single-word entry whose one-word case was easy to argue — every
+other costs a wiggle or a recording when the television says it, while a false stop only ends
+a conversation that was not happening. It became "fish stop" on the argument that ending a
+conversation with the pet's name mirrors starting one with it, and then "stop stop" at the
+owner's ask, which is better for a reason the symmetry argument missed: **a child who wants it
+to stop is not composing a phrase.** Repetition is what escalation sounds like at four, so
+"stop stop" is already what they would say where "fish stop" is a thing they have to remember
+to say. `vocab.h` rule 3 holds throughout — no phrase is a prefix of another.
 
 **The burp was mute — and that was the smaller half.** The owner, after the first fix landed:
 *"burp has been on there. It never actually activates them. The kids say the word — like the

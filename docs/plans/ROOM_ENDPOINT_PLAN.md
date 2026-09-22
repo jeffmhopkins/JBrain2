@@ -4674,6 +4674,268 @@ update, which is precisely the boot that has been going dark.
 right and is now a measurement, so a mute switch has somewhere to live (§10.4cg). PWR remains
 unprobed and still most likely belongs to the AXP2101 rather than to a GPIO.
 
+#### 10.4cp Faster turns, a conversation it remembers, and the data that only existed on a cable (0.2.80–0.2.83, 2026-09-22)
+
+Six complaints in one message, and they turned out to share two causes.
+
+**The turn took 9.5 s and should have taken 1.3 s.** `audio_ctx` was being sized from a
+constant floor of 256 frames regardless of how long the clip actually was, so a two-second
+utterance paid for a much longer window. Sized from the clip instead
+(`max(160, min(1500, seconds * 50 * 1.5))`) and the round trip fell to **1.3 s** — measured,
+not estimated.
+
+**The babies were being cut off**, both ends. Two separate faults wearing one symptom:
+
+- *At the end of their turn*: the stop margins were too tight for a four-year-old who pauses
+  mid-sentence. `_TRIM_LEAD_MS` 200 / `_TRIM_TAIL_MS` 400.
+- *During the pet's reply*: `PANEL_AUDIO_MAX` was a single ceiling serving both directions,
+  and a long reply hit it — **261,290 bytes against a 192,000 limit**, truncated silently.
+  `PANEL_REPLY_MAX` split it out and a `converse_reply_truncated` warning now says so when it
+  does happen rather than leaving a sentence to stop mid-word.
+
+**The silence at both ends is now trimmed** (`_trim_to_speech`): a 20 ms frame peak series, a
+gate at 3× the 10th-percentile frame or 300 absolute, and the margins above. One sampled clip
+was **six seconds of mostly room**. The first cut of this also carried a `ref//4` cap and a
+`_TRIM_MIN_MS` floor; probing showed neither ever bound — the margins alone already give
+620 ms against a 600 ms floor — so both came out. A guard that cannot fire is a guard nobody
+can reason about.
+
+**The stop word is "fish stop"**, matching the panel's name. (Changed again in §10.4cr.)
+
+##### The replies were incoherent, and history was why
+
+Half the sampled replies did not follow from what the child said — *"it had jam on it"* was
+answered with *"was it on your tummy or a yummy cookie?"*. Every turn was being sent with no
+history at all, so the model was answering a fragment. `_panel_memory` now carries **5 turns
+with a 240 s TTL**, keyed per panel. Babbles are deliberately NOT remembered: a recogniser
+false-positive should not become context the next three turns are conditioned on.
+`PANEL_CONVERSATION_PROMPT` rewritten to name subjects a small child has (what they ate, what
+they did today, their toys) and to stop offering games it cannot play.
+
+##### `burp` was never a missing sound; it was a phrase that never fired
+
+Reported as *"the code word is wrong"*. It was not refused — `vocab=46/0` proves every phrase
+registers — and the earlier claim here that it was a refusal was **wrong**. `speech_heard()`
+was added to carry the decoded phrase, its probability and whether it fired, and the answer
+came back on the wire: **"spin" fired at p=13/100.** This is a confidence problem, and setting
+an honest floor needs more samples than one session gave. Still open. What did ship: six more
+ways to ask (`can you burp`, `can you fart`, `do a big jump`, `have a snack`, `give it a kick`,
+`do a spin`), because a phrase a child actually says is worth more than a threshold.
+
+##### What was only visible on a cable, and now is not
+
+The instruction was to review every avenue of data reachable only over USB and put it in
+telemetry. `TelemetryIn` gained `vocab_ok`, `vocab_bad`, `vocab_refused`, `heard`,
+`int_largest`, `levels`, `blit_fail_total`, `blit_recov`, `meter_fail`, `wifi_reason`,
+`wifi_drops`, `ota_err`, `ota_tries`, `restart_why` — and **`tap`**, which the panel had been
+sending all along and the box had been silently dropping. That one was found by a test
+asserting that every key the firmware writes is a key the model accepts, which is the kind of
+gap no amount of reading either side finds.
+
+Three real bugs fell out of writing it:
+
+- **`ota_report` returned `ESP_OK` for any HTTP status.** A 422 counted as a successful report
+  and **cleared the PMU crash ring** — the panel discarding the evidence for a crash the box
+  had just rejected.
+- **`main.c`'s telemetry body could ship without its closing brace**, because the `}` was
+  written inside the last optional block. Unconditional now, and the buffer grew to 1536.
+- **`esp_mn_commands_add`'s return was discarded**, so a refused phrase looked identical to an
+  accepted one. Checked, counted, and the first six refusals are reported verbatim.
+
+##### Residency: the pin, and what a pin cannot do
+
+The owner: *"I would rather keep OSS 120 loaded all the time and then the Qwen models be able
+to hotswap first."* `keep_loaded` now ranks pinned models last among eviction candidates in
+both planners, and `qwen3.5-4b`'s `runtime_overhead_gb` came down from 9.5 to **3.5** on a
+measurement — 7.85 GiB of whole-box GTT against a 15.0 GiB declaration.
+
+**The pin did not stop the eviction, and the earlier claim here that it would was wrong.** A
+pin orders the victims of an eviction *decision*; the 120B is being killed by a llama-swap
+**config reload**, which makes no decision and consults no ranking — `--watch-config` sees the
+file change and `old.Shutdown()` takes down every running server. `llama_swap_config.write()`
+already compares content and short-circuits, so something is genuinely rendering differently,
+and `render()` is not pure: it globs the filesystem through `resolve_weight`. Which entry
+differs is **still unknown**. `llm_settings.gateway_config_changed` now logs exactly what
+changed when it re-stamps; reproducing needs the 4B to cold-load while the 120B is resident.
+
+##### And the double-boot workaround does not work
+
+§10.4co said it was *"confirmed on hardware"*. `restart_why: 'ota-park'` in today's telemetry
+proves the restart **fires** — and the screen was still black afterwards. So the correction
+stands: it fires, it does not fix it, and the five-tap gesture reboot remains the only thing
+that brings a panel back after an update. Root cause still open; the remaining suspect is the
+CO5300 reset line behind the TCA9554 expander, which needs the Waveshare schematic rather
+than blind probing next to a power rail.
+
+#### 10.4cq Twenty-six sounds, because the pet already varied and only the noise stayed put (0.2.84, 2026-09-22)
+
+The owner, twice: *"Sound effects are too repetitious. Same with the poke."* Then, precisely:
+*"I want the poke of the screen to be kind of dependent. If you hit the head the robot should
+kind of coo and be kind of nice... You can't all just be the same little coin sound effect.
+List all of the actions. All of the things that can cause sound effects — make sure they're
+all unique and appropriate."*
+
+**The panel was already varied; the sound was the only part that was not.** A poke resolves
+through `variants.c` to a weighted random action from the touched zone's pool — the head can
+blush, giggle, nod, wiggle or fall asleep — and every one of those played the same 880 Hz
+tone. So the fix is not to randomise a noise. It is to let the sound follow the **action**,
+which was already the interesting thing: `audio_cue(cue_for_action(action))`. Poking the head
+coos because the head's pool leans towards a blush. **No zone is special-cased**, so the sound
+and the animation cannot drift apart, and they stay in step for free the next time the pools
+are re-weighted. The same rule now covers a *spoken* action too, which retires the burp/fart
+special case — asking for a thing sounds like the thing, for all nineteen rather than two.
+
+`cue.c` is 26 cues over eight oscillator shapes: the nineteen actions in `rig.h`'s order, then
+seven interface sounds (tap, label toggle, calibration tick, phrase understood, mic open,
+stop, failed turn — the last of which was **silent** before this).
+
+**Synthesised, not sampled**: twenty-six WAVs is a licence question, a download and most of a
+megabyte of flash to answer what a table and eight shapes answer.
+
+**Additive, not naive squares**: output is 16 kHz, so Nyquist is 8 kHz and a hard-edged 2 kHz
+square folds its 10/14/18 kHz harmonics back to 6/2/2 kHz — on top of the real partials and
+sliding the *wrong way* as a sweep moves. Summing sines never generates a partial above
+Nyquist. Pulses use the **cosine** basis (peak ≈1.18, the Gibbs overshoot) rather than sine
+(peak ≈2.7, which wastes 7 dB of headroom for the same waveform).
+
+What the research established and the table encodes: SMB's coin is B5→E6, an ascending
+perfect fourth, **83 ms into 799 ms** — the duration asymmetry does as much work as the
+interval. A jump differs from a laser by *rate* (≈2.8 oct/s against 15–25), which is why
+CUE_JUMP holds a flat plateau first. Roughness is a property of **register**, not interval:
+partials buzz when they fall inside one critical band, ≈30 Hz apart near 300 Hz, where the
+same interval two octaves up merely beats — so CUE_OOPS is a close pair down at 311 Hz, low
+and falling and gently rough. *Try again*, not *told off*.
+
+**Each cue also varies between plays.** `cue_render` takes a `variant`: pitch moves by up to
+two semitones, length by 7%, and multi-note shapes rotate which interval they lean on.
+Contour, register and shape never vary, because those *are* the meaning — a rising cue that
+sometimes falls is not a variation. `audio_cue` counts the variant **per cue** rather than
+drawing at random: what has to differ is two consecutive plays of the *same* sound, which is
+what a child poking the same spot four times produces, and a counter guarantees that where a
+draw only makes it likely.
+
+##### Three things the host suite caught that listening would not have
+
+`cue.c` is pure C with no ESP-IDF in it, specifically so it can be tested on a host — the
+generator it replaces (`audio_rude`) could not be, and shipped with no test at all.
+
+- **A cue rendered nothing.** The fart is 620 ms and stretches to 663; `CUE_MAX_SAMPLES` was
+  9600. The length guard swallowed it *silently*, which is the worst shape for that failure.
+- **22 KB of floats on an 8 KB stack.** Peak-normalisation is done by measurement rather than
+  arithmetic (the naive bound is 2.7 for a square whose real peak is 1.18, and it *moves* as a
+  sweep carries partials through the taper). Buffering the floats to find that peak would have
+  overflowed the render task. The generator is pure for a given `(cue, variant)`, so it simply
+  runs **twice** and stores nothing.
+- **A DC offset of 13% of full scale on the eat.** A slowly-clocked LFSR is a sample-and-hold
+  of a coin flip, and a 300 ms cue only gets ~500 clocks of a 32767-step register — the flips
+  do not average out, so the noise rides a random offset. Measured across seeds: 200 clocks
+  can land at **49%**. That parks the cone off-centre for the length of the sound and snaps it
+  back at the end, which is the same click the envelope exists to prevent arriving by another
+  route. Which seeds land badly is luck, so the fix had to be structural: one pole at 200 Hz
+  inside the noise generator, well under the kilohertz it is clocked at and well over the
+  fraction of a hertz the drift lives at. Eat 3356 → −31, kick 1173 → 7, sneeze 471 → −9,
+  fart 409 → 3.
+
+That last one is also why the click and centring tests now sweep **32 variants** rather than
+checking the nominal one: the defect is redrawn per variant, so a single-variant test proves
+nothing about the rest. It reproduces the failure when the DC blocker is removed.
+
+##### Deleted rather than kept
+
+`audio_beep` and `audio_rude` are gone. Nothing called the first once every site had a cue,
+and it held a 2,880-byte tone buffer in the **internal** RAM `speech.c` is tight on. The
+second hand-rolled its own sawtooth, envelope and clipping — the one generator in the firmware
+that could not be built on a host, and the only one that stayed at a fixed level while the
+rest were peak-normalised. CUE_FART and CUE_BURP are the same sounds through the tested path.
+
+#### 10.4cr Five farts, and a way out a child would actually say (0.2.85, 2026-09-22)
+
+Two asks, and the second one is a design point rather than a request for more content.
+
+##### "stop stop"
+
+The way out of a conversation has now been three things: bare `stop`, then "fish stop", now
+**"stop stop"**. §10.4cm argued for the name version on symmetry — a conversation ends with
+the pet's name the way it starts with one ("hey fish") — and that argument **was wrong about
+the user**. A four-year-old who wants it to stop is not composing a phrase. Repetition is what
+escalation sounds like at four; "stop stop" is already what they say, where "fish stop" is a
+thing they have to remember to say. The phrase most likely to be uttered in the moment it is
+needed wins, and it is not always the tidiest one.
+
+It costs nothing that bare `stop` did not already cost less of — a television has to say it
+twice in a row — and `vocab.h` rule 3 still holds.
+
+The test that pinned this changed shape rather than its threshold, which is the honest move
+when a premise goes away: "carries the panel's name" is gone, because it is no longer true.
+What it pins now is the two properties that survive every rewording — the phrase is **more
+than one word** (or it is always live and the television ends conversations), and **nothing in
+the table shadows it**, because a stop phrase MultiNet will not resolve is a child shouting at
+a toy that keeps talking, and that failure is silent.
+
+##### Five farts
+
+The owner: *"fart should have five different kinds of farts, different tones, length,
+squeakiness, etc. The kids really love the farts."*
+
+**The variant machinery every other cue uses is not enough here, and that is the finding.**
+§10.4cq's `variant` moves pitch by up to two semitones and length by a tenth. For a giggle
+that is plenty. For a fart it is nothing: **a fart transposed a semitone is the same fart.**
+Variation that preserves identity is the right default — it is what stops a giggle becoming a
+different sound — and it is exactly wrong for the one cue where the *identity* is supposed to
+vary. So the fart gets five rows of its own rather than one row and a knob.
+
+Four axes actually distinguish one from another, and every row moves all four:
+
+| | length | starts | contour | texture | wet |
+|---|---|---|---|---|---|
+| **rumbler** | 700 ms | 92 Hz | falls | slow flutter | barely |
+| **squeaker** | 220 ms | 340 Hz | **rises** | tight, buzzy | dry |
+| **sputterer** | 420 ms | 150 Hz | falls | **breaks into bursts** | a little |
+| **wet one** | 560 ms | 118 Hz | falls | unhurried | 0.75 |
+| **pfft** | 170 ms | 210 Hz | falls hard | shallow | 0.55 |
+
+Lengths span **a factor of four** and registers nearly **two octaves**, against the two
+semitones the knob offered. The squeaker is the only one that rises, which is why `fall` is
+allowed to be negative: a tight opening pinches *higher* as it closes.
+
+**The sputterer is a clamp, not a number.** Its tremolo depth of 0.92 would drive the envelope
+negative, and a negative envelope **inverts the waveform rather than interrupting it** — a
+phase flip, which is audible as harshness and not as a gap. Clamping at zero turns the same
+number into real silence between bursts, which is what sputtering actually is. (A corner in an
+envelope does not click; a jump would.)
+
+`variant` still applies on top, so it is 5 characters × 8 transpositions × 4 stretches, and 5
+and 8 being coprime means the counter in `audio_cue` walks all forty rather than cycling five.
+
+##### Measuring "squeakiness" honestly
+
+The first attempt to test this measured **the decay envelope and called it texture**: counting
+frames quiet relative to the cue's *global* peak marks the end of every cue, so all five
+scored 0.35–0.68 and the test proved nothing. Measured against each frame's own ±30 ms
+neighbourhood instead, the number says the one thing sputtering is — the flow stopping and
+restarting *while the sound is still going* — and the separation is unambiguous: **0.53 for
+the sputterer against ≤0.05 for the rest** (worst case across all forty variants: 0.485
+against 0.150).
+
+Register is measured as a low-frequency energy share rather than a pitch, for the same reason
+§10.4cq switched estimators: three of the five carry noise, and a crossing-rate estimate on a
+noisy signal reports the **noise bandwidth**, not the fundamental. The first probe cheerfully
+reported the wet one, whose fundamental is 118 Hz falling to 72, as rising through 843→982 Hz.
+
+The test checks each axis **separately** — length, register, texture, then pairwise
+distinctness — because a single "are the waveforms different" check passes on five rows that
+differ in one number, which is precisely the failure being guarded. Probed against two
+degenerate implementations: five rows differing only in pitch (fails on length), and the
+tremolo clamp removed (fails on sputter).
+
+One sound was tuned by this rather than by ear, and the direction was already right: the
+pfft's flutter depth came down from 0.45 to 0.25. At 48 Hz a deep flutter reads as buzz rather
+than rhythm anyway, and nothing escaping that fast has time to flutter.
+
+`CUE_MAX_SAMPLES` is now 12800 (800 ms) for the 700 ms rumbler, which stretches to 749 — with
+deliberate room above it, because §10.4cq's silent-swallow is what a tight ceiling here looks
+like.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

@@ -1539,10 +1539,14 @@ static void face_task(void *arg)
                           "mag %.2f",
                      s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
                      (double)action_mag);
-            /* Before the repaint, not after: the beep is ~90 ms and a full frame is ~330 KB
-               over QSPI, and the tap feels answered by whichever lands first. */
+            /* Before the repaint, not after: the cue is ~90 ms and a full frame is ~330 KB
+               over QSPI, and the tap feels answered by whichever lands first.
+               THE SOUND FOLLOWS THE ACTION, which is what makes poking the head coo: the
+               head's pool is weighted towards a blush, and CUE_BLUSH is the warm one. No zone
+               is special-cased, so the sound and the animation cannot drift apart and they
+               stay in step for free the next time `variants.c` is re-weighted. */
             PHASE(3);
-            if (sound) audio_cue(CUE_BLIP);
+            if (sound) audio_cue(cue_for_action((int)action));
             dirty = true;
         tap_done:;
         } else if (tapped) {
@@ -1561,7 +1565,6 @@ static void face_task(void *arg)
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
-                bool rude = false; /* this phrase makes its own noise; skip the cue */
                 /* Understanding a word is not the same event as a finger landing, and used
                    to sound identical. `stop` gets the falling gesture, the name gets the
                    rising one that means the microphone is open, and everything else gets the
@@ -1625,18 +1628,15 @@ static void face_task(void *arg)
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
-                    /* The two the twins kept asking for and that never made a sound. The
-                       noise REPLACES the acknowledging beep rather than following it — a
-                       tone and then a burp is the toy answering twice. */
-                    if (action == ACT_BURP || action == ACT_FART) {
-                        audio_rude(action == ACT_FART);
-                        rude = true;
-                    }
+                    /* ASKING FOR A THING SOUNDS LIKE THE THING. The acknowledgement IS the
+                       action's cue, not a bleep followed by one — "can you burp" answering
+                       with a tone and then a burp is the toy answering twice, and that was
+                       already true of the two rude ones before the other seventeen had
+                       voices of their own. One rule now covers all nineteen. */
+                    heard_cue = cue_for_action((int)action);
                     break;
                 }
-                /* `rude` means the phrase makes its own noise — a burp answering with a
-                   bleep first would be the toy answering twice. */
-                if (sound && !rude) audio_cue(heard_cue);
+                if (sound) audio_cue(heard_cue);
                 dirty = true;
             }
         }

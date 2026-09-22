@@ -1,68 +1,102 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
-/* THE PANEL'S VOICE WHEN IT IS NOT TALKING — playful arcade bleeps, one per event.
+/* THE PANEL'S VOICE WHEN IT IS NOT TALKING — one sound per thing that happens.
  *
- * Every acknowledgement used to be the SAME 880 Hz tone: the label toggling, a tap on the
- * pet, a voice command landing, a calibration sample, the microphone opening. Five different
- * things and one sound, so the sound told a four-year-old only that *something* registered.
- * And the one event that most needed a sound — a turn that failed — had none at all, so a
- * pet that could not reach the box was silent in exactly the way a broken one is.
+ * The owner, after the first cut shipped with seven: *"Sound effects are too repetitious.
+ * Same with the poke. They should all be unique or kind of change variations... if we poke
+ * head or whatever we could have some cooing. Happy sounds. You can't all just be the same
+ * little coin sound effect."*
  *
- * WHY THESE ARE SYNTHESISED AND NOT SAMPLED: a WAV of a coin is a licence question, a
- * download and 100 KB of flash to answer something an oscillator answers in a few hundred
- * bytes of table.
+ * THE PANEL ALREADY VARIED WHAT IT DID; ONLY THE SOUND STAYED PUT. A poke resolves through
+ * `variants.c` to a weighted random action from the zone's pool — the head can blush, giggle,
+ * nod, wiggle or fall asleep — and every one of those played the same 880 Hz blip. So the fix
+ * is not to randomise a noise, it is to let the sound follow the ACTION, which is the thing
+ * that was already interesting. Poking the head coos because the head's most likely action is
+ * a blush; no special case is needed for it, and the two stay in step for free when the pools
+ * are next re-weighted.
  *
- * WHY ADDITIVE (a sum of sines) AND NOT A SQUARE WAVE: output here is 16 kHz, so Nyquist is
- * 8 kHz, and a hard-edged square at arcade pitches aliases badly — a 2 kHz square puts
- * harmonics at 10, 14, 18 kHz which fold back to 6, 2, 2 kHz, landing ON TOP of the real
- * partials and sliding the wrong way as the pitch sweeps. That is the gritty shimmer you hear
- * on a cheap retro sweep. Summing sines is EXACTLY band-limited instead of approximately: a
- * partial above Nyquist is simply never generated, so there is nothing to fold. The CPU cost
- * is irrelevant because every cue is rendered once into a buffer, not streamed.
+ * AND EACH ONE VARIES BETWEEN PLAYS. `cue_render` takes a `variant`: the same cue at a
+ * different variant is transposed a little, timed a little differently, and for the
+ * multi-note shapes uses a different set of intervals. Identity survives — a giggle is always
+ * a giggle — but the fourth one in a row is not the sample of the first. The generator stays
+ * PURE for a given (cue, variant), which is what lets `cue_render` find its own peak by
+ * running twice and storing nothing.
  *
- * Pure C with no ESP-IDF in it, deliberately: `audio.c` cannot be built on a host, which is
- * why `audio_rude()` shipped with no test. This can, and `firmware/host/tests.c` asserts the
- * things that actually go wrong — a cue that clicks, clips, sits off centre, or reads as the
- * wrong emotion because its pitch contour points the wrong way.
+ * WHY SYNTHESISED, NOT SAMPLED: twenty-six WAVs is a licence question, a download and most of
+ * a megabyte of flash to answer what a table of numbers and eight oscillator shapes answer.
+ *
+ * WHY ADDITIVE: output is 16 kHz, so Nyquist is 8 kHz, and a hard-edged square at these
+ * pitches aliases badly — a 2 kHz square folds its 10, 14 and 18 kHz harmonics back to 6, 2
+ * and 2 kHz, on top of the real partials and sliding the wrong way as the pitch sweeps.
+ * Summing sines is exactly band-limited: a partial above Nyquist is never generated.
+ *
+ * Pure C with no ESP-IDF in it, deliberately — `audio.c` cannot be built on a host, which is
+ * why `audio_rude()` shipped untested. The host suite asserts what actually goes wrong with
+ * generated audio: clicks at the edges, clipping, DC offset, two cues that sound alike, and a
+ * contour that contradicts the meaning.
  */
 
 typedef enum {
-    /* A tap landed. The shortest, flattest thing in the set: a blip that does not move,
-       because any pitch contour at all imports a mood, and a tap has none. */
-    CUE_BLIP = 0,
-    /* The label flipped between the panel's name and its version. Same family as the blip,
-       two semitones up, so the two touch targets do not sound identical. */
-    CUE_TOGGLE,
-    /* A voice command was understood. Ascending perfect fourth — the coin's interval, short
-       note into long note, which is the shape the ear reads as arriving somewhere. */
-    CUE_HEARD,
-    /* The microphone just opened and the pet is listening. A rising sweep: rising is the
-       prosody of a question, which is exactly what an open microphone is. */
-    CUE_LISTEN,
-    /* The conversation was ended on purpose ("fish stop"). The same gesture falling. */
-    CUE_STOP,
-    /* A turn failed — the box was unreachable, or took too long. Low, descending, and rough
-       on purpose. Gentle enough for a bedroom: this tells a child to try again, it does not
-       tell them off. */
-    CUE_OOPS,
-    /* A calibration sample was captured. Fires sixteen times in a row, so it is the one cue
-       that has to be pleasant to hear repeatedly: quiet, brief, and a touch higher each time
-       would be nice but a fixed neutral tick is what sixteen of them can bear. */
-    CUE_TICK,
+    /* --- the nineteen actions, in the order `rig.h` declares them ---------------------- */
+    CUE_WIGGLE = 0, /* a wobble — pitch vibrato, no journey */
+    CUE_GIGGLE,     /* four quick rising blips */
+    CUE_BOING,      /* up fast, down slow, with a wobble on the way back */
+    CUE_BLUSH,      /* THE COO. Warm, soft, rises and settles. The head's happy sound. */
+    CUE_SNEEZE,     /* a catch of breath, then a noise burst falling away */
+    CUE_HICCUP,     /* two tiny blips, the second higher, and nothing else */
+    CUE_NOD,        /* two low soft notes, agreeing */
+    CUE_JUMP,       /* the rising sweep, flat plateau first */
+    CUE_WAVE,       /* a friendly two-note hello */
+    CUE_DANCE,      /* a little major arpeggio */
+    CUE_BOP,        /* low rhythmic pulses */
+    CUE_SHIMMY,     /* fast vibrato, buzzier than the wiggle */
+    CUE_SLEEP,      /* a slow descent that fades — a yawn */
+    CUE_HIDE,       /* a quick drop to nothing */
+    CUE_FART,       /* FIVE of them — see FARTS[] in cue.c. Rumbler, squeaker, sputterer,
+                       wet one, pfft; 170-700 ms and nearly two octaves apart, because a fart
+                       transposed a semitone is the same fart and these are the twins'
+                       favourite thing the panel does. */
+    CUE_BURP,       /* the dry one, and still a single character */
+    CUE_EAT,        /* two soft noise bites */
+    CUE_KICK,       /* a thud: noise plus a pitch drop */
+    CUE_SPIN,       /* three rising sweeps, each starting higher */
+
+    /* --- the interface, which is not an action ----------------------------------------- */
+    CUE_BLIP,   /* a tap that resolved to nothing to do */
+    CUE_TOGGLE, /* the label flipped between the panel's name and its version */
+    CUE_TICK,   /* a calibration sample — fires sixteen times, so the lightest thing here */
+    CUE_HEARD,  /* a voice command understood: the coin's interval and its short-into-long */
+    CUE_LISTEN, /* the microphone opened — rising, because that is the prosody of a question */
+    CUE_STOP,   /* the conversation ended on purpose — the same gesture falling */
+    CUE_OOPS,   /* the turn failed. Low, falling, rough. Try again, not told off. */
     CUE_COUNT,
 } cue_t;
 
-/* How many samples `cue_render` will write for `c` at `rate` Hz. Never more than
-   CUE_MAX_SAMPLES at 16 kHz, so a caller can size one buffer and stop thinking about it. */
+/* The MOST samples `cue_render` can write for `c` at `rate` Hz, across every variant — not
+   the length of any particular one. A caller sizes a buffer from this, so it has to be the
+   worst case: variants stretch the run by up to 7%, and returning the nominal length would
+   under-allocate for exactly the variants that are longer than nominal. 0 for an unknown
+   cue. */
 int cue_samples(cue_t c, int rate);
 
-/* Longest cue at 16 kHz, for a statically sized buffer. */
-#define CUE_MAX_SAMPLES 5600
+/* 800 ms at 16 kHz. The longest cue is the rumbling fart at 700 ms, which stretches to 749.
+   The first cut of this constant said 600 against a 620 ms fart, so the fart rendered NOTHING
+   and the length guard in `cue_render` swallowed it silently. A ceiling that excludes a real
+   cue is worse than no ceiling, so there is deliberate room above the longest one here, and
+   the host suite checks every cue at every variant against it rather than trusting the
+   arithmetic in this comment. */
+#define CUE_MAX_SAMPLES 12800
 
-/* Render `c` into `out` (at least `cue_samples(c, rate)` int16s) and return how many samples
-   were written. `gain` is 0..100 on the same scale as the speaker volume — the cues are
-   normalised to a fixed headroom internally, so this is the only loudness control and one
-   number keeps the whole set consistent with each other. 0 samples for an unknown cue. */
-int cue_render(cue_t c, int16_t *out, int rate, int gain);
+/* Render `c` into `out` and return the samples written.
+   `gain` is 0..100 on the speaker's own scale; the cues are peak-normalised internally so
+   this is the only loudness control and one number keeps the whole set consistent.
+   `variant` picks among the small perturbations described above — any value is valid, and
+   the same value always renders the same samples. */
+int cue_render(cue_t c, int16_t *out, int rate, int gain, unsigned variant);
+
+/* The cue for an action, so the sound and the animation cannot drift apart. `rig.h`'s
+   `action_t` is the argument; an action with no sound of its own returns CUE_BLIP. */
+cue_t cue_for_action(int action);

@@ -42,14 +42,23 @@ static const vocab_t VOCAB[] = {
      * and it works when the box is slow or unreachable — which is exactly when a child would
      * most want to give up.
      *
-     * IT CARRIES THE PANEL'S NAME, and that is the whole reason it is two words. Bare "stop"
+     * IT IS THE WORD SAID TWICE, and that is the whole reason it is two words. Bare "stop"
      * was the safest single word in the table — the others cost a wiggle or a recording when
      * the television says one, while a false "stop" only ends a conversation that was not
-     * happening. But the owner asked for "fish stop", and it is better than the argument that
-     * kept "stop": a child ending a conversation with the pet's own name is the same shape as
-     * starting one with it ("hey fish"), and it leaves the one-word allowance to the words
-     * that genuinely need it. */
-    {"fish stop", VOCAB_STOP, 0},
+     * happening — but a one-word entry that can be said another way should be, and this one
+     * can.
+     *
+     * It was "fish stop" first, on the argument that ending a conversation with the pet's
+     * name mirrors starting one with it ("hey fish"). The owner changed it, and the new one is
+     * better for a reason the symmetry argument missed: A CHILD WHO WANTS IT TO STOP IS NOT
+     * COMPOSING A PHRASE. Repetition is what escalation sounds like at four — "stop stop" is
+     * already what they say, where "fish stop" is a thing they have to remember to say. The
+     * phrase most likely to be uttered in the moment it is needed wins, and that is not
+     * always the tidiest one.
+     *
+     * It still costs nothing in false triggers that bare "stop" did not already cost less of:
+     * a television saying "stop" twice in a row ends a conversation that was not happening. */
+    {"stop stop", VOCAB_STOP, 0},
 
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
