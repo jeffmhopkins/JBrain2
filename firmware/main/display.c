@@ -387,6 +387,33 @@ static void apply_brightness(void)
 #define LABEL_X 16
 #define LABEL_Y 18
 #define LABEL_SCALE 2
+/* WHOSE PANEL THIS IS, BY DEFAULT — and the version only when asked for.
+ *
+ * The owner: *"top left where we have the version number, if I touch that it should change
+ * between the version number and the panel name. Default to only showing the panel name."*
+ *
+ * Which is the right default and was not the right default for most of this project's life:
+ * the version mattered while every other message was "which build is it on", and it stops
+ * mattering the moment there are two panels in two bedrooms and the question is whose. A
+ * four-year-old cannot read `0.2.75` and can read their pet's name.
+ *
+ * The version is one touch away rather than gone, because it is still the first thing anyone
+ * debugging this asks for, and telemetry is not in the room with you. */
+static bool s_show_version;
+/* The name in the font's own alphabet — it has uppercase, digits and a lowercase `v`, so a
+   name has to be shouted. Built once; `vocab_name()` is derived from the wake phrase. */
+static char s_name_up[24];
+
+static void build_name(void)
+{
+    const char *n = vocab_name();
+    if (n == NULL) n = "PET";
+    size_t i = 0;
+    for (; n[i] != '\0' && i + 1 < sizeof(s_name_up); i++) {
+        s_name_up[i] = (n[i] >= 'a' && n[i] <= 'z') ? (char)(n[i] - 'a' + 'A') : n[i];
+    }
+    s_name_up[i] = '\0';
+}
 #define SWAP16(x) ((uint16_t)((uint16_t)(x) >> 8 | (uint16_t)(x) << 8))
 #define LABEL_COLOUR SWAP16(0x8410) /* mid grey */
 #define CUE_COLOUR SWAP16(0xFD20)   /* amber, and meant to be noticed */
@@ -833,6 +860,19 @@ static int s_blit_ok;
 #define BOOT_BTN GPIO_NUM_0
 static int s_boot_presses;
 static bool s_boot_was_down;
+
+/* Did that tap land on the label? In FRAME coordinates, so it follows the quarter turn like
+   everything else the finger touches (§10.4bw). Padded well beyond the glyphs: the text is
+   ~14 px tall and a four-year-old's fingertip is not, so the target is the corner rather than
+   the letters. */
+static bool label_hit(int fx, int fy, int over_y0)
+{
+    if (fx < 0 || fy < 0) return false;
+    const int w = font_text_w(s_show_version ? "0.0.00" : s_name_up, LABEL_SCALE);
+    const int x0 = LABEL_X - 14, x1 = LABEL_X + w + 14;
+    const int y0 = over_y0 + LABEL_Y - 14, y1 = over_y0 + LABEL_Y + FONT_H * LABEL_SCALE + 14;
+    return fx >= x0 && fx <= x1 && fy >= y0 && fy <= y1;
+}
 
 static void boot_button_poll(void)
 {
@@ -1290,6 +1330,7 @@ static void face_task(void *arg)
         .intr_type = GPIO_INTR_DISABLE,
     };
     if (gpio_config(&boot_cfg) != ESP_OK) ESP_LOGW(TAG, "boot button: gpio_config refused");
+    build_name();
     /* The framebuffer PSRAM was enabled for: 368x448x2 = 322 KB, which does not fit in the
        332 KB of internal RAM with Wi-Fi and TLS also to feed. */
     uint16_t *fb = heap_caps_malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t),
@@ -1412,6 +1453,17 @@ static void face_task(void *arg)
                all speak the same coordinates. The identity until a calibration exists. */
             calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
+               that says something cannot also be a poke. It sits above the pet's head where
+               `face_zone` returns nothing anyway, so no reaction is lost — and a tap that both
+               flipped the label and made the pet sneeze would read as two things happening. */
+            if (label_hit(s_fig_x, s_fig_y, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
+                s_show_version = !s_show_version;
+                ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
+                if (sound) audio_beep();
+                dirty = true;
+                goto tap_done;
+            }
             s_tap_zone = (int)face_zone(st.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
             const pool_t pool = ZONE_POOL[s_tap_zone];
             action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
@@ -1431,6 +1483,7 @@ static void face_task(void *arg)
             PHASE(3);
             if (sound) audio_beep();
             dirty = true;
+        tap_done:;
         } else if (tapped) {
             /* Poked mid-sentence. The flinch stays — ignoring the finger entirely would read
                as a frozen pet — but no beep, no colour change and no new action, so the reply
@@ -1814,7 +1867,7 @@ static void face_task(void *arg)
             const int over_y0 = side ? SQ_Y0 : 0;
             const int over_h = side ? SQ_Y0 + SQ : FACE_H;
             font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
-                      ota_running_version(), LABEL_COLOUR);
+                      s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);

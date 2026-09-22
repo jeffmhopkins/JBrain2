@@ -123,3 +123,17 @@ const vocab_t *vocab_get(int id)
     if (id < 0 || id >= vocab_count()) return NULL;
     return &VOCAB[id];
 }
+
+const char *vocab_name(void)
+{
+    for (int i = 0; i < (int)(sizeof(VOCAB) / sizeof(VOCAB[0])); i++) {
+        if (VOCAB[i].kind != VOCAB_LISTEN) continue;
+        const char *p = VOCAB[i].phrase, *last = VOCAB[i].phrase;
+        while (*p != '\0') {
+            if (*p == ' ' && *(p + 1) != '\0') last = p + 1;
+            p++;
+        }
+        return last;
+    }
+    return NULL;
+}

@@ -2109,6 +2109,19 @@ static void test_vocab_arguments_are_real(void)
     /* Both forms must be reachable BY VOICE, which is the request that started this: the
        ostrich is the default, so "change into robot" is the only way back without five taps. */
     CHECK(listens == 1, "the panel has exactly one name");
+    /* AND THAT NAME IS WHAT THE GLASS SHOWS. The label defaults to it now, derived from the
+       wake phrase rather than stored twice — so this pins the derivation: the word after the
+       carrier, drawable in a font that has uppercase and digits and nothing else. */
+    {
+        const char *nm = vocab_name();
+        CHECK(nm != NULL && nm[0] != '\0', "the panel's name is derivable from its phrase");
+        bool spaced = false;
+        for (const char *q = nm; *q != '\0'; q++) {
+            if (*q == ' ') spaced = true;
+            CHECK(*q >= 'a' && *q <= 'z', "and is plain lowercase letters, which the font can shout");
+        }
+        CHECK(!spaced, "the name is the last word, not the whole phrase");
+    }
     CHECK(forms >= 2, "both bodies can be asked for");
     CHECK(actions >= 8 && colours >= 1, "there is something worth saying");
     /* The owner asked for "turn [color]" by name, so a palette command that only ever steps

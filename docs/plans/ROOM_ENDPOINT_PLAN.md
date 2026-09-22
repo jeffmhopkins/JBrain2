@@ -4416,6 +4416,41 @@ This is the second time in two releases that the mouth's test was weaker than th
 the shape check that would have caught a box pretending to be a mouth. Both were found by
 someone looking at the object, which remains the instrument this project cannot replace.
 
+#### 10.4cj The corner says whose pet it is (0.2.76, 2026-09-22)
+
+The owner: *"top left where we have the version number, if I touch that it should change
+between the version number and the panel name. Default to only showing the panel name."*
+
+The right default, and it was not the right default for most of this project's life. The
+version earned that corner while every other message in this session was *"which build is it
+on"* — and it stops earning it the moment there are **two panels in two bedrooms** and the
+question becomes whose. A four-year-old cannot read `0.2.76` and can read their pet's name.
+
+The version is one touch away rather than gone, because it is still the first thing anyone
+debugging this asks for and telemetry is not in the room with you.
+
+##### The name comes from the wake phrase, not from a second constant
+
+`vocab_name()` returns the word after the carrier in the `VOCAB_LISTEN` phrase — "hey fish"
+gives "fish". One place to change it when the phrase becomes a per-panel setting (§10.4cd's
+open gap); a second constant holding the name would be a second thing to forget, and the two
+would drift the first time only one of them was edited.
+
+The host suite pins the derivation: the word after the carrier, plain lowercase, drawable in a
+font that has uppercase, digits and one lowercase `v` and nothing else. Confirmed to fail
+against a broken split.
+
+##### The label is its own button
+
+Checked **before** the zones, so a corner of the glass that says something cannot also be a
+poke — a tap that both flipped the label and made the pet sneeze would read as two things
+happening at once. It costs nothing: the label sits above the pet's head where `face_zone`
+returns nothing anyway.
+
+In frame coordinates, so it follows the quarter turn like everything else a finger touches
+(§10.4bw), and padded 14 px beyond the glyphs in every direction — the text is 14 px tall and
+a four-year-old's fingertip is not, so the target is the corner rather than the letters.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an
