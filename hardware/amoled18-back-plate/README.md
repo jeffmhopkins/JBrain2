@@ -170,9 +170,7 @@ socket). The counterbores are sized for them with room for the key; other sizes 
 There are no screw towers: each screw runs bare through the open inside, straight to the
 case. Its head sits in a pad on the floor, because the floor alone is thinner than the
 recess. Each pad is 8.6 mm across and 4.3 mm tall, with 2 mm of plastic over the head
-(`head_seat`) and around it (`pad_wall`). A brace climbs from each pad at 45° into its corner of
-the wall (`brace_h`, 4 mm), tying the pad to the wall. It slopes away from the cell, so it takes
-no battery room, and it prints without supports. The screws pull the plate's rim against the front shell. The deeper
+(`head_seat`) and around it (`pad_wall`). The screws pull the plate's rim against the front shell. The deeper
 plate means the stock screws are far too short. To work out the length:
 
 1. The console's `SCREWS:` line gives the **reach**: from where the head sits up to the rim top.
@@ -186,6 +184,11 @@ for the default tall plate and M2 × 12 for the flat 802525 one. Long M2 socket 
 sold on their own; small assortments usually stop at 20 mm.
 
 ## Battery mounting
+
+The walls are braced by a 45° chamfer where they meet the floor, all the way around the inside
+(`wall_chamfer`, 3 mm). On any wall the cell sits close to, it shrinks by itself so it never
+lifts the cell. With the default cell on edge, that's 3 mm on the long walls and 1.25 mm on the
+end walls; OpenSCAD's console prints both.
 
 The cell is held by double-sided VHB tape on the floor and foam padding above it, which presses
 it down when the case closes. The cavity is deliberately open rather than shaped to the cell;

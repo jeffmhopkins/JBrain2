@@ -113,8 +113,7 @@ head_sink = 0.3;    // [0:0.1:2]
 head_seat = 2.0;    // [0.6:0.1:5]
 // Wall around each screw head in the floor pads
 pad_wall = 2.0;     // [0.6:0.1:4]
-// Height of the 45 degree brace from each pad up into the wall corner (0 = none)
-brace_h = 4.0;      // [0:0.5:12]
+
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
 
@@ -132,6 +131,9 @@ custom_head_t = 2.0;    // [0.4:0.1:6]
 // through it, from small pads on the floor that seat their heads.
 // The walls rise straight up to the rim, so the cavity is the rim opening
 // and the rim wall below sets how much room there is.
+// 45 degree chamfer where the walls meet the floor, to brace the walls.
+// Shrinks by itself on any wall the cell sits close to.
+wall_chamfer = 3.0;     // [0:0.5:8]
 
 
 /* [6. Output] */
@@ -196,6 +198,11 @@ body_h      = plate_t + spacer_h;
 total_h     = body_h + lip_h;
 extra_depth = total_h - plate_t - stock_clear;
 
+// Full chamfer where the cell leaves room; near the cell it may rise only to
+// the tape under it.
+chamfer_x = min(wall_chamfer, max(0, (cav_x - fx) / 2 + tape_t - 0.2));
+chamfer_y = min(wall_chamfer, max(0, (cav_y - fy) / 2 + tape_t - 0.2));
+
 // Nearest gap between the cell's corner and a floor pad.
 pad_gap   = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - pad_r;
 clears_pads = pad_gap >= 0.3;
@@ -215,6 +222,7 @@ echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
 echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + air)"));
 echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open"));
 echo(str("Gap cell to pad:    ", pad_gap, " mm"));
+echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
 echo(str("SCREWS:             ", screw_size, " socket head cap, reach ", screw_reach,
@@ -244,19 +252,20 @@ module rrect(x, y, r) {
 
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
-// Each pad, plus a brace that climbs at 45 degrees away from the cell into
-// the wall corner, tying the pad to the wall.
 module pads() {
-    for (sx = [-1, 1], sy = [-1, 1]) {
-        c = [sx * screw_dx, sy * screw_dy];
-        u = c / norm(c);
-        hull() {
-            translate([c[0], c[1], plate_t - eps])
-                cylinder(r = pad_r, h = pad_top - plate_t + eps);
-            if (brace_h > 0.05)
-                translate([c[0] + u[0] * brace_h, c[1] + u[1] * brace_h, pad_top])
-                    cylinder(r = pad_r, h = brace_h);
-        }
+    for (sx = [-1, 1], sy = [-1, 1])
+        translate([sx * screw_dx, sy * screw_dy, plate_t - eps])
+            cylinder(r = pad_r, h = pad_top - plate_t + eps);
+}
+
+// Cavity limited by a 45 degree chamfer of size c along one pair of walls:
+// inset by c at the floor, full size from c up.
+module chamfered(ix, iy, c) {
+    hull() {
+        translate([0, 0, plate_t - eps])
+            linear_extrude(height = eps) rrect(ix - 2*c, iy, max(0.5, cav_r - c));
+        translate([0, 0, plate_t + c])
+            rbox(ix, iy, total_h, cav_r);
     }
 }
 
@@ -283,7 +292,11 @@ module solid_body() {
 
 module battery_cavity() {
     difference() {
-        translate([0, 0, plate_t]) rbox(cav_x, cav_y, spacer_h + lip_h + eps, cav_r);
+        intersection() {
+            translate([0, 0, plate_t]) rbox(cav_x, cav_y, spacer_h + lip_h + eps, cav_r);
+            chamfered(cav_x, cav_y + 2*chamfer_y + 2, chamfer_x);
+            rotate(90) chamfered(cav_y, cav_x + 2*chamfer_x + 2, chamfer_y);
+        }
         pads();
     }
 }
