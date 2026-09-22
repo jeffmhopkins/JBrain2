@@ -94,8 +94,29 @@ static DMA_ATTR uint16_t stripe[LCD_H_RES * STRIPE_ROWS];
  *
  * Two buffers and a queue one deep is the whole fix. Depth 1 means a call blocks until the
  * previous transfer has completed, so at most ONE is ever in flight when we return — and the
- * stripe we are about to fill is by definition the other one. */
+ * stripe we are about to fill is by definition the other one.
+ *
+ * WHICH ONLY HOLDS IF THE ALTERNATION NEVER RESTARTS, and for two releases it restarted at
+ * every frame boundary: each blit began with a local `odd = false`. Portrait got away with it
+ * by arithmetic — 448/16 is 28 transfers, so a frame ends on `stripe_b` and the next begins
+ * on `stripe`. The rotated blit does 368/16 = 23, an ODD count, so every landscape frame
+ * ENDED on `stripe` and the next frame's first memcpy wrote over the transfer still sending
+ * it. One 16 px column of the glass was therefore rebuilt from two different frames, 25 times
+ * a second, for as long as the panel was held sideways: the owner's "weird screen artifacts
+ * on the left side". The same restart corrupted the one-shot clear on the turn, and the
+ * landscape-to-portrait handoff besides.
+ *
+ * So the toggle is FILE-SCOPE and is never reset. Three loops share it; none of them may
+ * assume where the previous one stopped. */
 static DMA_ATTR uint16_t stripe_b[LCD_H_RES * STRIPE_ROWS];
+
+static bool s_stripe_odd;
+
+static uint16_t *next_stripe(void)
+{
+    s_stripe_odd = !s_stripe_odd;
+    return s_stripe_odd ? stripe_b : stripe;
+}
 
 static const co5300_lcd_init_cmd_t init_cmds[] = {
     {0xFE, (uint8_t[]){0x00}, 1, 0},
@@ -525,6 +546,24 @@ static volatile bool s_debug_overlay;
  * It never fires mid-maintenance-gesture: those are taps THEN a hold, so a hold that begins
  * while a tap run is live belongs to them. */
 #define HOLD_TALK_MS 700
+/* AND IT HAS TO LAND ON THE PET. 700 ms is short enough that carrying the panel starts a
+ * recording — the owner picked a unit up to photograph it sideways and found the red dot
+ * already lit, which is the same false positive the paragraph above waved through as "a beep
+ * and a discarded recording". It is not that any more: a listen now uploads six seconds of a
+ * child's bedroom and makes the pet answer something nobody asked.
+ *
+ * The discriminator is free and already computed. A hand carrying a 32 mm panel touches its
+ * RIM; a press meant for the pet lands on the pet, which occupies the middle. So the hold has
+ * to begin inside an inset rectangle — ~6 mm in on every side, about the half-width of an
+ * adult thumb pad, leaving a target of 224x304 that a four-year-old cannot miss. In PANEL
+ * coordinates on purpose: the rim is the rim whichever way up the thing is mounted.
+ *
+ * This is a margin, not a fix for grip contact that lands squarely on the pet's face. The
+ * complete answer is the rhythm `gesture.h` uses (slots 1 and 2 are still free, and it was
+ * measured at 12 false fires per 20 000 child presses against a bare hold's 1937) — but a
+ * rhythm is a thing to teach, and the owner asked for press-and-hold. Teach it only if this
+ * is not enough. */
+#define TALK_MARGIN_PX 72
 /* Long enough that a slow answer is not mistaken for a broken one, short enough that a child
    is not staring at a bubble. Beyond it the panel says it failed rather than returning to
    idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc). */
@@ -539,6 +578,12 @@ static uint32_t s_talk_since;
    is 40 ms and then the frame's work happens, so a tally of nominal ticks always lags the
    wall clock and the hold felt longer than the 700 ms it claimed. A timestamp cannot drift. */
 static uint32_t s_down_since;
+/* Where the current press landed, sampled once at the down edge rather than read from
+   `s_tap_x` at the threshold: the tap coordinates outlive their press, so a finger already
+   down when this loop started would otherwise inherit the last press's position. -1 when
+   the touch gave no point, which the margin test rejects for free. */
+static int s_down_x = -1;
+static int s_down_y = -1;
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -597,8 +642,16 @@ static void draw_thinking(uint16_t *fb, int y0, int h, uint32_t now, bool failed
     }
 }
 
-/* LISTENING: a red dot, the one symbol for "recording" that needs no explaining, pulsing so
-   it cannot be mistaken for a dead pixel or a bit of the pet. */
+/* LISTENING: a red dot, pulsing so it cannot be mistaken for a dead pixel or a bit of the pet.
+ *
+ * AND A WORD, because the dot did need explaining. This comment used to claim it was "the one
+ * symbol for recording that needs no explaining", and then the owner — who specified the
+ * feature — photographed it and asked what it indicated. A symbol only reads as recording
+ * next to a camera; on a pet's face it reads as part of the pet. The dot stays for the twins,
+ * who cannot read it, and the word is for whoever has to work out why the panel is doing
+ * something. It is also the fastest way to notice a listen nobody started, which is the
+ * failure this release is otherwise chasing. */
+#define LISTEN_SCALE 2
 static void draw_listening(uint16_t *fb, int y0, uint32_t now)
 {
     const int r = 13 + (int)((now / 140) % 4);
@@ -612,6 +665,9 @@ static void draw_listening(uint16_t *fb, int y0, uint32_t now)
             }
         }
     }
+    const int w = font_text_w("LISTENING", LISTEN_SCALE);
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 8 - w, cy + 22, LISTEN_SCALE, "LISTENING",
+              SWAP16(0xF800));
 }
 
 /* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
@@ -720,10 +776,8 @@ void display_blit_counts(int *ok, int *fail)
 static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
 {
     if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
-    bool odd = false;
     for (int x0 = 0; x0 < FACE_W; x0 += COL_STRIPE) {
-        uint16_t *dst = odd ? stripe_b : stripe;
-        odd = !odd;
+        uint16_t *dst = next_stripe();
         for (int c = 0; c < COL_STRIPE; c++) {
             const int x = x0 + c;
             /* Both directions walk the source consecutively; only the sign differs. */
@@ -748,20 +802,20 @@ static esp_err_t blit_frame(const uint16_t *fb)
                frame last left there would stay forever. Once, on the turn, not per frame. */
             s_quarter_changed = false;
             memset(stripe, 0, sizeof(stripe));
+            memset(stripe_b, 0, sizeof(stripe_b));
             for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
-                esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + STRIPE_ROWS, stripe);
+                esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + STRIPE_ROWS,
+                                          next_stripe());
             }
         }
         return blit_frame_rotated(fb, s_quarter == 1);
     }
     s_quarter_changed = false;
-    bool odd = false;
     for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
         int rows = FACE_H - y;
         if (rows > STRIPE_ROWS) rows = STRIPE_ROWS;
         /* ALTERNATING, because the previous stripe may still be in flight — see `stripe_b`. */
-        uint16_t *dst = odd ? stripe_b : stripe;
-        odd = !odd;
+        uint16_t *dst = next_stripe();
         memcpy(dst, fb + (size_t)y * FACE_W, (size_t)rows * FACE_W * sizeof(uint16_t));
         const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, 0, y, FACE_W, y + rows, dst);
         if (err != ESP_OK) return err;
@@ -1278,17 +1332,26 @@ static void face_task(void *arg)
         /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
            the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
            run is live belongs to them and must not also start a listen. */
-        if (!down) s_down_since = 0;
-        else if (s_down_since == 0) s_down_since = now;
+        if (!down) {
+            s_down_since = 0;
+        } else if (s_down_since == 0) {
+            s_down_since = now;
+            /* Same frame as the edge that set them, so this is THIS press's origin. */
+            s_down_x = tapped ? s_tap_x : -1;
+            s_down_y = tapped ? s_tap_y : -1;
+        }
         const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
+        const bool on_the_pet =
+            s_down_x >= TALK_MARGIN_PX && s_down_x < FACE_W - TALK_MARGIN_PX &&
+            s_down_y >= TALK_MARGIN_PX && s_down_y < FACE_H - TALK_MARGIN_PX;
         /* NOT WHILE A TURN IS STILL IN FLIGHT, and this is a lifetime rule rather than a
            politeness one. `talk.c` uploads straight out of the capture buffer, and this
            renderer gives up at 12 s while the HTTP timeout is 20 — so without this guard a
            child who holds again after a failure face would call `audio_capture_open()` and
            overwrite the bytes still being read by the socket. A five-second window, on the
            one path a frustrated four-year-old is most likely to take. */
-        if (s_talk == TALK_IDLE && down && gest.taps == 0 && held >= HOLD_TALK_MS &&
-            talk_state() != TALK_NET_BUSY) {
+        if (s_talk == TALK_IDLE && down && on_the_pet && gest.taps == 0 &&
+            held >= HOLD_TALK_MS && talk_state() != TALK_NET_BUSY) {
             s_talk = TALK_LISTENING;
             s_talk_since = now;
             /* The beep IS the affordance. Nothing else tells a child holding a 29 mm screen
@@ -1299,6 +1362,13 @@ static void face_task(void *arg)
                of the front of every message. */
             audio_capture_open();
             ESP_LOGI(TAG, "talk: listening");
+        } else if (s_talk == TALK_IDLE && down && !on_the_pet && gest.taps == 0 &&
+                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + TOUCH_POLL_MS) {
+            /* Once per press, on the frame the threshold passes — the owner has no terminal
+               but does have the log, and a margin that is too wide looks exactly like a
+               microphone that stopped working unless the panel says which it is. */
+            ESP_LOGI(TAG, "talk: hold at (%d,%d) is on the rim, not the pet", s_down_x,
+                     s_down_y);
         } else if (s_talk == TALK_LISTENING && !down) {
             size_t got = 0;
             const int16_t *pcm = audio_capture_close(&got);
@@ -1433,10 +1503,16 @@ static void face_task(void *arg)
             if (cue > 0.0f) {
                 /* Grows left to right across the top edge, full width at the moment it
                    reboots. Drawn into the frame rather than flashed separately so it cannot
-                   outlive the finger. */
+                   outlive the finger.
+                 *
+                 * `over_y0`, like the label and the caption above — rows 0..3 are outside the
+                 * square a quarter turn carries, so on a side-mounted panel this bar and the
+                 * tap pips below it were simply never blitted. A maintenance gesture with no
+                 * feedback is one an owner cannot tell from a dead panel, which is the exact
+                 * thing `gesture.h` added the pips to prevent. */
                 int w = (int)(FACE_W * cue);
                 if (w > FACE_W) w = FACE_W;
-                for (int y = 0; y < 4; y++) {
+                for (int y = over_y0; y < over_y0 + 4; y++) {
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
                 }
             } else if (gest.taps > 0) {
@@ -1446,7 +1522,7 @@ static void face_task(void *arg)
                    after the rhythm lapses, so ordinary play leaves nothing on screen. */
                 for (int i = 0; i < gest.taps && i < GESTURE_TAPS_MAX; i++) {
                     const int x0 = i * (PIP_W + PIP_GAP);
-                    for (int y = 0; y < 4; y++) {
+                    for (int y = over_y0; y < over_y0 + 4; y++) {
                         for (int x = x0; x < x0 + PIP_W && x < FACE_W; x++) {
                             fb[y * FACE_W + x] = CUE_COLOUR;
                         }

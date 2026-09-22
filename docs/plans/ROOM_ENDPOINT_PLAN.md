@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-21 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-22 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -3581,6 +3581,87 @@ Cost: the CA bundle grows the image from 894 K to 985 K, still 37% free in the f
 Firmware is **0.2.0**; three backend tests pin the pairing and were confirmed to fail
 against the shipped behaviour. Adding the bundle also needed `mbedtls` in the component's
 `REQUIRES` — the third defect in this wave that only compiling would find.
+
+#### 10.4bv One buffer, two frames, and a corner that never got the message (0.2.62, 2026-09-22)
+
+The owner, on 0.2.61: *"mic bar is gone, but when horizontal, we now have some weird screen
+artifacts on the left side, and I'm not quite sure why there's a red dot when I'm horizontal on
+the bottom left. What does that indicate?"*
+
+Three separate things, and the interesting one is not the one that looks like a display bug.
+
+##### The artifacts: the double buffer had a seam at every frame boundary
+
+§10.4bf bought two stripe buffers and a one-deep transfer queue, and the comment there states
+the invariant exactly: *"at most ONE is ever in flight when we return — and the stripe we are
+about to fill is by definition the other one."* True within a blit. Both blits then opened with
+a **local** `bool odd = false`, so the alternation restarted every frame — and "by definition
+the other one" quietly stopped being true across the boundary.
+
+Portrait survived on arithmetic. 448 / 16 = **28** transfers, an even count, so a frame ends on
+`stripe_b` and the next begins on `stripe`. The rotated blit does 368 / 16 = **23**, an odd
+count: every landscape frame ended on `stripe` and the next frame's first `memcpy` wrote over
+the transfer still sending it. One 16 px column of glass, assembled from two different frames,
+25 times a second, for as long as the panel is held sideways.
+
+The one-shot clear on the turn had the same hole and left a permanent mark rather than a
+flickering one. It queues 28 stripes of zeros over the whole panel, returns with the last still
+in flight, and `blit_frame_rotated` then fills a buffer whose size is `SQ * COL_STRIPE` = 5888
+pixels — **exactly `sizeof(stripe)`**. So the rotated figure landed on top of the zeros the DMA
+was reading, and panel rows 432–447 came out as transposed garbage. Nothing rewrites that
+region until the next turn, so it stays.
+
+Both are the same defect, and the fix is one line of state: the toggle moves to file scope and
+is never reset. Three loops share it now; none may assume where the previous one stopped.
+
+**What this cost to find, and why.** The first hypothesis was the overlays — the cue bar and
+the tap pips still draw at rows 0–3, which a quarter turn does not carry. That is a real defect
+and is fixed here too, but it is the **opposite** symptom: content that lands outside the square
+is *invisible* in landscape, never corrupt. Checking which rows the rotated blit actually reads
+(`SQ_Y0` … `SQ_Y0 + SQ`) ruled it out in a minute and pointed at the only other thing that
+writes those rows — the clear — and from there at the buffer it writes them with.
+
+##### The red dot: it is not an artifact, and the panel should not have been listening
+
+`draw_listening`. The recording indicator, top-right of the square, which a quarter turn puts in
+a corner — as designed. The answer to *"what does that indicate?"* is **the panel thought it was
+being held to talk**, because it was being held.
+
+Two things follow.
+
+The dot needed a word. Its comment claimed it was *"the one symbol for recording that needs no
+explaining"*, and then the person who specified the feature photographed it and asked what it
+meant. A red dot reads as recording next to a camera; on a pet's face it reads as part of the
+pet. The dot stays for the twins, who cannot read it. `LISTENING` under it is for whoever has to
+work out why the panel is doing something — and it is the fastest way to spot a listen nobody
+started.
+
+And 700 ms is short enough that **carrying the panel starts a recording**. §10.4bn waved this
+through — *"the cost of a false listen is a beep and a discarded recording"* — which was true of
+the state machine and stopped being true when `talk.c` landed behind it. A false listen now
+uploads six seconds of a child's bedroom and makes the pet answer something nobody asked.
+
+The discriminator was already computed. A hand carrying a 32 mm panel touches its **rim**; a
+press meant for the pet lands on the pet, which occupies the middle. The hold must now begin
+inside a 72 px inset — about 6 mm, roughly the half-width of an adult thumb pad — leaving a
+224 × 304 target a four-year-old cannot miss. In **panel** coordinates, so the rim is the rim
+whichever way up the unit is mounted, and sampled at the down edge rather than read at the
+threshold, because `s_tap_x` outlives its press and a finger already down when the loop starts
+would otherwise inherit the last one's position. A rejected hold logs once, with the
+coordinates: the owner has no terminal, and a margin that is too wide looks exactly like a
+microphone that stopped working unless the panel says which it is.
+
+This is a margin, not a cure. Grip contact that lands squarely on the pet's face still fires.
+The complete answer is the rhythm in `gesture.h` — slots 1 and 2 are free, and it measured 12
+false fires per 20,000 simulated child presses against a bare hold's 1,937 — but a rhythm is a
+thing to teach, and the owner asked for press-and-hold. Teach it only if the margin is not
+enough.
+
+##### Still unverified
+
+Press-and-hold has **never been exercised end to end on hardware**, so the whisper round trip
+from the room is still a number nobody has. The margin makes the gesture harder to trigger by
+accident; whether it is still easy to trigger on purpose is a question only the twins answer.
 
 ### 10.5 Three findings from the board in hand
 
