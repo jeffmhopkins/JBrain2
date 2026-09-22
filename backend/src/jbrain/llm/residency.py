@@ -11,8 +11,9 @@ evictor. Three duties:
     the operator sees the eviction before committing the load.
   - `ensure_room` (on the local completion path, awaited by the router before each load)
     and `free_room` (the operator's deliberate load from the settings screen): make room
-    for a model. If it wouldn't fit under the free-RAM floor, evict the fewest resident
-    models — biggest-footprint first — until it does. A model bigger than the whole floor
+    for a model. If it wouldn't fit under the free-RAM floor, evict resident models until
+    it does — the operator's PINS last (`llm_local_keep_loaded`), biggest-footprint first
+    within each group. A model bigger than the whole floor
     still loads: it evicts everything and gets the box to itself. That is the whole
     paradigm: load any model, unload until it fits. The two differ only in bookkeeping —
     ensure_room records each eviction as a TRANSIENT displacement to restore at end of
@@ -24,10 +25,26 @@ evictor. Three duties:
     restore reloads those as far as the budget allows, so the box drifts back to the steady
     state it had before the displacement rather than cold-loading on demand.
 
-The keep-hot set is therefore not a fixed pin — it's whatever was resident before the last
-displacement, remembered and restored. (There is no explicit operator pin: a model the
-operator uses stays warm on its own via this restore, and a deliberate manual load via
-free_room is left in place rather than proactively displaced.)
+The keep-hot set is therefore mostly not a fixed pin — it's whatever was resident before the
+last displacement, remembered and restored. A model the operator uses stays warm on its own
+that way, and a deliberate manual load via free_room is left in place rather than proactively
+displaced.
+
+THERE IS NOW ALSO AN EXPLICIT PIN, and it exists because the restore above does not cover the
+case that actually bit. On 2026-09-22 the operator loaded a 4.3 GB pet model from the settings
+screen; that is `free_room`, which deliberately records nothing to restore (a manual load is a
+steady-state change, not a displacement) — and the biggest-first ranking chose gpt-oss-120b,
+59 GB of weights and a minute to reload, as the victim. Nothing brought it back, correctly,
+because nothing was supposed to. The owner: *"I would rather keep OSS 120 loaded all the time
+and then the Qwen models be able to hotswap first."*
+
+Which model that is cannot be read off a size. Biggest-first was minimising the number of
+unloads, and the number of unloads is not the cost — the reload is, and it scales with exactly
+the thing that ranking evicted first. But even ranking smallest-first would be a guess at
+intent: shedding two small models to keep one big one is right here and wrong on a box whose
+big model is the disposable one. So the operator says it, per-model, in the PWA, and pinned
+models sort LAST among victims. Still victims, though: a pin is a last resort, not a lock, or
+a load the operator explicitly asked for could be refused by a setting they have forgotten.
 
 Best-effort throughout: a cloud-only or disabled box no-ops, and any gateway/meminfo hiccup
 is swallowed and logged — residency housekeeping must never fail or slow a turn.
@@ -153,6 +170,8 @@ WindowsLoader = Callable[[], Awaitable[Mapping[str, int]]]
 # construction-time config default. Called before every load so a settings-screen change
 # takes effect with no restart; a read failure or junk value degrades to the config default.
 FractionLoader = Callable[[], Awaitable[float | None]]
+# The operator's keep-resident pins (catalog ids). See `LLM_LOCAL_KEEP_LOADED_KEY`.
+KeepLoadedLoader = Callable[[], Awaitable[set[str]]]
 # Reads the served-model names code mode has reserved the box for (empty when code mode is
 # off) — jcode's own executor + planner. While non-empty, `ensure_room` refuses to load any
 # model NOT in the set (unless it's already resident) — code mode owns the box, so nothing
@@ -181,7 +200,8 @@ class EvictionPlan:
     two eviction paths, so the preview is exactly what the load will do."""
 
     target: str
-    # Served names that would be evicted, biggest-footprint first, to hold the free-RAM
+    # Served names that would be evicted, unpinned first and biggest-footprint within each
+    # group, to hold the free-RAM
     # floor after `target` is resident. Empty when it fits (or is already resident).
     victims: tuple[str, ...]
     # Measured used memory now (GiB), and the projected used after the load + evictions.
@@ -238,6 +258,9 @@ class ResidencyWiring:
     # is what removes it from that list.
     free_ram_fraction: float
     fraction_loader: FractionLoader | None
+    # The operator's keep-resident pins, read live. Absent -> nothing pinned, which ranks
+    # victims purely by footprint, the behaviour before pins existed.
+    keep_loaded_loader: KeepLoadedLoader | None
     # Code mode's box reservation: while held, ensure_room refuses to load any other
     # non-resident model. Absent loader -> nothing held -> admit everything.
     hold_loader: HoldLoader | None
@@ -270,6 +293,7 @@ class ResidencyWiring:
         enabled: bool = False,
         free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
         fraction_loader: FractionLoader | None = None,
+        keep_loaded_loader: KeepLoadedLoader | None = None,
         hold_loader: HoldLoader | None = None,
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
         box_lock: BoxLock | None = None,
@@ -287,6 +311,7 @@ class ResidencyWiring:
             enabled=enabled,
             free_ram_fraction=free_ram_fraction,
             fraction_loader=fraction_loader,
+            keep_loaded_loader=keep_loaded_loader,
             hold_loader=hold_loader,
             auto_restore_loader=auto_restore_loader,
             box_lock=box_lock,
@@ -324,6 +349,7 @@ class ResidencyCoordinator:
         # loader, or the read fails — so the budget always has a floor.
         self._free_ram_fraction = wiring.free_ram_fraction
         self._fraction_loader = wiring.fraction_loader
+        self._keep_loaded_loader = wiring.keep_loaded_loader
         # When code mode holds the box, this loads the reserved coder's served name ("" when
         # code mode is off). While held, `ensure_room` refuses to load any other non-resident
         # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
@@ -460,6 +486,22 @@ class ResidencyCoordinator:
                 return override
         return self._free_ram_fraction
 
+    async def _pinned_served(self) -> frozenset[str]:
+        """The SERVED names the operator pinned as keep-resident, translated from the catalog
+        ids the settings screen stores. Read per-plan so a toggle applies to the next load.
+
+        Any hiccup degrades to empty — a pin is a preference about which model goes first, and
+        a settings read that failed must not be able to block an eviction the box needs to
+        make room. The cost of degrading is that one load ranks by footprint alone, which is
+        what every load did before pins existed."""
+        if self._keep_loaded_loader is None:
+            return frozenset()
+        with contextlib.suppress(Exception):
+            ids = await self._keep_loaded_loader()
+            served = {m.served_model for mid in ids if (m := local_catalog.get(mid)) is not None}
+            return frozenset(served)
+        return frozenset()
+
     async def _held_names(self) -> frozenset[str]:
         """The served-model names code mode has reserved the box for, or an empty set (not
         held). Read per-load so toggling code mode applies immediately; any hiccup degrades to
@@ -540,10 +582,10 @@ class ResidencyCoordinator:
     async def _plan_ledger(self, served_model: str, *, narrate_skip: bool) -> EvictionPlan | None:
         """The one-arithmetic plan: simulate evictions until `admission.admit` says yes.
 
-        Victims are ranked biggest-first by what the ledger actually holds for them (their
-        charged declaration; a resident model with no row — a foreign one — falls back to
-        the catalog prediction), and each simulated eviction removes the victim's rows and
-        credits its size back to the measured term, so both of admission's estimates see
+        Victims are ranked unpinned-first, then biggest-first by what the ledger actually
+        holds for them (their charged declaration; a resident model with no row — a foreign
+        one — falls back to the catalog prediction), and each simulated eviction removes the
+        victim's rows and credits its size back to the measured term, so both estimates see
         the room the unload will really free. The operator's free-RAM headroom (Settings →
         LLM) folds in as extra host reserve — never below admission's own floor — so the
         knob keeps meaning what the screen says while the arithmetic stays the ledger's."""
@@ -637,8 +679,12 @@ class ResidencyCoordinator:
                 over_box=True,
                 already_resident=False,
             )
-        # Eviction candidates, biggest-first by what evicting them actually releases.
-        candidates: list[tuple[float, float, str]] = []
+        # Eviction candidates: UNPINNED first, and biggest-first within each group by what
+        # evicting them actually releases. The pin is the whole ranking change — see
+        # `_pinned_served` — and it sorts ahead of the footprint rather than replacing it, so
+        # an unpinned box ranks exactly as it always did.
+        pinned = await self._pinned_served()
+        candidates: list[tuple[int, float, float, str]] = []
         for served in running:
             if served == served_model:
                 continue
@@ -649,14 +695,14 @@ class ResidencyCoordinator:
                 # memory only, sized by the catalog prediction (0.0 for an unknown name,
                 # which keeps it out of the ranking, same as the fallback planner).
                 row_host = row_device = await self._footprint(served, windows, slots)
-            candidates.append((-row_host, -row_device, served))
+            candidates.append((1 if served in pinned else 0, -row_host, -row_device, served))
         candidates.sort()
         victims: list[str] = []
         sim_rows = list(rows)
         sim_host, sim_device = host, device
         freed_host = freed_device = 0.0
         decision = admission.admit(request, sim_rows, host=sim_host, device=sim_device)
-        for neg_host, neg_device, served in candidates:
+        for _pin, neg_host, neg_device, served in candidates:
             if decision.admitted:
                 break
             # A floored-reserve INFEASIBLE is NOT a physical one (that returned above): a
@@ -697,7 +743,8 @@ class ResidencyCoordinator:
         """The FALLBACK plan for a build with no ledger: measured whole-box used memory plus
         a predicted footprint, against the free-RAM floor. Kept only because a DB-less
         process has no rows to admit against; wherever a ledger exists, `_plan_ledger`
-        answers. Ranks victims biggest-footprint first: freeing the room costs the fewest
+        answers. Ranks victims unpinned first, then biggest-footprint: freeing the room
+        costs the fewest
         evictions and spares the tiny models (evict one big model, not several small
         ones)."""
         running = await self._gateway.running()
@@ -745,17 +792,21 @@ class ResidencyCoordinator:
                 over_box=False,
                 already_resident=False,
             )
-        # Rank eviction candidates biggest-footprint first (a generator with `await` can't be
-        # sorted directly — build the list, then sort).
-        ranked: list[tuple[float, str]] = []
+        # Rank eviction candidates UNPINNED first, then biggest-footprint first within each
+        # group (a generator with `await` can't be sorted directly — build the list, then
+        # sort). Same ranking as the ledger planner above; the two must not disagree about
+        # who leaves, or the preview shows one answer and the load does another.
+        pinned = await self._pinned_served()
+        ranked: list[tuple[int, float, str]] = []
         for served in running:
             if served == served_model:
                 continue
-            ranked.append((-await self._footprint(served, windows, slots), served))
+            fp = await self._footprint(served, windows, slots)
+            ranked.append((1 if served in pinned else 0, -fp, served))
         ranked.sort()
         victims: list[str] = []
         freed = 0.0
-        for neg_fp, served in ranked:
+        for _pin, neg_fp, served in ranked:
             if predicted - freed <= ceiling:
                 break
             victims.append(served)

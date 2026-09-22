@@ -660,6 +660,12 @@ async def run() -> None:
             fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(
                 queue.SYSTEM_CTX
             ),
+            # The same keep-resident pins the api reads, so a background job's model load
+            # ranks victims the way the operator asked too. A pin the worker did not see is a
+            # pin that holds until the nightly sweep runs and quietly does not.
+            keep_loaded_loader=lambda: worker_settings_store.llm_local_keep_loaded(
+                queue.SYSTEM_CTX
+            ),
             # Code-mode box reservation: while jcode holds the box, a background job's model load
             # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
             # never evict code mode's models or co-load past physical RAM.

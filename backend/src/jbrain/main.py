@@ -504,6 +504,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # free_ram_fraction config default above when unset. Read per load, so a change
                 # applies with no restart. Wired identically in the worker (jbrain.worker).
                 fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
+                # The operator's keep-resident pins (Settings → LLM). Models pinned here are
+                # evicted LAST — the answer to a 4 GB pet model displacing a 59 GB assistant,
+                # which no ranking by size could have got right. Read per load, identically
+                # wired in the worker.
+                keep_loaded_loader=lambda: settings_store.llm_local_keep_loaded(SYSTEM_CTX),
                 # Code-mode box reservation (jcode power ON writes it): while set, ensure_room
                 # refuses to load any model outside code mode's reserved set, so nothing evicts its
                 # models or co-loads past physical RAM. Read per load (SYSTEM_CTX), identically

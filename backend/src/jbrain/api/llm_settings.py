@@ -248,6 +248,12 @@ class LocalModelInfo(BaseModel):
     # deleted the durable copy of it (and the box grew an empty `.kvslots` folder that read as
     # "configured"). Surfaced so the screen can say so before the owner spends the trade.
     slots_drop_disk_cache: bool
+    # Keep this model resident: the coordinator evicts pinned models LAST. The answer to a
+    # 4.3 GB pet model displacing a 59 GB assistant, which no ranking by size could have got
+    # right — see `LLM_LOCAL_KEEP_LOADED_KEY`. A last resort, not a lock: a model big enough
+    # that nothing else frees the room still evicts a pinned one, so the operator can never
+    # be refused a load by a pin they set and forgot.
+    keep_loaded: bool
     # `--image-min-tokens`: the FLOOR an image is encoded to, and the knob for whether small
     # text in a photo survives to the model. None on a text-only entry (no projector, so a
     # floor would do nothing) and on a vision entry left at the catalog value.
@@ -467,6 +473,7 @@ async def _snapshot(
     free_ram_override = await store.llm_local_free_ram_fraction(ctx)
     auto_restore = await store.llm_local_auto_restore(ctx)
     unavailable = set(await store.llm_local_unavailable(ctx))
+    keep_loaded = await store.llm_local_keep_loaded(ctx)
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
@@ -497,6 +504,7 @@ async def _snapshot(
                 slots,
                 image_floors,
                 m.id in unavailable,
+                m.id in keep_loaded,
                 m.id in requested,
                 m.id in removing,
             )
@@ -589,6 +597,7 @@ def _local_model_info(
     slots: dict[str, int],
     image_floors: dict[str, int],
     unavailable: bool,
+    keep_loaded: bool,
     requested: bool,
     removing: bool,
 ) -> LocalModelInfo:
@@ -635,6 +644,7 @@ def _local_model_info(
         kv_gb=kv_gb,
         parallel_slots=n_slots,
         slots_drop_disk_cache=bool(m.recurrent and m.is_mtp_speculative),
+        keep_loaded=keep_loaded,
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
         # The override wins; otherwise the catalog's own field. Both None on a text-only entry,
@@ -1298,6 +1308,37 @@ async def set_local_available(
             if model.served_model in await gateway.running():
                 with box_events.because("you marked it unavailable"):
                     await gateway.unload(model.served_model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class KeepLoadedIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    keep: bool
+
+
+@router.put("/settings/llm/local-models/{model_id}/keep-loaded")
+async def set_local_keep_loaded(
+    model_id: str,
+    body: KeepLoadedIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Pin a model as keep-resident, so the coordinator evicts it LAST.
+
+    The eviction ranking used to be biggest-footprint first, on the reasoning that freeing the
+    room costs the fewest unloads. That reasoning threw a 59 GB assistant out of the box to
+    seat a 4.3 GB pet model, and no ranking by size could have avoided it: which model matters
+    is what the operator uses it FOR. So this is where they say it.
+
+    Loads NOTHING and unloads nothing — a pin is about the ORDER victims are chosen in, not
+    about residency now, and a toggle that silently pulled 59 GB of weights off disk would be
+    a very expensive surprise. 404 for an unprovisioned id; 409 when hosting is off."""
+    _require_provisioned(settings, model_id)
+    ctx = ctx_for(principal)
+    await store.set_llm_local_keep_loaded(ctx, model_id=model_id, keep=body.keep)
     return await _snapshot(settings, store, ctx, gateway)
 
 

@@ -950,6 +950,12 @@ export interface LocalModelInfo {
    * withheld with it (a plain-recurrent restore can only restore garbage). Sound, but it used
    * to be silent — protecting the prefix quietly deleted the durable copy of it. */
   slots_drop_disk_cache: boolean;
+  /** Keep this model resident: the evictor picks pinned models LAST. Which model matters is
+   * what you use it FOR, and no ranking by size can know that — the evictor used to rank
+   * biggest-first and threw a 59 GB assistant out to seat a 4.3 GB pet model. A last resort,
+   * not a lock: a model big enough that nothing else frees the room still evicts a pinned
+   * one, so a forgotten pin can never refuse a load you asked for. */
+  keep_loaded: boolean;
   /** `--image-min-tokens`: the floor an image is encoded to, and the knob for whether small
    * text in a photo survives to the model. null on a text-only entry — no projector, so a
    * floor would do nothing and the control is not rendered. */
@@ -3258,6 +3264,17 @@ export const api = {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/parallel-slots`,
       jsonInit("PUT", { slots }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Pin (or unpin) a model as keep-resident, so the evictor takes it LAST. Loads and
+   * unloads nothing — this is about the ORDER victims are chosen in, not residency now.
+   * Returns the full snapshot. */
+  async setLocalKeepLoaded(id: string, keep: boolean): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/keep-loaded`,
+      jsonInit("PUT", { keep }),
     );
     return (await response.json()) as LlmSettings;
   },

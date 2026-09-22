@@ -26,6 +26,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     kv_gb: 0,
     parallel_slots: 1,
     slots_drop_disk_cache: false,
+    keep_loaded: false,
     image_min_tokens: null,
     image_min_tokens_default: null,
     ...over,
@@ -1103,6 +1104,78 @@ describe("LLMSettingsScreen", () => {
     expect(select.value).toBe("1");
     fireEvent.change(select, { target: { value: "2" } });
     await waitFor(() => expect(putBody).toEqual({ slots: 2 }));
+  });
+
+  it("pins a model as keep-loaded and PUTs it, without loading anything", async () => {
+    // The owner, after a 4.3 GB pet model evicted a 59 GB assistant: "I would rather keep OSS
+    // 120 loaded all the time and then the Qwen models be able to hotswap first." Which model
+    // matters is not readable off a size, so this is where they say it — and it has to be
+    // HERE, because they run the box with no terminal (CLAUDE.md #10).
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        size_gb: 59,
+        disk_gb: 59,
+        keep_loaded: false,
+      }),
+    ];
+    let putBody: { keep: boolean } | null = null;
+    const paths: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        paths.push(`${method} ${path}`);
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/keep-loaded") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.keep_loaded = putBody?.keep ?? false;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = (await screen.findByLabelText("keep loaded")) as HTMLSelectElement;
+    expect(select.value).toBe("off");
+    fireEvent.change(select, { target: { value: "on" } });
+    await waitFor(() => expect(putBody).toEqual({ keep: true }));
+    // A pin is about the ORDER victims are chosen in. Pulling 59 GB of weights off disk as a
+    // side effect of a preference toggle would be a very expensive surprise.
+    expect(paths.some((p) => p.includes("/load") || p.includes("/unload"))).toBe(false);
+  });
+
+  it("says a keep-loaded pin is an order, not a lock", async () => {
+    // The distinction that stops the toggle becoming a trap: a model big enough that nothing
+    // else frees the room still takes a pinned one, so a pin set and forgotten can never
+    // leave the owner unable to load something they asked for.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", enabled: true })];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) =>
+        String(input).includes("/api/settings/llm")
+          ? new Response(JSON.stringify(s), { status: 200 })
+          : new Response("{}", { status: 200 }),
+      ),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const title = (await screen.findByLabelText("keep loaded")).getAttribute("title") ?? "";
+    expect(title).toMatch(/not a lock/i);
   });
 
   it("warns on the models where a second slot costs the saved-to-disk prefix", async () => {

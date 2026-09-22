@@ -1716,3 +1716,40 @@ async def test_a_warm_prime_subtracts_the_history_it_already_had() -> None:
         "processed_tokens": 1,
         "reuse_rate": 1.0,
     }
+
+
+def test_keep_loaded_round_trips_and_defaults_off() -> None:
+    """The pin the coordinator ranks victims by. Settable here because it has to be settable
+    in the PWA: the owner runs this box with no terminal (CLAUDE.md #10), and a residency
+    preference that can only be expressed by editing a file is one that never gets expressed.
+    """
+    c, store = _authed_client(_local_settings())
+    rows = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert rows["gpt-oss-120b"]["keep_loaded"] is False, "nothing is pinned on a fresh box"
+
+    resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/keep-loaded", json={"keep": True})
+    assert resp.status_code == 200, resp.text
+    rows = {m["id"]: m for m in resp.json()["local_models"]}
+    assert rows["gpt-oss-120b"]["keep_loaded"] is True
+    assert rows["qwen3.5-4b"]["keep_loaded"] is False, "a pin is per model, not a mode"
+    assert store.values["llm_local_keep_loaded"] == ["gpt-oss-120b"]
+
+    resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/keep-loaded", json={"keep": False})
+    assert {m["id"]: m for m in resp.json()["local_models"]}["gpt-oss-120b"]["keep_loaded"] is False
+    assert store.values["llm_local_keep_loaded"] == []
+
+
+def test_pinning_a_model_does_not_load_or_unload_anything() -> None:
+    """A pin is about the ORDER victims are chosen in, not about residency now. A toggle that
+    quietly pulled 59 GB of weights off disk would be a very expensive surprise."""
+    c, store = _authed_client(_local_settings())
+    gw = c.app.state.local_gateway  # type: ignore[attr-defined]
+    before = list(gw.loaded), list(gw.unloaded)
+    c.put("/api/settings/llm/local-models/gpt-oss-120b/keep-loaded", json={"keep": True})
+    assert (list(gw.loaded), list(gw.unloaded)) == before
+
+
+def test_keep_loaded_404s_for_a_model_that_is_not_provisioned() -> None:
+    c, _store = _authed_client(_local_settings())
+    r = c.put("/api/settings/llm/local-models/not-a-model/keep-loaded", json={"keep": True})
+    assert r.status_code == 404

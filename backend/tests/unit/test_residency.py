@@ -41,6 +41,7 @@ def _coord(
     on_prefix_lost: object = None,
     auto_restore_loader: object = None,
     box_try_lock: object = None,
+    keep_loaded_loader: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -57,6 +58,7 @@ def _coord(
             on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
             auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
             box_try_lock=box_try_lock,  # type: ignore[arg-type]
+            keep_loaded_loader=keep_loaded_loader,  # type: ignore[arg-type]
         ),
     )
 
@@ -1548,3 +1550,111 @@ async def test_a_generous_floor_is_never_reported_as_would_crash_the_box() -> No
     assert plan is not None
     assert not plan.over_box, "a floor refusal is transient, not 'cannot exist'"
     assert plan.over
+
+
+# --- keep-loaded pins: which model leaves is not a question about bytes ----------------
+
+
+def _pins(*model_ids: str) -> object:
+    async def loader() -> set[str]:
+        return set(model_ids)
+
+    return loader
+
+
+@pytest.mark.asyncio
+async def test_a_pin_saves_the_big_model_and_spends_the_small_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failure this exists for, on 2026-09-22.
+
+    The operator loaded a 4.3 GB pet model from the settings screen and the coordinator threw
+    gpt-oss-120b — 59 GB of weights, a minute to reload — out of the box to seat it, because
+    victims were ranked biggest-footprint first. That ranking minimises the NUMBER of unloads,
+    which is not the cost; the reload is, and it scales with exactly what got evicted first.
+    The owner: *"I would rather keep OSS 120 loaded all the time and then the Qwen models be
+    able to hotswap first."*
+    """
+    # The owner's own box, in miniature: gpt-oss-120b (69.57) and the 27B (24.75) resident,
+    # a pet model (8.10) to seat. Ceiling 96 of 128, used 104, so 112.1 predicted and 16.1 to
+    # find. The 27B alone covers it and gets to 87.3 — but only if the ranking reaches for it
+    # first, and it used to reach for gpt-oss.
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.8-27b-q4"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=104.0, keep_loaded_loader=_pins("gpt-oss-120b")
+    )
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == ["qwen3.8-27b-q4"], gw.unloaded
+    assert "gpt-oss-120b" in await gw.running()
+
+
+@pytest.mark.asyncio
+async def test_without_a_pin_the_ranking_is_the_one_it_always_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pin sorts AHEAD of the footprint rather than replacing it, so an unpinned box
+    behaves exactly as it did — biggest-first, fewest unloads."""
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.8-27b-q4"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=104.0)
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == ["gpt-oss-120b"], gw.unloaded
+
+
+@pytest.mark.asyncio
+async def test_a_pin_is_a_last_resort_and_not_a_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pinned model is still a victim when nothing else frees enough.
+
+    The module's paradigm is "load any model, unload until it fits". A hard lock would turn a
+    load the operator explicitly asked for into a refusal they cannot clear without
+    remembering this setting exists — which is a worse trap than the eviction it prevents."""
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=90.0, keep_loaded_loader=_pins("gpt-oss-120b")
+    )
+    await coord.ensure_room("qwen3-coder-next")  # 59.6 on top of 90, ceiling 96
+    assert gw.unloaded == ["gpt-oss-120b"]
+
+
+@pytest.mark.asyncio
+async def test_a_pin_on_a_model_that_is_not_in_the_way_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.8-27b-q4"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=104.0, keep_loaded_loader=_pins("qwen3.5-0.8b")
+    )
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == ["gpt-oss-120b"], gw.unloaded
+
+
+@pytest.mark.asyncio
+async def test_a_settings_read_that_fails_does_not_block_the_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pin is a preference about ORDER. A settings hiccup must degrade to the old ranking,
+    never to a box that cannot make room — best-effort, like the rest of this coordinator."""
+
+    async def boom() -> set[str]:
+        raise RuntimeError("settings row is unreadable")
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.8-27b-q4"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=104.0, keep_loaded_loader=boom)
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == ["gpt-oss-120b"], gw.unloaded
+
+
+@pytest.mark.asyncio
+async def test_the_preview_names_the_same_victim_the_load_will_take(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`plan_load` is what the settings screen shows before the operator commits. If it ranked
+    differently from the load, the screen would promise one eviction and the box would make
+    another — which is worse than no preview at all."""
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.8-27b-q4"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=104.0, keep_loaded_loader=_pins("gpt-oss-120b")
+    )
+    plan = await coord.plan_load("qwen3.5-4b")
+    assert plan is not None
+    assert plan.victims == ("qwen3.8-27b-q4",)
+    assert gw.unloaded == [], "a preview must not touch the box"

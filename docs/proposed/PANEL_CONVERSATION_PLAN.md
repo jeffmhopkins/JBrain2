@@ -127,6 +127,32 @@ before and 400 ms after. A room too loud to judge trims nothing rather than trim
 The panel's own VAD already knows where the speech is and could say so, but a backend fix
 ships without an OTA, and `held_ms` / `spoken_ms` in `endpoint.converse` are how it is watched.
 
+**Which model gets evicted is not a question about bytes.** Correcting the 4b's declaration
+(above) stops the eviction that happened, but not the ranking that chose the victim. The
+coordinator ranked candidates biggest-footprint first, on the stated reasoning that freeing
+the room costs the fewest unloads — so the first thing it reached for was the 59 GB assistant
+that takes a minute to reload, to seat a pet model. The owner: *"I would rather keep OSS 120
+loaded all the time and then the Qwen models be able to hotswap first. The goal was to have
+27b as my multi-mode model but it's not loaded all the time. But if it is loaded, I should
+swap it out for the smaller 4b, not the OSS 120."*
+
+No ranking by size gets that right. Biggest-first minimises the NUMBER of unloads, which is
+not the cost — the reload is, and it scales with exactly what that ranking evicts first. But
+smallest-first would be just as much of a guess: shedding two small models to keep one big one
+is correct on this box and wrong on one whose big model is the disposable one. The preference
+is about what each model is FOR. So the operator says it: `llm_local_keep_loaded` is a
+per-model pin, set from the LLM settings card, and pinned models sort last among victims in
+both planners (the ledger one and the measured fallback — if they disagreed, the stage preview
+would promise one eviction and the load would make another).
+
+A last resort, not a lock. A model big enough that nothing else frees the room still takes a
+pinned one, because the module's paradigm is "load any model, unload until it fits" and a hard
+lock would turn a load the operator explicitly asked for into a refusal they cannot clear
+without remembering the setting exists. Note also what did NOT go wrong: the restore machinery
+behaved correctly. The manual load went through `free_room`, which records nothing to restore
+on purpose — an operator's deliberate load is a steady-state change, not a displacement to
+undo — so nothing brought the 120b back, and nothing was supposed to.
+
 **The panel cut both ends of the turn off.** Two ceilings, both six seconds, both reasoned
 from the wrong thing. On the way IN, `LISTEN_HUSH_MS` was 900 ms — the silence the panel waits
 out to decide a sentence has ended — and it was chosen to fit under a six-second recording cap

@@ -734,6 +734,23 @@ class FakeSettingsStore:
         self.values["llm_local_parallel_slots"] = current
         return current
 
+    async def llm_local_keep_loaded(self, ctx: object) -> set[str]:
+        raw = self.values.get("llm_local_keep_loaded", [])
+        if not isinstance(raw, list):
+            return set()
+        return {mid for mid in raw if isinstance(mid, str) and mid}
+
+    async def set_llm_local_keep_loaded(
+        self, ctx: object, *, model_id: str, keep: bool
+    ) -> set[str]:
+        current = await self.llm_local_keep_loaded(ctx)
+        if keep:
+            current.add(model_id)
+        else:
+            current.discard(model_id)
+        self.values["llm_local_keep_loaded"] = sorted(current)
+        return current
+
     async def llm_local_image_min_tokens(self, ctx: object) -> dict[str, int]:
         raw = self.values.get("llm_local_image_min_tokens", {})
         return dict(raw) if isinstance(raw, dict) else {}
