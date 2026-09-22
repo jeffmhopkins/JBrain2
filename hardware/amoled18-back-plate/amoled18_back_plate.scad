@@ -109,8 +109,10 @@ counterbore = true;
 head_clear = 0.6;   // [0:0.1:2]
 // How far below the back face the head sits
 head_sink = 0.3;    // [0:0.1:2]
-// Wall around the screw in each post
-boss_wall = 1.5;    // [0.8:0.1:3]
+// Plastic under each screw head, in the floor pads
+head_seat = 1.2;    // [0.6:0.1:4]
+// Wall around each screw head in the floor pads
+pad_wall = 1.2;     // [0.6:0.1:3]
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
 
@@ -124,7 +126,8 @@ custom_head_t = 2.0;    // [0.4:0.1:6]
 
 /* [5. Battery cavity] */
 
-// The whole inside is hollow except the screw posts; pad gaps with foam.
+// The whole inside is hollow; pad gaps with foam. The screws run bare
+// through it, from small pads on the floor that seat their heads.
 // The walls rise straight up to the rim, so the cavity is the rim opening
 // and the rim wall below sets how much room there is.
 
@@ -156,8 +159,9 @@ shaft_table = screw_size == "M1.6" ? [1.8, 3.0, 1.6]
 shaft_d = shaft_table[0] + hole_slop;
 head_d  = counterbore ? shaft_table[1] + head_clear + hole_slop : shaft_d;
 head_t  = counterbore ? shaft_table[2] + head_sink : 0;
-boss_d  = shaft_d + 2 * boss_wall;
-screw_r = max(head_d, boss_d) / 2;
+// The floor is thinner than the counterbores, so each head sits in a pad.
+pad_r   = head_d / 2 + pad_wall;
+pad_top = max(plate_t, head_t + head_seat);
 
 // Cell footprint and height as it sits in the plate.
 edge  = battery_orientation == "edge";
@@ -190,9 +194,9 @@ body_h      = plate_t + spacer_h;
 total_h     = body_h + lip_h;
 extra_depth = total_h - plate_t - stock_clear;
 
-// Nearest gap between the cell's corner and a screw post.
-post_gap  = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - screw_r;
-clears_posts = post_gap >= 0.3;
+// Nearest gap between the cell's corner and a floor pad.
+pad_gap   = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - pad_r;
+clears_pads = pad_gap >= 0.3;
 kx = cav_x/2 - cav_r;
 ky = cav_y/2 - cav_r;
 fits_walls = fx <= cav_x - 0.6 && fy <= cav_y - 0.6
@@ -200,28 +204,28 @@ fits_walls = fx <= cav_x - 0.6 && fy <= cav_y - 0.6
 rim_fits      = (rim_out_x <= plate_x - 0.4) && (rim_out_y <= plate_y - 0.4);
 screws_inside = (screw_dx + head_d/2 < plate_x/2 - 0.6)
              && (screw_dy + head_d/2 < plate_y/2 - 0.6);
-// Plastic the screw passes through, from the head's seat to the post top.
-screw_grip = total_h - head_t;
+// From the head's seat to the rim top, where a stock screw's length is measured from.
+screw_reach = total_h - head_t;
 
 echo("================ BACK PLATE ================");
 echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
          " mm, ", edge ? "standing on its edge" : "lying flat"));
 echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + air)"));
-echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open around the posts"));
-echo(str("Gap cell to post:   ", post_gap, " mm"));
+echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open"));
+echo(str("Gap cell to pad:    ", pad_gap, " mm"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
-echo(str("SCREWS:             ", screw_size, " socket head cap, grip ", screw_grip,
-         " mm. Length = grip + how far a stock screw pokes through the stock cover."));
+echo(str("SCREWS:             ", screw_size, " socket head cap, reach ", screw_reach,
+         " mm. Length = reach + how far a stock screw pokes through the stock cover."));
 echo(str("Rim outside:        ", rim_out_x, " x ", rim_out_y,
          "  (r ", rim_out_r, ", wall ", lip_wall, ")"));
 echo(str("Rim opening:        ", rim_in_x, " x ", rim_in_y, " mm"));
 echo("-------------------------------------------");
 if (!rim_fits)      echo("*** RIM IS LARGER THAN THE PLATE ***");
-if (!clears_posts)  echo("*** CELL HITS A SCREW POST - try the other orientation or a narrower cell ***");
+if (!clears_pads)   echo("*** CELL SITS ON A SCREW PAD - try the other orientation or a narrower cell ***");
 if (!fits_walls)    echo("*** CELL DOES NOT FIT INSIDE THE WALLS ***");
 if (!screws_inside) echo("*** SCREW HOLES FALL OFF THE PLATE EDGE ***");
-if (rim_fits && clears_posts && fits_walls && screws_inside)
+if (rim_fits && clears_pads && fits_walls && screws_inside)
     echo("All checks passed.");
 echo("===========================================");
 
@@ -238,9 +242,9 @@ module rrect(x, y, r) {
 
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
-module posts_2d() {
+module pads_2d() {
     for (sx = [-1, 1], sy = [-1, 1])
-        translate([sx * screw_dx, sy * screw_dy]) circle(r = screw_r);
+        translate([sx * screw_dx, sy * screw_dy]) circle(r = pad_r);
 }
 
 module solid_body() {
@@ -255,12 +259,6 @@ module solid_body() {
     else
         rbox(plate_x, plate_y, body_h, plate_r);
 
-    // Posts up to the rim top, as on the stock cover, so the screws clamp
-    // through plastic rather than across the rim's air gap.
-    for (sx = [-1, 1], sy = [-1, 1])
-        translate([sx * screw_dx, sy * screw_dy, body_h - eps])
-            cylinder(d = boss_d, h = lip_h + eps);
-
     if (lip_h > 0.05)
         translate([0, 0, body_h - eps])
             linear_extrude(height = lip_h + eps)
@@ -274,7 +272,7 @@ module battery_cavity() {
     difference() {
         translate([0, 0, plate_t]) rbox(cav_x, cav_y, spacer_h + lip_h + eps, cav_r);
         translate([0, 0, plate_t - eps])
-            linear_extrude(height = spacer_h + lip_h + 3*eps) posts_2d();
+            linear_extrude(height = pad_top - plate_t + eps) pads_2d();
     }
 }
 
@@ -310,7 +308,7 @@ if (show_battery)
 // PRINTING NOTES
 //   Orientation : flat face down on the bed, rim upward. No supports.
 //   Layer       : 0.2 mm
-//   Walls       : 3 perimeters minimum around the screw posts
+//   Walls       : 3 perimeters or more
 //   Infill      : 40% or more
 //   Material    : PETG or ABS if it may sit in a warm car; PLA softens
 //   First print : check the screw holes line up before printing a final

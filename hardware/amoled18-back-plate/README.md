@@ -10,15 +10,15 @@ runs the room-endpoint pet firmware in [`../../firmware/`](../../firmware/README
 
 The stock cover leaves almost no room behind the board: Waveshare's largest recommended cell
 for the stock case is 3.85 × 24 × 28 mm. This plate is a tall box with straight walls: the
-whole inside is open except the four screw posts, and its depth follows the cell. Any gaps are
+whole inside is open, and its depth follows the cell. The four screws run bare through it. Any gaps are
 padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything else about
 the case stays stock: all ports, buttons and the mic are in the **front** shell, so the plate
 has no other openings.
 
 The default is a **1000 mAh 852540 cell (8.5 × 25 × 40 mm) standing on its long edge**, which
 makes the unit about **37.6 × 45.2 × 39 mm**, close to a cube. A long cell can't lie flat: the
-screw posts sit only about 19 mm apart across the case, but a cell on its edge is just 8.5 mm
-wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an 802525 lying
+screws pass through 24 mm apart across the case, so a 25 mm wide cell would sit across them,
+but a cell on its edge is just 8.5 mm wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an 802525 lying
 flat makes the unit about 22.7 mm thick.
 
 The back face is flat, with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
@@ -108,10 +108,10 @@ follows automatically.
 
 Press **F5** again after changing values. At the bottom of the window is the **console**
 (if it's hidden: **Window → Console**). It prints a summary block, and the last line should
-say **`All checks passed.`** If instead it says something like `CELL HITS A SCREW POST`,
+say **`All checks passed.`** If instead it says something like `CELL SITS ON A SCREW PAD`,
 the battery is too big for this plate — pick a smaller cell or adjust the flagged value.
 
-Write down the **`SCREWS:`** line — it gives the grip length you need to work out which
+Write down the **`SCREWS:`** line — it gives the reach you need to work out which
 screws to buy (see [Screws](#screws)).
 
 ### 7. Export the file for the printer
@@ -167,15 +167,16 @@ Use **M2 socket head cap screws** (ISO 4762 / DIN 912 — the round head with a 
 socket). The counterbores are sized for them with room for the key; other sizes in the
 `screw_size` drop-down get matching counterbores.
 
-Each hole runs through a post that rises to the rim top, as on the stock cover, so the screw
-clamps through solid plastic. The deeper plate means the stock screws are far too short. To
-work out the length:
+There are no screw towers: each screw runs bare through the open inside, straight to the
+case. Its head sits in a small pad on the floor (3.5 mm tall), because the floor alone is
+thinner than the recess. The screws pull the plate's rim against the front shell. The deeper
+plate means the stock screws are far too short. To work out the length:
 
-1. The console's `SCREWS:` line gives the **grip**: the plastic between the head's seat and the
-   post top. It's 27.3 mm with the defaults (10.9 mm for the flat 802525 version).
+1. The console's `SCREWS:` line gives the **reach**: from where the head sits up to the rim top.
+   It's 27.3 mm with the defaults (10.9 mm for the flat 802525 version).
 2. Push a stock screw through the stock cover and measure how far it sticks out past the top of
-   its post. That's how far it goes into the case.
-3. Screw length = grip + that, rounded **down** to a length that's sold, so it can't bottom out.
+   its screw post. That's how far it goes into the case.
+3. Screw length = reach + that, rounded **down** to a length that's sold, so it can't bottom out.
 
 If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 30
 for the default tall plate and M2 × 12 for the flat 802525 one. Long M2 socket head screws are
@@ -196,7 +197,7 @@ to reach the `BAT` connector.
 | Orientation | Flat face down, rim up. No supports. |
 | Counterbores | The shelf at the top of each one is a short bridge; it prints fine at 0.2 mm. |
 | Layer | 0.2 mm |
-| Perimeters | 3 or more (the screw posts take the load) |
+| Perimeters | 3 or more (the walls and screw pads take the load) |
 | Infill | 40 %+ |
 | Material | PETG or ABS — PLA softens in a warm car. |
 
