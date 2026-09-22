@@ -178,6 +178,33 @@ to stop is not composing a phrase.** Repetition is what escalation sounds like a
 "stop stop" is already what they would say where "fish stop" is a thing they have to remember
 to say. `vocab.h` rule 3 holds throughout — no phrase is a prefix of another.
 
+**"It was like refusing to tell me a joke, saying it was a robot and couldn't do that."** The
+cause was in the prompt, and it was a clause added on purpose. To stop the pet OFFERING games
+it cannot play, it had been told it *"cannot play games, look at things, go anywhere or do
+anything, so never offer to"* — and **"cannot do anything" is a blanket refusal.** Telling a
+joke is doing something. The obvious repair is to delete the constraint, which would bring
+back the broken promises instead, so it was narrowed to what is actually impossible (no body,
+no camera, no hands) and paired with an explicit list of what a voice CAN do. Both halves are
+pinned by tests, because either one alone regresses the other.
+
+**And the rest of the prompt stopped being hand-tuned.** "Be warm and curious" is a vibe; the
+early-language literature has named techniques that a 4B model can actually follow, and the
+prompt is now built from them:
+
+| technique | in the prompt | why |
+|---|---|---|
+| Follow the child's lead (serve-and-return) | "Stay on their subject instead of changing it" | Back-and-forth on the child's topic is the unit that grows language |
+| **Linguistic expansion** | "Agree, repeat what they said in slightly fuller words, then add one small new thing" | The highest-value one — and it doubles as the rule against correcting a four-year-old: you never say *wrong*, you say it back properly |
+| Open-ended prompts | "One question per reply, never two"; yes/no questions named as conversation-enders | A question answerable with yes ends the exchange; a string of them is a quiz |
+
+Plus one the literature does not cover and the logs did. **The transcriber mangles small
+children**: *"tell us a joke"* arrived as `"There is a joke. There is a joke."`, and the pet
+answered the sentence it was given — *"Tell me the joke, please!"* — which from the room reads
+as a dodge. The pet is now told it is hearing through a tiny microphone that mishears
+constantly, to work out what a four-year-old most likely meant, and to ask again only when it
+truly cannot guess. That is a patch over the symptom; the transcription itself is the real
+fault and is still open.
+
 **The burp was mute — and that was the smaller half.** The owner, after the first fix landed:
 *"burp has been on there. It never actually activates them. The kids say the word — like the
 code word is wrong."* A silent action was real, but downstream of the phrase never resolving.
