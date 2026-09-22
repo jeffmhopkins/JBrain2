@@ -13,9 +13,10 @@
 //
 // Workflow:  set values  >  F5 preview  >  F6 render  >  F7 export STL
 //
-// NOTE ON SCREWS: the holes are counterbored for socket head cap screws
-// (the standard hex-key M screws). Making the plate deeper means the
-// stock screws no longer reach; the console prints the new length.
+// NOTE ON SCREWS: each screw sits in a hollow tower. Its head rests near
+// the top, so the tower presses on the board's nut as the stock cover's
+// posts do, and a short standard socket head screw is enough. Drive it
+// down the tower with a long hex key.
 //
 // Units: millimetres.   OpenSCAD is free at openscad.org
 // =====================================================================
@@ -23,12 +24,12 @@
 
 /* [1. Battery] */
 
-// Cell thickness (the first number in a size code: 852540 is 8.5)
-battery_t = 8.5;    // [2:0.1:25]
-// Cell width (852540: 25). On edge it's the height; on end it runs along the case
-battery_w = 25.0;   // [10:0.5:60]
-// Cell length (852540: 40). Along the case, or the height when on end
-battery_l = 40.0;   // [10:0.5:60]
+// Cell thickness (the first number in a size code: 103035 is 10)
+battery_t = 10.0;   // [2:0.1:25]
+// Cell width (103035: 30). On edge it's the height; on end it runs along the case
+battery_w = 30.0;   // [10:0.5:60]
+// Cell length (103035: 35). Along the case, or the height when on end
+battery_l = 35.0;   // [10:0.5:60]
 // flat = lying on its face. edge = standing on its long edge, which fits long cells.
 // end = standing upright on its end: any length fits, the plate just gets taller.
 battery_orientation = "edge";  // [flat, edge, end]
@@ -106,16 +107,17 @@ screw_dx = 12.0;    // [5:0.1:40]
 screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
-// Recess the heads (off = plain through holes)
-counterbore = true;
-// Room around the head so it drops in and a hex key reaches
+// Room around the head so it slides down the tower and a hex key reaches
 head_clear = 0.6;   // [0:0.1:2]
-// How far below the back face the head sits
-head_sink = 0.3;    // [0:0.1:2]
-// Plastic over each screw head (the pad's roof)
+// Plastic between the screw head and the board's nut, at the top of each tower
 head_seat = 2.0;    // [0.6:0.1:5]
-// Wall around each screw head in the floor pads
-pad_wall = 2.0;     // [0.6:0.1:4]
+// Wall around the screw head in each tower
+tower_wall = 1.2;   // [0.8:0.1:3]
+// How far below the rim top the towers stop. Measure the stock cover: rim top to post top
+tower_drop = 0.0;   // [0:0.1:10]
+// One-layer skin closing the top of each tower's bore so it prints as a bridge;
+// poke it through with the screw. 0 = none
+bridge_skin = 0.2;  // [0:0.05:0.6]
 
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
@@ -130,8 +132,8 @@ custom_head_t = 2.0;    // [0.4:0.1:6]
 
 /* [5. Battery cavity] */
 
-// The whole inside is hollow; pad gaps with foam. The screws run bare
-// through it, from small pads on the floor that seat their heads.
+// The whole inside is hollow apart from the four screw towers; pad gaps
+// with foam.
 // The walls rise straight up to the rim, so the cavity is the rim opening
 // and the rim wall below sets how much room there is.
 // 45 degree chamfer where the walls meet the floor, to brace the walls.
@@ -164,11 +166,8 @@ shaft_table = screw_size == "M1.6" ? [1.8, 3.0, 1.6]
             : [custom_shaft_d, custom_head_d, custom_head_t];
 
 shaft_d = shaft_table[0] + hole_slop;
-head_d  = counterbore ? shaft_table[1] + head_clear + hole_slop : shaft_d;
-head_t  = counterbore ? shaft_table[2] + head_sink : 0;
-// The floor is thinner than the counterbores, so each head sits in a pad.
-pad_r   = head_d / 2 + pad_wall;
-pad_top = max(plate_t, head_t + head_seat);
+head_d  = shaft_table[1] + head_clear + hole_slop;
+tower_r = head_d / 2 + tower_wall;
 
 // Cell footprint and height as it sits in the plate.
 edge   = battery_orientation == "edge";
@@ -207,39 +206,46 @@ extra_depth = total_h - plate_t - stock_clear;
 chamfer_x = min(wall_chamfer, max(0, (cav_x - fx) / 2 + tape_t - 0.2));
 chamfer_y = min(wall_chamfer, max(0, (cav_y - fy) / 2 + tape_t - 0.2));
 
-// Nearest gap between the cell's corner and a floor pad.
-pad_gap   = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - pad_r;
-clears_pads = pad_gap >= 0.3;
+tower_top = total_h - tower_drop;
+bore_top  = tower_top - head_seat;
+
+// Clearances from the cell to each wall pair and to the nearest tower.
+side_gap  = (cav_x - fx) / 2;
+end_gap   = (cav_y - fy) / 2;
+tower_gap = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - tower_r;
 kx = cav_x/2 - cav_r;
 ky = cav_y/2 - cav_r;
-fits_walls = fx <= cav_x - 0.6 && fy <= cav_y - 0.6
-          && (fx/2 <= kx || fy/2 <= ky || norm([fx/2 - kx, fy/2 - ky]) <= cav_r - 0.3);
+corner_gap = (fx/2 <= kx || fy/2 <= ky) ? min(side_gap, end_gap)
+           : cav_r - norm([fx/2 - kx, fy/2 - ky]);
+min_gap = min(side_gap, end_gap, tower_gap, corner_gap);
+// Real cells run up to about half a millimetre over their listed size.
+fits  = min_gap >= 0.2;
+tight = min_gap < 0.5;
 rim_fits      = (rim_out_x <= plate_x - 0.4) && (rim_out_y <= plate_y - 0.4);
-screws_inside = (screw_dx + head_d/2 < plate_x/2 - 0.6)
-             && (screw_dy + head_d/2 < plate_y/2 - 0.6);
-// From the head's seat to the rim top, where a stock screw's length is measured from.
-screw_reach = total_h - head_t;
+screws_inside = (screw_dx + tower_r < plate_x/2) && (screw_dy + tower_r < plate_y/2);
 
 echo("================ BACK PLATE ================");
 echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
          " mm, ", on_end ? "standing on its end" : edge ? "standing on its edge" : "lying flat"));
 echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + wires + air)"));
-echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm, open"));
-echo(str("Gap cell to pad:    ", pad_gap, " mm"));
+echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm"));
+echo(str("Room around cell:   ", side_gap, " mm each side, ", end_gap, " mm each end, ",
+         tower_gap, " mm to the nearest tower"));
 echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
-echo(str("SCREWS:             ", screw_size, " socket head cap, reach ", screw_reach,
-         " mm. Length = reach + how far a stock screw pokes through the stock cover."));
+echo(str("SCREWS:             ", screw_size, " socket head cap. Length = ", head_seat,
+         " + how far a stock screw pokes past the top of its post on the stock cover."));
+echo(str("Hex key reach:      ", bore_top, " mm down each tower"));
 echo(str("Rim outside:        ", rim_out_x, " x ", rim_out_y,
          "  (r ", rim_out_r, ", wall ", lip_wall, ")"));
 echo(str("Rim opening:        ", rim_in_x, " x ", rim_in_y, " mm"));
 echo("-------------------------------------------");
 if (!rim_fits)      echo("*** RIM IS LARGER THAN THE PLATE ***");
-if (!clears_pads)   echo("*** CELL SITS ON A SCREW PAD - try the other orientation or a narrower cell ***");
-if (!fits_walls)    echo("*** CELL DOES NOT FIT INSIDE THE WALLS ***");
-if (!screws_inside) echo("*** SCREW HOLES FALL OFF THE PLATE EDGE ***");
-if (rim_fits && clears_pads && fits_walls && screws_inside)
+if (!fits)          echo("*** CELL DOES NOT FIT - try another orientation or a smaller cell ***");
+if (fits && tight)  echo(str("TIGHT: only ", min_gap, " mm spare. Measure the real cell before printing."));
+if (!screws_inside) echo("*** SCREW TOWERS FALL OFF THE PLATE EDGE ***");
+if (rim_fits && fits && screws_inside)
     echo("All checks passed.");
 echo("===========================================");
 
@@ -256,10 +262,10 @@ module rrect(x, y, r) {
 
 module rbox(x, y, z, r) { linear_extrude(height = z) rrect(x, y, r); }
 
-module pads() {
+module towers() {
     for (sx = [-1, 1], sy = [-1, 1])
         translate([sx * screw_dx, sy * screw_dy, plate_t - eps])
-            cylinder(r = pad_r, h = pad_top - plate_t + eps);
+            cylinder(r = tower_r, h = tower_top - plate_t + eps);
 }
 
 // Cavity limited by a 45 degree chamfer of size c along one pair of walls:
@@ -292,6 +298,15 @@ module solid_body() {
                     rrect(rim_out_x, rim_out_y, rim_out_r);
                     rrect(rim_in_x, rim_in_y, rim_in_r);
                 }
+
+    // Tower tops that rise into the rim, trimmed to its outline so they
+    // never reach the front shell.
+    if (tower_top > body_h)
+        intersection() {
+            towers();
+            translate([0, 0, body_h - eps])
+                rbox(rim_out_x, rim_out_y, lip_h + eps, rim_out_r);
+        }
 }
 
 module battery_cavity() {
@@ -301,19 +316,18 @@ module battery_cavity() {
             chamfered(cav_x, cav_y + 2*chamfer_y + 2, chamfer_x);
             rotate(90) chamfered(cav_y, cav_x + 2*chamfer_x + 2, chamfer_y);
         }
-        pads();
+        towers();
     }
 }
 
 module screw_holes() {
     for (sx = [-1, 1], sy = [-1, 1])
         translate([sx * screw_dx, sy * screw_dy, 0]) {
+            // Bore for the head and hex key, from the back face to the seat.
             translate([0, 0, -eps])
-                cylinder(d = shaft_d, h = total_h + 2*eps);
-
-            if (counterbore)
-                translate([0, 0, -eps])
-                    cylinder(d = head_d, h = head_t + eps);
+                cylinder(d = head_d, h = bore_top + eps);
+            translate([0, 0, bore_top + bridge_skin])
+                cylinder(d = shaft_d, h = total_h);
         }
 }
 

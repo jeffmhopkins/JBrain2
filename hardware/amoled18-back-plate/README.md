@@ -10,35 +10,37 @@ runs the room-endpoint pet firmware in [`../../firmware/`](../../firmware/README
 
 The stock cover leaves almost no room behind the board: Waveshare's largest recommended cell
 for the stock case is 3.85 × 24 × 28 mm. This plate is a tall box with straight walls: the
-whole inside is open, and its depth follows the cell. The four screws run bare through it. Any gaps are
-padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything else about
+whole inside is open apart from four hollow screw towers, and its depth follows the cell. Any
+gaps are padded with foam. The cell plugs into the board's MX1.25 `BAT` connector. Everything else about
 the case stays stock: all ports, buttons and the mic are in the **front** shell, so the plate
 has no other openings.
 
-The default is a **1000 mAh 852540 cell (8.5 × 25 × 40 mm) standing on its long edge**, which
-makes the unit about **37.6 × 45.2 × 39 mm**, close to a cube. A long cell can't lie flat: the
-screws pass through 24 mm apart across the case, so a 25 mm wide cell would sit across them,
-but a cell on its edge is just 8.5 mm wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an 802525 lying
-flat makes the unit about 22.7 mm thick.
+The default is a **1000 mAh 103035 cell (10 × 30 × 35 mm) standing on its long edge**, which
+makes the unit about **37.6 × 45.2 × 44 mm**, close to a cube, with 2.85 mm at each end for the
+wires and for cells that run over size. A long cell can't lie flat: the screws pass through
+24 mm apart across the case, so a 30 mm wide cell would sit across them, but a cell on its edge
+is just 10 mm wide there. Smaller cells can lie flat instead (`battery_orientation = flat`); an
+802525 lying flat makes the unit about 22.7 mm thick.
 
 The back face is flat, with only a 0.4 mm chamfer on its edge so it prints cleanly face down.
-The screw holes are counterbored so standard M2 socket head cap screws (the hex-key kind) sit
-just below the surface.
+Each screw runs up a hollow tower and its head sits near the top, so short standard M2 socket
+head screws do the job (see [Screws](#screws)).
 
 | Inside, battery ghosted in green | Back face |
 |---|---|
-| ![Render with the battery ghosted in green](preview.png) | ![Flat back face with counterbored screw holes](preview-back.png) |
+| ![Render with the battery ghosted in green](preview.png) | ![Flat back face with the four tower openings](preview-back.png) |
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `amoled18_back_plate.scad` | The parametric model. Every dimension is adjustable. |
-| `back_plate_852540_1000mAh_edge.stl` | Ready to print: the defaults, for an 852540 cell on its edge. Unit ≈ 39 mm thick. |
+| `back_plate_103035_1000mAh_edge.stl` | Ready to print: the defaults, for a 103035 cell on its edge. Unit ≈ 44 mm thick. |
 | `back_plate_802525_400mAh_flat.stl` | Ready to print for an 802525 cell lying flat. Unit ≈ 22.7 mm thick. |
-| `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. See [The tall variation](#the-tall-variation-104050-on-end). |
-| `amoled18_back_plate.json` | The three builds above as presets, selectable in OpenSCAD's Customizer. |
-| `preview.png`, `preview-back.png`, `preview-104050-end.png` | Renders of the inside (battery ghosted in), the back face, and the tall variation. |
+| `back_plate_852540_1000mAh_edge.stl` | An 852540 cell on its edge. Unit ≈ 39 mm thick. **Tight: 0.35 mm per end, no room for wires at the ends — measure first.** |
+| `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. **Tight — measure first.** See [The tall variation](#the-tall-variation-104050-on-end). |
+| `amoled18_back_plate.json` | The four builds above as presets, selectable in OpenSCAD's Customizer. |
+| `preview.png`, `preview-back.png`, `preview-cutaway.png`, `preview-104050-end.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, and the tall variation. |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
@@ -91,14 +93,16 @@ ideal; a good ruler works for a first try. All values are in millimetres.
 | 2. Plate outline | `plate_r` | Roughly how round the outer corners are (radius) |
 | 3. Rim | `lip_outer_x`, `lip_outer_y` | Outside width and height of the raised rim that slides into the front shell |
 | 3. Rim | `lip_h` | How tall that rim stands |
+| 4. Screws | `tower_drop` | How far below the rim top the tops of the stock cover's screw posts are (0 if level) |
+| 4. Screws | — | The length of one stock screw, for choosing new ones (see [Screws](#screws)) |
 | 3. Rim | `stock_clear` | Inside depth of the stock cover, rim top down to the floor |
 | 4. Screws | `screw_dx`, `screw_dy` | Distance from the **centre** of the plate to the centre of a screw hole, across and up. Easiest: measure hole-to-hole and halve it. |
 
 ### 5. Enter the battery you actually have
 
 In **group 1 (Battery)** type the cell's thickness, width and length — they're usually on the
-cell's label or listing (the size code reads thickness, width, length: "852540" is
-8.5 × 25 × 40 mm). Measure the real cell if you can, including the little circuit board folded
+cell's label or listing (the size code reads thickness, width, length: "103035" is
+10 × 30 × 35 mm). Measure the real cell if you can, including the little circuit board folded
 at the wire end. Then pick `battery_orientation`:
 
 - **edge** — standing on its long edge. Use this for long cells (35–40 mm).
@@ -116,11 +120,11 @@ presets. Pick one and every battery setting fills in.
 
 Press **F5** again after changing values. At the bottom of the window is the **console**
 (if it's hidden: **Window → Console**). It prints a summary block, and the last line should
-say **`All checks passed.`** If instead it says something like `CELL SITS ON A SCREW PAD`,
+say **`All checks passed.`** If instead it says `CELL DOES NOT FIT`,
 the battery is too big for this plate — pick a smaller cell or adjust the flagged value.
 
-Write down the **`SCREWS:`** line — it gives the reach you need to work out which
-screws to buy (see [Screws](#screws)).
+A line starting **`TIGHT:`** means the cell fits its listed size with under 0.5 mm to spare;
+real cells often run up to half a millimetre over, so measure yours before printing.
 
 ### 7. Export the file for the printer
 
@@ -164,79 +168,84 @@ but not the case shells.
 | `lip_h` | 2.0 | Not visible in any source | Guess: **measure** |
 | `lip_wall` | 0.8 | Chosen, not measured: the walls run straight up to the rim, so the rim's inside is the cavity, and 0.8 mm leaves a 40.7 mm opening for a 40 mm cell. Two nozzle widths, plenty for a 2 mm locating lip. | Design choice |
 | `screw_size` | M2 | Screw heads measure ~3.8 mm across in the drawing, which matches M2 | Likely: check a stock screw |
-| Counterbores | Ø4.6 × 2.3 deep | ISO 4762 M2 socket head (Ø3.8 × 2.0) + `head_clear` 0.6 + `hole_slop` 0.2, sunk `head_sink` 0.3 | Standard |
+| Tower bore | Ø4.6 | ISO 4762 M2 socket head (Ø3.8) + `head_clear` 0.6 + `hole_slop` 0.2 | Standard |
+| `tower_drop` | 0 | Towers stop level with the rim top. Where the stock posts stop isn't visible in any source | Guess: **measure** |
 
 For reference, the whole stock unit is 15.0 mm thick, and the back label window is
 27.6 × 27.6 mm with R1.8 corners.
 
 ## Screws
 
-Use **M2 socket head cap screws** (ISO 4762 / DIN 912 — the round head with a hex-key
-socket). The counterbores are sized for them with room for the key; other sizes in the
-`screw_size` drop-down get matching counterbores.
+The brass nuts the screws thread into are soldered to the **board**, not the case. On the stock
+cover, a post around each screw presses on its nut, so tightening the screws clamps the board in
+place. This plate does the same with four hollow towers, one per screw, running from the back
+face to the rim top:
 
-There are no screw towers: each screw runs bare through the open inside, straight to the
-case. Its head sits in a pad on the floor, because the floor alone is thinner than the
-recess. Each pad is 8.6 mm across and 4.3 mm tall, with 2 mm of plastic over the head
-(`head_seat`) and around it (`pad_wall`). The screws pull the plate's rim against the front shell. The deeper
-plate means the stock screws are far too short. To work out the length:
+- The bore is wide enough (Ø4.6 mm) for the screw head and a hex key, from the back face up to
+  the **seat**: 2 mm of plastic at the top of the tower (`head_seat`). The screw head rests under
+  the seat, and the tower top presses on the nut.
+- So the screw only has to pass through the seat and into the nut. Short standard screws do it,
+  whichever battery or height you pick.
+- The top of each bore is closed by one printed layer (`bridge_skin`, 0.2 mm) so the printer can
+  bridge it cleanly. **Push it through with the screw or a 2 mm drill before assembly.**
+- `tower_drop` lowers the towers if the stock posts turn out to stop short of the rim top.
 
-1. The console's `SCREWS:` line gives the **reach**: from where the head sits up to the rim top.
-   It's 27.3 mm with the defaults (10.9 mm for the flat 802525 version).
-2. Push a stock screw through the stock cover and measure how far it sticks out past the top of
-   its screw post. That's how far it goes into the case.
-3. Screw length = reach + that, rounded **down** to a length that's sold, so it can't bottom out.
+Use **M2 socket head cap screws** (ISO 4762 / DIN 912 — the round head with a hex-key socket).
+To choose the length:
 
-If you can't measure a stock screw: 2–3 mm into the case is typical, which makes it M2 × 30
-for the default plate and M2 × 12 for the flat 802525 one. Long M2 socket head screws are sold
-on their own; small assortments usually stop at 20 mm. The tall variation needs about 58 mm,
-which is covered below.
+1. Push a stock screw through the stock cover and measure how far it sticks out past the top of
+   its post. That's how far it goes into the nut.
+2. Screw length = 2 mm (the seat) + that, to the nearest length that's sold. Don't go longer: a
+   screw that passes right through the nut could press on the display.
+
+If you can't measure a stock screw, **M2 × 5** is the likely answer; **M2 × 4** is safe to try
+first. Drive them with a **1.5 mm hex key long enough to reach down the tower**: the console's
+`Hex key reach` line gives the depth, about 33 mm for the default, 11 mm for the flat 802525 and
+56 mm for the tall variation (a screwdriver-style 1.5 mm hex driver reaches all of them).
 
 ## The tall variation: 104050 on end
 
 A 104050 cell (10 × 40 × 50 mm, sold as 2400 mAh; expect about 2000) standing on its 10 × 40
 face, circuit board and wires at the top. The unit comes out about **37.6 × 45.2 × 67 mm**, with
 roughly twice the capacity of the default and 5–6× the 802525. Select the
-`104050 2400mAh on end` preset, or print `back_plate_104050_2400mAh_end.stl`.
+`104050 2400mAh on end (tight, measure first)` preset, or print `back_plate_104050_2400mAh_end.stl`.
 
 ![The tall variation with the cell ghosted in](preview-104050-end.png)
 
 Things to know before building it:
 
-- **The fit along the case is tight:** 40 mm in a 40.7 mm opening, the same 0.35 mm per end as
-  the default. Measure the real cell. If it's over 40 mm, set `lip_wall` to 0.6, which opens
+- **The fit along the case is tight:** 40 mm in a 40.7 mm opening, 0.35 mm per end. Measure the
+  real cell. If it's over 40 mm, set `lip_wall` to 0.6, which opens
   the space to 41.1 mm.
 - **The common listing has the wrong plug.** It ships with a JST PH 2.0 mm plug; the board
   needs MX1.25 (1.25 mm). Swap the plug for a 1.25 mm two-pin one, or use a short PH 2.0 to
   Micro JST 1.25 adapter; there's room beside the cell for either. Check which pin is + and
   which is − against the board's `BAT` marks before plugging in.
-- **The screws are about 58 mm long** (reach 55.3 mm + ~2.5 into the case). M2 socket head
-  screws that long are hard to find, so search for them before printing. The fallback is M2
-  threaded rod cut to length: screw it into the case's insert, then tighten an M2 nut on the
-  back with a 4 mm nut driver. A round counterbore can't hold a nut still, so for that route
-  untick `counterbore` and let the nut and a washer sit on the flat back face.
+- **The screws are the same short M2s as every other version** — the towers take the height —
+  but the hex key has to reach about 56 mm down each tower.
 
 ## Battery mounting
 
 The walls are braced by a 45° chamfer where they meet the floor, all the way around the inside
 (`wall_chamfer`, 3 mm). On any wall the cell sits close to, it shrinks by itself so it never
-lifts the cell. With the default cell on edge, that's 3 mm on the long walls and 1.25 mm on the
-end walls; OpenSCAD's console prints both.
+lifts the cell. With the default cell it's 3 mm all round; with the 40 mm cells it drops to
+1.25 mm on the end walls. OpenSCAD's console prints both.
 
 The cell is held by double-sided VHB tape on the floor and foam padding above it, which presses
 it down when the case closes. The cavity is deliberately open rather than shaped to the cell;
 pack foam into the gaps around it so it can't shift. Set `tape_t` and `foam_t` to what you
-actually have; both add to the depth. There's room at the ends and beside the cell for the wires
-to reach the `BAT` connector.
+actually have; both add to the depth. With the default cell there's 2.85 mm at each end and
+over 11 mm beside it for the wires to reach the `BAT` connector. The 40 mm cells have no room
+at their ends, so their wires must leave from the top or side.
 
 ## Printing
 
 | Setting | Value |
 |---|---|
 | Orientation | Flat face down, rim up. No supports. |
-| Counterbores | The shelf at the top of each one is a short bridge; it prints fine at 0.2 mm. |
+| Screw towers | The top of each bore is closed by a one-layer bridge; push it through after printing. |
 | Layer | 0.2 mm |
-| Perimeters | 3 or more (the walls and screw pads take the load) |
+| Perimeters | 3 or more (the walls and screw towers take the load) |
 | Infill | 40 %+ |
 | Material | PETG or ABS — PLA softens in a warm car. |
 

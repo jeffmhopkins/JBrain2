@@ -1,10 +1,10 @@
 {
     "fileFormatVersion": "1",
     "parameterSets": {
-        "852540 1000mAh on edge (default)": {
-            "battery_t": "8.5",
-            "battery_w": "25",
-            "battery_l": "40",
+        "103035 1000mAh on edge (default)": {
+            "battery_t": "10",
+            "battery_w": "30",
+            "battery_l": "35",
             "battery_orientation": "edge",
             "lead_space": "0"
         },
@@ -15,7 +15,14 @@
             "battery_orientation": "flat",
             "lead_space": "0"
         },
-        "104050 2400mAh on end": {
+        "852540 1000mAh on edge (tight, measure first)": {
+            "battery_t": "8.5",
+            "battery_w": "25",
+            "battery_l": "40",
+            "battery_orientation": "edge",
+            "lead_space": "0"
+        },
+        "104050 2400mAh on end (tight, measure first)": {
             "battery_t": "10",
             "battery_w": "40",
             "battery_l": "50",
