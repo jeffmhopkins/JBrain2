@@ -267,3 +267,16 @@
     animation: none;
   }
 }
+
+/* The status of the one message you last sent. Quiet until it is good news: "not heard yet" is
+   the resting state and should not read as a warning, while "heard" is the thing a parent at
+   work opened the app to find out. */
+.jp-status {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.jp-status-heard {
+  color: var(--ok, #2e7d32);
+}

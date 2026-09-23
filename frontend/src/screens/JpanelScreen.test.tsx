@@ -235,6 +235,43 @@ describe("JpanelScreen messages", () => {
     expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
   });
 
+  it("shows only the last thing Dad sent, and whether it was heard", async () => {
+    /* The owner: *"The pwa also needs only to show the last sent message and message status.
+     * If I send a new message it should overwrite that one. We shouldn't just keep on piling
+     * up message after message."*
+     *
+     * INBOUND IS UNTOUCHED, and the asymmetry is the point: what the twins said is a record to
+     * read, and losing one because a newer arrived would be the one unforgivable thing on this
+     * surface. What Dad said is a control — he already knows it, and the only live question is
+     * whether it has been heard. */
+    let n = 0;
+    fetchMock.mockImplementation(
+      box({
+        post: () => {
+          n += 1;
+          return json({ ...SENT, id: `sent-${n}`, transcript: n === 1 ? "first" : "second" }, 201);
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const input = await screen.findByLabelText("Message Ellie");
+    fireEvent.change(input, { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+    await waitFor(() => expect(screen.getByText("first")).toBeTruthy());
+
+    fireEvent.change(await screen.findByLabelText("Message Ellie"), {
+      target: { value: "second" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+    await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
+
+    // The first is gone — overwritten, not stacked.
+    expect(screen.queryByText("first")).toBeNull();
+    // And it carries its status, which is the whole reason a parent opens this at work.
+    expect(screen.getAllByText(/Not heard yet/).length).toBeGreaterThan(0);
+  });
+
   it("offers a microphone when there is nothing typed", async () => {
     /* THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the point.
      *

@@ -206,6 +206,12 @@ and a sender name. A waiting message draws a **pop-up over the face** — big, t
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
 
+**The pop-up stands down after 15 s** to a small badge in the top-left, carrying the sender's
+name and the same tap target. Big is right while it must interrupt; big for an hour holds a
+child's toy hostage over a message nobody has come to. The clock runs from when the WAIT began,
+not from the last count change, or a second message would restore the big box on a child who
+has already declined the first.
+
 **After it plays**, a repeat icon in the **top-left** for 5 seconds; a tap replays, then it
 clears. Deliberately short: it is for *"what did she say?"*, not a permanent control.
 
@@ -323,6 +329,14 @@ would most want to reach.
 tempting fix is to stamp `played_at` in `GET .../audio`, and it is wrong for the same reason the
 next paragraph gives: the expected interaction is READING. A father who reads the transcript and
 never presses play would leave the count sitting there forever.
+
+**Only the LAST message the owner sent is shown, with its status.** The owner: *"we shouldn't
+just keep on piling up message after message."* Inbound is untouched, and the asymmetry is the
+point: what the twins said is a record to read — losing one because a newer arrived would be
+the one unforgivable thing on this surface — while what Dad said is a control. He already knows
+it; the only live question is whether it has been heard, so the row carries that and nothing
+else stacks behind it. Display only: nothing is deleted on the box, because a hidden row is
+recoverable in a way a DELETE is not, and retention is §5's decision.
 
 **`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
 work; the audio is the fallback for when the transcript does not make sense — which, given how

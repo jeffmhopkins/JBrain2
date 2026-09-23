@@ -267,6 +267,30 @@ function MessagesTab() {
     [],
   );
 
+  /* ONLY THE LAST THING YOU SAID, AND ITS STATUS.
+   *
+   * The owner: *"The pwa also needs only to show the last sent message and message status. If
+   * I send a new message it should overwrite that one. We shouldn't just keep on piling up
+   * message after message."*
+   *
+   * INBOUND IS UNTOUCHED, and the asymmetry is the point. What the twins said is a record to
+   * read — that is what this surface is for, and losing one because a newer arrived would be
+   * the one unforgivable thing here. What DAD said is a control, not a record: he already
+   * knows it, he sent it, and the only live question is whether it has been heard yet. A
+   * scrolling column of his own words pushes theirs off the screen.
+   *
+   * DISPLAY ONLY — nothing is deleted on the box. Retention is a separate decision (§5), and
+   * a UI that hides a row is recoverable in a way a DELETE is not. */
+  function visible(messages: JpanelMessage[]): JpanelMessage[] {
+    let seenOut = false;
+    return messages.filter((m) => {
+      if (m.direction !== "out") return true;
+      if (seenOut) return false;
+      seenOut = true;
+      return true;
+    });
+  }
+
   async function send(deviceId: string) {
     const text = (drafts[deviceId] ?? "").trim();
     if (!text || sending !== null) return;
@@ -330,11 +354,11 @@ function MessagesTab() {
             {thread.unplayed > 0 && <span className="jp-unplayed">{thread.unplayed} unplayed</span>}
           </h2>
 
-          {thread.messages.length === 0 ? (
+          {visible(thread.messages).length === 0 ? (
             <p className="jp-empty">Nothing from {thread.name} yet.</p>
           ) : (
             <ul className="jp-msgs">
-              {thread.messages.map((m) => (
+              {visible(thread.messages).map((m) => (
                 <li
                   className={`jp-msg${unheard(m) ? " jp-msg-new" : ""}`}
                   key={m.id}
@@ -346,6 +370,15 @@ function MessagesTab() {
                     <span className="jp-from">{m.from_name}</span>
                     <time dateTime={m.created_at}>{whenText(m.created_at)}</time>
                     <span className="jp-dur">{durationText(m.duration_ms)}</span>
+                    {/* STATUS, AND ONLY ON WHAT YOU SENT. For an inbound message `played_at`
+                        means "the owner has dealt with it", which is the unplayed badge's job
+                        and would read as nonsense here. For an outbound one it is the only
+                        live question: has the child actually heard it. */}
+                    {m.direction === "out" && (
+                      <span className={`jp-status${m.played_at ? " jp-status-heard" : ""}`}>
+                        {m.played_at ? `Heard ${whenText(m.played_at)}` : "Not heard yet"}
+                      </span>
+                    )}
                   </div>
                   <div className="jp-msg-body">
                     {/* The transcript is the content, not a caption under a player: it is

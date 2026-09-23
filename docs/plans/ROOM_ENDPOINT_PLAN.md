@@ -5295,6 +5295,31 @@ Two details the prefetch forced, both of which would have been bugs:
   the acknowledgement when it plays at once; the cue fires only when it does not — which is
   exactly the tap that felt unanswered.
 
+##### And the pop-up stands down after fifteen seconds
+
+The owner: *"the notification on the panel is very large when it shows which is fine, but if
+it's not acknowledged within say 15 seconds, it should kind of be a smaller one up on the top
+left."*
+
+A box over the pet's face is right for the first fifteen seconds — it has to interrupt, the
+reader is four and is not auditing the screen for changes. It is wrong for the next hour: a
+message nobody has come to yet should not hold a child's toy hostage. So it becomes a badge
+top-left, still carrying the sender's name and still the same generous tap target — shrinking
+the box must not shrink what a four-year-old has to hit.
+
+Two details that are easy to get wrong:
+
+- **The clock starts when the WAIT does, not when the count last moved.** A second message
+  arriving while the first is unheard must not restore the big box: the child has already been
+  interrupted once and has chosen not to come. It restarts only from nothing-waiting.
+- **The shrink is a frame nobody else asks for.** The count has not changed, no finger has
+  landed, and the pet may be perfectly still — so without an explicit repaint the big box would
+  sit there until the next blink happened to redraw it.
+
+The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
+answers a question the child is asking right now, where the badge answers one they have already
+declined.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

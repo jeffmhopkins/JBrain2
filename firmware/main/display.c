@@ -764,6 +764,22 @@ static uint32_t s_rec_hush;
    button that never leaves would become another thing on the glass to poke. */
 #define REPEAT_MS 5000
 static uint32_t s_repeat_until;
+/* THE POP-UP SHRINKS RATHER THAN NAGS.
+ *
+ * The owner: *"the notification on the panel is very large when it shows which is fine, but if
+ * it's not acknowledged within say 15 seconds, it should kind of be a smaller one up on the
+ * top left."*
+ *
+ * A box over the pet's face is right for the first fifteen seconds — it has to interrupt, the
+ * reader is four and is not auditing the screen. It is wrong for the next hour: a message
+ * nobody has come to yet should not hold a child's toy hostage. So it stands down to a badge
+ * and the pet is a pet again, with the message still there and still tappable.
+ *
+ * `s_popup_since` is when the CURRENT run of waiting messages began — reset when the count
+ * goes to zero, not on every poll, or a panel that polls every thirty seconds would restart
+ * the clock forever and never shrink. */
+#define POPUP_BIG_MS 15000
+static uint32_t s_popup_since;
 /* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
    is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
    are rectangles; -1 in the first slot means not on screen. */
@@ -942,6 +958,40 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
     font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 112, POPUP_SCALE, "TAP TO HEAR",
               SWAP16(0x07FF));
 
+    s_popup_box[0] = bx;
+    s_popup_box[1] = by;
+    s_popup_box[2] = bx + bw;
+    s_popup_box[3] = by + bh;
+}
+
+/* THE BADGE THE POP-UP BECOMES. Top-left, small, and still the whole tap target it was —
+ * shrinking the box must not shrink what a four-year-old has to hit, so the rectangle stays
+ * generous around a small mark.
+ *
+ * A DOT AND A NAME, not a count. "3" is a number a four-year-old cannot act on; who it is from
+ * is the thing they care about, and one glance at it is the whole content. */
+static void draw_popup_badge(uint16_t *fb, int y0, const char *from)
+{
+    char line[20];
+    snprintf(line, sizeof(line), "%s", from != NULL && from[0] != '\0' ? from : "SOMEONE");
+    for (char *q = line; *q != '\0'; q++) {
+        if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
+    }
+    const int tw = font_text_w(line, 2);
+    const int bw = tw + 46, bh = 44;
+    const int bx = 14, by = y0 + 14;
+    bubble(fb, bx, by, bw, bh, 12, SWAP16(0x001F));
+    /* The same pulsing dot the pop-up's colour carries, so the two read as one thing at two
+       sizes rather than as two different notices. */
+    const int r = 7;
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy > r * r) continue;
+            const int px = bx + 18 + dx, py = by + bh / 2 + dy;
+            if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) fb[py * FACE_W + px] = CUE_COLOUR;
+        }
+    }
+    font_draw(fb, FACE_W, FACE_H, bx + 32, by + 14, 2, line, SWAP16(0xFFFF));
     s_popup_box[0] = bx;
     s_popup_box[1] = by;
     s_popup_box[2] = bx + bw;
@@ -2282,7 +2332,23 @@ static void face_task(void *arg)
                 if (sound && waiting_now > 0 && waiting_now > s_waiting_shown) {
                     audio_cue(CUE_MESSAGE);
                 }
+                /* THE CLOCK STARTS WHEN THE WAIT DOES, not when the count last moved. A
+                   second message arriving while the first is still unheard must not restore
+                   the big box — the child has already been interrupted once and has chosen
+                   not to come yet. It restarts only from nothing waiting to something. */
+                if (waiting_now > 0 && s_waiting_shown <= 0) s_popup_since = now;
                 s_waiting_shown = waiting_now;
+                dirty = true;
+            }
+        }
+        /* THE SHRINK IS A FRAME NOBODY ELSE ASKS FOR. The count has not changed, no finger has
+           landed and the pet may be perfectly still — so without this the big box would sit
+           there until the next blink happened to repaint it. */
+        {
+            static bool s_popup_was_big;
+            const bool big = jpanel_waiting(NULL, 0) > 0 && now - s_popup_since < POPUP_BIG_MS;
+            if (big != s_popup_was_big) {
+                s_popup_was_big = big;
                 dirty = true;
             }
         }
@@ -2407,7 +2473,17 @@ static void face_task(void *arg)
             if (s_talk == TALK_IDLE && !speaking && jpanel_state() != JPANEL_BUSY) {
                 char from[32];
                 const int waiting = jpanel_waiting(from, sizeof(from));
-                if (waiting > 0) draw_popup(fb, over_y0, over_h, from, waiting);
+                if (waiting > 0) {
+                    /* Big for the first fifteen seconds, then a badge. The AGAIN button owns
+                       the same corner for its five seconds and wins there — it is transient
+                       and it answers a question the child is asking right now ("what did she
+                       say?"), where the badge answers one they have already declined. */
+                    if (now - s_popup_since < POPUP_BIG_MS) {
+                        draw_popup(fb, over_y0, over_h, from, waiting);
+                    } else if (s_repeat_until == 0) {
+                        draw_popup_badge(fb, over_y0, from);
+                    }
+                }
             }
             if (s_repeat_until != 0) draw_repeat(fb, over_y0);
             PHASE(8);
