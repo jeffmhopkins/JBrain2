@@ -43,7 +43,7 @@ head screws do the job (see [Screws](#screws)).
 | `back_plate_104050_2400mAh_end.stl` | **Variation:** a 104050 cell standing on its end. Unit ≈ 67 mm tall. **Tight — measure first.** See [The tall variation](#the-tall-variation-104050-on-end). |
 | `amoled18_hole_plugs.stl` | Six press-fit plugs (four plus spares) that hide the screw openings on the back. Fits every plate. See [Hole plugs](#hole-plugs). |
 | `amoled18_back_plate.json` | The three plate builds above as presets, selectable in OpenSCAD's Customizer. |
-| `preview.png`, `preview-back.png`, `preview-cutaway.png`, `preview-104050-end.png`, `preview-plugs.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, the tall variation, and the plugs. |
+| `preview*.png` | Renders: the inside (battery ghosted in), the back face, a cut through two screw towers, the tall variation, and the plugs (loose, fitted, close up and in section). |
 | `photos/` | The real unit: the stock cover's inside, the assembled back, the board in the front shell. |
 | `reference/` | Archived copies of Waveshare's drawing, 3D model, schematic and web pages, plus the script that measured them. See [`reference/README.md`](reference/README.md). |
 
@@ -239,7 +239,17 @@ makes a firm press fit without glue.
   export just the plugs, or `both` to see them next to the plate. `plug_recess` turns the
   recesses off if you'd rather leave the openings plain.
 
-![The six hole plugs](preview-plugs.png)
+| The six plugs | Back without plugs | Back with plugs fitted |
+|---|---|---|
+| ![The six hole plugs](preview-plugs.png) | ![Back face without plugs](preview-back-no-plugs.png) | ![Back face with plugs fitted](preview-back-plugs.png) |
+
+| Opening, close up | Plug fitted, close up | Section through a fitted plug |
+|---|---|---|
+| ![Tower opening and its recess](preview-plug-close-open.png) | ![Plug sitting flush in its recess](preview-plug-close-fitted.png) | ![Section: plug cap in the recess, ribbed shank in the bore](preview-plug-section.png) |
+
+In the section (orange is the plug), the cap fills the recess flush with the back face and the
+ribbed shank grips the bore. The screw head sits far above it, under the seat at the top of the
+tower.
 
 ## Grip
 
@@ -279,7 +289,8 @@ Things to know before building it:
 The walls are braced by a 45° chamfer where they meet the floor, all the way around the inside
 (`wall_chamfer`, 3 mm). On any wall the cell sits close to, it shrinks by itself so it never
 lifts the cell: it always keeps 0.5 mm clear of the cell's bottom edge, or stays below the
-tape where the cell is closer than that. With the default cell it's 3 mm on the long walls and
+tape where the cell is closer than that. Each screw tower gets the same treatment where it meets
+the floor: a 45° flare (`tower_flare`, 2 mm), shrinking by the same rule near the cell. With the default cell it's 3 mm on the long walls and
 2.45 mm on the end walls; OpenSCAD's console prints both. Trim the tape so it sits flat on the
 floor rather than riding up the chamfer.
 
