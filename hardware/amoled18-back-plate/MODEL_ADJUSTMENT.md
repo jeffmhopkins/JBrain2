@@ -101,7 +101,7 @@ estimate from photos, so it's the thing most worth checking against the stock co
 ## Screw towers
 
 Each screw goes up a hollow tower from the back. Its head sits under a 2 mm **seat** at the top,
-and only a small **pad** around the board's brass nut touches the board.
+and the tower's flat top presses on the board's brass nut.
 
 ![Top of a screw tower](renders/fig-tower-top.png)
 
@@ -109,9 +109,9 @@ and only a small **pad** around the board's brass nut touches the board.
 |---|---|---|
 | `tower_drop` | How far below the rim top the towers stop (negative = above) | Measure the stock cover: rim top to the tops of its screw posts |
 | `head_seat` | Plastic between screw head and nut | Rarely; it sets the screw length (2 + how far the screw goes into the nut) |
-| `nut_pad_d`, `nut_pad_h` | The pad that presses the nut, and how far it stands proud | Rarely |
+| `nut_pad_h`, `nut_pad_d` | Optional raised pad around the nut (0 = flat top, the default) | Only if the tower top would press on parts beside a nut |
 | `hole_slop` | Extra on every hole, since printers make holes small | Screw head or hex key tight in the tower: raise by 0.1 |
-| `bridge_skin` | The thin layer closing each tower for printing | 0 if your printer bridges badly (then no bridge, but a small overhang) |
+| `bridge_skin` | The thin skin closing each tower for printing (0.4 mm, two layers) | Thicker if it sags; 0 for none (then a small overhang instead) |
 
 ## Hole plugs
 

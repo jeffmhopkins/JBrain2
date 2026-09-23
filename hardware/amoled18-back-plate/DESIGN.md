@@ -41,9 +41,10 @@ the same with four hollow towers:
 - The bore (Ø4.6) takes the screw head and hex key up to the **seat**, 2 mm of plastic at the top
   (`head_seat`). The screw only passes through the seat into the nut, so short screws work at
   any plate height.
-- Only a Ø4.5 pad touches the board, 0.5 mm proud of the rest of the tower (`nut_pad_d`,
-  `nut_pad_h`), because Waveshare's 3D model has small parts about 3 mm from some nuts.
-- One printed layer (`bridge_skin`, 0.2 mm) closes each bore so the printer can bridge it; it's
+- The tower top is flat and full width (Ø7), level with the rim, and presses squarely on the
+  nut. If it ever needs to stand clear of parts near a nut (Waveshare's 3D model has small ones
+  about 3 mm from some), `nut_pad_h` raises a Ø4.5 pad around the nut instead.
+- A thin skin (`bridge_skin`, 0.4 mm — two layers) closes each bore so the printer can bridge it; it's
   cleared at assembly.
 
 ![Top of a screw tower, with the screw, nut and board](renders/fig-tower-top.png)

@@ -109,11 +109,11 @@ screw_dx = 12.0;    // [5:0.1:40]
 screw_dy = 18.0;    // [5:0.1:40]
 // Thread size drives the default hole sizes
 screw_size = "M2";  // [M1.6, M2, M2.5, M3, Custom]
-// Only this much of each tower top touches the board, around the nut,
-// so it clears the small parts on the board near the nuts
+// Optional raised pad around the nut, if the flat tower top ever needs to
+// stand clear of parts on the board near a nut
 nut_pad_d = 4.5;    // [3:0.1:7]
-// How far that pad stands above the rest of the tower top (0 = whole top touches)
-nut_pad_h = 0.5;    // [0:0.1:2]
+// How far that pad stands above the rest of the tower top (0 = flat top, the default)
+nut_pad_h = 0.0;    // [0:0.1:2]
 // Room around the head so it slides down the tower and a hex key reaches
 head_clear = 0.6;   // [0:0.1:2]
 // Plastic between the screw head and the board's nut, at the top of each tower
@@ -123,9 +123,9 @@ tower_wall = 1.2;   // [0.8:0.1:3]
 // How far below the rim top the towers stop; negative = they stand above it.
 // Measure the stock cover: rim top to post top
 tower_drop = 0.0;   // [-5:0.1:10]
-// One-layer skin closing the top of each tower's bore so it prints as a bridge;
+// Thin skin (two layers at 0.2 mm) closing the top of each tower's bore so it prints as a bridge;
 // poke it through with the screw. 0 = none
-bridge_skin = 0.2;  // [0:0.05:0.6]
+bridge_skin = 0.4;  // [0:0.05:0.8]
 
 // Printer hole allowance (holes print undersize; 0.2 suits most FDM)
 hole_slop = 0.2;    // [0:0.05:0.6]
