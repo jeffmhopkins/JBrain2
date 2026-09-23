@@ -397,3 +397,55 @@ async def test_a_panel_on_a_superseded_key_does_not_address_itself(
     assert new_key not in [pid for pid, n in names.items() if n != me], (
         "filtering by name must exclude the panel's own newer key; filtering by id would not"
     )
+
+
+async def test_dads_recording_reaches_the_panel_it_was_addressed_to(
+    maker: async_sessionmaker,
+) -> None:
+    """THE NEW HALF: the owner may now send his ACTUAL VOICE, not only text to be read out.
+
+    `JPANEL_PLAN.md` §3b made the asymmetry binding — the PWA composed text and nothing else.
+    The owner amended it: *"PWA should also be able to actually send audio, a voice message,
+    that have the option to send text that gets rendered."* The reason is the one `DAD_VOICE`
+    already exists for: a synthesised voice reading a father's words is not his voice, and for
+    a child who cannot read it is the only thing that carries who the message is from.
+
+    What has to hold in Postgres is that an owner-composed VOICE row is a first-class message:
+    accepted by the schema's `composed` check, delivered to the panel it names, and — the part
+    that matters in a bedroom — invisible to that panel's sibling. A recording of a parent is
+    not less private than a recording of a child."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, recipient_kind, recipient_device, blob_sha256,
+                     transcript, composed, duration_ms)
+                VALUES ('owner', 'panel', 'panel-one', 'sha-dad-voice',
+                        'five more minutes then teeth', 'voice', 2400)
+                """
+            )
+        )
+        await s.commit()
+
+    async with scoped_session(maker, ONE) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT sender_kind, composed FROM app.jpanel_message WHERE blob_sha256 = :sha"
+                ),
+                {"sha": "sha-dad-voice"},
+            )
+        ).first()
+    assert row is not None, "the panel it was addressed to must be able to play it"
+    assert row[0] == "owner"
+    assert row[1] == "voice", "an owner may compose by voice, not only by text"
+
+    async with scoped_session(maker, TWO) as s:
+        seen = (
+            await s.execute(
+                text("SELECT count(*) FROM app.jpanel_message WHERE blob_sha256 = :sha"),
+                {"sha": "sha-dad-voice"},
+            )
+        ).scalar_one()
+    assert seen == 0, "the sibling must not hear a recording addressed to the other twin"

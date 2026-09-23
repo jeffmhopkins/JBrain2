@@ -213,12 +213,15 @@ describe("JpanelScreen messages", () => {
     expect(FakeAudio.built[0]?.paused).toBe(true);
   });
 
-  it("sends TEXT — the PWA never uploads audio", async () => {
+  it("sends typed text, and the microphone yields while there is a draft", async () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
     const input = await screen.findByLabelText("Message Ellie");
     fireEvent.change(input, { target: { value: "Five more minutes then teeth." } });
+    // ONE ACTION PER COMPOSE ROW. With words in the box the obvious thing is to send them,
+    // and two live buttons side by side is the moment a parent taps the wrong one.
+    expect(screen.queryByRole("button", { name: "Record a message for Ellie" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
 
     await waitFor(() => expect(screen.getByText("Five more minutes then teeth.")).toBeTruthy());
@@ -228,9 +231,27 @@ describe("JpanelScreen messages", () => {
       to_device: "panel-ellie",
       text: "Five more minutes then teeth.",
     });
-    // No recorder anywhere on the surface: a parent at work cannot talk into a phone, and
-    // the panels are the only half of this that speaks.
-    expect(screen.queryByRole("button", { name: /record|hold to talk|microphone/i })).toBeNull();
+    // And it comes back once the draft is cleared, so the next thing said can be spoken.
+    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+  });
+
+  it("offers a microphone when there is nothing typed", async () => {
+    /* THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the point.
+     *
+     * `JPANEL_PLAN.md` §3b made the asymmetry binding — *"The panels never send text and
+     * never read. The PWA never has to listen if it does not want to"* — and this file
+     * enforced it by checking no recorder existed anywhere on the surface.
+     *
+     * The owner amended it: *"PWA should also be able to actually send audio, a voice
+     * message, that have the option to send text that gets rendered."* The reason is the same
+     * one `DAD_VOICE` exists for — a synthesised voice reading a father's words is not his
+     * voice, and for a child who cannot read, the recording is the only version that carries
+     * who it is from. The PWA still never has to LISTEN; it may now speak. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+    // And the send button is not also live — one action per compose row.
+    expect(screen.queryByRole("button", { name: "Send to Ellie" })).toBeNull();
   });
 
   it("keeps the words in the box when the send fails", async () => {

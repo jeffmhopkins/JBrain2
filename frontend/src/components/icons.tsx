@@ -115,6 +115,16 @@ export const BoltIcon = (p: IconProps) => (
   </Icon>
 );
 
+// A microphone. The compose row's other half: this surface can now send Dad's actual voice
+// as well as text the box reads out (docs/plans/JPANEL_PLAN.md §3b).
+export const MicIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="9" y="2" width="6" height="12" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0" />
+    <path d="M12 18v4" />
+  </Icon>
+);
+
 export const SendIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m22 2-7 20-4-9-9-4Z" />

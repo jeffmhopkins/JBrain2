@@ -579,6 +579,96 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
     return _row_to_message(row, names)
 
 
+@router.post("/messages/audio", status_code=201)
+async def send_audio(
+    owner: OwnerDep,
+    request: Request,
+    to_device: str = Query(...),
+) -> Message:
+    """Dad SPEAKS; the panel plays his actual voice.
+
+    The owner, after the typed path shipped: *"PWA should also be able to actually send audio,
+    a voice message, that have the option to send text that gets rendered."* Typing is now one
+    of two ways rather than the only one, and `JPANEL_PLAN.md` §3b's asymmetry is amended to
+    match — the PWA still never has to LISTEN, but it may speak.
+
+    **THE REASON THIS IS WORTH THE ROUTE**: a synthesised voice reading a father's words is not
+    the same object as his voice. The whole design already turns on that — `DAD_VOICE` exists
+    because a message from Dad arriving in the pet's own voice would teach a four-year-old that
+    the robot and their father are the same thing. A real recording settles the question
+    completely, and for a child who cannot read it is the only version that carries who it is
+    from.
+
+    **NO FIRMWARE CHANGE, AND THAT IS NOT LUCK.** `GET /next` hands the panel raw PCM and the
+    panel plays it; nothing in the firmware knows or cares whether that audio came from a
+    microphone, from Kokoro, or from a phone in an office. The contract was drawn at the right
+    seam, so this lands entirely on the box and the PWA.
+
+    **RAW 16 kHz MONO s16 IN THE BODY, exactly as the panel's `/send` takes it**, and the
+    browser does the conversion. A `MediaRecorder` blob is webm/opus or mp4/aac depending on
+    the browser, and decoding that on the box would mean a codec dependency in the api
+    container for a job the recorder's own browser can already do — every browser can decode
+    what it just recorded. One audio format crosses this boundary, the same one the panels
+    speak, and the PWA resamples before it uploads.
+
+    **Transcribed on the way in, and the transcript may be WRONG.** Unlike the typed path — where
+    the text IS what was said and is kept verbatim — this is a re-transcription of real speech,
+    with all of whisper's failings. That is acceptable for the same reason it is on the panel's
+    side: the audio is the message and the text is a convenience. A failed transcription is not
+    a failed send."""
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=400, detail="no audio")
+    audio = audio[:MAX_MESSAGE_BYTES]
+    audio = _trim_to_speech(audio)
+    if not audio:
+        # The owner pressed record and said nothing, or held the wrong microphone. Refused
+        # rather than filed: an empty message would draw a pop-up on a child's wall for silence.
+        raise HTTPException(status_code=400, detail="nothing said")
+    duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+
+    settings = cast(Settings, request.app.state.settings)
+    # The addressee is checked BEFORE the slow work, so a bad device id fails in milliseconds
+    # rather than after a transcription. `_panel_names` is the roster — one row per name — so
+    # this also rejects a superseded key the PWA might still be holding from a stale render.
+    names = await _panel_names(request.app.state.session_maker)
+    if to_device not in names:
+        raise HTTPException(status_code=404, detail="no such panel")
+
+    # TWO SESSIONS WITH THE SLOW WORK BETWEEN THEM, for the reason `send` gives: whisper and
+    # the blob write are network calls measured in seconds, and holding a scoped session across
+    # them pins a connection on a box that also serves the pet's turns.
+    transcript = await _transcribe(settings, audio)
+    sha = await request.app.state.blob_store.put(_wav(audio))
+
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO app.jpanel_message
+                        (sender_kind, recipient_kind, recipient_device, blob_sha256,
+                         transcript, composed, duration_ms)
+                    VALUES ('owner', 'panel', :to, :sha, :tx, 'voice', :ms)
+                    RETURNING id, sender_kind, sender_device, recipient_kind, recipient_device,
+                              transcript, composed, duration_ms, created_at, played_at
+                    """
+                ),
+                {"to": to_device, "sha": sha, "tx": transcript, "ms": duration_ms},
+            )
+        ).first()
+        await session.commit()
+    if row is None:  # pragma: no cover — RETURNING on a successful INSERT always yields
+        raise HTTPException(status_code=500, detail="message not stored")
+    log.info(
+        "jpanel.spoke_aloud",
+        to=names.get(to_device, to_device),
+        duration_ms=duration_ms,
+        transcribed=bool(transcript),
+    )
+    return _row_to_message(row, names)
+
+
 @router.post("/messages/{message_id}/played", status_code=204)
 async def mark_read(owner: OwnerDep, request: Request, message_id: str) -> Response:
     """The owner has dealt with this one.

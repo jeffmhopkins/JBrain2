@@ -103,11 +103,42 @@ whenever it next asks.
 |  | sends | receives | reads |
 |---|---|---|---|
 | **panel** (each twin) | audio only | audio, played aloud | — |
-| **PWA** (Dad) | **text**, spoken to them by TTS | audio | **transcript**, with the audio available |
+| **PWA** (Dad) | **audio OR text** — text is spoken by TTS | audio | **transcript**, with the audio available |
 
-The panels never send text and never read. The PWA never has to listen if it does not want to.
-That is the owner's requirement verbatim and it is also the right split: a four-year-old cannot
-type, and a parent at work cannot play audio out loud.
+The panels never send text and never read. The PWA never has to *listen* if it does not want
+to. A four-year-old cannot type, and a parent at work cannot play audio out loud — so the
+reading half of this is unchanged and load-bearing.
+
+> **AMENDED 2026-09-23.** This table said the PWA sends **text and nothing else**, and that
+> the panels are "the only half of this that speaks" — a `JpanelScreen` test asserted no
+> recorder existed anywhere on the surface. The owner: *"PWA should also be able to actually
+> send audio, a voice message, that have the option to send text that gets rendered."*
+>
+> **The reason is the one `DAD_VOICE` already exists for.** A separate male voice was chosen
+> because a message from Dad arriving in the pet's own voice would teach a four-year-old that
+> the robot and their father are the same thing. A synthesised voice reading a father's words
+> is a weaker answer to the same problem than his actual voice, and for a child who cannot
+> read, the recording is the ONLY version that carries who it is from. Typing stays, because a
+> parent in an open-plan office cannot always speak — it is now one of two options rather than
+> the only one.
+>
+> **It needed no firmware change and no OTA**, which is the contract having been drawn at the
+> right seam: `GET /next` hands the panel raw PCM and the panel plays it. Nothing in the
+> firmware knows or cares whether that audio came from a microphone, from Kokoro, or from a
+> phone in an office.
+>
+> **The browser converts, not the box.** A `MediaRecorder` blob is webm/opus in Chrome and
+> Firefox and mp4/aac in Safari; decoding that server-side would mean a codec dependency in
+> the api container for a job the recording browser can already do. `frontend/src/voiceMessage.ts`
+> resamples to the same 16 kHz mono s16 a panel uploads, so ONE audio format crosses this
+> boundary and the owner's voice takes the identical path through the box as a child's — same
+> trim, same transcription, same blob store. It avoids `OfflineAudioContext` deliberately:
+> Safari has historically refused sample rates below 44.1 kHz there, and Safari on a phone is
+> exactly where the owner is.
+>
+> **The transcript of a recording may be wrong**, unlike the typed path where the text IS what
+> was said and is kept verbatim. Acceptable for the same reason it is on the panel's side: the
+> audio is the message and the text is a convenience.
 
 ### Why this is not built on `/converse`
 
@@ -253,6 +284,7 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 |---|---|---|
 | `GET /messages` | `limit` (default 100) | `200 {panels: [PanelThread]}` |
 | `POST /messages` | `{to_device, text}` | `201 Message` — TTS renders it, the typed text is kept as the transcript |
+| `POST /messages/audio?to_device=` | the raw 16 kHz mono s16 body, exactly as the panel's `/send` takes it | `201 Message` — Dad's own voice; transcribed on the way in, `composed: "voice"`; `404` for an unknown panel |
 | `POST /messages/{id}/played` | — | `204` — the owner has dealt with it; idempotent, keeps the first timestamp |
 | `GET /messages/{id}/audio` | — | `200 audio/wav` |
 

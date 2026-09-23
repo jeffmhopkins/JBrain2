@@ -221,3 +221,49 @@
   line-height: 1.45;
   margin: 0;
 }
+
+/* The microphone, and the recording state that has to read from across a room.
+   Same footprint as `.jp-send` so the compose row does not reflow when a draft appears and
+   the button swaps — a row that jumps as you type is a row you mistap. */
+.jp-mic {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.jp-mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* RED AND PULSING, which is the one place this surface borrows the panel's own vocabulary:
+   on the glass a red pulsing dot means a microphone is open, and it means the same here. */
+.jp-mic-live {
+  background: var(--danger, #c0392b);
+  color: #fff;
+  animation: jp-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jp-mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(192 57 43 / 55%);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgb(192 57 43 / 0%);
+  }
+}
+
+/* A recording indicator that only moves is no indicator at all for anyone who has reduced
+   motion on; the colour still carries it. */
+@media (prefers-reduced-motion: reduce) {
+  .jp-mic-live {
+    animation: none;
+  }
+}

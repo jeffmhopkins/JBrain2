@@ -148,3 +148,62 @@ class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
         # And the four suffixes it passes to that helper.
         for suffix in ('"/send?to=%s"', '"/waiting"', '"/next"', '"/played"'):
             assert suffix in src, f"the firmware stopped asking for {suffix}"
+
+
+class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
+    """THE SAME PIN, FOR THE OTHER CLIENT, AND FOR THE SAME REASON.
+
+    The firmware spent a whole release calling `/api/endpoint/jpanel/*` — a path that does not
+    exist — because it was written from a plan the backend had not followed. The PWA is the
+    other client of these routes and hardcodes its URLs in exactly the same way, in a package
+    with its own test runner that never imports this one.
+
+    So the owner-facing paths are pinned from here too, against the TypeScript that calls
+    them. The voice route is the one that matters most: it is newest, it takes a query
+    parameter rather than a body field, and a 404 on it looks to a parent like a recording
+    that simply did not send."""
+
+    def test_the_owner_routes_keep_their_paths(self) -> None:
+        paths = {
+            (route.path, method)
+            for route in jpanel.router.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+            if method != "HEAD"
+        }
+        assert ("/jpanel/messages", "GET") in paths
+        assert ("/jpanel/messages", "POST") in paths
+        assert ("/jpanel/messages/audio", "POST") in paths
+        assert ("/jpanel/messages/{message_id}/played", "POST") in paths
+        assert ("/jpanel/messages/{message_id}/audio", "GET") in paths
+
+    def test_the_pwa_calls_exactly_those(self) -> None:
+        src = (
+            Path(__file__).resolve().parents[3] / "frontend" / "src" / "api" / "client.ts"
+        ).read_text(encoding="utf-8")
+        assert '"/api/jpanel/messages"' in src, "the PWA stopped calling the list/send route"
+        assert "/api/jpanel/messages/audio?to_device=" in src, (
+            "the PWA no longer POSTs Dad's recording to /api/jpanel/messages/audio with a "
+            "to_device query parameter — a parent would see a send that silently 404s"
+        )
+        assert "/api/jpanel/messages/${encodeURIComponent(id)}/played" in src
+        assert "/api/jpanel/messages/${encodeURIComponent(id)}/audio" in src
+
+    def test_the_pwa_sends_the_audio_format_the_panels_speak(self) -> None:
+        """One audio format crosses this boundary, and the browser is what converts to it.
+
+        `voiceMessage.ts` resamples to 16 kHz mono s16 before upload, because decoding a
+        `MediaRecorder` blob (webm/opus in Chrome, mp4/aac in Safari) would mean a codec
+        dependency in the api container for a job the recording browser can already do. If
+        that constant drifts from `PANEL_RATE`, the panel plays Dad at the wrong speed."""
+        src = (
+            Path(__file__).resolve().parents[3] / "frontend" / "src" / "voiceMessage.ts"
+        ).read_text(encoding="utf-8")
+        assert f"export const PANEL_RATE = {jpanel.PANEL_RATE};" in src, (
+            f"the PWA resamples to something other than {jpanel.PANEL_RATE} Hz — Dad would "
+            "arrive on the panel at the wrong pitch and speed"
+        )
+        assert f"export const MAX_MESSAGE_MS = {jpanel.MAX_MESSAGE_MS:_};" in src, (
+            "the PWA's recording cap no longer matches MAX_MESSAGE_MS, so a long message "
+            "would be truncated on arrival with nothing said about it"
+        )
