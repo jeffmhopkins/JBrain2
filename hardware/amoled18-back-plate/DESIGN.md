@@ -81,29 +81,33 @@ the hex driver needs a 60 mm shaft.
 
 ![The desk stand cut open](renders/stand-section-103035.png)
 
-One piece: a battery box whose top is the back plate.
+Two parts, so the box stays a plain box and the part that meets the display stays the stock
+cover's shape:
 
-- **The top** is the plate's: the same rim, and four towers whose flat tops press the board's
-  nuts, all tilted up by `stand_angle` and flush with the front shell's outline. The +x edge
-  (USB-C and the two buttons) is the high back edge.
-- **The walls** run straight down from the seam to the table, so seen from above the box is the
-  case outline squeezed front to back by cos(angle). They are as thick as the plate's wall under
-  the rim, with the plate's 45° chamfer at the floor.
-- **Screws.** Each tower hangs down `tower_len` below its seat and is braced into the end wall by
-  a corbel whose underside slopes at 45° or steeper, so it prints without supports. The bore
-  carries on in a straight line down the screw's axis and out through the box: the two front
-  screws come out through the floor, the two back ones through the back wall. The screws are the
-  plate's M2 × 4, and the seat and bridge skin are the same too.
-- **Battery room.** The screws are 18 mm either side of the centre, so their paths run down the
-  box's two ends; a cell must be under 31 mm left to right to stay clear of them. The towers
-  themselves stand 14.5 mm from the centre, so a cell wider than 28 mm also has to sit below
-  them, which the model allows for.
+- **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
+  towers, so it fits the front shell exactly as the stock cover does. It adds a solid block
+  inside each end for the lock screws and a slot through the floor beside the board's `BAT`
+  socket for the battery's wires. The board's `BAT` socket is on the side away from the USB-C,
+  which fixes which way round the head goes.
+- **The box** is a straight-walled prism standing on the table. Its top is cut at `stand_angle`,
+  rising to the back, and the head sinks into it: its back rests on a ledge `stand_ledge` wide
+  inside, and round it the box's wall carries on up `pocket_wall` thick to the seam, where the
+  front shell sits on it. The outside of that top band is the case outline, so box and front
+  shell are flush; the head is the case outline less that wall, and its rim stands above the
+  seam into the front shell as usual. Below the ledge the box is open under the head, so the
+  head's back is its lid, with the plate's 45° chamfer where its walls meet the floor.
+- **Landscape, USB-C up.** The head's +x edge (USB-C and the two buttons) is the high back edge.
+  Nothing of the box stands above the seam, so the USB-C plug and the buttons are clear.
 - **Box height.** The cell stands against the back wall, where the slope gives most height, as far
   back as its corners allow 0.5 mm from the rounded corners. The box is then made just tall
-  enough that the board clears the cell, tape, foam, wires and `extra_clearance`, and the towers
-  clear it too, but never lower at the front than `stand_front_min`.
-- **The 104050 doesn't fit.** At 40 mm across it would block the screw paths in any
-  orientation that fits the case's outline. A cell that big needs a separate lid or a wider box.
+  enough that the head clears the cell's front top edge plus tape, foam, wires and
+  `extra_clearance`, but never lower at the front than `stand_front_min`.
+- **Printing.** The box's walls are vertical and its top slopes at 30°, so it prints on its
+  bottom with no supports; the top band's walls lean at the stand angle, 60° from the bed at 30°,
+  the same as the front shell's.
+- **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
+  3.5 mm deep). The two M2 × 6 lock screws pass through the box's 1.1 mm top wall at each end
+  and cut their own thread about 4.7 mm into the head's end blocks.
 
 ## Where the numbers come from
 
