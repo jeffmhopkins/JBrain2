@@ -32,6 +32,7 @@ import array
 import base64
 import hashlib
 import random
+import re
 import struct
 import time
 from collections.abc import AsyncIterator
@@ -489,6 +490,13 @@ class TelemetryIn(BaseModel):
     # "gesture" (a four-year-old), "ota-park" (routine). All three arrive as
     # `reset_reason: "sw(3)"` and two of them also share `crash_phase: 9`.
     restart_why: str = ""
+    # Whether the panel got a real HARDWARE reset before the display was brought up. The
+    # CO5300's reset line hangs off the TCA9554 expander and no build before 0.2.86 ever drove
+    # it, so the controller only ever saw a SOFTWARE reset — a command down the same QSPI bus
+    # it was already wedged on. False here means this boot initialised the panel the old way
+    # (the expander did not answer), which is the state the post-OTA black screen lives in, so
+    # a dark panel reporting `panel_reset: false` and one reporting `true` are different bugs.
+    panel_reset: bool = False
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -562,6 +570,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         wifi_drops=body.wifi_drops,
         restart_why=body.restart_why,
         tap=body.tap,
+        panel_reset=body.panel_reset,
         # Only when there is something to say. An empty key on every report for fifteen
         # minutes of a healthy panel is how a log stops being read.
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),
@@ -875,22 +884,38 @@ PANEL_REPLY_MAX = PANEL_RATE * 2 * 10
 # is, who it is talking to, and the one constraint that actually matters — every word here is
 # SPOKEN ALOUD through a small speaker, so length is not a style preference, it is latency the
 # child waits through.
-PANEL_CONVERSATION_PROMPT = """You are a small friendly robot pet who lives on a little screen \
-in a child's bedroom. You are talking with a four-year-old.
+PANEL_CONVERSATION_PROMPT = """You are a small friendly robot pet who lives on a little \
+screen in a child's bedroom. You are talking with a four-year-old.
 
-Talk about their life: what they are doing right now, what they ate, what they did today, \
-their toys, their room, their animals, the people they know. Ask about the thing they just \
-said rather than changing the subject.
+FOLLOW THEIR LEAD. Talk about whatever they just brought up — what they are doing, what they \
+ate, what they did today, their toys, their room, their animals, the people they know. Stay \
+on their subject instead of changing it.
 
-You are a voice on a small screen. You cannot play games, look at things, go anywhere or do \
-anything, so never offer to. An offer you cannot keep is a promise broken every time, and a \
-four-year-old will hold you to it.
+SAY THEIR IDEA BACK, BIGGER. Agree, repeat what they said in slightly fuller words, then add \
+one small new thing. If they say "doggy runned", say "Yes! The doggy ran so fast." Never tell \
+them they got a word wrong and never correct them — saying it back properly is the whole \
+trick.
+
+ASK ONE OPEN QUESTION, and never a quiz. "What happened next?" or "Tell me about it" gets a \
+real answer; a question they can answer with yes or no ends the conversation. One question \
+per reply, never two.
+
+GUESS KINDLY WHEN THE WORDS COME OUT WRONG. You hear them through a tiny microphone and it \
+mishears small children constantly. Work out what a four-year-old most likely meant and \
+answer that. Only ask them to say it again if you truly cannot guess.
+
+You have no body, no camera and no hands. You cannot look at things, fetch things, go \
+anywhere, or play games that need moving or seeing, so never offer to — an offer you cannot \
+keep is a promise broken, and a four-year-old will hold you to it.
+
+But you CAN talk, and talking is nearly everything a four-year-old wants. Tell jokes, make up \
+little stories, sing silly songs, count things, play guessing games with words, be silly. If \
+they ask for a joke, just tell one. Never answer that you are a robot who cannot do things.
 
 Reply with ONE or TWO short spoken sentences. Never more.
-Be warm and curious. Use simple words a four-year-old knows.
+Be warm and patient. Use simple words a four-year-old knows.
 Your reply is read aloud, so write only what should be said — no emoji, no asterisks, no \
-stage directions, no lists.
-If you did not understand, say so cheerfully and ask them to say it again."""
+stage directions, no lists."""
 
 
 # IT HAD NO IDEA WHAT IT HAD JUST SAID.
@@ -921,6 +946,41 @@ def _panel_history(key: str, now: float) -> list[tuple[str, str]]:
         del _panel_memory[stale]
     entry = _panel_memory.get(key)
     return list(entry[1]) if entry else []
+
+
+# THE PANEL'S NAME, STRIPPED OFF THE FRONT OF WHAT IT HEARD.
+#
+# The owner: *"if I say hey fish and then proceed with asking it something, it shouldn't be
+# transcribed hey fish at the beginning."*
+#
+# WHY THE AUDIO CANNOT BE TRUSTED TO EXCLUDE IT. The obvious place to fix this is the panel —
+# the recogniser fires on the phrase, so open the microphone after it and the name is already
+# past. That is what happens on a cold start, and it is not the path this shows up on. After a
+# reply the panel reopens the microphone by itself for a couple of seconds
+# (`FOLLOW_LEAD_MS`), and a child who starts their next sentence with the pet's name is
+# recorded saying ALL of it: the recogniser does fire, but `VOCAB_LISTEN` is refused because a
+# turn is already live, so nothing trims anything and the whole utterance goes up. The name
+# arrives inside the audio, so it has to come off the text.
+#
+# Stripped rather than left for the model to ignore, because it is not inert: it is the
+# subject of the first sentence the model sees, and a four-year-old asking "hey fish, what do
+# dogs eat" gets answers about fish.
+#
+# ONLY AS A PREFIX. A name in the middle of a sentence is the child talking about the pet, and
+# deleting it there would change what they said.
+#
+# The variants are Whisper's, not ours: it has no idea this is a name and spells it by sound.
+# The trailing \b is load-bearing — without it this eats the front of "fisherman".
+_WAKE_PREFIX = re.compile(r"^\W*(?:hey|hay)\W+(?:fish|fishy|fisch|phish)\b\W*", re.IGNORECASE)
+
+
+def _strip_wake_prefix(text: str) -> str:
+    """`text` without a leading wake phrase. Unchanged when it does not start with one.
+
+    An utterance that was ONLY the name becomes empty, which is right: there is no question in
+    it, and the caller already treats empty as "say that again" rather than as an error. That
+    is the correct answer to an accidental wake and a better one than a reply about fish."""
+    return _WAKE_PREFIX.sub("", text, count=1).strip()
 
 
 def _panel_remember(key: str, now: float, heard: str, reply: str) -> None:
@@ -1139,7 +1199,8 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001 — the panel gets an answer or a reason, never a hang
         log.warning("endpoint.converse_stt_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not hear") from exc
-    heard = (transcript.text or "").strip()
+    raw_heard = (transcript.text or "").strip()
+    heard = _strip_wake_prefix(raw_heard)
     stt_ms = int((time.monotonic() - stt_started) * 1000)
 
     if not heard:
@@ -1147,6 +1208,10 @@ async def converse(principal: PanelDep, request: Request) -> Response:
         log.info(
             "endpoint.converse",
             heard="",
+            # What the transcriber actually returned, when the name was all of it. Otherwise
+            # an accidental wake and a dead microphone log identically, and they are not the
+            # same fault.
+            **({"raw_heard": raw_heard} if raw_heard else {}),
             stt_ms=stt_ms,
             audio_ctx=audio_ctx,
             held_ms=held_ms,

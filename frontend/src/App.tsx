@@ -13,7 +13,6 @@ import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
 import { ControlScreen } from "./screens/ControlScreen";
 import { DataScreen } from "./screens/DataScreen";
-import { EndpointsScreen } from "./screens/EndpointsScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
@@ -23,6 +22,7 @@ import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
 import { JlaunchScreen } from "./screens/JlaunchScreen";
 import { JmoltScreen } from "./screens/JmoltScreen";
+import { JpanelScreen } from "./screens/JpanelScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
@@ -35,7 +35,6 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
-import { PetFaceScreen } from "./screens/PetFaceScreen";
 import { RadioScreen } from "./screens/RadioScreen";
 import { ResearchDetailScreen } from "./screens/ResearchDetailScreen";
 import { type ResearchKind, ResearchScreen } from "./screens/ResearchScreen";
@@ -75,7 +74,7 @@ type Card =
   | "radio"
   | "intake"
   | "petcontrol"
-  | "petface"
+  | "jpanel"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -95,7 +94,7 @@ const SCREEN_TITLES: Record<
     | "jcode"
     | "jlaunch"
     | "petcontrol"
-    | "petface"
+    | "jpanel"
     | "endpoints"
   >,
   string
@@ -509,7 +508,8 @@ export function App() {
     if (card === "jcode") return setCard(null);
     if (card === "jlaunch") return setCard(null);
     if (card === "petcontrol") return setCard(null);
-    if (card === "petface") return setCard(null);
+    // jpanel (either tab) brings its own full-screen wrap and back bar.
+    if (card === "jpanel") return setCard(null);
     if (card === "endpoints") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
@@ -577,7 +577,7 @@ export function App() {
         card !== "image" &&
         card !== "radio" &&
         card !== "petcontrol" &&
-        card !== "petface" &&
+        card !== "jpanel" &&
         card !== "endpoints" &&
         card !== "jcode" &&
         card !== "jlaunch" && (
@@ -697,8 +697,15 @@ export function App() {
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
       {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
-      {card === "petface" && <PetFaceScreen onClose={() => setCard(null)} />}
-      {card === "endpoints" && <EndpointsScreen onClose={() => setCard(null)} />}
+      {/* One surface, two doors: the jpanel tile opens it on Messages, the Endpoints tile
+          opens the same screen on its Flash tab. The flasher is no longer a screen of its
+          own — it is jpanel's second tab (docs/plans/JPANEL_PLAN.md). */}
+      {(card === "jpanel" || card === "endpoints") && (
+        <JpanelScreen
+          initialTab={card === "endpoints" ? "flash" : "messages"}
+          onClose={() => setCard(null)}
+        />
+      )}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

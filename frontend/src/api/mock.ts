@@ -16,6 +16,8 @@ import type {
   GeneratedImageOut,
   GraphEdge,
   ImageSettings,
+  JpanelMessage,
+  JpanelThread,
   LlmProviderId,
   LlmSettings,
   LlmUsage,
@@ -3493,6 +3495,81 @@ function mockRecordingState(): SdrRecordingState | null {
   };
 }
 
+// --- jpanel: the panels' messages (docs/plans/JPANEL_PLAN.md §3b). Two panels because
+// there are two twins, and one of them has never sent anything — an empty thread is the
+// normal state of a panel nobody has spoken into yet, not an error.
+//
+// The transcripts are deliberately unflattering. Whisper mangles four-year-olds ("tell us
+// a joke" came back as "There is a joke. There is a joke."), so a fixture of tidy
+// sentences would validate a screen that does not exist. One row has no words at all,
+// which is what a panel pointed at a noisy room produces.
+let mockJpanelSeq = 1;
+const jpanelAt = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).toISOString();
+
+const MOCK_JPANEL: JpanelThread[] = [
+  {
+    device_id: "panel-ellie",
+    name: "Ellie",
+    unplayed: 2,
+    messages: [
+      {
+        id: "jp-1",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript: "There is a joke. There is a joke.",
+        composed: "voice",
+        duration_ms: 3400,
+        created_at: jpanelAt(6),
+        played_at: null,
+      },
+      {
+        id: "jp-2",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript: "",
+        composed: "voice",
+        duration_ms: 1900,
+        created_at: jpanelAt(24),
+        played_at: null,
+      },
+      {
+        id: "jp-3",
+        from_name: "Dad",
+        to_name: "Ellie",
+        direction: "out",
+        transcript: "Five more minutes then teeth. I love you.",
+        composed: "text",
+        duration_ms: 4100,
+        created_at: jpanelAt(52),
+        played_at: jpanelAt(51),
+      },
+      {
+        id: "jp-4",
+        from_name: "Ellie",
+        to_name: "Dad",
+        direction: "in",
+        transcript:
+          "and then and then the the dinosaur he goed in the the water but not the water the " +
+          "other one with the with the slide and Mabel sayed no but I sayed yes and then it " +
+          "was my turn but it wasn't my turn and daddy can you can you bring the the red one " +
+          "home the red one not the blue one the red one",
+        composed: "voice",
+        duration_ms: 19_600,
+        created_at: jpanelAt(190),
+        played_at: jpanelAt(120),
+      },
+    ],
+  },
+  {
+    device_id: "panel-mabel",
+    name: "Mabel",
+    unplayed: 0,
+    messages: [],
+  },
+];
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -5218,6 +5295,56 @@ export const mockFetch: typeof fetch = async (input, init) => {
       },
     ]);
   }
+  // --- jpanel. `unplayed` is served by the box rather than counted off `messages`,
+  // so it survives a truncating `limit`; the fixture keeps that honest by summing the
+  // thread's own unplayed inbound rows.
+  if (path === "/api/jpanel/messages" && method === "GET") {
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    return json({
+      panels: MOCK_JPANEL.map((thread) => ({
+        ...thread,
+        unplayed: thread.messages.filter((m) => m.direction === "in" && m.played_at === null)
+          .length,
+        messages: thread.messages.slice(0, limit),
+      })),
+    });
+  }
+  const jpPlayed = path.match(/^\/api\/jpanel\/messages\/([^/]+)\/played$/);
+  if (jpPlayed && method === "POST") {
+    const id = decodeURIComponent(jpPlayed[1] ?? "");
+    for (const thread of MOCK_JPANEL) {
+      const row = thread.messages.find((m) => m.id === id);
+      // Idempotent, and the FIRST timestamp stands: when he saw it is a real answer, and
+      // looking again does not change it.
+      if (row) row.played_at ??= new Date().toISOString();
+    }
+    return new Response(null, { status: 204 });
+  }
+  if (path === "/api/jpanel/messages" && method === "POST") {
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as { to_device?: string; text?: string })
+      : {};
+    const thread = MOCK_JPANEL.find((t) => t.device_id === body.to_device);
+    if (!thread) return json({ detail: "no panel with that device id" }, 404);
+    const text = (body.text ?? "").trim();
+    if (!text) return json({ detail: "a message needs words" }, 422);
+    const sent: JpanelMessage = {
+      id: `jp-sent-${mockJpanelSeq++}`,
+      from_name: "Dad",
+      to_name: thread.name,
+      direction: "out",
+      // The typed text IS the transcript: TTS renders it, and both ends agree about what
+      // was said. The duration is the box's estimate of the spoken length.
+      transcript: text,
+      composed: "text",
+      duration_ms: Math.max(1200, Math.round(text.split(/\s+/).length * 400)),
+      created_at: new Date().toISOString(),
+      played_at: null,
+    };
+    thread.messages.unshift(sent);
+    return json(sent, 201);
+  }
+
   if (path === "/api/locations/geocode" && method === "GET") {
     return json({ address: "12 Market St, Springfield" });
   }

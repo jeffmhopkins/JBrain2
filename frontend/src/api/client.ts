@@ -2624,6 +2624,51 @@ export interface FlashRequest {
   remember?: boolean;
 }
 
+/** One jpanel message, owner-facing (docs/plans/JPANEL_PLAN.md §3b).
+ *
+ *  `transcript` is the PRIMARY content here, not a caption: the owner reads it at work
+ *  and only plays the audio when it does not make sense — which, with a four-year-old on
+ *  the other end, is often. `direction` is relative to the OWNER, so "in" is a panel's
+ *  message to them and "out" is one they typed. */
+export interface JpanelMessage {
+  id: string;
+  from_name: string;
+  to_name: string;
+  direction: "in" | "out";
+  transcript: string;
+  /** How it was MADE, not how it is played: Dad's `text` is spoken aloud by TTS. */
+  composed: "voice" | "text";
+  duration_ms: number;
+  created_at: string;
+  /** null = still waiting. The whole inbox query, and the badge. */
+  played_at: string | null;
+}
+
+/** One panel's thread: the messaging surface is grouped by panel because "which twin,
+ *  and how many have I not heard" is the question being asked at work. */
+export interface JpanelThread {
+  device_id: string;
+  name: string;
+  /** Messages from THIS panel the owner has not played. */
+  unplayed: number;
+  /** Newest first, as the route serves them. */
+  messages: JpanelMessage[];
+}
+
+export interface JpanelMessages {
+  panels: JpanelThread[];
+}
+
+/** Playable URL for one message's audio.
+ *
+ *  A URL helper rather than an `api.*` method for the same reason `sdrRecordingUrl` is:
+ *  the bytes never go through `request()`, which reads the body as JSON. In `dev:mock`
+ *  nothing serves them, so the play button reports it could not play — the fixture's job
+ *  is the transcripts, which are what this surface is for. */
+export function jpanelAudioUrl(id: string): string {
+  return `/api/jpanel/messages/${encodeURIComponent(id)}/audio`;
+}
+
 export const api = {
   async login(ownerKey: string, deviceLabel: string): Promise<void> {
     await request(
@@ -4926,6 +4971,36 @@ export const api = {
       reader.releaseLock();
     }
   },
+  // ===== jpanel messages (docs/plans/JPANEL_PLAN.md §3b) =====
+  // Owner-only. One list grouped by panel, newest first, with the unplayed count per
+  // panel already summed by the box — the PWA never counts it from the page it happens
+  // to be holding, which would drop to zero the moment `limit` truncated a thread.
+  async jpanelMessages(limit?: number): Promise<JpanelMessages> {
+    const q = limit === undefined ? "" : `?limit=${encodeURIComponent(limit)}`;
+    const response = await request(`/api/jpanel/messages${q}`);
+    return (await response.json()) as JpanelMessages;
+  },
+
+  // Text only, and deliberately: a four-year-old cannot type and a parent at work cannot
+  // play audio out loud, so the PWA composes text that the box speaks to them, and never
+  // uploads a recording. The typed text comes back as the transcript so both ends agree
+  // about what was said.
+  async sendJpanelMessage(toDevice: string, text: string): Promise<JpanelMessage> {
+    const response = await request(
+      "/api/jpanel/messages",
+      jsonInit("POST", { to_device: toDevice, text }),
+    );
+    return (await response.json()) as JpanelMessage;
+  },
+
+  // What clears the unplayed badge. Reading is the interaction this surface is built
+  // around — the transcript is the content — so a message counts as heard once the owner
+  // has actually seen it, not only when the audio was played. Idempotent on the box, and
+  // it keeps the FIRST timestamp, so a second look never rewrites when he saw it.
+  async markJpanelPlayed(id: string): Promise<void> {
+    await request(`/api/jpanel/messages/${encodeURIComponent(id)}/played`, { method: "POST" });
+  },
+
   // ===== Room endpoints (the ESP32-S3 panels) =====
   // Owner-only. `GET /ports` is the one worth calling first: on a box with no terminal it
   // is the only way to tell "the panel is not enumerating" from "the flasher container

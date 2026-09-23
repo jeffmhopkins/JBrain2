@@ -4936,6 +4936,173 @@ than rhythm anyway, and nothing escaping that fast has time to flutter.
 deliberate room above it, because §10.4cq's silent-swallow is what a tight ceiling here looks
 like.
 
+#### 10.4cs The reset line that was there all along (0.2.86, 2026-09-22)
+
+**The panel has never had a hardware reset, and that is the black screen.**
+
+`display.c` brings the CO5300 up with `.reset_gpio_num = GPIO_NUM_NC` and a comment asserting
+*"the panel has no reset line brought out; the init sequence does the work."* That comment is
+wrong, and everything downstream of it followed.
+
+With no reset pin, the controller only ever gets a **software** reset — a command, down the
+same QSPI bus as everything else. From a cold boot that is fine: the CO5300 resets itself when
+the rails come up. It cannot work in the one case that matters. `esp_restart()` leaves the
+controller **powered and holding its state**, so a CO5300 stopped mid memory-write is still
+waiting for pixels — and it swallows the next boot's entire init sequence as picture data,
+**including the software reset**. Nothing sent over that bus can reach it.
+
+That is the whole shape of the fault, and it finally explains the parts that never fitted:
+
+- **Why the screen is dark while the firmware is provably fine.** §10.4am measured rails up,
+  firmware alive and beeping, `blit_ok` climbing with `blit_fail` at zero — frames going out
+  to a controller that was not listening. Exactly what a wedged memory-write looks like.
+- **Why the reboot gesture works and the OTA's own restart does not.** §10.4cl blamed leaving
+  mid-transfer and 0.2.77 parked the renderer to fix it; telemetry confirms the park FIRES
+  (`restart_why: "ota-park"`) and the screen is still black, which §10.4cp recorded as a
+  correction without explaining it. Now it explains itself: how the panel leaves was never the
+  variable. The gesture works because it is a *later* reboot, by which time the controller has
+  been fed enough bytes to finish the write it was stuck in.
+- **Why waiting helps.** The owner: *"I don't want to wait 15 minutes. Can I just do the
+  gesture update"* — waiting was already known to work, and nobody had a reason for it.
+
+##### The line exists, and `pmu.c` has said so since it was written
+
+*"The BSP brings the panel's reset and enable lines out here, which is why a chip nothing has
+ever written to can still be holding the screen off."* The suspicion was recorded; what was
+missing was **which pins**, and probing blind next to a power rail and a touch controller was
+never worth the risk.
+
+Waveshare's own V2 sample code answers it. Every display example for this board does the same
+thing before touching the touch controller or the display:
+
+```cpp
+expander.pinMode(0/1/2, OUTPUT);
+expander.digitalWrite(0/1/2, LOW);
+delay(20);
+expander.digitalWrite(0/1/2, HIGH);
+```
+
+A 20 ms active-low pulse on **TCA9554 pins 0, 1 and 2**. Verified identical across
+`04_GFX_FT3168_Image`, `02_Drawing_board` and `13_LVGL_Widgets` in the `arduino-v2` tree —
+this board's revision, not V1's.
+
+##### Confirmed against the box's own telemetry
+
+The PMU ring that survived the 0.2.85 OTA reads, on all eight samples:
+
+```
+20 15 4a 0f ff 01 | cf ff ff
+                    in out cfg
+```
+
+**`cfg = 0xff` — all eight expander pins are INPUTS.** Nothing is driven, exactly as `pmu.h`
+says. External pull-ups hold the three reset lines deasserted, which is precisely why a cold
+boot works and why no reboot has ever been able to assert them.
+
+(Those samples are a *healthy-panel* baseline — they cover the two minutes before the OTA
+reboot. A dark-period capture would still be worth having, and the gesture is how to get one.)
+
+##### What shipped
+
+`pmu_reset_panel()` pulses pins 0–2 low for 20 ms and releases them, then settles 120 ms
+before the init sequence goes out. It is called from `display_start()` immediately after
+`pmu_start()` — which already owned the expander handle — and before the SPI bus comes up.
+
+Three things it deliberately does:
+
+- **Read-modify-write, three bits only.** The other five are not ours: two read low on this
+  board and the vendor drives a sixth for the SD card. A blanket write is how a diagnostic
+  becomes an outage.
+- **Deassert before switching to outputs**, so becoming an output cannot glitch the lines low.
+- **Degrade, don't refuse.** If the expander does not answer, the bring-up is exactly what it
+  has always been — a panel that boots the old way beats a panel that will not boot.
+
+`panel_reset` is now in telemetry (and in `TelemetryIn`, because a key the panel sends and the
+box drops is a bug this plan has already had once). A dark panel reporting `panel_reset: true`
+and one reporting `false` are different bugs, and until now every boot was silently the
+second.
+
+**Not yet confirmed on hardware.** This is an I2C write sequence that cannot be exercised on
+the host. The prediction is specific and cheap to falsify: a boot of 0.2.86 should report
+`panel_reset: true` with the expander's config byte reading `0xf8` instead of `0xff`, and a
+panel that goes dark after an update anyway would then be a DIFFERENT fault from this one.
+
+**And the claim this entry was first written with is already too strong.** It said 0.2.86 fixes
+"the very boot that has gone dark after every single update". The 0.2.85 OTA did not go dark:
+the owner found the screen on, and telemetry agrees — 2757 s of continuous uptime, no gesture
+reboot, `restart_why: "ota-park"`. So **the black screen is intermittent, not deterministic**,
+which matters twice over. It weakens the evidence that the missing hardware reset is the cause
+(a wedged controller would not unwedge itself between updates), and it means a single good boot
+of 0.2.86 proves nothing on its own — only a run of updates that all come back lit would. The
+missing reset is a real gap worth closing either way; whether it is THE gap is still open.
+
+#### 10.4ct A finger that cancels, and a name that stops being the question (0.2.87, 2026-09-22)
+
+Two asks from the owner, and the second one is not where it looks like it is.
+
+##### A touch cancels a listen
+
+*"When it's listening, if I touch the screen it should stop and discard."*
+
+A hands-free listen had no way out for someone who was not going to say a phrase. It runs until
+the room goes quiet, so an accidental wake — or a child who changes their mind — was committed
+to a turn they did not want. A finger is the one input that is always available and never
+ambiguous.
+
+It does exactly what `"stop stop"` does: the recording closed and dropped, the follow-up window
+shut so the microphone does not reopen, and the turn counter parked at its cap until a
+deliberate start resets it. Two ways to say stop that behaved differently would be a worse toy
+than one that only had a word.
+
+Two deliberate limits. **Only the voice-started listen** — a held turn ends on the RELEASE of
+the same finger that started it, so treating that touch as an abort would make press-and-hold
+impossible to complete. And **the tap is consumed**: no colour change, no action, no poke. A
+touch that both cancelled the question and made the pet fart reads as two things happening and
+the child cannot tell which one they asked for. The flinch stays, because something has to
+acknowledge the finger.
+
+##### The name stops being the first word of the question
+
+*"If I say hey fish and then proceed with asking it something, it shouldn't be transcribed hey
+fish at the beginning."*
+
+**The obvious fix is on the panel, and it is the wrong one.** The recogniser fires on the
+phrase, so opening the microphone after it leaves the name already past — which is exactly what
+happens on a cold start, and is not the path this shows up on.
+
+The path is the follow-up. After a reply the panel reopens the microphone by itself for
+`FOLLOW_LEAD_MS` (2 s), and a child who starts their next sentence with the pet's name is
+recorded saying **all** of it. The recogniser does fire, but `VOCAB_LISTEN` is refused because a
+turn is already live, so nothing trims anything and the whole utterance goes up. **The name
+arrives inside the audio**, so it has to come off the text.
+
+Stripped rather than left for the model to ignore, because it is not inert: it is the subject of
+the first sentence the model sees, and *"hey fish, what do dogs eat"* gets answers about fish.
+
+Three properties, each with a test: it comes off **only as a prefix** (a name mid-sentence is the
+child talking about the pet, and deleting it would change what they said); it does not eat a word
+that merely starts with the name (`"hey fisherman"` survives — the trailing `\b` is the whole
+reason); and an utterance that was ONLY the name becomes empty, which the caller already treats
+as "say that again" rather than an error. That is the right answer to an accidental wake and a
+better one than a reply about fish.
+
+The spelling variants are Whisper's, not ours — it has no idea this is a name and spells it by
+sound. And the coupling is pinned: a test reads `VOCAB_LISTEN`'s phrase out of `vocab.c` and
+asserts the box strips it, so **renaming the pet fails loudly here** instead of silently
+restoring the symptom.
+
+##### A note on the suite, and on measuring before concluding
+
+28 backend tests failed on the first run of this change and none of them were related to it —
+`RecorderRefused: there is only 465 MB left on the box`. The sdr recorder asserts a free-space
+floor, and repeated full-suite runs had left 8.1 GB of pytest temp directories behind, taking
+the session's writable allowance to 99%. Cleared, the suite is 6555 green.
+
+Worth recording because the first two diagnoses were both wrong: "pre-existing" (reached by
+running the failing file alone, which passes, rather than the suite that fails) and then "mine"
+(reached from a clean-tree comparison that happened to run when there was more disk). Neither
+hypothesis was tested against the actual error text, which named the cause in one line.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

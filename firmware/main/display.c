@@ -166,6 +166,10 @@ static void fill_stripe(void)
 static esp_lcd_panel_handle_t s_panel;
 /* Kept so display-on and brightness can be re-asserted from the render loop. */
 static esp_lcd_panel_io_handle_t s_io;
+/* Whether the hardware reset above actually landed. Reported, because "the panel came up" and
+   "the panel came up after a real reset" are different facts and only one of them is evidence
+   about the black screen. */
+static bool s_panel_reset;
 
 static bool paint(void)
 {
@@ -192,6 +196,14 @@ bool display_start(void)
     /* Before the first sample, so the history is what preceded the restart rather than a
        mixture of then and now. */
     if (pmu_start()) pmu_report_history();
+    /* AND THEN PULL THE PANEL'S RESET, which this firmware has never done. `esp_restart()`
+       leaves the CO5300 powered and holding whatever state it was in, so a controller stopped
+       mid memory-write swallows the init sequence below as pixel data and the screen stays
+       black — the software reset included, because it goes down the same bus. Only the
+       hardware line can reach it, and it hangs off the expander `pmu.c` already talks to.
+       Best-effort: if the expander does not answer, the bring-up below is exactly what it has
+       always been. */
+    s_panel_reset = pmu_reset_panel();
     const bool v2 = is_v2_board();
     ESP_LOGI(TAG, "board revision: %s", v2 ? "V2 (CO5300/CST820)" : "V1 (SH8601/FT3168)");
 
@@ -1311,6 +1323,11 @@ static int s_phase_at_crash = -1;
         s_phase = (n); \
     } while (0)
 
+bool display_panel_reset(void)
+{
+    return s_panel_reset;
+}
+
 int display_crash_phase(void)
 {
     return s_phase_at_crash;
@@ -1502,6 +1519,43 @@ static void face_task(void *arg)
         }
         s_was_speaking = speaking;
         if (tapped && !speaking) {
+            /* A FINGER CANCELS A LISTEN, AND THROWS THE RECORDING AWAY.
+             *
+             * The owner: *"when it's listening, if I touch the screen it should stop and
+             * discard."* A hands-free listen has no other way out for someone who is not
+             * going to say a phrase — it runs until the room goes quiet, so an accidental
+             * wake, or a child who changes their mind, is otherwise committed to a turn they
+             * did not want. A finger is the one input that is always available and never
+             * ambiguous.
+             *
+             * ONLY THE VOICE-STARTED LISTEN. A held turn ends on the RELEASE of the same
+             * finger that started it, which is the gesture working, not a cancel — treating
+             * the touch as an abort there would make press-and-hold impossible to complete.
+             *
+             * This does exactly what "stop stop" does, deliberately: the same three states
+             * left the same way, the follow-up window closed so the microphone does not
+             * reopen, and the turn counter parked at its cap until a deliberate start resets
+             * it. Two ways to say stop that behaved differently would be a worse toy than one
+             * that only had a word.
+             *
+             * The tap is CONSUMED — no colour change, no action, no poke. A touch that both
+             * cancelled the question and made the pet fart reads as two things happening, and
+             * the child cannot tell which one they asked for. The flinch stays, because
+             * something has to acknowledge the finger. */
+            if (s_talk == TALK_LISTENING && s_listen_voice) {
+                size_t dropped = 0;
+                (void)audio_capture_close(&dropped);
+                s_talk = TALK_IDLE;
+                s_listen_voice = false;
+                s_follow_armed = false;
+                s_follow_turns = FOLLOW_MAX_TURNS;
+                s_flinch = 1.0f;
+                if (sound) audio_cue(CUE_STOP);
+                ESP_LOGI(TAG, "talk: cancelled by touch, %u bytes discarded",
+                         (unsigned)dropped);
+                dirty = true;
+                goto tap_done;
+            }
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the

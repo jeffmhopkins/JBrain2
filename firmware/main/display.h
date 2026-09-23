@@ -27,6 +27,12 @@ int display_stack_free(void);
 /* The render loop stage reached just before the last restart, or -1 on a cold boot.
    1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip,
    9 full blit, 10 mic read, 11 meter blit, 12 panel re-assert, 13 PMU sample. */
+/* Whether the panel got a real HARDWARE reset at boot (`pmu_reset_panel`). False means the
+   expander did not answer and the CO5300 was initialised with only a software reset — the
+   state every build before this one shipped in, and the one the post-OTA black screen lives
+   in. Reported so the box can tell those two boots apart. */
+bool display_panel_reset(void);
+
 int display_crash_phase(void);
 
 /* THE MICROPHONE METER IS A DEBUG TOOL NOW, not furniture. It earned its place during

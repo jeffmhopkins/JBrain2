@@ -1452,10 +1452,18 @@ class TestPanelMemory:
     def test_the_prompt_does_not_offer_what_the_panel_cannot_do(self) -> None:
         """The owner: the pet *"could be more of a conversationalist talking about what the
         kid is doing or what the kid is eating or what the kid did today... talk about his
-        toys"*. A screen with a speaker cannot play a game, and offering one is a promise a
-        four-year-old will hold it to."""
+        toys"*. A screen with a speaker cannot fetch a ball, and offering to is a promise a
+        four-year-old will hold it to.
+
+        This used to assert the literal words "cannot play games", and that line moved on
+        purpose: a voice CAN play a guessing game, and the blanket ban was over-broad in the
+        same way "cannot do anything" was — see `TestPanelPrompt`, where refusing to tell a
+        joke came from exactly that clause. So what is pinned now is the RULE rather than the
+        sentence."""
         prompt = endpoint_api.PANEL_CONVERSATION_PROMPT.lower()
-        assert "cannot play games" in prompt
+        assert "never offer" in prompt, "the no-broken-promises rule is gone"
+        for impossible in ("no body", "look at things", "go anywhere"):
+            assert impossible in prompt, f"the prompt no longer rules out {impossible!r}"
         for subject in ("what they ate", "what they did today", "their toys"):
             assert subject in prompt
 
@@ -1559,3 +1567,105 @@ class TestReplyCeiling:
         spoken_ms = len(r.content) * 1000 // (endpoint_api.PANEL_RATE * 2)
         # 1 s of speech plus the 30/120 ms margins, not 1 s of speech plus 4 s of padding.
         assert 1000 <= spoken_ms <= 1400, spoken_ms
+
+
+class TestWakePrefix:
+    """The pet's name, taken off the front of what it heard."""
+
+    def test_the_name_comes_off_the_front_of_a_question(self) -> None:
+        # The owner: "if I say hey fish and then proceed with asking it something, it
+        # shouldn't be transcribed hey fish at the beginning." Whisper punctuates and
+        # capitalises as it likes, so the shapes matter more than the exact string.
+        # Exact expectations per input: an `or` across two acceptable answers would pass on a
+        # stripper that mangled the case or ate a word, which is the failure worth catching.
+        cases = {
+            "Hey fish, what do dogs eat?": "what do dogs eat?",
+            "hey fish what do dogs eat?": "what do dogs eat?",
+            "Hey, Fish! What do dogs eat?": "What do dogs eat?",
+            "  hey  fish  -  what do dogs eat?": "what do dogs eat?",
+            "Hey fishy, what do dogs eat?": "what do dogs eat?",
+        }
+        for said, want in cases.items():
+            assert endpoint_api._strip_wake_prefix(said) == want, said
+
+    def test_a_wake_on_its_own_leaves_nothing_to_answer(self) -> None:
+        # Which the caller already handles: empty means "say that again", not an error. That
+        # is the right answer to an accidental wake and a better one than a reply about fish.
+        assert endpoint_api._strip_wake_prefix("Hey fish.") == ""
+        assert endpoint_api._strip_wake_prefix("hey fish") == ""
+
+    def test_the_name_is_only_stripped_as_a_prefix(self) -> None:
+        # In the middle of a sentence it is a child talking ABOUT the pet, and deleting it
+        # would change what they said.
+        assert endpoint_api._strip_wake_prefix("I told hey fish a joke") == "I told hey fish a joke"
+        assert endpoint_api._strip_wake_prefix("what is a fish") == "what is a fish"
+
+    def test_it_does_not_eat_a_word_that_merely_starts_with_the_name(self) -> None:
+        # The trailing \b in the pattern is the whole reason this passes.
+        assert endpoint_api._strip_wake_prefix("hey fisherman") == "hey fisherman"
+
+    def test_an_ordinary_question_is_untouched(self) -> None:
+        assert endpoint_api._strip_wake_prefix("what do dogs eat?") == "what do dogs eat?"
+        assert endpoint_api._strip_wake_prefix("") == ""
+
+    def test_it_strips_the_phrase_the_firmware_actually_listens_for(self) -> None:
+        """THE COUPLING, PINNED. The wake phrase lives in the firmware's vocabulary table and
+        the pattern here is a copy of it, so a rename would silently leave the box stripping a
+        name the panel no longer answers to — and the symptom is the one the owner reported,
+        returning. Read from `vocab.c` so that rename fails here instead."""
+        vocab = Path(__file__).resolve().parents[3] / "firmware" / "main" / "vocab.c"
+        text = vocab.read_text()
+        match = re.search(r'\{"([^"]+)",\s*VOCAB_LISTEN', text)
+        assert match is not None, "no VOCAB_LISTEN phrase in vocab.c"
+        phrase = match.group(1)
+        assert (
+            endpoint_api._strip_wake_prefix(f"{phrase} what do dogs eat?") == "what do dogs eat?"
+        ), f"the firmware listens for {phrase!r} and the box does not strip it"
+
+
+class TestPanelPrompt:
+    """What the pet is allowed to be."""
+
+    def test_the_pet_is_allowed_to_tell_a_joke(self) -> None:
+        """The owner: it "was like refusing to tell me a joke saying it was a robot and
+        couldn't do that."
+
+        The cause was this prompt, and the clause was added on purpose: to stop the pet
+        OFFERING games it cannot play, because an offer it cannot keep is a promise broken and
+        a four-year-old holds you to it. But it was written as "you cannot play games, look at
+        things, go anywhere or DO ANYTHING, so never offer to" — and "cannot do anything" is a
+        blanket refusal. Telling a joke is doing something.
+
+        Both halves are pinned here, because the obvious repair is to delete the constraint and
+        that would bring back the broken promises instead. The pet must still be told never to
+        offer what it cannot keep, AND must not be told it can do nothing."""
+        prompt = endpoint_api.PANEL_CONVERSATION_PROMPT.lower()
+        assert "or do anything" not in prompt, (
+            "the blanket refusal is back: a pet told it cannot DO ANYTHING refuses jokes"
+        )
+        assert "joke" in prompt, "nothing tells the pet that jokes are allowed"
+        assert "never offer" in prompt, (
+            "the no-broken-promises rule was deleted rather than narrowed"
+        )
+
+    def test_the_prompt_uses_the_techniques_that_actually_grow_language(self) -> None:
+        """Not hand-tuned any more. The strategies here are the named ones from the early
+        language-development literature, because "be warm and curious" is a vibe and these are
+        instructions a 4B model can follow:
+
+        - FOLLOW THE CHILD'S LEAD (serve-and-return): stay on their subject.
+        - LINGUISTIC EXPANSION: affirm, restate in fuller words, add one idea. This is the
+          highest-value one, and it doubles as the rule against correcting a four-year-old —
+          you never say "wrong", you say it back properly.
+        - ONE OPEN-ENDED PROMPT: a question they can answer yes-or-no ends the conversation,
+          and a string of them is a quiz rather than a talk.
+
+        Plus one the literature does not cover and the logs did: the transcriber mangles small
+        children ("tell us a joke" arrived as "There is a joke. There is a joke."), so the pet
+        has to interpret charitably rather than bouncing "say that again" back at them."""
+        prompt = endpoint_api.PANEL_CONVERSATION_PROMPT.lower()
+        assert "follow their lead" in prompt
+        assert "never correct them" in prompt, "the pet may end up correcting a four-year-old"
+        assert "open question" in prompt
+        assert "one question per reply" in prompt
+        assert "guess" in prompt, "nothing tells the pet what to do with a mangled transcript"
