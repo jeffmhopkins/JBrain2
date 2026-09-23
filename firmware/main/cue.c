@@ -314,6 +314,19 @@ static const cue_def_t DEF[CUE_COUNT] = {
        two partials buzz inside one critical band, which near 300 Hz means a ~30 Hz gap and
        two octaves up is just a gentle beat. Gentle: try again, not told off. */
     [CUE_OOPS] = {SH_PAIR, 300, 311.13f, 0.125f, -0.75f, 90.0f, {END}, 2, 20},
+    /* GOING AWAY: three notes climbing an octave and leaving. Rising and UNRESOLVED on the
+       octave rather than settling on the tonic, because a message that has been sent is not
+       finished — someone else has it now. Distinct from the coin (two notes, a fourth) and
+       from the dance (four notes, a full major arpeggio) by note count and by interval. */
+    [CUE_SENT] = {SH_STEPS, 300, 659.25f, 0.4f, 0, 0, {0, 7, 12, END}, 2, 5},
+    /* ARRIVING, AND IT HAS TO BE GENTLE, because this is the one cue in the set that fires
+       WITHOUT anyone having touched or said anything — it goes off in a bedroom, possibly
+       while a four-year-old is doing something else. So: a triangle (no bright partials), a
+       slow attack, and a FALLING major third, which is the two-note shape a doorbell uses
+       and the ear reads as an announcement rather than a demand. A rising one would ask a
+       question the panel cannot answer. Apart from the nod (the same shape two octaves
+       down, and a smaller interval) by register. */
+    [CUE_MESSAGE] = {SH_STEPS, 440, 880.0f, 0.0f, 0, 0, {0, -4, END}, 9, 0},
 };
 
 /* The longest any variant stretches a cue. Kept beside `variant_stretch` in spirit; declared

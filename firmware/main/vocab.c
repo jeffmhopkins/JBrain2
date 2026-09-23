@@ -60,6 +60,28 @@ static const vocab_t VOCAB[] = {
      * a television saying "stop" twice in a row ends a conversation that was not happening. */
     {"stop stop", VOCAB_STOP, 0},
 
+    /* VOICE POST, AND THE TWO PHRASES ARE THE WHOLE INTERFACE TO IT.
+     *
+     * The owner: *"cross panel or panel to pwa messaging… 'send message' / 'send Dad a
+     * message'."* A four-year-old cannot pick a recipient off a list, so the recipient is
+     * part of the sentence — which is also why there are exactly two of these and not a
+     * general "send a message to X": the name of the person would have to be in this table,
+     * and the twins' names are not (JPANEL_PLAN.md §5).
+     *
+     * NEITHER IS A PREFIX OF THE OTHER, which rule 3 requires and which nearly failed:
+     * "send a message" and "send dad a message" diverge at the fourth word — `a` against
+     * `d` — and that is the entire margin. A third recipient phrased "send X a message" would
+     * be safe for the same reason; "send a message to dad" would NOT be, because the short
+     * form is its prefix. Worth knowing before the third panel exists.
+     *
+     * THE ARGUMENT IS A `jpanel_to_t`, not a face or an action, and it is the first entry in
+     * this table whose `arg` means something outside `face.h` and `rig.h`. Spelled as the
+     * literal rather than by including `jpanel.h`: this file is pure C and built on the host,
+     * and `jpanel.h` drags in `cfg.h` and the ESP headers behind it. The host suite pins the
+     * two values together so the spelling cannot drift. */
+    {"send a message", VOCAB_SEND, 0},     /* JPANEL_TO_PANEL — the twin's unit */
+    {"send dad a message", VOCAB_SEND, 1}, /* JPANEL_TO_DAD — the owner's PWA */
+
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */
     {"change into merc", VOCAB_FORM, FORM_OSTRICH},

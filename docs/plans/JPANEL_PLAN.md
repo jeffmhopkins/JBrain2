@@ -1,6 +1,8 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** Proposed · **Last verified:** 2026-09-22 · **Waves:** W1◻ W2◻ W3◻ W4◻
+> **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> — W2 and W4 shipped together in #1498; W3 is the firmware in this branch (0.2.88) and is
+> **built but not yet run on a panel**. W1 (the screen that sleeps) is the one left.
 
 The owner, across two asks:
 
@@ -290,6 +292,25 @@ costs two rewrites.
 
 ## 5. Open, and deliberately not guessed
 
+- **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
+  `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
+  is `CAPTURE_MAX_MS` — ten seconds, claimed once at start-up because a heap request in the
+  middle of a four-year-old talking is a failure with no good outcome. Twenty would mean
+  either a second 320 KB buffer or doubling a conversational cap that whisper's flat ~10.7 s
+  is already sized against. Ten seconds of a four-year-old is a long message; revisit it if
+  the twins actually hit the ceiling, which the `full` branch logs when they do.
+  **Playback is NOT capped at ten**, and that was a real bug on the way past: `audio_play`
+  truncated everything at the REPLY ceiling, so a typed message from Dad (600 characters
+  through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
+  any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
+  so in the log when it still has to cut.
+- **A panel cannot learn the other panel's name**, so the blue recording indicator says
+  `TO DAD` or, for the twin, `MESSAGE`. There is no route that answers "what is the other
+  unit called" — `GET /waiting` names a sender only when something is already waiting — and
+  inventing a word for a child's twin would be worse than saying MESSAGE. The caption ticker
+  shows the phrase they just said in the same frame, so the recipient is on the glass either
+  way. This is the same missing mechanism as the bullet below about enumerating panels, and
+  it wants the same fix: a panel roster.
 - **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
   not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
   on it.

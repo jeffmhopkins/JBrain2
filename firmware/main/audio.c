@@ -141,10 +141,19 @@ static volatile bool s_cap_on;
  * had replies of 221,012 and 261,290 bytes against the 192,000 this held, so the long one
  * stopped mid-word — silently, because `audio_play` truncates without a word to anyone.
  *
- * `PANEL_REPLY_MAX` in `backend/src/jbrain/api/endpoint.py` is the same ten seconds and now
- * logs when it has to cut. The two must move together; the host suite checks that they have. */
-#define PLAY_MAX_MS 10000
-#define PLAY_MAX_SAMPLES (AUDIO_RATE * PLAY_MAX_MS / 1000)
+ * `PANEL_REPLY_MAX` in `backend/src/jbrain/api/endpoint.py` is the same ten seconds, and
+ * `REPLY_MAX_BYTES` in `talk.c` is how much of a reply this panel will read. That cap belongs
+ * to the REPLY and stays with it.
+ *
+ * WHAT THIS BUFFER HOLDS IS A DIFFERENT QUESTION, and conflating the two is how the cut
+ * happened in the first place. Voice post (`jpanel.c`) plays messages the box caps at
+ * `MAX_MESSAGE_MS` — twenty seconds — and Dad's are typed text put through a voice, where
+ * `SendText` allows 600 characters. Sized to a reply, every one of those would stop mid-word.
+ * So the buffer is sized for the LONGEST audio any caller can hand over, not for the shortest
+ * ceiling one of them happens to have; the extra 320 KB comes out of the same PSRAM the
+ * capture buffer is claimed from. */
+#define PLAY_BUF_MS 20000
+#define PLAY_BUF_SAMPLES (AUDIO_RATE * PLAY_BUF_MS / 1000)
 static int16_t *s_play;
 static volatile int s_play_len;  /* samples still to write */
 static volatile int s_play_pos;
@@ -154,7 +163,14 @@ bool audio_play(const int16_t *pcm, size_t bytes)
     if (s_play == NULL || pcm == NULL || bytes < 2) return false;
     if (s_play_pos < s_play_len) return false; /* still speaking */
     int n = (int)(bytes / sizeof(int16_t));
-    if (n > PLAY_MAX_SAMPLES) n = PLAY_MAX_SAMPLES;
+    if (n > PLAY_BUF_SAMPLES) {
+        /* SAID OUT LOUD NOW. Truncating silently is how a 261 KB reply stopped mid-word with
+           nothing in any log to say it had, and a cut message would be the same bug wearing a
+           different hat — a child told their father's message ended where it did not. */
+        ESP_LOGW(TAG, "cutting %d ms of audio: %d ms is all this buffer holds",
+                 (n - PLAY_BUF_SAMPLES) * 1000 / AUDIO_RATE, PLAY_BUF_MS);
+        n = PLAY_BUF_SAMPLES;
+    }
     memcpy(s_play, pcm, (size_t)n * sizeof(int16_t));
     s_play_pos = 0;
     s_play_len = n;
@@ -341,7 +357,7 @@ bool audio_start(void)
        keeps its voice commands and its meter and simply cannot record a message, which is a
        smaller loss than refusing to start. */
     s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    s_play = heap_caps_malloc((size_t)PLAY_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    s_play = heap_caps_malloc((size_t)PLAY_BUF_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "capture %s, playback %s (%d ms each)",
              s_cap != NULL ? "ready" : "UNAVAILABLE",
              s_play != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS);

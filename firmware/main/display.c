@@ -45,6 +45,7 @@
 #include "face.h"
 #include "font.h"
 #include "gesture.h"
+#include "jpanel.h"
 #include "rig.h"
 #include "speech.h"
 #include "vocab.h"
@@ -699,7 +700,28 @@ static volatile bool s_debug_overlay;
 #define FOLLOW_LEAD_MS 2000
 #define FOLLOW_MAX_TURNS 6
 
-typedef enum { TALK_IDLE = 0, TALK_LISTENING, TALK_THINKING, TALK_FAILED } talk_t;
+/* VOICE POST ON THE GLASS (`docs/plans/JPANEL_PLAN.md`, W3).
+ *
+ * RECORDING IS A STATE BESIDE LISTENING, NOT A FLAG ON IT, and the three differences are why:
+ * where the audio goes, what is drawn, and what ends it. A flag would have every branch of
+ * the machine below asking "but which kind" — and the one that forgot would upload a child's
+ * message to the pet, which would answer it out loud.
+ *
+ * WHAT IT SHARES is everything that was tuned for a four-year-old: the same hush (they stop
+ * for longer than an adult does), the same lead, the same cap, and the same finger-cancels
+ * rule the owner asked for. A second set of numbers would be a second thing to get wrong.
+ *
+ * A BLUE DOT, NOT THE RED ONE, and that is the owner's actual requirement rather than a
+ * palette choice: red means *the robot is listening to you*, and talking to your sister must
+ * not look like that. */
+#define RECORD_LEAD_MS 4000
+typedef enum {
+    TALK_IDLE = 0,
+    TALK_LISTENING,
+    TALK_RECORDING,
+    TALK_THINKING,
+    TALK_FAILED
+} talk_t;
 static talk_t s_talk;
 static uint32_t s_talk_since;
 /* WHEN the finger landed, not HOW MANY passes ago. The first cut counted `+= TOUCH_POLL_MS`
@@ -728,6 +750,45 @@ static int s_follow_turns;
 /* Last frame's speaking state, so the follow-up fires on the EDGE where the speaker falls
    silent rather than on every frame after it. */
 static bool s_was_speaking;
+/* Declared here because `tap_to_overlay` below needs it and the orientation block that owns
+   it comes later in the file. */
+static bool s_upside_down;
+
+/* Who the message being recorded is for, and the hush machinery for it — separate from the
+   listen's so a message cannot inherit half of a conversation that was in flight. */
+static jpanel_to_t s_rec_to;
+static bool s_rec_heard;
+static uint32_t s_rec_hush;
+/* THE REPEAT ICON, and it is a deadline rather than a flag. The owner asked for five seconds
+   after a message plays: it is for *"what did she say?"*, not a permanent control, and a
+   button that never leaves would become another thing on the glass to poke. */
+#define REPEAT_MS 5000
+static uint32_t s_repeat_until;
+/* Where the pop-up and the repeat icon were drawn, in the space they were drawn in — which
+   is NOT the space `panel_to_frame` hands back; see `tap_to_overlay` immediately below. Both
+   are rectangles; -1 in the first slot means not on screen. */
+static int s_popup_box[4] = {-1, -1, -1, -1};
+static int s_repeat_box[4] = {-1, -1, -1, -1};
+
+static bool in_box(const int box[4], int x, int y)
+{
+    return box[0] >= 0 && x >= box[0] && x < box[2] && y >= box[1] && y < box[3];
+}
+
+/* THE OVERLAYS ARE DRAWN BEFORE THE 180 FLIP AND THE TAP MARKER IS DRAWN AFTER IT, so the two
+ * live in different coordinate spaces and a hit test has to say which one it means.
+ *
+ * `panel_to_frame` stops at the quarter turns on purpose (the marker needs it to): upside down
+ * it returns the touch unchanged, because by the time the marker is plotted `flip_frame` has
+ * already run and the buffer is in panel order. Anything drawn EARLIER — the pop-up, the
+ * repeat icon, the label, the caption — was written in frame order and then flipped, so its
+ * rectangle has to be compared against a touch that has been flipped the same way. Merging
+ * this into `panel_to_frame` would put the marker back under the finger's mirror image. */
+static void tap_to_overlay(int fx, int fy, int *ox, int *oy)
+{
+    *ox = s_upside_down ? FACE_W - 1 - fx : fx;
+    *oy = s_upside_down ? FACE_H - 1 - fy : fy;
+}
 
 /* A filled rounded box. `display.c` has no drawing library and does not need one: the bubble
    is one rectangle and four corners, and the corners are the difference between a speech
@@ -796,7 +857,11 @@ static void draw_thinking(uint16_t *fb, int y0, int h, uint32_t now, bool failed
  * something. It is also the fastest way to notice a listen nobody started, which is the
  * failure this release is otherwise chasing. */
 #define LISTEN_SCALE 2
-static void draw_listening(uint16_t *fb, int y0, uint32_t now)
+/* ONE SHAPE, TWO MEANINGS, AND THE COLOUR IS THE DIFFERENCE. Factored out when voice post
+   arrived rather than copied: a second pulsing dot drawn by a second function is two things
+   to keep in step, and the pulse rate IS the affordance — a recording indicator that breathed
+   at a different speed would read as a different kind of thing entirely. */
+static void draw_indicator(uint16_t *fb, int y0, uint32_t now, uint16_t colour, const char *word)
 {
     const int r = 13 + (int)((now / 140) % 4);
     const int cx = FACE_W - 34, cy = y0 + 34;
@@ -805,13 +870,107 @@ static void draw_listening(uint16_t *fb, int y0, uint32_t now)
             if (dx * dx + dy * dy > r * r) continue;
             const int px = cx + dx, py = cy + dy;
             if (px >= 0 && px < FACE_W && py >= 0 && py < FACE_H) {
-                fb[py * FACE_W + px] = SWAP16(0xF800);
+                fb[py * FACE_W + px] = colour;
             }
         }
     }
-    const int w = font_text_w("LISTENING", LISTEN_SCALE);
-    font_draw(fb, FACE_W, FACE_H, FACE_W - 8 - w, cy + 22, LISTEN_SCALE, "LISTENING",
-              SWAP16(0xF800));
+    const int w = font_text_w(word, LISTEN_SCALE);
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 8 - w, cy + 22, LISTEN_SCALE, word, colour);
+}
+
+static void draw_listening(uint16_t *fb, int y0, uint32_t now)
+{
+    draw_indicator(fb, y0, now, SWAP16(0xF800), "LISTENING");
+}
+
+/* RECORDING A MESSAGE. Blue, and the word names the RECIPIENT rather than the act, because
+   the act is the part a child already knows — they just asked for it — and who it is going to
+   is the part they cannot see.
+ *
+ * "TO DAD" IS KNOWN AND THE SIBLING'S NAME IS NOT, which is an honest gap rather than a
+ * placeholder: a panel has no way to ask the box what the other unit is called (there is no
+ * route for it — JPANEL_PLAN.md §5 wants a panel roster for exactly this class of question),
+ * and inventing a word for a child's twin would be worse than saying MESSAGE. The caption
+ * ticker is showing the phrase they said in the same frame, so the recipient is on the glass
+ * either way. */
+static void draw_recording(uint16_t *fb, int y0, uint32_t now, jpanel_to_t to)
+{
+    draw_indicator(fb, y0, now, SWAP16(0x001F), to == JPANEL_TO_DAD ? "TO DAD" : "MESSAGE");
+}
+
+/* THE POP-UP, AND IT IS THE ONLY THING ON THIS GLASS THAT COVERS THE PET.
+ *
+ * The owner: *"a little pop-up box would show up if a message is available to play."* A
+ * badge in a corner would be the polite version and would be the wrong one — the reader is
+ * four, cannot read, and is not auditing the screen for changes. It has to interrupt, and it
+ * has to be tappable anywhere inside, because a four-year-old aiming at a small target with
+ * an excited finger is a miss.
+ *
+ * IT DOES NOT AUTO-PLAY. A message that starts talking on its own would be the panel making
+ * noise in a bedroom at a moment nobody chose; the pop-up survives a reboot (the state lives
+ * on the box) and waits.
+ *
+ * Drawn centred in the SQUARE, not the frame, so a side-mounted panel keeps it — the same
+ * rule the caption and the label were moved to obey. */
+#define POPUP_SCALE 3
+#define POPUP_NAME_SCALE 4
+static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count)
+{
+    const int bw = 296, bh = 156;
+    const int bx = (FACE_W - bw) / 2;
+    const int by = y0 + (h - y0 - bh) / 2;
+    bubble(fb, bx, by, bw, bh, 22, SWAP16(0x001F));
+    bubble(fb, bx + 5, by + 5, bw - 10, bh - 10, 18, SWAP16(0x0010));
+
+    char line[40];
+    /* Uppercase because that is the alphabet the font has, and the box's names arrive in
+       whatever case the owner typed at flash time. */
+    snprintf(line, sizeof(line), "%s", from != NULL && from[0] != '\0' ? from : "SOMEONE");
+    for (char *q = line; *q != '\0'; q++) {
+        if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
+    }
+    int w = font_text_w(line, POPUP_NAME_SCALE);
+    /* A long name is shrunk rather than clipped: a name cut in half names nobody. */
+    const int name_scale = w > bw - 32 ? POPUP_SCALE : POPUP_NAME_SCALE;
+    w = font_text_w(line, name_scale);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 34, name_scale, line, SWAP16(0xFFFF));
+
+    const char *sub = count > 1 ? "SENT YOU SOME" : "SENT YOU ONE";
+    w = font_text_w(sub, 2);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 84, 2, sub, SWAP16(0xFFFF));
+    w = font_text_w("TAP TO HEAR", POPUP_SCALE);
+    font_draw(fb, FACE_W, FACE_H, bx + (bw - w) / 2, by + 112, POPUP_SCALE, "TAP TO HEAR",
+              SWAP16(0x07FF));
+
+    s_popup_box[0] = bx;
+    s_popup_box[1] = by;
+    s_popup_box[2] = bx + bw;
+    s_popup_box[3] = by + bh;
+}
+
+/* THE REPEAT ICON: top-left, five seconds, then gone (`REPEAT_MS`).
+ *
+ * Top-left is where the owner asked for it, and it is NOT an empty corner — the panel's name
+ * label lives there. It covers the label for those five seconds, deliberately: everything
+ * else on this glass is on the right (the indicator, the thinking box, the meter), and a
+ * label that says what the panel is called is worth less for five seconds than a button that
+ * says what your sister said. It is tested before `label_hit`, so the tap goes to the replay
+ * rather than flipping the name to a version number.
+ *
+ * A WORD RATHER THAN A GLYPH. There is no drawing library here and a hand-plotted circular
+ * arrow at this size reads as a smudge; "AGAIN" is what the adult in the room needs, and the
+ * twins learn a box that appears where the sound just came from by pressing it once. */
+static void draw_repeat(uint16_t *fb, int y0)
+{
+    const int w = font_text_w("AGAIN", 3);
+    const int bw = w + 32, bh = 52;
+    const int bx = 14, by = y0 + 14;
+    bubble(fb, bx, by, bw, bh, 14, SWAP16(0x001F));
+    font_draw(fb, FACE_W, FACE_H, bx + 16, by + 14, 3, "AGAIN", SWAP16(0xFFFF));
+    s_repeat_box[0] = bx;
+    s_repeat_box[1] = by;
+    s_repeat_box[2] = bx + bw;
+    s_repeat_box[3] = by + bh;
 }
 
 /* 0 upright, 1 clockwise, 2 upside down, 3 anticlockwise — a quarter turn each. */
@@ -838,8 +997,8 @@ void display_set_debug_overlay(bool on)
 
    Hysteresis at about half a gravity, because a panel lying near flat has almost nothing on
    this axis and a bare sign test would flip it back and forth on noise. That figure now lives
-   in `orient.h` as `ORIENT_MIN_MAG`, beside the band it belongs with. */
-static bool s_upside_down;
+   in `orient.h` as `ORIENT_MIN_MAG`, beside the band it belongs with.
+   (Declared above, where `tap_to_overlay` needs it.) */
 
 /* THE LEAN. The robot slides downhill in proportion to the sideways component of gravity, so
    the flip at the end of a rotation has something leading up to it instead of being a jump
@@ -1519,6 +1678,49 @@ static void face_task(void *arg)
         }
         s_was_speaking = speaking;
         if (tapped && !speaking) {
+            /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
+             *
+             * It used to be resolved down in the poke block, which was fine while the poke
+             * was the only branch that cared. It is not any more: the pop-up and the repeat
+             * icon are hit-tested, and a branch that returns before the poke block would have
+             * left `s_fig_x` holding the PREVIOUS tap — so the recoil ring would appear where
+             * the last finger was, which is the same class of bug `s_down_x` exists to
+             * document. Corrected once here and every branch below speaks the same
+             * coordinates. */
+            int rx = -1, ry = -1;
+            touch_point(&rx, &ry);
+            calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
+            panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
+             * and the poke for exactly the reason the label is: a tap that both played a
+             * message and made the pet fart reads as two things happening, and the child
+             * cannot tell which one they asked for.
+             *
+             * Against overlay coordinates, not frame ones — see `tap_to_overlay`. */
+            {
+                int ox = -1, oy = -1;
+                tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
+                if (in_box(s_popup_box, ox, oy)) {
+                    s_flinch = 1.0f;
+                    /* Cleared the moment it is pressed, not when the audio arrives: a box
+                       that stays up through a two-second fetch invites a second press, and
+                       `jpanel_play_next` refuses that one — so the child would be pressing a
+                       button that had stopped working. */
+                    s_popup_box[0] = -1;
+                    if (!jpanel_play_next()) ESP_LOGW(TAG, "jpanel: busy, not fetching");
+                    dirty = true;
+                    goto tap_done;
+                }
+                if (in_box(s_repeat_box, ox, oy)) {
+                    s_flinch = 1.0f;
+                    /* Replayed from this panel's own buffer — no box, no network — so it
+                       works when the link is down, which is when a child is most likely to be
+                       asking what she said. */
+                    if (jpanel_replay()) s_repeat_until = now + REPEAT_MS;
+                    dirty = true;
+                    goto tap_done;
+                }
+            }
             /* A FINGER CANCELS A LISTEN, AND THROWS THE RECORDING AWAY.
              *
              * The owner: *"when it's listening, if I touch the screen it should stop and
@@ -1556,18 +1758,27 @@ static void face_task(void *arg)
                 dirty = true;
                 goto tap_done;
             }
+            /* A FINGER CANCELS A MESSAGE TOO, on exactly the rule the listen has: silence
+               sends, a finger abandons, and there is no third gesture to learn. */
+            if (s_talk == TALK_RECORDING) {
+                size_t dropped = 0;
+                (void)audio_capture_close(&dropped);
+                s_talk = TALK_IDLE;
+                s_flinch = 1.0f;
+                if (sound) audio_cue(CUE_STOP);
+                ESP_LOGI(TAG, "jpanel: message cancelled by touch, %u bytes discarded",
+                         (unsigned)dropped);
+                dirty = true;
+                goto tap_done;
+            }
             colour = (colour + 1) % face_colour_count();
             s_flinch = 1.0f;
             /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
                pool; the pool picks the reaction, weighted, cooled-down, and softened if you
                are hammering it (`variants.c`). The colour cycle stays, because it is the one
-               thing a child can steer deliberately. */
-            int rx = -1, ry = -1;
-            touch_point(&rx, &ry);
-            /* Corrected before anything reads it, so the zones, the marker and the telemetry
-               all speak the same coordinates. The identity until a calibration exists. */
-            calib_apply(&s_cal, rx, ry, &s_tap_x, &s_tap_y);
-            panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+               thing a child can steer deliberately. The coordinates were corrected at the top
+               of this block, so the zones, the marker and the telemetry all speak the same
+               ones. */
             /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
                that says something cannot also be a poke. It sits above the pet's head where
                `face_zone` returns nothing anyway, so no reaction is lost — and a tap that both
@@ -1645,7 +1856,7 @@ static void face_task(void *arg)
                        goes to its cap rather than to a separate flag — the next deliberate
                        start (the name, or a finger) resets it, which is exactly the rule that
                        already governs the loop. */
-                    if (s_talk == TALK_LISTENING) {
+                    if (s_talk == TALK_LISTENING || s_talk == TALK_RECORDING) {
                         size_t dropped = 0;
                         (void)audio_capture_close(&dropped);
                     } else if (s_talk != TALK_IDLE) {
@@ -1657,6 +1868,40 @@ static void face_task(void *arg)
                     s_follow_turns = FOLLOW_MAX_TURNS;
                     ESP_LOGI(TAG, "talk: stopped by voice");
                     heard_cue = CUE_STOP;
+                    break;
+                case VOCAB_SEND:
+                    /* VOICE POST. The same capture machinery a conversation uses, pointed
+                       somewhere else — which is the whole design: a second recorder with its
+                       own buffer, its own hush and its own cap would be a second thing to get
+                       wrong for a four-year-old, and the numbers here were tuned against one.
+                     *
+                       A LONGER LEAD THAN A CONVERSATION GETS (`RECORD_LEAD_MS`). Asking the
+                       pet something is a sentence already formed; telling your sister
+                       something is one being composed, out loud, by a four-year-old who has
+                       just watched a blue dot appear. Four seconds rather than three, and the
+                       silent branch below still throws away a message nobody spoke into.
+                     *
+                       Refused while a turn is in flight or while the pet is speaking, exactly
+                       as the name is: one microphone, one thing at a time. */
+                    if (s_talk == TALK_IDLE && !speaking && talk_state() != TALK_NET_BUSY &&
+                        jpanel_state() != JPANEL_BUSY) {
+                        s_talk = TALK_RECORDING;
+                        s_talk_since = now;
+                        s_rec_to = v->arg == (int)JPANEL_TO_DAD ? JPANEL_TO_DAD
+                                                                : JPANEL_TO_PANEL;
+                        s_rec_heard = false;
+                        s_rec_hush = 0;
+                        /* The follow-up window is closed: a message is not a turn, and the
+                           microphone must not reopen after one. */
+                        s_follow_armed = false;
+                        audio_capture_open();
+                        ESP_LOGI(TAG, "jpanel: recording for %s",
+                                 s_rec_to == JPANEL_TO_DAD ? "dad" : "the other panel");
+                        heard_cue = CUE_LISTEN;
+                        dirty = true;
+                    } else {
+                        ESP_LOGI(TAG, "jpanel: busy — not recording");
+                    }
                     break;
                 case VOCAB_LISTEN:
                     /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
@@ -1884,6 +2129,42 @@ static void face_task(void *arg)
                 }
                 dirty = true;
             }
+        } else if (s_talk == TALK_RECORDING) {
+            /* THE SAME THREE WAYS OUT A HANDS-FREE LISTEN HAS, and deliberately the same
+               numbers: hush sends, silence drops it, the cap sends what there is. The only
+               difference is where it goes. */
+            const bool voice = speech_hearing();
+            if (voice) {
+                s_rec_heard = true;
+                s_rec_hush = 0;
+            } else if (s_rec_heard && s_rec_hush == 0) {
+                s_rec_hush = now;
+            }
+            const bool hushed =
+                s_rec_heard && s_rec_hush != 0 && now - s_rec_hush >= LISTEN_HUSH_MS;
+            const bool full = audio_capture_ms() >= audio_capture_cap_ms();
+            const bool nothing = !s_rec_heard && now - s_talk_since > RECORD_LEAD_MS;
+            if (nothing) {
+                size_t got = 0;
+                (void)audio_capture_close(&got);
+                s_talk = TALK_IDLE;
+                ESP_LOGI(TAG, "jpanel: asked to send but nobody spoke — dropped");
+                dirty = true;
+            } else if (hushed || full) {
+                size_t got = 0;
+                const int16_t *pcm = audio_capture_close(&got);
+                ESP_LOGI(TAG, "jpanel: %s after %u ms (%u bytes)", full ? "full" : "hushed",
+                         (unsigned)audio_capture_ms(), (unsigned)got);
+                s_talk = TALK_IDLE;
+                if (pcm == NULL || !jpanel_send(pcm, got, s_rec_to)) {
+                    /* Nothing recorded, or something already in flight. Said out loud, not
+                       swallowed: a child who has just spoken into a blue dot and hears
+                       nothing has been told the message went. */
+                    if (sound) audio_cue(CUE_OOPS);
+                    ESP_LOGW(TAG, "jpanel: nothing to send");
+                }
+                dirty = true;
+            }
         } else if (s_talk == TALK_LISTENING && !down) {
             size_t got = 0;
             const int16_t *pcm = audio_capture_close(&got);
@@ -1935,6 +2216,68 @@ static void face_task(void *arg)
             ESP_LOGW(TAG, "talk: no reply");
         } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
             s_talk = TALK_IDLE;
+        }
+        /* WHAT THE BOX SAID ABOUT THE MESSAGE, answered in sound because the child who sent
+           it is four and the screen is showing a pet. Each outcome gets its OWN cue: "it
+           went", "there is nobody to send it to", and "it did not go" are three different
+           sentences, and a single beep for all three would teach that pressing makes a noise
+           rather than that the message arrived. */
+        switch (jpanel_state()) {
+        case JPANEL_SENT:
+            jpanel_clear();
+            if (sound) audio_cue(CUE_SENT);
+            jpanel_poll_soon(); /* the twin may already have answered */
+            ESP_LOGI(TAG, "jpanel: sent");
+            break;
+        case JPANEL_NOBODY:
+            jpanel_clear();
+            if (sound) audio_cue(CUE_OOPS);
+            caption_say(&cap, "nobody to send to");
+            ESP_LOGW(TAG, "jpanel: no one to send to");
+            dirty = true;
+            break;
+        case JPANEL_FAILED:
+            jpanel_clear();
+            if (sound) audio_cue(CUE_OOPS);
+            ESP_LOGW(TAG, "jpanel: failed");
+            break;
+        case JPANEL_PLAYING:
+            /* Held until the speaker stops, so the repeat window starts when the message
+               ENDS rather than when it began — five seconds measured from the wrong end
+               would expire before a twenty-second message finished. */
+            if (!speaking) {
+                jpanel_clear();
+                s_repeat_until = now + REPEAT_MS;
+                dirty = true;
+            }
+            break;
+        default:
+            break;
+        }
+        /* A MESSAGE ARRIVING IS A FRAME, and it would otherwise not be one. The render loop
+           repaints on `dirty`, and nothing about a poll on another task sets it — so the
+           pop-up would appear whenever the pet next happened to blink, which is a wait a
+           child would spend looking at a panel that knows something and is not saying it. */
+        {
+            static int s_waiting_shown = -1;
+            const int waiting_now = jpanel_waiting(NULL, 0);
+            if (waiting_now != s_waiting_shown) {
+                /* A SOUND ON THE WAY UP ONLY. The count falls when a message is played, and
+                   announcing that would be the panel telling a child about the thing they
+                   just did. It also has to survive the first poll after a boot, where -1
+                   becomes whatever was already waiting — that IS news to a child who has just
+                   turned the panel on, so the initial value is deliberately not 0. */
+                if (sound && waiting_now > 0 && waiting_now > s_waiting_shown) {
+                    audio_cue(CUE_MESSAGE);
+                }
+                s_waiting_shown = waiting_now;
+                dirty = true;
+            }
+        }
+        if (s_repeat_until != 0 && now > s_repeat_until) {
+            s_repeat_until = 0;
+            s_repeat_box[0] = -1;
+            dirty = true;
         }
         if (s_talk != TALK_IDLE) dirty = true; /* the dot pulses and the dots cycle */
         const bool rebooting = act == GESTURE_REBOOT;
@@ -2034,9 +2377,27 @@ static void face_task(void *arg)
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
             if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, now);
+            else if (s_talk == TALK_RECORDING) draw_recording(fb, over_y0, now, s_rec_to);
             else if (s_talk != TALK_IDLE) {
                 draw_thinking(fb, over_y0, over_h - over_y0, now, s_talk == TALK_FAILED);
             }
+            /* THE POP-UP LAST, OVER EVERYTHING, and only when the panel is otherwise idle.
+               A box announcing a message on top of a pet that is mid-sentence, or mid-
+               recording, would be two demands on a four-year-old at once — and the one it
+               covers is the one they are already doing. It is not lost: the count lives on
+               the box and the next idle frame draws it. */
+            s_popup_box[0] = -1;
+            /* AND NOT WHILE THE FETCH IT STARTED IS STILL RUNNING. Clearing the rectangle on
+               the tap is not enough on its own: the count does not drop until the box hands
+               the message over, so the very next frame would draw the pop-up again and the
+               child would press a button that `jpanel_play_next` now refuses. The BUSY state
+               is the gap between the press and the sound, and it belongs to the fetch. */
+            if (s_talk == TALK_IDLE && !speaking && jpanel_state() != JPANEL_BUSY) {
+                char from[32];
+                const int waiting = jpanel_waiting(from, sizeof(from));
+                if (waiting > 0) draw_popup(fb, over_y0, over_h, from, waiting);
+            }
+            if (s_repeat_until != 0) draw_repeat(fb, over_y0);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
             /* In FRAME coordinates (`panel_to_frame`), and after the flip: upside down that

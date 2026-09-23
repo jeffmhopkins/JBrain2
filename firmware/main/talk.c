@@ -25,8 +25,9 @@ static const char *TAG = "talk";
    guarded on `TALK_NET_BUSY` — between the renderer giving up and this timeout firing, a
    frustrated child can hold again while the socket is still reading the last recording. */
 #define TALK_HTTP_TIMEOUT_MS 30000
-/* What the box returns at most, and what `audio.c` will play (`PLAY_MAX_MS`). It said six,
-   the box never capped its audio at all, and a 261 KB reply therefore stopped here mid-word
+/* What the box returns at most, and THE REPLY'S OWN CEILING — `audio.c`'s buffer is bigger
+   (it also holds voice-post messages), so this is the only thing bounding a reply here.
+   It said six, the box never capped its audio at all, and a 261 KB reply stopped here mid-word
    with nothing said about it. Ten, matching `PANEL_REPLY_MAX` on the box, which now logs when
    it has to cut. */
 #define REPLY_MAX_BYTES (16000 * 2 * 10)
