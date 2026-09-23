@@ -5360,6 +5360,32 @@ message it has handed to the same panel many times without an acknowledgement. A
 cannot acknowledge should not be able to loop audio in a bedroom forever, whatever the reason —
 that is a property of the box and it needs no OTA to take effect.
 
+#### 10.4cx The instrument, finally wide enough to see through (0.2.91, 2026-09-23)
+
+The confidence floor has been blocked since bring-up on one measurement: what does a CORRECT
+decode score on this hardware. `speech.c` has computed it on every decode the whole time and
+said so in its own comment. The ring that carries it to the box held **three** entries.
+
+Three was sized for a bench, where the question is asked seconds later. The owner asks his from
+another room, hours later, off a poll that runs every fifteen minutes — so a play session of
+children shouting at a panel arrived as the last three things it thought it heard, and every
+attempt to look at `dance` and `burp` found an empty ring.
+
+**Twelve now, and consecutive identical decodes are collapsed into one entry with a count.**
+The count matters more than the depth: a television repeating one word, or a child saying
+"burp" eight times because it is not working, would flush the ring with eight copies of one
+fact and push out everything that explained it. The repetition is the signature of a false
+trigger, so it is kept rather than spent on slots.
+
+**The box had to learn the new shape first, and both of them.** `TelemetryIn.heard` validated a
+3-tuple; a 4-element entry would have 422'd, and a 422 telemetry is a FAILED report — the panel
+keeps its crash ring and the reading simply never arrives, looking from the box exactly like a
+panel with nothing to say. During an OTA one panel is on the old firmware and one on the new,
+so the model accepts both arities. That is what makes a fleet upgradable one panel at a time,
+and it is pinned by a test that reads `DECODE_MAX` out of `speech.c` — the same cross-package
+coupling that shipped the `/api/jpanel` routes broken for a release because no test read both
+ends.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

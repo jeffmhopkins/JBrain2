@@ -290,3 +290,66 @@ class TestDadsVoice:
         the cheapest possible signal to a four-year-old that this is a person and not the toy."""
         name = jpanel.DAD_VOICE.split("-", 1)[-1]
         assert name.startswith(("am_", "bm_")), f"{name!r} is not one of Kokoro's male voices"
+
+
+class TestTheHeardRingCrossesThePackageBoundary:
+    """THE FIRMWARE FILLS IT AND THE BOX VALIDATES IT, AND NOTHING ELSE CONNECTS THEM.
+
+    `speech.c` builds the ring and `main.c` serialises it into the telemetry body; `TelemetryIn`
+    decides whether that body is accepted at all. A shape mismatch is not a soft failure: the
+    body 422s, and a 422 telemetry is a FAILED report — the panel keeps its crash ring and the
+    reading never arrives. From the box it looks exactly like a panel that had nothing to say.
+
+    This is the same class of coupling as the `/api/jpanel` route paths, which shipped broken
+    for a release because two packages disagreed and no test read both.
+    """
+
+    def _speech_source(self) -> str:
+        return (Path(__file__).resolve().parents[3] / "firmware" / "main" / "speech.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_box_accepts_both_the_old_and_the_new_entry_shape(self) -> None:
+        """A fleet upgrades one panel at a time, so both arities are live at once."""
+        from jbrain.api.endpoint import TelemetryIn
+
+        old = TelemetryIn(version="0.2.90", uptime_ms=1, heard=[("burp", 21, 1)])
+        assert len(old.heard) == 1
+
+        new = TelemetryIn(version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1, 4)])
+        assert len(new.heard) == 1
+        # Through `list()` because the field is a union of both arities, and indexing position
+        # 3 is only valid on one of them — which is the point of the union.
+        assert list(new.heard[0])[3] == 4, "the repeat count must survive validation"
+
+        both = TelemetryIn(
+            version="0.2.91", uptime_ms=1, heard=[("burp", 21, 1), ("dance", 9, 0, 3)]
+        )
+        assert len(both.heard) == 2
+
+    def test_the_ring_is_deep_enough_to_outlive_a_poll(self) -> None:
+        """THE DEPTH IS THE WHOLE POINT OF THE CHANGE. Three entries were sized for a bench,
+        where the question is asked seconds later; the owner asks his from another room off a
+        poll that runs every fifteen minutes. `dance` and `burp` went undiagnosed because every
+        attempt to look found an empty ring (docs/reference/PANEL_COMMANDS.md).
+
+        Read out of the firmware so shrinking it back fails here rather than quietly costing
+        another evening of data."""
+        src = self._speech_source()
+        match = re.search(r"#define DECODE_MAX (\d+)", src)
+        assert match is not None, "DECODE_MAX moved; re-pin this test"
+        assert int(match.group(1)) >= 8, (
+            f"the ring holds {match.group(1)} decodes — too few to survive a fifteen-minute "
+            "poll with children shouting at the panel, which is the case it exists for"
+        )
+
+    def test_the_firmware_sends_the_repeat_count(self) -> None:
+        """Consecutive identical decodes collapse into one entry with a count, so a television
+        repeating one word cannot flush the ring. The count only helps if it is on the wire."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        assert '[\\"%s\\",%d,%d,%d]' in src, (
+            "the telemetry body no longer carries four fields per decode; the box accepts them "
+            "and nothing is sending them"
+        )

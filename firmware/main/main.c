@@ -166,7 +166,11 @@ static void report(const cfg_t *cfg)
     int ota_tries = 0;
     ota_apply_faults(&ota_err, &ota_tries);
 
-    char body[1536];
+    /* 2048, up from 1536: the heard ring is twelve variable-length entries now and the loop
+       below stops on room rather than on a count, so a small body silently costs the OLDEST
+       decodes — which is the right end to lose, but only after the buffer has actually been
+       sized for the job rather than left at what three entries needed. */
+    char body[2048];
     int w = snprintf(body, sizeof(body),
                      "{\"version\":\"%s\",\"uptime_ms\":%llu,\"reset_reason\":\"%s\","
                      "\"free_heap\":%u,\"free_psram\":%u,\"mic_peak\":%d,"
@@ -212,13 +216,18 @@ static void report(const cfg_t *cfg)
        score is known on this hardware — a measurement that has been waiting on a console. */
     if (w > 0 && w < (int)sizeof(body) - 32) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, ",\"heard\":[");
-        for (int i = 0; i < 3 && w > 0 && w < (int)sizeof(body) - 48; i++) {
+        /* TWELVE, and the loop stops on room rather than on a count it assumes will fit — the
+           entries are variable-length now (a raw decode is as long as whatever was said) and a
+           body that ran out mid-token is the unterminated-JSON failure the comment below is
+           about. A fourth field carries how many times the same decode repeated. */
+        for (int i = 0; i < 12 && w > 0 && w < (int)sizeof(body) - 64; i++) {
             const char *phrase = NULL;
             int prob = 0;
+            int count = 0;
             bool fired = false;
-            if (!speech_heard(i, &phrase, &prob, &fired)) break;
-            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s[\"%s\",%d,%d]", i ? "," : "",
-                          phrase, prob, fired ? 1 : 0);
+            if (!speech_heard(i, &phrase, &prob, &fired, &count)) break;
+            w += snprintf(body + w, sizeof(body) - (size_t)w, "%s[\"%s\",%d,%d,%d]",
+                          i ? "," : "", phrase, prob, fired ? 1 : 0, count);
         }
         if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
     }

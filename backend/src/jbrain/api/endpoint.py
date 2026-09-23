@@ -450,7 +450,13 @@ class TelemetryIn(BaseModel):
     # the panel does not have — and its own comment says the confidence floor that would stop
     # "turn red" firing `jump up` at p=0.19 cannot be chosen until a CORRECT decode's score is
     # known on this hardware. This is that measurement, finally leaving the device.
-    heard: list[tuple[str, int, int]] = Field(default_factory=list)
+    # BOTH ARITIES, AND THE UNION IS THE ROLLOUT. 0.2.91 adds a fourth field — how many times
+    # the same decode repeated in a row — and during an OTA one panel is on the old firmware
+    # while the other is on the new. A model that took only the new shape would 422 the old
+    # panel's telemetry, and a 422 is a FAILED report: the crash ring it was carrying would be
+    # kept rather than cleared, and the reading would simply never arrive. Accepting both is
+    # what makes a fleet upgradable one panel at a time.
+    heard: list[tuple[str, int, int] | tuple[str, int, int, int]] = Field(default_factory=list)
     # The largest free INTERNAL DMA block. `free_heap` above is the total, and the total is
     # exactly the number that cannot tell 60 KB free-and-contiguous from 60 KB
     # free-and-fragmented — which is the difference between a panel that draws and one where
