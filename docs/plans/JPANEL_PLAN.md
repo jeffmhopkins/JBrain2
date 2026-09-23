@@ -103,6 +103,14 @@ the queue as activity would mean one unacknowledged good-night left the panel li
 morning, which is the exact thing this feature exists to stop. Nothing about sleeping drops the
 queue, so the pop-up is still there when the child touches the panel awake.
 
+**Waking to a message left overnight shows the big box again.** The pop-up stands down to a
+badge after fifteen seconds and deliberately does *not* come back when a second message arrives
+— the child has been interrupted once and has chosen not to come. A night is not that: whoever
+is looking at the panel now was not in the room when it shrank, and a corner badge is not how a
+four-year-old finds out their sister sent them something. Only out of dark, because at dim the
+screen was visible the whole time; and without a sound, because a message that chirped whenever
+somebody walked past the table would be the panel nagging.
+
 **A finger on a dark screen buys the screen and nothing else.** The child cannot see what they
 are aiming at, so the waking touch is spent on waking — it does not poke the pet, arm a gesture
 or acknowledge a message. The next tap, aimed at a face that is now visible, lands normally.

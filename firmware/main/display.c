@@ -2568,6 +2568,9 @@ static void face_task(void *arg)
                the first frame claims the millisecond after it rather than carrying a second
                flag around all night. */
             static uint32_t active_ms;
+            /* Read before anything below can clear it — and `woke_by_touch` is the same fact
+               from the branch far above, which has already put the stage back to awake. */
+            const bool was_dark = s_sleep == SCREEN_DARK || woke_by_touch;
             if (active_ms == 0) active_ms = now == 0 ? 1 : now;
             /* A MESSAGE ARRIVING WAKES THE SCREEN; A MESSAGE WAITING DOES NOT HOLD IT.
                Counting the queue as activity would mean one unacknowledged good-night left
@@ -2609,6 +2612,22 @@ static void face_task(void *arg)
                              want == SCREEN_DARK ? "dark" : want == SCREEN_DIM ? "dim" : "awake",
                              (unsigned)(idle / 60000u));
                 }
+            }
+            /* WAKING TO A MESSAGE LEFT OVERNIGHT SHOWS THE BIG BOX AGAIN.
+             *
+             * The pop-up stands down to a badge after fifteen seconds and deliberately does
+             * NOT come back when another message arrives: the child has been interrupted once
+             * and has chosen not to come. A night is not that. Whoever is looking at this
+             * panel now was not in the room when it shrank, and a corner badge is not how a
+             * four-year-old finds out their sister sent them something.
+             *
+             * Only out of DARK. At dim the screen was visible the whole time, so the reason
+             * the badge shrank still holds. And no sound: a message that chirped every time
+             * somebody walked past the table would be the panel nagging, which is the thing
+             * the stand-down exists to prevent. */
+            if (was_dark && s_sleep == SCREEN_AWAKE && waiting > 0) {
+                s_popup_since = now;
+                dirty = true;
             }
             /* Pinned rather than left to accumulate: the gate below cannot fire while dark,
                so an unbounded counter would be a counter nothing ever reads — and the frame

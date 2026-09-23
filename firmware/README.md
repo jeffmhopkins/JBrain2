@@ -245,6 +245,10 @@ and in the `render: N frames ok` beat. That matters because a sleeping screen st
 on purpose, which makes `blit_ok` stop climbing: the exact signature of the stalled render task
 that cost 0.2.44 a photograph from the owner to diagnose.
 
+Waking out of dark with a message still waiting restores the *big* pop-up. The badge it shrank
+to is right for a child who was interrupted once and chose not to come; it is wrong for one who
+walked into the room the next morning.
+
 The accelerometer threshold (`SCREEN_MOVE_COUNTS`, 900 raw counts ≈ 0.11 g) is reasoned rather
 than measured. Every wake it causes logs its magnitude next to the threshold, so a panel waking
 itself on an empty table says what to raise it to.
