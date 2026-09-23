@@ -5195,6 +5195,43 @@ router, so either side moving fails loudly. Verified by reintroducing the bug an
 fail. The general lesson is the one §10.4 keeps relearning: a coupling that no single package
 can see needs a test that reads both ends.
 
+##### And then panel-to-panel turned out never to have worked at all
+
+Two more, found the same way — by asking the live box instead of reading code. Neither is in
+the firmware; both are in W2, and both would have made a child's message to her sister vanish.
+
+**RLS meant a panel could not see any panel but itself.** `principals_select` opens for the
+owner, for `auth_ctx()` in ('login','bootstrap'), and for a principal reading its own row.
+`send` resolved "the other panel" inside a session scoped to the *asking panel*, so the roster
+held exactly one entry — itself — and `others` was always empty. **Every sibling message
+answered 409, on any box, from the first commit.** The same cause had two quieter symptoms: the
+pop-up never learned who a message was from, and `GET /next`'s `X-Jpanel-From` always said "the
+other one".
+
+Fixed by reading the roster under the narrow `login` context in a session of its own, not by
+widening the policy — and that ordering is the point. A panel must not be able to enumerate
+principals; it says "the other panel" and the box decides who that is. Widening
+`principals_select` to let device keys see each other would hand a device on a bedroom wall the
+whole principal table, `key_hash` column included, to answer a question it should never have
+been asking.
+
+**And every `/flash` mints a key that nothing retires.** The box carried **thirteen** unrevoked
+principals labelled `panel Elora` — one physical panel, re-flashed — plus two unnamed. Fifteen
+candidates where the route needs exactly one, so even with the policy fixed it would have stayed
+at 409. The roster keeps one row per NAME now, newest `created_at` winning, which is right
+rather than tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the one that
+panel is running and every older one is dead by construction.
+
+`send` also excludes by NAME rather than by id, because a panel still on a superseded key is not
+in the roster under its own id — `pid != principal.id` would leave its own name in the list and
+post the message back to the unit the child spoke into.
+
+Both are pinned by integration tests against real Postgres, each verified by reverting the fix
+and watching the test fail. The residual risk is written into `JPANEL_PLAN.md` §5: a flash that
+minted a key and then failed leaves a newest key no unit holds, and nothing records which key is
+live, because `last_used_at` is never written and RLS forbids any panel- or login-context write
+to `principals`. That is the panel roster §5 keeps asking for.
+
 ##### What is known to be missing
 
 - **A panel cannot learn the other panel's name.** The blue indicator says `TO DAD`, or

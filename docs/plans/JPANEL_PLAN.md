@@ -337,6 +337,52 @@ costs two rewrites.
 - **Retention.** 30 days after playing is a proposal. Unplayed-forever is not.
 - **More than two panels.** The refusal rule above is safe but unhelpful; addressing by name
   needs the twins' names in the offline vocabulary, which the owner has deferred.
+- **Panel-to-panel post could never have worked, for two reasons found on the live box**
+  (2026-09-23, both fixed, both with tests that fail when reverted):
+
+  1. **RLS.** `principals_select` opens for the owner, for `auth_ctx()` in
+     ('login','bootstrap'), and for a principal reading ITS OWN ROW. `send` resolved "the
+     other panel" inside a session scoped to the *asking panel*, so the roster it read held
+     exactly one row — itself — `others` was always empty and **every sibling message answered
+     409, on any box, from the first commit**. Two more symptoms shared the cause: the pop-up
+     never learned who a message was from, and `GET /next`'s `X-Jpanel-From` always said "the
+     other one".
+
+     Fixed by reading the roster under the narrow `login` context in a session of its own, NOT
+     by widening the policy. That ordering is the security posture: a panel must not be able
+     to enumerate principals — it says "the other panel" and the box decides. Widening
+     `principals_select` would hand a device on a bedroom wall the whole principal table,
+     `key_hash` included, to answer a question it should never have been asking.
+
+  2. **Every `/flash` mints a key and nothing retires the old one.** The live box carried
+     **thirteen** unrevoked principals labelled `panel Elora` — one physical panel, re-flashed
+     — plus two unnamed, so the roster held fifteen candidates where `send` needs exactly one.
+     The roster now keeps one row per NAME, newest `created_at` winning, which is right rather
+     than merely tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the
+     one that panel is using and every older one is dead by construction. No liveness signal
+     is needed, which is why this did not wait on one.
+
+     `send` also excludes by NAME rather than by id, because a panel still running a
+     superseded key is not in the roster under its own id — filtering on `pid != principal.id`
+     would leave its own name in the list and post the child's message back to the unit they
+     spoke into.
+
+  **The residual risk is a dead letter, and it is the one §5 has always described.** RLS
+  delivers on `recipient_device = app.principal_id`, so a message is readable only by the
+  exact key it was addressed to. Newest-key-per-name is right whenever the last `/flash`
+  reached the panel; a flash that minted a key and then failed leaves a newest key no unit
+  holds, and messages to that name go nowhere. Not a leak — the panel simply never sees a
+  pop-up — and not fixable without knowing which key is LIVE, which nothing records:
+  `principals.last_used_at` is never written and RLS forbids any panel- or login-context
+  write to that table (`principals_update` needs owner or bootstrap). That is the panel
+  roster this section keeps asking for, and it is the next thing to build if a message ever
+  goes missing.
+
+  **The cost is naming.** Two physical panels flashed with the SAME name collapse to one row
+  and one twin becomes unreachable. Not a regression — a child saying "send a message" could
+  not have picked between two panels called Elora either — but it is now the one thing that
+  breaks addressing, so the collapse is logged.
+
 - **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
   ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
   an OwnTracks phone — and the only thing marking one is the label `/flash` writes:

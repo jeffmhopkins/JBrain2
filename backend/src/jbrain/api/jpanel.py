@@ -42,7 +42,7 @@ from jbrain.api.endpoint import (
 )
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
 from jbrain.transcribe import WhisperCppClient
 
 log = structlog.get_logger(__name__)
@@ -121,8 +121,37 @@ def _display_name(label: str) -> str:
     return label.removeprefix("panel").strip() or "the other one"
 
 
-async def _panel_names(session) -> dict[str, str]:
+# ADDRESSING IS THE BOX'S JOB, NOT THE PANEL'S, AND RLS IS WHY.
+#
+# `principals_select` opens for the owner, for `auth_ctx()` in ('login','bootstrap'), and for a
+# principal reading ITS OWN ROW — nothing else. So `_panel_names` run under a panel's own
+# context (`ctx_for(principal)`, which is what `send` used) returns exactly one row: the panel
+# asking. `others` was therefore ALWAYS empty and every panel-to-panel message answered 409,
+# on any box, from the first commit. It is not a data problem and no amount of tidying the
+# principals table would have fixed it.
+#
+# Resolved by reading the roster under the same narrow auth context the login path uses, in a
+# session of its own, rather than by widening the policy. That ordering is the security
+# posture and not merely a workaround: a panel must NOT be able to enumerate principals — it
+# says "the other panel" and the box decides who that is. Widening `principals_select` to let
+# device keys see each other would hand a device on a bedroom wall the whole principal table,
+# `key_hash` column included, to fix an addressing question the panel should never have been
+# asking.
+#
+# The session is read-only by construction: the two statements below are SELECTs, and `login`
+# grants no INSERT or UPDATE on principals (`principals_update` needs owner or bootstrap).
+_ADDRESSING = SessionContext(auth_context="login")
+
+
+async def _panel_names(maker) -> dict[str, str]:
     """Panel principal id → the name to say out loud.
+
+    TAKES THE SESSION MAKER, NOT A SESSION, so no caller can hand it one that cannot see the
+    answer. Three of the five call sites ran under a panel's own context and therefore read a
+    roster containing exactly one panel — themselves. That is the bug above, and it presented
+    three different ways: `send` refused every sibling, the pop-up never learned who a message
+    was from, and `GET /next`'s `X-Jpanel-From` always said "the other one". One cause, three
+    symptoms, none of which looks like a permissions problem from the outside.
 
     THIS IS A LABEL CONVENTION, NOT A MECHANISM, and that is worth saying plainly. Panels are
     ordinary `device_key` principals — the same substrate as an OwnTracks phone — and the only
@@ -132,21 +161,57 @@ async def _panel_names(session) -> dict[str, str]:
     model does not have, and because the blast radius is small: the worst case is a message
     offered to a device that RLS then refuses to deliver to — a dead letter, not a leak. Worth
     replacing with a real marker the first time a third device key exists in this house
-    (JPANEL_PLAN.md §5)."""
-    rows = (
-        await session.execute(
-            text(
-                """
-                SELECT id::text, label
-                FROM app.principals
-                WHERE kind = 'device_key' AND revoked_at IS NULL
-                  AND (label LIKE 'panel%' OR label = :unnamed)
-                ORDER BY created_at
-                """
-            ),
-            {"unnamed": _UNNAMED_LABEL},
-        )
-    ).all()
+    (JPANEL_PLAN.md §5).
+
+    ONE ROW PER NAME, NEWEST KEY WINS, AND WITHOUT THAT VOICE POST DOES NOT WORK AT ALL.
+
+    Every `/flash` mints a fresh device key and nothing retires the old one, so a panel
+    re-flashed thirteen times is thirteen unrevoked principals carrying the same label. On the
+    live box that made fifteen candidates where `send(to="panel")` needs exactly one, so every
+    panel-to-panel message answered 409 — a feature that could never have worked in this
+    house, found by counting rows rather than by reading code.
+
+    `DISTINCT ON (label)` with the newest `created_at` is not a tidy-up, it is the right
+    answer: `/flash` rewrites the unit's NVS with the new key, so for a given name the newest
+    principal IS the one that panel is now using and every older one is dead by construction.
+    No liveness signal is needed to know that, which is why this does not wait on one.
+
+    THE COST IS NAMING. Two physical panels flashed with the SAME name collapse to one row and
+    one twin becomes unreachable. That is not a regression — a child saying "send a message"
+    could not have picked between two panels called Elora either — but it is now the ONE thing
+    that breaks addressing, so it is logged loudly rather than left to be discovered."""
+    async with scoped_session(maker, _ADDRESSING) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (label) id::text, label
+                    FROM app.principals
+                    WHERE kind = 'device_key' AND revoked_at IS NULL
+                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    ORDER BY label, created_at DESC
+                    """
+                ),
+                {"unnamed": _UNNAMED_LABEL},
+            )
+        ).all()
+        total = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM app.principals
+                    WHERE kind = 'device_key' AND revoked_at IS NULL
+                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    """
+                ),
+                {"unnamed": _UNNAMED_LABEL},
+            )
+        ).scalar_one()
+    if int(total) > len(rows):
+        # Not a warning: superseded keys are the NORMAL state of a re-flashed panel. It is
+        # logged so that "why is there only one panel" has an answer without a database.
+        log.info("jpanel.panels_collapsed", live=len(rows), keys=int(total))
     return {str(pid): _display_name(str(label)) for pid, label in rows}
 
 
@@ -234,18 +299,30 @@ async def send(
     settings = cast(Settings, request.app.state.settings)
     ctx = ctx_for(principal)
 
-    async with scoped_session(request.app.state.session_maker, ctx) as session:
-        names = await _panel_names(session)
-        if to == "dad":
-            r_kind, r_dev = "owner", None
-        else:
-            others = [pid for pid in names if pid != principal.id]
-            if len(others) != 1:
-                # THE RULE THE PLAN REFUSED TO GUESS AT. A toy that silently posts to the wrong
-                # sibling is worse than one that says it cannot, so this is a refusal the panel
-                # speaks aloud rather than a best guess.
-                raise HTTPException(status_code=409, detail="no single other panel")
-            r_kind, r_dev = "panel", others[0]
+    # NO PANEL-SCOPED SESSION HERE ANY MORE. Resolving the recipient was wrapped in one, which
+    # is what hid the RLS problem: it looked like the panel was reading the roster, and a panel
+    # cannot. Addressing is `_panel_names`'s own business now (see its note), and this block
+    # touches no other table, so the session it used to open had nothing left to do.
+    names = await _panel_names(request.app.state.session_maker)
+    if to == "dad":
+        r_kind, r_dev = "owner", None
+    else:
+        # BY NAME, NOT BY ID, and the difference is a panel talking to itself.
+        #
+        # `_panel_names` keeps the NEWEST key per name, so a panel still running an older
+        # key for its own name is not in that dict under its own id — filtering on
+        # `pid != principal.id` would leave its own name in the list and post the child's
+        # message straight back to the unit they spoke into. Which panel a key belongs to
+        # is the name, not the row.
+        me = _display_name(principal.label)
+        others = [pid for pid, name in names.items() if name != me]
+        if len(others) != 1:
+            # THE RULE THE PLAN REFUSED TO GUESS AT. A toy that silently posts to the wrong
+            # sibling is worse than one that says it cannot, so this is a refusal the panel
+            # speaks aloud rather than a best guess.
+            log.info("jpanel.no_single_other_panel", me=me, candidates=len(others))
+            raise HTTPException(status_code=409, detail="no single other panel")
+        r_kind, r_dev = "panel", others[0]
 
     # TWO SESSIONS, WITH THE SLOW WORK BETWEEN THEM. Whisper and the blob write are network
     # calls measured in seconds; holding a scoped database session open across them would pin a
@@ -326,7 +403,7 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
         count = int(row[0]) if row else 0
         from_name = ""
         if count:
-            names = await _panel_names(session)
+            names = await _panel_names(request.app.state.session_maker)
             oldest = (
                 await session.execute(
                     text(
@@ -368,7 +445,7 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
         ).first()
         if row is None:
             return Response(status_code=204)
-        names = await _panel_names(session)
+        names = await _panel_names(request.app.state.session_maker)
 
     wav = await request.app.state.blob_store.get(row[1])
     pcm, rate = _pcm_from_wav(wav)
@@ -412,7 +489,7 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
     owner could not message a twin who has not yet spoken into her panel — exactly the child he
     would most want to reach."""
     async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
-        names = await _panel_names(session)
+        names = await _panel_names(request.app.state.session_maker)
         unplayed = await _unplayed_by_panel(session)
         rows = (
             await session.execute(
@@ -490,7 +567,7 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
             )
         ).first()
         await session.commit()
-        names = await _panel_names(session)
+        names = await _panel_names(request.app.state.session_maker)
     if row is None:  # pragma: no cover — RETURNING on a successful INSERT always yields
         raise HTTPException(status_code=500, detail="message not stored")
     log.info(
