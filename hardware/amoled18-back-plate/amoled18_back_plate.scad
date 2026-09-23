@@ -163,6 +163,8 @@ custom_head_t = 2.0;    // [0.4:0.1:6]
 // 45 degree chamfer where the walls meet the floor, to brace the walls.
 // Shrinks by itself on any wall the cell sits close to.
 wall_chamfer = 3.0;     // [0:0.5:8]
+// 45 degree flare where each screw tower meets the floor. Also shrinks near the cell
+tower_flare = 2.0;      // [0:0.5:6]
 
 
 /* [5b. Grip texture on the outside walls] */
@@ -263,6 +265,8 @@ bore_top  = tower_top - head_seat;
 side_gap  = (cav_x - fx) / 2;
 end_gap   = (cav_y - fy) / 2;
 tower_gap = norm([max(0, screw_dx - fx/2), max(0, screw_dy - fy/2)]) - tower_r;
+// Same rule as the wall chamfer: keep 0.5 mm off the cell's bottom edge.
+flare = min(tower_flare, tape_t + max(0, tower_gap - 0.5));
 kx = cav_x/2 - cav_r;
 ky = cav_y/2 - cav_r;
 corner_gap = (fx/2 <= kx || fy/2 <= ky) ? min(side_gap, end_gap)
@@ -281,7 +285,7 @@ echo(str("Stack height:       ", stack_t, " mm  (cell + tape + foam + wires + ai
 echo(str("Cavity:             ", cav_x, " x ", cav_y, " x ", spacer_h + lip_h, " mm"));
 echo(str("Room around cell:   ", side_gap, " mm each side, ", end_gap, " mm each end, ",
          tower_gap, " mm to the nearest tower"));
-echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls"));
+echo(str("Wall chamfer:       ", chamfer_x, " mm on the long walls, ", chamfer_y, " mm on the end walls; tower flare ", flare, " mm"));
 echo(str("EXTRA DEPTH:        ", extra_depth, " mm over stock"));
 echo(str("Total plate height: ", total_h, " mm"));
 echo(str("SCREWS:             ", screw_size, " socket head cap. Length = ", head_seat,
@@ -370,7 +374,15 @@ module battery_cavity() {
             rotate(90) chamfered(cav_y, cav_x + 2*chamfer_x + 2, chamfer_y);
         }
         towers();
+        tower_flares();
     }
+}
+
+module tower_flares() {
+    if (flare > 0.05)
+        for (sx = [-1, 1], sy = [-1, 1])
+            translate([sx * screw_dx, sy * screw_dy, plate_t - eps])
+                cylinder(r1 = tower_r + flare, r2 = tower_r, h = flare + eps);
 }
 
 module screw_holes() {
