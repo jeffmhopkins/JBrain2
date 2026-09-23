@@ -529,6 +529,54 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
     )
 
 
+@router.get("/message/{message_id}/pcm")
+async def message_pcm(message_id: str, principal: PanelDep, request: Request) -> Response:
+    """One message's audio by id, for a panel that has already been given it.
+
+    **THIS EXISTS BECAUSE THE PANEL NO LONGER KEEPS THE BYTES.** It used to hold a whole
+    message in PSRAM, so the repeat icon — *tap to hear it again* — replayed from memory. Since
+    0.2.96 the audio streams through a four-second ring and is gone as it plays, which is what
+    lifts the length cap; the cost is that "again" has to ask the box a second time.
+
+    **It does NOT touch `deliveries`.** That counter is the give-up rule: five attempts to hand
+    a message over and the box stops trying (`JPANEL_MAX_DELIVERIES`). A replay is not an
+    attempt to deliver — the child has already heard it and is asking for it again — and
+    counting it would make listening twice a way to lose a message. For the same reason this
+    route does not care whether the row is played: by definition it is.
+
+    Isolation is the table's, not this handler's. `jpanel_message_panel_read` opens a row only
+    to the panel that sent it or was sent it, so a panel guessing another twin's message id
+    gets a 404 from the policy rather than from a check written here (migration 0208)."""
+    try:
+        # A path segment that is not a uuid would reach the cast below and come back as a 500,
+        # which reads as the box being broken rather than as a message that is not there.
+        uuid.UUID(message_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such message") from None
+    async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT blob_sha256 FROM app.jpanel_message
+                    WHERE id = CAST(:id AS uuid) AND recipient_device = :me
+                    """
+                ),
+                {"id": message_id, "me": principal.id},
+            )
+        ).first()
+    if row is None or not row[0]:
+        raise HTTPException(status_code=404, detail="no such message")
+
+    wav = await request.app.state.blob_store.get(str(row[0]))
+    pcm, rate = _pcm_from_wav(wav)
+    return Response(
+        content=_to_panel_rate(pcm, rate),
+        media_type="application/octet-stream",
+        headers={"X-Jpanel-Id": message_id},
+    )
+
+
 class Played(BaseModel):
     id: str
 

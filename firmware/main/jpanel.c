@@ -24,26 +24,20 @@ static const char *TAG = "jpanel";
    this is not slow, it is broken. */
 #define JPANEL_HTTP_TIMEOUT_MS 20000
 
-/* WHAT THE BOX WILL HAND OVER AT MOST, and it is NOT the reply cap.
+/* THERE IS NO INBOUND CEILING ANY MORE, and its absence is the feature.
  *
- * `MAX_MESSAGE_MS` in `backend/src/jbrain/api/jpanel.py` is the same number, and a message
- * from Dad is text put through a voice — `SendText` allows 600 characters, which is far more
- * speech than the ten seconds `audio.c` used to truncate at without a word to anyone. The two
- * numbers must move together; `audio.c`'s buffer is sized from this one.
- *
- * Thirty seconds at the owner's ask (0.2.95), up from twenty. The cost is PSRAM and it is
- * affordable: this buffer, the capture buffer and the play buffer together come to about
- * 2.8 MB of the board's 8 MB, beside a 322 KB framebuffer. What it does NOT fix is a maxed-out
- * typed message — 600 characters of Kokoro is nearer fifty seconds — so the gap between the
- * text cap and the audio cap is narrowed here, not closed. */
-#define JPANEL_MAX_BYTES (16000 * 2 * 30)
+ * This used to be the size of the buffer a whole message was read into — twenty seconds, then
+ * thirty — and it had to be kept in step with `MAX_MESSAGE_MS` on the box and with `audio.c`'s
+ * play buffer, or a message was cut at whichever was smallest, silently. The audio streams
+ * through a ring now (`audio_stream_*`), so the only limit left on a message's length is what
+ * the box is willing to store, and the panel does not need to know that number at all. */
 
 /* ~30 s, as the plan's contract says: fast enough that "my sister just sent me something" is
    answered while she is still in the room, small enough that two panels asking forever costs
    the box nothing — the route returns a count and a name and touches one index. */
 #define POLL_EVERY_MS 30000
 
-typedef enum { CMD_SEND = 0, CMD_FETCH, CMD_POLL } cmd_kind_t;
+typedef enum { CMD_SEND = 0, CMD_FETCH, CMD_POLL, CMD_REPLAY } cmd_kind_t;
 
 typedef struct {
     cmd_kind_t kind;
@@ -61,21 +55,25 @@ static volatile size_t s_bytes;
 
 /* The incoming message: PSRAM, claimed once at start-up, because a heap request in the middle
    of a child waiting for their sister's voice is a failure with no good outcome. */
-static uint8_t *s_in;
-static volatile int s_in_len;
-/* A FETCHED MESSAGE, WAITING FOR A FINGER — the difference between a pop-up that plays and
-   one that makes a child wait.
+/* ONE HTTP READ'S WORTH, NOT ONE MESSAGE'S. The 960 KB that used to sit here held a whole
+   message so the repeat icon could replay it from memory; it is a ring in `audio.c` now, and
+   "again" asks the box a second time (`GET /message/{id}/pcm`). What is left is the staging
+   buffer between the socket and that ring. */
+#define JPANEL_READ_CHUNK 4096
+static uint8_t s_chunk[JPANEL_READ_CHUNK];
+/* WHY THERE IS NO LONGER A HELD MESSAGE, because the reason there WAS one still matters.
  *
  * The owner: *"the message should start playing faster. There's a couple seconds between me
  * acknowledging the message and it's starting to play."* That gap was the whole round trip —
  * a TLS handshake, a blob read on the box, a rate conversion and up to 640 KB down the wire —
- * and it ran AFTER the tap because the tap is what used to start it.
+ * and it ran AFTER the tap, because the tap is what started it. The answer then was to fetch
+ * early and hold the bytes, so the tap became a memcpy.
  *
- * Nothing required that order. `GET /next` deliberately does not mark a message played, so
- * fetching one early costs nothing and risks nothing: a panel that loses power holding an
- * unplayed message still has it on the box. So the poll that discovers a message now also
- * collects it, and the tap is a memcpy into the speaker's buffer. */
-static volatile bool s_held;
+ * Streaming removes the gap at its source instead. The first sound needs only the preroll —
+ * about 48 KB rather than the whole message — so the tap is answered sooner than the prefetch
+ * ever managed, and nothing is held. The 960 KB that held it, and the 960 KB play buffer it
+ * was copied into, are both gone; what replaces them is a four-second ring in `audio.c`. */
+
 /* A MESSAGE HAS BEEN HANDED TO THE SPEAKER AND THE BOX HAS NOT BEEN TOLD YET.
  *
  * SET WHERE THE PLAY HAPPENS, NOT BY WATCHING FOR A STATE. It was armed by polling for
@@ -304,6 +302,73 @@ done:
 
 /* --- GET /next: collect a message, do NOT play it ------------------------------------------ */
 
+/* Socket to ring, at the speed of the speaker.
+ *
+ * `audio_stream_write` takes what fits and returns how much it took, so a full ring is not an
+ * error — it is the speaker saying "not yet". Waiting here is what bounds the memory: without
+ * it a fast network would need somewhere to put a whole message again, which is the thing this
+ * path exists to stop. Twenty milliseconds is half a chunk, so the codec never starves waiting
+ * for this loop to come back.
+ *
+ * Returns the bytes handed over, which is how the caller tells a real message from an empty
+ * one. */
+static int pump(esp_http_client_handle_t c)
+{
+    int total = 0;
+    while (audio_stream_live()) {
+        const int n = esp_http_client_read(c, (char *)s_chunk, sizeof(s_chunk));
+        if (n <= 0) break;
+        int off = 0;
+        while (off < n) {
+            /* CHECKED EVERY TIME ROUND, because a refusal has two meanings. A full ring says
+               "not yet"; a stopped stream says "never" — and waiting out the second one would
+               hang this task forever on a speaker that is no longer listening. This task also
+               polls, sends and acknowledges, so hanging it would take voice post down until
+               the panel was power-cycled. */
+            if (!audio_stream_live()) return total;
+            const size_t took = audio_stream_write(s_chunk + off, (size_t)(n - off));
+            if (took == 0) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+            off += (int)took;
+        }
+        total += n;
+    }
+    return total;
+}
+
+/* "AGAIN", WHICH USED TO BE A MEMCPY. The bytes are gone once they have played, so the repeat
+   icon re-asks the box for that id. It is a different route from `/next` on purpose: replaying
+   must not spend one of the five delivery attempts that exist to stop the box trying forever
+   (`JPANEL_MAX_DELIVERIES`), or listening twice would be a way to lose a message. */
+static void do_replay(void)
+{
+    if (s_in_id[0] == '\0') return;
+    char path[96];
+    snprintf(path, sizeof(path), "/message/%s/pcm", s_in_id);
+    char url[288];
+    esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
+    if (c == NULL) return;
+    if (esp_http_client_open(c, 0) != ESP_OK) goto done;
+    if (esp_http_client_fetch_headers(c) < 0) goto done;
+    if (esp_http_client_get_status_code(c) != 200) {
+        ESP_LOGW(TAG, "replay: box said %d", esp_http_client_get_status_code(c));
+        goto done;
+    }
+    if (!audio_stream_begin()) goto done;
+    /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
+       played; telling the box again would be a second `POST /played` for one listen, and
+       joining the run would make "again" walk on into the next unheard message. */
+    const int got = pump(c);
+    audio_stream_end();
+    if (got < 2) audio_stream_abort();
+    else ESP_LOGI(TAG, "replayed %d B, id %s", got, s_in_id);
+
+done:
+    esp_http_client_cleanup(c);
+}
+
 static void do_fetch(bool asked)
 {
     char url[288];
@@ -334,19 +399,30 @@ static void do_fetch(bool asked)
     /* `s_in_id` and `s_in_from` were filled by `on_header` while `fetch_headers` ran, and
        both were cleared before the request so a box that sends neither cannot leave the last
        message's id standing. */
-    while (got < JPANEL_MAX_BYTES) {
-        const int n = esp_http_client_read(c, (char *)s_in + got, JPANEL_MAX_BYTES - got);
-        if (n <= 0) break;
-        got += n;
-    }
-    if (got < 2) {
-        ESP_LOGW(TAG, "empty message");
+    if (!audio_stream_begin()) {
+        ESP_LOGW(TAG, "speaker busy — not starting this message");
         goto done;
     }
-    s_in_len = got;
-    s_held = true;
-    out = JPANEL_IDLE;
-    ESP_LOGI(TAG, "holding %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
+    /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
+       `audio_playing()` is true from here until the ring drains, so the renderer, the pop-up
+       and `POST /played` all see one message in flight — including during the seconds before
+       the preroll has landed, when nothing is audible yet. */
+    s_owed = true;
+    s_run = true;
+    s_state = JPANEL_PLAYING;
+    if (s_wait_count > 0) s_wait_count--;
+    if (s_wait_count == 0) s_wait_from[0] = '\0';
+    got = pump(c);
+    audio_stream_end();
+    if (got < 2) {
+        ESP_LOGW(TAG, "empty message");
+        audio_stream_abort();
+        s_owed = false;
+        s_run = false;
+        goto done;
+    }
+    out = JPANEL_PLAYING;
+    ESP_LOGI(TAG, "streamed %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
              s_in_id[0] ? s_in_id : "(none)");
 
 done:
@@ -358,21 +434,9 @@ done:
        an outcome worth reporting.
      *
        And never PLAYING: nothing was played. `jpanel_play_next` owns that transition. */
+    /* `out` is already PLAYING when a stream started — the sound IS the outcome, and it began
+       inside the loop above rather than after it. */
     if (asked) s_state = out;
-    if (asked && s_held) {
-        /* Tapped before the poll had collected it. Play it now rather than making the child
-           tap a second time — the pop-up is already gone from their screen. */
-        if (audio_play((const int16_t *)s_in, (size_t)s_in_len)) {
-            s_held = false;
-            s_owed = true;
-            s_run = true;
-            s_state = JPANEL_PLAYING;
-            if (s_wait_count > 0) s_wait_count--;
-            if (s_wait_count == 0) s_wait_from[0] = '\0';
-            ESP_LOGI(TAG, "playing %d B from %s (fetched on the tap)", s_in_len,
-                     s_in_from[0] ? s_in_from : "?");
-        }
-    }
 }
 
 /* --- POST /played ------------------------------------------------------------------------ */
@@ -416,6 +480,7 @@ static void jpanel_task(void *arg)
             switch (cmd.kind) {
             case CMD_SEND: do_send(cmd.to); break;
             case CMD_FETCH: do_fetch(cmd.asked); break;
+            case CMD_REPLAY: do_replay(); break;
             case CMD_POLL: next_poll = 0; break;
             }
         }
@@ -446,7 +511,10 @@ static void jpanel_task(void *arg)
                path and into the wait nobody is watching, which is what turns two seconds of a
                child staring at a pop-up into a memcpy. Safe precisely because `GET /next` does
                not mark a message played. */
-            if (s_wait_count > 0 && !s_held && s_state != JPANEL_BUSY) do_fetch(false);
+            /* NO PREFETCH ANY MORE, and that is the point of streaming rather than a loss.
+               The panel used to collect a whole message in the background so a tap would not
+               wait two seconds for it; a stream needs only the preroll before the first sound,
+               so the tap is answered sooner with nothing held in PSRAM at all. */
         }
     }
 }
@@ -455,9 +523,8 @@ bool jpanel_start(const cfg_t *cfg)
 {
     if (cfg == NULL) return false;
     s_cfg = cfg;
-    s_in = heap_caps_malloc(JPANEL_MAX_BYTES, MALLOC_CAP_SPIRAM);
     s_q = xQueueCreate(2, sizeof(cmd_t));
-    if (s_in == NULL || s_q == NULL) {
+    if (s_q == NULL) {
         ESP_LOGE(TAG, "no memory for voice post");
         return false;
     }
@@ -492,26 +559,10 @@ bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to)
 bool jpanel_play_next(void)
 {
     if (s_q == NULL) return false;
-    /* THE FAST PATH, AND IT IS THE ONLY ONE A CHILD SHOULD EVER MEET. A message collected by
-       the poll is already in PSRAM, so this is a memcpy into the speaker's buffer and the
-       sound starts on the same frame as the finger. */
-    if (s_held && s_in_len >= 2) {
-        if (!audio_play((const int16_t *)s_in, (size_t)s_in_len)) return false;
-        s_held = false;
-        s_owed = true;
-        s_run = true;
-        s_state = JPANEL_PLAYING;
-        /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
-           up while the message plays would tell a child there is still one waiting. The next
-           poll corrects it either way. */
-        if (s_wait_count > 0) s_wait_count--;
-        if (s_wait_count == 0) s_wait_from[0] = '\0';
-        ESP_LOGI(TAG, "playing %d B from %s", s_in_len, s_in_from[0] ? s_in_from : "?");
-        return true;
-    }
-    /* The slow path survives for the case the fast one cannot cover: a pop-up tapped before
-       the poll that announced it had time to collect the audio. It still works, it is simply
-       the two seconds this change exists to remove. */
+    /* ONE PATH NOW. The fetch and the playing are the same act: the jpanel task opens the
+       message, claims the speaker before the first byte and feeds the ring as it arrives, so
+       there is nothing here to do but ask for it. The count and the state move on that task,
+       where the stream actually begins, rather than optimistically here. */
     if (s_state == JPANEL_BUSY) return false;
     s_state = JPANEL_BUSY;
     if (post(CMD_FETCH, JPANEL_TO_PANEL, true)) return true;
@@ -521,8 +572,9 @@ bool jpanel_play_next(void)
 
 bool jpanel_replay(void)
 {
-    if (s_in == NULL || s_in_len < 2) return false;
-    return audio_play((const int16_t *)s_in, (size_t)s_in_len);
+    if (s_in_id[0] == '\0') return false;
+    if (audio_playing()) return false;
+    return post(CMD_REPLAY, JPANEL_TO_PANEL, false);
 }
 
 /* Stop a run. The message sounding is cut and nothing more is fetched; whatever has not been

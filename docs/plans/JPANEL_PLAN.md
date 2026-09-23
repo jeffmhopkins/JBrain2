@@ -463,7 +463,35 @@ costs two rewrites.
   is noisy enough at rest that §10.4af spent three releases on exactly that noise, which is why
   this is measured rather than argued.
 
-- ~~**The recording cap is ten seconds**~~ — **THIRTY EVERYWHERE (0.2.95), at the owner's ask.**
+- ~~**The message length cap**~~ — **GONE (0.2.96); the recording cap is thirty (0.2.95).**
+
+  Playback no longer has a ceiling at all. The panel streams a message through a four-second
+  ring in `audio.c` — the network writes into it as bytes arrive, the codec drains it — so a
+  message is bounded by what the box will store rather than by this board's PSRAM. The ring's
+  arithmetic is `ring.c`, its own file and host-tested for the reason `orient.c` and `screen.c`
+  are: a wrap off by one plays a fragment of an earlier second in the middle of a child's
+  message, and neither that nor a full-versus-empty mistake shows up as a crash.
+
+  **It gave memory back rather than costing it.** The 960 KB inbound buffer and the 960 KB play
+  buffer are both gone; what replaces them is a 128 KB ring, and the play buffer shrinks to the
+  reply cap it always described. **And it made the tap faster**, which is why the prefetch could
+  go: the first sound needs only the 1.5 s preroll (~48 KB) rather than a whole message, so a
+  panel that used to fetch ahead and hold the bytes now holds nothing and answers sooner. The
+  owner's *"couple of seconds between me acknowledging the message and it starting to play"* is
+  removed at its source rather than worked around.
+
+  Three things had to move with it, and each is the kind of thing that fails quietly:
+  **`audio_playing()` now covers a stream**, including while the ring is momentarily dry — the
+  render loop, the pop-up, the queue and `POST /played` all ask that one question, and a panel
+  that answered "finished" during a Wi-Fi stall would mark a message played mid-sentence and
+  drop the rest. **The producer checks `audio_stream_live()` every pass**, because a full ring
+  and a stopped stream both refuse bytes: a writer that could not tell them apart would spin
+  forever on the task that also polls, sends and acknowledges — a child tapping to stop a long
+  message is exactly how that would have been found. And **"again" re-asks the box**
+  (`GET /message/{id}/pcm`), since the bytes are gone as they play; that route does not spend a
+  delivery attempt, or listening twice would become a way to lose a message.
+
+- ~~**The recording cap is ten seconds**~~ — **THIRTY (0.2.95), at the owner's ask.**
   Ten was reasoned rather than measured: "ten seconds of a four-year-old is a long message",
   with a note to revisit it if the twins hit the ceiling and a `full` branch that logs when
   they do. Nobody waited for that evidence — the ask came first, and the only real cost was

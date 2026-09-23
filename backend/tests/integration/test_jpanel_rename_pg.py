@@ -28,11 +28,13 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.api.jpanel import _wav
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.main import create_app
+from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -270,3 +272,111 @@ async def test_only_a_panel_can_be_renamed_through_this_route(
             )
         ).scalar_one()
     assert label == "owntracks phone"
+
+
+async def _plant(
+    maker: async_sessionmaker[AsyncSession], blob_dir, panel_id: str, words: bytes
+) -> tuple[str, bytes]:
+    """A message from the owner to `panel_id`, with real audio in the store.
+
+    Built directly rather than through `POST /messages`, because that route synthesises Dad's
+    voice and there is no TTS in this environment — and what is under test here is the replay,
+    not the synthesiser."""
+    pcm = words * 400  # a second or so of something, so the round trip has bytes to compare
+    sha = await FsBlobStore(blob_dir).put(_wav(pcm))
+    mid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (id, sender_kind, recipient_kind, recipient_device, blob_sha256,
+                     transcript, composed, duration_ms)
+                VALUES (CAST(:id AS uuid), 'owner', 'panel', :dev, :sha,
+                        'good night', 'text', 1000)
+                """
+            ),
+            {"id": mid, "dev": panel_id, "sha": sha},
+        )
+        await s.commit()
+    return mid, pcm
+
+
+async def test_a_panel_can_re_fetch_a_message_it_has_already_heard(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """THE ROUTE THAT MAKES "AGAIN" POSSIBLE WITHOUT KEEPING THE BYTES.
+
+    Since 0.2.96 the panel streams a message through a four-second ring and the audio is gone
+    as it plays — which is what lifts the length cap. The repeat icon therefore has to ask the
+    box a second time, and it must be able to do so for a message that is already PLAYED,
+    which `GET /next` by definition will not return.
+
+    It must also not spend a delivery attempt. `deliveries` is the give-up rule — five tries
+    and the box stops offering a message — so counting a replay would make listening to
+    something twice a way to lose it."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        pid = next(iter(_names(client)))
+        message_id, _ = await _plant(maker, tmp_path, pid, b"\x11\x22")
+
+        head = {"Authorization": f"Bearer {panel['key']}"}
+        client.cookies.clear()
+        first = client.get("/api/jpanel/next", headers=head)
+        assert first.status_code == 200, first.text
+        assert first.headers["X-Jpanel-Id"] == message_id
+        assert (
+            client.post("/api/jpanel/played", json={"id": message_id}, headers=head).status_code
+            == 204
+        )
+
+        # `/next` has nothing more — the message is played. That is the whole problem.
+        assert client.get("/api/jpanel/next", headers=head).status_code == 204
+
+        again = client.get(f"/api/jpanel/message/{message_id}/pcm", headers=head)
+        assert again.status_code == 200, again.text
+        assert again.content == first.content, "the same audio, byte for byte"
+
+    # A replay is not a delivery attempt.
+    async with scoped_session(maker, OWNER) as s:
+        deliveries = (
+            await s.execute(
+                text("SELECT deliveries FROM app.jpanel_message WHERE id = CAST(:i AS uuid)"),
+                {"i": message_id},
+            )
+        ).scalar_one()
+    assert int(deliveries) == 1, "the one real delivery, not two"
+
+
+async def test_a_panel_cannot_re_fetch_a_message_that_is_not_its_own(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """The replay route takes a message id from a device on a child's wall, so the id must not
+    be the thing that grants access. It is not: `jpanel_message_panel_read` opens a row only to
+    the panel that sent it or was sent it, so a guessed id is a 404 from the policy rather than
+    from a check in the handler (CLAUDE.md rule 3)."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        client.post("/api/devices", json={"label": "panel Ellie"})
+        snooper = client.post("/api/devices", json={"label": "panel Nora"}).json()
+        ellie_id = next(pid for pid, name in _names(client).items() if name == "Ellie")
+        hers, _ = await _plant(maker, tmp_path, ellie_id, b"\x33\x44")
+
+        client.cookies.clear()
+        head = {"Authorization": f"Bearer {snooper['key']}"}
+        assert client.get(f"/api/jpanel/message/{hers}/pcm", headers=head).status_code == 404
+        # And a path segment that is not a uuid is a 404 too, not a 500.
+        assert client.get("/api/jpanel/message/not-a-uuid/pcm", headers=head).status_code == 404

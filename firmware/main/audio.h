@@ -101,6 +101,49 @@ bool audio_play(const int16_t *pcm, size_t bytes);
    state on this rather than on a timer, or a long reply ends on screen mid-sentence. */
 bool audio_playing(void);
 
+/* ── PLAYING SOMETHING LONGER THAN MEMORY ───────────────────────────────────────────────
+ *
+ * `audio_play()` takes the whole clip at once, which caps a message at whatever buffer the
+ * panel can afford to keep — thirty seconds of 16 kHz mono is 960 KB, and the inbound fetch
+ * buffer that fed it was another 960 KB. These four calls replace both with a ring a few
+ * seconds deep: the network writes into it as the bytes arrive and the codec drains it, so a
+ * message is bounded by the box's storage rather than by this board's PSRAM.
+ *
+ * IT ALSO MAKES PLAYBACK START SOONER, which is why the prefetch this replaces could go. A
+ * tap used to wait for the WHOLE message to arrive (the owner: "there's a couple of seconds
+ * between me acknowledging the message and it starting to play"), and the panel worked around
+ * it by fetching ahead and holding the bytes. Streaming needs only the preroll before the
+ * first sound — about twenty times less data — so the tap answers faster with nothing held.
+ *
+ * `audio_playing()` COVERS A STREAM, and that is the contract everything else reads. The
+ * render loop's `speaking`, the pop-up, the message queue and `POST /played` all ask that one
+ * question, and a ring that momentarily runs dry must not answer it the way a finished message
+ * does — a panel that marked a message played mid-sentence would drop it from the queue and
+ * nobody would ever hear the rest. So a stream counts as playing until `audio_stream_end()`
+ * AND the ring has drained. */
+
+/* Claim the speaker for a stream. False when anything else is sounding. */
+bool audio_stream_begin(void);
+
+/* Hand over more bytes. Returns how many were ACCEPTED, which is less than `bytes` when the
+   ring is full — the caller pauses and offers the rest, which is what paces a fast network to
+   the speed of the speaker and keeps the memory bounded. */
+size_t audio_stream_write(const void *pcm, size_t bytes);
+
+/* No more is coming. What is already in the ring still plays out. */
+void audio_stream_end(void);
+
+/* Stop now and throw away what has not been played — a finger on the screen, not an end. */
+void audio_stream_abort(void);
+
+/* IS THIS STREAM STILL WANTED. False once `audio_stream_end` or `audio_stream_abort` has run,
+   and the producer MUST check it: a full ring and a stopped stream both refuse bytes, and a
+   writer that could not tell them apart would offer the same bytes forever to a speaker that
+   has stopped listening — wedging the task that feeds it, which on this panel is also the task
+   that polls, sends and acknowledges. A child tapping to stop a long message is exactly how
+   that would be found. */
+bool audio_stream_live(void);
+
 /* Stop whatever is sounding, at the next chunk. For a child getting out of a run of messages
    (`jpanel.h`) — a queue has to end on the finger, not only on the last message. */
 void audio_stop(void);
