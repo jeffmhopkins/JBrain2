@@ -37,10 +37,12 @@ from sqlalchemy import text
 from jbrain.api.deps import OwnerDep, PanelDep
 from jbrain.api.endpoint import (
     PANEL_RATE,
+    UNNAMED_PANEL_LABEL,
     _pcm_from_wav,
     _to_panel_rate,
     _trim_to_speech,
     _wav,
+    panel_display_name,
 )
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
@@ -148,17 +150,13 @@ class SendText(BaseModel):
 # `f"panel {name}"` when the owner named the unit, `"room endpoint panel"` when they did not.
 # Both are matched, because an unnamed panel is still a panel — a first cut of this matched
 # only `panel%` and silently lost every unit flashed without a name.
-_UNNAMED_LABEL = "room endpoint panel"
-
-
-def _display_name(label: str) -> str:
-    """The name to say out loud, from a principal's label. Pure, so the mapping can be pinned
-    against the route that writes it rather than assumed."""
-    if label == _UNNAMED_LABEL:
-        # Sayable, if inelegant. A four-year-old told "a message from the other one" at least
-        # knows a message arrived; an empty name would draw a pop-up from nobody.
-        return "the other one"
-    return label.removeprefix("panel").strip() or "the other one"
+#
+# IMPORTED RATHER THAN RESTATED, and that is the fix for the fault above. The label is written
+# in `endpoint.py` (`/flash`) and matched here, and for a while the only thing holding the two
+# together was a test that read one module's source from the other's. One definition cannot
+# come apart; a test that two strings agree can only notice after they have.
+_UNNAMED_LABEL = UNNAMED_PANEL_LABEL
+_display_name = panel_display_name
 
 
 # ADDRESSING IS THE BOX'S JOB, NOT THE PANEL'S, AND RLS IS WHY.

@@ -5299,6 +5299,57 @@ export const mockFetch: typeof fetch = async (input, init) => {
       },
     ]);
   }
+  // --- the fleet. Two panels, and deliberately NOT both healthy: a fixture where everything
+  // is fine validates a card that only ever renders the boring half, and the half that
+  // matters is the panel that has stopped reporting.
+  if (path === "/api/endpoint/status" && method === "GET") {
+    return json({
+      panels: [
+        {
+          device_id: "panel-ellie",
+          name: "Ellie",
+          reported_at: new Date(Date.now() - 240_000).toISOString(),
+          version: "0.2.94",
+          age_s: 240,
+          report: {
+            version: "0.2.94",
+            uptime_ms: 7_200_000,
+            // Dark, because that is the reading that stops a sleeping panel being mistaken
+            // for a stalled render task — the fault that once cost a photograph to diagnose.
+            screen: "dark",
+            restart_why: "ota-park",
+            blit_ok: 41233,
+            blit_fail: 0,
+            wifi_drops: 0,
+            mic_peak: 9123,
+            crash_phase: -1,
+            panel_reset: true,
+          },
+        },
+        {
+          device_id: "panel-mabel",
+          name: "the other one",
+          reported_at: new Date(Date.now() - 9 * 3600_000).toISOString(),
+          version: "0.2.89",
+          age_s: 9 * 3600,
+          report: {
+            version: "0.2.89",
+            uptime_ms: 400_000,
+            screen: "awake",
+            reset_reason: "sw(3)",
+            blit_ok: 12,
+            blit_fail_total: 249,
+            blit_recov: 1,
+            wifi_drops: 7,
+            wifi_reason: 201,
+            mic_peak: 0,
+            crash_phase: 9,
+            panel_reset: false,
+          },
+        },
+      ],
+    });
+  }
   // --- jpanel. `unplayed` is served by the box rather than counted off `messages`,
   // so it survives a truncating `limit`; the fixture keeps that honest by summing the
   // thread's own unplayed inbound rows.

@@ -5386,6 +5386,63 @@ and it is pinned by a test that reads `DECODE_MAX` out of `speech.c` — the sam
 coupling that shipped the `/api/jpanel` routes broken for a release because no test read both
 ends.
 
+#### 10.4cy The fleet view: the panel was never the thing that could not be read (2026-09-23)
+
+The panel has reported richly for months — version, uptime, screen stage, blit counters and
+their monotone totals, the largest free internal block, Wi-Fi drops and their reason, OTA
+errors and retries, the crash phase, which of the three `esp_restart()` callers it was, what it
+heard, where the last finger landed. Every one of those readings was added because a fault had
+been invisible without it.
+
+**And the only reader was `grep` over the box's structured log.** `POST /telemetry` said so in
+as many words: *"Nothing is stored. These are a panel's own claims about itself, they are only
+ever read by a human looking at a log, and a table would be a schema to migrate every time the
+question changes."*
+
+The objection was right — the report has gained `screen`, `heard`, `tap`, `restart_why` and
+`panel_reset` since, and each one would have been a migration. **The premise underneath it was
+not.** It assumed a human reading a log, and the owner has no terminal (CLAUDE.md #10). "Is her
+panel alive, and did the update land" was a question only a shell could answer, which is what
+*"just your update only has 0.2.88"* cost on a panel that had in fact updated forty minutes
+earlier — the reading was in the box's log the whole time, forty lines up.
+
+**`app.endpoint_status` (0210) keeps the answer without conceding the objection**: one row per
+panel, upserted, with the report itself as `jsonb`. A field added to the report needs no
+migration because there are no columns to add. `version` and `reported_at` are lifted out
+because they are what every query sorts and filters on, and a panel with no row at all has
+never reported — which is a *different* answer from having gone quiet, with a different first
+move, and the fleet view keeps them apart rather than folding both into "unknown".
+
+It is a SNAPSHOT, not a history. The `pmu_history` ring inside the report already carries the
+only series anything has needed, and a growing table would be a retention question nobody has
+asked.
+
+**A panel may write only its own row, and the policy says so rather than the route.** These are
+devices on children's walls authenticating with a key a four-year-old could hand to a visitor,
+and this row is now the owner's only view of the fleet. A panel that could write its sibling's
+could report that twin as dead, or as running a version it is not, and the one instrument he
+has would be lying to him in the direction of "nothing to see". Four isolation tests in
+`test_endpoint_status_rls_pg.py`; two of them fail when the policy is widened to any
+`device_key`.
+
+**What the card decides, beyond displaying.** Two missed reports before a panel is even called
+late — one missed cycle is an ordinary Wi-Fi blip on a bedroom radio, and a fleet view that
+cries wolf is ignored exactly when it matters. The screen stage leads every row, because a
+sleeping panel stops blitting on purpose and `blit_ok` stops climbing: the exact signature of
+the stalled render task that cost 0.2.44 a photograph from the owner to diagnose. A failing
+update is the first concern listed, because a panel that cannot install retries every fifteen
+minutes reporting the old version, which from the box is indistinguishable from a panel nobody
+offered an update to.
+
+**A related tidy, and the reason it belongs in this entry.** The label `/flash` writes onto a
+panel's key is what marks a principal as a panel at all — for addressing, for the roster, and
+now for this view. It was spelled out in `endpoint.py` and matched again in `jpanel.py`, with
+nothing but a test reading one module's source from the other holding them together; a first
+cut of that match lost every unit flashed *without* a name. `panel_label` and
+`panel_display_name` are now defined once where the label is written and imported by the
+readers. One definition cannot come apart; a test that two strings agree can only notice after
+they already have.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

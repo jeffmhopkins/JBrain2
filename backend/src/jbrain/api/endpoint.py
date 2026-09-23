@@ -31,6 +31,7 @@ from __future__ import annotations
 import array
 import base64
 import hashlib
+import json
 import random
 import re
 import struct
@@ -537,7 +538,7 @@ class TelemetryIn(BaseModel):
 
 
 @router.post("/telemetry", status_code=204)
-async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
+async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) -> Response:
     """A panel reporting its own state, because every other channel either lies or resets it.
 
     THIS EXISTS BECAUSE THE INSTRUMENTS WERE THE PROBLEM. The display fault took six firmware
@@ -550,10 +551,23 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
     is not a room endpoint, it is a bench unit — and the owner moving one to a plain USB
     charger, which is the whole premise, must not cost the ability to see what it is doing.
 
-    Nothing is stored. These are a panel's own claims about itself, they are only ever read
-    by a human looking at a log, and a table would be a schema to migrate every time the
-    question changes. `pmu_history` is passed through as the panel spelled it, because the
-    point is to see exactly what the registers held.
+    THE LOG IS STILL WHERE THE DETAIL LIVES, and the latest report is now also KEPT — one
+    row per panel, upserted, in `app.endpoint_status`. This route used to store nothing, on
+    the argument that a table would be a schema to migrate every time the question changes.
+    That objection was right and is answered by holding the report as `jsonb`; the premise
+    underneath it was not. It assumed a human reading a log, and **the owner has no terminal**
+    (CLAUDE.md #10) — so "is her panel alive, and did the update land" was a question only a
+    shell could answer, which is what "just your update only has 0.2.88" cost on a panel that
+    had in fact updated forty minutes earlier. `GET /status` is the answer from a phone.
+
+    A FAILED SAVE MUST NOT FAIL THE REPORT. A 500 here is a *failed* telemetry from the
+    panel's side: it keeps its crash ring rather than clearing it, and retries the whole body
+    on the next cycle. The log line above has already been written by then, so the reading is
+    not lost — only the snapshot is — and a panel that cannot reach the box's disk is exactly
+    the panel whose report is most worth having.
+
+    `pmu_history` is passed through as the panel spelled it, because the point is to see
+    exactly what the registers held.
     """
     log.info(
         "endpoint.telemetry",
@@ -594,6 +608,32 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         pmu_history=body.pmu_history,
         note=body.note,
     )
+    # `model_dump`, not the raw request: what is stored is what this route's model accepted,
+    # so a panel cannot grow the row with fields nobody declared.
+    try:
+        async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as session:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO app.endpoint_status (principal_id, reported_at, version, report)
+                    VALUES (CAST(:me AS uuid), now(), :version, CAST(:report AS jsonb))
+                    ON CONFLICT (principal_id) DO UPDATE
+                    SET reported_at = now(),
+                        version = EXCLUDED.version,
+                        report = EXCLUDED.report
+                    """
+                ),
+                {
+                    "me": principal.id,
+                    "version": body.version,
+                    "report": json.dumps(body.model_dump(mode="json")),
+                },
+            )
+            await session.commit()
+    except Exception:
+        # See the docstring: the report is already in the log, and a 500 would make the panel
+        # keep its crash ring and re-send everything rather than move on.
+        log.warning("endpoint.status_not_saved", principal=principal.id, exc_info=True)
     return Response(status_code=204)
 
 
@@ -654,6 +694,108 @@ async def _read_settings(request: Request, ctx: SessionContext) -> EndpointSetti
         return EndpointSettings()
     return EndpointSettings(
         volume=row[0], mic_gain_db=row[1], brightness=row[2], debug_overlay=row[3]
+    )
+
+
+# THE LABEL CONVENTION, DEFINED WHERE IT IS WRITTEN.
+#
+# A panel is an ordinary `device_key` principal — the same substrate as an OwnTracks phone —
+# and the ONLY thing marking one is the label `/flash` puts on the key it mints. That makes
+# this string load-bearing for addressing, for the roster, and now for the fleet view, and it
+# was written in one module and matched in another with nothing but a test connecting them.
+# A unit flashed without a name was silently unaddressable for exactly that reason once
+# already. One definition, imported by the readers, is the version of that test that cannot
+# come apart. `jpanel` imports these; it does not restate them.
+UNNAMED_PANEL_LABEL = "room endpoint panel"
+
+
+def panel_label(name: str) -> str:
+    """The label `/flash` writes onto a panel's device key."""
+    return f"panel {name}".strip() if name else UNNAMED_PANEL_LABEL
+
+
+def panel_display_name(label: str) -> str:
+    """The name to say out loud, from that label. Pure, so the mapping can be round-tripped
+    against the function that writes it rather than assumed."""
+    if label == UNNAMED_PANEL_LABEL:
+        # Sayable, if inelegant. A four-year-old told "a message from the other one" at least
+        # knows a message arrived; an empty name would draw a pop-up from nobody.
+        return "the other one"
+    return label.removeprefix("panel").strip() or "the other one"
+
+
+class PanelStatus(BaseModel):
+    """One panel, as it last described itself."""
+
+    device_id: str
+    name: str
+    # Absent for a panel that has been flashed and has never reported — which is its own
+    # answer, and a different one from "reported an hour ago and has gone quiet".
+    reported_at: str = ""
+    version: str = ""
+    # Seconds since that report, computed on the box. The PWA must not subtract a server
+    # timestamp from a phone clock: the two disagree by minutes on a phone that has been
+    # asleep, and "last seen 4 minutes in the future" is how a working fleet looks broken.
+    age_s: int = -1
+    report: dict[str, Any] = Field(default_factory=dict)
+
+
+class PanelStatuses(BaseModel):
+    panels: list[PanelStatus] = Field(default_factory=list)
+
+
+@router.get("/status")
+async def panel_status(owner: OwnerDep, request: Request) -> PanelStatuses:
+    """Every panel this box knows, and the last thing each one said about itself.
+
+    **THE POINT IS THAT IT IS NOT A LOG.** The panel has reported richly for months and the
+    only reader was `grep` over the box's structured log, reachable through the debug API and
+    a terminal. The owner has neither (CLAUDE.md #10), so the questions this answers — is her
+    panel alive, did the update land, is it drawing, can it hear, why did it restart — were
+    ones he had to hand to someone with a shell.
+
+    **A panel with no row has never reported**, and that is kept distinct from a stale one
+    rather than folded into "unknown": the first is a unit that was flashed and never came up,
+    the second is one that was working and stopped, and they are different faults with
+    different first moves.
+
+    Read under the OWNER's context, which is also why the roster query is here rather than
+    borrowed from `jpanel`: that module's helper deliberately runs under its own addressing
+    context to survive being called by a panel, and this route has no such problem."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (p.label)
+                           p.id::text, p.label, s.reported_at, s.version, s.report,
+                           EXTRACT(EPOCH FROM (now() - s.reported_at))::bigint
+                    FROM app.principals p
+                    LEFT JOIN app.endpoint_status s ON s.principal_id = p.id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND (p.label LIKE 'panel%' OR p.label = :unnamed)
+                    ORDER BY p.label, p.created_at DESC
+                    """
+                ),
+                {"unnamed": UNNAMED_PANEL_LABEL},
+            )
+        ).all()
+    return PanelStatuses(
+        panels=[
+            PanelStatus(
+                device_id=str(row[0]),
+                name=panel_display_name(str(row[1])),
+                reported_at=row[2].isoformat() if row[2] is not None else "",
+                version=str(row[3] or ""),
+                age_s=int(row[5]) if row[5] is not None else -1,
+                report=dict(row[4] or {}),
+            )
+            # `DISTINCT ON (label)` for the reason `jpanel._panel_names` uses it: every flash
+            # mints a fresh key and nothing retires the old one, so a re-flashed panel is
+            # several principals under one label and the newest is the one it is using. Without
+            # this the owner's fleet view would show a unit once per time it was ever flashed.
+            for row in rows
+        ]
     )
 
 
@@ -788,7 +930,7 @@ async def build_flash(
     # the owner's own key rotation has. Re-flashing a panel therefore issues a NEW
     # identity — correct, because a re-flash is how a unit is handed over or recovered,
     # and the old key should stop working at that moment.
-    label = f"panel {name}".strip() if name else "room endpoint panel"
+    label = panel_label(name)
     provisioned = await devices.provision_device(device_repo, ctx, label)
 
     api_base, ca = _panel_base(request, settings)

@@ -54,6 +54,7 @@ import type {
   JlaunchSpec,
   PublicJlaunchRun,
 } from "../jlaunch/types";
+import type { PanelReport } from "../panelStatus";
 import type { SdrBands, SpectrumRange } from "../sdrBands";
 import type { SdrRadios } from "../sdrRadios";
 import type { SdrListening, SdrRecordingState, SdrState } from "../sdrSession";
@@ -2650,6 +2651,23 @@ export interface JpanelMessage {
   undelivered?: boolean;
 }
 
+/** One panel as the box last heard from it. `report` is the panel's own telemetry body,
+ *  held as-is — see `panelStatus.ts` for what is read out of it and why. */
+export interface PanelStatusOut {
+  device_id: string;
+  name: string;
+  /** "" for a panel that has been flashed and has never reported. */
+  reported_at: string;
+  version: string;
+  /** Seconds since that report, computed on the box; -1 when there has never been one. */
+  age_s: number;
+  report: PanelReport;
+}
+
+export interface PanelStatuses {
+  panels: PanelStatusOut[];
+}
+
 /** One panel's thread: the messaging surface is grouped by panel because "which twin,
  *  and how many have I not heard" is the question being asked at work. */
 export interface JpanelThread {
@@ -4977,6 +4995,15 @@ export const api = {
       reader.releaseLock();
     }
   },
+  // THE FLEET, AS EACH PANEL LAST DESCRIBED ITSELF. Owner-only. The box computes `age_s`
+  // rather than leaving this surface to subtract a server timestamp from a phone clock: the
+  // two disagree by minutes on a phone that has been asleep, and "last seen four minutes in
+  // the future" is how a working fleet looks broken.
+  async panelStatus(): Promise<PanelStatuses> {
+    const response = await request("/api/endpoint/status");
+    return (await response.json()) as PanelStatuses;
+  },
+
   // ===== jpanel messages (docs/plans/JPANEL_PLAN.md §3b) =====
   // Owner-only. One list grouped by panel, newest first, with the unplayed count per
   // panel already summed by the box — the PWA never counts it from the page it happens

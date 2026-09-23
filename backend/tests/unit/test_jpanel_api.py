@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
+from jbrain.api import endpoint as endpoint_api
 from jbrain.api import jpanel
 
 
@@ -29,32 +30,33 @@ class TestDisplayName:
         assert jpanel._display_name("panel") == "the other one"
 
     def test_the_label_the_flash_route_actually_writes_is_one_this_understands(self) -> None:
-        """THE COUPLING, PINNED. A panel is reachable only if its label matches what this
-        module looks for, and the label is written somewhere else entirely — `/flash`, in
-        `endpoint.py`. Nothing connects the two but this test.
+        """THE COUPLING, AND IT IS A ROUND TRIP NOW RATHER THAN A REGEX.
 
-        The first cut matched `label LIKE 'panel%'` and therefore silently lost every unit
-        flashed WITHOUT a name, because that branch writes "room endpoint panel". The panel
-        would have enrolled, polled, and simply never been addressable, with nothing anywhere
-        saying why. So both branches of that expression are read out of the source and checked,
-        rather than remembered."""
+        A panel is reachable only if its label matches what the addressing looks for, and the
+        label is written somewhere else entirely — `/flash`, in `endpoint.py`. The first cut
+        matched `label LIKE 'panel%'` and therefore silently lost every unit flashed WITHOUT a
+        name, because that branch writes "room endpoint panel": the panel would enrol, poll,
+        and simply never be addressable, with nothing anywhere saying why.
+
+        This test used to read that expression out of `endpoint.py` with a regular expression,
+        which was the best available check while the two modules each spelled the convention
+        out. They no longer do — `jpanel` imports `panel_label`/`panel_display_name` rather
+        than restating them — so the two halves are now the same symbols and what is worth
+        asserting is that they compose: whatever `/flash` writes, the addressing reads back.
+        """
+        # The named branch, and the unnamed one, through the pair as the routes use them.
+        assert jpanel._display_name(endpoint_api.panel_label("Ellie")) == "Ellie"
+        assert jpanel._display_name(endpoint_api.panel_label("")) == "the other one"
+        assert endpoint_api.panel_label("") == jpanel._UNNAMED_LABEL
+        # And `/flash` really does write it through that function rather than its own literal,
+        # which is the one thing composing the pair here cannot prove.
         src = (
             Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "endpoint.py"
         ).read_text()
-        match = re.search(r'label = (f"[^"]+"[^\n]*?if name else "([^"]+)")', src)
-        assert match is not None, "the /flash label expression moved; re-pin this test"
-        named, unnamed = match.group(1), match.group(2)
-
-        # The named branch: whatever prefix it uses must be one `_display_name` strips.
-        assert "panel" in named, f"/flash no longer labels a named panel with 'panel': {named}"
-        assert jpanel._display_name("panel Ellie") == "Ellie"
-
-        # The unnamed branch, verbatim from the source rather than typed again here.
-        assert unnamed == jpanel._UNNAMED_LABEL, (
-            f"/flash labels an unnamed panel {unnamed!r} and jpanel looks for "
-            f"{jpanel._UNNAMED_LABEL!r} — such a panel would never be addressable"
+        assert "label = panel_label(name)" in src, (
+            "/flash no longer labels a panel through `panel_label`; the convention has two "
+            "definitions again and an unnamed unit can go unaddressable without anything saying so"
         )
-        assert jpanel._display_name(unnamed) == "the other one"
 
 
 class TestNameOf:

@@ -6,11 +6,13 @@ import {
   type MetricRange,
   type MetricsHistory,
   type OpsMetrics,
+  type PanelStatusOut,
   type UpdateStatus,
   api,
 } from "../api/client";
 import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { serverMetricSeries } from "../components/serverMetricSeries";
+import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
 import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
 
@@ -841,6 +843,100 @@ const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
  *  Collapsed by default when everything holds, and OPEN when something does not: a health
  *  panel nobody opens is not a health panel. The body fetches on mount, so a healthy box
  *  pays nothing for it. */
+// ===== The panels, as they last described themselves =====
+//
+// THE PANEL HAS REPORTED RICHLY FOR MONTHS AND NOBODY COULD READ IT. Everything below arrives
+// in a telemetry body every fifteen minutes, and until this card the only reader was `grep`
+// over the box's structured log — reachable through the debug API and a terminal, neither of
+// which the owner has (CLAUDE.md #10). "Is her panel alive, did the update land, is it still
+// drawing" were questions he had to hand to somebody with a shell, and "just your update only
+// has 0.2.88" is what that cost on a panel that had updated forty minutes earlier.
+//
+// On Ops rather than beside the messages, because these are the questions asked ABOUT a panel
+// rather than through it — next to the update that put the version there.
+function PanelsCard({ refreshKey }: { refreshKey: number }) {
+  const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Refetched whenever the top Refresh bumps `refreshKey`, like the history card, and for a
+  // more pointed reason: the press right after an update is the owner asking THIS card
+  // whether the new version landed, and a card that answered with the pre-update reading
+  // would be worse than one that made him reload the app.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a re-run trigger, not read in the effect
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await api.panelStatus();
+        if (!cancelled) setPanels(result.panels);
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  const health = (panels ?? []).map((p) => panelHealth(p.age_s));
+  const unwell = health.filter((h) => h !== "ok").length;
+  const summary = error
+    ? "unavailable"
+    : panels === null
+      ? "checking…"
+      : panels.length === 0
+        ? "none flashed"
+        : unwell === 0
+          ? `${panels.length} reporting`
+          : `${unwell} not reporting`;
+
+  return (
+    <OpsCard
+      // Keyed on the verdict for the reason `HostSettingsCard` is: `defaultOpen` is read into
+      // `useState` on the first render only, and this data arrives after mount.
+      key={unwell > 0 ? "attention" : "healthy"}
+      title="Panels"
+      defaultOpen={unwell > 0}
+      summaryCollapsed={
+        <span className={`ops-card-summary${unwell > 0 ? " warn" : ""}`}>{summary}</span>
+      }
+    >
+      {error && <p className="muted ops-vrow-empty">{error}</p>}
+      {panels?.length === 0 && (
+        <p className="muted ops-vrow-empty">
+          No panels flashed against this box yet — the Flash tab on the Panels screen adds one.
+        </p>
+      )}
+      {panels?.map((p) => {
+        const state = panelHealth(p.age_s);
+        const concerns = panelConcerns(p.report);
+        return (
+          <div key={p.device_id} className={`ops-panel-row${state === "ok" ? "" : " bad"}`}>
+            <div className="ops-panel-head">
+              <span className="ops-panel-name">{p.name}</span>
+              <span className="ops-panel-version">{p.version || "—"}</span>
+              <span className="ops-panel-seen">{agoLabel(p.age_s)}</span>
+            </div>
+            {state === "never" ? (
+              /* A DIFFERENT FAULT FROM HAVING GONE QUIET, and a different first move: this
+                 one was flashed and never came up, so the question is whether it was
+                 provisioned against this box at all. */
+              <p className="ops-panel-note">Flashed, but has never reported.</p>
+            ) : (
+              <p className="ops-panel-facts">{panelFacts(p.report).join(" · ") || "no detail"}</p>
+            )}
+            {concerns.map((c) => (
+              <p className="ops-panel-concern" key={c}>
+                {c}
+              </p>
+            ))}
+          </div>
+        );
+      })}
+    </OpsCard>
+  );
+}
+
 function HostSettingsCard() {
   const [data, setData] = useState<HostSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1444,6 +1540,8 @@ export function OpsScreen() {
       <SystemCard metrics={metrics} />
 
       <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
+
+      <PanelsCard refreshKey={refreshKey} />
 
       <HostSettingsCard />
 

@@ -648,6 +648,22 @@ describe("mock API", () => {
   // jpanel's fixture exists to exercise the states the real inbox will be full of: a
   // transcript the transcriber mangled, one it returned empty, and a twin who has not
   // sent anything yet.
+  it("serves a fleet with something actually wrong with it", async () => {
+    /* The fixture's job is to exercise the half of the card that matters. A mock where both
+       panels were healthy would validate a surface that only ever renders the boring case,
+       and the case this card exists for is the panel that has stopped reporting. */
+    const out = (await (await call("/api/endpoint/status")).json()) as {
+      panels: { name: string; version: string; age_s: number; report: Record<string, unknown> }[];
+    };
+    expect(out.panels).toHaveLength(2);
+    const [live, stale] = out.panels;
+    expect(live?.version).toBe("0.2.94");
+    // The reading that stops a sleeping panel being read as a stalled render task.
+    expect(live?.report.screen).toBe("dark");
+    expect(stale?.age_s).toBeGreaterThan(8 * 3600);
+    expect(stale?.report.blit_fail_total).toBeGreaterThan(0);
+  });
+
   it("serves jpanel messages grouped by panel, newest first", async () => {
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
     const ellie = out.panels.find((p) => p.name === "Ellie");
