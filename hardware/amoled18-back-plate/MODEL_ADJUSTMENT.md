@@ -186,6 +186,7 @@ front of it with foam. A cell stood on its `end` makes the longest box, `flat` t
 | `pocket_wall` | The box's wall round the head at its rim, which the front shell sits on (0.8–1.3). The head is this much (plus `pocket_clear`) smaller than the case each side | Rarely. The default 1.1 is already the most the head's rim allows; go thinner only to give the head more room |
 | `pocket_clear` | Gap between the head and the box, each side (0.05–0.25) | Head won't go in: raise by 0.05. Rattles: lower |
 | `stand_ledge` | Width of the step inside the box the head's back rests on | Wider is firmer but leaves less room for the battery (the 104050 box uses 0.8) |
+| `lock_spread` | Distance between the two lock screws on each side (0 = one per side, in the middle) | Rarely; 14 keeps them on the flat part of the side |
 
 The head can't shrink past its own rim, so `pocket_wall` + `pocket_clear` together can't go above
 1.35; the console stops with `RIM IS LARGER THAN THE HEAD` if they do. The box's outside is always

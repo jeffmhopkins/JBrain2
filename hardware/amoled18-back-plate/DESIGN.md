@@ -87,7 +87,7 @@ cover's shape:
 - **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
   towers, so it fits the front shell exactly as the stock cover does. It is smaller than the case
   by the box's top wall, with tighter corners (R5.55) so the wall outside each screw bore stays
-  1 mm thick. It adds a solid block inside each short end (left and right in use) for the lock screws, and a slot through the
+  1 mm thick. It adds a solid block for each lock screw inside its short ends (left and right in use), and a slot through the
   floor just in front of the board's `BAT` socket, whose mouth faces the slot (from Waveshare's
   3D model). The socket is on the side away from the USB-C, which fixes which way round the head
   goes. Its back edge has no chamfer, so all of it bears on the ledge, and its tower flares don't
@@ -114,7 +114,7 @@ cover's shape:
   same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
   short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). The two M2 × 6 lock screws pass through the box's band at each side, 1 mm up
+  3.5 mm deep). The four M2 × 6 lock screws, two at each side `lock_spread` (14 mm) apart, pass through the box's band, 1 mm up
   from the ledge so the hole's lower edge runs into the solid wall below, and cut their own
   thread about 4.7 mm into the head's end blocks; the holes are deep enough for an M2 × 8.
 
