@@ -120,11 +120,23 @@ head_clear = 0.6;   // [0:0.1:2]
 head_seat = 2.0;    // [0.6:0.1:5]
 // Wall around the screw head in each tower
 tower_wall = 1.2;   // [0.8:0.1:3]
-// How far below the rim top the towers stop. Measure the stock cover: rim top to post top
-tower_drop = 0.0;   // [0:0.1:10]
+// How far below the rim top the towers stop; negative = they stand above it.
+// Measure the stock cover: rim top to post top
+tower_drop = 0.0;   // [-5:0.1:10]
 // One-layer skin closing the top of each tower's bore so it prints as a bridge;
 // poke it through with the screw. 0 = none
 bridge_skin = 0.2;  // [0:0.05:0.6]
+
+// Printer hole allowance (holes print undersize; 0.2 suits most FDM)
+hole_slop = 0.2;    // [0:0.05:0.6]
+
+/* [4b. Custom screw sizes - used only when screw_size is Custom] */
+custom_shaft_d = 2.0;   // [1:0.1:6]
+// Socket head diameter
+custom_head_d = 3.8;    // [2:0.1:10]
+// Socket head height
+custom_head_t = 2.0;    // [0.4:0.1:6]
+
 
 /* [4c. Hole plugs - press-fit caps that hide the tower openings] */
 
@@ -142,16 +154,6 @@ plug_interference = 0.1;  // [-0.2:0.05:0.4]
 plug_cap_gap = 0.15;    // [0:0.05:0.5]
 // Plugs to print (4 plus spares)
 plug_count = 6;         // [1:1:12]
-
-// Printer hole allowance (holes print undersize; 0.2 suits most FDM)
-hole_slop = 0.2;    // [0:0.05:0.6]
-
-/* [4b. Custom screw sizes - used only when screw_size is Custom] */
-custom_shaft_d = 2.0;   // [1:0.1:6]
-// Socket head diameter
-custom_head_d = 3.8;    // [2:0.1:10]
-// Socket head height
-custom_head_t = 2.0;    // [0.4:0.1:6]
 
 
 /* [5. Battery cavity] */
@@ -362,7 +364,7 @@ module solid_body() {
         intersection() {
             towers();
             translate([0, 0, body_h - eps])
-                rbox(rim_out_x, rim_out_y, lip_h + eps, rim_out_r);
+                rbox(rim_out_x, rim_out_y, tower_top - body_h + eps, rim_out_r);
         }
 }
 
