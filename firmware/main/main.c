@@ -20,6 +20,7 @@
 #include "audio.h"
 #include "display.h"
 #include "imu.h"
+#include "jpanel.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
 #include "esp_heap_caps.h"
@@ -374,6 +375,11 @@ void app_main(void)
                starting it before the network is up would only mean a task blocked on a
                socket that cannot open yet. */
             if (!talk_start(&cfg)) ESP_LOGW(TAG, "no conversation — holds will not upload");
+            /* Voice post, for the same reasons in the same place: it needs `cfg`, and its
+               own ~30 s poll is a socket that cannot open before the radio is up. A panel
+               that starts without it is still a pet — it simply cannot carry messages, which
+               is worth a line in the log rather than a refusal to boot. */
+            if (!jpanel_start(&cfg)) ESP_LOGW(TAG, "no voice post — messages will not arrive");
             mem_log("post-speech");
         }
         /* Offline panels come back faster than settled ones check for updates: a router

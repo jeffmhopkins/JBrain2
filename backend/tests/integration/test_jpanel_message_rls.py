@@ -13,6 +13,7 @@ shape of the handlers, because "the route filters by recipient" is a code-review
 rather than a mechanism (CLAUDE.md rule 3, and `0178_settings_deny_jmolt` for the argument).
 """
 
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -275,3 +276,124 @@ async def test_the_owners_badge_counts_only_what_was_sent_to_him(
         "waiting for the owner"
     )
     assert "panel-two" not in counts, "a twin who sent nothing to the owner has no badge"
+
+
+# ---------------------------------------------------------------------------------------------
+# Addressing: who "the other panel" is, and why the panel is not allowed to work it out.
+# ---------------------------------------------------------------------------------------------
+
+
+async def _make_panel(maker: async_sessionmaker, label: str, age_s: int = 0) -> str:
+    """A device_key principal exactly as `/flash` mints one, returning its id.
+
+    `created_at` is set rather than defaulted: these tests turn on WHICH key is newest, and
+    three inserts a few milliseconds apart is not a margin to rest an assertion on."""
+    pid = str(uuid.uuid4())
+    async with scoped_session(maker, SessionContext(auth_context="bootstrap")) as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.principals (id, kind, key_hash, label, created_at)
+                VALUES (CAST(:id AS uuid), 'device_key', :kh, :label,
+                        now() - make_interval(secs => :age))
+                """
+            ),
+            {"id": pid, "kh": f"hash-{pid}", "label": label, "age": age_s},
+        )
+        await s.commit()
+    return pid
+
+
+async def test_a_panel_cannot_read_the_roster_itself(maker: async_sessionmaker) -> None:
+    """THE BUG THAT MADE PANEL-TO-PANEL POST IMPOSSIBLE ON EVERY BOX, FROM THE FIRST COMMIT.
+
+    `principals_select` opens for the owner, for `auth_ctx()` in ('login','bootstrap'), and for
+    a principal reading ITS OWN ROW. Nothing else. `send` resolved "the other panel" inside a
+    session scoped to the asking panel, so the roster it read contained exactly one row —
+    itself — `others` was always empty, and every sibling message answered 409.
+
+    It is asserted here rather than fixed by widening the policy, because the narrowness is
+    correct: a device key on a bedroom wall must not be able to enumerate principals. This test
+    is what stops a future "fix" from opening it."""
+    mine = await _make_panel(maker, f"panel Alpha{uuid.uuid4().hex[:6]}")
+    other = await _make_panel(maker, f"panel Beta{uuid.uuid4().hex[:6]}")
+    async with scoped_session(
+        maker, SessionContext(principal_id=mine, principal_kind="device_key")
+    ) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT id::text FROM app.principals "
+                    "WHERE kind = 'device_key' AND revoked_at IS NULL"
+                )
+            )
+        ).all()
+    assert [r[0] for r in rows] == [mine], (
+        "a panel must see only itself in the principals table — if this widens, a device key "
+        "on a wall can enumerate every principal on the box"
+    )
+
+    # AND THE OTHER HALF, WHICH IS WHAT MAKES THE FIX LOAD-BEARING: the box CAN see both,
+    # through `_panel_names`'s own narrow addressing context. If someone reverts that to take
+    # the caller's session, this assertion is the one that fails.
+    from jbrain.api.jpanel import _panel_names
+
+    roster = await _panel_names(maker)
+    assert mine in roster and other in roster, (
+        "the box must be able to resolve the roster even though the panel cannot; "
+        f"saw {len(roster)} panels"
+    )
+
+
+async def test_the_roster_collapses_the_keys_a_reflash_leaves_behind(
+    maker: async_sessionmaker,
+) -> None:
+    """ONE ROW PER NAME, NEWEST KEY WINS.
+
+    Every `/flash` mints a fresh device key and nothing retires the old one. The live box had
+    thirteen unrevoked principals labelled "panel Elora" — one physical panel, re-flashed — and
+    two more unnamed, so `send(to="panel")` saw fifteen candidates where it needs exactly one.
+    Even with the RLS fix above, that alone would have kept the feature at 409 forever.
+
+    The newest key for a name is the one that panel is using, because `/flash` rewrites its
+    NVS; every older one is dead by construction."""
+    from jbrain.api.jpanel import _panel_names
+
+    name = f"panel Reflash{uuid.uuid4().hex[:6]}"
+    # Oldest first, so `ids[-1]` is genuinely the newest key for this name.
+    ids = [await _make_panel(maker, name, age_s=age) for age in (300, 200, 100)]
+
+    names = await _panel_names(maker)
+    mine = [pid for pid in ids if pid in names]
+    assert len(mine) == 1, f"three keys for one name must collapse to one, got {len(mine)}"
+    assert mine[0] == ids[-1], "and it must be the newest, which is the key the panel now runs"
+
+
+async def test_a_panel_on_a_superseded_key_does_not_address_itself(
+    maker: async_sessionmaker,
+) -> None:
+    """The second half of the same problem, and the reason `send` filters by NAME not by id.
+
+    A panel that has not been re-flashed since a newer key was minted for its own name is not
+    in the roster under its own id. Filtering `pid != principal.id` would therefore leave its
+    OWN name in the candidate list and post the child's message straight back to the unit they
+    spoke into — which, with exactly two names present, is not a 409 but a wrong delivery.
+
+    This asserts the roster's shape that makes the by-name filter work: the surviving row for a
+    name is not the id the older panel is running as."""
+    from jbrain.api.jpanel import _display_name, _panel_names
+
+    name = f"panel Stale{uuid.uuid4().hex[:6]}"
+    old_key = await _make_panel(maker, name, age_s=300)
+    new_key = await _make_panel(maker, name, age_s=100)
+    assert old_key != new_key
+
+    names = await _panel_names(maker)
+    assert old_key not in names, "the superseded key is not in the roster"
+    assert names.get(new_key) == _display_name(name)
+
+    # What `send` does: exclude by the asking panel's own NAME.
+    me = _display_name(name)
+    assert new_key not in [pid for pid, n in names.items() if n != me], (
+        "filtering by name must exclude the panel's own newer key; filtering by id would not"
+    )

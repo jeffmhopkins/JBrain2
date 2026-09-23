@@ -2567,6 +2567,7 @@ static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
     int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0, stops = 0;
+    int to_panel = 0, to_dad = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -2590,6 +2591,17 @@ static void test_vocab_arguments_are_real(void)
             /* No argument to be wrong: it names no action, form or colour. Counted so the
                table cannot lose the only way out of a self-continuing conversation. */
             stops++;
+            break;
+        case VOCAB_SEND:
+            /* THE ARGUMENT IS A RECIPIENT, and `vocab.c` spells it as a bare 0 or 1 rather
+               than including `jpanel.h` — that file drags in the ESP headers and this one is
+               built on a host. So the values are pinned HERE, which is the only place both
+               spellings can be seen at once. 0 is JPANEL_TO_PANEL, 1 is JPANEL_TO_DAD; the
+               enum in `jpanel.h` declares them in that order and nothing else may be added
+               in front of them. */
+            CHECK(v[i].arg == 0 || v[i].arg == 1, "a send command names a real recipient");
+            if (v[i].arg == 0) to_panel++;
+            else to_dad++;
             break;
         case VOCAB_LISTEN:
             /* THE NAME, and there must be EXACTLY ONE of it. Two wake phrases would give the
@@ -2635,6 +2647,32 @@ static void test_vocab_arguments_are_real(void)
     /* The owner asked for "turn [color]" by name, so a palette command that only ever steps
        to the next colour no longer satisfies the request. */
     CHECK(named_colours >= 6, "colours can be asked for by name, not only cycled");
+    /* ONE PHRASE PER RECIPIENT, EXACTLY. Two ways to reach the same person would be harmless;
+       two recipients behind one phrase would not — a message posted to the wrong sibling is
+       the failure the 409 refusal in `jpanel.c` exists to prevent, and it must not be
+       reintroduced here by a table that offers a choice the child cannot see. */
+    CHECK(to_panel == 1, "there is one way to send to the other panel");
+    CHECK(to_dad == 1, "and one way to send to dad");
+}
+
+/* THE MARGIN BETWEEN THE TWO SEND PHRASES IS ONE LETTER, and rule 3 is what makes it matter.
+ *
+ * "send a message" and "send dad a message" diverge at `a` against `d`. `test_vocab_has_no_
+ * ambiguity` already forbids a prefix anywhere in the table, so this does not re-check that.
+ * What it pins is the SHAPE that keeps the margin: every send phrase names its recipient
+ * BEFORE the noun, so a third one ("send ellie a message") is safe for the same reason —
+ * where the natural-sounding "send a message to ellie" would make the existing short form its
+ * prefix and take the whole feature down with it. The next person to add a recipient reads
+ * this before they reach for the phrasing they would have said out loud. */
+static void test_send_phrases_name_the_recipient_before_the_noun(void)
+{
+    const vocab_t *v = vocab_all();
+    for (int i = 0; i < vocab_count(); i++) {
+        if (v[i].kind != VOCAB_SEND) continue;
+        const char *msg = strstr(v[i].phrase, "message");
+        CHECK(msg != NULL, "a send phrase says the word message");
+        CHECK(strcmp(msg, "message") == 0, "and ends on it, so no recipient trails the noun");
+    }
 }
 
 /* ---- the caption ticker -------------------------------------------------------------- */
@@ -2858,6 +2896,7 @@ int main(void)
     test_gesture_no_cue_for_a_count_that_does_nothing();
     test_gesture_cue();
     test_vocab_phrases_are_sayable();
+    test_send_phrases_name_the_recipient_before_the_noun();
     test_vocab_has_no_ambiguity();
     test_vocab_arguments_are_real();
     test_the_way_out_is_the_word_a_child_would_actually_say();

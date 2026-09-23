@@ -1,6 +1,6 @@
 # Room endpoints — the box's face and ears on a small AMOLED satellite
 
-> **Status:** In progress · **Last verified:** 2026-09-22 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
+> **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1🟢 W2◻ W3◻ W4🟢 W4b🟢 W5◻ W6◻ W7◻
 
 **The hardware arrived 2026-09-18** and the owner confirmed the two constraints that decide
 the whole delivery path: the panels sit on **the same LAN as the box**, and the box's own USB
@@ -5102,6 +5102,151 @@ Worth recording because the first two diagnoses were both wrong: "pre-existing" 
 running the failing file alone, which passes, rather than the suite that fails) and then "mine"
 (reached from a clean-tree comparison that happened to run when there was more disk). Neither
 hypothesis was tested against the actual error text, which named the cause in one line.
+
+#### 10.4cu Voice post on the panel (0.2.88, 2026-09-23)
+
+W3 of `JPANEL_PLAN.md`: the panel can now send a message and play one. Built and byte-compared
+in CI; **not yet run on a unit**, so everything below is what it does, not what it has been
+seen doing.
+
+##### Two phrases, and the margin between them is one letter
+
+`send a message` goes to the other panel; `send dad a message` goes to the PWA. Neither is a
+prefix of the other — they diverge at `a` against `d` — and that is the whole margin rule 3
+leaves. The shape is what protects it: every send phrase names its recipient BEFORE the noun,
+so a third one (`send ellie a message`) is safe for the same reason, where the natural-sounding
+`send a message to ellie` would make the short form its prefix and take the feature down. A host
+test pins the shape rather than the two strings.
+
+##### Recording is a state, not a flag on listening
+
+`TALK_RECORDING` sits beside `TALK_LISTENING` because three things differ — where the audio
+goes, what is drawn, and what ends it — and a flag would have every branch of the machine
+asking "but which kind". The one that forgot would upload a child's message to the pet, which
+would then answer it out loud.
+
+Everything tuned for a four-year-old is shared: the same 1.8 s hush, the same cap, the same
+finger-cancels rule. One number differs, `RECORD_LEAD_MS` at 4 s against the name's 3 s —
+asking the pet something is a sentence already formed, telling your sister something is one
+being composed out loud by a child who has just watched a blue dot appear.
+
+**Blue, not red**, which is the owner's requirement rather than a palette choice: red means *the
+robot is listening to you*, and talking to your sister must not look like that.
+
+##### The pop-up, and the button that would have stopped working
+
+A waiting message draws a box over the pet, tappable anywhere inside, naming who it is from. It
+does not auto-play — a message that started talking on its own would be the panel making noise
+in a bedroom at a moment nobody chose.
+
+The first cut cleared the rectangle on the tap and thought that was enough. It was not: the
+waiting count does not drop until the box hands the message over, so the very next frame drew
+the pop-up again, over a fetch that `jpanel_play_next` now refuses. A child would have been
+pressing a button that had stopped working. The draw is gated on `JPANEL_BUSY` as well.
+
+##### The truncation that would have cut Dad in half
+
+`audio_play` capped everything at ten seconds — the REPLY ceiling — and did it silently. A
+message from Dad is typed text through a voice, and `SendText` allows 600 characters, so every
+long one would have stopped mid-word with nothing in any log to say it had. This is the same bug
+as the 261 KB reply in §10.4, arriving by another route: two different things sharing one
+number because nobody had separated them. The buffer is now sized by the LONGEST audio any
+caller can hand over (20 s, matching `MAX_MESSAGE_MS` on the box) and says so when it still has
+to cut. The reply keeps its own cap in `talk.c`.
+
+##### Two new cues, because reusing one was the old bug
+
+"Sent" first used `CUE_TOGGLE` — the sound the name/version label makes. That is the twenty-six-
+events-one-blip problem coming back one event at a time, so there are now `CUE_SENT` (three
+notes climbing away, unresolved on the octave, because a sent message is not finished — someone
+else has it now) and `CUE_MESSAGE` (a soft falling third on a triangle with a slow attack). The
+arrival cue is the only one in the set that fires with nobody having touched or said anything;
+it goes off in a bedroom, so it announces rather than demands. Both clear the suite's
+"no two cues are the same sound" check on their own.
+
+##### The 404 that would have looked like silence
+
+**Every jpanel call the firmware made was to a route that does not exist**, and it took asking
+the live box to find out. `JPANEL_PLAN.md` §3b put the panel's routes on the device surface at
+`/api/endpoint/jpanel/*`, beside `/endpoint/converse`, and said in as many words that it was
+the source of truth. W2 had mounted one `/jpanel` router carrying the panel's four routes and
+the owner's four together, so the live paths are `/api/jpanel/*`. W3's firmware was written
+from the plan.
+
+It built, linked, passed 4,045,509 host checks and produced a byte-compared image. **Nothing
+could have caught it**: the URL is assembled by `snprintf` inside a file that cannot be built
+on a host, and on a panel the symptom is not an error — `GET /waiting` returning 404 is
+indistinguishable from "nobody sent me anything", so the whole feature would have shipped
+looking merely quiet. A child would have said *"send dad a message"*, watched the blue dot,
+spoken, and been told it was sent.
+
+Found by probing the box directly: `/api/jpanel/waiting` answered **401**,
+`/api/endpoint/jpanel/waiting` answered **404**.
+
+Fixed toward what is deployed rather than the reverse — the backend is live, the PWA already
+calls it, and renaming production routes to match a document costs a redeploy for nothing. Auth
+is per-route (`PanelDep` against `OwnerDep`), so sharing a prefix with the owner's routes is not
+a hole; it does mean the device surface is no longer one prefix, which is worth weighing if a
+wall ever gates by path.
+
+**Pinned from the end that can run.** `test_the_panel_facing_routes_are_where_the_firmware_looks`
+reads the format string out of `firmware/main/jpanel.c` and asserts the four route paths on the
+router, so either side moving fails loudly. Verified by reintroducing the bug and watching it
+fail. The general lesson is the one §10.4 keeps relearning: a coupling that no single package
+can see needs a test that reads both ends.
+
+##### And then panel-to-panel turned out never to have worked at all
+
+Two more, found the same way — by asking the live box instead of reading code. Neither is in
+the firmware; both are in W2, and both would have made a child's message to her sister vanish.
+
+**RLS meant a panel could not see any panel but itself.** `principals_select` opens for the
+owner, for `auth_ctx()` in ('login','bootstrap'), and for a principal reading its own row.
+`send` resolved "the other panel" inside a session scoped to the *asking panel*, so the roster
+held exactly one entry — itself — and `others` was always empty. **Every sibling message
+answered 409, on any box, from the first commit.** The same cause had two quieter symptoms: the
+pop-up never learned who a message was from, and `GET /next`'s `X-Jpanel-From` always said "the
+other one".
+
+Fixed by reading the roster under the narrow `login` context in a session of its own, not by
+widening the policy — and that ordering is the point. A panel must not be able to enumerate
+principals; it says "the other panel" and the box decides who that is. Widening
+`principals_select` to let device keys see each other would hand a device on a bedroom wall the
+whole principal table, `key_hash` column included, to answer a question it should never have
+been asking.
+
+**And every `/flash` mints a key that nothing retires.** The box carried **thirteen** unrevoked
+principals labelled `panel Elora` — one physical panel, re-flashed — plus two unnamed. Fifteen
+candidates where the route needs exactly one, so even with the policy fixed it would have stayed
+at 409. The roster keeps one row per NAME now, newest `created_at` winning, which is right
+rather than tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the one that
+panel is running and every older one is dead by construction.
+
+`send` also excludes by NAME rather than by id, because a panel still on a superseded key is not
+in the roster under its own id — `pid != principal.id` would leave its own name in the list and
+post the message back to the unit the child spoke into.
+
+Both are pinned by integration tests against real Postgres, each verified by reverting the fix
+and watching the test fail. The residual risk is written into `JPANEL_PLAN.md` §5: a flash that
+minted a key and then failed leaves a newest key no unit holds, and nothing records which key is
+live, because `last_used_at` is never written and RLS forbids any panel- or login-context write
+to `principals`. That is the panel roster §5 keeps asking for.
+
+##### What is known to be missing
+
+- **A panel cannot learn the other panel's name.** The blue indicator says `TO DAD`, or
+  `MESSAGE` for the twin. There is no route that answers "what is the other unit called", and
+  inventing a word for a child's sibling would be worse than saying MESSAGE. Same missing
+  mechanism as `JPANEL_PLAN.md` §5's panel roster.
+- **The cap is ten seconds, not the plan's twenty.** W3 reuses `audio.c`'s single capture
+  buffer, as the plan told it to; twenty would mean a second 320 KB buffer or doubling a
+  conversational cap whisper is already sized against. The `full` branch logs when a child
+  actually hits it.
+- **`X-Jpanel-Id` cost a trap worth naming.** `esp_http_client_get_header()` reads the REQUEST
+  headers — it returns what the panel sent, not what the box answered — and compiles, runs and
+  hands back NULL forever. Response headers reach a caller through the event handler alone.
+  Losing that id means a message that plays every time the panel asks.
+
 
 ### 10.5 Three findings from the board in hand
 

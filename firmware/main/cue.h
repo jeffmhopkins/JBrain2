@@ -72,6 +72,12 @@ typedef enum {
     CUE_LISTEN, /* the microphone opened — rising, because that is the prosody of a question */
     CUE_STOP,   /* the conversation ended on purpose — the same gesture falling */
     CUE_OOPS,   /* the turn failed. Low, falling, rough. Try again, not told off. */
+    /* --- voice post, and they are two EVENTS rather than two versions of "something
+       happened". The message leaving and a message arriving are opposite directions and the
+       sounds say so; reusing the label's toggle for "sent" was the 26-cue problem coming
+       back, one event at a time. */
+    CUE_SENT,   /* the message went — three notes climbing away */
+    CUE_MESSAGE,/* one arrived — a soft falling pair, because this rings in a bedroom */
     CUE_COUNT,
 } cue_t;
 

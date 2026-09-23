@@ -10,6 +10,8 @@ principals and that label is the only thing marking one.
 import re
 from pathlib import Path
 
+from fastapi.routing import APIRoute
+
 from jbrain.api import jpanel
 
 
@@ -98,3 +100,51 @@ class TestMessageShape:
         assert msg.played_at is None
         assert msg.from_name == "Ellie"
         assert msg.to_name == "Dad"
+
+
+class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
+    """THE FIRMWARE HARDCODES THESE FOUR PATHS AND NOTHING ELSE COULD CATCH A MOVE.
+
+    `firmware/main/jpanel.c` builds `<api>/jpanel/<path>` with `snprintf`. Nothing on the panel
+    can be tested on a host (the file needs the ESP HTTP client), and the box cannot tell a
+    panel it is knocking on the wrong door — a 404 from `GET /waiting` is indistinguishable
+    from "nobody sent me anything", so the whole feature reads as merely quiet.
+
+    That is not hypothetical. W3 was written against `JPANEL_PLAN.md` §3b, which put these
+    under the device surface at `/api/endpoint/jpanel/*` beside `/endpoint/converse`; W2 had
+    mounted them at `/api/jpanel/*` instead, and the mismatch survived a clean build, a green
+    host suite and a byte-compared image. It was found by asking the live box.
+
+    So the paths are pinned from this end, where a test can actually run, and the firmware
+    comment names this test by name.
+    """
+
+    def test_the_four_panel_routes_keep_their_paths(self) -> None:
+        # `routes` is typed as `BaseRoute`, which has neither `path` nor `methods` — only the
+        # `APIRoute` subclass does. Narrowed rather than ignored, so a route type that really
+        # has no path (a mount, a websocket) is skipped instead of crashing the pin.
+        paths = {
+            (route.path, method)
+            for route in jpanel.router.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+            if method != "HEAD"
+        }
+        assert ("/jpanel/send", "POST") in paths
+        assert ("/jpanel/waiting", "GET") in paths
+        assert ("/jpanel/next", "GET") in paths
+        assert ("/jpanel/played", "POST") in paths
+
+    def test_the_firmware_builds_exactly_that_base(self) -> None:
+        """Read out of the firmware, so the two cannot drift without one of them failing."""
+        # parents[3] is the repo root — one further out than the backend-local reads above.
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"%s/jpanel%s", s_cfg->api, path' in src, (
+            "firmware/main/jpanel.c no longer builds <api>/jpanel/<path>; "
+            "the routes above moved with it or the panel is about to 404"
+        )
+        # And the four suffixes it passes to that helper.
+        for suffix in ('"/send?to=%s"', '"/waiting"', '"/next"', '"/played"'):
+            assert suffix in src, f"the firmware stopped asking for {suffix}"

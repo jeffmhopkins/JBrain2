@@ -1,6 +1,8 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** Proposed · **Last verified:** 2026-09-22 · **Waves:** W1◻ W2◻ W3◻ W4◻
+> **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> — W2 and W4 shipped together in #1498; W3 is the firmware in this branch (0.2.88) and is
+> **built but not yet run on a panel**. W1 (the screen that sleeps) is the one left.
 
 The owner, across two asks:
 
@@ -206,7 +208,27 @@ clients of W2 and a route that moves under them costs two rewrites. This section
 source of truth; if an implementation disagrees with it, the implementation is wrong or this
 section gets edited first.
 
-### Panel-facing — `/api/endpoint/jpanel/*`, `Authorization: Bearer <device_key>`
+### Panel-facing — `/api/jpanel/*`, `Authorization: Bearer <device_key>`
+
+> **CORRECTED 2026-09-23, and the correction cost a bug.** This section said
+> `/api/endpoint/jpanel/*` — the device surface, beside `/endpoint/converse` — on the argument
+> that panel routes belong with the other panel routes. **W2 did not build it that way**: it
+> mounted one `/jpanel` router carrying both the panel's four and the owner's four, so the
+> panel's live paths are `/api/jpanel/*`. Nothing noticed, because the section above says this
+> contract is the source of truth and W3's firmware was written from it — so the panel asked
+> for `/api/endpoint/jpanel/waiting`, got a 404, and **a 404 there is indistinguishable from
+> "nobody sent me anything"**. The feature would have shipped looking merely quiet.
+>
+> Corrected to what is deployed rather than the reverse: the backend is live and the PWA
+> already calls it, and moving production routes to match a document buys nothing a rename
+> would not cost twice. Auth is per-route (`PanelDep` vs `OwnerDep`), so sharing a prefix is
+> not a hole — but it does mean the device surface is no longer one prefix, which is the thing
+> to weigh if a future wall ever gates by path.
+>
+> Pinned now from the end that can run: `test_the_panel_facing_routes_are_where_the_firmware_looks`
+> in `backend/tests/unit/test_jpanel_api.py` reads the URL out of `firmware/main/jpanel.c` and
+> fails if either side moves. Nothing on the host can check a URL the firmware builds, which is
+> why this went unseen through a clean build, a green host suite and a byte-compared image.
 
 | route | takes | gives |
 |---|---|---|
@@ -290,12 +312,77 @@ costs two rewrites.
 
 ## 5. Open, and deliberately not guessed
 
+- **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
+  `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
+  is `CAPTURE_MAX_MS` — ten seconds, claimed once at start-up because a heap request in the
+  middle of a four-year-old talking is a failure with no good outcome. Twenty would mean
+  either a second 320 KB buffer or doubling a conversational cap that whisper's flat ~10.7 s
+  is already sized against. Ten seconds of a four-year-old is a long message; revisit it if
+  the twins actually hit the ceiling, which the `full` branch logs when they do.
+  **Playback is NOT capped at ten**, and that was a real bug on the way past: `audio_play`
+  truncated everything at the REPLY ceiling, so a typed message from Dad (600 characters
+  through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
+  any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
+  so in the log when it still has to cut.
+- **A panel cannot learn the other panel's name**, so the blue recording indicator says
+  `TO DAD` or, for the twin, `MESSAGE`. There is no route that answers "what is the other
+  unit called" — `GET /waiting` names a sender only when something is already waiting — and
+  inventing a word for a child's twin would be worse than saying MESSAGE. The caption ticker
+  shows the phrase they just said in the same frame, so the recipient is on the glass either
+  way. This is the same missing mechanism as the bullet below about enumerating panels, and
+  it wants the same fix: a panel roster.
 - **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
   not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
   on it.
 - **Retention.** 30 days after playing is a proposal. Unplayed-forever is not.
 - **More than two panels.** The refusal rule above is safe but unhelpful; addressing by name
   needs the twins' names in the offline vocabulary, which the owner has deferred.
+- **Panel-to-panel post could never have worked, for two reasons found on the live box**
+  (2026-09-23, both fixed, both with tests that fail when reverted):
+
+  1. **RLS.** `principals_select` opens for the owner, for `auth_ctx()` in
+     ('login','bootstrap'), and for a principal reading ITS OWN ROW. `send` resolved "the
+     other panel" inside a session scoped to the *asking panel*, so the roster it read held
+     exactly one row — itself — `others` was always empty and **every sibling message answered
+     409, on any box, from the first commit**. Two more symptoms shared the cause: the pop-up
+     never learned who a message was from, and `GET /next`'s `X-Jpanel-From` always said "the
+     other one".
+
+     Fixed by reading the roster under the narrow `login` context in a session of its own, NOT
+     by widening the policy. That ordering is the security posture: a panel must not be able
+     to enumerate principals — it says "the other panel" and the box decides. Widening
+     `principals_select` would hand a device on a bedroom wall the whole principal table,
+     `key_hash` included, to answer a question it should never have been asking.
+
+  2. **Every `/flash` mints a key and nothing retires the old one.** The live box carried
+     **thirteen** unrevoked principals labelled `panel Elora` — one physical panel, re-flashed
+     — plus two unnamed, so the roster held fifteen candidates where `send` needs exactly one.
+     The roster now keeps one row per NAME, newest `created_at` winning, which is right rather
+     than merely tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the
+     one that panel is using and every older one is dead by construction. No liveness signal
+     is needed, which is why this did not wait on one.
+
+     `send` also excludes by NAME rather than by id, because a panel still running a
+     superseded key is not in the roster under its own id — filtering on `pid != principal.id`
+     would leave its own name in the list and post the child's message back to the unit they
+     spoke into.
+
+  **The residual risk is a dead letter, and it is the one §5 has always described.** RLS
+  delivers on `recipient_device = app.principal_id`, so a message is readable only by the
+  exact key it was addressed to. Newest-key-per-name is right whenever the last `/flash`
+  reached the panel; a flash that minted a key and then failed leaves a newest key no unit
+  holds, and messages to that name go nowhere. Not a leak — the panel simply never sees a
+  pop-up — and not fixable without knowing which key is LIVE, which nothing records:
+  `principals.last_used_at` is never written and RLS forbids any panel- or login-context
+  write to that table (`principals_update` needs owner or bootstrap). That is the panel
+  roster this section keeps asking for, and it is the next thing to build if a message ever
+  goes missing.
+
+  **The cost is naming.** Two physical panels flashed with the SAME name collapse to one row
+  and one twin becomes unreachable. Not a regression — a child saying "send a message" could
+  not have picked between two panels called Elora either — but it is now the one thing that
+  breaks addressing, so the collapse is logged.
+
 - **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
   ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
   an OwnTracks phone — and the only thing marking one is the label `/flash` writes:
