@@ -23,7 +23,9 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import string
 import time
+import uuid
 from typing import Literal, cast
 
 import httpx
@@ -95,6 +97,16 @@ class Waiting(BaseModel):
 
     count: int = 0
     from_name: str = ""
+    # WHO THE OTHER PANEL IS, so the blue recording indicator can say TO ELORA rather than
+    # MESSAGE. A panel had no way to ask that — there was no route for it, and inventing a word
+    # for a child's twin would be worse than the placeholder — so the gap was written into
+    # `display.c` as an honest one. This is the answer, and it rides the poll the panel already
+    # makes rather than adding a second one.
+    #
+    # Empty unless there is EXACTLY ONE other panel, which is the same rule `send(to="panel")`
+    # already enforces: with two siblings "the other one" is not a name, it is a question, and
+    # a label that guesses would put the wrong child on the glass.
+    sibling: str = ""
 
 
 class Message(BaseModel):
@@ -435,9 +447,12 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             )
         ).first()
         count = int(row[0]) if row else 0
+        # ONCE PER POLL, AND UNCONDITIONALLY. It used to be read only when something was
+        # waiting; the indicator it now also feeds is drawn while a child is RECORDING, which
+        # is precisely the case where nothing is. Two small queries twice a minute.
+        names = await _panel_names(request.app.state.session_maker)
         from_name = ""
         if count:
-            names = await _panel_names(request.app.state.session_maker)
             oldest = (
                 await session.execute(
                     text(
@@ -453,7 +468,10 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             ).first()
             if oldest:
                 from_name = _name_of(names, oldest[0], oldest[1])
-    return Waiting(count=count, from_name=from_name)
+        me = _display_name(principal.label)
+        others = [n for pid, n in names.items() if pid != str(principal.id) and n != me]
+        sibling = others[0] if len(others) == 1 else ""
+    return Waiting(count=count, from_name=from_name, sibling=sibling)
 
 
 @router.get("/next")
@@ -577,6 +595,150 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
             continue
         thread.messages.append(_row_to_message(row, names))
     return Threads(panels=list(threads.values()))
+
+
+# THE PANEL'S FONT IS THE REAL CONSTRAINT ON A NAME, not taste and not the column width.
+#
+# `font.c` carries 5x7 cells for A-Z, the digits, space, hyphen and full stop — and nothing
+# else, uppercase only, because at that size a lowercase set is a second alphabet with
+# descenders to place. A character it does not have draws as NOTHING, so a name with an
+# apostrophe in it would reach a four-year-old as a pop-up from someone whose name is missing a
+# letter. Rejected at the door instead, where the owner is standing and can retype it.
+_PANEL_NAME_CHARS = frozenset(string.ascii_uppercase + string.digits + " -.")
+
+# Fourteen, and the number is arithmetic rather than a guess. The pop-up's bubble is 296 px
+# wide with 32 px of padding, and `font_text_w` is `(n * 5 + (n - 1)) * scale`: at the shrunk
+# scale of 3 that leaves 14 characters, and `draw_popup` shrinks rather than clips precisely so
+# a long name still names somebody. Eleven or fewer renders at the full scale of 4.
+MAX_PANEL_NAME = 14
+
+
+def _panel_name(raw: str) -> str:
+    """The typed name, normalised, or a 422 that says what is wrong with it.
+
+    Pure and separate from the route because it is the half that can be tested without a
+    database — and because it is the half coupled to something two packages away: the panel's
+    5x7 font."""
+    name = " ".join(raw.split())
+    if not name or any(c not in _PANEL_NAME_CHARS for c in name.upper()):
+        raise HTTPException(
+            status_code=422,
+            detail="a panel name may use letters, digits, spaces, hyphens and full stops only",
+        )
+    if name.lower() == _display_name(_UNNAMED_LABEL):
+        # The name an UNNAMED panel already answers to. Typed as a real name it would produce
+        # two panels the PWA and the pop-up both call "the other one", which is the one
+        # ambiguity this whole route exists to remove.
+        raise HTTPException(status_code=409, detail="that is what an unnamed panel is called")
+    return name
+
+
+class RenamePanel(BaseModel):
+    name: str = Field(min_length=1, max_length=MAX_PANEL_NAME)
+
+
+class Renamed(BaseModel):
+    device_id: str
+    name: str
+    # HOW MANY KEYS MOVED, because the answer is routinely not one and the owner should see
+    # that rather than wonder. Every `/flash` mints a fresh device key and nothing retires the
+    # old one, so a panel flashed four times is four principals carrying one label.
+    keys: int
+
+
+@router.post("/panels/{device_id}/name")
+async def rename_panel(
+    device_id: str, owner: OwnerDep, request: Request, body: RenamePanel
+) -> Renamed:
+    """Name a panel, from the PWA, with no cable and no re-flash.
+
+    **The name a panel is known by lives on the BOX, not in its firmware.** `/flash` writes
+    `panel <name>` onto the device key it mints, and everything the twins actually see —
+    the thread in the PWA, the `X-Jpanel-From` a sibling's pop-up reads out — comes from that
+    label. So a panel enrolled without a name announces itself as "the other one" forever, and
+    until this route the only way to correct it was to re-flash a unit over USB. That is a
+    terminal by another name, which CLAUDE.md #10 exists to stop.
+
+    **EVERY KEY UNDER THE OLD LABEL MOVES, AND THAT IS THE WHOLE DESIGN.** `_panel_names`
+    collapses the roster with `DISTINCT ON (label)` because a re-flashed panel leaves its dead
+    keys behind — the label IS the identity in this model. Renaming only the newest key would
+    therefore leave the older ones sitting under the old name, and the roster would grow a
+    second panel: a "the other one" thread pointing at a principal nothing can reach, next to
+    the freshly-named one. Moving the group keeps the collapse true.
+
+    **`{device_id}` IS THE PANEL'S PRINCIPAL ID — the one `GET /messages` puts on a thread —
+    and NOT the subject id `POST /api/devices` echoes back.** The two id spaces both exist
+    here: a device's stable identity is its subject, while a panel is addressed, stored against
+    and collapsed by its PRINCIPAL, because that is what mints a key and carries the label. So
+    this route addresses principals, and `/api/devices/{id}/rename` — which takes the subject —
+    is a different control on a different thing despite the identical name. Renaming a panel
+    through that one moves one device's label and leaves the roster alone.
+
+    Refused when the name is already another panel's, because `_panel_names` keeps one row per
+    label: two panels called Elora become one row and one twin becomes unreachable. That is the
+    one failure this addressing model has, it is documented where it is caused, and it must not
+    be reachable from a text box."""
+    name = _panel_name(body.name)
+    label = f"panel {name}"
+    try:
+        # Checked here rather than left to the cast below: a path segment that is not a uuid
+        # would reach Postgres and come back as a 500, which reads as the box being broken
+        # rather than as a link that has gone stale.
+        uuid.UUID(device_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="no such panel") from None
+
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        current = (
+            await session.execute(
+                text(
+                    """
+                    SELECT label FROM app.principals
+                    WHERE id = CAST(:dev AS uuid) AND kind = 'device_key'
+                      AND revoked_at IS NULL
+                      AND (label LIKE 'panel%' OR label = :unnamed)
+                    """
+                ),
+                {"dev": device_id, "unnamed": _UNNAMED_LABEL},
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            raise HTTPException(status_code=404, detail="no such panel")
+        taken = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM app.principals
+                    WHERE kind = 'device_key' AND revoked_at IS NULL
+                      AND lower(label) = lower(:label) AND label <> :current
+                    """
+                ),
+                {"label": label, "current": str(current)},
+            )
+        ).scalar_one()
+        if int(taken) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"another panel is already called {name} — two panels with one name "
+                "collapse to one and a twin becomes unreachable",
+            )
+        moved = len(
+            (
+                await session.execute(
+                    text(
+                        """
+                        UPDATE app.principals SET label = :label
+                        WHERE kind = 'device_key' AND revoked_at IS NULL AND label = :current
+                        RETURNING 1
+                        """
+                    ),
+                    {"label": label, "current": str(current)},
+                )
+            ).all()
+        )
+        await session.commit()
+    log.info("jpanel.panel_renamed", device=device_id, was=str(current), now=label, keys=moved)
+    return Renamed(device_id=device_id, name=_display_name(label), keys=int(moved))
 
 
 @router.post("/messages", status_code=201)

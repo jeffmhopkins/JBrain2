@@ -465,13 +465,21 @@ costs two rewrites.
   through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
   any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
   so in the log when it still has to cut.
-- **A panel cannot learn the other panel's name**, so the blue recording indicator says
-  `TO DAD` or, for the twin, `MESSAGE`. There is no route that answers "what is the other
-  unit called" — `GET /waiting` names a sender only when something is already waiting — and
-  inventing a word for a child's twin would be worse than saying MESSAGE. The caption ticker
-  shows the phrase they just said in the same frame, so the recipient is on the glass either
-  way. This is the same missing mechanism as the bullet below about enumerating panels, and
-  it wants the same fix: a panel roster.
+- ~~**A panel cannot learn the other panel's name**~~ — **CLOSED (0.2.93).**
+
+  The gap was real and the placeholder was honest: a panel is flashed with its OWN name, the
+  box mints the other one's at the OTHER unit's flash, and no route answered "what is my twin
+  called", so the blue recording indicator said `TO DAD` or, for the sibling, `MESSAGE`.
+  Inventing a word for a child's twin would have been worse.
+
+  `GET /waiting` now carries `sibling`, so it says `TO ELORA`. It rides the poll the panel was
+  already making rather than adding a route, and the box answers only where there is EXACTLY
+  ONE other panel — the same rule `send(to="panel")` follows, because with two siblings "the
+  other one" is a question rather than a name and a guess puts the wrong child on the glass.
+  `MESSAGE` remains for that case, for a single-panel box, and for the moments before the
+  first poll. The caption ticker still shows the phrase they just said in the same frame, so
+  the recipient was on the glass either way; this makes it the name.
+
 - **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
   not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
   on it.
@@ -524,6 +532,25 @@ costs two rewrites.
   not have picked between two panels called Elora either — but it is now the one thing that
   breaks addressing, so the collapse is logged.
 
+- **A panel can be NAMED from the PWA now, which is not the same as the roster being a
+  mechanism.** `POST /api/jpanel/panels/{id}/name` writes the `panel <name>` label the
+  convention below turns on, so a unit enrolled without a name no longer needs a cable to stop
+  being "the other one" — which was a re-flash over USB, i.e. a terminal, for a fault the owner
+  can see from his phone (CLAUDE.md #10). Two things about it are worth keeping in mind:
+
+  1. **It moves every unrevoked key under the old label, not the one addressed.** The label IS
+     the identity while `_panel_names` collapses with `DISTINCT ON (label)`; renaming one key
+     would leave the superseded ones under the old name and grow a second, unreachable panel in
+     the roster. Asserted against real Postgres in `test_jpanel_rename_pg.py`, which fails when
+     the `UPDATE` is narrowed to the addressed id.
+  2. **The name is constrained by the PANEL'S FONT, two packages away.** `font.c` has 5x7 cells
+     for A-Z, the digits, space, hyphen and full stop and nothing else, and a character it does
+     not have draws as *nothing* — so "O'Brien" would reach a four-year-old as a pop-up from
+     someone missing a letter. The route refuses those at the door and the cap (14) is the
+     arithmetic of `draw_popup`'s bubble at its shrunk scale. Both ends are read out of the
+     firmware by unit tests rather than transcribed.
+
+  It does not make the convention a mechanism, and the bullet below still stands.
 - **There is no way to enumerate panels that is a mechanism rather than a convention**, and W2
   ran into it immediately. A panel is an ordinary `device_key` principal — the same substrate as
   an OwnTracks phone — and the only thing marking one is the label `/flash` writes:

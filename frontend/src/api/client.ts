@@ -5021,6 +5021,25 @@ export const api = {
     return (await response.json()) as JpanelMessage;
   },
 
+  // NAME A PANEL, WITH NO CABLE. A panel's name lives on the box — `/flash` writes
+  // `panel <name>` onto the device key it mints — so a unit enrolled without one announces
+  // itself to its sibling as "the other one" until somebody re-flashes it over USB. This is
+  // what removes that cable (CLAUDE.md #10).
+  //
+  // `keys` comes back because the answer is routinely not one: every flash mints a fresh key
+  // and nothing retires the old one, so a panel flashed four times is four principals carrying
+  // one label, and all of them move together or the roster grows a second, unreachable panel.
+  async renameJpanelPanel(
+    deviceId: string,
+    name: string,
+  ): Promise<{ device_id: string; name: string; keys: number }> {
+    const response = await request(
+      `/api/jpanel/panels/${encodeURIComponent(deviceId)}/name`,
+      jsonInit("POST", { name }),
+    );
+    return (await response.json()) as { device_id: string; name: string; keys: number };
+  },
+
   // Clear one panel's conversation. The box refuses to delete a message a child has not heard
   // yet (JPANEL_PLAN.md §5: a message nobody heard must not evaporate), and returns how many
   // it kept so this surface can SAY so — a clear that silently leaves rows behind is worse

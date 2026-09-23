@@ -651,7 +651,10 @@ describe("mock API", () => {
   it("serves jpanel messages grouped by panel, newest first", async () => {
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
     const ellie = out.panels.find((p) => p.name === "Ellie");
-    const mabel = out.panels.find((p) => p.name === "Mabel");
+    // BY ID, NOT BY NAME. The second twin's panel is unnamed in the fixture — which is the
+    // live box's own state and the case the rename control exists for — and a name is now a
+    // thing the owner can change from the screen, so it cannot be an identity here.
+    const mabel = out.panels.find((p) => p.device_id === "panel-mabel");
     expect(ellie?.unplayed).toBe(2);
     expect(mabel?.messages).toEqual([]);
     expect(mabel?.unplayed).toBe(0);
@@ -700,7 +703,7 @@ describe("mock API", () => {
     expect(sent.transcript).toBe("goodnight, see you in the morning");
 
     const out = (await (await call("/api/jpanel/messages")).json()) as JpanelMessages;
-    const mabel = out.panels.find((p) => p.name === "Mabel");
+    const mabel = out.panels.find((p) => p.device_id === "panel-mabel");
     expect(mabel?.messages[0]?.id).toBe(sent.id);
     // Dad's own message is not something Dad has to play: the badge counts what the
     // panels sent HIM.

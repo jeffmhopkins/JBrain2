@@ -945,15 +945,33 @@ static void draw_listening(uint16_t *fb, int y0, uint32_t now)
    the act is the part a child already knows — they just asked for it — and who it is going to
    is the part they cannot see.
  *
- * "TO DAD" IS KNOWN AND THE SIBLING'S NAME IS NOT, which is an honest gap rather than a
- * placeholder: a panel has no way to ask the box what the other unit is called (there is no
- * route for it — JPANEL_PLAN.md §5 wants a panel roster for exactly this class of question),
- * and inventing a word for a child's twin would be worse than saying MESSAGE. The caption
- * ticker is showing the phrase they said in the same frame, so the recipient is on the glass
- * either way. */
+ * THE SIBLING'S NAME USED TO BE UNKNOWABLE HERE, and the placeholder MESSAGE was the honest
+ * way to say so: a panel is flashed with its OWN name and the box mints the other one's at the
+ * other unit's flash, so nothing on this device could answer "who is my twin". `GET /waiting`
+ * now carries it — it is a poll that was already happening — and the fallback stays for the
+ * cases the box deliberately declines to answer: before the first poll, on a box with one
+ * panel, and on a box with three, where "the other one" is a question rather than a name and a
+ * guess would put the wrong child on the glass. */
 static void draw_recording(uint16_t *fb, int y0, uint32_t now, jpanel_to_t to)
 {
-    draw_indicator(fb, y0, now, SWAP16(0x001F), to == JPANEL_TO_DAD ? "TO DAD" : "MESSAGE");
+    if (to == JPANEL_TO_DAD) {
+        draw_indicator(fb, y0, now, SWAP16(0x001F), "TO DAD");
+        return;
+    }
+    /* "TO " plus the longest name the box will accept, uppercased: the font has no lowercase
+       (`font.c`), so a name typed in the PWA has to be shouted here exactly as the pop-up
+       shouts it. */
+    char who[40];
+    char name[32];
+    if (jpanel_sibling(name, sizeof(name)) <= 0) {
+        draw_indicator(fb, y0, now, SWAP16(0x001F), "MESSAGE");
+        return;
+    }
+    snprintf(who, sizeof(who), "TO %s", name);
+    for (char *q = who; *q != '\0'; q++) {
+        if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
+    }
+    draw_indicator(fb, y0, now, SWAP16(0x001F), who);
 }
 
 /* THE POP-UP, AND IT IS THE ONLY THING ON THIS GLASS THAT COVERS THE PET.

@@ -261,6 +261,47 @@ describe("JpanelScreen messages", () => {
     expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-ellie");
   });
 
+  it("names a panel from here, and says how many device keys moved", async () => {
+    /* THE CABLE THIS REMOVES. A panel's name lives on the box — `/flash` writes it onto the
+       device key it mints — so a unit enrolled without one calls itself "the other one" to its
+       sibling until somebody re-flashes it over USB (CLAUDE.md #10).
+
+       The key count is said out loud because it is routinely not one: every flash mints a
+       fresh key and nothing retires the old one, and they all have to move together or the
+       roster grows a second panel still called "the other one" that nothing can reach. */
+    vi.spyOn(window, "prompt").mockReturnValue("Nora");
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (/^\/api\/jpanel\/panels\/[^/]+\/name$/.test(path) && method === "POST") {
+        return json({ device_id: "panel-ellie", name: "Nora", keys: 3 });
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Rename Ellie/ }));
+    expect(await screen.findByText(/3 device keys moved/)).toBeTruthy();
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/panels/"));
+    expect(String(call?.[0])).toBe("/api/jpanel/panels/panel-ellie/name");
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ name: "Nora" });
+  });
+
+  it("does not rename when the prompt is dismissed or the name is unchanged", async () => {
+    /* `window.prompt` returns null for cancel and the current name when someone opens it and
+       thinks better of it. Neither is a request to rename anything. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    const button = await screen.findByRole("button", { name: /Rename Ellie/ });
+
+    vi.spyOn(window, "prompt").mockReturnValue(null);
+    fireEvent.click(button);
+    vi.spyOn(window, "prompt").mockReturnValue("  Ellie  ");
+    fireEvent.click(button);
+
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/panels/"))).toBe(false);
+  });
+
   it("does not clear when the confirm is declined", async () => {
     /* The one control here that destroys a child's words. Everything else on this surface is
        recoverable by waiting. */

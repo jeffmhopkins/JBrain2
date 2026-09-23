@@ -10,6 +10,8 @@ principals and that label is the only thing marking one.
 import re
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
 from jbrain.api import jpanel
@@ -353,3 +355,135 @@ class TestTheHeardRingCrossesThePackageBoundary:
             "the telemetry body no longer carries four fields per decode; the box accepts them "
             "and nothing is sending them"
         )
+
+
+class TestNamingAPanelWithoutACable:
+    """The rename, and the two packages it is coupled to at once.
+
+    A panel's name lives on the BOX — `/flash` writes `panel <name>` onto the device key it
+    mints — so a unit enrolled without one announces itself as "the other one" until somebody
+    re-flashes it over USB. That is a terminal by another name (CLAUDE.md #10), and the route
+    this class covers is what removes it.
+
+    What cannot be checked here is the SQL: the group rename runs against real Postgres in
+    `tests/integration/test_jpanel_rename_pg.py`, where the policies are. What CAN be checked
+    without a database is the name itself, and the name is constrained by a file two packages
+    away that nothing else connects to this one.
+    """
+
+    @staticmethod
+    def _font_source() -> str:
+        return (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.c").read_text(
+            encoding="utf-8"
+        )
+
+    def test_a_name_is_normalised_rather_than_taken_literally(self) -> None:
+        assert jpanel._panel_name("  Nora  ") == "Nora"
+        assert jpanel._panel_name("Mary   Jane") == "Mary Jane"
+
+    def test_a_name_the_panel_cannot_draw_is_refused_at_the_door(self) -> None:
+        """A character the 5x7 font has no cell for draws as NOTHING. A name with an
+        apostrophe would reach a four-year-old as a pop-up from someone missing a letter, and
+        the only person who can fix that is the owner, who is standing at the text box."""
+        for bad in ("O'Brien", "Zoë", "panel #2", "", "   "):
+            with pytest.raises(HTTPException) as caught:
+                jpanel._panel_name(bad)
+            assert caught.value.status_code == 422
+
+    def test_the_name_an_unnamed_panel_already_answers_to_is_reserved(self) -> None:
+        """Typed as a real name it would produce two panels that the PWA and the pop-up both
+        call "the other one" — the exact ambiguity this route exists to remove."""
+        with pytest.raises(HTTPException) as caught:
+            jpanel._panel_name("The Other One")
+        assert caught.value.status_code == 409
+
+    def test_every_character_the_route_allows_is_one_the_panel_can_draw(self) -> None:
+        """THE COUPLING, PINNED, AND IN THE DIRECTION THAT MATTERS. The allowed set is written
+        here and the glyphs are written in `firmware/main/font.c`; nothing but this test says
+        they have to agree. Read the glyph table out of the firmware rather than trusting a
+        transcription — a name accepted by the box and unrenderable by the panel is a bug with
+        no symptom on this side of the wire."""
+        src = self._font_source()
+        glyphs = {
+            # `{'A', {0x7E, ...}}` — the character literal each cell is keyed by. The space
+            # glyph is written `{' ', ...}` like any other, so one pattern finds them all.
+            match.group(1)
+            for match in re.finditer(r"\{'(.)', \{0x", src)
+        }
+        assert len(glyphs) > 30, "the glyph table did not parse; re-pin this test"
+        missing = {c for c in jpanel._PANEL_NAME_CHARS if c not in glyphs}
+        assert not missing, (
+            f"the rename accepts {sorted(missing)}, which the panel's font cannot draw — "
+            "a name with one of those in it reaches a child with a letter missing"
+        )
+
+    def test_the_cap_fits_the_buffer_the_panel_receives_it_in(self) -> None:
+        """`X-Jpanel-From` lands in a fixed `char s_wait_from[N]` and is drawn from there.
+        A name that overruns it arrives truncated — a name cut in half names nobody, which is
+        the same reason `draw_popup` shrinks rather than clips."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(r"static char s_wait_from\[(\d+)\];", src)
+        assert match is not None, "the panel's from-name buffer moved; re-pin this test"
+        assert int(match.group(1)) > jpanel.MAX_PANEL_NAME, (
+            f"names up to {jpanel.MAX_PANEL_NAME} characters are accepted into a "
+            f"{match.group(1)}-byte buffer"
+        )
+
+    def test_the_cap_fits_the_bubble_the_panel_draws_it_in(self) -> None:
+        """And the other end of the same name: the pop-up. `font_text_w` is
+        `(n * FONT_W + (n - 1)) * scale`, the bubble is `bw` wide with the padding
+        `draw_popup` subtracts before it decides to shrink — so the longest accepted name has
+        to fit at the shrunk scale, or it overruns the box it is centred in. All four numbers
+        are read out of the firmware rather than assumed."""
+        display = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
+            encoding="utf-8"
+        )
+        # Sliced to `draw_popup` first: the smaller badge drawn after fifteen seconds has its
+        # own `bw`, and a search over the whole file finds whichever comes first rather than
+        # the box the name is actually centred in.
+        start = display.index("static void draw_popup(")
+        popup = display[start : display.index("\n}", start)]
+        scale = re.search(r"#define POPUP_SCALE (\d+)", display)
+        box = re.search(r"const int bw = (\d+), bh = \d+;", popup)
+        pad = re.search(r"w > bw - (\d+) \?", popup)
+        width = re.search(r"#define FONT_W (\d+)", font_h)
+        assert scale and box and pad and width, "the pop-up's geometry moved; re-pin this test"
+        n = jpanel.MAX_PANEL_NAME
+        drawn = (n * int(width.group(1)) + (n - 1)) * int(scale.group(1))
+        assert drawn <= int(box.group(1)) - int(pad.group(1)), (
+            f"a {n}-character name draws {drawn} px wide into a "
+            f"{int(box.group(1)) - int(pad.group(1))} px bubble"
+        )
+
+    def test_the_panel_reads_the_sibling_name_this_poll_serves(self) -> None:
+        """The other half of the name, and the other direction of the same coupling. The blue
+        recording indicator said MESSAGE because nothing on the panel could answer "who is my
+        twin" — it is flashed with its OWN name and the box mints the other one's at the other
+        unit's flash. `GET /waiting` carries it now, and a field the box spends bytes on that
+        the firmware never reads is exactly the fault `tap` shipped with for months."""
+        assert "sibling" in jpanel.Waiting.model_fields
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
+            encoding="utf-8"
+        )
+        assert '"sibling"' in src, "the panel stopped reading the sibling name off the poll"
+        display = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+        ).read_text(encoding="utf-8")
+        assert "jpanel_sibling(" in display, (
+            "the recording indicator no longer asks who the message is going to"
+        )
+
+    def test_the_route_is_where_the_pwa_will_look(self) -> None:
+        paths = {
+            (route.path, method)
+            for route in jpanel.router.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+            if method != "HEAD"
+        }
+        assert ("/jpanel/panels/{device_id}/name", "POST") in paths

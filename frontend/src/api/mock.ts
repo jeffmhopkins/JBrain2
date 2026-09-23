@@ -3563,8 +3563,12 @@ const MOCK_JPANEL: JpanelThread[] = [
     ],
   },
   {
+    // UNNAMED ON PURPOSE. A panel flashed without a name announces itself as "the other one"
+    // — which is the live box's actual state for the second twin, and the case the rename
+    // control exists for. A fixture where both panels were already named would validate a
+    // screen nobody needs.
     device_id: "panel-mabel",
-    name: "Mabel",
+    name: "the other one",
     unplayed: 0,
     messages: [],
   },
@@ -5319,6 +5323,30 @@ export const mockFetch: typeof fetch = async (input, init) => {
       if (row) row.played_at ??= new Date().toISOString();
     }
     return new Response(null, { status: 204 });
+  }
+  // Naming a panel, with no cable. The name lives on the box rather than in the panel's
+  // firmware, so this is an ordinary write — and the key count is part of the answer because
+  // every flash mints another device key under the same label.
+  const jpName = path.match(/^\/api\/jpanel\/panels\/([^/]+)\/name$/);
+  if (jpName && method === "POST") {
+    const thread = MOCK_JPANEL.find((t) => t.device_id === jpName[1]);
+    if (!thread) return json({ detail: "no such panel" }, 404);
+    const name = String(JSON.parse(String(init?.body ?? "{}")).name ?? "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (!name || !/^[A-Za-z0-9 .-]+$/.test(name)) {
+      return json(
+        { detail: "a panel name may use letters, digits, spaces, hyphens and full stops only" },
+        422,
+      );
+    }
+    if (MOCK_JPANEL.some((t) => t !== thread && t.name.toLowerCase() === name.toLowerCase())) {
+      return json({ detail: `another panel is already called ${name}` }, 409);
+    }
+    thread.name = name;
+    // Three, because the live box's unnamed panel had been flashed more than once and the
+    // count is the thing worth seeing on this screen.
+    return json({ device_id: thread.device_id, name, keys: 3 });
   }
   if (path === "/api/jpanel/messages" && method === "DELETE") {
     const dev = url.searchParams.get("device") ?? "";
