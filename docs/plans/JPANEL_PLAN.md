@@ -330,13 +330,27 @@ tempting fix is to stamp `played_at` in `GET .../audio`, and it is wrong for the
 next paragraph gives: the expected interaction is READING. A father who reads the transcript and
 never presses play would leave the count sitting there forever.
 
-**Only the LAST message the owner sent is shown, with its status.** The owner: *"we shouldn't
-just keep on piling up message after message."* Inbound is untouched, and the asymmetry is the
-point: what the twins said is a record to read — losing one because a newer arrived would be
-the one unforgivable thing on this surface — while what Dad said is a control. He already knows
-it; the only live question is whether it has been heard, so the row carries that and nothing
-else stacks behind it. Display only: nothing is deleted on the box, because a hidden row is
-recoverable in a way a DELETE is not, and retention is §5's decision.
+**IT IS A CONVERSATION WINDOW, and the fix for a long one is a scroll cap, not forgetting.**
+This briefly showed only the newest outbound message, on a misreading of *"we shouldn't just
+keep on piling up message after message."* The owner corrected it: *"This is a conversation
+window. It needs to limit the max height of each panel conversation and scroll is larger. And
+add a 'clear history' button per panel."* Throwing away what was said is the wrong answer to a
+list that is too tall.
+
+So each thread caps its own height and scrolls inside — which keeps every panel's compose row
+on screen at once, the layout a parent with two children actually needs, rather than one column
+metres long with the box you came to use below the fold. Each row still carries its status
+(`Heard 4m ago` / `Not heard yet`) on what the owner sent, because that is the only live
+question about something he already knows he said.
+
+**`DELETE /messages?device=` clears one panel's conversation, EXCEPT a message a child has not
+heard yet.** §5 says a message nobody heard must not evaporate, and a row addressed to a panel
+with `played_at IS NULL` is sitting on a bedroom wall waiting for a four-year-old to come back
+to it — the owner tidying his own view is not a decision about her post. A panel's unread
+message to the OWNER is a different thing and goes: that is his own badge and clearing is
+exactly the call he is making. The route returns how many it kept so the PWA can **say so**; a
+clear that silently leaves rows behind is worse than one that refuses, because the whole point
+of the button is that the list afterwards matches what he expects.
 
 **`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
 work; the audio is the fallback for when the transcript does not make sense — which, given how

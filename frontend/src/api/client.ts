@@ -5015,6 +5015,17 @@ export const api = {
     return (await response.json()) as JpanelMessage;
   },
 
+  // Clear one panel's conversation. The box refuses to delete a message a child has not heard
+  // yet (JPANEL_PLAN.md §5: a message nobody heard must not evaporate), and returns how many
+  // it kept so this surface can SAY so — a clear that silently leaves rows behind is worse
+  // than one that refuses.
+  async clearJpanelHistory(toDevice: string): Promise<{ deleted: number; kept: number }> {
+    const response = await request(`/api/jpanel/messages?device=${encodeURIComponent(toDevice)}`, {
+      method: "DELETE",
+    });
+    return (await response.json()) as { deleted: number; kept: number };
+  },
+
   // What clears the unplayed badge. Reading is the interaction this surface is built
   // around — the transcript is the content — so a message counts as heard once the owner
   // has actually seen it, not only when the audio was played. Idempotent on the box, and

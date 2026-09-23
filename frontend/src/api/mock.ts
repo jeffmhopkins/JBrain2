@@ -5320,6 +5320,17 @@ export const mockFetch: typeof fetch = async (input, init) => {
     }
     return new Response(null, { status: 204 });
   }
+  if (path === "/api/jpanel/messages" && method === "DELETE") {
+    const dev = url.searchParams.get("device") ?? "";
+    const thread = MOCK_JPANEL.find((t) => t.device_id === dev);
+    if (!thread) return json({ detail: "no such panel" }, 404);
+    // The fixture keeps the box's rule rather than clearing everything: a message a child has
+    // not heard yet survives, and the count comes back so the screen can say so.
+    const keep = thread.messages.filter((m) => m.direction === "out" && m.played_at === null);
+    const deleted = thread.messages.length - keep.length;
+    thread.messages = keep;
+    return json({ deleted, kept: keep.length });
+  }
   // Dad's own voice. Raw PCM in the body rather than JSON, so the mock asserts the SHAPE the
   // real route takes — a fixture that accepted JSON here would let a client ship that could
   // never talk to the box.

@@ -280,3 +280,44 @@
 .jp-status-heard {
   color: var(--ok, #2e7d32);
 }
+
+/* THE CONVERSATION SCROLLS RATHER THAN PUSHING EVERYTHING ELSE OFF THE PAGE.
+   Two panels each with a long history made the screen a single column metres long, and the
+   compose box — the thing you opened the app to use — ended up below the fold of a list you
+   had to scroll past to reach. Capping each thread keeps every panel's compose row on screen
+   at once, which is the layout a parent with two children actually needs.
+   `svh`, not `vh`: on a phone `vh` ignores the browser chrome and the cap comes out taller
+   than the visible area, which is the whole bug wearing a different hat. */
+.jp-msgs {
+  max-height: min(46svh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain; /* scrolling to the end must not drag the page behind it */
+}
+
+/* Destructive, so it does not sit at button weight beside the panel's name — it is reachable,
+   not prominent, and it only appears when there is something to clear. */
+.jp-clear {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.jp-clear:hover:not(:disabled) {
+  color: var(--danger, #c0392b);
+}
+
+.jp-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.jp-cleared {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}

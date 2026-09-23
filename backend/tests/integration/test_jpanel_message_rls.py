@@ -449,3 +449,77 @@ async def test_dads_recording_reaches_the_panel_it_was_addressed_to(
             )
         ).scalar_one()
     assert seen == 0, "the sibling must not hear a recording addressed to the other twin"
+
+
+async def test_clearing_a_history_keeps_what_a_child_has_not_heard(
+    maker: async_sessionmaker,
+) -> None:
+    """THE CARVE-OUT, AND IT IS THE POINT OF THE ROUTE RATHER THAN A DETAIL.
+
+    `JPANEL_PLAN.md` §5: *"unplayed messages are kept indefinitely — a message nobody heard is
+    the one thing that must not evaporate."* A row addressed to a panel with `played_at IS NULL`
+    is sitting on a bedroom wall waiting for a four-year-old to come back to it. The owner
+    tidying his own view is not a decision about her post, so the delete steps around it and
+    reports how many it left.
+
+    A panel's unread message to the OWNER is a different thing and goes: that is his own badge,
+    he is looking at the thread, and clearing is exactly the call he is making."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.jpanel_message"))
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, sender_device, recipient_kind, recipient_device,
+                     blob_sha256, composed, played_at)
+                VALUES
+                    -- from the panel to Dad, never opened: HIS badge, his call
+                    ('panel', 'panel-one', 'owner', NULL, 'clr-unread-to-dad', 'voice', NULL),
+                    -- from the panel to Dad, opened
+                    ('panel', 'panel-one', 'owner', NULL, 'clr-read-to-dad', 'voice', now()),
+                    -- from Dad to the panel, already heard
+                    ('owner', NULL, 'panel', 'panel-one', 'clr-heard', 'text', now()),
+                    -- from Dad to the panel, NOT heard: must survive
+                    ('owner', NULL, 'panel', 'panel-one', 'clr-waiting', 'text', NULL)
+                """
+            )
+        )
+        await s.commit()
+
+    async with scoped_session(maker, OWNER) as s:
+        row = (
+            await s.execute(
+                text(
+                    """
+                    WITH mine AS (
+                        SELECT id, recipient_kind, played_at
+                        FROM app.jpanel_message
+                        WHERE (sender_kind = 'panel' AND sender_device = :dev)
+                           OR (sender_kind = 'owner' AND recipient_device = :dev)
+                    ), gone AS (
+                        DELETE FROM app.jpanel_message
+                        WHERE id IN (
+                            SELECT id FROM mine
+                            WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
+                        )
+                        RETURNING 1
+                    )
+                    SELECT (SELECT count(*) FROM gone),
+                           (SELECT count(*) FROM mine
+                            WHERE recipient_kind = 'panel' AND played_at IS NULL)
+                    """
+                ),
+                {"dev": "panel-one"},
+            )
+        ).first()
+        await s.commit()
+    assert row is not None
+    assert row[0] == 3, "everything but the message still waiting to be heard"
+    assert row[1] == 1, "and the count of what survived, so the PWA can say so"
+
+    async with scoped_session(maker, OWNER) as s:
+        left = [
+            r[0]
+            for r in (await s.execute(text("SELECT blob_sha256 FROM app.jpanel_message"))).all()
+        ]
+    assert left == ["clr-waiting"], f"only the unheard message may survive, got {left}"

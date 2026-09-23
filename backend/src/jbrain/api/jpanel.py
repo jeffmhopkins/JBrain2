@@ -594,6 +594,64 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
     return _row_to_message(row, names)
 
 
+class Cleared(BaseModel):
+    deleted: int
+    kept: int
+
+
+@router.delete("/messages")
+async def clear_history(owner: OwnerDep, request: Request, device: str = Query(...)) -> Cleared:
+    """Clear one panel's conversation.
+
+    Deletes exactly the rows that panel's thread SHOWS — what it sent (to the owner or to its
+    sibling) and what the owner sent to it — because a button under a conversation that cleared
+    something else would be a button nobody could predict.
+
+    **EXCEPT A MESSAGE A CHILD HAS NOT HEARD YET, and that exception is not a nicety.**
+    `JPANEL_PLAN.md` §5: *"unplayed messages are kept indefinitely — a message nobody heard is
+    the one thing that must not evaporate."* A row addressed to a panel with `played_at IS NULL`
+    is a message sitting on a wall waiting for a four-year-old to come back to it; deleting it
+    means she never hears it and nobody ever knows it existed. The owner clearing his own view
+    is not a decision about her post.
+
+    A panel's unread message to the OWNER is a different thing and is deleted: that is his own
+    badge, he is looking at the thread, and clearing is exactly the call he is making.
+
+    The count of what was kept comes back so the PWA can SAY so. A clear that silently leaves
+    rows behind is worse than one that refuses — the whole point of the button is that the list
+    afterwards matches what he expects."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    WITH mine AS (
+                        SELECT id, recipient_kind, played_at
+                        FROM app.jpanel_message
+                        WHERE (sender_kind = 'panel' AND sender_device = :dev)
+                           OR (sender_kind = 'owner' AND recipient_device = :dev)
+                    ), gone AS (
+                        DELETE FROM app.jpanel_message
+                        WHERE id IN (
+                            SELECT id FROM mine
+                            WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
+                        )
+                        RETURNING 1
+                    )
+                    SELECT (SELECT count(*) FROM gone),
+                           (SELECT count(*) FROM mine
+                            WHERE recipient_kind = 'panel' AND played_at IS NULL)
+                    """
+                ),
+                {"dev": device},
+            )
+        ).first()
+        await session.commit()
+    deleted, kept = (int(row[0]), int(row[1])) if row else (0, 0)
+    log.info("jpanel.history_cleared", device=device, deleted=deleted, kept=kept)
+    return Cleared(deleted=deleted, kept=kept)
+
+
 @router.post("/messages/audio", status_code=201)
 async def send_audio(
     owner: OwnerDep,

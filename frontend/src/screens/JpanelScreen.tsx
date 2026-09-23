@@ -267,28 +267,36 @@ function MessagesTab() {
     [],
   );
 
-  /* ONLY THE LAST THING YOU SAID, AND ITS STATUS.
-   *
-   * The owner: *"The pwa also needs only to show the last sent message and message status. If
-   * I send a new message it should overwrite that one. We shouldn't just keep on piling up
-   * message after message."*
-   *
-   * INBOUND IS UNTOUCHED, and the asymmetry is the point. What the twins said is a record to
-   * read — that is what this surface is for, and losing one because a newer arrived would be
-   * the one unforgivable thing here. What DAD said is a control, not a record: he already
-   * knows it, he sent it, and the only live question is whether it has been heard yet. A
-   * scrolling column of his own words pushes theirs off the screen.
-   *
-   * DISPLAY ONLY — nothing is deleted on the box. Retention is a separate decision (§5), and
-   * a UI that hides a row is recoverable in a way a DELETE is not. */
-  function visible(messages: JpanelMessage[]): JpanelMessage[] {
-    let seenOut = false;
-    return messages.filter((m) => {
-      if (m.direction !== "out") return true;
-      if (seenOut) return false;
-      seenOut = true;
-      return true;
-    });
+  const [clearing, setClearing] = useState<string | null>(null);
+  const [cleared, setCleared] = useState<Record<string, string>>({});
+
+  async function clearHistory(deviceId: string, name: string) {
+    if (clearing !== null) return;
+    /* CONFIRMED, BECAUSE IT CANNOT BE UNDONE. Everything else on this surface is recoverable
+       by waiting; this is the one control that destroys a child's words. */
+    if (!window.confirm(`Delete the conversation with ${name}? This cannot be undone.`)) return;
+    setClearing(deviceId);
+    setSendError("");
+    try {
+      const { deleted, kept } = await api.clearJpanelHistory(deviceId);
+      setThreads(
+        (cur) => cur?.map((t) => (t.device_id === deviceId ? { ...t, messages: [] } : t)) ?? cur,
+      );
+      /* SAID OUT LOUD WHEN SOMETHING SURVIVED. The box refuses to delete a message a child has
+         not heard yet, and a clear that silently leaves rows behind is worse than one that
+         refuses — the list afterwards has to match what he expects. */
+      setCleared((c) => ({
+        ...c,
+        [deviceId]: kept
+          ? `Cleared ${deleted}. Kept ${kept} ${name} hasn't heard yet — they'll stay until played.`
+          : `Cleared ${deleted}.`,
+      }));
+      await refresh();
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearing(null);
+    }
   }
 
   async function send(deviceId: string) {
@@ -352,13 +360,29 @@ function MessagesTab() {
           <h2 className="jp-panel-head">
             <span className="jp-panel-name">{thread.name}</span>
             {thread.unplayed > 0 && <span className="jp-unplayed">{thread.unplayed} unplayed</span>}
+            {thread.messages.length > 0 && (
+              <button
+                type="button"
+                className="jp-clear"
+                aria-label={`Clear the conversation with ${thread.name}`}
+                disabled={clearing !== null}
+                onClick={() => void clearHistory(thread.device_id, thread.name)}
+              >
+                {clearing === thread.device_id ? "Clearing…" : "Clear history"}
+              </button>
+            )}
           </h2>
+          {cleared[thread.device_id] && (
+            <p className="jp-cleared" role="status">
+              {cleared[thread.device_id]}
+            </p>
+          )}
 
-          {visible(thread.messages).length === 0 ? (
+          {thread.messages.length === 0 ? (
             <p className="jp-empty">Nothing from {thread.name} yet.</p>
           ) : (
             <ul className="jp-msgs">
-              {visible(thread.messages).map((m) => (
+              {thread.messages.map((m) => (
                 <li
                   className={`jp-msg${unheard(m) ? " jp-msg-new" : ""}`}
                   key={m.id}
