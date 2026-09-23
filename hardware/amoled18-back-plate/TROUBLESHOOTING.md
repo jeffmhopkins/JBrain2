@@ -67,12 +67,18 @@ Back to the [README](README.md).
 | **Ribs too strong or too subtle** | Taste | `grip_depth` 0.2–0.5, or 0 for smooth ([comparison](MODEL_ADJUSTMENT.md#grip-ribs)) |
 | **Unit too thick** | Battery choice | Use the flat 802525 version (24.7 mm) |
 
-## Tilted stand
+## Desk stand
 
-![Standing on the sloped face](renders/fig-tilt-stand.png)
+![The desk stand cut open](renders/stand-section-103035.png)
 
 | Problem | Likely cause | Fix |
 |---|---|---|
-| **Tips over backwards too easily** | Angle too steep | Lower `tilt_angle` (15° is steadier) |
-| **Rocks or wobbles on the table** | Stringing or a blob on the sloped face | Scrape it flat; it's the face it stands on |
-| **Console says `CELL DOES NOT FIT` with a tilt** | The slope reaches the battery | Lower `tilt_angle`, use a thinner cell, or keep the tilt for the flat versions |
+| **Console says `CELL DOES NOT FIT THE BOX`** | Cell too wide for the box, or its corners reach the rounded corners | Another `battery_orientation`; or lower `stand_ledge` a little |
+| **Head won't drop into the pocket** | Pocket printed small | Raise `pocket_clear` by 0.1 and print the box again |
+| **Head rattles in the pocket** | Pocket printed big | Lower `pocket_clear` by 0.1; or rely on the end screws |
+| **Head sits proud, rocking on the battery** | Foam too thick, or the cell is bigger than entered | Thinner foam; measure the cell and enter it, which makes the box taller |
+| **Lock screw won't bite** | Its hole in the head is too big | A longer screw (M2 × 8), or a drop of glue in the hole |
+| **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
+| **Battery plug won't reach the `BAT` socket** | Short wires | Tape the cell to the box's other end, nearer the slot; or extend the wires |
+| **USB-C plug or buttons blocked** | Head in the wrong way round | The USB-C side goes to the box's tall back, where the pocket is open |
+| **Too steep or too flat** | Taste | `stand_angle`, 10–45° |

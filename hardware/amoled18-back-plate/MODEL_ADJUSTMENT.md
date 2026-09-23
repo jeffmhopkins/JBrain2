@@ -12,7 +12,8 @@ edit code — every number is a labelled field in a form. Back to the [README](R
    (on GitHub: click the file, then the download icon). The `.json` holds the ready-made versions.
 3. Open the `.scad`. Turn on the form: **Window → Customizer** (on some versions untick **View →
    Hide customizer**). Press **F5** to see the part; drag to spin, scroll to zoom.
-4. **Start from a version**: the drop-down at the top of the Customizer has all four. Then
+4. **Start from a version**: the drop-down at the top of the Customizer has all three, and
+   the desk stand's head and boxes. Then
    change fields — the groups are numbered, and each field has a plain-English label.
 5. **Read the console** at the bottom (**Window → Console** if hidden) after each **F5**:
    - `All checks passed.` — good to go.
@@ -39,8 +40,8 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Holes too tight or loose on your printer | `hole_slop` | 4. Screws |
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
-| Stand it up leaning back on a table | `tilt_angle` | 5c. Tilted stand |
 | Export plugs instead of the plate | `part` | 6. Output |
+| Desk stand: tilt, box height, how the head fits the box | `stand_angle`, `stand_front_min`, `pocket_h`, `pocket_clear` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
 The sections below show what each of these is on the part.
@@ -137,28 +138,6 @@ To export just the plugs, set `part` (group 6) to `plugs`; `both` shows them bes
 offers `honeycomb` (raised hexagons) and `nubs` (raised squares). `grip_size`, `grip_gap` and
 `grip_margin` set the rib height, spacing and how far they stay from the bed and the seam.
 
-## Tilted stand
-
-`tilt_angle` cuts the plate's bottom-back corner flat at that angle, so the unit stands on a
-table leaning back (0 = off). The preset `802525 400mAh flat, tilted stand 20°` is the ready one.
-
-| On a table | The sloped base | Cut open |
-|---|---|---|
-| ![](renders/fig-tilt-stand.png) | ![](renders/tilt-under.png) | ![](renders/version-tilt.png) |
-
-- **It needs a thin, flat-battery plate.** The slope runs from the seam's bottom edge up to the
-  back face, so the deeper the plate the more it cuts away; in the edge and end versions it runs
-  through the battery, and the console says `CELL DOES NOT FIT`. When there's a little
-  conflict, the model moves the cell up the cavity by itself, as far as it can.
-- **What fits:** the 802525 flat tilts to 30°; a thicker 25 × 25 cell, up to
-  12 mm (around half as much again), fits at 20°. The console's `Tilted stand` line shows how far the cell sits from the
-  sloped wall.
-- **Angle:** 15–25° looks like your photo; 20° is the default. Steeper still stands, but the
-  unit gets easier to knock over backwards.
-- **The bottom two screw holes** come out partly on the sloped face, so only the top two openings
-  take plugs. The screws work the same.
-- `tilt_wall` sets the wall thickness along the slope (2 mm).
-
 ## Measuring the stock cover
 
 The outline and screw positions are from Waveshare's data. These few couldn't be seen in any
@@ -171,3 +150,36 @@ source; measuring them on the original black cover makes a keeper fit first time
 | Rim top down to the tops of the screw posts (0 if level, negative if the posts are higher) | `tower_drop` |
 | Rim top down to the floor inside | `stock_clear` (only affects reported numbers) |
 | How far a stock screw sticks out past its post, and how tall the brass nuts stand | Choosing screw length — [DESIGN.md](DESIGN.md#screws) |
+
+## Desk stand
+
+Pick **Desk stand: box for …** from the preset drop-down, or tick `desk_stand` (group 7) on any
+version. `part` then chooses the piece: `plate` gives the **head**, `box` the **box**, and
+`stand` shows both put together (for looking at, not exporting). The battery fields (group 1)
+work exactly as for the plate: set your cell and orientation, and the box grows to fit it.
+`show_battery` ghosts it in the box.
+
+![The desk stand cut open](renders/stand-section-103035.png)
+
+| Field | What it does |
+|---|---|
+| `stand_angle` | How far the screen tilts up from flat, 10–45° (30 by default) |
+| `stand_front_min` | The lowest the box's front edge may be. The box is as low as the battery allows, but never lower than this |
+| `pocket_h` | How deep the head sits in the box's pocket. It must stay under 3.5 mm, or the pocket hits the front shell |
+| `pocket_clear` | Gap between the head and the pocket, each side. Raise by 0.1 if the head won't go in; lower if it rattles |
+| `pocket_wall` | Thickness of the pocket's wall |
+| `stand_ledge` | Width of the box's wall top the head's back rests on. Wider = firmer, but less room for the battery |
+| `box_floor` | Thickness of the box's floor |
+| `open_top` | Leaves the pocket open along the top edge, clear of the USB-C plug and the buttons |
+
+The console reports the box's size, its front and back height, the room each side of the cell,
+and the screws to buy. The cell always sits against the tall back wall, where there's most
+height; pack the space in front of it with foam. A cell stood on its `end` makes the tallest box,
+`flat` the lowest.
+
+| 103035 on edge | 802525 flat | 104050 on end |
+|---|---|---|
+| ![](renders/stand-section-103035.png) | ![](renders/stand-section-802525.png) | ![](renders/stand-section-104050.png) |
+
+Grip ribs (group 5b) go round the box too, below its front edge. The head has none: it's hidden
+in the pocket.

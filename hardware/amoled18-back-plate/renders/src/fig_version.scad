@@ -6,7 +6,7 @@ color("SteelBlue") render() difference() {
     back_plate();
     translate([-60, -60, -1]) cube([60, 120, 120]);
 }
-translate([-fx/2, y_lo, plate_t]) {
+translate([-fx/2, -fy/2, plate_t]) {
     color("Crimson") cube([fx, cell_y, tape_t]);
     color("LimeGreen") translate([0, 0, tape_t]) cube([fx, cell_y, cell_h]);
     color("Gold") translate([0, 0, tape_t + cell_h]) cube([fx, cell_y, foam_t]);

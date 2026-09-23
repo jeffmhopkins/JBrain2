@@ -7,8 +7,7 @@
             "battery_l": "35",
             "battery_orientation": "edge",
             "lead_space": "0",
-            "lead_end": "2",
-            "tilt_angle": "0"
+            "lead_end": "2"
         },
         "802525 400mAh flat": {
             "battery_t": "8.6",
@@ -16,8 +15,7 @@
             "battery_l": "25",
             "battery_orientation": "flat",
             "lead_space": "2",
-            "lead_end": "2",
-            "tilt_angle": "0"
+            "lead_end": "2"
         },
         "104050 2400mAh on end (tight, measure first)": {
             "battery_t": "10",
@@ -25,17 +23,41 @@
             "battery_l": "50",
             "battery_orientation": "end",
             "lead_space": "3",
-            "lead_end": "0",
-            "tilt_angle": "0"
+            "lead_end": "0"
         },
-        "802525 400mAh flat, tilted stand 20°": {
+        "Desk stand: head (fits every box)": {
+            "desk_stand": "true",
+            "part": "plate"
+        },
+        "Desk stand: box for 103035 on edge": {
+            "battery_t": "10",
+            "battery_w": "30",
+            "battery_l": "35",
+            "battery_orientation": "edge",
+            "lead_space": "0",
+            "lead_end": "2",
+            "desk_stand": "true",
+            "part": "box"
+        },
+        "Desk stand: box for 104050 on end (tight, measure first)": {
+            "battery_t": "10",
+            "battery_w": "40",
+            "battery_l": "50",
+            "battery_orientation": "end",
+            "lead_space": "3",
+            "lead_end": "0",
+            "desk_stand": "true",
+            "part": "box"
+        },
+        "Desk stand: box for 802525 flat": {
             "battery_t": "8.6",
             "battery_w": "25",
             "battery_l": "25",
             "battery_orientation": "flat",
             "lead_space": "2",
             "lead_end": "2",
-            "tilt_angle": "20"
+            "desk_stand": "true",
+            "part": "box"
         }
     }
 }

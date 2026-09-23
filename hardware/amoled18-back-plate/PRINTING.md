@@ -27,7 +27,6 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 | Walls / perimeters | 3 or more. The rim is 0.8 mm: check the slicer preview shows it solid (two lines). |
 | Infill | 40 % or more |
 | Plugs | As laid out in their file, flat caps down; same material if you want them to match. |
-| Tilted stand version | Prints the same way. Its sloped face leans 20° from vertical, well within what prints unsupported. |
 
 Everything that isn't straight up is sloped at 45° or less, so nothing needs support. The only
 flat overhang is a thin skin closing the top of each screw hole, which bridges cleanly — and
@@ -79,8 +78,7 @@ the board's nut. Don't crank it.
 
 ## 7. Plugs (optional — not for babies)
 
-Press one into each opening on the back until the cap sits flush. On the tilted stand, only
-the top two openings take plugs: the bottom two come out on the sloped face. To reach a screw again, pry a
+Press one into each opening on the back until the cap sits flush. To reach a screw again, pry a
 plug out with a knife tip in the small gap around its cap.
 
 | Without plugs | With plugs |
@@ -89,3 +87,45 @@ plug out with a knife tip in the small gap around its cap.
 | ![](renders/plug-close-open.png) | ![](renders/plug-close-fitted.png) |
 
 ![Section: the plug's cap in its recess, its ribbed shank in the bore](renders/fig-tower-bottom.png)
+
+## Desk stand
+
+The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same as above, except:
+
+| Part | Notes |
+|---|---|
+| **Head** | `amoled18_stand_head.stl`: one, whatever the battery |
+| **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
+| **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short hex key reaches: the towers are only 3.5 mm deep |
+| **2 × M2 × 6 screws** | Head to box, one each end. Socket head or pan head; they cut their own thread in the head |
+| No plugs | The head's back is hidden inside the box |
+
+**Print** both with the settings in step 2. The head goes back face down, like the plate; the box
+stands on its bottom, as the file loads, its sloped top up. Neither needs supports.
+
+![The box from above: the ledge the head rests on, the pocket around it, open along the top edge](renders/stand-box-top.png)
+
+![The head from inside: the four screw towers, a solid block at each end for the lock screw, and the slot for the battery's wires](renders/stand-head.png)
+
+**Assemble** — the head screws to the display before it goes into the box, so the battery's
+plug has to go through the head first:
+
+1. Clear the four towers in the head, as in step 3.
+2. **Battery into the box**: check its polarity (step 5), then tape it to the floor against the
+   tall back wall, wires toward whichever end the plug will reach best from.
+3. **Plug through the head**: feed the battery's plug up through the slot in the head's floor,
+   from the back, and into the board's `BAT` socket. The slot sits right beside the socket.
+4. **Head onto the display**: seat it on the front shell with the head's slot end under the
+   screen's bottom edge — the USB-C and buttons go on the *other* long side, the top. Screw it
+   on with the four M2 × 4 (step 6). Keep the box beside it while you work; the wire is short.
+5. Lay the foam on the battery, tuck the spare wire into the box, and **lower the head into the
+   pocket** in the box's sloped top, USB-C side at the tall back.
+6. **Lock it**: drive an M2 × 6 through the hole at each end of the box into the head. Snug, not
+   tight — it's cutting its own thread in plastic.
+
+![The desk stand cut open: the head resting on the box's ledge, the battery (green) against the back wall](renders/stand-section-103035.png)
+
+![From behind, apart: the head's lock holes and the USB-C on the top edge; the box's pocket is open along the top so the plug and buttons stay clear](renders/stand-back.png)
+
+To charge, plug into the USB-C on the top edge; nothing needs taking apart. To take it apart,
+undo the two end screws and lift the head out.
