@@ -132,9 +132,13 @@ static const audio_codec_ctrl_if_t *s_ctrl;
 
    30 s of 16 kHz mono s16 is 960 KB, claimed ONCE at start-up out of the board's 8 MB of
    PSRAM. Never allocated while recording: a heap request in the middle of a four-year-old
-   talking is a failure with no good outcome. With the play and inbound buffers at the same
-   length the three come to about 2.8 MB, beside a 322 KB framebuffer — comfortable, and the
-   number to watch is `free_psram` in telemetry rather than this comment. */
+   talking is a failure with no good outcome.
+
+   IT IS THE LARGEST BUFFER ON THIS PANEL NOW, and by a wide margin. Streaming took the
+   inbound buffer away entirely and cut the play buffer to the reply it actually holds, so the
+   three come to about 1.4 MB — 960 KB here, 320 KB of playback, 128 KB of ring — beside a
+   322 KB framebuffer. The number to watch is `free_psram` in telemetry rather than this
+   comment. */
 #define CAPTURE_MAX_MS 30000
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
@@ -153,18 +157,14 @@ static volatile bool s_cap_on;
  * `REPLY_MAX_BYTES` in `talk.c` is how much of a reply this panel will read. That cap belongs
  * to the REPLY and stays with it.
  *
- * WHAT THIS BUFFER HOLDS IS A DIFFERENT QUESTION, and conflating the two is how the cut
- * happened in the first place. Voice post (`jpanel.c`) plays messages the box caps at
- * `MAX_MESSAGE_MS` — thirty seconds since 0.2.95 — and Dad's are typed text put through a
- * voice, where `SendText` allows 600 characters. Sized to a reply, every one of those would
- * stop mid-word. So the buffer is sized for the LONGEST audio any caller can hand over, not
- * for the shortest ceiling one of them happens to have.
+ * IT HOLDS A REPLY, AND SINCE 0.2.96 ONLY A REPLY. Voice post used to be copied through here
+ * too, which is why this was sized to the longest message the box would serve — and why it
+ * grew every time that cap did. Messages stream through the ring now (`audio_stream_*`), so
+ * this is back to the one caller it was ever really for: `talk.c`, whose own `REPLY_MAX_BYTES`
+ * is the same ten seconds and whose `PANEL_REPLY_MAX` on the box matches both.
  *
- * AND IT STILL DOES NOT COVER THE WORST TYPED MESSAGE. 600 characters through Kokoro runs
- * nearer fifty seconds, so a maxed-out note from Dad is cut here and says so in the warning
- * below. Thirty narrows that gap; only bringing the text cap and this one into line would
- * close it, and that is a decision about how long a message to a four-year-old should be
- * rather than a memory question. */
+ * The cut this warns about therefore belongs to a reply that overran, not to a child's
+ * message — a message is no longer capped at all. */
 #define PLAY_BUF_MS 10000
 #define PLAY_BUF_SAMPLES (AUDIO_RATE * PLAY_BUF_MS / 1000)
 static int16_t *s_play;

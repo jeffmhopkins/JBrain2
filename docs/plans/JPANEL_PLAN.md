@@ -527,9 +527,12 @@ costs two rewrites.
   memory. Four numbers had to move together or a thirty-second message would be cut at
   whichever stayed lowest: `CAPTURE_MAX_MS` and `PLAY_BUF_MS` in `audio.c`, `JPANEL_MAX_BYTES`
   in `jpanel.c`, and `MAX_MESSAGE_MS` on the box (which the PWA recorder reads, pinned by a
-  test at each end). The three panel buffers now come to about 2.8 MB of the board's 8 MB of
-  PSRAM beside a 322 KB framebuffer; `free_psram` in telemetry is the number to watch rather
-  than any arithmetic written here.
+  test at each end). **That figure was briefly wrong here**: it said 2.8 MB, which was the total
+  while the play buffer was also thirty seconds. Streaming (0.2.96) removed the inbound buffer
+  and cut playback back to the ten-second reply it actually holds, so the three come to about
+  **1.4 MB** of the board's 8 MB — 960 KB of capture, 320 KB of playback, 128 KB of ring —
+  beside a 322 KB framebuffer. `free_psram` in telemetry is the number to watch rather than any
+  arithmetic written here, which is the lesson of having got it wrong.
 
   **A maxed-out TYPED message is still cut, and that gap is now the open one.** `SendText`
   allows 600 characters, which through Kokoro runs nearer fifty seconds — and `send_text`

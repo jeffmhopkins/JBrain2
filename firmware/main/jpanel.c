@@ -100,6 +100,8 @@ static volatile bool s_owed;
  * WHAT IS PLAYED IS ACKNOWLEDGED AS IT GOES, one message at a time, so stopping halfway leaves
  * the rest genuinely unheard rather than silently consumed — the pop-up comes back for them. */
 static volatile bool s_run;
+/* A finger ended the last stream, rather than the network. See `jpanel_stop`. */
+static volatile bool s_stopped;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
    who it came from, which is what the repeat icon's caption says. Both are filled by the
    header handler below. */
@@ -385,38 +387,62 @@ done:
  * one. */
 static int pump(esp_http_client_handle_t c, char *got_hex, size_t hex_cap)
 {
+    /* FIRST, NOT LAST. Every path out of this function — including the early one when a finger
+       stops the stream — must leave a readable string behind, or the caller compares the box's
+       digest against whatever was on the stack. */
+    if (got_hex != NULL && hex_cap > 0) got_hex[0] = '\0';
+
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     bool hashing = mbedtls_sha256_starts(&sha, 0) == 0;
     int total = 0;
+    /* AN ODD BYTE IS CARRIED, NOT OFFERED, and that is not tidiness — it is a hang.
+       `esp_http_client_read` returns whatever the transport has, which on a timeout or a FIN
+       mid-body is routinely an odd count; the ring deals in samples and refuses anything under
+       two bytes, so a lone trailing byte would be offered forever at 20 ms a go on the task
+       that also polls, sends and acknowledges. Held over and prepended to the next read
+       instead, which is also the only way the samples stay aligned. */
+    uint8_t odd = 0;
+    bool have_odd = false;
     while (audio_stream_live()) {
-        const int n = esp_http_client_read(c, (char *)s_chunk, sizeof(s_chunk));
+        const int n = esp_http_client_read(c, (char *)s_chunk + (have_odd ? 1 : 0),
+                                           (int)sizeof(s_chunk) - (have_odd ? 1 : 0));
         if (n <= 0) break;
+        if (have_odd) s_chunk[0] = odd;
+        int avail = n + (have_odd ? 1 : 0);
+        have_odd = false;
+        if (avail % 2 == 1) {
+            odd = s_chunk[avail - 1];
+            have_odd = true;
+            avail -= 1;
+        }
+        if (hashing && mbedtls_sha256_update(&sha, s_chunk, (size_t)avail) != 0) hashing = false;
         int off = 0;
-        while (off < n) {
+        while (off < avail) {
             /* CHECKED EVERY TIME ROUND, because a refusal has two meanings. A full ring says
                "not yet"; a stopped stream says "never" — and waiting out the second one would
-               hang this task forever on a speaker that is no longer listening. This task also
-               polls, sends and acknowledges, so hanging it would take voice post down until
-               the panel was power-cycled. */
-            if (!audio_stream_live()) return total;
-            const size_t took = audio_stream_write(s_chunk + off, (size_t)(n - off));
+               hang this task forever on a speaker that is no longer listening. */
+            if (!audio_stream_live()) {
+                mbedtls_sha256_free(&sha);
+                return total;
+            }
+            const size_t took = audio_stream_write(s_chunk + off, (size_t)(avail - off));
             if (took == 0) {
                 vTaskDelay(pdMS_TO_TICKS(20));
                 continue;
             }
             off += (int)took;
         }
-        if (hashing && mbedtls_sha256_update(&sha, s_chunk, (size_t)n) != 0) hashing = false;
-        total += n;
+        total += avail;
     }
-    if (got_hex != NULL && hex_cap > 0) {
-        got_hex[0] = '\0';
-        unsigned char digest[32];
-        if (hashing && hex_cap >= 65 && mbedtls_sha256_finish(&sha, digest) == 0) {
-            for (int i = 0; i < 32; i++) snprintf(&got_hex[i * 2], 3, "%02x", digest[i]);
-            got_hex[64] = '\0';
-        }
+    /* A body that ended on an odd byte is a body that was cut: the digest will not match, and
+       the last half-sample is not worth playing. Hashed as received so the mismatch is honest
+       about what arrived. */
+    if (have_odd && hashing && mbedtls_sha256_update(&sha, &odd, 1) == 0) total += 1;
+    unsigned char digest[32];
+    if (got_hex != NULL && hex_cap >= 65 && hashing && mbedtls_sha256_finish(&sha, digest) == 0) {
+        for (int i = 0; i < 32; i++) snprintf(&got_hex[i * 2], 3, "%02x", digest[i]);
+        got_hex[64] = '\0';
     }
     mbedtls_sha256_free(&sha);
     return total;
@@ -442,22 +468,40 @@ static bool verified(const char *claimed, const char *got)
 static void do_replay(void)
 {
     if (s_in_id[0] == '\0') return;
+    bool ok = false;
     char path[96];
     snprintf(path, sizeof(path), "/message/%s/pcm", s_in_id);
     char url[288];
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
-    if (c == NULL) return;
+    if (c == NULL) {
+        s_state = JPANEL_FAILED;
+        return;
+    }
     /* CLEARED AFTER `path` IS BUILT, because that used `s_in_id` — and cleared at all because
        a box too old to send the header would otherwise leave the PREVIOUS message's digest
        standing, and this replay would be judged against it. */
     s_in_sha[0] = '\0';
-    if (esp_http_client_open(c, 0) != ESP_OK) goto done;
-    if (esp_http_client_fetch_headers(c) < 0) goto done;
+    /* EVERY WAY OUT OF HERE SAYS SO. A replay that fails silently is the control a child
+       presses when she missed something answering with nothing at all — which is exactly what
+       the touch cue was added to stop, and the link being down is when she is most likely to
+       be pressing it. */
+    if (esp_http_client_open(c, 0) != ESP_OK) {
+        ESP_LOGW(TAG, "replay: could not reach the box");
+        goto done;
+    }
+    if (esp_http_client_fetch_headers(c) < 0) {
+        ESP_LOGW(TAG, "replay: no answer from the box");
+        goto done;
+    }
     if (esp_http_client_get_status_code(c) != 200) {
         ESP_LOGW(TAG, "replay: box said %d", esp_http_client_get_status_code(c));
         goto done;
     }
-    if (!audio_stream_begin()) goto done;
+    if (!audio_stream_begin()) {
+        ESP_LOGW(TAG, "replay: speaker busy");
+        goto done;
+    }
+    ok = true;
     /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
        played; telling the box again would be a second `POST /played` for one listen, and
        joining the run would make "again" walk on into the next unheard message. */
@@ -477,6 +521,7 @@ static void do_replay(void)
 
 done:
     esp_http_client_cleanup(c);
+    if (!ok) s_state = JPANEL_FAILED;
 }
 
 static void do_fetch(bool asked)
@@ -514,6 +559,7 @@ static void do_fetch(bool asked)
         ESP_LOGW(TAG, "speaker busy — not starting this message");
         goto done;
     }
+    s_stopped = false;
     /* CLAIMED BEFORE THE FIRST BYTE, and that ordering is the whole safety of this path.
        `audio_playing()` is true from here until the ring drains, so the renderer, the pop-up
        and `POST /played` all see one message in flight — including during the seconds before
@@ -531,6 +577,14 @@ static void do_fetch(bool asked)
         audio_stream_abort();
         s_owed = false;
         s_run = false;
+        goto done;
+    }
+    if (s_stopped) {
+        /* Her choice, not a fault. `s_owed` stays set, so `POST /played` fires when the ring
+           finishes draining and the message retires as it always did. */
+        ESP_LOGI(TAG, "stopped by a finger after %d B, id %s", got,
+                 s_in_id[0] ? s_in_id : "(none)");
+        out = JPANEL_PLAYING;
         goto done;
     }
     if (!verified(s_in_sha, heard)) {
@@ -707,6 +761,16 @@ bool jpanel_replay(void)
    played is still unplayed on the box, so the pop-up returns for it. */
 void jpanel_stop(void)
 {
+    /* RECORDED, BECAUSE A STOP AND A CUT LOOK IDENTICAL FROM THE HASH.
+     *
+       Both end the stream early, so both fail verification — but they mean opposite things. A
+       truncated download must NOT be acknowledged, or the box retires a message nobody heard
+       the end of. A child putting her finger on the screen must BE acknowledged, exactly as it
+       was before streaming: she heard it and chose to stop. Without this the stop path burns a
+       delivery attempt every time, and after five `GET /next` filters the message out while
+       `GET /waiting` still counts it — a pop-up that returns every thirty seconds and that no
+       tap can ever satisfy. */
+    s_stopped = true;
     s_run = false;
     audio_stop();
 }

@@ -998,6 +998,35 @@ static void test_a_partial_write_reports_what_it_took(void)
     CHECK(ring_filled(&r) == RING_CAP, "which fills it");
 }
 
+static void test_a_lone_byte_is_refused_so_the_caller_must_carry_it(void)
+{
+    /* THE SHARP EDGE THAT CAUSED A HANG, pinned so it cannot be forgotten twice.
+     *
+     * This ring deals in SAMPLES, so a single byte is not a unit it can take — and a caller
+     * that treats the refusal as "full, try again" spins forever. That is exactly what
+     * `jpanel.c`'s pump did on its first cut: `esp_http_client_read` returns whatever the
+     * transport has, which on a timeout or a FIN mid-body is routinely an odd count, and the
+     * lone trailing byte was offered every 20 ms to a ring that would never take it — on the
+     * task that also polls, sends and acknowledges.
+     *
+     * The fix is in the caller (it carries the odd byte into the next read, which is also the
+     * only way the samples stay aligned). What is fixed HERE is the contract being explicit,
+     * so the next person to write a producer learns it from a test rather than from a panel
+     * that stopped answering. */
+    int16_t buf[RING_CAP];
+    const uint8_t one = 0x7F;
+    ring_t r;
+    ring_init(&r, buf, RING_CAP);
+    CHECK(ring_write(&r, &one, 1) == 0, "a lone byte is not a sample and is refused");
+    CHECK(ring_filled(&r) == 0, "and nothing is consumed by the attempt");
+
+    /* An odd count takes the whole samples and leaves the last byte, which the caller must
+       notice: the RETURN is what says how much was taken, never the argument. */
+    const uint8_t three[3] = {1, 2, 3};
+    CHECK(ring_write(&r, three, 3) == 2, "an odd write reports the even part it took");
+    CHECK(ring_filled(&r) == 1, "one sample in");
+}
+
 static void test_a_read_run_never_crosses_the_seam(void)
 {
     /* The codec is handed a POINTER, not a callback, so a run that wrapped would play the
@@ -3122,6 +3151,7 @@ int main(void)
     test_an_empty_ring_and_a_full_one_are_not_the_same_answer();
     test_what_goes_in_comes_out_in_order_across_the_wrap();
     test_a_partial_write_reports_what_it_took();
+    test_a_lone_byte_is_refused_so_the_caller_must_carry_it();
     test_a_read_run_never_crosses_the_seam();
     test_an_empty_ring_offers_nothing_rather_than_garbage();
     test_the_cursors_survive_their_own_wrap();

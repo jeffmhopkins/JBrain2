@@ -1907,9 +1907,13 @@ static void face_task(void *arg)
                 }
                 if (in_box(s_repeat_box, ox, oy)) {
                     s_flinch = 1.0f;
-                    /* Replayed from this panel's own buffer — no box, no network — so it
-                       works when the link is down, which is when a child is most likely to be
-                       asking what she said. */
+                    /* IT ASKS THE BOX NOW, and that is a real change from what this comment
+                       used to promise. The message was replayed from this panel's own buffer
+                       until 0.2.96; streaming discards the audio as it plays, so "again" is a
+                       fetch (`GET /message/{id}/pcm`) and it needs the link to be up. The
+                       failure is reported through `jpanel_state()` like any other fetch rather
+                       than being silent, because a control that answers with nothing is the
+                       thing the cue below was added to stop. */
                     /* Same shape as the pop-up: a sound for the finger, then the audio. This
                        had NO cue at all, which made the one control a child presses when they
                        missed something the one that answered with silence. */
