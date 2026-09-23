@@ -373,9 +373,10 @@ function MessagesTab() {
             )}
           </h2>
           {cleared[thread.device_id] && (
-            <p className="jp-cleared" role="status">
-              {cleared[thread.device_id]}
-            </p>
+            /* `<output>`, not a `<p role="status">`: it carries the same implicit role and is
+               the element the rule asks for — and a screen reader should announce what a
+               destructive button just did without the owner having to go looking. */
+            <output className="jp-cleared">{cleared[thread.device_id]}</output>
           )}
 
           {thread.messages.length === 0 ? (

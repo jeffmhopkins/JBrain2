@@ -317,6 +317,7 @@
 }
 
 .jp-cleared {
+  display: block; /* `<output>` is inline by default */
   margin: 0 0 8px;
   font-size: 0.82rem;
   color: var(--text-dim);
