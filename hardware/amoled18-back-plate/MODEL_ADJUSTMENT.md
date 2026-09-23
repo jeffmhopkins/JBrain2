@@ -2,7 +2,9 @@
 
 > **Status:** Living · **Last verified:** 2026-09-23
 
-How to change the plate: another battery, a better fit to the case, a different grip. You never edit code — every number is a labelled field in a form (the one exception is noted under the desk stand). Back to the [README](README.md).
+How to change the plate: another battery, a better fit to the case, a different grip. You never
+edit code — every number is a labelled field in a form (the one exception is noted under the desk
+stand). Back to the [README](README.md).
 
 ## Opening it (first time)
 
@@ -41,7 +43,7 @@ How to change the plate: another battery, a better fit to the case, a different 
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
 | Desk stand: screen angle, box size | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
-| Desk stand: how the head fits the box | `pocket_wall`, `pocket_clear`, `stand_ledge` | 7. Desk stand |
+| Desk stand: how the head fits the box, lock screws | `pocket_wall`, `pocket_clear`, `stand_ledge`, `lock_spread` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
 The sections below show what each of these is on the part.
@@ -162,7 +164,7 @@ one head fits every box.
 
 ### The box
 
-![The desk stand from the side: its heights and angle](renders/fig-stand-side.png)
+![The desk stand from the side, as it sits: its size and angle](renders/fig-stand-side.png)
 
 | Field | What it is | Change it when |
 |---|---|---|
@@ -170,8 +172,9 @@ one head fits every box.
 | `stand_front_min` | The shortest the box's top may be (the short wall under the USB-C edge) | The box is as short as the battery allows, but never shorter than this |
 | `box_floor` | Thickness of the box's floor | Rarely |
 
-The cell always lies on the long flat wall the box rests on, where there's most room; pack the space in
-front of it with foam. A cell stood on its `end` makes the longest box, `flat` the shortest.
+The cell always lies on the long flat wall the box rests on, where there's most room; pack the
+space around it with foam. `battery_orientation` names how the cell stands in the box as it's
+printed (on its floor): `end` makes the longest box, `flat` the shortest.
 
 | 103035 on edge | 802525 flat | 104050 on end |
 |---|---|---|
@@ -190,7 +193,8 @@ front of it with foam. A cell stood on its `end` makes the longest box, `flat` t
 
 The head can't shrink past its own rim, so `pocket_wall` + `pocket_clear` together can't go above
 1.35; the console stops with `RIM IS LARGER THAN THE HEAD` if they do. The box's outside is always
-the case outline (`plate_x`, `plate_y`, `plate_r`), so the front shell sits flush whatever these are.
+the case outline (`plate_x`, `plate_y`, `plate_r`), so the front shell sits flush whatever these
+are.
 
 ### What the console tells you
 

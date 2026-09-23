@@ -6,6 +6,9 @@
 // and the mic live in the FRONT shell, so this part is solid except for
 // the battery cavity and four screw holes.
 //
+// Group 7 builds a two-part desk stand instead: a thin head that screws to
+// the display, and a battery box it sinks into (see DESIGN.md).
+//
 // EVERY dimension is adjustable. In OpenSCAD open
 //     Window > Customizer
 // and the parameters appear as labelled fields and sliders, grouped by
@@ -345,8 +348,8 @@ b_ub   = b_dy <= 0 ? bhx - stand_margin
 cell_x1 = b_ub * sc;
 cell_x0 = cell_x1 - fx;
 // Height the plane must clear over the cell's front top edge, then the pivot
-// height Zh (head centre) that achieves it without dropping the front below
-// stand_front_min.
+// height Zh (head centre) that achieves it without making the short wall (the
+// box's top in use) shorter than stand_front_min.
 top_needed = box_floor + tape_t + cell_h + foam_t + lead_space + extra_clearance;
 stand_zh = max(top_needed - cell_x0 * ss / sc, stand_front_min + p_out_x * ss);
 box_front_h = stand_zh - p_out_x * ss;
@@ -629,7 +632,7 @@ lock_len   = 6.75;
 lock_xs    = lock_spread > 0 ? [-lock_spread / 2, lock_spread / 2] : [0];
 lock_count = 2 * len(lock_xs);
 
-// A solid block inside each end wall for each lock screw to bite into.
+// A solid block inside the head's short ends for each lock screw to bite into.
 module lock_blocks() {
     for (sy = [-1, 1], lx = lock_xs)
         let(l = lock_len + 0.8 - (head_y - cav_y) / 2)
@@ -797,6 +800,7 @@ else if (show_battery && part != "plugs" && !desk)
 // =====================================================================
 // PRINTING NOTES
 //   Orientation : flat face down on the bed, rim upward. No supports.
+//                 Desk stand: head back face down; box on its floor, cut end up.
 //   Layer       : 0.2 mm
 //   Walls       : 3 perimeters or more
 //   Infill      : 40% or more

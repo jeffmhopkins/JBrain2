@@ -2,11 +2,11 @@
 
 > **Status:** Living · **Last verified:** 2026-09-23
 
-A 3D-printable back cover for the
-[Waveshare ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm),
-the little touchscreen that runs the kids' pet (firmware in [`../../firmware/`](../../firmware/README.md)).
-The stock back only fits a tiny battery. This one is a deeper box that holds a real one, screws
-on with the original four screw positions, and has grip ribs so small hands don't drop it.
+A 3D-printable back cover for the [Waveshare
+ESP32-S3-Touch-AMOLED-1.8](https://www.waveshare.com/esp32-s3-touch-amoled-1.8.htm), the little
+touchscreen that runs the kids' pet (firmware in [`../../firmware/`](../../firmware/README.md)).
+The stock back only fits a tiny battery. This one is a deeper box that holds a real one, screws on
+with the original four screw positions, and has grip ribs so small hands don't drop it.
 
 ![The default back plate, battery ghosted in green](renders/hero.png)
 
@@ -29,8 +29,9 @@ a choking hazard**.
 ![The desk stand: the box lies on its side, the screen leans back 30°, USB-C and buttons along the top](renders/stand.png)
 
 A two-part version for a desk. A thin **head** screws to the display in place of the stock
-cover, then sinks right into the angled end of a plain **battery box**, held by two screws at each side. The box's rim is the case outline, so the front shell sits flush on it and the head is
-hidden inside. The box lies on its long flat side, and the screen faces you, landscape, leaning
+cover, then sinks right into the angled end of a plain **battery box**, held by two screws at
+each side. The box's rim is the case outline, so the front shell sits flush on it and the head
+is hidden inside. The box lies on its long flat side, and the screen faces you, landscape, leaning
 back 30° from upright, with the USB-C and buttons along its top edge.
 The head is the same for every box, so changing battery only means printing another box.
 
