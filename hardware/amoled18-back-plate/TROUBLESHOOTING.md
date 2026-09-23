@@ -69,16 +69,14 @@ Back to the [README](README.md).
 
 ## Desk stand
 
-![The desk stand cut open](renders/stand-section-103035.png)
+![Cut through two screws](renders/stand-screws.png)
 
 | Problem | Likely cause | Fix |
 |---|---|---|
-| **Console says `CELL DOES NOT FIT THE BOX`** | Cell too wide for the box, or its corners reach the rounded corners | Another `battery_orientation`; or lower `stand_ledge` a little |
-| **Head won't drop into the pocket** | Pocket printed small | Raise `pocket_clear` by 0.1 and print the box again |
-| **Head rattles in the pocket** | Pocket printed big | Lower `pocket_clear` by 0.1; or rely on the end screws |
-| **Head sits proud, rocking on the battery** | Foam too thick, or the cell is bigger than entered | Thinner foam; measure the cell and enter it, which makes the box taller |
-| **Lock screw won't bite** | Its hole in the head is too big | A longer screw (M2 × 8), or a drop of glue in the hole |
-| **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
-| **Battery plug won't reach the `BAT` socket** | Short wires | Tape the cell to the box's other end, nearer the slot; or extend the wires |
-| **USB-C plug or buttons blocked** | Head in the wrong way round | The USB-C side goes to the box's tall back, where the pocket is open |
+| **Console says `CELL BLOCKS THE SCREW PATHS`** | Cell over 31 mm left to right | Stand it on its end, or use a narrower cell |
+| **Console says `CELL DOES NOT FIT THE BOX`** | Cell too big for the box | Another `battery_orientation`, or a smaller cell |
+| **Hex key can't find the screw** | Battery or wire in the path | Push the cell back to the centre and the wires away from the ends; shine a light down the hole |
+| **Key too short** | Long path | A driver with a longer shaft; the console gives the reach |
+| **Rim, screws or seam problems** | Same top as the plate | See the sections above: the fixes and fields are the same |
+| **Battery pressing on the board** | Not enough headroom | Thinner foam, or raise `lead_space`, which makes the box taller |
 | **Too steep or too flat** | Taste | `stand_angle`, 10–45° |

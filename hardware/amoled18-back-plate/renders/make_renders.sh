@@ -50,11 +50,13 @@ for d in 0 0.3 0.5; do
 done
 
 echo "Desk stand"
-HEAD="Desk stand: head (fits every box)"
-run stand.png src/fig_stand.scad --imgsize=900,700 --camera=0,0,26,62,0,235,190 -p "$PRESETS" -P "$DEFAULT"
-run stand-back.png src/fig_stand.scad --imgsize=900,700 --camera=0,0,35,62,0,125,220 -p "$PRESETS" -P "$DEFAULT" -D 'view="exploded"'
-run stand-section-103035.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,34,90,0,180,190 -p "$PRESETS" -P "$DEFAULT" -D 'view="section"'
-run stand-section-802525.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,26,90,0,180,190 -p "$PRESETS" -P "$FLAT" -D 'view="section"'
-run stand-section-104050.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,44,90,0,180,250 -p "$PRESETS" -P "$TALL" -D 'view="section"'
-run stand-head.png "$MODEL" --imgsize=900,700 --camera=0,0,2,40,0,20,120 -p "$PRESETS" -P "$HEAD"
-run stand-box-top.png "$MODEL" --imgsize=900,700 --camera=0,0,24,35,0,250,200 -p "$PRESETS" -P "Desk stand: box for 103035 on edge"
+SD="Desk stand: 103035 1000mAh on end"
+SF="Desk stand: 802525 400mAh flat"
+sec="--projection=o --imgsize=900,800 --camera=0,0,34,90,0,180,190"
+run stand.png src/fig_stand.scad --imgsize=900,700 --camera=0,0,30,62,0,235,200 -p "$PRESETS" -P "$SD"
+run stand-back.png src/fig_stand.scad --imgsize=900,800 --camera=0,0,45,62,0,125,260 -p "$PRESETS" -P "$SD" -D 'view="exploded"'
+run stand-under.png "$MODEL" --imgsize=900,700 --camera=0,0,25,230,0,125,190 -p "$PRESETS" -P "$SD"
+run stand-top.png "$MODEL" --imgsize=900,700 --camera=0,0,30,40,0,250,190 -p "$PRESETS" -P "$SD"
+run stand-section-103035.png src/fig_stand.scad $sec -p "$PRESETS" -P "$SD" -D 'view="section"'
+run stand-screws.png src/fig_stand.scad $sec -p "$PRESETS" -P "$SD" -D 'view="section"' -D cut_y=-18
+run stand-section-802525.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,22,90,0,180,150 -p "$PRESETS" -P "$SF" -D 'view="section"'

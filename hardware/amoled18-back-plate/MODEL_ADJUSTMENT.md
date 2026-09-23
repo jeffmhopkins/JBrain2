@@ -13,7 +13,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 3. Open the `.scad`. Turn on the form: **Window → Customizer** (on some versions untick **View →
    Hide customizer**). Press **F5** to see the part; drag to spin, scroll to zoom.
 4. **Start from a version**: the drop-down at the top of the Customizer has all three, and
-   the desk stand's head and boxes. Then
+   the desk stands. Then
    change fields — the groups are numbered, and each field has a plain-English label.
 5. **Read the console** at the bottom (**Window → Console** if hidden) after each **F5**:
    - `All checks passed.` — good to go.
@@ -41,7 +41,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
-| Desk stand: tilt, box height, how the head fits the box | `stand_angle`, `stand_front_min`, `pocket_h`, `pocket_clear` | 7. Desk stand |
+| Desk stand: tilt, box height | `desk_stand`, `stand_angle`, `stand_front_min` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
 The sections below show what each of these is on the part.
@@ -153,11 +153,11 @@ source; measuring them on the original black cover makes a keeper fit first time
 
 ## Desk stand
 
-Pick **Desk stand: box for …** from the preset drop-down, or tick `desk_stand` (group 7) on any
-version. `part` then chooses the piece: `plate` gives the **head**, `box` the **box**, and
-`stand` shows both put together (for looking at, not exporting). The battery fields (group 1)
-work exactly as for the plate: set your cell and orientation, and the box grows to fit it.
-`show_battery` ghosts it in the box.
+Pick a **Desk stand: …** preset from the drop-down, or tick `desk_stand` (group 7) on any
+version. The whole part becomes the stand box, and everything about its top (outline, rim,
+screws) comes from the same fields as the plate. The battery fields (group 1) work exactly as for
+the plate: set your cell and orientation, and the box grows to fit it. `show_battery` ghosts the
+cell in the box.
 
 ![The desk stand cut open](renders/stand-section-103035.png)
 
@@ -165,21 +165,22 @@ work exactly as for the plate: set your cell and orientation, and the box grows 
 |---|---|
 | `stand_angle` | How far the screen tilts up from flat, 10–45° (30 by default) |
 | `stand_front_min` | The lowest the box's front edge may be. The box is as low as the battery allows, but never lower than this |
-| `pocket_h` | How deep the head sits in the box's pocket. It must stay under 3.5 mm, or the pocket hits the front shell |
-| `pocket_clear` | Gap between the head and the pocket, each side. Raise by 0.1 if the head won't go in; lower if it rattles |
-| `pocket_wall` | Thickness of the pocket's wall |
-| `stand_ledge` | Width of the box's wall top the head's back rests on. Wider = firmer, but less room for the battery |
 | `box_floor` | Thickness of the box's floor |
-| `open_top` | Leaves the pocket open along the top edge, clear of the USB-C plug and the buttons |
+| `tower_len` | How far each screw tower reaches down below its seat |
 
-The console reports the box's size, its front and back height, the room each side of the cell,
-and the screws to buy. The cell always sits against the tall back wall, where there's most
-height; pack the space in front of it with foam. A cell stood on its `end` makes the tallest box,
-`flat` the lowest.
+The console reports the box's size, its front and back height, the room around the cell and the
+hex key reach. The cell always sits against the tall back wall, where there's most height; pack
+the space in front of it with foam.
 
-| 103035 on edge | 802525 flat | 104050 on end |
-|---|---|---|
-| ![](renders/stand-section-103035.png) | ![](renders/stand-section-802525.png) | ![](renders/stand-section-104050.png) |
+**Left to right, the cell must be under 31 mm.** The hex key reaches each screw along a straight
+path down from it and out through the box, and those paths run down both ends. The console says
+`CELL BLOCKS THE SCREW PATHS` if the cell would sit in one. That's why the 103035 stands on its
+end here (30 mm across) rather than on its edge (37 mm with its wires).
 
-Grip ribs (group 5b) go round the box too, below its front edge. The head has none: it's hidden
-in the pocket.
+![Cut through two screws: the key's path from each hole in the box up to its tower](renders/stand-screws.png)
+
+| 103035 on end | 802525 flat |
+|---|---|
+| ![](renders/stand-section-103035.png) | ![](renders/stand-section-802525.png) |
+
+Grip ribs (group 5b) go round the box, below its front edge.
