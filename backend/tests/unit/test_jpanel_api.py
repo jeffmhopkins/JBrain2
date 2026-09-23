@@ -70,7 +70,7 @@ class TestNameOf:
 
 
 class TestMessageShape:
-    def _row(self, sender_kind: str, sender_device: str | None):
+    def _row(self, sender_kind: str, sender_device: str | None, deliveries: int = 0):
         from datetime import UTC, datetime
 
         return (
@@ -84,6 +84,7 @@ class TestMessageShape:
             1500,
             datetime(2026, 9, 22, 12, 0, tzinfo=UTC),
             None,
+            deliveries,
         )
 
     def test_direction_is_relative_to_the_owner(self) -> None:
@@ -100,6 +101,29 @@ class TestMessageShape:
         assert msg.played_at is None
         assert msg.from_name == "Ellie"
         assert msg.to_name == "Dad"
+
+    def test_a_message_the_box_gave_up_on_is_not_merely_waiting(self) -> None:
+        """THE TWO LOOK IDENTICAL IN `played_at`, AND ONLY ONE MEANS SOMETHING IS WRONG.
+
+        A message nobody has come to yet and a message the box has stopped trying to deliver are
+        both `played_at IS NULL`. Without a way to tell them apart, a panel that cannot
+        acknowledge — the §10.4cw failure — presents to the owner as a child who simply has not
+        pressed the pop-up, which is the wrong thing to believe about your own children.
+
+        `played_at` is deliberately NOT written when the box gives up: the row is unplayed
+        because it IS unplayed, and stamping it would be the box telling the owner a lie."""
+        waiting = jpanel._row_to_message(self._row("owner", None, deliveries=1), {"p1": "Ellie"})
+        assert waiting.undelivered is False, "one try is a message waiting, not a failure"
+
+        gave_up = jpanel._row_to_message(
+            self._row("owner", None, deliveries=jpanel.JPANEL_MAX_DELIVERIES),
+            {"p1": "Ellie"},
+        )
+        assert gave_up.undelivered is True
+        assert gave_up.played_at is None, (
+            "the box must never stamp played_at on a message nobody heard — that is a lie "
+            "about his children, told to make a number tidy"
+        )
 
 
 class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
