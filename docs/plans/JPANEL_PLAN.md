@@ -171,6 +171,28 @@ bedrooms. A panel principal may read only messages addressed to it and rows it s
 **never** read its sibling's inbox. Ships with an RLS isolation test in the same PR
 (`CLAUDE.md` #3) that asserts the **sibling** case explicitly, not just owner/not-owner.
 
+**A PANEL THAT CANNOT ACKNOWLEDGE IS BOUNDED BY THE BOX** (migration 0209, `deliveries`).
+`GET /next` counts how many times it has handed a message over and stops offering one collected
+`JPANEL_MAX_DELIVERIES` (5) times without ever being acknowledged.
+
+This exists because it happened: a firmware bug meant `POST /played` never fired, so the row
+stayed unplayed, every poll fetched it again, and a panel repeated the same message in a child's
+bedroom every thirty seconds until new firmware could be built (`ROOM_ENDPOINT_PLAN.md`
+§10.4cw). Nothing on the box could stop it — the debug SQL surface is read-only and
+`DELETE /messages` deliberately preserves exactly that row.
+
+The firmware bug is fixed; **the class of bug never will be**. A crash mid-playback, a dropped
+POST, a future regression — every path to "the panel did not acknowledge" ends with the same
+audio repeating. That is a property of the BOX, and the box should own it, because the box is
+the half that can be fixed without an OTA.
+
+**It does NOT mark the message played**, and that is the whole design. `played_at` means a child
+heard it; writing it here would be the box telling the owner a lie about his children, and his
+thread would show a message delivered that nobody heard a word of. The row stays unplayed
+because it IS unplayed. `deliveries` goes out on the wire instead and the PWA says
+**"Couldn't be delivered"** — because unplayed-and-waiting and unplayed-and-abandoned are
+identical in `played_at`, and only one of them means something is wrong.
+
 **Retention:** unplayed messages are kept indefinitely — a message nobody heard is the one thing
 that must not evaporate. Played messages are kept 30 days, then swept. Proposed; §5.
 

@@ -2642,6 +2642,12 @@ export interface JpanelMessage {
   created_at: string;
   /** null = still waiting. The whole inbox query, and the badge. */
   played_at: string | null;
+  /** How many times the box handed this to a panel. */
+  deliveries?: number;
+  /** The box has STOPPED trying to deliver this one. Unplayed and out of attempts — which is
+   *  not the same as unplayed and waiting, though `played_at` cannot tell them apart. The box
+   *  computes it, so one definition of "gave up" exists on the side that owns the cap. */
+  undelivered?: boolean;
 }
 
 /** One panel's thread: the messaging surface is grouped by panel because "which twin,

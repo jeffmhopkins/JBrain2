@@ -400,8 +400,20 @@ function MessagesTab() {
                         and would read as nonsense here. For an outbound one it is the only
                         live question: has the child actually heard it. */}
                     {m.direction === "out" && (
-                      <span className={`jp-status${m.played_at ? " jp-status-heard" : ""}`}>
-                        {m.played_at ? `Heard ${whenText(m.played_at)}` : "Not heard yet"}
+                      <span
+                        className={`jp-status${
+                          m.played_at ? " jp-status-heard" : m.undelivered ? " jp-status-stuck" : ""
+                        }`}
+                      >
+                        {m.played_at
+                          ? `Heard ${whenText(m.played_at)}`
+                          : m.undelivered
+                            ? // THE BOX GAVE UP, which is not the same as nobody having come to
+                              // it yet — and `played_at` cannot tell those apart. Said plainly,
+                              // because the alternative is a parent believing their child chose
+                              // not to listen when the panel never managed to play it.
+                              "Couldn't be delivered"
+                            : "Not heard yet"}
                       </span>
                     )}
                   </div>

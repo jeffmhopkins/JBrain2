@@ -322,3 +322,9 @@
   font-size: 0.82rem;
   color: var(--text-dim);
 }
+
+/* A delivery the box stopped retrying. Warning-coloured, unlike "not heard yet", because this
+   one is a fault rather than a child who has not walked past their panel. */
+.jp-status-stuck {
+  color: var(--danger, #c0392b);
+}

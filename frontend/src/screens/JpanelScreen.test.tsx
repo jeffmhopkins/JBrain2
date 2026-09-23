@@ -312,6 +312,26 @@ describe("JpanelScreen messages", () => {
     expect(screen.getAllByText(/Not heard yet/).length).toBeGreaterThan(0);
   });
 
+  it("says when the box gave up delivering, rather than showing it as merely waiting", async () => {
+    /* The two are identical in `played_at` and only one means something is wrong. A firmware
+       bug once left a message undeliverable while a panel repeated it every thirty seconds
+       (ROOM_ENDPOINT_PLAN.md §10.4cw); without this the owner would read that as a child who
+       had not walked past their panel. */
+    fetchMock.mockImplementation(
+      box({
+        threads: [
+          {
+            ...(THREADS[0] as object),
+            messages: [{ ...SENT, played_at: null, undelivered: true }],
+          },
+        ],
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    expect(await screen.findByText(/Couldn't be delivered/)).toBeTruthy();
+    expect(screen.queryByText(/Not heard yet/)).toBeNull();
+  });
+
   it("offers a microphone when there is nothing typed", async () => {
     /* THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the point.
      *

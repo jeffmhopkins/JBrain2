@@ -54,10 +54,6 @@ router = APIRouter(prefix="/jpanel", tags=["jpanel"])
 MAX_MESSAGE_MS = 20_000
 MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 
-# DAD DOES NOT SOUND LIKE THE PET. The pet answers in a female Kokoro voice; a message from a
-# father arriving in the toy's own voice would teach a four-year-old that the robot and their
-# parent are the same thing. A different voice is the cheapest possible signal that this is a
-# person, and it costs one query parameter.
 # DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.
 #
 # This said "am_michael" and every message from the owner arrived in the PET'S voice, which is
@@ -75,6 +71,18 @@ MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 # rule and roster out of that file rather than trusting this string.
 DAD_VOICE = "kokoro-am_michael"
 DAD_NAME = "Dad"
+
+# HOW MANY TIMES THE BOX WILL HAND THE SAME MESSAGE TO THE SAME PANEL BEFORE GIVING UP.
+#
+# A panel that cannot acknowledge must not be able to loop audio in a child's bedroom, and that
+# is the box's job because the box is the half that can be fixed without an OTA — §10.4cw is
+# the afternoon this was learned the hard way.
+#
+# Five, because the honest failures are all ONE: a dropped POST, a crash mid-playback, a power
+# cut between hearing and acknowledging. Retrying a handful of times covers every one of them
+# with room to spare, and the sixth identical delivery is not a flaky link, it is a panel that
+# cannot tell us it heard.
+JPANEL_MAX_DELIVERIES = 5
 
 
 class SendResult(BaseModel):
@@ -99,6 +107,11 @@ class Message(BaseModel):
     duration_ms: int
     created_at: str
     played_at: str | None = None
+    # HOW MANY TIMES THE BOX HANDED THIS TO A PANEL. On the wire so the PWA can tell a message
+    # that is merely waiting from one the box has GIVEN UP delivering — the two are identical
+    # in `played_at` and only one of them means something is wrong.
+    deliveries: int = 0
+    undelivered: bool = False
 
 
 class PanelThread(BaseModel):
@@ -265,7 +278,9 @@ def _name_of(names: dict[str, str], kind: str, device: str | None) -> str:
 
 
 def _row_to_message(row, names: dict[str, str]) -> Message:
-    (mid, s_kind, s_dev, r_kind, r_dev, transcript, composed, dur, created, played) = row
+    (mid, s_kind, s_dev, r_kind, r_dev, transcript, composed, dur, created, played, deliveries) = (
+        row
+    )
     return Message(
         id=str(mid),
         from_name=_name_of(names, s_kind, s_dev),
@@ -278,6 +293,10 @@ def _row_to_message(row, names: dict[str, str]) -> Message:
         duration_ms=int(dur or 0),
         created_at=created.isoformat(),
         played_at=played.isoformat() if played else None,
+        deliveries=int(deliveries or 0),
+        # Unplayed AND out of attempts. Computed here rather than in the PWA so one definition
+        # of "gave up" exists, on the side that owns the cap.
+        undelivered=played is None and int(deliveries or 0) >= JPANEL_MAX_DELIVERIES,
     )
 
 
@@ -449,17 +468,40 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
             await session.execute(
                 text(
                     """
-                    SELECT id::text, blob_sha256, sender_kind, sender_device
+                    SELECT id::text, blob_sha256, sender_kind, sender_device, deliveries
                     FROM app.jpanel_message
                     WHERE recipient_device = :me AND played_at IS NULL
+                      AND deliveries < :cap
                     ORDER BY created_at LIMIT 1
                     """
                 ),
-                {"me": principal.id},
+                {"me": principal.id, "cap": JPANEL_MAX_DELIVERIES},
             )
         ).first()
         if row is None:
             return Response(status_code=204)
+        # COUNTED BEFORE IT IS SENT, not after it is acknowledged — the whole point is to bound
+        # deliveries that are never acknowledged, so a count that only moved on success would
+        # never move at all in the case this exists for.
+        await session.execute(
+            text(
+                "UPDATE app.jpanel_message SET deliveries = deliveries + 1"
+                " WHERE id = CAST(:id AS uuid)"
+            ),
+            {"id": row[0]},
+        )
+        await session.commit()
+        if int(row[4]) + 1 >= JPANEL_MAX_DELIVERIES:
+            # LOUD, because this is the box giving up on delivering a child's message and the
+            # only other symptom is silence. The row stays UNPLAYED — it was never heard — and
+            # `deliveries` goes out on the wire so the PWA can say so rather than showing it as
+            # merely waiting.
+            log.warning(
+                "jpanel.delivery_gave_up",
+                message=row[0],
+                panel=principal.id,
+                deliveries=int(row[4]) + 1,
+            )
         names = await _panel_names(request.app.state.session_maker)
 
     wav = await request.app.state.blob_store.get(row[1])
@@ -511,7 +553,7 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
                 text(
                     """
                     SELECT id, sender_kind, sender_device, recipient_kind, recipient_device,
-                           transcript, composed, duration_ms, created_at, played_at
+                           transcript, composed, duration_ms, created_at, played_at, deliveries
                     FROM app.jpanel_message
                     ORDER BY created_at DESC
                     LIMIT :lim
@@ -575,7 +617,7 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
                          transcript, composed, duration_ms)
                     VALUES ('owner', 'panel', :to, :sha, :tx, 'text', :ms)
                     RETURNING id, sender_kind, sender_device, recipient_kind, recipient_device,
-                              transcript, composed, duration_ms, created_at, played_at
+                              transcript, composed, duration_ms, created_at, played_at, deliveries
                     """
                 ),
                 {"to": body.to_device, "sha": sha, "tx": body.text, "ms": duration_ms},
@@ -724,7 +766,7 @@ async def send_audio(
                          transcript, composed, duration_ms)
                     VALUES ('owner', 'panel', :to, :sha, :tx, 'voice', :ms)
                     RETURNING id, sender_kind, sender_device, recipient_kind, recipient_device,
-                              transcript, composed, duration_ms, created_at, played_at
+                              transcript, composed, duration_ms, created_at, played_at, deliveries
                     """
                 ),
                 {"to": to_device, "sha": sha, "tx": transcript, "ms": duration_ms},

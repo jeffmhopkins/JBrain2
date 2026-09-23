@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.api.jpanel import JPANEL_MAX_DELIVERIES
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -523,3 +524,108 @@ async def test_clearing_a_history_keeps_what_a_child_has_not_heard(
             for r in (await s.execute(text("SELECT blob_sha256 FROM app.jpanel_message"))).all()
         ]
     assert left == ["clr-waiting"], f"only the unheard message may survive, got {left}"
+
+
+async def test_a_panel_that_never_acknowledges_stops_being_offered_the_message(
+    maker: async_sessionmaker,
+) -> None:
+    """MIGRATION 0209, AND IT EXISTS BECAUSE IT HAPPENED.
+
+    A firmware bug meant `POST /played` never fired after playback (§10.4cw): the row stayed
+    unplayed, every poll fetched it again, and a panel repeated the same message in a child's
+    bedroom every thirty seconds until new firmware could be built. Nothing on the box could
+    stop it — the debug SQL surface is read-only and `DELETE /messages` deliberately preserves
+    exactly this row.
+
+    The firmware bug is fixed; the CLASS of bug never will be. A crash mid-playback, a dropped
+    POST, a future regression — every path to "the panel did not acknowledge" ends with the same
+    audio repeating. So the box bounds it, because the box is the half that can be fixed without
+    an OTA.
+
+    Asserted as the inbox query the route actually runs, so a change to either moves together."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.jpanel_message"))
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, recipient_kind, recipient_device, blob_sha256, composed)
+                VALUES ('owner', 'panel', 'panel-one', 'cap-test', 'text')
+                """
+            )
+        )
+        await s.commit()
+
+    inbox = text(
+        """
+        SELECT id::text FROM app.jpanel_message
+        WHERE recipient_device = :me AND played_at IS NULL AND deliveries < :cap
+        ORDER BY created_at LIMIT 1
+        """
+    )
+    bump = text(
+        "UPDATE app.jpanel_message SET deliveries = deliveries + 1 WHERE id = CAST(:id AS uuid)"
+    )
+
+    handed = 0
+    for _ in range(JPANEL_MAX_DELIVERIES + 4):
+        async with scoped_session(maker, ONE) as s:
+            row = (
+                await s.execute(inbox, {"me": "panel-one", "cap": JPANEL_MAX_DELIVERIES})
+            ).first()
+            if row is None:
+                break
+            handed += 1
+            await s.execute(bump, {"id": row[0]})
+            await s.commit()
+
+    assert handed == JPANEL_MAX_DELIVERIES, (
+        f"the box handed it over {handed} times; the cap is {JPANEL_MAX_DELIVERIES} and without "
+        "one this loop does not terminate at all"
+    )
+
+    async with scoped_session(maker, OWNER) as s:
+        played = (
+            await s.execute(
+                text("SELECT played_at FROM app.jpanel_message WHERE blob_sha256 = 'cap-test'")
+            )
+        ).scalar_one()
+    assert played is None, (
+        "giving up must NOT stamp played_at — nobody heard this message, and saying otherwise "
+        "would be the box telling the owner a lie about his children to tidy a number"
+    )
+
+
+async def test_a_panel_cannot_touch_its_siblings_delivery_count(
+    maker: async_sessionmaker,
+) -> None:
+    """The new column rides `jpanel_message_panel_played`, whose bound is the ROW. Worth an
+    assertion anyway: a counter a sibling could reset is a counter that cannot bound anything,
+    and the cap above is the only thing standing between a broken panel and a bedroom."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.jpanel_message"))
+        await s.execute(
+            text(
+                """
+                INSERT INTO app.jpanel_message
+                    (sender_kind, recipient_kind, recipient_device, blob_sha256, composed,
+                     deliveries)
+                VALUES ('owner', 'panel', 'panel-one', 'cap-sibling', 'text', 4)
+                """
+            )
+        )
+        await s.commit()
+
+    async with scoped_session(maker, TWO) as s:
+        await s.execute(
+            text("UPDATE app.jpanel_message SET deliveries = 0 WHERE blob_sha256 = 'cap-sibling'")
+        )
+        await s.commit()
+
+    async with scoped_session(maker, OWNER) as s:
+        left = (
+            await s.execute(
+                text("SELECT deliveries FROM app.jpanel_message WHERE blob_sha256 = 'cap-sibling'")
+            )
+        ).scalar_one()
+    assert left == 4, "the sibling reset another panel's delivery count"
