@@ -37,11 +37,12 @@ static const char *TAG = "jpanel";
    the box nothing — the route returns a count and a name and touches one index. */
 #define POLL_EVERY_MS 30000
 
-typedef enum { CMD_SEND = 0, CMD_PLAY, CMD_POLL } cmd_kind_t;
+typedef enum { CMD_SEND = 0, CMD_FETCH, CMD_POLL } cmd_kind_t;
 
 typedef struct {
     cmd_kind_t kind;
-    jpanel_to_t to;
+    jpanel_to_t to;  /* CMD_SEND only */
+    bool asked;      /* CMD_FETCH: a finger is waiting for this, so play it and report */
 } cmd_t;
 
 static const cfg_t *s_cfg;
@@ -56,6 +57,19 @@ static volatile size_t s_bytes;
    of a child waiting for their sister's voice is a failure with no good outcome. */
 static uint8_t *s_in;
 static volatile int s_in_len;
+/* A FETCHED MESSAGE, WAITING FOR A FINGER — the difference between a pop-up that plays and
+   one that makes a child wait.
+ *
+ * The owner: *"the message should start playing faster. There's a couple seconds between me
+ * acknowledging the message and it's starting to play."* That gap was the whole round trip —
+ * a TLS handshake, a blob read on the box, a rate conversion and up to 640 KB down the wire —
+ * and it ran AFTER the tap because the tap is what used to start it.
+ *
+ * Nothing required that order. `GET /next` deliberately does not mark a message played, so
+ * fetching one early costs nothing and risks nothing: a panel that loses power holding an
+ * unplayed message still has it on the box. So the poll that discovers a message now also
+ * collects it, and the tap is a memcpy into the speaker's buffer. */
+static volatile bool s_held;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
    who it came from, which is what the repeat icon's caption says. Both are filled by the
    header handler below. */
@@ -242,9 +256,9 @@ done:
     esp_http_client_cleanup(c);
 }
 
-/* --- GET /next, then the speaker ---------------------------------------------------------- */
+/* --- GET /next: collect a message, do NOT play it ------------------------------------------ */
 
-static void do_play(void)
+static void do_fetch(bool asked)
 {
     char url[288];
     esp_http_client_handle_t c = open_client("/next", HTTP_METHOD_GET, url, sizeof(url));
@@ -284,20 +298,33 @@ static void do_play(void)
         goto done;
     }
     s_in_len = got;
-    out = audio_play((const int16_t *)s_in, (size_t)got) ? JPANEL_PLAYING : JPANEL_FAILED;
-    if (out == JPANEL_PLAYING) {
-        ESP_LOGI(TAG, "playing %d B from %s, id %s", got,
-                 s_in_from[0] ? s_in_from : "?", s_in_id[0] ? s_in_id : "(none)");
-        /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
-           up while the message plays would tell a child there is still one waiting. The next
-           poll corrects it either way. */
-        if (s_wait_count > 0) s_wait_count--;
-        if (s_wait_count == 0) s_wait_from[0] = '\0';
-    }
+    s_held = true;
+    out = JPANEL_IDLE;
+    ESP_LOGI(TAG, "holding %d B from %s, id %s", got, s_in_from[0] ? s_in_from : "?",
+             s_in_id[0] ? s_in_id : "(none)");
 
 done:
     esp_http_client_cleanup(c);
-    s_state = out;
+    /* THE BACKGROUND FETCH REPORTS NOTHING, and that is not tidiness. It runs off the poll,
+       which fires on this task's own clock — so writing `s_state` here would overwrite a
+       `JPANEL_SENT` or `JPANEL_NOBODY` the renderer had not shown yet, and the child would
+       lose the sound that told them their message went. Only a fetch a finger asked for has
+       an outcome worth reporting.
+     *
+       And never PLAYING: nothing was played. `jpanel_play_next` owns that transition. */
+    if (asked) s_state = out;
+    if (asked && s_held) {
+        /* Tapped before the poll had collected it. Play it now rather than making the child
+           tap a second time — the pop-up is already gone from their screen. */
+        if (audio_play((const int16_t *)s_in, (size_t)s_in_len)) {
+            s_held = false;
+            s_state = JPANEL_PLAYING;
+            if (s_wait_count > 0) s_wait_count--;
+            if (s_wait_count == 0) s_wait_from[0] = '\0';
+            ESP_LOGI(TAG, "playing %d B from %s (fetched on the tap)", s_in_len,
+                     s_in_from[0] ? s_in_from : "?");
+        }
+    }
 }
 
 /* --- POST /played ------------------------------------------------------------------------ */
@@ -341,17 +368,20 @@ static void jpanel_task(void *arg)
         if (have) {
             switch (cmd.kind) {
             case CMD_SEND: do_send(cmd.to); break;
-            case CMD_PLAY:
-                do_play();
-                owe_played = s_state == JPANEL_PLAYING;
+            case CMD_FETCH:
+                do_fetch(cmd.asked);
                 break;
             case CMD_POLL: next_poll = 0; break;
             }
         }
         /* THE ACKNOWLEDGEMENT WAITS FOR THE SPEAKER, which is the whole reason `GET /next`
            does not mark it played: a panel that loses power mid-message must still have the
-           message. */
-        if (owe_played && !audio_playing()) {
+           message.
+         *
+           Armed by the RENDERER now rather than by a command, because the play itself happens
+           there — `jpanel_play_next` hands the held buffer straight to the speaker. */
+        if (s_state == JPANEL_PLAYING) owe_played = true;
+        if (owe_played && !audio_playing() && s_state != JPANEL_BUSY) {
             owe_played = false;
             do_played();
             next_poll = 0;
@@ -362,6 +392,11 @@ static void jpanel_task(void *arg)
         if (now >= next_poll && !audio_playing() && s_state != JPANEL_BUSY) {
             do_poll();
             next_poll = now + POLL_EVERY_MS;
+            /* COLLECT IT NOW, NOT WHEN THE CHILD TAPS. The whole round trip moves off the tap
+               path and into the wait nobody is watching, which is what turns two seconds of a
+               child staring at a pop-up into a memcpy. Safe precisely because `GET /next` does
+               not mark a message played. */
+            if (s_wait_count > 0 && !s_held && s_state != JPANEL_BUSY) do_fetch(false);
         }
     }
 }
@@ -385,10 +420,10 @@ bool jpanel_start(const cfg_t *cfg)
     return true;
 }
 
-static bool post(cmd_kind_t kind, jpanel_to_t to)
+static bool post(cmd_kind_t kind, jpanel_to_t to, bool asked)
 {
     if (s_q == NULL) return false;
-    const cmd_t cmd = {.kind = kind, .to = to};
+    const cmd_t cmd = {.kind = kind, .to = to, .asked = asked};
     return xQueueSend(s_q, &cmd, 0) == pdTRUE;
 }
 
@@ -399,16 +434,35 @@ bool jpanel_send(const int16_t *pcm, size_t bytes, jpanel_to_t to)
     s_pcm = pcm;
     s_bytes = bytes;
     s_state = JPANEL_BUSY;
-    if (post(CMD_SEND, to)) return true;
+    if (post(CMD_SEND, to, false)) return true;
     s_state = JPANEL_IDLE;
     return false;
 }
 
 bool jpanel_play_next(void)
 {
-    if (s_q == NULL || s_state == JPANEL_BUSY) return false;
+    if (s_q == NULL) return false;
+    /* THE FAST PATH, AND IT IS THE ONLY ONE A CHILD SHOULD EVER MEET. A message collected by
+       the poll is already in PSRAM, so this is a memcpy into the speaker's buffer and the
+       sound starts on the same frame as the finger. */
+    if (s_held && s_in_len >= 2) {
+        if (!audio_play((const int16_t *)s_in, (size_t)s_in_len)) return false;
+        s_held = false;
+        s_state = JPANEL_PLAYING;
+        /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
+           up while the message plays would tell a child there is still one waiting. The next
+           poll corrects it either way. */
+        if (s_wait_count > 0) s_wait_count--;
+        if (s_wait_count == 0) s_wait_from[0] = '\0';
+        ESP_LOGI(TAG, "playing %d B from %s", s_in_len, s_in_from[0] ? s_in_from : "?");
+        return true;
+    }
+    /* The slow path survives for the case the fast one cannot cover: a pop-up tapped before
+       the poll that announced it had time to collect the audio. It still works, it is simply
+       the two seconds this change exists to remove. */
+    if (s_state == JPANEL_BUSY) return false;
     s_state = JPANEL_BUSY;
-    if (post(CMD_PLAY, JPANEL_TO_PANEL)) return true;
+    if (post(CMD_FETCH, JPANEL_TO_PANEL, true)) return true;
     s_state = JPANEL_IDLE;
     return false;
 }
@@ -421,7 +475,7 @@ bool jpanel_replay(void)
 
 void jpanel_poll_soon(void)
 {
-    (void)post(CMD_POLL, JPANEL_TO_PANEL);
+    (void)post(CMD_POLL, JPANEL_TO_PANEL, false);
 }
 
 /* Who the message now in the buffer came from — the caption beside the repeat icon. Empty

@@ -10,9 +10,11 @@
 // four-year-old cannot type, and a parent at work cannot play audio out loud.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import { type JpanelMessage, type JpanelThread, api, jpanelAudioUrl } from "../api/client";
-import { PlayIcon, SendIcon, StopIcon } from "../components/icons";
+import { MicIcon, PlayIcon, SendIcon, StopIcon } from "../components/icons";
 import { useForeground } from "../visibility";
+import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
 import "./jpanel.css";
 
@@ -64,6 +66,14 @@ function MessagesTab() {
   const [sendError, setSendError] = useState("");
   const [playing, setPlaying] = useState<string | null>(null);
   const [playError, setPlayError] = useState("");
+  /* Which panel is being recorded FOR, not a bare boolean: the screen shows every panel at
+     once, and a flag would light the microphone on all of them. */
+  const [recording, setRecording] = useState<string | null>(null);
+  const recorder = useRef<Recorder | null>(null);
+  /* The cap is enforced here as well as on the box, so a long message is stopped and SENT
+     rather than truncated on arrival — the failure `audio_play` had on the panel, which must
+     not be reintroduced from this end. */
+  const recordTimer = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   /** Ids already reported, so a poll that re-renders the same row does not re-POST it. */
@@ -185,6 +195,110 @@ function MessagesTab() {
     });
   }
 
+  const stopRecording = useCallback(async (deviceId: string) => {
+    const active = recorder.current;
+    recorder.current = null;
+    if (recordTimer.current !== null) {
+      window.clearTimeout(recordTimer.current);
+      recordTimer.current = null;
+    }
+    setRecording(null);
+    if (!active) return;
+    setSending(deviceId);
+    setSendError("");
+    try {
+      const pcm = await active.stop();
+      if (pcm.byteLength < 2) throw new Error("nothing was recorded");
+      const sent = await api.sendJpanelVoice(deviceId, pcm);
+      /* From the server's own row, exactly as the typed path does: the box decides the id,
+         the duration and the transcript, and a message that exists only on this phone is
+         precisely the message a parent believes they sent and did not. */
+      setThreads(
+        (cur) =>
+          cur?.map((t) =>
+            t.device_id === deviceId ? { ...t, messages: [sent, ...t.messages] } : t,
+          ) ?? cur,
+      );
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(null);
+    }
+  }, []);
+
+  const beginRecording = useCallback(
+    async (deviceId: string) => {
+      if (recording !== null || sending !== null) return;
+      setSendError("");
+      try {
+        recorder.current = await startRecording();
+        setRecording(deviceId);
+        /* Stops and SENDS at the ceiling rather than discarding: someone who has just spoken
+           for twenty seconds has said something, and throwing it away for going one second
+           long is the worst thing this control could do. */
+        recordTimer.current = window.setTimeout(() => {
+          void stopRecording(deviceId);
+        }, MAX_MESSAGE_MS);
+      } catch (e) {
+        /* Surfaced, never swallowed. A refused microphone makes this button do nothing, which
+           is indistinguishable from a broken one — and the browser only prompts once. */
+        recorder.current = null;
+        setRecording(null);
+        setSendError(
+          e instanceof Error && e.name === "NotAllowedError"
+            ? "The browser would not give this page the microphone."
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        );
+      }
+    },
+    [recording, sending, stopRecording],
+  );
+
+  /* The microphone is released when this screen goes, whatever route it left by. A recording
+     abandoned by navigation would otherwise hold the mic and its indicator light open. */
+  useEffect(
+    () => () => {
+      recorder.current?.cancel();
+      recorder.current = null;
+      if (recordTimer.current !== null) window.clearTimeout(recordTimer.current);
+    },
+    [],
+  );
+
+  const [clearing, setClearing] = useState<string | null>(null);
+  const [cleared, setCleared] = useState<Record<string, string>>({});
+
+  async function clearHistory(deviceId: string, name: string) {
+    if (clearing !== null) return;
+    /* CONFIRMED, BECAUSE IT CANNOT BE UNDONE. Everything else on this surface is recoverable
+       by waiting; this is the one control that destroys a child's words. */
+    if (!window.confirm(`Delete the conversation with ${name}? This cannot be undone.`)) return;
+    setClearing(deviceId);
+    setSendError("");
+    try {
+      const { deleted, kept } = await api.clearJpanelHistory(deviceId);
+      setThreads(
+        (cur) => cur?.map((t) => (t.device_id === deviceId ? { ...t, messages: [] } : t)) ?? cur,
+      );
+      /* SAID OUT LOUD WHEN SOMETHING SURVIVED. The box refuses to delete a message a child has
+         not heard yet, and a clear that silently leaves rows behind is worse than one that
+         refuses — the list afterwards has to match what he expects. */
+      setCleared((c) => ({
+        ...c,
+        [deviceId]: kept
+          ? `Cleared ${deleted}. Kept ${kept} ${name} hasn't heard yet — they'll stay until played.`
+          : `Cleared ${deleted}.`,
+      }));
+      await refresh();
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearing(null);
+    }
+  }
+
   async function send(deviceId: string) {
     const text = (drafts[deviceId] ?? "").trim();
     if (!text || sending !== null) return;
@@ -246,7 +360,24 @@ function MessagesTab() {
           <h2 className="jp-panel-head">
             <span className="jp-panel-name">{thread.name}</span>
             {thread.unplayed > 0 && <span className="jp-unplayed">{thread.unplayed} unplayed</span>}
+            {thread.messages.length > 0 && (
+              <button
+                type="button"
+                className="jp-clear"
+                aria-label={`Clear the conversation with ${thread.name}`}
+                disabled={clearing !== null}
+                onClick={() => void clearHistory(thread.device_id, thread.name)}
+              >
+                {clearing === thread.device_id ? "Clearing…" : "Clear history"}
+              </button>
+            )}
           </h2>
+          {cleared[thread.device_id] && (
+            /* `<output>`, not a `<p role="status">`: it carries the same implicit role and is
+               the element the rule asks for — and a screen reader should announce what a
+               destructive button just did without the owner having to go looking. */
+            <output className="jp-cleared">{cleared[thread.device_id]}</output>
+          )}
 
           {thread.messages.length === 0 ? (
             <p className="jp-empty">Nothing from {thread.name} yet.</p>
@@ -264,6 +395,15 @@ function MessagesTab() {
                     <span className="jp-from">{m.from_name}</span>
                     <time dateTime={m.created_at}>{whenText(m.created_at)}</time>
                     <span className="jp-dur">{durationText(m.duration_ms)}</span>
+                    {/* STATUS, AND ONLY ON WHAT YOU SENT. For an inbound message `played_at`
+                        means "the owner has dealt with it", which is the unplayed badge's job
+                        and would read as nonsense here. For an outbound one it is the only
+                        live question: has the child actually heard it. */}
+                    {m.direction === "out" && (
+                      <span className={`jp-status${m.played_at ? " jp-status-heard" : ""}`}>
+                        {m.played_at ? `Heard ${whenText(m.played_at)}` : "Not heard yet"}
+                      </span>
+                    )}
                   </div>
                   <div className="jp-msg-body">
                     {/* The transcript is the content, not a caption under a player: it is
@@ -293,9 +433,12 @@ function MessagesTab() {
             </ul>
           )}
 
-          {/* Text only, and there is no record button to look for: the box speaks what is
-              typed here in a voice of its own (not the pet's), which is the half of the
-              asymmetry the PWA owns. */}
+          {/* TWO WAYS TO SAY IT, and the microphone is the one that matters most.
+              The owner: *"PWA should also be able to actually send audio, a voice message,
+              that have the option to send text that gets rendered."*
+              Type and the box reads it out in a voice of its own (never the pet's); or hold
+              the microphone and the panel plays Dad's ACTUAL voice — which, for a child who
+              cannot read, is the only version that carries who it is from. */}
           <form
             className="jp-compose"
             onSubmit={(e) => {
@@ -310,16 +453,45 @@ function MessagesTab() {
               aria-label={`Message ${thread.name}`}
               enterKeyHint="send"
             />
-            <button
-              type="submit"
-              className="jp-send"
-              aria-label={`Send to ${thread.name}`}
-              disabled={!(drafts[thread.device_id] ?? "").trim() || sending !== null}
-            >
-              <SendIcon size={18} />
-            </button>
+            {/* The microphone yields to a typed draft rather than sitting beside it armed:
+                with words in the box the obvious action is to send them, and two live buttons
+                is the moment a parent taps the wrong one. */}
+            {(drafts[thread.device_id] ?? "").trim() ? (
+              <button
+                type="submit"
+                className="jp-send"
+                aria-label={`Send to ${thread.name}`}
+                disabled={sending !== null}
+              >
+                <SendIcon size={18} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`jp-mic${recording === thread.device_id ? " jp-mic-live" : ""}`}
+                aria-label={
+                  recording === thread.device_id
+                    ? `Stop and send to ${thread.name}`
+                    : `Record a message for ${thread.name}`
+                }
+                aria-pressed={recording === thread.device_id}
+                disabled={
+                  sending !== null || (recording !== null && recording !== thread.device_id)
+                }
+                onClick={() => {
+                  if (recording === thread.device_id) void stopRecording(thread.device_id);
+                  else void beginRecording(thread.device_id);
+                }}
+              >
+                {recording === thread.device_id ? <StopIcon size={18} /> : <MicIcon size={18} />}
+              </button>
+            )}
           </form>
-          <p className="jp-hint">They hear it read out on their panel — they never read it.</p>
+          <p className="jp-hint">
+            {recording === thread.device_id
+              ? "Recording — press again to send."
+              : "They hear it read out on their panel — they never read it."}
+          </p>
         </section>
       ))}
     </div>

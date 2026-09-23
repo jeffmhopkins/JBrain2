@@ -103,11 +103,42 @@ whenever it next asks.
 |  | sends | receives | reads |
 |---|---|---|---|
 | **panel** (each twin) | audio only | audio, played aloud | — |
-| **PWA** (Dad) | **text**, spoken to them by TTS | audio | **transcript**, with the audio available |
+| **PWA** (Dad) | **audio OR text** — text is spoken by TTS | audio | **transcript**, with the audio available |
 
-The panels never send text and never read. The PWA never has to listen if it does not want to.
-That is the owner's requirement verbatim and it is also the right split: a four-year-old cannot
-type, and a parent at work cannot play audio out loud.
+The panels never send text and never read. The PWA never has to *listen* if it does not want
+to. A four-year-old cannot type, and a parent at work cannot play audio out loud — so the
+reading half of this is unchanged and load-bearing.
+
+> **AMENDED 2026-09-23.** This table said the PWA sends **text and nothing else**, and that
+> the panels are "the only half of this that speaks" — a `JpanelScreen` test asserted no
+> recorder existed anywhere on the surface. The owner: *"PWA should also be able to actually
+> send audio, a voice message, that have the option to send text that gets rendered."*
+>
+> **The reason is the one `DAD_VOICE` already exists for.** A separate male voice was chosen
+> because a message from Dad arriving in the pet's own voice would teach a four-year-old that
+> the robot and their father are the same thing. A synthesised voice reading a father's words
+> is a weaker answer to the same problem than his actual voice, and for a child who cannot
+> read, the recording is the ONLY version that carries who it is from. Typing stays, because a
+> parent in an open-plan office cannot always speak — it is now one of two options rather than
+> the only one.
+>
+> **It needed no firmware change and no OTA**, which is the contract having been drawn at the
+> right seam: `GET /next` hands the panel raw PCM and the panel plays it. Nothing in the
+> firmware knows or cares whether that audio came from a microphone, from Kokoro, or from a
+> phone in an office.
+>
+> **The browser converts, not the box.** A `MediaRecorder` blob is webm/opus in Chrome and
+> Firefox and mp4/aac in Safari; decoding that server-side would mean a codec dependency in
+> the api container for a job the recording browser can already do. `frontend/src/voiceMessage.ts`
+> resamples to the same 16 kHz mono s16 a panel uploads, so ONE audio format crosses this
+> boundary and the owner's voice takes the identical path through the box as a child's — same
+> trim, same transcription, same blob store. It avoids `OfflineAudioContext` deliberately:
+> Safari has historically refused sample rates below 44.1 kHz there, and Safari on a phone is
+> exactly where the owner is.
+>
+> **The transcript of a recording may be wrong**, unlike the typed path where the text IS what
+> was said and is kept verbatim. Acceptable for the same reason it is on the panel's side: the
+> audio is the message and the text is a convenience.
 
 ### Why this is not built on `/converse`
 
@@ -174,6 +205,12 @@ sent me something"*, so a small `GET /jpanel/waiting` runs on a ~30 s cadence re
 and a sender name. A waiting message draws a **pop-up over the face** — big, tappable anywhere
 inside, naming who it is from — and wakes the screen if it is asleep. It does not auto-play; an
 unplayed message survives a reboot because the state lives on the box.
+
+**The pop-up stands down after 15 s** to a small badge in the top-left, carrying the sender's
+name and the same tap target. Big is right while it must interrupt; big for an hour holds a
+child's toy hostage over a message nobody has come to. The clock runs from when the WAIT began,
+not from the last count change, or a second message would restore the big box on a child who
+has already declined the first.
 
 **After it plays**, a repeat icon in the **top-left** for 5 seconds; a tap replays, then it
 clears. Deliberately short: it is for *"what did she say?"*, not a permanent control.
@@ -253,6 +290,7 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 |---|---|---|
 | `GET /messages` | `limit` (default 100) | `200 {panels: [PanelThread]}` |
 | `POST /messages` | `{to_device, text}` | `201 Message` — TTS renders it, the typed text is kept as the transcript |
+| `POST /messages/audio?to_device=` | the raw 16 kHz mono s16 body, exactly as the panel's `/send` takes it | `201 Message` — Dad's own voice; transcribed on the way in, `composed: "voice"`; `404` for an unknown panel |
 | `POST /messages/{id}/played` | — | `204` — the owner has dealt with it; idempotent, keeps the first timestamp |
 | `GET /messages/{id}/audio` | — | `200 audio/wav` |
 
@@ -291,6 +329,28 @@ would most want to reach.
 tempting fix is to stamp `played_at` in `GET .../audio`, and it is wrong for the same reason the
 next paragraph gives: the expected interaction is READING. A father who reads the transcript and
 never presses play would leave the count sitting there forever.
+
+**IT IS A CONVERSATION WINDOW, and the fix for a long one is a scroll cap, not forgetting.**
+This briefly showed only the newest outbound message, on a misreading of *"we shouldn't just
+keep on piling up message after message."* The owner corrected it: *"This is a conversation
+window. It needs to limit the max height of each panel conversation and scroll is larger. And
+add a 'clear history' button per panel."* Throwing away what was said is the wrong answer to a
+list that is too tall.
+
+So each thread caps its own height and scrolls inside — which keeps every panel's compose row
+on screen at once, the layout a parent with two children actually needs, rather than one column
+metres long with the box you came to use below the fold. Each row still carries its status
+(`Heard 4m ago` / `Not heard yet`) on what the owner sent, because that is the only live
+question about something he already knows he said.
+
+**`DELETE /messages?device=` clears one panel's conversation, EXCEPT a message a child has not
+heard yet.** §5 says a message nobody heard must not evaporate, and a row addressed to a panel
+with `played_at IS NULL` is sitting on a bedroom wall waiting for a four-year-old to come back
+to it — the owner tidying his own view is not a decision about her post. A panel's unread
+message to the OWNER is a different thing and goes: that is his own badge and clearing is
+exactly the call he is making. The route returns how many it kept so the PWA can **say so**; a
+clear that silently leaves rows behind is worse than one that refuses, because the whole point
+of the button is that the list afterwards matches what he expects.
 
 **`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
 work; the audio is the fallback for when the transcript does not make sense — which, given how

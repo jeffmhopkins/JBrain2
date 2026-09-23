@@ -213,12 +213,15 @@ describe("JpanelScreen messages", () => {
     expect(FakeAudio.built[0]?.paused).toBe(true);
   });
 
-  it("sends TEXT — the PWA never uploads audio", async () => {
+  it("sends typed text, and the microphone yields while there is a draft", async () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} />);
 
     const input = await screen.findByLabelText("Message Ellie");
     fireEvent.change(input, { target: { value: "Five more minutes then teeth." } });
+    // ONE ACTION PER COMPOSE ROW. With words in the box the obvious thing is to send them,
+    // and two live buttons side by side is the moment a parent taps the wrong one.
+    expect(screen.queryByRole("button", { name: "Record a message for Ellie" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
 
     await waitFor(() => expect(screen.getByText("Five more minutes then teeth.")).toBeTruthy());
@@ -228,9 +231,104 @@ describe("JpanelScreen messages", () => {
       to_device: "panel-ellie",
       text: "Five more minutes then teeth.",
     });
-    // No recorder anywhere on the surface: a parent at work cannot talk into a phone, and
-    // the panels are the only half of this that speaks.
-    expect(screen.queryByRole("button", { name: /record|hold to talk|microphone/i })).toBeNull();
+    // And it comes back once the draft is cleared, so the next thing said can be spoken.
+    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+  });
+
+  it("clears a panel's history, and says what the box refused to delete", async () => {
+    /* The owner: *"add a 'clear history' button per panel."*
+     *
+     * The box refuses to delete a message a child has not heard yet — JPANEL_PLAN.md §5, a
+     * message nobody heard must not evaporate — so the clear is partial by design, and a
+     * partial clear that says nothing is worse than one that refuses: the list afterwards has
+     * to match what the owner expects to see. */
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (path.startsWith("/api/jpanel/messages") && method === "DELETE") {
+        return json({ deleted: 7, kept: 1 });
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Clear the conversation with Ellie/ }),
+    );
+    expect(await screen.findByText(/Kept 1 Ellie hasn't heard yet/)).toBeTruthy();
+    const del = fetchMock.mock.calls.find((c) => (c[1]?.method ?? "") === "DELETE");
+    expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-ellie");
+  });
+
+  it("does not clear when the confirm is declined", async () => {
+    /* The one control here that destroys a child's words. Everything else on this surface is
+       recoverable by waiting. */
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Clear the conversation with Ellie/ }),
+    );
+    expect(fetchMock.mock.calls.some((c) => (c[1]?.method ?? "") === "DELETE")).toBe(false);
+  });
+
+  it("keeps the whole conversation rather than collapsing it", async () => {
+    /* This briefly showed only the newest outbound message, on a misreading of "we shouldn't
+       just keep on piling up message after message". The owner corrected it: this is a
+       CONVERSATION WINDOW — the fix for a long thread is a scroll cap and a clear button, not
+       throwing away what was said. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    await screen.findByText("There is a joke. There is a joke.");
+    const outbound = THREADS[0]?.messages.filter((m) => m.direction === "out") ?? [];
+    for (const m of outbound) {
+      if (m.transcript.trim()) expect(screen.getByText(m.transcript)).toBeTruthy();
+    }
+  });
+
+  it("says whether what Dad sent has been heard", async () => {
+    /* The status, which survived a misread requirement. This once ALSO collapsed the thread to
+       the newest outbound row; the owner corrected that — it is a conversation window — so what
+       remains is the part that was actually useful: for a message you sent, the only live
+       question is whether the child has heard it, and that is what a parent opens this to find
+       out at work. */
+    let n = 0;
+    fetchMock.mockImplementation(
+      box({
+        post: () => {
+          n += 1;
+          return json({ ...SENT, id: `sent-${n}`, transcript: "teeth please" }, 201);
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const input = await screen.findByLabelText("Message Ellie");
+    fireEvent.change(input, { target: { value: "teeth please" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Ellie" }));
+
+    await waitFor(() => expect(screen.getByText("teeth please")).toBeTruthy());
+    expect(screen.getAllByText(/Not heard yet/).length).toBeGreaterThan(0);
+  });
+
+  it("offers a microphone when there is nothing typed", async () => {
+    /* THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the point.
+     *
+     * `JPANEL_PLAN.md` §3b made the asymmetry binding — *"The panels never send text and
+     * never read. The PWA never has to listen if it does not want to"* — and this file
+     * enforced it by checking no recorder existed anywhere on the surface.
+     *
+     * The owner amended it: *"PWA should also be able to actually send audio, a voice
+     * message, that have the option to send text that gets rendered."* The reason is the same
+     * one `DAD_VOICE` exists for — a synthesised voice reading a father's words is not his
+     * voice, and for a child who cannot read, the recording is the only version that carries
+     * who it is from. The PWA still never has to LISTEN; it may now speak. */
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Record a message for Ellie" })).toBeTruthy();
+    // And the send button is not also live — one action per compose row.
+    expect(screen.queryByRole("button", { name: "Send to Ellie" })).toBeNull();
   });
 
   it("keeps the words in the box when the send fails", async () => {

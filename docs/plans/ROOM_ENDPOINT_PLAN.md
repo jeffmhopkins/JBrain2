@@ -5248,6 +5248,78 @@ to `principals`. That is the panel roster §5 keeps asking for.
   Losing that id means a message that plays every time the panel asks.
 
 
+#### 10.4cv Dad in the pet's voice, a silent pop-up, and two seconds of waiting (0.2.89, 2026-09-23)
+
+Three things the owner found by using it, an hour after the first messages went through.
+
+##### Dad arrived in the robot's voice
+
+`DAD_VOICE` was `"am_michael"`. `_resolve_kokoro_voice` in `deploy/tts-stt/tts_server.py`
+returns the DEFAULT for any id that does not start with `kokoro-`, and the default is
+`CURATED_KOKORO_VOICES[0]` — `af_heart`, **the pet's own voice**. So every message the owner
+sent arrived in exactly the voice a separate voice exists to avoid, because a message from Dad
+in the robot's voice teaches a four-year-old that the robot and their father are the same thing.
+
+**It was silent by construction and that part is not a bug.** The fallback is right on the
+engine's side — a stale id from an old client should render rather than error — so the box
+logged a successful render, the panel played perfectly good speech, and nothing anywhere said
+the voice had been swapped. It took the owner hearing it.
+
+Now `"kokoro-am_michael"`, and pinned: a test reads `KOKORO_ID_PREFIX` and
+`CURATED_KOKORO_VOICES` out of the service and asserts the id carries the prefix, is in the
+roster, is male, and is **not** the default. Verified by restoring the old string and watching
+it fail. The two live in different packages with different test runners and nothing else
+connected them.
+
+##### The pop-up made no sound, and the message took two seconds to start
+
+The gap was the whole round trip — a TLS handshake, a blob read, a rate conversion and up to
+640 KB down the wire — and it ran AFTER the tap, because the tap is what started it.
+
+**Nothing required that order.** `GET /next` deliberately does not mark a message played, which
+is what makes a message survive a power cut mid-playback; the same property makes it free to
+collect one EARLY. So the ~30 s poll that discovers a message now also fetches it, and the tap
+is a memcpy into the speaker's buffer. The slow path survives for the case the fast one cannot
+cover — a pop-up tapped before the poll had collected the audio — and now plays on arrival
+rather than making the child tap twice.
+
+Two details the prefetch forced, both of which would have been bugs:
+
+- **A background fetch reports no state.** It runs on the jpanel task's own clock, so writing
+  `s_state` would overwrite a `JPANEL_SENT` the renderer had not shown yet — and the child
+  would lose the sound that told them their own message went. Only a fetch a finger asked for
+  has an outcome worth reporting.
+- **The tap sound is conditional, and the obvious version is wrong.** `audio_play` refuses
+  while anything else is sounding, so an unconditional acknowledgement beep would be the thing
+  that swallowed the message now that playback usually starts on the same frame. The message IS
+  the acknowledgement when it plays at once; the cue fires only when it does not — which is
+  exactly the tap that felt unanswered.
+
+##### And the pop-up stands down after fifteen seconds
+
+The owner: *"the notification on the panel is very large when it shows which is fine, but if
+it's not acknowledged within say 15 seconds, it should kind of be a smaller one up on the top
+left."*
+
+A box over the pet's face is right for the first fifteen seconds — it has to interrupt, the
+reader is four and is not auditing the screen for changes. It is wrong for the next hour: a
+message nobody has come to yet should not hold a child's toy hostage. So it becomes a badge
+top-left, still carrying the sender's name and still the same generous tap target — shrinking
+the box must not shrink what a four-year-old has to hit.
+
+Two details that are easy to get wrong:
+
+- **The clock starts when the WAIT does, not when the count last moved.** A second message
+  arriving while the first is unheard must not restore the big box: the child has already been
+  interrupted once and has chosen not to come. It restarts only from nothing-waiting.
+- **The shrink is a frame nobody else asks for.** The count has not changed, no finger has
+  landed, and the pet may be perfectly still — so without an explicit repaint the big box would
+  sit there until the next blink happened to redraw it.
+
+The AGAIN button owns the same corner for its five seconds and wins there: it is transient and
+answers a question the child is asking right now, where the badge answers one they have already
+declined.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

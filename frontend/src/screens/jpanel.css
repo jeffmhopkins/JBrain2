@@ -221,3 +221,104 @@
   line-height: 1.45;
   margin: 0;
 }
+
+/* The microphone, and the recording state that has to read from across a room.
+   Same footprint as `.jp-send` so the compose row does not reflow when a draft appears and
+   the button swaps — a row that jumps as you type is a row you mistap. */
+.jp-mic {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.jp-mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* RED AND PULSING, which is the one place this surface borrows the panel's own vocabulary:
+   on the glass a red pulsing dot means a microphone is open, and it means the same here. */
+.jp-mic-live {
+  background: var(--danger, #c0392b);
+  color: #fff;
+  animation: jp-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jp-mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(192 57 43 / 55%);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgb(192 57 43 / 0%);
+  }
+}
+
+/* A recording indicator that only moves is no indicator at all for anyone who has reduced
+   motion on; the colour still carries it. */
+@media (prefers-reduced-motion: reduce) {
+  .jp-mic-live {
+    animation: none;
+  }
+}
+
+/* The status of the one message you last sent. Quiet until it is good news: "not heard yet" is
+   the resting state and should not read as a warning, while "heard" is the thing a parent at
+   work opened the app to find out. */
+.jp-status {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.jp-status-heard {
+  color: var(--ok, #2e7d32);
+}
+
+/* THE CONVERSATION SCROLLS RATHER THAN PUSHING EVERYTHING ELSE OFF THE PAGE.
+   Two panels each with a long history made the screen a single column metres long, and the
+   compose box — the thing you opened the app to use — ended up below the fold of a list you
+   had to scroll past to reach. Capping each thread keeps every panel's compose row on screen
+   at once, which is the layout a parent with two children actually needs.
+   `svh`, not `vh`: on a phone `vh` ignores the browser chrome and the cap comes out taller
+   than the visible area, which is the whole bug wearing a different hat. */
+.jp-msgs {
+  max-height: min(46svh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain; /* scrolling to the end must not drag the page behind it */
+}
+
+/* Destructive, so it does not sit at button weight beside the panel's name — it is reachable,
+   not prominent, and it only appears when there is something to clear. */
+.jp-clear {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.jp-clear:hover:not(:disabled) {
+  color: var(--danger, #c0392b);
+}
+
+.jp-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.jp-cleared {
+  display: block; /* `<output>` is inline by default */
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}

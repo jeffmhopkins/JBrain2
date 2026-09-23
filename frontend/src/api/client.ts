@@ -4993,6 +4993,39 @@ export const api = {
     return (await response.json()) as JpanelMessage;
   },
 
+  // DAD'S ACTUAL VOICE, which is the other half of composing and not a variant of the one
+  // above. The owner: *"PWA should also be able to actually send audio, a voice message, that
+  // have the option to send text that gets rendered."*
+  //
+  // A synthesised voice reading a father's words is not the same object as his voice — the
+  // whole design already turns on that, which is why `DAD_VOICE` exists at all. For a child
+  // who cannot read, a real recording is the only version that carries who it is from.
+  //
+  // Raw 16 kHz mono s16 in the body, the SAME format a panel uploads, converted in the
+  // browser by `voiceMessage.ts` — see that file for why the box does not decode webm.
+  async sendJpanelVoice(toDevice: string, pcm: ArrayBuffer): Promise<JpanelMessage> {
+    const response = await request(
+      `/api/jpanel/messages/audio?to_device=${encodeURIComponent(toDevice)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: pcm,
+      },
+    );
+    return (await response.json()) as JpanelMessage;
+  },
+
+  // Clear one panel's conversation. The box refuses to delete a message a child has not heard
+  // yet (JPANEL_PLAN.md §5: a message nobody heard must not evaporate), and returns how many
+  // it kept so this surface can SAY so — a clear that silently leaves rows behind is worse
+  // than one that refuses.
+  async clearJpanelHistory(toDevice: string): Promise<{ deleted: number; kept: number }> {
+    const response = await request(`/api/jpanel/messages?device=${encodeURIComponent(toDevice)}`, {
+      method: "DELETE",
+    });
+    return (await response.json()) as { deleted: number; kept: number };
+  },
+
   // What clears the unplayed badge. Reading is the interaction this surface is built
   // around — the transcript is the content — so a message counts as heard once the owner
   // has actually seen it, not only when the audio was played. Idempotent on the box, and

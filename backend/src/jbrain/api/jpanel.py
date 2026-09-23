@@ -58,7 +58,22 @@ MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 # father arriving in the toy's own voice would teach a four-year-old that the robot and their
 # parent are the same thing. A different voice is the cheapest possible signal that this is a
 # person, and it costs one query parameter.
-DAD_VOICE = "am_michael"
+# DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.
+#
+# This said "am_michael" and every message from the owner arrived in the PET'S voice, which is
+# the exact thing a separate voice exists to prevent: a message from Dad in the robot's voice
+# teaches a four-year-old that the robot and their father are the same thing.
+#
+# `_resolve_kokoro_voice` in `deploy/tts-stt/tts_server.py` returns the DEFAULT for any id that
+# does not start with `kokoro-`, and the default is `CURATED_KOKORO_VOICES[0]` — af_heart, the
+# pet's own voice. That fallback is deliberate on its side (a stale id from an old client should
+# render rather than error) and it is exactly why this was silent: the box logged a successful
+# render, the panel played perfectly good speech, and nothing anywhere said the voice had been
+# swapped. It took the owner hearing it.
+#
+# Pinned by `test_dads_voice_is_one_the_engine_will_actually_use`, which reads the resolver's own
+# rule and roster out of that file rather than trusting this string.
+DAD_VOICE = "kokoro-am_michael"
 DAD_NAME = "Dad"
 
 
@@ -575,6 +590,154 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
         to=names.get(body.to_device, body.to_device),
         tts_ms=int((time.monotonic() - started) * 1000),
         duration_ms=duration_ms,
+    )
+    return _row_to_message(row, names)
+
+
+class Cleared(BaseModel):
+    deleted: int
+    kept: int
+
+
+@router.delete("/messages")
+async def clear_history(owner: OwnerDep, request: Request, device: str = Query(...)) -> Cleared:
+    """Clear one panel's conversation.
+
+    Deletes exactly the rows that panel's thread SHOWS — what it sent (to the owner or to its
+    sibling) and what the owner sent to it — because a button under a conversation that cleared
+    something else would be a button nobody could predict.
+
+    **EXCEPT A MESSAGE A CHILD HAS NOT HEARD YET, and that exception is not a nicety.**
+    `JPANEL_PLAN.md` §5: *"unplayed messages are kept indefinitely — a message nobody heard is
+    the one thing that must not evaporate."* A row addressed to a panel with `played_at IS NULL`
+    is a message sitting on a wall waiting for a four-year-old to come back to it; deleting it
+    means she never hears it and nobody ever knows it existed. The owner clearing his own view
+    is not a decision about her post.
+
+    A panel's unread message to the OWNER is a different thing and is deleted: that is his own
+    badge, he is looking at the thread, and clearing is exactly the call he is making.
+
+    The count of what was kept comes back so the PWA can SAY so. A clear that silently leaves
+    rows behind is worse than one that refuses — the whole point of the button is that the list
+    afterwards matches what he expects."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    WITH mine AS (
+                        SELECT id, recipient_kind, played_at
+                        FROM app.jpanel_message
+                        WHERE (sender_kind = 'panel' AND sender_device = :dev)
+                           OR (sender_kind = 'owner' AND recipient_device = :dev)
+                    ), gone AS (
+                        DELETE FROM app.jpanel_message
+                        WHERE id IN (
+                            SELECT id FROM mine
+                            WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
+                        )
+                        RETURNING 1
+                    )
+                    SELECT (SELECT count(*) FROM gone),
+                           (SELECT count(*) FROM mine
+                            WHERE recipient_kind = 'panel' AND played_at IS NULL)
+                    """
+                ),
+                {"dev": device},
+            )
+        ).first()
+        await session.commit()
+    deleted, kept = (int(row[0]), int(row[1])) if row else (0, 0)
+    log.info("jpanel.history_cleared", device=device, deleted=deleted, kept=kept)
+    return Cleared(deleted=deleted, kept=kept)
+
+
+@router.post("/messages/audio", status_code=201)
+async def send_audio(
+    owner: OwnerDep,
+    request: Request,
+    to_device: str = Query(...),
+) -> Message:
+    """Dad SPEAKS; the panel plays his actual voice.
+
+    The owner, after the typed path shipped: *"PWA should also be able to actually send audio,
+    a voice message, that have the option to send text that gets rendered."* Typing is now one
+    of two ways rather than the only one, and `JPANEL_PLAN.md` §3b's asymmetry is amended to
+    match — the PWA still never has to LISTEN, but it may speak.
+
+    **THE REASON THIS IS WORTH THE ROUTE**: a synthesised voice reading a father's words is not
+    the same object as his voice. The whole design already turns on that — `DAD_VOICE` exists
+    because a message from Dad arriving in the pet's own voice would teach a four-year-old that
+    the robot and their father are the same thing. A real recording settles the question
+    completely, and for a child who cannot read it is the only version that carries who it is
+    from.
+
+    **NO FIRMWARE CHANGE, AND THAT IS NOT LUCK.** `GET /next` hands the panel raw PCM and the
+    panel plays it; nothing in the firmware knows or cares whether that audio came from a
+    microphone, from Kokoro, or from a phone in an office. The contract was drawn at the right
+    seam, so this lands entirely on the box and the PWA.
+
+    **RAW 16 kHz MONO s16 IN THE BODY, exactly as the panel's `/send` takes it**, and the
+    browser does the conversion. A `MediaRecorder` blob is webm/opus or mp4/aac depending on
+    the browser, and decoding that on the box would mean a codec dependency in the api
+    container for a job the recorder's own browser can already do — every browser can decode
+    what it just recorded. One audio format crosses this boundary, the same one the panels
+    speak, and the PWA resamples before it uploads.
+
+    **Transcribed on the way in, and the transcript may be WRONG.** Unlike the typed path — where
+    the text IS what was said and is kept verbatim — this is a re-transcription of real speech,
+    with all of whisper's failings. That is acceptable for the same reason it is on the panel's
+    side: the audio is the message and the text is a convenience. A failed transcription is not
+    a failed send."""
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=400, detail="no audio")
+    audio = audio[:MAX_MESSAGE_BYTES]
+    audio = _trim_to_speech(audio)
+    if not audio:
+        # The owner pressed record and said nothing, or held the wrong microphone. Refused
+        # rather than filed: an empty message would draw a pop-up on a child's wall for silence.
+        raise HTTPException(status_code=400, detail="nothing said")
+    duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+
+    settings = cast(Settings, request.app.state.settings)
+    # The addressee is checked BEFORE the slow work, so a bad device id fails in milliseconds
+    # rather than after a transcription. `_panel_names` is the roster — one row per name — so
+    # this also rejects a superseded key the PWA might still be holding from a stale render.
+    names = await _panel_names(request.app.state.session_maker)
+    if to_device not in names:
+        raise HTTPException(status_code=404, detail="no such panel")
+
+    # TWO SESSIONS WITH THE SLOW WORK BETWEEN THEM, for the reason `send` gives: whisper and
+    # the blob write are network calls measured in seconds, and holding a scoped session across
+    # them pins a connection on a box that also serves the pet's turns.
+    transcript = await _transcribe(settings, audio)
+    sha = await request.app.state.blob_store.put(_wav(audio))
+
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO app.jpanel_message
+                        (sender_kind, recipient_kind, recipient_device, blob_sha256,
+                         transcript, composed, duration_ms)
+                    VALUES ('owner', 'panel', :to, :sha, :tx, 'voice', :ms)
+                    RETURNING id, sender_kind, sender_device, recipient_kind, recipient_device,
+                              transcript, composed, duration_ms, created_at, played_at
+                    """
+                ),
+                {"to": to_device, "sha": sha, "tx": transcript, "ms": duration_ms},
+            )
+        ).first()
+        await session.commit()
+    if row is None:  # pragma: no cover — RETURNING on a successful INSERT always yields
+        raise HTTPException(status_code=500, detail="message not stored")
+    log.info(
+        "jpanel.spoke_aloud",
+        to=names.get(to_device, to_device),
+        duration_ms=duration_ms,
+        transcribed=bool(transcript),
     )
     return _row_to_message(row, names)
 

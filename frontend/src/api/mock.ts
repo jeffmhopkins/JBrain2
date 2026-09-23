@@ -5320,6 +5320,45 @@ export const mockFetch: typeof fetch = async (input, init) => {
     }
     return new Response(null, { status: 204 });
   }
+  if (path === "/api/jpanel/messages" && method === "DELETE") {
+    const dev = url.searchParams.get("device") ?? "";
+    const thread = MOCK_JPANEL.find((t) => t.device_id === dev);
+    if (!thread) return json({ detail: "no such panel" }, 404);
+    // The fixture keeps the box's rule rather than clearing everything: a message a child has
+    // not heard yet survives, and the count comes back so the screen can say so.
+    const keep = thread.messages.filter((m) => m.direction === "out" && m.played_at === null);
+    const deleted = thread.messages.length - keep.length;
+    thread.messages = keep;
+    return json({ deleted, kept: keep.length });
+  }
+  // Dad's own voice. Raw PCM in the body rather than JSON, so the mock asserts the SHAPE the
+  // real route takes — a fixture that accepted JSON here would let a client ship that could
+  // never talk to the box.
+  if (path === "/api/jpanel/messages/audio" && method === "POST") {
+    const to = url.searchParams.get("to_device") ?? "";
+    const thread = MOCK_JPANEL.find((t) => t.device_id === to);
+    if (!thread) return json({ detail: "no such panel" }, 404);
+    const bytes =
+      init?.body instanceof ArrayBuffer
+        ? init.body.byteLength
+        : ((init?.body as ArrayBufferView | undefined)?.byteLength ?? 0);
+    if (bytes < 2) return json({ detail: "no audio" }, 400);
+    const sent: JpanelMessage = {
+      id: `jp-voice-${mockJpanelSeq++}`,
+      from_name: "Dad",
+      to_name: thread.name,
+      direction: "out",
+      // A RE-TRANSCRIPTION, unlike the typed path where the text is what was said. It can be
+      // wrong, and the fixture says so rather than echoing something tidy.
+      transcript: "(transcribed from Dad's recording)",
+      composed: "voice",
+      duration_ms: Math.round((bytes / 2 / 16000) * 1000),
+      created_at: new Date().toISOString(),
+      played_at: null,
+    };
+    thread.messages.unshift(sent);
+    return json(sent, 201);
+  }
   if (path === "/api/jpanel/messages" && method === "POST") {
     const body = init?.body
       ? (JSON.parse(String(init.body)) as { to_device?: string; text?: string })
