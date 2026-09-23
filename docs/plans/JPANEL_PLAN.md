@@ -463,18 +463,23 @@ costs two rewrites.
   is noisy enough at rest that §10.4af spent three releases on exactly that noise, which is why
   this is measured rather than argued.
 
-- **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
-  `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
-  is `CAPTURE_MAX_MS` — ten seconds, claimed once at start-up because a heap request in the
-  middle of a four-year-old talking is a failure with no good outcome. Twenty would mean
-  either a second 320 KB buffer or doubling a conversational cap that whisper's flat ~10.7 s
-  is already sized against. Ten seconds of a four-year-old is a long message; revisit it if
-  the twins actually hit the ceiling, which the `full` branch logs when they do.
-  **Playback is NOT capped at ten**, and that was a real bug on the way past: `audio_play`
-  truncated everything at the REPLY ceiling, so a typed message from Dad (600 characters
-  through a voice) would have stopped mid-word. The buffer is now sized by the longest audio
-  any caller can hand over — twenty seconds, matching `MAX_MESSAGE_MS` on the box — and says
-  so in the log when it still has to cut.
+- ~~**The recording cap is ten seconds**~~ — **THIRTY EVERYWHERE (0.2.95), at the owner's ask.**
+  Ten was reasoned rather than measured: "ten seconds of a four-year-old is a long message",
+  with a note to revisit it if the twins hit the ceiling and a `full` branch that logs when
+  they do. Nobody waited for that evidence — the ask came first, and the only real cost was
+  memory. Four numbers had to move together or a thirty-second message would be cut at
+  whichever stayed lowest: `CAPTURE_MAX_MS` and `PLAY_BUF_MS` in `audio.c`, `JPANEL_MAX_BYTES`
+  in `jpanel.c`, and `MAX_MESSAGE_MS` on the box (which the PWA recorder reads, pinned by a
+  test at each end). The three panel buffers now come to about 2.8 MB of the board's 8 MB of
+  PSRAM beside a 322 KB framebuffer; `free_psram` in telemetry is the number to watch rather
+  than any arithmetic written here.
+
+  **A maxed-out TYPED message is still cut, and that gap is now the open one.** `SendText`
+  allows 600 characters, which through Kokoro runs nearer fifty seconds — and `send_text`
+  does not cap what it stores, so the panel truncates on fetch and `audio_play` says so in its
+  log. Thirty narrows the gap; closing it means bringing the text cap and the audio cap into
+  line, which is a decision about how long a message to a four-year-old should be rather than
+  a memory question.
 - ~~**A panel cannot learn the other panel's name**~~ — **CLOSED (0.2.93).**
 
   The gap was real and the placeholder was honest: a panel is flashed with its OWN name, the

@@ -26,11 +26,17 @@ static const char *TAG = "jpanel";
 
 /* WHAT THE BOX WILL HAND OVER AT MOST, and it is NOT the reply cap.
  *
- * `MAX_MESSAGE_MS` in `backend/src/jbrain/api/jpanel.py` is twenty seconds, and a message
+ * `MAX_MESSAGE_MS` in `backend/src/jbrain/api/jpanel.py` is the same number, and a message
  * from Dad is text put through a voice — `SendText` allows 600 characters, which is far more
  * speech than the ten seconds `audio.c` used to truncate at without a word to anyone. The two
- * numbers must move together; `audio.c`'s buffer is sized from this one. */
-#define JPANEL_MAX_BYTES (16000 * 2 * 20)
+ * numbers must move together; `audio.c`'s buffer is sized from this one.
+ *
+ * Thirty seconds at the owner's ask (0.2.95), up from twenty. The cost is PSRAM and it is
+ * affordable: this buffer, the capture buffer and the play buffer together come to about
+ * 2.8 MB of the board's 8 MB, beside a 322 KB framebuffer. What it does NOT fix is a maxed-out
+ * typed message — 600 characters of Kokoro is nearer fifty seconds — so the gap between the
+ * text cap and the audio cap is narrowed here, not closed. */
+#define JPANEL_MAX_BYTES (16000 * 2 * 30)
 
 /* ~30 s, as the plan's contract says: fast enough that "my sister just sent me something" is
    answered while she is still in the room, small enough that two panels asking forever costs

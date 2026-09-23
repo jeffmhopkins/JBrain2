@@ -55,7 +55,7 @@ router = APIRouter(prefix="/jpanel", tags=["jpanel"])
 
 # A panel's clip: longer than a conversational turn, because a message is a thought rather
 # than an answer, and short enough that a pocket-dial cannot fill the box.
-MAX_MESSAGE_MS = 20_000
+MAX_MESSAGE_MS = 30_000
 MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
 
 # DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.

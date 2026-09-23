@@ -124,10 +124,17 @@ static const audio_codec_ctrl_if_t *s_ctrl;
    ending turns before the hush could. The extra padding costs the box nothing now that it
    trims the silence off before whisper sees it (`_trim_to_speech`).
 
-   10 s of 16 kHz mono s16 is 320 KB, claimed ONCE at start-up out of the 7.8 MB of PSRAM
-   nothing else wants. Never allocated while recording: a heap request in the middle of a
-   four-year-old talking is a failure with no good outcome. */
-#define CAPTURE_MAX_MS 10000
+   THIRTY NOW, AT THE OWNER'S ASK (0.2.95), up from ten. Ten was chosen as "a long message for
+   a four-year-old" and left with a note to revisit it if the twins ever hit the ceiling — the
+   `full` branch below logs when they do. Nobody waited for that evidence; the ask came first,
+   and the cost is only memory.
+
+   30 s of 16 kHz mono s16 is 960 KB, claimed ONCE at start-up out of the board's 8 MB of
+   PSRAM. Never allocated while recording: a heap request in the middle of a four-year-old
+   talking is a failure with no good outcome. With the play and inbound buffers at the same
+   length the three come to about 2.8 MB, beside a 322 KB framebuffer — comfortable, and the
+   number to watch is `free_psram` in telemetry rather than this comment. */
+#define CAPTURE_MAX_MS 30000
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */
@@ -147,12 +154,17 @@ static volatile bool s_cap_on;
  *
  * WHAT THIS BUFFER HOLDS IS A DIFFERENT QUESTION, and conflating the two is how the cut
  * happened in the first place. Voice post (`jpanel.c`) plays messages the box caps at
- * `MAX_MESSAGE_MS` — twenty seconds — and Dad's are typed text put through a voice, where
- * `SendText` allows 600 characters. Sized to a reply, every one of those would stop mid-word.
- * So the buffer is sized for the LONGEST audio any caller can hand over, not for the shortest
- * ceiling one of them happens to have; the extra 320 KB comes out of the same PSRAM the
- * capture buffer is claimed from. */
-#define PLAY_BUF_MS 20000
+ * `MAX_MESSAGE_MS` — thirty seconds since 0.2.95 — and Dad's are typed text put through a
+ * voice, where `SendText` allows 600 characters. Sized to a reply, every one of those would
+ * stop mid-word. So the buffer is sized for the LONGEST audio any caller can hand over, not
+ * for the shortest ceiling one of them happens to have.
+ *
+ * AND IT STILL DOES NOT COVER THE WORST TYPED MESSAGE. 600 characters through Kokoro runs
+ * nearer fifty seconds, so a maxed-out note from Dad is cut here and says so in the warning
+ * below. Thirty narrows that gap; only bringing the text cap and this one into line would
+ * close it, and that is a decision about how long a message to a four-year-old should be
+ * rather than a memory question. */
+#define PLAY_BUF_MS 30000
 #define PLAY_BUF_SAMPLES (AUDIO_RATE * PLAY_BUF_MS / 1000)
 static int16_t *s_play;
 static volatile int s_play_len;  /* samples still to write */
