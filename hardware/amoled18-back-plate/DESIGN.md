@@ -114,10 +114,14 @@ cover's shape:
   same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
   short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). The four M2 × 6 lock screws, two at each side `lock_spread` (14 mm) apart, pass
-  through the box's band 1 mm up from the ledge, so the hole's lower edge runs into the solid wall
-  below, and cut their own thread about 4.7 mm into the head's lock blocks; the holes are deep
-  enough for an M2 × 8.
+  3.5 mm deep). Six M2 × 6 countersunk lock screws hold the head in the box: two on each side,
+  `lock_spread` (14 mm) apart, and one each in the top and bottom, diagonally opposite so they
+  clear the battery slot and the head still fits either way round. Each goes through the band
+  round the box's angled end into a lock block in the head, cutting its own thread about 4.7 mm
+  deep (the holes take an M2 × 8 too). The band is only 1.1 mm thick, but an M2 countersunk head
+  needs just a 0.8 mm 90° seat, so the heads sit flush. The holes are 1.45 mm up from the ledge,
+  which keeps each seat under the seam with the front shell; its lower edge dips into the solid
+  wall below the ledge.
 
 ![The head from inside, with the BAT socket ghosted](renders/fig-stand-head.png)
 

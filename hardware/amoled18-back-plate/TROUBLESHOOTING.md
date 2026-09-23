@@ -77,7 +77,7 @@ Back to the [README](README.md).
 | **…and suggests a lower `stand_angle`** | A wide cell doesn't fit at a big lean | Lower `stand_angle` |
 | **Console says `RIM IS LARGER THAN THE HEAD`** | `pocket_wall` + `pocket_clear` too big | Lower one of them |
 | **Head won't drop into the box** | Opening printed small | Raise `pocket_clear` by 0.05 and print the box again |
-| **Head rattles in the box** | Opening printed big | Lower `pocket_clear` by 0.05; the side screws hold it anyway |
+| **Head rattles in the box** | Opening printed big | Lower `pocket_clear` by 0.05; the rim screws hold it anyway |
 | **Front shell stands proud of the box** | Head not right down on the ledge | Check nothing (foam, wire) is under the head's back; thinner foam |
 | **Front shell overhangs the box, or the box sticks out** | The case outline differs from the drawing | Measure the stock cover and correct `plate_x`, `plate_y`, `plate_r` |
 | **Head sits proud, rocking on the battery** | Foam too thick, or the cell is bigger than entered | Thinner foam; measure the cell and enter it, which makes the box longer |
@@ -85,6 +85,7 @@ Back to the [README](README.md).
 | **Plug won't reach the `BAT` socket** | Short wires | Extend the wires (the cell has little room to move over) |
 | **Lock screw won't bite** | Its hole in the head is too big | An M2 × 8 (the hole is deep enough), or a drop of glue |
 | **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
+| **Lock screw head stands proud** | Countersink printed small, or a pan-head screw | Use countersunk (flat head) screws; clean the seat with a countersink bit or a 5 mm drill turned by hand |
 | **The band round the box's angled end cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
 | **USB-C and buttons end up at the bottom** | Head in the box the wrong way round | The USB-C side goes to the box's short wall, away from the long flat side it lies on |
 | **Screen leans back too much or too little** | Taste | `stand_angle`, 10–45° |

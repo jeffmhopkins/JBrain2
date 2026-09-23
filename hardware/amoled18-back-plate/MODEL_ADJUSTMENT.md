@@ -43,7 +43,7 @@ stand). Back to the [README](README.md).
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
 | Desk stand: screen angle, box size | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
-| Desk stand: how the head fits the box, lock screws | `pocket_wall`, `pocket_clear`, `stand_ledge`, `lock_spread` | 7. Desk stand |
+| Desk stand: how the head fits the box, lock screws | `pocket_wall`, `pocket_clear`, `stand_ledge`, `lock_spread`, `lock_top_bottom` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
 The sections below show what each of these is on the part.
@@ -190,6 +190,7 @@ printed (on its floor): `end` makes the longest box, `flat` the shortest.
 | `pocket_clear` | Gap between the head and the box, each side (0.05–0.25) | Head won't go in: raise by 0.05. Rattles: lower |
 | `stand_ledge` | Width of the step inside the box the head's back rests on | Wider is firmer but leaves less room for the battery (the 104050 box uses 0.8) |
 | `lock_spread` | Distance between the two lock screws on each side (0 = one per side, in the middle) | Rarely; 14 keeps them on the flat part of the side |
+| `lock_top_bottom` | One more lock screw in the top and one in the bottom, diagonally opposite so they miss the battery slot | Untick for side screws only |
 
 The head can't shrink past its own rim, so `pocket_wall` + `pocket_clear` together can't go above
 1.35; the console stops with `RIM IS LARGER THAN THE HEAD` if they do. The box's outside is always
