@@ -77,6 +77,18 @@ per end, hence "measure first"; set `lip_wall` to 0.6 for 41.1 mm if it's over. 
 listing ships a JST PH 2.0 plug that needs swapping for 1.25 mm. The screws are the same M2 × 4;
 the hex driver needs a 60 mm shaft.
 
+## Tilted stand
+
+To lean back on a table, the unit has to rest on something ahead of its balance point, or it
+tips onto its face. `tilt_angle` cuts the plate's bottom-back corner flat, along a plane through
+the bottom edge of the seam with the front shell and rising toward the back at that angle. The
+unit stands on that edge and the sloped face; its weight (display and board in front, battery in
+the plate) falls between them. The slope's wall is `tilt_wall` thick, and the cavity is clipped
+behind it, so the deeper the plate, the more cavity it takes: only the thin flat-battery plates
+keep room for a cell. The cell moves up the cavity by itself when needed, and the fit check
+includes its distance from the sloped wall. The sloped face leans at `tilt_angle` from vertical
+when printed back face down, so it needs no support.
+
 ## Where the numbers come from
 
 Sources: Waveshare's [dimension drawing](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8)

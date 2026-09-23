@@ -20,7 +20,19 @@ on with the original four screw positions, and has grip ribs so small hands don'
 | Finished unit | 37.6 × 45.2 × 44 mm | 37.6 × 45.2 × 24.7 mm | 37.6 × 45.2 × 67 mm |
 | Notes | Roomy fit | Thinnest | Tight fit — measure the cell first |
 
-Green is the battery, red the tape under it, yellow the foam on top. Optional:
+Green is the battery, red the tape under it, yellow the foam on top.
+
+### Variation: tilted stand
+
+| ![Standing on a table, leaning back 20°](renders/fig-tilt-stand.png) | ![The sloped base underneath](renders/tilt-under.png) |
+|---|---|
+
+`back_plate_802525_400mAh_tilt20.stl` — the thin 802525 version with its bottom-back corner cut
+flat at 20°, so the unit stands on a table leaning back like a little screen. Unit 37.6 × 45.2 ×
+24.7 mm. Only the thin, flat-battery versions can tilt: in the deep ones the slope would run
+through the battery. See [the stand](MODEL_ADJUSTMENT.md#tilted-stand).
+
+Optional:
 `amoled18_hole_plugs.stl`, press-in caps that hide the screw openings — **not for babies, they're
 a choking hazard**.
 
@@ -46,7 +58,7 @@ battery plug's polarity before connecting it, and don't leave it charging unatte
 | `back_plate_*.stl` | Ready-to-print plates, one per version |
 | `amoled18_hole_plugs.stl` | Six press-fit plugs |
 | `amoled18_back_plate.scad` | The adjustable model ([MODEL_ADJUSTMENT.md](MODEL_ADJUSTMENT.md)) |
-| `amoled18_back_plate.json` | The three versions as OpenSCAD presets |
+| `amoled18_back_plate.json` | The four versions as OpenSCAD presets |
 | `renders/` | Every image in these guides, and `make_renders.sh` to regenerate them |
 | `photos/` | The real unit |
 | `reference/` | Archived Waveshare drawings, 3D model, schematic and web pages ([reference/README.md](reference/README.md)) |

@@ -27,6 +27,7 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 | Walls / perimeters | 3 or more. The rim is 0.8 mm: check the slicer preview shows it solid (two lines). |
 | Infill | 40 % or more |
 | Plugs | As laid out in their file, flat caps down; same material if you want them to match. |
+| Tilted stand version | Prints the same way. Its sloped face leans 20° from vertical, well within what prints unsupported. |
 
 Everything that isn't straight up is sloped at 45° or less, so nothing needs support. The only
 flat overhang is a thin skin closing the top of each screw hole, which bridges cleanly — and
@@ -78,7 +79,8 @@ the board's nut. Don't crank it.
 
 ## 7. Plugs (optional — not for babies)
 
-Press one into each opening on the back until the cap sits flush. To reach a screw again, pry a
+Press one into each opening on the back until the cap sits flush. On the tilted stand, only
+the top two openings take plugs: the bottom two come out on the sloped face. To reach a screw again, pry a
 plug out with a knife tip in the small gap around its cap.
 
 | Without plugs | With plugs |

@@ -9,6 +9,7 @@ PRESETS=../amoled18_back_plate.json
 DEFAULT="103035 1000mAh on edge (default)"
 FLAT="802525 400mAh flat"
 TALL="104050 2400mAh on end (tight, measure first)"
+TILT="802525 400mAh flat, tilted stand 20°"
 
 run() {
   local out=$1; shift
@@ -29,6 +30,11 @@ echo "Versions (cut open, battery green, tape red, foam yellow)"
 run version-103035.png src/fig_version.scad $iso --camera=0,0,0,60,0,300,0 -p "$PRESETS" -P "$DEFAULT"
 run version-802525.png src/fig_version.scad $iso --camera=0,0,0,60,0,300,0 -p "$PRESETS" -P "$FLAT"
 run version-104050.png src/fig_version.scad $iso --camera=0,0,0,60,0,300,0 -p "$PRESETS" -P "$TALL"
+
+echo "Tilted stand"
+run version-tilt.png src/fig_version.scad --imgsize=900,700 --camera=0,0,7,60,0,300,120 -p "$PRESETS" -P "$TILT"
+run tilt-under.png "$MODEL" --imgsize=900,700 --camera=0,0,7,110,0,320,110 -p "$PRESETS" -P "$TILT"
+run fig-tilt-stand.png src/fig_tilt_stand.scad --projection=o --imgsize=1000,900 --camera=0,0,22,90,0,90,190 -p "$PRESETS" -P "$TILT"
 
 echo "Plugs"
 run plugs.png "$MODEL" $iso --camera=0,0,0,50,0,30,0 -D 'part="plugs"'

@@ -66,3 +66,13 @@ Back to the [README](README.md).
 | **Rough spot at the top of each screw hole** | The bridged layer sagged a little | Normal; it's cleared anyway in assembly |
 | **Ribs too strong or too subtle** | Taste | `grip_depth` 0.2–0.5, or 0 for smooth ([comparison](MODEL_ADJUSTMENT.md#grip-ribs)) |
 | **Unit too thick** | Battery choice | Use the flat 802525 version (24.7 mm) |
+
+## Tilted stand
+
+![Standing on the sloped face](renders/fig-tilt-stand.png)
+
+| Problem | Likely cause | Fix |
+|---|---|---|
+| **Tips over backwards too easily** | Angle too steep | Lower `tilt_angle` (15° is steadier) |
+| **Rocks or wobbles on the table** | Stringing or a blob on the sloped face | Scrape it flat; it's the face it stands on |
+| **Console says `CELL DOES NOT FIT` with a tilt** | The slope reaches the battery | Lower `tilt_angle`, use a thinner cell, or keep the tilt for the flat versions |
