@@ -10,7 +10,7 @@ Everything from buying parts to a finished unit. Back to the [README](README.md)
 |---|---|
 | **Battery** | 3.7 V single-cell LiPo matching your version (103035, 802525 or 104050) with a **1.25 mm two-pin plug** — sold as "MX1.25", "Micro JST 1.25" or "PicoBlade". A 2.0 mm "JST PH" plug won't fit the board: swap the plug or use an adapter. |
 | **4 × M2 × 4 socket head cap screws** | ISO 4762 / DIN 912, the round head with a hex socket. Don't go longer without reading [screw length](DESIGN.md#screws): too long presses on the display. |
-| **1.5 mm hex key or driver** | Must reach down a 4.6 mm hole: about 35 mm for the default, 11 mm for the flat version, 60 mm+ for the tall one. A screwdriver-style hex driver is easiest. |
+| **1.5 mm hex key or driver** | Must reach down a 4.6 mm hole: about 35 mm for the default, 15 mm for the flat version, 60 mm+ for the tall one (the console gives each). A screwdriver-style hex driver is easiest. |
 | **1 mm double-sided VHB tape** | Holds the battery to the floor. |
 | **1.5 mm foam** | Thin craft or gasket foam, on top of the battery and in the gaps. |
 | **2 mm drill bit** | Turned by hand, clears the thin skin at the top of each screw tower. |
@@ -97,7 +97,7 @@ The two-part version ([README](README.md#or-the-desk-stand)). Parts are the same
 | **Head** | `amoled18_stand_head.stl`: one, whatever the battery |
 | **Box** | `amoled18_stand_box_<battery>.stl`, for your battery |
 | **4 × M2 × 4 socket head screws** | Display to head, as for the plate. Any short 1.5 mm hex key reaches: the towers are only 3.5 mm deep |
-| **2 × M2 × 6 pan head or wafer head screws** | Head to box, one each end. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's end; a wafer (flat) head sits lower |
+| **2 × M2 × 6 pan head or wafer head screws** | Head to box, one each side. They cut their own thread in the head. A pan head stands about 1.3 mm proud of the box's side; a wafer (flat) head sits lower |
 | No plugs | The head's back is hidden inside the box |
 
 ### Print
@@ -122,7 +122,8 @@ the board through the head, so it goes in this order:
 1. **Clear the towers** in the head, as in step 3.
 2. **Battery into the box**: check its polarity (step 5). With the box standing as it printed,
    tape the battery to the floor, pushed against the long flat wall — the side the stand will
-   lie on. Wires toward the right-hand end as you'll face the screen (the socket's side).
+   lie on. To find the wire end, stand on the long flat wall's side and look down into the box:
+   the wires go to your right, the same side as the head's slot.
 3. **Plug through the head**: with the head off, feed the battery's plug up through the slot in
    the head's floor, from the back, then push it into the board's `BAT` socket. The socket's
    mouth faces the slot, so the plug goes straight in.
@@ -138,7 +139,7 @@ the board through the head, so it goes in this order:
 7. **Lay it down** on its long flat side, screen facing you: the USB-C and buttons are now along
    the top.
 
-![How the head sits in the box, cut through an end wall](renders/fig-stand-joint.png)
+![How the head sits in the box, cut through a side wall at a lock screw](renders/fig-stand-joint.png)
 
 ![The desk stand as it sits, cut open: the head on the box's ledge, the battery (green) lying on the long flat side](renders/stand-section-103035.png)
 

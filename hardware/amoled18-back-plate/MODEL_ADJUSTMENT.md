@@ -2,8 +2,7 @@
 
 > **Status:** Living · **Last verified:** 2026-09-23
 
-How to change the plate: another battery, a better fit to the case, a different grip. You never
-edit code — every number is a labelled field in a form. Back to the [README](README.md).
+How to change the plate: another battery, a better fit to the case, a different grip. You never edit code — every number is a labelled field in a form (the one exception is noted under the desk stand). Back to the [README](README.md).
 
 ## Opening it (first time)
 
@@ -172,7 +171,7 @@ one head fits every box.
 | `box_floor` | Thickness of the box's floor | Rarely |
 
 The cell always lies on the long flat wall the box rests on, where there's most room; pack the space in
-front of it with foam. A cell stood on its `end` makes the tallest box, `flat` the lowest.
+front of it with foam. A cell stood on its `end` makes the longest box, `flat` the shortest.
 
 | 103035 on edge | 802525 flat | 104050 on end |
 |---|---|---|
@@ -180,29 +179,30 @@ front of it with foam. A cell stood on its `end` makes the tallest box, `flat` t
 
 ### How the head fits the box
 
-![Where the head sits in the box, cut through an end wall](renders/fig-stand-joint.png)
+![Where the head sits in the box, cut through a side wall at a lock screw](renders/fig-stand-joint.png)
 
 | Field | What it is | Change it when |
 |---|---|---|
-| `pocket_wall` | The box's wall round the head at the top, which the front shell sits on (0.8–1.3). The head is this much smaller than the case each side | The front shell's wall is thinner or thicker than 1.3 mm: match it |
+| `pocket_wall` | The box's wall round the head at its rim, which the front shell sits on (0.8–1.3). The head is this much (plus `pocket_clear`) smaller than the case each side | Rarely. The default 1.1 is already the most the head's rim allows; go thinner only to give the head more room |
 | `pocket_clear` | Gap between the head and the box, each side (0.05–0.25) | Head won't go in: raise by 0.05. Rattles: lower |
 | `stand_ledge` | Width of the step inside the box the head's back rests on | Wider is firmer but leaves less room for the battery (the 104050 box uses 0.8) |
 
 The head can't shrink past its own rim, so `pocket_wall` + `pocket_clear` together can't go above
-about 1.4; the console stops with `RIM IS LARGER THAN THE HEAD` if they do.
+1.35; the console stops with `RIM IS LARGER THAN THE HEAD` if they do. The box's outside is always
+the case outline (`plate_x`, `plate_y`, `plate_r`), so the front shell sits flush whatever these are.
 
 ### What the console tells you
 
-The head's size; the box's size and its height at the front and back; the whole unit's size with
-the display on; the room each side of the cell; and the screws to buy. The same `TIGHT` and
+The head's size; the box's size as it lies on the table; the whole unit's size with the display
+on; the hex key reach; the room each side of the cell; and the screws to buy. The same `TIGHT` and
 `DOES NOT FIT` warnings as the plate, and it refuses to export a box the cell doesn't fit.
 
 ### Measuring for the desk stand
 
 | Measure | Why |
 |---|---|
-| The front shell's wall, at its bottom edge | The box's top band (`pocket_wall`, 1.1) should be about as thick, so the two are flush |
-| Where the board's `BAT` socket is, and which way its mouth faces | The head's slot sits just in front of it, taken from Waveshare's 3D model ([figure](renders/fig-stand-head.png)). If your board differs, the slot is at `head_holes()` in the `.scad` |
+| The front shell's outside, if it isn't flush with the box | The box's outside is the case outline: correct `plate_x`, `plate_y`, `plate_r` ([outline](#outline-and-screw-positions)) |
+| Where the board's `BAT` socket is, and which way its mouth faces | The head's slot sits just in front of it, taken from Waveshare's 3D model ([figure](renders/fig-stand-head.png)). If your board differs, the slot's position is in `head_holes()` in the `.scad` — the one place you'd edit code |
 
 Grip ribs (group 5b) go round the box too, clear of its angled end. The head has none: it's hidden
 inside the box.

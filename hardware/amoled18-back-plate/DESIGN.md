@@ -87,7 +87,7 @@ cover's shape:
 - **The head** is the plate at stock depth (5.5 mm) with no battery room: same rim, same four
   towers, so it fits the front shell exactly as the stock cover does. It is smaller than the case
   by the box's top wall, with tighter corners (R5.55) so the wall outside each screw bore stays
-  1 mm thick. It adds a solid block inside each end for the lock screws, and a slot through the
+  1 mm thick. It adds a solid block inside each short end (left and right in use) for the lock screws, and a slot through the
   floor just in front of the board's `BAT` socket, whose mouth faces the slot (from Waveshare's
   3D model). The socket is on the side away from the USB-C, which fixes which way round the head
   goes. Its back edge has no chamfer, so all of it bears on the ledge, and its tower flares don't
@@ -106,7 +106,7 @@ cover's shape:
   a side 45 mm wide and as long as the box, it's low and steady.
 - **Box size.** The cell lies on that long flat wall, as far along it as its corners allow 0.5 mm
   from the rounded corners. The box is then made just long enough that the head clears the
-  cell's end plus tape, foam, wires and `extra_clearance`, but its short wall is never shorter
+  top of the cell (in the print frame) plus tape, foam, wires and `extra_clearance`, but its short wall is never shorter
   than `stand_front_min`. The box is modelled in its print frame; `part = stand` shows it lying
   as it's used (`stand_pose()` in the `.scad`).
 - **Printing.** Standing on its floor, the box's walls are vertical and its cut end slopes at
@@ -115,7 +115,7 @@ cover's shape:
   short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
   3.5 mm deep). The two M2 × 6 lock screws pass through the box's band at each side, 1 mm up
-  from the ledge so the lower half of the hole runs into the solid wall below, and cut their own
+  from the ledge so the hole's lower edge runs into the solid wall below, and cut their own
   thread about 4.7 mm into the head's end blocks; the holes are deep enough for an M2 × 8.
 
 ![The head from inside, with the BAT socket ghosted](renders/fig-stand-head.png)

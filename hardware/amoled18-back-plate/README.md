@@ -40,7 +40,7 @@ The head is the same for every box, so changing battery only means printing anot
 | Print | `amoled18_stand_head.stl` + `amoled18_stand_box_103035_edge.stl` | head + `amoled18_stand_box_802525_flat.stl` | head + `amoled18_stand_box_104050_end.stl` |
 | Box | 46 × 45 × 34 mm | 34 × 45 × 34 mm | 70 × 45 × 34 mm |
 | With the display on | 56 × 45 × 40 mm | 44 × 45 × 40 mm | 80 × 45 × 40 mm |
-| Notes | Roomy | Lowest | Tight fit — measure the cell first |
+| Notes | Roomy | Shortest | Tight fit — measure the cell first |
 
 Sizes are front to back × left to right × height, as it sits on the table. How to print and assemble it:
 [PRINTING.md](PRINTING.md#desk-stand).

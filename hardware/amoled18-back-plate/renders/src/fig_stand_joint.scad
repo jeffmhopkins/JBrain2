@@ -1,4 +1,4 @@
-// Where the head sits in the box: an end wall cut through the lock screw, drawn
+// Where the head sits in the box: a side wall cut at the lock screw, drawn
 // square to the head (the whole stand tilted back level).
 include <../../amoled18_back_plate.scad>
 use <annot.scad>
