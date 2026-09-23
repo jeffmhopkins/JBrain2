@@ -463,6 +463,35 @@ costs two rewrites.
   is noisy enough at rest that §10.4af spent three releases on exactly that noise, which is why
   this is measured rather than argued.
 
+- ~~**Nothing checked that a message arrived whole**~~ — **VERIFIED BOTH WAYS (0.2.97).**
+
+  The upload is a chunked write over a radio in a bedroom. A stalled write the panel already
+  caught; a connection that ended cleanly two thirds of the way through a sentence it did not —
+  and from the box that is indistinguishable from a child who stopped talking. The fragment was
+  stored, transcribed, and she was told her message went.
+
+  The panel now hashes the recording before it sends (`X-Jpanel-Sha256`, SHA-256 in the S3's
+  hardware, `mbedtls` already linked for the CA bundle) and the box compares it against what
+  arrived. A mismatch is a **422**, which is the one status the panel retries — its capture
+  buffer still holds the good copy, which is precisely why the recording is not streamed
+  straight off the microphone. Two failures in a row is reported rather than retried forever.
+
+  **And the same proof on the way down**, which streaming made necessary: the panel discards a
+  message as it plays it, so a short download is a message that stops mid-sentence — and
+  acknowledging that would RETIRE it, because `/next` never offers a played message again. The
+  box sends the digest with the audio, the panel hashes as it streams, and what it cannot
+  verify it simply does not acknowledge: the row stays unplayed, the pop-up comes back, and the
+  delivery cap turns a repeated failure into the box giving up loudly rather than a message
+  quietly lost.
+
+  **An unverified upload is still accepted**, with a log line, because a panel mid-fleet-upgrade
+  sends no header and refusing it would take voice post away from a unit to fix a fault it does
+  not have. The header name is pinned at both ends by a test, since a misspelt one fails
+  silently — it simply looks like every panel being old.
+
+  **Oversize is now a 413 rather than a truncation.** Keeping the first N bytes was the same
+  fault the hash exists to catch, committed on purpose.
+
 - ~~**The message length cap**~~ — **GONE (0.2.96); the recording cap is thirty (0.2.95).**
 
   Playback no longer has a ceiling at all. The panel streams a message through a four-second

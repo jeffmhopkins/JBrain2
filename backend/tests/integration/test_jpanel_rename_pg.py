@@ -14,6 +14,7 @@ leave the rest under the old name and grow a second, unreachable panel in the ro
 SQL against real policies, so it is asserted here rather than reasoned about (CLAUDE.md rule 3).
 """
 
+import hashlib
 import uuid
 from collections.abc import AsyncIterator
 
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from jbrain.api import jpanel
 from jbrain.api.jpanel import _wav
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -380,3 +382,130 @@ async def test_a_panel_cannot_re_fetch_a_message_that_is_not_its_own(
         assert client.get(f"/api/jpanel/message/{hers}/pcm", headers=head).status_code == 404
         # And a path segment that is not a uuid is a 404 too, not a 500.
         assert client.get("/api/jpanel/message/not-a-uuid/pcm", headers=head).status_code == 404
+
+
+async def test_an_upload_that_does_not_match_its_hash_is_refused(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """THE FAULT THE HASH EXISTS FOR, and it is not a hypothetical shape.
+
+    The upload is a chunked write over a radio in a bedroom. A stalled write the panel catches;
+    a connection that ends cleanly two thirds of the way through a sentence it does not — and
+    from the box that is indistinguishable from a child who stopped talking. Stored, the
+    fragment is transcribed and she is told her message went.
+
+    A mismatch is a 422, which is the one status the panel retries, because its capture buffer
+    still holds the good copy."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        client.cookies.clear()
+        head = {"Authorization": f"Bearer {panel['key']}"}
+
+        said = b"\x10\x20" * 4000
+        truncated = said[: len(said) // 3]
+
+        # What a half-arrived upload looks like: the body is short, the digest is of the whole.
+        bad = client.post(
+            "/api/jpanel/send?to=dad",
+            content=truncated,
+            headers={**head, "X-Jpanel-Sha256": hashlib.sha256(said).hexdigest()},
+        )
+        assert bad.status_code == 422, bad.text
+
+        # Nothing was filed. A refused send must not leave a fragment behind.
+        async with scoped_session(maker, OWNER) as s:
+            rows = (await s.execute(text("SELECT count(*) FROM app.jpanel_message"))).scalar_one()
+        assert int(rows) == 0
+
+        # The retry — the same bytes, whole — is accepted.
+        good = client.post(
+            "/api/jpanel/send?to=dad",
+            content=said,
+            headers={**head, "X-Jpanel-Sha256": hashlib.sha256(said).hexdigest()},
+        )
+        assert good.status_code == 200, good.text
+
+
+async def test_a_panel_that_cannot_prove_itself_is_still_heard(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """A panel on older firmware sends no digest. Refusing it would take voice post away from a
+    unit in the middle of a fleet upgrade to fix a fault it does not have — so an unverified
+    upload is accepted exactly as it always was, and says so in the log."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        client.cookies.clear()
+        sent = client.post(
+            "/api/jpanel/send?to=dad",
+            content=b"\x10\x20" * 4000,
+            headers={"Authorization": f"Bearer {panel['key']}"},
+        )
+        assert sent.status_code == 200, sent.text
+
+
+async def test_a_message_too_long_is_refused_rather_than_cut(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """This used to keep the first N bytes silently — the same fault the hash exists to catch,
+    committed on purpose: a child's message stored with its end removed and nothing saying
+    so."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        client.cookies.clear()
+        too_long = b"\x10\x20" * (jpanel.MAX_MESSAGE_BYTES // 2 + 1000)
+        answer = client.post(
+            "/api/jpanel/send?to=dad",
+            content=too_long,
+            headers={"Authorization": f"Bearer {panel['key']}"},
+        )
+        assert answer.status_code == 413, answer.text
+
+
+async def test_the_box_says_what_it_sent_so_the_panel_can_check(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    tmp_path,
+) -> None:
+    """The other direction. The panel streams a message straight into its speaker and discards
+    it as it plays, so a download that ends early is one that stops mid-sentence — and if the
+    panel acknowledged that, the box would retire the message and nobody would know the rest
+    existed. The digest is what lets it decline to acknowledge instead."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(
+        Settings(secure_cookies=False, database_url=database_url, blob_dir=str(tmp_path))
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        panel = client.post("/api/devices", json={"label": "panel Ellie"}).json()
+        pid = next(iter(_names(client)))
+        message_id, _ = await _plant(maker, tmp_path, pid, b"\x55\x66")
+
+        client.cookies.clear()
+        head = {"Authorization": f"Bearer {panel['key']}"}
+        got = client.get("/api/jpanel/next", headers=head)
+        assert got.status_code == 200
+        assert got.headers["X-Jpanel-Sha256"] == hashlib.sha256(got.content).hexdigest()
+
+        again = client.get(f"/api/jpanel/message/{message_id}/pcm", headers=head)
+        assert again.headers["X-Jpanel-Sha256"] == hashlib.sha256(again.content).hexdigest()

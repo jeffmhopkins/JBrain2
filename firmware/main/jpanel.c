@@ -10,6 +10,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
+#include "mbedtls/sha256.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -104,6 +105,13 @@ static volatile bool s_run;
    header handler below. */
 static char s_in_id[48];
 static char s_in_from[32];
+/* WHAT THE BOX SAYS IT SENT, hex, or "" from a box too old to say. The panel hashes the
+   message as it streams it into the speaker and compares at the end — not to re-play it, which
+   it cannot, but to decide whether to ACKNOWLEDGE it. A download that ends early plays a
+   message that stops mid-sentence, and acknowledging that would retire it: the box would never
+   offer it again and nobody would know the rest existed. Unverified, it is simply not
+   acknowledged, so it stays unplayed and the pop-up comes back. */
+static char s_in_sha[72];
 
 /* What the poll last saw. `s_wait_from` is written BEFORE `s_wait_count` is raised and
    cleared AFTER it is lowered, so a renderer that sees a non-zero count always reads a name
@@ -172,6 +180,8 @@ static void on_header(const esp_http_client_event_t *e)
         strlcpy(s_in_id, e->header_value, sizeof(s_in_id));
     } else if (strcasecmp(e->header_key, "X-Jpanel-From") == 0) {
         strlcpy(s_in_from, e->header_value, sizeof(s_in_from));
+    } else if (strcasecmp(e->header_key, "X-Jpanel-Sha256") == 0) {
+        strlcpy(s_in_sha, e->header_value, sizeof(s_in_sha));
     }
 }
 
@@ -198,17 +208,72 @@ static esp_http_client_handle_t open_client(const char *path, esp_http_client_me
 
 /* --- POST /send?to=panel|dad ------------------------------------------------------------- */
 
+/* One retry, and only for the one failure a retry can fix.
+ *
+ * A hash mismatch means the bytes on the box are not the bytes in this buffer — a truncated
+ * upload or a flipped bit on the wire — and sending the same buffer again is exactly the right
+ * response, because the buffer is the good copy. Everything else (no sibling, a 500, a dead
+ * socket) is either permanent or already reported, and hammering it would only delay the
+ * child's answer. */
+#define SEND_ATTEMPTS 2
+
+static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt);
+
 static void do_send(jpanel_to_t to)
+{
+    for (int attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+        bool corrupt = false;
+        const jpanel_state_t out = do_send_once(to, &corrupt);
+        if (!corrupt || attempt == SEND_ATTEMPTS) {
+            if (corrupt) {
+                /* LOUD, because this is a child's message that did not go and the panel is
+                   about to say so on the glass. Twice in a row is not a bad packet. */
+                ESP_LOGE(TAG, "upload failed verification twice — not sent");
+            }
+            s_state = out;
+            return;
+        }
+        ESP_LOGW(TAG, "box did not get what we sent — trying once more");
+    }
+}
+
+static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)
 {
     char url[288];
     char path[32];
     snprintf(path, sizeof(path), "/send?to=%s", to == JPANEL_TO_DAD ? "dad" : "panel");
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_POST, url, sizeof(url));
-    if (c == NULL) {
-        s_state = JPANEL_FAILED;
-        return;
-    }
+    if (c == NULL) return JPANEL_FAILED;
     esp_http_client_set_header(c, "Content-Type", "application/octet-stream");
+
+    /* WHAT THE BOX SHOULD END UP WITH, SAID BEFORE THE BYTES GO.
+     *
+     * The upload is a chunked write over a radio in a bedroom, and until now nothing on either
+     * end could tell a message that arrived whole from one that arrived short. A stalled write
+     * is caught here, but a connection that ends cleanly after two thirds of a sentence is not
+     * — the box would store what it got, whisper would transcribe it, and a child would be
+     * told her message went. Hashing what we are about to send turns that into a refusal the
+     * panel can act on.
+     *
+     * Computed over the capture buffer before the first byte, because a header cannot follow a
+     * body. The buffer is still ours until the box says yes, which is what makes a retry
+     * possible — and is the reason the recording is not streamed straight off the microphone.
+     *
+     * SHA-256 because the ESP32-S3 has it in hardware and `mbedtls` is already linked for the
+     * CA bundle; a cheaper checksum would catch a truncation but not a corruption, and the box
+     * is content-addressing these bytes with the same function anyway. */
+    unsigned char digest[32];
+    char hex[65];
+    if (mbedtls_sha256((const unsigned char *)s_pcm, s_bytes, digest, 0) == 0) {
+        for (int i = 0; i < 32; i++) snprintf(&hex[i * 2], 3, "%02x", digest[i]);
+        hex[64] = '\0';
+        esp_http_client_set_header(c, "X-Jpanel-Sha256", hex);
+    } else {
+        /* Not fatal: an older box ignores the header and a newer one treats its absence as
+           "this panel cannot prove it", which is exactly what has been true all along. */
+        ESP_LOGW(TAG, "could not hash the recording — sending it unverified");
+        hex[0] = '\0';
+    }
 
     const int64_t t0 = esp_timer_get_time();
     jpanel_state_t out = JPANEL_FAILED;
@@ -239,6 +304,12 @@ static void do_send(jpanel_to_t to)
         out = JPANEL_NOBODY;
         goto done;
     }
+    if (status == 422) {
+        /* The box hashed what arrived and got something else. Recoverable, and the only
+           status this panel retries. */
+        *corrupt = true;
+        goto done;
+    }
     if (status != 200) {
         ESP_LOGW(TAG, "box said %d", status);
         goto done;
@@ -250,7 +321,7 @@ done:
              to == JPANEL_TO_DAD ? "dad" : "panel",
              (int)((esp_timer_get_time() - t0) / 1000), (int)out);
     esp_http_client_cleanup(c);
-    s_state = out;
+    return out;
 }
 
 /* --- GET /waiting ------------------------------------------------------------------------ */
@@ -312,8 +383,11 @@ done:
  *
  * Returns the bytes handed over, which is how the caller tells a real message from an empty
  * one. */
-static int pump(esp_http_client_handle_t c)
+static int pump(esp_http_client_handle_t c, char *got_hex, size_t hex_cap)
 {
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    bool hashing = mbedtls_sha256_starts(&sha, 0) == 0;
     int total = 0;
     while (audio_stream_live()) {
         const int n = esp_http_client_read(c, (char *)s_chunk, sizeof(s_chunk));
@@ -333,9 +407,32 @@ static int pump(esp_http_client_handle_t c)
             }
             off += (int)took;
         }
+        if (hashing && mbedtls_sha256_update(&sha, s_chunk, (size_t)n) != 0) hashing = false;
         total += n;
     }
+    if (got_hex != NULL && hex_cap > 0) {
+        got_hex[0] = '\0';
+        unsigned char digest[32];
+        if (hashing && hex_cap >= 65 && mbedtls_sha256_finish(&sha, digest) == 0) {
+            for (int i = 0; i < 32; i++) snprintf(&got_hex[i * 2], 3, "%02x", digest[i]);
+            got_hex[64] = '\0';
+        }
+    }
+    mbedtls_sha256_free(&sha);
     return total;
+}
+
+/* Did we get what the box said it was sending.
+ *
+ * TRUE WHEN THE BOX DID NOT SAY, and that is deliberate rather than lax: a panel talking to an
+ * older box has exactly the assurance it always had, and refusing to acknowledge messages it
+ * cannot verify would make every one of them play forever. What changes is only that a box
+ * which DOES say is believed. */
+static bool verified(const char *claimed, const char *got)
+{
+    if (claimed[0] == '\0') return true;
+    if (got[0] == '\0') return false;
+    return strcasecmp(claimed, got) == 0;
 }
 
 /* "AGAIN", WHICH USED TO BE A MEMCPY. The bytes are gone once they have played, so the repeat
@@ -350,6 +447,10 @@ static void do_replay(void)
     char url[288];
     esp_http_client_handle_t c = open_client(path, HTTP_METHOD_GET, url, sizeof(url));
     if (c == NULL) return;
+    /* CLEARED AFTER `path` IS BUILT, because that used `s_in_id` — and cleared at all because
+       a box too old to send the header would otherwise leave the PREVIOUS message's digest
+       standing, and this replay would be judged against it. */
+    s_in_sha[0] = '\0';
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
     if (esp_http_client_get_status_code(c) != 200) {
@@ -360,10 +461,19 @@ static void do_replay(void)
     /* NO `s_owed` AND NO `s_run`. This message was already acknowledged the first time it
        played; telling the box again would be a second `POST /played` for one listen, and
        joining the run would make "again" walk on into the next unheard message. */
-    const int got = pump(c);
+    char heard[72];
+    const int got = pump(c, heard, sizeof(heard));
     audio_stream_end();
-    if (got < 2) audio_stream_abort();
-    else ESP_LOGI(TAG, "replayed %d B, id %s", got, s_in_id);
+    if (got < 2) {
+        audio_stream_abort();
+    } else if (!verified(s_in_sha, heard)) {
+        /* Nothing to un-acknowledge — this message was acknowledged the first time it played.
+           Worth a line, because a replay that arrives short is the same network fault that
+           would cut a first play, and this is where it shows up without costing anything. */
+        ESP_LOGW(TAG, "replay arrived incomplete (%d B), id %s", got, s_in_id);
+    } else {
+        ESP_LOGI(TAG, "replayed %d B, id %s", got, s_in_id);
+    }
 
 done:
     esp_http_client_cleanup(c);
@@ -382,6 +492,7 @@ static void do_fetch(bool asked)
     int got = 0;
     s_in_id[0] = '\0';
     s_in_from[0] = '\0';
+    s_in_sha[0] = '\0';
     if (esp_http_client_open(c, 0) != ESP_OK) goto done;
     if (esp_http_client_fetch_headers(c) < 0) goto done;
     const int status = esp_http_client_get_status_code(c);
@@ -412,13 +523,28 @@ static void do_fetch(bool asked)
     s_state = JPANEL_PLAYING;
     if (s_wait_count > 0) s_wait_count--;
     if (s_wait_count == 0) s_wait_from[0] = '\0';
-    got = pump(c);
+    char heard[72];
+    got = pump(c, heard, sizeof(heard));
     audio_stream_end();
     if (got < 2) {
         ESP_LOGW(TAG, "empty message");
         audio_stream_abort();
         s_owed = false;
         s_run = false;
+        goto done;
+    }
+    if (!verified(s_in_sha, heard)) {
+        /* NOT ACKNOWLEDGED, WHICH IS THE WHOLE POINT. What played was short — the child heard
+           her father stop mid-sentence — and telling the box it was played would retire it:
+           `/next` would never offer it again and nobody would know the rest existed. Leaving
+           `s_owed` clear keeps the row unplayed, so the pop-up comes back and the next tap
+           fetches it whole. `deliveries` counts this attempt, and five of them is the box
+           giving up loudly rather than a message quietly lost. */
+        ESP_LOGE(TAG, "message arrived incomplete (%d B) — not acknowledging, id %s", got,
+                 s_in_id[0] ? s_in_id : "(none)");
+        s_owed = false;
+        s_run = false;
+        out = JPANEL_PLAYING;
         goto done;
     }
     out = JPANEL_PLAYING;

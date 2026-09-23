@@ -23,6 +23,7 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import hashlib
 import string
 import time
 import uuid
@@ -329,11 +330,44 @@ async def send(
     Transcribed on the way in, because the owner reads before he listens. A failed
     transcription is NOT a failed send: the audio is the message, the text is a convenience,
     and refusing to deliver a child's voice because whisper was busy would be the wrong
-    trade."""
+    trade.
+
+    **VERIFIED, NOT ASSUMED.** The panel hashes the recording before it sends and puts the
+    digest in `X-Jpanel-Sha256`; this compares it against what actually arrived. The upload is
+    a chunked write over a radio in a bedroom, and a connection that ends cleanly two thirds of
+    the way through a sentence is indistinguishable, from here, from a child who stopped
+    talking — so without this the box would store the fragment, whisper would transcribe it,
+    and she would be told her message went. A mismatch is a 422 and the panel sends the same
+    buffer again, which is the right answer because the buffer is the good copy.
+
+    Unverified uploads are still accepted, with a log line. A panel on older firmware sends no
+    header, and refusing it would take voice post away from a unit mid-fleet-upgrade to fix a
+    fault it does not have."""
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    audio = audio[:MAX_MESSAGE_BYTES]
+    if len(audio) > MAX_MESSAGE_BYTES:
+        # REFUSED RATHER THAN TRUNCATED. This used to silently keep the first N bytes, which is
+        # the same fault the hash exists to catch, committed deliberately: a child's message
+        # stored with its end cut off and nothing anywhere saying so.
+        raise HTTPException(
+            status_code=413,
+            detail=f"message longer than {MAX_MESSAGE_MS // 1000}s",
+        )
+    claimed = request.headers.get("X-Jpanel-Sha256", "").strip().lower()
+    if claimed:
+        actual = hashlib.sha256(audio).hexdigest()
+        if actual != claimed:
+            log.warning(
+                "jpanel.upload_corrupt",
+                panel=principal.id,
+                bytes=len(audio),
+                claimed=claimed,
+                actual=actual,
+            )
+            raise HTTPException(status_code=422, detail="audio did not survive the upload")
+    else:
+        log.info("jpanel.upload_unverified", panel=principal.id, bytes=len(audio))
     audio = _trim_to_speech(audio)
     if not audio:
         # Silence is not an error; it is a child who pressed and said nothing.
@@ -522,10 +556,21 @@ async def next_message(principal: PanelDep, request: Request) -> Response:
 
     wav = await request.app.state.blob_store.get(row[1])
     pcm, rate = _pcm_from_wav(wav)
+    body = _to_panel_rate(pcm, rate)
     return Response(
-        content=_to_panel_rate(pcm, rate),
+        content=body,
         media_type="application/octet-stream",
-        headers={"X-Jpanel-Id": row[0], "X-Jpanel-From": _name_of(names, row[2], row[3])},
+        headers={
+            "X-Jpanel-Id": row[0],
+            "X-Jpanel-From": _name_of(names, row[2], row[3]),
+            # THE OTHER HALF OF THE PROOF. The panel streams this straight into its speaker and
+            # discards it as it plays, so a download that ends early is a message that stops
+            # mid-sentence — and the panel would then acknowledge it and the box would never
+            # offer it again. With the digest it can hash as it plays and simply not
+            # acknowledge what it could not verify, which leaves the message unplayed and the
+            # pop-up standing.
+            "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+        },
     )
 
 
@@ -570,10 +615,14 @@ async def message_pcm(message_id: str, principal: PanelDep, request: Request) ->
 
     wav = await request.app.state.blob_store.get(str(row[0]))
     pcm, rate = _pcm_from_wav(wav)
+    body = _to_panel_rate(pcm, rate)
     return Response(
-        content=_to_panel_rate(pcm, rate),
+        content=body,
         media_type="application/octet-stream",
-        headers={"X-Jpanel-Id": message_id},
+        headers={
+            "X-Jpanel-Id": message_id,
+            "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+        },
     )
 
 
