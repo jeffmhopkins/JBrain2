@@ -459,7 +459,9 @@ costs two rewrites.
   tens of counts a resting panel jitters by and far below a hand lifting it. That is reasoning,
   not measurement. It is correctable without a terminal: every wake it causes logs
   `screen: movement N counts (threshold 900)`, and a panel waking itself on an empty table will
-  say so with the number that justifies raising it. Two nights of logs decide it.
+  say so with the number that justifies raising it. Two nights of logs decide it — and the part
+  is noisy enough at rest that §10.4af spent three releases on exactly that noise, which is why
+  this is measured rather than argued.
 
 - **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
   `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer
@@ -488,9 +490,6 @@ costs two rewrites.
   first poll. The caption ticker still shows the phrase they just said in the same frame, so
   the recipient was on the glass either way; this makes it the name.
 
-- **The movement threshold** for waking. It has to be picked against a panel on a bedside table,
-  not reasoned about here; the part is noisy enough at rest that §10.4af spent three releases
-  on it.
 - ~~**Retention.**~~ **BUILT.** `jbrain/jpanel/sweep.py`, a lifespan loop beside the
   guided-intake reaper, every six hours. Played messages go 30 days after they were **played**
   — not after they were sent, so a year-old message the owner listened to this morning is a
