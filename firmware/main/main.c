@@ -181,7 +181,8 @@ static void report(const cfg_t *cfg)
                      "\"blit_fail_total\":%d,\"blit_recov\":%d,\"meter_fail\":%d,"
                      "\"wifi_reason\":%d,\"wifi_drops\":%d,"
                      "\"ota_err\":\"%s\",\"ota_tries\":%d,\"restart_why\":\"%s\","
-                     "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"pmu_history\":[",
+                     "\"tap\":[%d,%d,%d],\"panel_reset\":%s,\"screen\":\"%s\","
+                     "\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
                      (unsigned)esp_get_free_heap_size(),
@@ -195,7 +196,7 @@ static void report(const cfg_t *cfg)
                      audio_levels_state(), blit_fail_total, blit_recov, meter_fail,
                      wifi_reason, wifi_drops, ota_err, ota_tries, display_restart_reason(),
                      tap_x, tap_y, tap_zone,
-                     display_panel_reset() ? "true" : "false");
+                     display_panel_reset() ? "true" : "false", display_screen());
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }

@@ -224,6 +224,31 @@ below the vendor's 90, so a slipped digit cannot reach a child's ear), mic gain 
 ES8311's PGA truncates above it), brightness floor 10 (zero looks exactly like the blanking
 fault).
 
+## The screen sleeps, and says so rather than looking broken
+
+Five minutes with nothing happening dims the panel to a quarter of its configured brightness;
+fifteen takes it to zero **and stops blitting**. Touch, movement, a voice command or an
+arriving message brings it straight back. The policy is `screen.c` — pure arithmetic, so the
+host suite holds it to the properties its comments claim.
+
+It does **not** call `esp_lcd_panel_disp_on_off(false)`. This controller has a documented habit
+of not coming back from display state transitions, and a sleep whose wake path is the operation
+most likely to fail is not a power saving, it is a toy that is dead every morning. Brightness 0
+leaves the display initialised and the io handle untouched, so waking is one 0x51 and one
+frame — both of which the render loop already does thousands of times an hour.
+
+Note that this deliberately drives the brightness the settings API refuses to accept: the
+clamp's floor of 10 exists because *a setting* of zero is indistinguishable from the blanking
+fault. A sleep is not a setting — the configured brightness is untouched underneath it, and the
+panel comes back to it — so the stage is reported instead, as `screen` in the telemetry body
+and in the `render: N frames ok` beat. That matters because a sleeping screen stops blitting
+on purpose, which makes `blit_ok` stop climbing: the exact signature of the stalled render task
+that cost 0.2.44 a photograph from the owner to diagnose.
+
+The accelerometer threshold (`SCREEN_MOVE_COUNTS`, 900 raw counts ≈ 0.11 g) is reasoned rather
+than measured. Every wake it causes logs its magnitude next to the threshold, so a panel waking
+itself on an empty table says what to raise it to.
+
 ## Maintenance gestures: N short taps, then hold
 
 The tap count selects the action — **three reboots, five calibrates the touchscreen** — and the

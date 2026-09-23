@@ -14,7 +14,7 @@ CC ?= cc
 # under -std=c11 every trig call here fails to build while the firmware is fine.)
 CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror -I../main
 LDLIBS = -lm
-SRC = ../main/cue.c ../main/orient.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c
+SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c
 # HEADERS ARE PREREQUISITES TOO. They were not, and the cost was a green run against a stale
 # binary: a constant moved into `face.h`, `make` saw no newer .c file and re-ran the previous
 # build. A suite that can report OK without having compiled the change is worse than no suite.

@@ -503,6 +503,12 @@ class TelemetryIn(BaseModel):
     # (the expander did not answer), which is the state the post-OTA black screen lives in, so
     # a dark panel reporting `panel_reset: false` and one reporting `true` are different bugs.
     panel_reset: bool = False
+    # "awake", "dim" or "dark": which stage of the screen sleep the panel is in. A sleeping
+    # screen stops blitting deliberately, so `blit_ok` stops climbing — the exact signature of
+    # the stalled render task that took a photograph from the owner to diagnose. Without this
+    # field the two reports are identical, and the owner has no terminal to tell them apart
+    # with (CLAUDE.md #10). Empty means firmware too old to say.
+    screen: str = ""
     free_heap: int = 0
     free_psram: int = 0
     # Loudest microphone sample since the panel's last report, 0..32767. Zero across several
@@ -577,6 +583,7 @@ async def telemetry(principal: PanelDep, body: TelemetryIn) -> Response:
         restart_why=body.restart_why,
         tap=body.tap,
         panel_reset=body.panel_reset,
+        screen=body.screen,
         # Only when there is something to say. An empty key on every report for fifteen
         # minutes of a healthy panel is how a log stops being read.
         **({"ota_err": body.ota_err, "ota_tries": body.ota_tries} if body.ota_err else {}),

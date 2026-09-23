@@ -51,6 +51,7 @@
 #include "vocab.h"
 #include "variants.h"
 #include "orient.h"
+#include "screen.h"
 #include "ota.h"
 #include "pmu.h"
 #include "freertos/FreeRTOS.h"
@@ -378,12 +379,31 @@ void display_set_brightness(int level)
     s_brightness_pending = true;
 }
 
+/* THE SLEEP ITSELF IS `screen.h` — thresholds, levels and the movement test, all pure
+   arithmetic and all host-tested. What lives here is the half that needs the panel: which
+   stage we are in, what wakes it, and the frame that does not get drawn. */
+static screen_stage_t s_sleep = SCREEN_AWAKE;
+/* Set in `update_orientation()` and consumed by the same task a few lines later — the IMU
+   read is where these numbers already are, so movement costs no extra bus traffic. */
+static bool s_moved;
+static int s_move_mag;
+
+/* Only ever called on the render task: the write itself is deferred to the same
+   `s_brightness_pending` hand-off the box's setting uses, for the reason above it. */
+static void sleep_wake(const char *why)
+{
+    if (s_sleep == SCREEN_AWAKE) return;
+    ESP_LOGI(TAG, "screen: waking (%s)", why);
+    s_sleep = SCREEN_AWAKE;
+    s_brightness_pending = true;
+}
+
 /* The local copy is not a style choice: `esp_lcd_panel_io_tx_param` takes a plain `const
    void *`, and handing it a pointer into volatile storage discards the qualifier. */
 static void apply_brightness(void)
 {
     if (s_io == NULL) return;
-    const uint8_t level = s_brightness;
+    const uint8_t level = screen_level(s_brightness, s_sleep);
     const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, 0x51, &level, 1);
     if (err != ESP_OK) ESP_LOGW(TAG, "brightness: %s", esp_err_to_name(err));
 }
@@ -1372,6 +1392,22 @@ static void update_orientation(void)
 {
     int16_t ax = 0, ay = 0, az = 0;
     if (!imu_read(&ax, &ay, &az)) return;
+    /* The sleep timer's other input, taken here because this is where the accelerometer
+       has already been read — `screen.h` says why it is a difference and not a tilt. */
+    {
+        static bool seen;
+        static int16_t prev[3];
+        const int16_t cur[3] = {ax, ay, az};
+        if (seen) {
+            const int d = screen_motion(prev, cur);
+            if (screen_moved(d)) {
+                s_moved = true;
+                s_move_mag = d;
+            }
+        }
+        seen = true;
+        for (int i = 0; i < 3; i++) prev[i] = cur[i];
+    }
     /* FOUR WAYS UP, FROM THE TWO AXES THE FLIP ALREADY USED. Gravity on X is portrait and
        its sign says which way; gravity on Y is landscape, mounted with the cable out the
        side, and its sign says which. Whichever axis is larger wins, with the same half-a-
@@ -1453,6 +1489,9 @@ static int s_shown;
 static void blit_meter(int level)
 {
     if (s_panel == NULL) return;
+    /* The one blit that does not go through the frame gate, so the sleep has to be repeated
+       here or a dark screen with the debug overlay on would keep a bar lit all night. */
+    if (s_sleep == SCREEN_DARK) return;
     if (!s_debug_overlay) {
         /* Zeroed rather than merely skipped, so switching the overlay on shows the room as it
            is now instead of a peak the bar was holding when it was switched off. */
@@ -1627,6 +1666,11 @@ int display_stack_free(void)
     return s_stack_free;
 }
 
+const char *display_screen(void)
+{
+    return s_sleep == SCREEN_DARK ? "dark" : s_sleep == SCREEN_DIM ? "dim" : "awake";
+}
+
 int display_mic_peak(void)
 {
     const int p = s_mic_peak;
@@ -1735,10 +1779,21 @@ static void face_task(void *arg)
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
+    /* The interval the delay below last served, which is what every accumulator in this loop
+       is measuring. Decided at the end of a pass and read at the start of the next, so a
+       stage change never mis-counts the pass that carried it. */
+    int poll_ms = TOUCH_POLL_MS;
 
     while (true) {
         PHASE(1);
         bool dirty = false;
+        /* Set where the recogniser is drained, read by the sleep timer far below. */
+        bool heard_voice = false;
+        /* And the touch that woke the screen, which has to be remembered rather than read:
+           it is cleared out of `tapped` below so nothing else acts on it, and the idle timer
+           further down would otherwise see a frame with no activity in it and put the panel
+           straight back to sleep on the same pass. */
+        bool woke_by_touch = false;
         /* One clock read per frame, shared by the rig, the pools and the cooldowns, so every
            part of a frame agrees about when it is. */
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
@@ -1746,8 +1801,20 @@ static void face_task(void *arg)
         /* Read the edge ONCE. `touch_tapped()` is what refreshes the cached level that
            `touch_is_down()` returns, so calling it twice in a frame would consume the edge
            for whichever caller ran first. */
-        const bool tapped = touch && touch_tapped();
-        const bool down = touch && touch_is_down();
+        bool tapped = touch && touch_tapped();
+        bool down = touch && touch_is_down();
+        /* A FINGER ON A DARK SCREEN BUYS THE SCREEN, AND NOTHING ELSE. The child cannot see
+           what they are aiming at, so letting that touch also poke the pet, arm a gesture or
+           acknowledge a message would make the first tap after a nap do something nobody
+           chose. It wakes, it is spent, and the next tap — aimed at a face that is now
+           visible — lands normally. Dim is not included: the pet is still on screen there,
+           and a tap that hits what you can see should do what it looks like it does. */
+        if (s_sleep == SCREEN_DARK && (tapped || down)) {
+            sleep_wake("touch");
+            woke_by_touch = true;
+            tapped = false;
+            down = false;
+        }
         /* SPEAKING, AND IT OUTRANKS THE TOY. The owner, after the first real conversation:
            "when the agent is talking we should prohibit beeps from cutting it off, and we
            should also stop poke interactions making other animations."
@@ -1960,6 +2027,11 @@ static void face_task(void *arg)
         char said[64];
         int said_id = -1;
         if (speech_live() && speech_take(said, sizeof(said), &said_id)) {
+            /* A WORD UNDERSTOOD IS THE PANEL BEING USED, even when it resolves to nothing
+               this frame can draw. The recogniser stays live while the screen is dark — a
+               panel that cannot hear its name in the dark is a panel that is OFF, and the
+               owner asked for a screen timer rather than a power switch. */
+            heard_voice = true;
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
@@ -2142,7 +2214,7 @@ static void face_task(void *arg)
         PHASE(5);
         update_orientation();
         boot_button_poll();
-        s_open = blink_open(TOUCH_POLL_MS);
+        s_open = blink_open(poll_ms);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;
         /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
@@ -2168,7 +2240,7 @@ static void face_task(void *arg)
         /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
            to reach the glass first, or a reboot is indistinguishable from the fault we are
            chasing. */
-        const gesture_action_t act = gesture_poll(&gest, tapped, down, TOUCH_POLL_MS);
+        const gesture_action_t act = gesture_poll(&gest, tapped, down, poll_ms);
 
         /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
            the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
@@ -2218,7 +2290,7 @@ static void face_task(void *arg)
             audio_capture_open();
             ESP_LOGI(TAG, "talk: listening");
         } else if (s_talk == TALK_IDLE && down && !on_the_pet && gest.taps == 0 &&
-                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + TOUCH_POLL_MS) {
+                   held >= HOLD_TALK_MS && held < HOLD_TALK_MS + poll_ms) {
             /* Once per press, on the frame the threshold passes — the owner has no terminal
                but does have the log, and a margin that is too wide looks exactly like a
                microphone that stopped working unless the panel says which it is. */
@@ -2466,7 +2538,71 @@ static void face_task(void *arg)
         const float cue = gesture_cue(&gest);
         if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
-        if (dirty || since_draw >= FACE_FLOOR_MS) {
+        /* ── AWAKE OR NOT, DECIDED ONCE, AFTER EVERYTHING THAT COULD COUNT AS ALIVE ──
+         *
+         * Idle is not "nobody touched it". A reply playing, a listening turn, a message
+         * waiting to be acknowledged, a running animation and a finger mid-gesture are all
+         * the panel being USED, and a screen that dimmed under any of them would be a bug
+         * with a very visible symptom. So the test reads the same signals the frame above
+         * was drawn from, and it reads them here — below every branch that sets them. */
+        {
+            /* Zero is the never-been-active value and `now` passes through it once a boot, so
+               the first frame claims the millisecond after it rather than carrying a second
+               flag around all night. */
+            static uint32_t active_ms;
+            if (active_ms == 0) active_ms = now == 0 ? 1 : now;
+            /* A MESSAGE ARRIVING WAKES THE SCREEN; A MESSAGE WAITING DOES NOT HOLD IT.
+               Counting the queue as activity would mean one unacknowledged good-night left
+               the panel lit until morning — the exact thing this feature exists to stop. The
+               pop-up is still there when the child touches it awake, because nothing about
+               sleeping drops the queue. */
+            static int prev_wait;
+            const int waiting = jpanel_waiting(NULL, 0);
+            const bool arrived = waiting > prev_wait;
+            prev_wait = waiting;
+            const bool used = tapped || down || woke_by_touch || s_moved || speaking ||
+                              gest.taps > 0 || cue > 0.0f || action != ACT_NONE ||
+                              s_talk != TALK_IDLE || s_repeat_until != 0 || heard_voice ||
+                              speech_hearing() || arrived || jpanel_running() ||
+                              jpanel_state() != JPANEL_IDLE;
+            if (s_moved) {
+                /* Logged only where it MATTERS — a waking nudge — and with the number that
+                   would justify moving the threshold. A panel awake and being played with
+                   trips this constantly and has nothing to say about it. */
+                if (s_sleep != SCREEN_AWAKE) {
+                    ESP_LOGI(TAG, "screen: movement %d counts (threshold %d)", s_move_mag,
+                             SCREEN_MOVE_COUNTS);
+                }
+                s_moved = false;
+            }
+            if (used) {
+                active_ms = now == 0 ? 1 : now;
+                if (s_sleep != SCREEN_AWAKE) {
+                    sleep_wake(arrived ? "message" : "activity");
+                    dirty = true; /* the first frame back is a whole one, not a delta */
+                }
+            } else {
+                const uint32_t idle = now - active_ms;
+                const screen_stage_t want = screen_stage(idle);
+                if (want != s_sleep) {
+                    s_sleep = want;
+                    s_brightness_pending = true;
+                    ESP_LOGI(TAG, "screen: %s after %u min idle",
+                             want == SCREEN_DARK ? "dark" : want == SCREEN_DIM ? "dim" : "awake",
+                             (unsigned)(idle / 60000u));
+                }
+            }
+            /* Pinned rather than left to accumulate: the gate below cannot fire while dark,
+               so an unbounded counter would be a counter nothing ever reads — and the frame
+               that wakes wants it already over the floor so the face comes straight back. */
+            if (s_sleep == SCREEN_DARK) since_draw = FACE_FLOOR_MS;
+            poll_ms = s_sleep == SCREEN_DARK ? SCREEN_POLL_MS : TOUCH_POLL_MS;
+        }
+
+        /* DARK SKIPS THE DRAW AS WELL AS THE LIGHT. Brightness 0 already hides the picture;
+           composing and shipping 322 KB to a screen nobody can see is the part that actually
+           costs something, and it is the part worth not doing all night. */
+        if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
             /* Where we are in the running action, and what face it wears. An action that has
                run out returns to ACT_NONE, whose face is happy — so the robot always settles
@@ -2719,7 +2855,7 @@ static void face_task(void *arg)
            is the race that cost a panic). So the pacing is an honest delay, and the level is
            whatever the audio task last measured. */
         PHASE(10);
-        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+        vTaskDelay(pdMS_TO_TICKS(poll_ms));
         if (sound) {
             level = audio_level();
             if (level > s_mic_peak) s_mic_peak = level;
@@ -2735,17 +2871,21 @@ static void face_task(void *arg)
            from the owner to find out. Anything that can stop has to say so on a timer, and
            the largest free internal block comes along because it is the number that has
            explained this fault twice. */
-        since_beat += TOUCH_POLL_MS;
+        since_beat += poll_ms;
         if (since_beat >= BEAT_MS) {
             since_beat = 0;
-            ESP_LOGI(TAG, "render: %d frames ok, %d failed | internal largest %u",
-                     s_blit_ok, s_blit_fails,
+            /* THE STAGE IS ON THIS LINE BECAUSE OF WHAT THE LINE IS FOR. It exists so that a
+               loop which has stopped blitting says so rather than going quiet — and a
+               sleeping screen stops blitting ON PURPOSE. Without the stage here the two are
+               the same log. */
+            ESP_LOGI(TAG, "render: %d frames ok, %d failed | screen %s | internal largest %u",
+                     s_blit_ok, s_blit_fails, display_screen(),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
                                                                 MALLOC_CAP_DMA));
         }
-        since_draw += TOUCH_POLL_MS;
-        since_reassert += TOUCH_POLL_MS;
-        since_sample += TOUCH_POLL_MS;
+        since_draw += poll_ms;
+        since_reassert += poll_ms;
+        since_sample += poll_ms;
     }
 }
 

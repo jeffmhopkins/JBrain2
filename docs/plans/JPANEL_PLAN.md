@@ -1,8 +1,13 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
 > **Status:** In progress · **Last verified:** 2026-09-23 · **Waves:** W1◻️ W2✅ W3✅ W4✅
-> — W2 and W4 shipped together in #1498; W3 is the firmware in this branch (0.2.88) and is
-> **built but not yet run on a panel**. W1 (the screen that sleeps) is the one left.
+> — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
+> **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
+>
+> **W1's code has landed** — firmware 0.2.92, `screen.{c,h}` plus the render loop — and stays
+> open rather than ticked because the wave is not done until it has run on hardware: the
+> panel is away until tonight, the movement threshold it ships with is reasoned rather than
+> measured, and §5 says how to correct it from the box without a terminal.
 
 The owner, across two asks:
 
@@ -82,6 +87,34 @@ should not be reached for until the black screen has a confirmed root cause.
 The render loop is the panel's clock — the level meter, the recogniser feed and the capture all
 hang off it (§10.4). Sleep stops *blitting*, not the loop. The task keeps turning at a slower
 cadence; it simply stops sending pixels.
+
+### What shipped (0.2.92)
+
+The policy is `firmware/main/screen.{c,h}` — thresholds, the dim level and the movement test,
+pure arithmetic and host-tested, extracted for the same reason `orient.c` was: a rule about
+time and thresholds that is only ever *reasoned* about is how the first orientation shipped
+backwards. `display.c` keeps the half that needs the panel: which stage it is in, what wakes
+it, and the frame that does not get drawn.
+
+Three things are worth knowing beyond the rule above.
+
+**A message arriving wakes the screen; a message *waiting* does not hold it awake.** Counting
+the queue as activity would mean one unacknowledged good-night left the panel lit until
+morning, which is the exact thing this feature exists to stop. Nothing about sleeping drops the
+queue, so the pop-up is still there when the child touches the panel awake.
+
+**A finger on a dark screen buys the screen and nothing else.** The child cannot see what they
+are aiming at, so the waking touch is spent on waking — it does not poke the pet, arm a gesture
+or acknowledge a message. The next tap, aimed at a face that is now visible, lands normally.
+Dim does not consume the touch: the pet is still on screen there, and a tap that hits what you
+can see should do what it looks like it does.
+
+**The stage is in the heartbeat and in the render beat, because a sleeping panel reports what a
+broken one reports.** Sleep stops blitting on purpose, so `blit_ok` stops climbing — which is
+the signature of the stalled render task that cost 0.2.44 a photograph from the owner to
+diagnose. `screen: "awake" | "dim" | "dark"` in telemetry, and the same word in the
+`render: N frames ok` log line, is what tells the two apart for someone with no terminal
+(CLAUDE.md #10).
 
 ---
 
@@ -412,6 +445,13 @@ W2 lands before W3 and W4 because both are its clients and a route that changes 
 costs two rewrites.
 
 ## 5. Open, and deliberately not guessed
+
+- **The movement threshold has never met a bedside table.** `SCREEN_MOVE_COUNTS` is 900 raw
+  counts summed over three axes, sample to sample — about 0.11 g, chosen to sit far above the
+  tens of counts a resting panel jitters by and far below a hand lifting it. That is reasoning,
+  not measurement. It is correctable without a terminal: every wake it causes logs
+  `screen: movement N counts (threshold 900)`, and a panel waking itself on an empty table will
+  say so with the number that justifies raising it. Two nights of logs decide it.
 
 - **The recording cap is ten seconds, not the twenty this plan asked for.** W3 reuses
   `audio.c`'s single capture buffer, which is what the plan told it to reuse, and that buffer

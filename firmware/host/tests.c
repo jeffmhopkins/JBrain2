@@ -21,6 +21,7 @@
 #include "font.h"
 #include "gesture.h"
 #include "orient.h"
+#include "screen.h"
 #include "rig.h"
 #include "variants.h"
 #include "cue.h"
@@ -913,6 +914,110 @@ static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
         const int opposite = (q + 2) % 4;
         CHECK(orient_quarter(opposite, ax, ay) == q, "and reachable from the far side");
     }
+}
+
+/* ---- screen sleep ------------------------------------------------------------------ */
+
+static void test_the_screen_only_ever_gets_darker_with_time(void)
+{
+    /* The one property a bedside table cares about: no amount of sitting still ever makes
+       the screen come BACK. A non-monotone stage rule would light a dark room at 3 a.m. and
+       there would be no way to tell from a log why. Stepped in half-minutes across the whole
+       first hour, which crosses both thresholds and keeps going well past the second. */
+    screen_stage_t last = screen_stage(0);
+    CHECK(last == SCREEN_AWAKE, "a panel just touched is awake");
+    for (uint32_t t = 0; t <= 60u * 60u * 1000u; t += 30u * 1000u) {
+        const screen_stage_t now = screen_stage(t);
+        CHECK((int)now >= (int)last, "time never wakes the screen back up");
+        last = now;
+    }
+    CHECK(last == SCREEN_DARK, "and an hour alone leaves it dark");
+}
+
+static void test_each_stage_arrives_exactly_when_it_says(void)
+{
+    /* The thresholds are inclusive, and the second one is reached from the first rather than
+       skipping it — a rule that jumped straight to dark would lose the warning stage the dim
+       is there to be. */
+    CHECK(screen_stage(SCREEN_DIM_MS - 1) == SCREEN_AWAKE, "awake right up to the dim");
+    CHECK(screen_stage(SCREEN_DIM_MS) == SCREEN_DIM, "and dims on the minute it says");
+    CHECK(screen_stage(SCREEN_DARK_MS - 1) == SCREEN_DIM, "dim right up to the dark");
+    CHECK(screen_stage(SCREEN_DARK_MS) == SCREEN_DARK, "and goes dark on the minute it says");
+    CHECK(SCREEN_DIM_MS < SCREEN_DARK_MS, "the warning stage comes before the dark one");
+}
+
+static void test_a_long_night_does_not_wrap_back_to_a_lit_screen(void)
+{
+    /* `idle_ms` is a millisecond difference of a 32-bit timer, so the arithmetic that feeds
+       this rolls over roughly every 49 days. What must NOT happen is the stage rule treating
+       a huge idle as a small one. Anything above the dark threshold is dark, right up to the
+       largest number that can be handed to it. */
+    CHECK(screen_stage(24u * 60u * 60u * 1000u) == SCREEN_DARK, "a full day is still dark");
+    CHECK(screen_stage(0xFFFFFFFFu) == SCREEN_DARK, "and so is the largest idle there is");
+}
+
+static void test_sleeping_never_makes_the_screen_brighter(void)
+{
+    /* Whatever the box configured is a CEILING: the sleep is allowed to take light away and
+       never to add it. Checked against every brightness a caller can set, because the dim is
+       a shift and shifts are exactly where an off-by-one hides. */
+    for (int c = 0; c <= 255; c++) {
+        const uint8_t want = (uint8_t)c;
+        CHECK(screen_level(want, SCREEN_AWAKE) == want, "awake shows what the box asked for");
+        CHECK(screen_level(want, SCREEN_DIM) <= want, "dim is never brighter than configured");
+        CHECK(screen_level(want, SCREEN_DARK) == 0, "dark is off, whatever was configured");
+    }
+}
+
+static void test_dim_is_dimmer_but_still_a_visible_pet(void)
+{
+    /* THE WHOLE POINT OF THE FIRST STAGE. A dim that reached zero would be a second dark
+       stage ten minutes early, and the child would be told the panel had crashed. */
+    for (int c = 1; c <= 255; c++) {
+        CHECK(screen_level((uint8_t)c, SCREEN_DIM) > 0, "a configured screen never dims to off");
+    }
+    CHECK(screen_level(0xFF, SCREEN_DIM) < 0xFF, "full brightness actually dims");
+    CHECK(screen_level(0, SCREEN_DIM) == 0, "an already-dark panel is left alone");
+    /* And the floor raises nothing: a box that asked for a very dim screen at bedtime gets
+       that screen back, not a brighter one, when the five minutes are up. */
+    for (int c = 1; c < SCREEN_DIM_FLOOR; c++) {
+        CHECK(screen_level((uint8_t)c, SCREEN_DIM) <= (uint8_t)c, "the floor never brightens");
+    }
+}
+
+static void test_a_still_panel_is_not_moving(void)
+{
+    const int16_t rest[3] = {120, -80, 8192};
+    CHECK(screen_motion(rest, rest) == 0, "an identical sample is no movement at all");
+    CHECK(!screen_moved(screen_motion(rest, rest)), "and does not wake anything");
+    /* Accelerometer noise at rest is tens of counts, not hundreds. If this trips, the panel
+       wakes itself all night on a table nobody is near — the failure the threshold exists to
+       prevent, and the one with no visible cause. */
+    const int16_t jitter[3] = {120 + 40, -80 - 35, 8192 + 50};
+    CHECK(!screen_moved(screen_motion(rest, jitter)), "resting jitter is not movement");
+}
+
+static void test_a_hand_picking_it_up_is_movement(void)
+{
+    const int16_t rest[3] = {0, 0, 8192};
+    /* Lifted and tilted: a quarter of a gravity moved onto another axis. Anything a person
+       does to one of these deliberately is larger than this. */
+    const int16_t lifted[3] = {2048, 0, 8192 - 2048};
+    CHECK(screen_moved(screen_motion(rest, lifted)), "a lift wakes the screen");
+    /* Direction cannot matter — putting it back down is a wake too. */
+    CHECK(screen_motion(lifted, rest) == screen_motion(rest, lifted), "movement is symmetric");
+}
+
+static void test_movement_does_not_overflow_at_full_scale(void)
+{
+    /* The samples are int16 and the difference of two of them does not fit in one, which is
+       the classic way a magnitude like this reports a huge movement as a tiny one. */
+    const int16_t lo[3] = {INT16_MIN, INT16_MIN, INT16_MIN};
+    const int16_t hi[3] = {INT16_MAX, INT16_MAX, INT16_MAX};
+    const int d = screen_motion(lo, hi);
+    CHECK(d > 0, "opposite extremes are a positive magnitude");
+    CHECK(d == 3 * (int)(INT16_MAX - INT16_MIN), "and the full span on every axis");
+    CHECK(screen_moved(d), "which is unambiguously movement");
 }
 
 static void test_the_open_mouth_is_the_smile_opening(void)
@@ -2860,6 +2965,14 @@ int main(void)
     test_the_open_mouth_is_the_smile_opening();
     test_the_shuffle_is_driven_by_distance_not_by_a_clock();
     test_the_orientation_needs_a_band_crossed_on_purpose();
+    test_the_screen_only_ever_gets_darker_with_time();
+    test_each_stage_arrives_exactly_when_it_says();
+    test_a_long_night_does_not_wrap_back_to_a_lit_screen();
+    test_sleeping_never_makes_the_screen_brighter();
+    test_dim_is_dimmer_but_still_a_visible_pet();
+    test_a_still_panel_is_not_moving();
+    test_a_hand_picking_it_up_is_movement();
+    test_movement_does_not_overflow_at_full_scale();
     test_the_bird_moves_between_frames();
     test_the_three_dances_differ_on_the_bird();
     test_the_bird_keeps_its_head_on_its_neck();

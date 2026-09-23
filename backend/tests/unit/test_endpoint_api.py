@@ -938,6 +938,7 @@ class TestAPanelCanReportItsOwnState:
             "ota_tries": 999999,
             "restart_why": "blit-heal",
             "tap": [999, 999, 9],
+            "screen": "awake",
             "pmu_history": ["0123456789abcdef0123456789a"] * 8,
             "vocab_refused": ["make a rude noise"] * 6,
             "heard": [["make a rude noise", 100, 1]] * 3,
@@ -947,6 +948,42 @@ class TestAPanelCanReportItsOwnState:
         # And every key really is one this route accepts — a field the panel spends bytes on
         # and the box silently drops is worse than one it never sent.
         assert set(worst) <= set(endpoint_api.TelemetryIn.model_fields)
+
+    def test_a_sleeping_screen_is_distinguishable_from_a_dead_one(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The screen sleep stops blitting on purpose, so a panel asleep on a bedside table
+        reports exactly what a panel with a stalled render task reports: blit counters that
+        have stopped moving. That fault cost 0.2.44 a photograph from the owner to diagnose,
+        and the owner has no terminal to take a second one with — so the stage has to be in
+        the report, not inferred from it."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={
+                "version": "0.2.92",
+                "uptime_ms": 36000000,
+                "blit_ok": 41233,
+                "blit_fail": 0,
+                "screen": "dark",
+            },
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+        assert '"screen": "dark"' in capsys.readouterr().out
+
+    def test_the_panel_actually_sends_the_screen_stage(self) -> None:
+        """The other half of the same fault, and the one that has already happened once: the
+        panel spent bytes on `tap` for months while pydantic dropped every one of them,
+        because nothing checked that the two ends agreed. Read the key out of the firmware
+        rather than trusting that it is still there."""
+        main_c = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text()
+        assert '\\"screen\\":' in main_c, "the panel stopped reporting its screen stage"
+        assert "display_screen()" in main_c, "the stage is no longer read from the display"
+        assert "screen" in endpoint_api.TelemetryIn.model_fields
 
     def test_the_pmu_history_survives_the_round_trip(
         self, client: tuple[TestClient, Path, list[Any]]
