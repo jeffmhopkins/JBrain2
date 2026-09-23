@@ -5320,6 +5320,46 @@ The AGAIN button owns the same corner for its five seconds and wins there: it is
 answers a question the child is asking right now, where the badge answers one they have already
 declined.
 
+#### 10.4cw The message that came back every thirty seconds (0.2.90, 2026-09-23)
+
+The prefetch in 0.2.89 was correct about the network and wrong about who sets a flag. The owner,
+within the hour: *"it seems that right now it just keeps repeating the test message every 30
+seconds or every poll."*
+
+**The acknowledgement was armed by WATCHING FOR A STATE that another task clears first.**
+`jpanel_play_next` runs on the RENDER task and sets `JPANEL_PLAYING`; the jpanel task polled for
+that state every 250 ms to know it owed the box a `POST /played`. In between, the renderer's own
+`switch (jpanel_state())` clears it — **in the same frame as the tap**, because `speaking` is
+sampled at the top of the frame and the tap that starts the audio happens later in that frame.
+So on exactly the frame a child presses the pop-up, `speaking` still reads false, the renderer
+decides the message has finished, and the state is back to IDLE before the jpanel task has
+looked once.
+
+The box therefore never learned the message was played. It stayed unplayed, the next poll
+fetched it again, the pop-up returned, and the panel repeated the same message in a child's
+bedroom every thirty seconds indefinitely.
+
+Two fixes, and the first is the general lesson:
+
+- **A flag set where the work happens cannot be missed by a reader that runs later.** `s_owed`
+  is now set synchronously at the moment `audio_play` succeeds, in both places audio can start.
+  The polled version never had that property; the code it replaced did, because it armed inside
+  the task's own command branch. Refactoring moved the work to another task and quietly dropped
+  the guarantee.
+- **`audio_playing()` is re-read in that switch** rather than using the frame's `speaking`. The
+  repeat window is supposed to start when a message ENDS; with the stale flag it started the
+  instant playback began.
+
+**It could not be cleared from the box, either**, which is worth recording: the debug SQL
+surface is read-only (correctly), and `DELETE /messages` deliberately keeps a message a panel
+has not played — §5's rule protecting exactly this row. Both defences held and both pointed the
+same way: the only way out was the firmware.
+
+**Worth building next, and not bundled into this fix:** the box should stop re-offering a
+message it has handed to the same panel many times without an acknowledgement. A panel that
+cannot acknowledge should not be able to loop audio in a bedroom forever, whatever the reason —
+that is a property of the box and it needs no OTA to take effect.
+
 ### 10.5 Three findings from the board in hand
 
 **A. There is no echo reference, so barge-in is probably not available.** The board carries an

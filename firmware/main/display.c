@@ -2306,8 +2306,15 @@ static void face_task(void *arg)
         case JPANEL_PLAYING:
             /* Held until the speaker stops, so the repeat window starts when the message
                ENDS rather than when it began — five seconds measured from the wrong end
-               would expire before a twenty-second message finished. */
-            if (!speaking) {
+               would expire before a twenty-second message finished.
+             *
+               `audio_playing()` READ AGAIN HERE, not the frame's `speaking`. That flag is
+               sampled at the top of the frame and a tap LATER in the same frame is what starts
+               the message, so on exactly the frame a child presses the pop-up `speaking` still
+               says false — and this branch would fire the instant playback began. It used to
+               clear the state that armed the acknowledgement, which is how one message came
+               back every thirty seconds forever. */
+            if (!audio_playing()) {
                 jpanel_clear();
                 s_repeat_until = now + REPEAT_MS;
                 dirty = true;

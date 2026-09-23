@@ -70,6 +70,18 @@ static volatile int s_in_len;
  * unplayed message still has it on the box. So the poll that discovers a message now also
  * collects it, and the tap is a memcpy into the speaker's buffer. */
 static volatile bool s_held;
+/* A MESSAGE HAS BEEN HANDED TO THE SPEAKER AND THE BOX HAS NOT BEEN TOLD YET.
+ *
+ * SET WHERE THE PLAY HAPPENS, NOT BY WATCHING FOR A STATE. It was armed by polling for
+ * `JPANEL_PLAYING` every 250 ms, and the renderer clears that state from another task — in the
+ * SAME frame as the tap, because its `speaking` flag is sampled at the top of the frame and the
+ * tap that starts the audio comes later in it. So the task never once saw PLAYING, `POST
+ * /played` never fired, the box kept the message unplayed, and every poll delivered it again:
+ * a pop-up on a child's wall repeating the same message every thirty seconds, forever.
+ *
+ * A flag set synchronously at the moment the audio starts cannot be missed by a reader that
+ * runs later, which is the property the polled version did not have. */
+static volatile bool s_owed;
 /* The id the box gave it, held so `POST /played` can name it after the speaker finishes, and
    who it came from, which is what the repeat icon's caption says. Both are filled by the
    header handler below. */
@@ -318,6 +330,7 @@ done:
            tap a second time — the pop-up is already gone from their screen. */
         if (audio_play((const int16_t *)s_in, (size_t)s_in_len)) {
             s_held = false;
+            s_owed = true;
             s_state = JPANEL_PLAYING;
             if (s_wait_count > 0) s_wait_count--;
             if (s_wait_count == 0) s_wait_from[0] = '\0';
@@ -358,7 +371,6 @@ static void jpanel_task(void *arg)
     (void)arg;
     /* Staggered, so two panels on the same Wi-Fi do not ask in lockstep forever. */
     uint32_t next_poll = (uint32_t)(esp_timer_get_time() / 1000) + (esp_random() % POLL_EVERY_MS);
-    bool owe_played = false;
     while (true) {
         cmd_t cmd;
         /* A short wait rather than a block: the poll is this task's own heartbeat, and the
@@ -368,21 +380,16 @@ static void jpanel_task(void *arg)
         if (have) {
             switch (cmd.kind) {
             case CMD_SEND: do_send(cmd.to); break;
-            case CMD_FETCH:
-                do_fetch(cmd.asked);
-                break;
+            case CMD_FETCH: do_fetch(cmd.asked); break;
             case CMD_POLL: next_poll = 0; break;
             }
         }
         /* THE ACKNOWLEDGEMENT WAITS FOR THE SPEAKER, which is the whole reason `GET /next`
            does not mark it played: a panel that loses power mid-message must still have the
-           message.
-         *
-           Armed by the RENDERER now rather than by a command, because the play itself happens
-           there — `jpanel_play_next` hands the held buffer straight to the speaker. */
-        if (s_state == JPANEL_PLAYING) owe_played = true;
-        if (owe_played && !audio_playing() && s_state != JPANEL_BUSY) {
-            owe_played = false;
+           message. `s_owed` is set where the audio starts — see its declaration for the race
+           that taught us not to watch for a state instead. */
+        if (s_owed && !audio_playing() && s_state != JPANEL_BUSY) {
+            s_owed = false;
             do_played();
             next_poll = 0;
         }
@@ -448,6 +455,7 @@ bool jpanel_play_next(void)
     if (s_held && s_in_len >= 2) {
         if (!audio_play((const int16_t *)s_in, (size_t)s_in_len)) return false;
         s_held = false;
+        s_owed = true;
         s_state = JPANEL_PLAYING;
         /* Optimistic, and deliberately so: the count is what draws the pop-up, and leaving it
            up while the message plays would tell a child there is still one waiting. The next
