@@ -120,9 +120,9 @@ the board through the head, so it goes in this order:
 ![The head from inside: the slot the plug comes up through, just in front of the board's BAT socket](renders/fig-stand-head.png)
 
 1. **Clear the towers** in the head, as in step 3.
-2. **Battery into the box**: check its polarity (step 5), then tape it to the floor against the
-   tall back wall, its wires toward the right-hand end as you'll face the screen (the socket's
-   side).
+2. **Battery into the box**: check its polarity (step 5). With the box standing as it printed,
+   tape the battery to the floor, pushed against the long flat wall — the side the stand will
+   lie on. Wires toward the right-hand end as you'll face the screen (the socket's side).
 3. **Plug through the head**: with the head off, feed the battery's plug up through the slot in
    the head's floor, from the back, then push it into the board's `BAT` socket. The socket's
    mouth faces the slot, so the plug goes straight in.
@@ -131,20 +131,18 @@ the board through the head, so it goes in this order:
    and buttons are on the top edge. Screw it on with the four M2 × 4 (step 6). Keep the box
    beside it while you work; the wire is short.
 5. Lay the foam on the battery, tuck the spare wire into the box, and **lower the head into the
-   box's sloped top**, USB-C side to the tall back. It sinks in until its back rests on the ledge
-   inside and the front shell sits on the box's top edge.
-6. **Lock it**: drive an M2 × 6 through the hole at each end of the box into the head. Snug, not
-   tight — it's cutting its own thread in plastic.
+   box's sloped end**, USB-C side to the box's short wall — away from the long flat wall. It
+   sinks in until its back rests on the ledge inside and the front shell sits on the box's rim.
+6. **Lock it**: drive an M2 × 6 through the hole on each side of the box into the head. Snug,
+   not tight — it's cutting its own thread in plastic.
+7. **Lay it down** on its long flat side, screen facing you: the USB-C and buttons are now along
+   the top.
 
 ![How the head sits in the box, cut through an end wall](renders/fig-stand-joint.png)
 
-![The desk stand cut open: the head resting on the box's ledge, the battery (green) against the back wall](renders/stand-section-103035.png)
+![The desk stand as it sits, cut open: the head on the box's ledge, the battery (green) lying on the long flat side](renders/stand-section-103035.png)
 
-![From behind, apart: the head on the display, and the box it sinks into; the USB-C and buttons are on the top edge](renders/stand-back.png)
+![Apart: the display on its head, and the box it sinks into; the USB-C and buttons are on the top edge](renders/stand-back.png)
 
 To charge, plug into the USB-C on the top edge; nothing needs taking apart. To take it apart,
-undo the two end screws and lift the head out.
-
-**It tips backwards if the top of the screen is pushed.** Leaning back at 30° on a small box, a
-firm tap high on the screen can knock it over, and the tall 104050 version most easily. The
-802525 box is the lowest and steadiest.
+undo the two side screws and lift the head out.

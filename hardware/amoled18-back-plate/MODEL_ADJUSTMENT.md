@@ -41,7 +41,7 @@ edit code — every number is a labelled field in a form. Back to the [README](R
 | Plug fit, or no plug recesses | `plug_interference`, `plug_recess` | 4c. Hole plugs |
 | Grip ribs | `grip_depth`, `grip_style` | 5b. Grip |
 | Export plugs instead of the plate | `part` | 6. Output |
-| Desk stand: tilt, box height | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
+| Desk stand: screen angle, box size | `desk_stand`, `stand_angle`, `stand_front_min`, `box_floor` | 7. Desk stand |
 | Desk stand: how the head fits the box | `pocket_wall`, `pocket_clear`, `stand_ledge` | 7. Desk stand |
 | See the battery in the preview | `show_battery` | 6. Output |
 
@@ -167,11 +167,11 @@ one head fits every box.
 
 | Field | What it is | Change it when |
 |---|---|---|
-| `stand_angle` | How far the screen tilts up from flat, 10–45° | Taste. Steeper makes the box taller at the back and easier to tip |
-| `stand_front_min` | The lowest the box's front edge may be | The box is as low as the battery allows, but never lower than this |
+| `stand_angle` | How far the screen leans back from upright, 10–45° | Taste. More lean makes the box longer |
+| `stand_front_min` | The shortest the box's top may be (the short wall under the USB-C edge) | The box is as short as the battery allows, but never shorter than this |
 | `box_floor` | Thickness of the box's floor | Rarely |
 
-The cell always sits against the tall back wall, where there's most height; pack the space in
+The cell always lies on the long flat wall the box rests on, where there's most room; pack the space in
 front of it with foam. A cell stood on its `end` makes the tallest box, `flat` the lowest.
 
 | 103035 on edge | 802525 flat | 104050 on end |
@@ -204,5 +204,5 @@ the display on; the room each side of the cell; and the screws to buy. The same 
 | The front shell's wall, at its bottom edge | The box's top band (`pocket_wall`, 1.1) should be about as thick, so the two are flush |
 | Where the board's `BAT` socket is, and which way its mouth faces | The head's slot sits just in front of it, taken from Waveshare's 3D model ([figure](renders/fig-stand-head.png)). If your board differs, the slot is at `head_holes()` in the `.scad` |
 
-Grip ribs (group 5b) go round the box too, below its front edge. The head has none: it's hidden
+Grip ribs (group 5b) go round the box too, clear of its angled end. The head has none: it's hidden
 inside the box.

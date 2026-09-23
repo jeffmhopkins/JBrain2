@@ -1,18 +1,19 @@
-// The desk stand assembled, with the display unit ghosted on the head.
-// view = "assembled" | "section" | "exploded"
+// The desk stand as it sits on the table, with the display unit on the head.
+// view = "assembled" | "section" | "exploded"; the section keeps the half at y >= cut_y.
 include <../../amoled18_back_plate.scad>
 show_part = false;
 part = "stand";
 view = "assembled";
 front_h = 11.5;   // front shell + display above the head's seam (stock unit is 15 mm)
+cut_y = 0;
 lift = view == "exploded" ? 25 : 0;
 
-// Keeps only the half nearer the viewer in a section; render() keeps the colour.
+// Keeps only the half beyond the cut in a section; render() keeps the colour.
 module cut(c, a = 1) {
     if (view == "section")
         color(c, a) render() intersection() {
             children();
-            translate([-100, -100, -1]) cube([200, 100, 200]);
+            translate([-100, cut_y, -100]) cube([200, 100, 300]);
         }
     else color(c, a) children();
 }
@@ -30,13 +31,16 @@ module display_unit() {
             linear_extrude(height = 0.6) hull() for (dy = [-1.5, 1.5]) translate([0, dy]) circle(d = 2);
 }
 
-cut("SteelBlue") stand_box();
-multmatrix(m_head) translate([0, 0, lift]) {
-    cut("LightSteelBlue") back_plate();
-    display_unit();
-}
-if (view != "exploded") {
-    cut("Crimson") translate([cell_x0, -fy/2, box_floor]) cube([fx, cell_y, tape_t]);
-    cut("LimeGreen") translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
-    cut("Gold") translate([cell_x0, -fy/2, box_floor + tape_t + cell_h]) cube([fx, cell_y, foam_t]);
+color("Gainsboro") translate([-5, -40, -1]) cube([95, 80, 1]);
+stand_pose() {
+    cut("SteelBlue") stand_box();
+    stand_head_pose() translate([0, 0, lift]) {
+        cut("LightSteelBlue") back_plate();
+        display_unit();
+    }
+    if (view != "exploded") {
+        cut("Crimson") translate([cell_x0, -fy/2, box_floor]) cube([fx, cell_y, tape_t]);
+        cut("LimeGreen") translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
+        cut("Gold") translate([cell_x0, -fy/2, box_floor + tape_t + cell_h]) cube([fx, cell_y, foam_t]);
+    }
 }

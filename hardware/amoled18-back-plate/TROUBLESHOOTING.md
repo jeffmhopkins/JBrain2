@@ -74,7 +74,7 @@ Back to the [README](README.md).
 | Problem | Likely cause | Fix |
 |---|---|---|
 | **Console says `CELL DOES NOT FIT THE BOX`** | Cell too wide for the box, or its corners reach the rounded corners | Another `battery_orientation`; or lower `stand_ledge` a little |
-| **…and suggests a lower `stand_angle`** | A wide cell doesn't fit front to back at a steep angle | Lower `stand_angle` |
+| **…and suggests a lower `stand_angle`** | A wide cell doesn't fit at a big lean | Lower `stand_angle` |
 | **Console says `RIM IS LARGER THAN THE HEAD`** | `pocket_wall` + `pocket_clear` too big | Lower one of them |
 | **Head won't drop into the box** | Opening printed small | Raise `pocket_clear` by 0.05 and print the box again |
 | **Head rattles in the box** | Opening printed big | Lower `pocket_clear` by 0.05; the end screws hold it anyway |
@@ -86,6 +86,5 @@ Back to the [README](README.md).
 | **Lock screw won't bite** | Its hole in the head is too big | An M2 × 8 (the hole is deep enough), or a drop of glue |
 | **Lock screw won't go in** | Its hole in the head is too small | Open it with a 1.5 mm drill |
 | **Box's top band cracks at a lock screw** | Screw overtightened | Snug only; print the box with more walls |
-| **Head won't go in the right way round** | Head turned 180° | The USB-C side goes to the box's tall back |
-| **It tips over when tapped** | Tall box, steep angle | A lower `stand_angle`, or a flatter battery (the 802525 box is the steadiest) |
-| **Too steep or too flat** | Taste | `stand_angle`, 10–45° |
+| **USB-C and buttons end up at the bottom** | Head in the box the wrong way round | The USB-C side goes to the box's short wall, away from the long flat side it lies on |
+| **Screen leans back too much or too little** | Taste | `stand_angle`, 10–45° |

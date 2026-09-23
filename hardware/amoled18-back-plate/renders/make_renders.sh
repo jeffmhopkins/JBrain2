@@ -49,17 +49,18 @@ for d in 0 0.3 0.5; do
   run "fig-grip-$d.png" src/fig_grip.scad --projection=o --imgsize=500,800 --camera=17,0,8.5,90,0,0,72 -D grip_depth=$d
 done
 
-echo "Desk stand"
+echo "Desk stand (as it sits on the table: box on its long flat side, screen facing you)"
 B1="Desk stand: box for 103035 on edge"
 B2="Desk stand: box for 802525 flat"
 B3="Desk stand: box for 104050 on end (tight, measure first)"
-run stand.png src/fig_stand.scad --imgsize=900,700 --camera=0,0,26,62,0,235,190 -p "$PRESETS" -P "$B1"
-run stand-back.png src/fig_stand.scad --imgsize=900,800 --camera=0,0,42,62,0,125,250 -p "$PRESETS" -P "$B1" -D 'view="exploded"'
-run stand-section-103035.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,34,90,0,180,190 -p "$PRESETS" -P "$B1" -D 'view="section"'
-run stand-section-802525.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,26,90,0,180,190 -p "$PRESETS" -P "$B2" -D 'view="section"'
-run stand-section-104050.png src/fig_stand.scad --projection=o --imgsize=900,800 --camera=0,0,44,90,0,180,250 -p "$PRESETS" -P "$B3" -D 'view="section"'
+sec="--projection=o --imgsize=900,700"
+run stand.png src/fig_stand.scad --imgsize=900,700 --camera=35,0,15,62,0,60,200 -p "$PRESETS" -P "$B1"
+run stand-back.png src/fig_stand.scad --imgsize=900,700 --camera=35,0,25,55,0,35,240 -p "$PRESETS" -P "$B1" -D 'view="exploded"'
+run stand-section-103035.png src/fig_stand.scad $sec --camera=35,0,20,90,0,0,150 -p "$PRESETS" -P "$B1" -D 'view="section"'
+run stand-section-802525.png src/fig_stand.scad $sec --camera=30,0,20,90,0,0,140 -p "$PRESETS" -P "$B2" -D 'view="section"'
+run stand-section-104050.png src/fig_stand.scad $sec --camera=45,0,20,90,0,0,190 -p "$PRESETS" -P "$B3" -D 'view="section"'
 run stand-box-top.png "$MODEL" --imgsize=900,700 --camera=0,0,24,35,0,250,200 -p "$PRESETS" -P "$B1"
-run fig-stand-side.png src/fig_stand_side.scad --projection=o --imgsize=1300,1000 --camera=-6,0,28,90,0,0,230 -p "$PRESETS" -P "$B1"
+run fig-stand-side.png src/fig_stand_side.scad --projection=o --imgsize=1400,1000 --camera=36,0,22,90,0,0,215 -p "$PRESETS" -P "$B1"
 run fig-stand-joint.png src/fig_stand_joint.scad --projection=o --imgsize=1300,900 --camera=0,21.5,1.2,90,0,90,50 -p "$PRESETS" -P "$B1"
 run fig-stand-head.png src/fig_stand_head.scad --projection=o --imgsize=1300,950 --camera=-9,2,0,0,0,0,240 -p "$PRESETS" -P "$B1"
 run stand-print-bed.png src/fig_stand_print.scad --imgsize=1000,700 --camera=-15,0,10,50,0,15,260 -p "$PRESETS" -P "$B1"

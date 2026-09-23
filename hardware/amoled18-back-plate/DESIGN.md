@@ -92,29 +92,29 @@ cover's shape:
   3D model). The socket is on the side away from the USB-C, which fixes which way round the head
   goes. Its back edge has no chamfer, so all of it bears on the ledge, and its tower flares don't
   change with the battery, so one head fits every box.
-- **The box** is a straight-walled prism standing on the table. Its top is cut at `stand_angle`,
-  rising to the back, and the head sinks into it: its back rests on a ledge `stand_ledge` wide
-  inside, and round it the box's wall carries on up `pocket_wall` thick to the seam, where the
-  front shell sits on it. The outside of that top band is the case outline, so box and front
-  shell are flush; the head's rim stands above the seam into the front shell as usual. Below the
-  ledge the box is open under the head, so the head's back is its lid. Where its walls meet the
-  floor there's a 45° chamfer, kept under the tape beside the cell as on the plate.
-- **Landscape, USB-C up.** The head's +x edge (USB-C and the two buttons) is the high back edge.
-  Nothing of the box stands above the seam, so the USB-C plug and the buttons are clear.
-- **Box height.** The cell stands against the back wall, where the slope gives most height, as far
-  back as its corners allow 0.5 mm from the rounded corners. The box is then made just tall
-  enough that the head clears the cell's front top edge plus tape, foam, wires and
-  `extra_clearance`, but never lower at the front than `stand_front_min`.
-- **Stability.** Tilted back, the unit's weight sits near the middle of the box while a tap on
-  the screen pushes backwards and down, so a plain box tips at well under 1 N at the screen's top
-  edge: about 0.6 N for the 103035, 0.7 N for the 802525 and 0.4 N for the 104050, where a firm
-  tap is 0.5–2 N (estimates: PETG at 85 % fill, a 40 g display). Pressing mid-screen is much
-  safer. A lower `stand_angle` or a flatter, lower cell helps.
-- **Printing.** The box's walls are vertical and its top slopes at 30°, so it prints on its
-  bottom with no supports; the top band's walls lean at the stand angle, 60° from the bed at 30°,
-  the same as the front shell's. The band is 1.1 mm at the ends and about 1.3 mm front and back.
+- **The box** is a straight-walled prism, printed standing on its floor. Its open end is cut at
+  `stand_angle`, and the head sinks into it: its back rests on a ledge `stand_ledge` wide inside,
+  and round it the box's wall carries on `pocket_wall` thick to the seam, where the front shell
+  sits on it. The outside of that band is the case outline, so box and front shell are flush;
+  the head's rim stands above the seam into the front shell as usual. Below the ledge the box is
+  open under the head, so the head's back is its lid. Where its walls meet the floor there's a
+  45° chamfer, kept under the tape beside the cell as on the plate.
+- **How it sits.** In use the box lies on its long flat wall, with the cut end facing you, so the
+  screen leans back `stand_angle` from upright. The display goes in with its USB-C edge (the
+  head's +x, where the two buttons are too) to the box's short wall, which puts it along the top.
+  Nothing of the box stands past the seam, so the USB-C plug and the buttons are clear. Lying on
+  a side 45 mm wide and as long as the box, it's low and steady.
+- **Box size.** The cell lies on that long flat wall, as far along it as its corners allow 0.5 mm
+  from the rounded corners. The box is then made just long enough that the head clears the
+  cell's end plus tape, foam, wires and `extra_clearance`, but its short wall is never shorter
+  than `stand_front_min`. The box is modelled in its print frame; `part = stand` shows it lying
+  as it's used (`stand_pose()` in the `.scad`).
+- **Printing.** Standing on its floor, the box's walls are vertical and its cut end slopes at
+  `stand_angle`, so it prints with no supports; the band's walls lean at that angle too, the
+  same as the front shell's. The band is 1.1 mm at the sides and about 1.3 mm along the long and
+  short walls.
 - **Screws.** Four M2 × 4 hold the display to the head, exactly as on the plate (the towers are
-  3.5 mm deep). The two M2 × 6 lock screws pass through the box's top band at each end, 1 mm up
+  3.5 mm deep). The two M2 × 6 lock screws pass through the box's band at each side, 1 mm up
   from the ledge so the lower half of the hole runs into the solid wall below, and cut their own
   thread about 4.7 mm into the head's end blocks; the holes are deep enough for an M2 × 8.
 

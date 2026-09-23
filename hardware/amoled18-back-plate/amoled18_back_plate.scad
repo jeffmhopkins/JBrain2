@@ -187,11 +187,12 @@ grip_margin = 1.5;      // [0.5:0.5:5]
 /* [7. Desk stand (two parts)] */
 
 // Build the desk stand instead of the back plate. A head that screws to the
-// display like the stock cover sinks right into the top of a battery box, whose
-// outside is flush with the case, and one screw at each end locks it. The unit
-// sits landscape with the USB-C and buttons along the top edge, tilted up.
+// display like the stock cover sinks right into the angled end of a battery box,
+// whose outside is flush with the case, and one screw at each side locks it. The
+// box lies on its long flat side; the screen leans back from upright, landscape,
+// with the USB-C and buttons along its top edge.
 desk_stand = false;
-// How far the display tilts up from flat
+// How far the screen leans back from upright
 stand_angle = 30;       // [10:1:45]
 // The box's wall around the head at the top; the front shell sits on it
 pocket_wall = 1.1;      // [0.8:0.1:1.3]
@@ -199,7 +200,7 @@ pocket_wall = 1.1;      // [0.8:0.1:1.3]
 pocket_clear = 0.15;    // [0.05:0.05:0.25]
 // Width of the step inside the box the head's back rests on
 stand_ledge = 1.0;      // [0.6:0.1:4]
-// Lowest the box's front edge may be
+// Shortest the box's top face may be (the face under the USB-C edge)
 stand_front_min = 8.0;  // [4:0.5:30]
 // Thickness of the box's floor
 box_floor = 2.0;        // [1.2:0.1:4]
@@ -316,9 +317,12 @@ rim_fits      = (rim_out_x <= head_x - 0.2) && (rim_out_y <= head_y - 0.2);
 screws_inside = (screw_dx + tower_r < head_x/2) && (screw_dy < head_y/2 - 1);
 
 // ---- desk stand -------------------------------------------------------
-// World frame: the table is z = 0, the viewer looks along +X, Y runs left to
-// right. The head's back face lies on a plane tilted up by stand_angle, and
-// the head's +x edge (USB-C and buttons) is the high, back edge.
+// The box is built in its print frame: standing on its floor at z = 0, its end
+// cut at stand_angle and rising toward +X, where its long flat wall is. In use
+// it lies on that long wall (stand_pose), which turns the cut end to face the
+// viewer with the screen leaning back stand_angle from upright. The head goes
+// in turned 180 degrees (stand_head_pose), so the display's USB-C edge (the
+// head's +x) is at the top.
 sc = cos(stand_angle);
 ss = sin(stand_angle);
 stand_margin = 0.5;     // cell to the box's rounded corners, in the head's plane
@@ -357,7 +361,7 @@ box_x_room   = cell_x0 + cell_x1;   // cell_x0 + b_ub*sc: room left at the front
 desk_fits  = b_dy <= b_room && box_side_gap >= 0.2 && box_x_room >= 0;
 desk_tight = box_side_gap < 0.5;
 // Floor chamfers, kept 0.5 mm off the cell's bottom edge like the plate's.
-// The cell stands against the back wall, so the front and back chamfers stay
+// The cell stands against the long flat wall, so the chamfers along it and opposite stay
 // under the tape; the end chamfers can rise into the room beside the cell.
 box_cx = min(wall_chamfer, max(0, tape_t - 0.5));
 box_cy = min(wall_chamfer, max(0, tape_t - 0.5 + max(0, box_side_gap - 0.5)));
@@ -367,17 +371,17 @@ if (desk) {
     echo("================ DESK STAND ================");
     echo(str("Cell:               ", battery_t, " x ", battery_w, " x ", battery_l,
              " mm, ", on_end ? "standing on its end" : edge ? "standing on its edge" : "lying flat"));
-    echo(str("Tilt:               ", stand_angle, " degrees, USB-C and buttons on the top edge"));
+    echo(str("Screen:             leans back ", stand_angle, " degrees from upright, USB-C and buttons on its top edge"));
     echo(str("Head:               ", head_x, " x ", head_y, " x ", total_h,
              " mm, the same for every box; it sinks into the box's top, its rim standing above"));
     if (part != "plate") {
-        echo(str("Box:                ", box_depth, " front to back x ", 2 * p_out_y, " wide; ",
-                 band_top_front, " mm tall at the front, ", band_top_back, " at the back"));
-        echo(str("With the display:   ", unit_depth, " x ", 2 * p_out_y, " x ", unit_h, " mm tall"));
-        echo(str("Room around cell:   ", box_side_gap, " mm each side; it stands against the back wall"));
+        echo(str("Box:                ", band_top_back, " long x ", 2 * p_out_y, " wide x ", box_depth,
+                 " tall, lying on its long flat side (", band_top_front, " mm along its top)"));
+        echo(str("With the display:   ", unit_h, " long x ", 2 * p_out_y, " wide x ", unit_depth, " mm tall"));
+        echo(str("Room around cell:   ", box_side_gap, " mm each side; it lies on the box's long flat side"));
     }
     echo(str("SCREWS:             4 x ", screw_size, " x 4 socket head (display to head), 2 x ",
-             screw_size, " x 6 pan or wafer head (head to box, one each end)"));
+             screw_size, " x 6 pan or wafer head (head to box, one each side)"));
     echo("-------------------------------------------");
     if (!rim_fits) echo("*** RIM IS LARGER THAN THE HEAD - lower pocket_wall or pocket_clear ***");
     if (!desk_fits) echo(box_x_room < 0
@@ -754,18 +758,28 @@ module stand_box() {
     }
 }
 
+// In use: the box on its long flat wall (and grip ribs), the cut end facing you.
+module stand_pose() {
+    translate([0, 0, p_out_x * sc + (grip_style != "none" ? grip_depth : 0)])
+        rotate([0, 90, 0]) children();
+}
+
+// The head in the box, turned so the display's USB-C edge ends up on top.
+module stand_head_pose() { multmatrix(m_head) rotate([0, 0, 180]) children(); }
+
 if (show_part) {
-    if (part == "box" || part == "stand") stand_box();
-    if (part == "stand") multmatrix(m_head) back_plate();
+    if (part == "box") stand_box();
+    if (part == "stand") stand_pose() { stand_box(); stand_head_pose() back_plate(); }
     if (part == "plate" || part == "both") back_plate();
     if (part == "plugs" || part == "both")
         translate([part == "both" ? plate_x/2 + 6 : 0, 0, 0]) plugs();
 }
 
-if (show_battery && (part == "box" || part == "stand"))
-    color("green", 0.35)
-        translate([cell_x0, -fy/2, box_floor + tape_t])
-            cube([fx, cell_y, cell_h]);
+if (show_battery && part == "box")
+    color("green", 0.35) translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
+else if (show_battery && part == "stand")
+    color("green", 0.35) stand_pose()
+        translate([cell_x0, -fy/2, box_floor + tape_t]) cube([fx, cell_y, cell_h]);
 else if (show_battery && part != "plugs" && !desk)
     color("green", 0.35)
         translate([-fx/2, -fy/2, plate_t + tape_t])
